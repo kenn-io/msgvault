@@ -6,6 +6,14 @@ Please be pragmatic about reviews, raising theoretical or highly
 pedantic concerns will result in unnecessary code churn and wasted
 review-fix cycles.
 
+CI already builds and tests this project. Do not assert that code fails
+to compile, tests fail, symbols are undefined, APIs do not exist, or
+similar build-verifiable facts unless you personally ran the relevant
+command during this review and can cite the exact failing command and
+output. Inferred compile or test failures are not findings. If the concern
+is only based on reasoning from the diff, describe the underlying behavior
+risk instead of claiming the build is broken.
+
 The Windows CSV fallback path uses \\N as a NULL sentinel (PostgreSQL
 convention) with DuckDB's nullstr option. This is an accepted design
 choice — do not flag it as a concern.
