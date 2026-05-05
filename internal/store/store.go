@@ -570,6 +570,7 @@ func (s *Store) InitSchema() error {
 		{`ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
 		{`ALTER TABLE messages ADD COLUMN attachment_count INTEGER DEFAULT 0`, "attachment_count"},
 		{`ALTER TABLE messages ADD COLUMN deleted_from_source_at DATETIME`, "deleted_from_source_at"},
+		{`ALTER TABLE messages ADD COLUMN deleted_at DATETIME`, "deleted_at"},
 		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
 		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
@@ -592,14 +593,20 @@ func (s *Store) InitSchema() error {
 			if !s.dialect.IsNoSuchModuleError(err) {
 				return fmt.Errorf("init FTS schema: %w", err)
 			}
-			// Module not compiled in; availability stays false.
-			return nil
+			// Module not compiled in; availability stays false. Fall
+			// through so the rest of schema init still runs.
 		}
 	}
 
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema.
 	s.fts5Available = s.dialect.FTSAvailable(s.db.DB)
+
+	// Ensure the default "All" collection exists and contains every source.
+	if err := s.EnsureDefaultCollection(); err != nil {
+		return fmt.Errorf("ensure default collection: %w", err)
+	}
+
 	return nil
 }
 
@@ -622,22 +629,132 @@ type Stats struct {
 }
 
 // GetStats returns statistics about the database.
+// Delegates to GetStatsForScope with no scope filter (global counts).
 func (s *Store) GetStats() (*Stats, error) {
+	return s.GetStatsForScope(nil)
+}
+
+// GetStatsForScope returns statistics scoped to the given source IDs.
+// When sourceIDs is nil or empty, returns global counts.
+// All message-derived counts (threads, attachments, labels) exclude
+// dedup-hidden and source-deleted messages via LiveMessagesWhere.
+// DatabaseSize is always the global file size — it cannot be decomposed per source.
+func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
 
-	queries := []struct {
+	var queries []struct {
 		query string
+		args  []any
 		dest  *int64
-	}{
-		{"SELECT COUNT(*) FROM messages", &stats.MessageCount},
-		{"SELECT COUNT(*) FROM conversations", &stats.ThreadCount},
-		{"SELECT COUNT(*) FROM attachments", &stats.AttachmentCount},
-		{"SELECT COUNT(*) FROM labels", &stats.LabelCount},
-		{"SELECT COUNT(*) FROM sources", &stats.SourceCount},
+	}
+
+	if len(sourceIDs) == 0 {
+		// Unscoped: global catalog counts, matching pre-slice-3 semantics.
+		// All message-linked counts apply LiveMessagesWhere so dedup-hidden
+		// and source-deleted rows aren't reported as live rows.
+		queries = []struct {
+			query string
+			args  []any
+			dest  *int64
+		}{
+			{
+				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true),
+				nil,
+				&stats.MessageCount,
+			},
+			{
+				"SELECT COUNT(*) FROM conversations WHERE EXISTS (" +
+					"SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND " + LiveMessagesWhere("m", true) +
+					")",
+				nil,
+				&stats.ThreadCount,
+			},
+			{
+				"SELECT COUNT(*) FROM attachments a WHERE EXISTS (" +
+					"SELECT 1 FROM messages m WHERE m.id = a.message_id AND " + LiveMessagesWhere("m", true) +
+					")",
+				nil,
+				&stats.AttachmentCount,
+			},
+			{
+				"SELECT COUNT(*) FROM labels l WHERE EXISTS (" +
+					"SELECT 1 FROM message_labels ml JOIN messages m ON m.id = ml.message_id WHERE ml.label_id = l.id AND " + LiveMessagesWhere("m", true) +
+					")",
+				nil,
+				&stats.LabelCount,
+			},
+			{
+				"SELECT COUNT(*) FROM sources",
+				nil,
+				&stats.SourceCount,
+			},
+		}
+	} else {
+		// Build the IN (?, ?, ...) placeholder list. TrimSuffix is panic-safe
+		// for any len(sourceIDs); the outer guard already routes empty slices
+		// to the unscoped branch, but this avoids a negative slice index if
+		// the guard is ever refactored.
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",")
+
+		inClause := "source_id IN (" + placeholders + ")"
+		args := make([]any, len(sourceIDs))
+		for i, id := range sourceIDs {
+			args[i] = id
+		}
+		cloneArgs := func() []any {
+			out := make([]any, len(args))
+			copy(out, args)
+			return out
+		}
+
+		queries = []struct {
+			query string
+			args  []any
+			dest  *int64
+		}{
+			{
+				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
+				cloneArgs(),
+				&stats.MessageCount,
+			},
+			{
+				"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
+				cloneArgs(),
+				&stats.ThreadCount,
+			},
+			{
+				"SELECT COUNT(*) FROM attachments a WHERE EXISTS (" +
+					"SELECT 1 FROM messages m WHERE m.id = a.message_id AND " + LiveMessagesWhere("m", true) +
+					" AND m." + inClause + ")",
+				cloneArgs(),
+				&stats.AttachmentCount,
+			},
+			{
+				"SELECT COUNT(DISTINCT ml.label_id) FROM message_labels ml " +
+					"JOIN messages m ON m.id = ml.message_id WHERE " + LiveMessagesWhere("m", true) +
+					" AND m." + inClause,
+				cloneArgs(),
+				&stats.LabelCount,
+			},
+		}
+		// SourceCount reflects the scope: how many distinct accounts are
+		// represented. Dedupe defensively in case a caller passes a
+		// slice with repeats.
+		seen := make(map[int64]struct{}, len(sourceIDs))
+		for _, id := range sourceIDs {
+			seen[id] = struct{}{}
+		}
+		stats.SourceCount = int64(len(seen))
 	}
 
 	for _, q := range queries {
-		if err := s.db.QueryRow(q.query).Scan(q.dest); err != nil {
+		var row *sql.Row
+		if len(q.args) > 0 {
+			row = s.db.QueryRow(q.query, q.args...)
+		} else {
+			row = s.db.QueryRow(q.query)
+		}
+		if err := row.Scan(q.dest); err != nil {
 			if s.dialect.IsNoSuchTableError(err) {
 				continue
 			}
@@ -645,7 +762,7 @@ func (s *Store) GetStats() (*Stats, error) {
 		}
 	}
 
-	// Get database file size
+	// DatabaseSize is always the global file size; scoped stats cannot decompose it.
 	if info, err := os.Stat(s.dbPath); err == nil {
 		stats.DatabaseSize = info.Size()
 	}

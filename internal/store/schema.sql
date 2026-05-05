@@ -365,3 +365,56 @@ CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 -- Sync
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+
+-- ============================================================================
+-- COLLECTIONS
+-- ============================================================================
+
+-- Collections (named groupings of sources treated as a single logical archive)
+CREATE TABLE IF NOT EXISTS collections (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT    NOT NULL UNIQUE,
+    description TEXT    NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Collection membership (many sources per collection)
+CREATE TABLE IF NOT EXISTS collection_sources (
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    source_id     INTEGER NOT NULL REFERENCES sources(id)     ON DELETE CASCADE,
+    PRIMARY KEY (collection_id, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
+    ON collection_sources(source_id);
+
+-- ============================================================================
+-- ACCOUNT IDENTITIES
+-- ============================================================================
+
+-- Confirmed per-account "me" identities used by sent-message detection
+-- in dedup. Identity is account-scoped: an address confirmed for one
+-- source does not imply it is "me" in any other source.
+CREATE TABLE IF NOT EXISTS account_identities (
+    source_id    INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    address      TEXT NOT NULL,             -- case-preserved
+    source_signal TEXT NOT NULL DEFAULT '', -- sorted comma-separated signal set, e.g. 'manual' or 'account-identifier,manual'
+    confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_identities_address
+    ON account_identities(address);
+
+-- ============================================================================
+-- APPLIED MIGRATIONS
+-- ============================================================================
+
+-- Marks one-time data migrations that have already run. Schema DDL is
+-- idempotent via IF NOT EXISTS; this table is for *data* migrations
+-- (e.g. moving legacy config into per-account records) that must run
+-- exactly once.
+CREATE TABLE IF NOT EXISTS applied_migrations (
+    name        TEXT PRIMARY KEY,
+    applied_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

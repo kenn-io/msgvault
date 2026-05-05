@@ -10,7 +10,10 @@ import (
 	"github.com/wesm/msgvault/internal/store"
 )
 
-var o365TenantID string
+var (
+	o365TenantID             string
+	noDefaultIdentityAddO365 bool
+)
 
 var addO365Cmd = &cobra.Command{
 	Use:   "add-o365 <email>",
@@ -81,6 +84,9 @@ Examples:
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrationsForIngest(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		identifier := imapCfg.Identifier()
 
@@ -113,7 +119,6 @@ Examples:
 				return fmt.Errorf("create source: %w", err)
 			}
 		}
-
 		cfgJSON, err := imapCfg.ToJSON()
 		if err != nil {
 			return fmt.Errorf("serialize config: %w", err)
@@ -123,6 +128,15 @@ Examples:
 		}
 		if err := s.UpdateSourceDisplayName(source.ID, email); err != nil {
 			return fmt.Errorf("set display name: %w", err)
+		}
+
+		// Auto-default-identity must run BEFORE the legacy migration
+		// retry — see comment in account_identity.go.
+		if !noDefaultIdentityAddO365 {
+			confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+		}
+		if err := runPostSourceCreateMigrations(s); err != nil {
+			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 
 		fmt.Printf("\nMicrosoft 365 account added successfully!\n")
@@ -155,5 +169,6 @@ func isMicrosoftIMAPSource(src *store.Source, email string) bool {
 func init() {
 	addO365Cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
+	addO365Cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, noDefaultIdentityHelp)
 	rootCmd.AddCommand(addO365Cmd)
 }

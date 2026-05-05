@@ -212,7 +212,8 @@ type MessageFilter struct {
 	TimeRange TimeRange
 
 	// Account filter
-	SourceID *int64 // nil means all accounts
+	SourceID  *int64  // nil means all accounts
+	SourceIDs []int64 // multi-source filter (collections); overrides SourceID
 
 	// Date range
 	After  *time.Time
@@ -282,13 +283,17 @@ func (f MessageFilter) Clone() MessageFilter {
 			clone.EmptyValueTargets[k] = v
 		}
 	}
+	if f.SourceIDs != nil {
+		clone.SourceIDs = append([]int64(nil), f.SourceIDs...)
+	}
 	return clone
 }
 
 // AggregateOptions configures an aggregate query.
 type AggregateOptions struct {
 	// Account filter
-	SourceID *int64 // nil means all accounts
+	SourceID  *int64  // nil means all accounts
+	SourceIDs []int64 // multi-source filter (collections)
 
 	// Date range
 	After  *time.Time
@@ -333,6 +338,7 @@ type AccountInfo struct {
 // StatsOptions configures a stats query.
 type StatsOptions struct {
 	SourceID              *int64   // nil means all accounts
+	SourceIDs             []int64  // multi-source filter (collections)
 	WithAttachmentsOnly   bool     // only count messages with attachments
 	HideDeletedFromSource bool     // exclude messages where deleted_from_source_at IS NOT NULL
 	SearchQuery           string   // when set, stats reflect only messages matching this search

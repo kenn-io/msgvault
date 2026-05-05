@@ -91,6 +91,9 @@ Remote Mode:
 			if err := s.InitSchema(); err != nil {
 				return fmt.Errorf("init schema: %w", err)
 			}
+			if err := runStartupMigrations(s); err != nil {
+				return fmt.Errorf("startup migrations: %w", err)
+			}
 
 			// Build FTS index in background — TUI uses DuckDB/Parquet for
 			// aggregates and only needs FTS for deep search (Tab to switch).
@@ -282,6 +285,34 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		result.FullRebuild = true
 		reasons = append(reasons,
 			fmt.Sprintf("%d deletions", deletedSinceBuild))
+	}
+
+	// Dedup-hidden rows (deleted_at) are excluded from the messages
+	// Parquet export, so a dedup run after the last cache build leaves
+	// stale duplicate rows in the cache. Detect that by counting hides
+	// since LastSyncAt and force a full rebuild if any are present.
+	// The deleted_from_source_at IS NULL clause keeps the count
+	// disjoint from the deletedSinceBuild count above so a row that is
+	// both source-deleted and dedup-hidden after LastSyncAt is reported
+	// once (as a deletion), not double-counted in the reason string.
+	var hiddenSinceBuild int64
+	err = db.DB().QueryRow(`
+		SELECT COUNT(*) FROM messages
+		WHERE deleted_at IS NOT NULL
+		  AND deleted_at >= ?
+		  AND deleted_from_source_at IS NULL
+	`, syncAtStr).Scan(&hiddenSinceBuild)
+	if err != nil {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: "cannot verify dedup state",
+		}
+	}
+	if hiddenSinceBuild > 0 {
+		result.HasDeleted = true
+		result.FullRebuild = true
+		reasons = append(reasons,
+			fmt.Sprintf("%d dedup-hidden", hiddenSinceBuild))
 	}
 
 	var hasSyncRunsTable int

@@ -852,20 +852,20 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 // CountMessagesForSource returns the count of messages for a specific source (account).
 func (s *Store) CountMessagesForSource(sourceID int64) (int64, error) {
 	var count int64
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_from_source_at IS NULL
-	`, sourceID).Scan(&count)
+	err := s.db.QueryRow(fmt.Sprintf(`
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s
+	`, LiveMessagesWhere("", true)), sourceID).Scan(&count)
 	return count, err
 }
 
 // CountMessagesWithRaw returns the count of messages that have raw MIME stored.
 func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 	var count int64
-	err := s.db.QueryRow(`
+	err := s.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages m
 		JOIN message_raw mr ON m.id = mr.message_id
-		WHERE m.source_id = ? AND m.deleted_from_source_at IS NULL
-	`, sourceID).Scan(&count)
+		WHERE m.source_id = ? AND %s
+	`, LiveMessagesWhere("m", true)), sourceID).Scan(&count)
 	return count, err
 }
 
@@ -873,12 +873,13 @@ func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 // Uses reservoir sampling with random offsets for O(limit) performance on large tables,
 // falling back to ORDER BY RANDOM() for small tables where the overhead isn't significant.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
+	live := LiveMessagesWhere("", true)
 	// Get total count first
 	var total int64
-	err := s.db.QueryRow(`
+	err := s.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages
-		WHERE source_id = ? AND deleted_from_source_at IS NULL
-	`, sourceID).Scan(&total)
+		WHERE source_id = ? AND %s
+	`, live), sourceID).Scan(&total)
 	if err != nil {
 		return nil, err
 	}
@@ -890,12 +891,12 @@ func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) 
 	// For small tables or when limit >= total, use simple ORDER BY RANDOM()
 	// The threshold of 10000 balances query overhead vs. scan cost
 	if total < 10000 || int64(limit) >= total {
-		rows, err := s.db.Query(`
+		rows, err := s.db.Query(fmt.Sprintf(`
 			SELECT id FROM messages
-			WHERE source_id = ? AND deleted_from_source_at IS NULL
+			WHERE source_id = ? AND %s
 			ORDER BY RANDOM()
 			LIMIT ?
-		`, sourceID, limit)
+		`, live), sourceID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -925,12 +926,12 @@ func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) 
 		offset := rng.Int63n(total)
 
 		var id int64
-		err := s.db.QueryRow(`
+		err := s.db.QueryRow(fmt.Sprintf(`
 			SELECT id FROM messages
-			WHERE source_id = ? AND deleted_from_source_at IS NULL
+			WHERE source_id = ? AND %s
 			ORDER BY id
 			LIMIT 1 OFFSET ?
-		`, sourceID, offset).Scan(&id)
+		`, live), sourceID, offset).Scan(&id)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				continue // Race condition with deletions, retry

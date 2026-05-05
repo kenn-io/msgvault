@@ -16,7 +16,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
 	"github.com/wesm/msgvault/internal/vector"
 	"github.com/wesm/msgvault/internal/vector/embed"
 	"github.com/wesm/msgvault/internal/vector/hybrid"
@@ -26,7 +25,9 @@ import (
 // runHybridSearch executes a vector or hybrid search against the local
 // msgvault archive using the sqlite-vec backend and configured embedding
 // endpoint. Invoked from search.go when --mode is "vector" or "hybrid".
-func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) error {
+// scope carries any resolved --account/--collection scope; an empty
+// Scope means no scope flag was supplied.
+func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, scope Scope) error {
 	if queryStr == "" {
 		return fmt.Errorf("empty search query")
 	}
@@ -93,27 +94,22 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) er
 		return fmt.Errorf("build filter: %w", err)
 	}
 
-	// Resolve --account to a SourceID so vector/hybrid respects
-	// account scoping the same way FTS mode does. A missing account
-	// must return a clear error rather than silently searching the
-	// whole corpus.
-	if searchAccount != "" {
-		s, err := store.Open(cfg.DatabaseDSN())
-		if err != nil {
-			return fmt.Errorf("open store for account lookup: %w", err)
+	// Apply resolved --account/--collection scope so vector and hybrid
+	// modes honour the same scope as FTS. Earlier this branch only
+	// looked at --account directly and silently ignored --collection.
+	if !scope.IsEmpty() {
+		filter.SourceIDs = scope.SourceIDs()
+		if scope.IsCollection() {
+			n := len(filter.SourceIDs)
+			suffix := "s"
+			if n == 1 {
+				suffix = ""
+			}
+			fmt.Fprintf(os.Stderr,
+				"Searching collection %q (%d account%s)\n",
+				scope.DisplayName(), n, suffix,
+			)
 		}
-		src, err := s.GetSourceByIdentifier(searchAccount)
-		closeErr := s.Close()
-		if err != nil {
-			return fmt.Errorf("look up account: %w", err)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close store: %w", closeErr)
-		}
-		if src == nil {
-			return fmt.Errorf("account %q not found", searchAccount)
-		}
-		filter.SourceIDs = []int64{src.ID}
 	}
 
 	freeText := strings.Join(q.TextTerms, " ")
@@ -192,6 +188,11 @@ func hydrateHybridResults(ctx context.Context, db *sql.DB, hits []vector.FusedHi
 		args[i] = h.MessageID
 		orderIdx[h.MessageID] = i
 	}
+	// Liveness is enforced upstream in the sqlite-vec backend's filter
+	// CTE used for ranking; re-filtering here would silently drop hits
+	// whose row was soft-deleted between ranking and hydration,
+	// returning a result list shorter than the ranked hits. Hydrate
+	// whatever was ranked.
 	q := fmt.Sprintf(`
 		SELECT m.id, COALESCE(m.subject,''), COALESCE(p.email_address,''), m.sent_at
 		FROM messages m
@@ -202,6 +203,10 @@ func hydrateHybridResults(ctx context.Context, db *sql.DB, hits []vector.FusedHi
 		return nil, fmt.Errorf("query messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	// hits ranked by the vector engine may have been soft-deleted between
+	// ranking and hydration. Track which slots got filled so we can drop
+	// the empty ones and warn about the gap.
+	filled := make([]bool, len(hits))
 	out := make([]hybridResultRow, len(hits))
 	for rows.Next() {
 		var id int64
@@ -228,11 +233,25 @@ func hydrateHybridResults(ctx context.Context, db *sql.DB, hits []vector.FusedHi
 			row.SentAt = sentAt.Time
 		}
 		out[idx] = row
+		filled[idx] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
-	return out, nil
+	dropped := 0
+	compact := out[:0]
+	for i, ok := range filled {
+		if ok {
+			compact = append(compact, out[i])
+		} else {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		logger.Warn("hydration dropped hits (likely soft-deleted between rank and hydrate)",
+			"dropped", dropped, "ranked", len(hits))
+	}
+	return compact, nil
 }
 
 func outputHybridResultsTable(results []hybridResultRow, meta hybrid.ResultMeta, explain bool) error {

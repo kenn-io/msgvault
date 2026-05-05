@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wesm/msgvault/internal/store"
 )
 
 // Compile-time interface assertion.
@@ -424,7 +426,7 @@ func (e *SQLiteEngine) TextSearch(
 		limit = 50
 	}
 
-	sqlQuery := `
+	sqlQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
 			COALESCE(m.source_message_id, '') AS source_message_id,
@@ -448,9 +450,10 @@ func (e *SQLiteEngine) TextSearch(
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE fts.messages_fts MATCH ?
 		  AND m.message_type IN ('whatsapp','imessage','sms','google_voice_text')
+		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`
+	`, store.LiveMessagesWhere("m", true))
 
 	rows, err := e.db.QueryContext(ctx, sqlQuery, query, limit, offset)
 	if err != nil {

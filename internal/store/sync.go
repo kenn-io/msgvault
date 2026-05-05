@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -320,6 +321,28 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 		UpdatedAt:  time.Now(),
 	}
 	newSource.ID, _ = result.LastInsertId()
+
+	// Add to the default "All" collection if it exists.
+	//
+	// This runs as a separate Exec rather than inside a transaction
+	// with the source insert. If this Exec fails, the source row is
+	// committed but the All membership is missing — and the next
+	// EnsureDefaultCollection call (which runs in InitSchema on every
+	// process launch) re-adds every source not yet linked. Self-heals
+	// on next CLI invocation; until then collection-scoped reads of
+	// All would miss this source. Acceptable for a single-user tool;
+	// a future refactor can fold this into a withTx.
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)
+		 SELECT id, ? FROM collections WHERE name = ?`,
+		newSource.ID, DefaultCollectionName,
+	); err != nil {
+		slog.Warn("failed to add source to default collection (self-heals on next InitSchema)",
+			"source_id", newSource.ID,
+			"identifier", identifier,
+			"error", err,
+		)
+	}
 
 	return newSource, nil
 }

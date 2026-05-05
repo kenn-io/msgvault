@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	headless           bool
-	accountDisplayName string
-	forceReauth        bool
-	oauthAppName       string
+	headless                    bool
+	accountDisplayName          string
+	forceReauth                 bool
+	oauthAppName                string
+	noDefaultIdentityAddAccount bool
 )
 
 var addAccountCmd = &cobra.Command{
@@ -60,6 +61,9 @@ Examples:
 
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
+		}
+		if err := runStartupMigrationsForIngest(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
 		}
 
 		// Look up existing source to detect binding changes
@@ -214,6 +218,18 @@ Examples:
 					return fmt.Errorf("set display name: %w", err)
 				}
 			}
+			// Auto-default-identity must run BEFORE the legacy migration
+			// retry (runPostSourceCreateMigrations). The migration's
+			// set-semantics merge handles the case where the legacy
+			// [identity] block contains the same address. Reverse order
+			// would leave the source without its own account identifier
+			// because confirmDefaultIdentity skips on any existing rows.
+			if !noDefaultIdentityAddAccount {
+				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+			}
+			if err := runPostSourceCreateMigrations(s); err != nil {
+				return fmt.Errorf("post-source-create migrations: %w", err)
+			}
 			if bindingChanged {
 				fmt.Printf("Account %s: OAuth app binding updated to %q.\n", email, resolvedApp)
 			} else {
@@ -272,6 +288,14 @@ Examples:
 				return fmt.Errorf("set display name: %w", err)
 			}
 		}
+		// Auto-default-identity must run BEFORE the legacy migration
+		// retry — see comment on the token-reusable path above.
+		if !noDefaultIdentityAddAccount {
+			confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier")
+		}
+		if err := runPostSourceCreateMigrations(s); err != nil {
+			return fmt.Errorf("post-source-create migrations: %w", err)
+		}
 
 		fmt.Printf("\nAccount %s authorized successfully!\n", email)
 		fmt.Println("You can now run: msgvault sync-full", email)
@@ -300,5 +324,6 @@ func init() {
 	addAccountCmd.Flags().BoolVar(&forceReauth, "force", false, "Delete existing token and re-authorize")
 	addAccountCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "Display name for the account (e.g., \"Work\", \"Personal\")")
 	addAccountCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "Named OAuth app from config (for Google Workspace orgs)")
+	addAccountCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, noDefaultIdentityHelp)
 	rootCmd.AddCommand(addAccountCmd)
 }

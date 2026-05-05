@@ -74,6 +74,9 @@ func listLocalAccounts() error {
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	if err := runStartupMigrations(s); err != nil {
+		return fmt.Errorf("startup migrations: %w", err)
+	}
 
 	sources, err := s.ListSources("")
 	if err != nil {

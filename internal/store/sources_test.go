@@ -320,6 +320,31 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	}
 }
 
+func TestStore_GetSourceByID(t *testing.T) {
+	f := storetest.New(t)
+
+	got, err := f.Store.GetSourceByID(f.Source.ID)
+	testutil.MustNoErr(t, err, "GetSourceByID")
+	if got == nil {
+		t.Fatal("expected non-nil source")
+	}
+	if got.ID != f.Source.ID {
+		t.Errorf("ID = %d, want %d", got.ID, f.Source.ID)
+	}
+	if got.Identifier != f.Source.Identifier {
+		t.Errorf("Identifier = %q, want %q", got.Identifier, f.Source.Identifier)
+	}
+}
+
+func TestStore_GetSourceByID_NotFound(t *testing.T) {
+	f := storetest.New(t)
+
+	_, err := f.Store.GetSourceByID(99999)
+	if err == nil {
+		t.Fatal("expected error for non-existent ID, got nil")
+	}
+}
+
 func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 	f := storetest.New(t)
 
@@ -421,5 +446,86 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 	}
 	if !sources[0].OAuthApp.Valid || sources[0].OAuthApp.String != "acme" {
 		t.Errorf("OAuthApp = %v, want {acme true}", sources[0].OAuthApp)
+	}
+}
+
+// TestInitSchema_AddsDeletedAtToLegacyMessagesTable verifies the
+// upgrade-path migration: a database whose `messages` table already has
+// every other column the embedded schema indexes reference, but is
+// missing the dedup-hide column `deleted_at`, gets the column added by
+// InitSchema. Without the ALTER, every read path that references
+// `deleted_at` (LiveMessagesWhere, the dedup engine, the cache
+// staleness check) fails on upgraded databases with "no such column".
+func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	// Build a messages table that has every column the embedded
+	// schema's CREATE INDEX statements reference (sender_id,
+	// deleted_from_source_at, message_type, …) but DOES NOT have the
+	// new dedup-hide columns (`deleted_at`, `delete_batch_id`).
+	// Approximates a legacy DB just before this branch landed.
+	if _, err := st.DB().Exec(`
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY,
+			source_id INTEGER NOT NULL,
+			source_message_id TEXT,
+			conversation_id INTEGER,
+			subject TEXT,
+			snippet TEXT,
+			sent_at DATETIME,
+			received_at DATETIME,
+			internal_date DATETIME,
+			size_estimate INTEGER,
+			has_attachments BOOLEAN,
+			is_from_me BOOLEAN,
+			archived_at DATETIME,
+			rfc822_message_id TEXT,
+			sender_id INTEGER,
+			message_type TEXT NOT NULL DEFAULT 'email',
+			attachment_count INTEGER DEFAULT 0,
+			deleted_from_source_at DATETIME
+		)
+	`); err != nil {
+		t.Fatalf("create legacy messages table: %v", err)
+	}
+
+	if _, err := st.DB().Exec(`
+		INSERT INTO messages (id, source_id, source_message_id, sent_at)
+		VALUES (1, 1, 'msg1', datetime('now'))
+	`); err != nil {
+		t.Fatalf("insert legacy message: %v", err)
+	}
+
+	// Run InitSchema — should add deleted_at and delete_batch_id via
+	// ALTER TABLE migrations (and silently no-op the columns that
+	// already exist, like deleted_from_source_at).
+	if err := st.InitSchema(); err != nil {
+		t.Fatalf("InitSchema on legacy DB: %v", err)
+	}
+
+	// Confirm the canonical live-messages predicate runs without
+	// "no such column": this is the failure mode codex flagged. The
+	// query uses both deleted_at and deleted_from_source_at.
+	var n int
+	if err := st.DB().QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE " + store.LiveMessagesWhere("", true),
+	).Scan(&n); err != nil {
+		t.Fatalf("post-migration live count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("post-migration live count = %d, want 1", n)
+	}
+
+	// Confirm delete_batch_id is also queryable post-migration so
+	// DeleteAllDeduped's distinct-batch count works on upgraded DBs.
+	if _, err := st.DB().Exec(
+		"SELECT COUNT(DISTINCT delete_batch_id) FROM messages",
+	); err != nil {
+		t.Fatalf("post-migration delete_batch_id query: %v", err)
 	}
 }

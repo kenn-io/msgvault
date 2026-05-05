@@ -52,6 +52,9 @@ Examples:
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrations(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		// Set up context with cancellation before any sync calls
 		// so Ctrl+C always saves checkpoints.

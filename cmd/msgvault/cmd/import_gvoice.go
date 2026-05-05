@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	importGvoiceBefore string
-	importGvoiceAfter  string
-	importGvoiceLimit  int
+	importGvoiceBefore            string
+	importGvoiceAfter             string
+	importGvoiceLimit             int
+	noDefaultIdentityImportGVoice bool
 )
 
 var importGvoiceCmd = &cobra.Command{
@@ -39,7 +40,7 @@ Examples:
 func runImportGvoice(cmd *cobra.Command, args []string) error {
 	takeoutDir := args[0]
 
-	s, err := openStoreAndInit()
+	s, err := openStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
@@ -93,6 +94,16 @@ func runImportGvoice(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("import failed: %w", err)
+	}
+
+	phone := client.Identifier()
+	// Auto-default-identity must run BEFORE the legacy migration
+	// retry — see comment in account_identity.go.
+	if !noDefaultIdentityImportGVoice && strings.HasPrefix(phone, "+") {
+		confirmDefaultIdentity(cmd.OutOrStdout(), s, src.ID, phone, phone, "phone-e164")
+	}
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	printGvoiceSummary(summary, startTime)
@@ -195,6 +206,10 @@ func init() {
 	importGvoiceCmd.Flags().IntVar(
 		&importGvoiceLimit, "limit", 0,
 		"limit number of messages (for testing)",
+	)
+	importGvoiceCmd.Flags().BoolVar(
+		&noDefaultIdentityImportGVoice, "no-default-identity", false,
+		noDefaultIdentityHelp,
 	)
 	rootCmd.AddCommand(importGvoiceCmd)
 }

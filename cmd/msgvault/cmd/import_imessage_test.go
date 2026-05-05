@@ -1,10 +1,44 @@
 package cmd
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/wesm/msgvault/internal/store"
 )
+
+// TestImportIMessage_NoAutoDefaultIdentity pins the documented behavior: the
+// apple_messages source uses identifier "local" and the spec explicitly excludes
+// this ingest path from auto-default-identity. After source creation via
+// resolveImessageSource, account_identities must remain empty.
+func TestImportIMessage_NoAutoDefaultIdentity(t *testing.T) {
+	// After a successful import, account_identities has zero rows for the
+	// apple_messages source. The source identifier is "local"; we never
+	// auto-write because there's no per-user identifier known at source
+	// creation time. Spec § Auto-default-identity § "Ingest paths that do
+	// not auto-write".
+	s, err := store.Open(filepath.Join(t.TempDir(), "msgvault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.InitSchema(); err != nil {
+		t.Fatal(err)
+	}
+
+	src, err := resolveImessageSource(s)
+	if err != nil {
+		t.Fatalf("resolveImessageSource: %v", err)
+	}
+
+	rows, err := s.ListAccountIdentities(src.ID)
+	if err != nil {
+		t.Fatalf("ListAccountIdentities: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected no account_identities rows for apple_messages source, got %d: %+v", len(rows), rows)
+	}
+}
 
 func TestResolveImessageSource(t *testing.T) {
 	tests := []struct {

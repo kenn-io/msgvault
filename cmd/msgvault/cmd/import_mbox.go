@@ -21,6 +21,7 @@ var (
 	importMboxNoResume           bool
 	importMboxCheckpointInterval int
 	importMboxNoAttachments      bool
+	noDefaultIdentityImportMbox  bool
 )
 
 type mboxCheckpoint struct {
@@ -106,6 +107,9 @@ Examples:
 		if err := st.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrationsForIngest(st); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importMboxNoAttachments {
@@ -118,6 +122,9 @@ Examples:
 		}
 
 		// If we're resuming, start from the active file in a multi-file zip export.
+		// Source creation here is for resume detection only; the post-import
+		// runPostSourceCreateMigrations call below covers both resume and
+		// --no-resume paths.
 		if !importMboxNoResume {
 			src, err := st.GetOrCreateSource(importMboxSourceType, identifier)
 			if err != nil {
@@ -240,6 +247,7 @@ Examples:
 			totalErrors        int64
 			totalBytes         int64
 			hadHardErrors      bool
+			sourceID           int64
 		)
 		type processedFile struct {
 			Path    string
@@ -268,6 +276,9 @@ Examples:
 			totalLabelsUpdated += summary.LabelsUpdated
 			totalErrors += summary.Errors
 			totalBytes += summary.BytesProcessed
+			if sourceID == 0 && summary.SourceID != 0 {
+				sourceID = summary.SourceID
+			}
 			if summary.HardErrors {
 				hadHardErrors = true
 			}
@@ -288,6 +299,36 @@ Examples:
 			// skipping the failed file's unprocessed messages.
 			if summary.HardErrors {
 				break
+			}
+		}
+
+		// Auto-default-identity must run BEFORE the legacy migration
+		// retry — see comment in account_identity.go. Earlier shape
+		// ran the migration first and confirmDefaultIdentity later,
+		// which suppressed the source's own account identifier
+		// whenever the legacy [identity] block had populated rows.
+		if ctx.Err() == nil && !hadHardErrors && !noDefaultIdentityImportMbox {
+			if sourceID != 0 {
+				confirmDefaultIdentity(cmd.OutOrStdout(), st, sourceID, identifier, identifier, "account-identifier")
+			}
+		}
+
+		// Re-run startup migrations after the importer has had a chance
+		// to create the first source. Required when the deferred legacy
+		// identity migration parked at startup because no source existed.
+		// Cheap no-op once the migration sentinel is set.
+		//
+		// Migration error returns before the summary print on purpose:
+		// minimal in-scope shape for #304's deferred legacy [identity]
+		// migration retry. The alternative (capture, print summary,
+		// return after) would restructure pre-existing summary code
+		// this PR otherwise leaves alone. Migration is idempotent —
+		// next invocation retries and prints summary then. UX polish
+		// tracked in
+		// private/drafts/2026-05-02-issue-import-migration-error-ux.md.
+		if sourceID != 0 {
+			if err := runPostSourceCreateMigrations(st); err != nil {
+				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 		}
 
@@ -334,4 +375,5 @@ func init() {
 	importMboxCmd.Flags().BoolVar(&importMboxNoResume, "no-resume", false, "Do not resume from an interrupted import")
 	importMboxCmd.Flags().IntVar(&importMboxCheckpointInterval, "checkpoint-interval", 200, "Save progress every N messages")
 	importMboxCmd.Flags().BoolVar(&importMboxNoAttachments, "no-attachments", false, "Do not store attachments (disk or database). Messages will still be marked as having attachments. Note: rerunning later without --no-attachments will not backfill attachments for already-imported messages.")
+	importMboxCmd.Flags().BoolVar(&noDefaultIdentityImportMbox, "no-default-identity", false, noDefaultIdentityHelp)
 }

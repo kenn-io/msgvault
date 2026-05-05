@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deduplication</title>
+  <style>
+    :root {
+      /* msgvault.io palette */
+      --bg: #0a0a0a;
+      --surface-1: #161616;
+      --surface-2: #212121;
+      --hairline: #3a3a3a;
+      --text: #e8e8e8;
+      --text-2: #c0c0c0;
+      --muted: #a0a0a0;
+      --muted-2: #707070;
+      --accent: #ffffff;
+
+      /* Source/account accents */
+      --gmail: #3fa37e;
+      --mbox: #d0a04a;
+      --mail: #6e8ab2;
+
+      /* Status accents */
+      --hide: #3fa37e;
+      --warn: #d0a04a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 1600px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .slide {
+      width: 1600px;
+      padding: 76px 100px 76px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 50px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1200px;
+      color: var(--text-2);
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 36px;
+    }
+
+    .panel {
+      min-height: 600px;
+      padding: 30px 32px 28px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.1;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .rule {
+      max-width: 290px;
+      color: var(--muted);
+      font-size: 14.5px;
+      line-height: 1.4;
+      text-align: right;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 220px 1fr 92px;
+      gap: 14px;
+      align-items: stretch;
+      padding: 14px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
+    }
+
+    .row + .row { margin-top: 10px; }
+
+    .row.dim {
+      background: var(--surface-1);
+      border-style: dashed;
+      color: var(--muted);
+      opacity: 0.85;
+    }
+
+    .acct {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 2px;
+    }
+
+    .dim .dot { opacity: 0.5; }
+
+    .name {
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--text);
+    }
+
+    .hint {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .dim .name, .dim .hint { color: var(--muted-2); }
+
+    .msg {
+      display: grid;
+      align-content: center;
+      padding: 8px 14px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid var(--hairline);
+    }
+
+    .dim .msg {
+      background: transparent;
+      border-style: dashed;
+    }
+
+    .subj {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meta {
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .dim .subj { color: var(--muted-2); }
+    .dim .meta { color: var(--muted-2); }
+
+    .stamp {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      align-self: center;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      border: 1px solid var(--hairline);
+      background: var(--bg);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .stamp.dup { color: var(--muted); }
+    .stamp.survivor {
+      color: var(--hide);
+      border-color: rgba(63, 163, 126, 0.5);
+    }
+    .stamp.hidden {
+      color: var(--muted-2);
+      border-style: dashed;
+    }
+
+    .group-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 14px 0 10px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      color: var(--warn);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    .group-tag.kept {
+      color: var(--hide);
+    }
+
+    .group-tag::before {
+      content: "■";
+      display: inline-block;
+      color: var(--warn);
+      font-size: 10px;
+    }
+
+    .group-tag.kept::before { color: var(--hide); }
+
+    .footer-rule {
+      margin-top: 22px;
+      padding: 16px 20px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--hide);
+      color: var(--text-2);
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .footer-rule strong {
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 600;
+      background: var(--bg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--hairline);
+    }
+
+    .identity-rule {
+      margin-top: 12px;
+      padding: 14px 18px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--warn);
+      color: var(--text-2);
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .scope-bar {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      margin: 4px 0 16px;
+      padding: 10px 18px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .scope-bar .chip-row {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .scope-bar .scope-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
+    }
+
+    .scope-chip.gmail { color: var(--gmail); border-color: rgba(63, 163, 126, 0.4); }
+    .scope-chip.mbox { color: var(--mbox); border-color: rgba(208, 160, 74, 0.4); }
+    .scope-chip.mail { color: var(--mail); border-color: rgba(110, 138, 178, 0.4); }
+
+    .ladder-strip {
+      margin-top: 26px;
+      padding: 18px 22px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+    }
+
+    .ladder-strip-title {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 1.3px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    .ladder-strip-rungs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .rung-mini {
+      padding: 12px 14px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      font-size: 13px;
+      line-height: 1.3;
+      color: var(--text-2);
+    }
+
+    .rung-mini.current {
+      border-color: rgba(63, 163, 126, 0.5);
+      border-left: 3px solid var(--hide);
+      background: rgba(63, 163, 126, 0.06);
+    }
+
+    .rung-mini-num {
+      display: inline-block;
+      min-width: 20px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 700;
+      color: var(--muted);
+      margin-right: 6px;
+    }
+
+    .rung-mini.current .rung-mini-num { color: var(--hide); }
+
+    .rung-mini-name {
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .rung-mini-hint {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .opt-in-tag {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--warn);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      vertical-align: middle;
+    }
+
+    .ladder-strip-note {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hairline);
+      color: var(--text-2);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .ladder-strip-note strong {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .ladder-strip-note code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">msgvault · safety ladder rung 02</div>
+    <h1>Dedup Mode: Hide First, Optionally Delete Later</h1>
+    <p class="subtitle">Dedup hides redundant copies. Hard delete and remote delete are separate, opt-in steps. One survivor per duplicate group; the other copies are hidden from normal reads but kept on disk and undo restores them. Permanently removing them from local storage or from the source server are distinct user actions on top of dedup.</p>
+
+    <section class="stage" aria-label="Before and after dedup">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Before</h2>
+          <div class="rule">The same message arrived through three independent sources.</div>
+        </div>
+
+        <div class="scope-bar">
+          $ deduplicate --collection Personal
+          <span class="chip-row">
+            <span class="scope-chip gmail">Gmail</span>
+            <span class="scope-chip mbox">mbox</span>
+            <span class="scope-chip mail">Mail</span>
+          </span>
+        </div>
+
+        <div class="group-tag">duplicate group · 3 copies</div>
+
+        <div class="row">
+          <div class="acct">
+            <div class="dot" style="background: var(--gmail)"></div>
+            <div>
+              <div class="name">Personal Gmail</div>
+              <div class="hint">current mailbox sync</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">Apr 12 · sam@example.com · raw MIME, 4 labels</div>
+          </div>
+          <div class="stamp dup">DUP</div>
+        </div>
+
+        <div class="row">
+          <div class="acct">
+            <div class="dot" style="background: var(--mbox)"></div>
+            <div>
+              <div class="name">Old mbox</div>
+              <div class="hint">historical email backup</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">Apr 12 · sam@example.com · plain body, no labels</div>
+          </div>
+          <div class="stamp dup">DUP</div>
+        </div>
+
+        <div class="row">
+          <div class="acct">
+            <div class="dot" style="background: var(--mail)"></div>
+            <div>
+              <div class="name">Apple Mail archive</div>
+              <div class="hint">retired laptop import</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">Apr 12 · sam@example.com · raw MIME, 1 folder</div>
+          </div>
+          <div class="stamp dup">DUP</div>
+        </div>
+
+        <div class="footer-rule">Detection uses Message-ID, normalized content hashes, and provider IDs together — not as separate passes.</div>
+        <div class="identity-rule">Survivor selection is deterministic and visible in dry-run output, so the choice is auditable before anything is hidden.</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>After dedup</h2>
+          <div class="rule">One survivor stays visible. The others are hidden on this rung; nothing has been deleted yet.</div>
+        </div>
+
+        <div class="group-tag kept">batch dedup-2026-04-29-01 · undo available</div>
+
+        <div class="row">
+          <div class="acct">
+            <div class="dot" style="background: var(--gmail)"></div>
+            <div>
+              <div class="name">Personal Gmail</div>
+              <div class="hint">richer labels, raw MIME present</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">visible to search, TUI, API, MCP, vector</div>
+          </div>
+          <div class="stamp survivor">SURVIVOR</div>
+        </div>
+
+        <div class="row dim">
+          <div class="acct">
+            <div class="dot" style="background: var(--mbox)"></div>
+            <div>
+              <div class="name">Old mbox</div>
+              <div class="hint">still in archive · undo restores</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">excluded from normal read paths</div>
+          </div>
+          <div class="stamp hidden">HIDDEN</div>
+        </div>
+
+        <div class="row dim">
+          <div class="acct">
+            <div class="dot" style="background: var(--mail)"></div>
+            <div>
+              <div class="name">Apple Mail archive</div>
+              <div class="hint">still in archive · undo restores</div>
+            </div>
+          </div>
+          <div class="msg">
+            <div class="subj">Re: dinner Friday</div>
+            <div class="meta">excluded from normal read paths</div>
+          </div>
+          <div class="stamp hidden">HIDDEN</div>
+        </div>
+
+        <div class="footer-rule">Dedup itself only hides. <strong>delete-deduped</strong> hard-deletes hidden rows locally; it is a separate command and is irreversible.</div>
+        <div class="identity-rule">Remote deletion is a further separate, source-scoped step — moves to the source's trash by default (e.g. Gmail/Trash); permanent removal only with an explicit flag and interactive confirmation. Never inferred from a collection-scope dedup.</div>
+      </div>
+    </section>
+
+    <div class="ladder-strip" aria-label="Where dedup sits on the safety ladder">
+      <div class="ladder-strip-title">where this sits on the safety ladder</div>
+      <div class="ladder-strip-rungs">
+        <div class="rung-mini">
+          <div><span class="rung-mini-num">01</span><span class="rung-mini-name">Scan</span></div>
+          <div class="rung-mini-hint">dry-run · no data touched</div>
+        </div>
+        <div class="rung-mini current">
+          <div><span class="rung-mini-num">02</span><span class="rung-mini-name">Hide (this step)</span></div>
+          <div class="rung-mini-hint">soft-delete · undo restores</div>
+        </div>
+        <div class="rung-mini">
+          <div><span class="rung-mini-num">03</span><span class="rung-mini-name">Local hard delete</span><span class="opt-in-tag">opt-in</span></div>
+          <div class="rung-mini-hint">delete-deduped · irreversible</div>
+        </div>
+        <div class="rung-mini">
+          <div><span class="rung-mini-num">04</span><span class="rung-mini-name">Remote delete</span><span class="opt-in-tag">opt-in</span></div>
+          <div class="rung-mini-hint">source-scoped · moves to source trash</div>
+        </div>
+      </div>
+      <div class="ladder-strip-note"><strong>Backup first, by default.</strong> Before this step modifies any row, msgvault writes a point-in-time database copy (<code>*.dedup-backup-&lt;ts&gt;</code>) — opt out only with <code>--no-backup</code>. <strong>And deletion is never required:</strong> you can run <code>deduplicate</code> as many times as you want and stay on rung 02 forever. <code>delete-deduped</code> and <code>delete-staged</code> only run if you invoke them.</div>
+    </div>
+  </main>
+</body>
+</html>

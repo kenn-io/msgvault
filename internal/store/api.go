@@ -38,15 +38,19 @@ type APIAttachment struct {
 
 // ListMessages returns a paginated list of messages with batch-loaded recipients and labels.
 func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
-	// Get total count
+	// Get total count. Use the canonical live-messages predicate so
+	// dedup-hidden rows (deleted_at) are excluded alongside source-
+	// deleted rows.
 	var total int64
-	err := s.db.QueryRow("SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL").Scan(&total)
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true),
+	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	// Query messages with sender info
-	query := `
+	query := fmt.Sprintf(`
 		SELECT
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
@@ -59,10 +63,10 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
-		WHERE m.deleted_from_source_at IS NULL
+		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
-	`
+	`, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(query, limit, offset)
 	if err != nil {
@@ -210,8 +214,8 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
-		WHERE m.id IN (%s) AND m.deleted_from_source_at IS NULL
-	`, strings.Join(placeholders, ","))
+		WHERE m.id IN (%s) AND %s
+	`, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
@@ -262,10 +266,10 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 		%s
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
-		WHERE %s AND m.deleted_from_source_at IS NULL
+		WHERE %s AND %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, ftsJoin, ftsWhere, ftsOrder)
+	`, ftsJoin, ftsWhere, LiveMessagesWhere("m", true), ftsOrder)
 
 	// Bind the search term once for WHERE, plus orderArgCount more times
 	// for any ? placeholders the dialect put in the order-by fragment.
@@ -298,8 +302,8 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 		SELECT COUNT(*)
 		FROM messages m
 		%s
-		WHERE %s AND m.deleted_from_source_at IS NULL
-	`, ftsJoin, ftsWhere)
+		WHERE %s AND %s
+	`, ftsJoin, ftsWhere, LiveMessagesWhere("m", true))
 	if err := s.db.QueryRow(countQuery, query).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count FTS results: %w", err)
 	}
@@ -320,8 +324,7 @@ func (s *Store) SearchMessagesQuery(
 	var conditions []string
 	var args []interface{}
 
-	conditions = append(conditions,
-		"m.deleted_from_source_at IS NULL")
+	conditions = append(conditions, LiveMessagesWhere("m", true))
 
 	// FTS text terms. ftsEnabled is the authoritative signal that FTS is
 	// active — ftsJoin may be empty on dialects (e.g. PostgreSQL) whose
@@ -546,17 +549,17 @@ func escapeLike(s string) string {
 func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessage, int64, error) {
 	likePattern := "%" + escapeLike(query) + "%"
 
-	countQuery := `
+	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages
-		WHERE deleted_from_source_at IS NULL
+		WHERE %s
 		AND (subject LIKE ? ESCAPE '\' OR snippet LIKE ? ESCAPE '\')
-	`
+	`, LiveMessagesWhere("", true))
 	var total int64
 	if err := s.db.QueryRow(countQuery, likePattern, likePattern).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search results: %w", err)
 	}
 
-	searchQuery := `
+	searchQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
@@ -569,11 +572,11 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
-		WHERE m.deleted_from_source_at IS NULL
+		WHERE %s
 		AND (m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
-	`
+	`, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(searchQuery, likePattern, likePattern, limit, offset)
 	if err != nil {

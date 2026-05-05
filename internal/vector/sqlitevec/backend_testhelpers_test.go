@@ -26,6 +26,7 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
+		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`); err != nil {
 		t.Fatalf("create messages: %v", err)
@@ -48,6 +49,7 @@ func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
+		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`); err != nil {
 		t.Fatalf("create messages: %v", err)
@@ -103,6 +105,7 @@ CREATE TABLE messages (
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
     sent_at DATETIME,
+    deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );
 CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);

@@ -334,7 +334,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			name:     "SourceID",
 			initial:  &search.Query{},
 			filter:   MessageFilter{SourceID: &sourceID42},
-			expected: &search.Query{AccountID: &sourceID42},
+			expected: &search.Query{AccountIDs: []int64{sourceID42}},
 		},
 		{
 			name:     "SenderAppends",
@@ -386,7 +386,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 				ToAddrs:       []string{"carol@example.com"},
 				Labels:        []string{"starred"},
 				HasAttachment: ptr.Bool(true),
-				AccountID:     &sourceID1,
+				AccountIDs:    []int64{sourceID1},
 			},
 		},
 	}
@@ -409,6 +409,37 @@ func TestMergeFilterIntoQuery_DoesNotMutateOriginal(t *testing.T) {
 
 	if len(q.FromAddrs) != 1 || q.FromAddrs[0] != "original@example.com" {
 		t.Errorf("Original query was mutated: FromAddrs=%v", q.FromAddrs)
+	}
+}
+
+// TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope verifies that
+// an explicit empty (non-nil) SourceIDs slice is treated as match-nothing,
+// matching appendSourceFilter's contract. Previously the code only
+// applied SourceIDs when len > 0, so an explicit empty slice silently
+// fell through and let the original query's AccountIDs leak through.
+func TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope(t *testing.T) {
+	q := &search.Query{AccountIDs: []int64{1, 2, 3}}
+	filter := MessageFilter{SourceIDs: []int64{}} // non-nil, len=0
+
+	merged := MergeFilterIntoQuery(q, filter)
+	if merged.AccountIDs == nil {
+		t.Fatal("merged.AccountIDs is nil; want non-nil empty slice (match-nothing)")
+	}
+	if len(merged.AccountIDs) != 0 {
+		t.Errorf("merged.AccountIDs = %v; want empty (match-nothing)", merged.AccountIDs)
+	}
+}
+
+// TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope verifies the
+// flip-side: a nil SourceIDs slice is "no override", and the original
+// query's AccountIDs survive unchanged.
+func TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope(t *testing.T) {
+	q := &search.Query{AccountIDs: []int64{1, 2, 3}}
+	filter := MessageFilter{} // SourceIDs is nil
+
+	merged := MergeFilterIntoQuery(q, filter)
+	if len(merged.AccountIDs) != 3 {
+		t.Errorf("merged.AccountIDs = %v; want [1 2 3]", merged.AccountIDs)
 	}
 }
 

@@ -126,6 +126,8 @@ func AssertManifestInState(t *testing.T, mgr *Manager, id string, state Status) 
 		dir = mgr.CompletedDir()
 	case StatusFailed:
 		dir = mgr.FailedDir()
+	case StatusCancelled:
+		dir = mgr.dirForStatus(StatusCancelled)
 	default:
 		t.Fatalf("unknown state %q", state)
 	}
@@ -423,7 +425,7 @@ func TestNewManager(t *testing.T) {
 	}
 
 	// Verify all directories were created
-	expectedDirs := []string{"pending", "in_progress", "completed", "failed"}
+	expectedDirs := []string{"pending", "in_progress", "completed", "failed", "cancelled"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(baseDir, d)
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
@@ -527,6 +529,8 @@ func TestManager_Transitions(t *testing.T) {
 		{"in_progress->failed", [][2]Status{{StatusPending, StatusInProgress}, {StatusInProgress, StatusFailed}}, false, [4]int{0, 0, 0, 1}},
 		{"completed->pending (invalid)", [][2]Status{{StatusPending, StatusInProgress}, {StatusInProgress, StatusCompleted}, {StatusCompleted, StatusPending}}, true, [4]int{}},
 		{"pending->pending (invalid)", [][2]Status{{StatusPending, StatusPending}}, true, [4]int{}},
+		{"pending->cancelled", [][2]Status{{StatusPending, StatusCancelled}}, false, [4]int{0, 0, 0, 0}},
+		{"in_progress->cancelled", [][2]Status{{StatusPending, StatusInProgress}, {StatusInProgress, StatusCancelled}}, false, [4]int{0, 0, 0, 0}},
 	}
 
 	for _, tc := range tests {
@@ -563,32 +567,67 @@ func TestManager_Transitions(t *testing.T) {
 func TestManager_CancelManifest(t *testing.T) {
 	mgr := testManager(t)
 
-	m := createTestManifest(t, mgr, "cancel test")
+	manifest := createTestManifest(t, mgr, "cancel test")
 
 	// Cancel it
-	if err := mgr.CancelManifest(m.ID); err != nil {
+	if err := mgr.CancelManifest(manifest.ID); err != nil {
 		t.Fatalf("CancelManifest() error = %v", err)
 	}
 
-	// Should be gone
-	assertListCount(t, mgr.ListPending, 0)
+	baseDir := filepath.Dir(mgr.PendingDir())
+
+	// File should now exist at cancelled/<id>.json with Status=cancelled.
+	cancelledPath := filepath.Join(baseDir, "cancelled", manifest.ID+".json")
+	if _, err := os.Stat(cancelledPath); err != nil {
+		t.Fatalf("expected cancelled manifest at %s: %v", cancelledPath, err)
+	}
+	loaded, err := LoadManifest(cancelledPath)
+	if err != nil {
+		t.Fatalf("load cancelled manifest: %v", err)
+	}
+	if loaded.Status != StatusCancelled {
+		t.Errorf("loaded.Status = %q, want %q", loaded.Status, StatusCancelled)
+	}
+	// File should be absent from pending/.
+	pendingPath := filepath.Join(baseDir, "pending", manifest.ID+".json")
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Errorf("expected pending manifest gone, got err=%v", err)
+	}
 }
 
 func TestManager_CancelManifest_InProgress(t *testing.T) {
 	mgr := testManager(t)
-	m := createTestManifest(t, mgr, "cancel in-progress")
+	manifest := createTestManifest(t, mgr, "cancel in-progress")
 
 	// Move to in_progress
-	if err := mgr.MoveManifest(m.ID, StatusPending, StatusInProgress); err != nil {
+	if err := mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress); err != nil {
 		t.Fatalf("MoveManifest() error = %v", err)
 	}
 
 	// Cancel it
-	if err := mgr.CancelManifest(m.ID); err != nil {
+	if err := mgr.CancelManifest(manifest.ID); err != nil {
 		t.Fatalf("CancelManifest() error = %v", err)
 	}
 
-	assertListCount(t, mgr.ListInProgress, 0)
+	baseDir := filepath.Dir(mgr.PendingDir())
+
+	// File should now exist at cancelled/<id>.json with Status=cancelled.
+	cancelledPath := filepath.Join(baseDir, "cancelled", manifest.ID+".json")
+	if _, err := os.Stat(cancelledPath); err != nil {
+		t.Fatalf("expected cancelled manifest at %s: %v", cancelledPath, err)
+	}
+	loaded, err := LoadManifest(cancelledPath)
+	if err != nil {
+		t.Fatalf("load cancelled manifest: %v", err)
+	}
+	if loaded.Status != StatusCancelled {
+		t.Errorf("loaded.Status = %q, want %q", loaded.Status, StatusCancelled)
+	}
+	// File should be absent from in_progress/.
+	inProgressPath := filepath.Join(baseDir, "in_progress", manifest.ID+".json")
+	if _, err := os.Stat(inProgressPath); !os.IsNotExist(err) {
+		t.Errorf("expected in_progress manifest gone, got err=%v", err)
+	}
 }
 
 func TestManager_CancelManifest_NotFound(t *testing.T) {
@@ -698,6 +737,7 @@ func TestStatusDirMap(t *testing.T) {
 		StatusInProgress: "in_progress",
 		StatusCompleted:  "completed",
 		StatusFailed:     "failed",
+		StatusCancelled:  "cancelled",
 	}
 	for status, wantDir := range expectedMappings {
 		gotDir, ok := statusDirMap[status]
@@ -723,6 +763,7 @@ func TestDirForStatus(t *testing.T) {
 		{StatusInProgress, "in_progress"},
 		{StatusCompleted, "completed"},
 		{StatusFailed, "failed"},
+		{StatusCancelled, "cancelled"},
 	}
 
 	for _, tc := range tests {
@@ -760,11 +801,36 @@ func TestPersistedStatusesComplete(t *testing.T) {
 		}
 	}
 
-	// StatusCancelled should NOT be in persistedStatuses (cancelled manifests are deleted)
+	// StatusCancelled MUST be in persistedStatuses; cancelled manifests
+	// are persisted on disk for audit (per spec § Manifest format).
+	found := false
 	for _, ps := range persistedStatuses {
 		if ps == StatusCancelled {
-			t.Errorf("StatusCancelled should not be in persistedStatuses")
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Errorf("StatusCancelled missing from persistedStatuses; cancelled manifests must persist on disk")
+	}
+}
+
+func TestManager_ListCancelled(t *testing.T) {
+	mgr := testManager(t)
+
+	manifest := createTestManifest(t, mgr, "test cancel")
+	if err := mgr.CancelManifest(manifest.ID); err != nil {
+		t.Fatalf("CancelManifest: %v", err)
+	}
+	got, err := mgr.ListCancelled()
+	if err != nil {
+		t.Fatalf("ListCancelled: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListCancelled returned %d manifests, want 1", len(got))
+	}
+	if got[0].ID != manifest.ID {
+		t.Errorf("got ID %q, want %q", got[0].ID, manifest.ID)
 	}
 }
 

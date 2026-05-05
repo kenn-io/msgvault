@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -87,6 +88,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	// Legacy [identity] migration is deferred to the first scheduled sync's
+	// runPostSourceCreateMigrations call, which fires AFTER that sync's
+	// confirmDefaultIdentity. Calling the migration here would race
+	// confirmDefaultIdentity for upgraded DBs with sources + a legacy
+	// [identity] block — same ordering hole the ingest commands already
+	// close by routing the legacy migration exclusively post-source-create.
 
 	// Set up cancellable context early so vector-backend initialization
 	// (which may open files and run migrations) respects Ctrl+C.
@@ -395,6 +402,14 @@ func runScheduledSync(ctx context.Context, email string, s *store.Store, getOAut
 	source, err := s.GetOrCreateSource("gmail", email)
 	if err != nil {
 		return fmt.Errorf("get source: %w", err)
+	}
+	// Auto-default-identity must run BEFORE the legacy migration retry
+	// — see comment in account_identity.go. serve is a daemon, so the
+	// confirmation message has no terminal; discard it. Helper logs any
+	// failure path through its own logger.Warn.
+	confirmDefaultIdentity(io.Discard, s, source.ID, email, email, "account-identifier")
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	// Run incremental sync

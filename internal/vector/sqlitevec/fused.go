@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wesm/msgvault/internal/store"
 	"github.com/wesm/msgvault/internal/vector"
 )
 
@@ -129,7 +130,7 @@ WITH
   filtered AS (
     SELECT m.id
       FROM messages m
-     WHERE m.deleted_from_source_at IS NULL
+     WHERE %s
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
        %s
        %s
@@ -187,7 +188,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
   FROM fused
  ORDER BY rrf_score DESC, message_id ASC
  LIMIT :limit
-`, senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL,
+`, store.LiveMessagesWhere("m", true), senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL,
 		kPlus1, req.KPerSignal, vecTable, kPlus1, req.KPerSignal)
 
 	var queryVecArg any
@@ -515,6 +516,11 @@ func (b *Backend) batchGetSubjects(ctx context.Context, ids []int64) (map[int64]
 		placeholders[i] = "?"
 		args[i] = id
 	}
+	// Liveness is already enforced upstream in the `filtered` CTE used
+	// for ranking; re-filtering here would silently drop the subject
+	// for any hit whose row is soft-deleted between ranking and
+	// hydration, leaving the caller with a ranked hit and an empty
+	// subject. Hydrate whatever was ranked.
 	q := fmt.Sprintf(`SELECT id, COALESCE(subject, '') FROM messages WHERE id IN (%s)`,
 		strings.Join(placeholders, ","))
 	rows, err := b.mainDB.QueryContext(ctx, q, args...)

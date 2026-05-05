@@ -2,8 +2,37 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrSourceNotFound is returned by GetSourceByID when no source row
+// matches the given ID. Wrapped via fmt.Errorf("...: %w", ...) so
+// callers can use errors.Is to distinguish absence from real DB
+// errors.
+var ErrSourceNotFound = errors.New("source not found")
+
+// GetSourceByID returns the source with the given ID, or
+// ErrSourceNotFound (wrapped) if no row matches.
+func (s *Store) GetSourceByID(id int64) (*Source, error) {
+	row := s.db.QueryRow(`
+		SELECT id, source_type, identifier, display_name, google_user_id,
+		       last_sync_at, sync_cursor, sync_config, oauth_app,
+		       created_at, updated_at
+		FROM sources
+		WHERE id = ?
+	`, id)
+
+	source, err := scanSource(row)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("source %d: %w", id, ErrSourceNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get source by id: %w", err)
+	}
+	return source, nil
+}
 
 // GetSourcesByIdentifier returns all sources matching an identifier,
 // regardless of source_type. Use this when the identifier may be

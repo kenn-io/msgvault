@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data Safety Ladder</title>
+  <style>
+    :root {
+      /* msgvault.io palette */
+      --bg: #0a0a0a;
+      --surface-1: #161616;
+      --surface-2: #212121;
+      --hairline: #3a3a3a;
+      --text: #e8e8e8;
+      --text-2: #c0c0c0;
+      --muted: #a0a0a0;
+      --muted-2: #707070;
+      --accent: #ffffff;
+
+      /* rung accents (kept low-saturation to fit dark theme) */
+      --scan: #6e8ab2;
+      --hide: #3fa37e;
+      --purge: #d0a04a;
+      --remote: #d6604a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 1600px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .slide {
+      width: 1600px;
+      padding: 76px 100px 76px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 50px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1200px;
+      color: var(--text-2);
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    .never-banner {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 16px;
+      align-items: center;
+      margin-top: 28px;
+      padding: 18px 22px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--hide);
+    }
+
+    .never-banner .stamp {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid rgba(63, 163, 126, 0.5);
+      color: var(--hide);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .never-banner-text {
+      color: var(--text);
+      font-size: 17px;
+      line-height: 1.4;
+    }
+
+    .never-banner-text strong {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .never-banner-text code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .rung-zero {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 18px;
+      align-items: center;
+      margin-top: 22px;
+      padding: 18px 22px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--accent);
+      position: relative;
+    }
+
+    .rung-zero-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 36px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .rung-zero-body {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .rung-zero-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.2;
+    }
+
+    .rung-zero-desc {
+      color: var(--text-2);
+      font-size: 14.5px;
+      line-height: 1.4;
+    }
+
+    .rung-zero-desc code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: var(--text);
+    }
+
+    .rung-zero-cmd {
+      align-self: center;
+      padding: 5px 10px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--text-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .ladder {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 18px;
+      margin-top: 14px;
+    }
+
+    .rung {
+      position: relative;
+      padding: 26px 24px 22px;
+      border-radius: 8px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-1);
+      min-height: 480px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .rung-accent {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      border-radius: 8px 0 0 8px;
+    }
+
+    .rung.scan .rung-accent { background: var(--scan); }
+    .rung.hide .rung-accent { background: var(--hide); }
+    .rung.purge .rung-accent { background: var(--purge); }
+    .rung.remote .rung-accent { background: var(--remote); }
+
+    .rung-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    .rung-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      color: var(--text-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .rung-name {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--accent);
+    }
+
+    .rung-cmd {
+      display: inline-block;
+      align-self: flex-start;
+      margin-top: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .rung-summary {
+      margin-top: 16px;
+      color: var(--text-2);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .rung-list {
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    .rung-list li {
+      position: relative;
+      padding-left: 16px;
+      font-size: 13.5px;
+      line-height: 1.4;
+      color: var(--text-2);
+    }
+
+    .rung-list li::before {
+      content: "›";
+      position: absolute;
+      left: 0;
+      top: -1px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 700;
+    }
+
+    .rung-list li code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: var(--text);
+    }
+
+    .rung-foot {
+      margin-top: auto;
+      padding-top: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .rung.scan .badge { color: var(--scan); border-color: rgba(110, 138, 178, 0.4); }
+    .rung.hide .badge { color: var(--hide); border-color: rgba(63, 163, 126, 0.4); }
+    .rung.purge .badge { color: var(--purge); border-color: rgba(208, 160, 74, 0.4); }
+    .rung.remote .badge { color: var(--remote); border-color: rgba(214, 96, 74, 0.4); }
+
+    .arrows {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 18px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.3;
+    }
+
+    .arrow-cell {
+      position: relative;
+      padding: 8px 14px;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .arrow-cell::after {
+      content: "→";
+      position: absolute;
+      right: -10px;
+      top: 7px;
+      color: var(--muted-2);
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .arrow-cell:last-child::after { content: ""; }
+
+    .arrow-cell strong {
+      color: var(--text);
+      font-weight: 600;
+      display: block;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      font-size: 11.5px;
+      margin-bottom: 3px;
+    }
+
+    .footnotes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 36px;
+    }
+
+    .note {
+      padding: 22px 24px;
+      border-radius: 8px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-1);
+      font-size: 16px;
+      line-height: 1.45;
+      color: var(--text-2);
+      position: relative;
+    }
+
+    .note.undo { border-left: 3px solid var(--hide); }
+    .note.cross { border-left: 3px solid var(--purge); }
+
+    .note-title {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 1.3px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .note code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">msgvault · data safety ladder</div>
+    <h1>🪜 Dedup Safety: A Ladder with 4 Rungs</h1>
+    <p class="subtitle">Each rung is a separate, explicit user action. msgvault never escalates from one rung to the next on its own. "Apply dedup" never implies hard delete. "Hard delete locally" never implies remote delete. "Remote delete" never implies permanent remote delete.</p>
+
+    <div class="never-banner" role="note">
+      <span class="stamp">deletion is never required</span>
+      <div class="never-banner-text">You can run <code>deduplicate</code> as many times as you want and stay on rung 02 forever. <strong>Rungs 03 and 04 are opt-in</strong> — <code>delete-deduped</code> and <code>delete-staged</code> only run if you choose to invoke them.</div>
+    </div>
+
+    <div class="rung-zero" role="note">
+      <span class="rung-zero-num">00</span>
+      <div class="rung-zero-body">
+        <div class="rung-zero-name">Backup (default-on, before any rung)</div>
+        <div class="rung-zero-desc">Before <code>deduplicate</code> or <code>delete-deduped</code> changes a single row, msgvault writes a point-in-time copy of your database alongside it (e.g. <code>msgvault.db.dedup-backup-20260503-083100</code>). Opt out only with <code>--no-backup</code>.</div>
+      </div>
+      <span class="rung-zero-cmd">--no-backup to skip</span>
+    </div>
+
+    <section class="ladder" aria-label="The four rungs of the data safety ladder">
+      <div class="rung scan">
+        <div class="rung-accent"></div>
+        <div class="rung-head">
+          <span class="rung-num">01</span>
+          <div class="rung-name">Scan</div>
+        </div>
+        <span class="rung-cmd">deduplicate --dry-run</span>
+        <div class="rung-summary">Detect duplicates and report what would change. No rows are modified.</div>
+        <ul class="rung-list">
+          <li>Survivor choices visible in dry-run output</li>
+          <li>Auditable before any data moves</li>
+          <li>Default for first-time runs</li>
+        </ul>
+        <div class="rung-foot"><span class="badge">no data touched</span></div>
+      </div>
+
+      <div class="rung hide">
+        <div class="rung-accent"></div>
+        <div class="rung-head">
+          <span class="rung-num">02</span>
+          <div class="rung-name">Hide (apply dedup)</div>
+        </div>
+        <span class="rung-cmd">deduplicate</span>
+        <div class="rung-summary">Soft-delete redundant copies. Survivor stays visible; losers are excluded from every normal read path but stay on disk.</div>
+        <ul class="rung-list">
+          <li>Hidden from search, TUI, API, MCP, vector / hybrid, stats</li>
+          <li>Batch ID written for audit</li>
+          <li><code>--undo &lt;batch-id&gt;</code> restores visibility</li>
+        </ul>
+        <div class="rung-foot"><span class="badge">reversible · undo</span></div>
+      </div>
+
+      <div class="rung purge">
+        <div class="rung-accent"></div>
+        <div class="rung-head">
+          <span class="rung-num">03</span>
+          <div class="rung-name">Local hard delete</div>
+        </div>
+        <span class="rung-cmd">delete-deduped --batch &lt;id&gt;</span>
+        <div class="rung-summary">Permanently remove rows that a named dedup batch hid. Refuses to operate on rows it did not hide.</div>
+        <ul class="rung-list">
+          <li>Separate command — never bundled with dedup</li>
+          <li><code>--all-hidden</code> requires interactive confirmation</li>
+          <li>Undo cannot recover purged rows</li>
+        </ul>
+        <div class="rung-foot"><span class="badge">irreversible locally</span></div>
+      </div>
+
+      <div class="rung remote">
+        <div class="rung-accent"></div>
+        <div class="rung-head">
+          <span class="rung-num">04</span>
+          <div class="rung-name">Remote delete</div>
+        </div>
+        <span class="rung-cmd">delete-staged (per-source)</span>
+        <div class="rung-summary">Delete from the source server (Gmail, IMAP, …). Stays source-scoped even when dedup ran across a collection.</div>
+        <ul class="rung-list">
+          <li>Same-source-only — cross-source dup groups stage zero remote deletions</li>
+          <li>Moves to source trash by default (e.g. Gmail/Trash, ~30-day recovery)</li>
+          <li>Permanent removal needs explicit flag + interactive confirmation</li>
+        </ul>
+        <div class="rung-foot"><span class="badge">leaves the local archive</span></div>
+      </div>
+    </section>
+
+    <div class="arrows" aria-hidden="true">
+      <div class="arrow-cell"><strong>look</strong>see what would change</div>
+      <div class="arrow-cell"><strong>then hide</strong>locally, recoverable</div>
+      <div class="arrow-cell"><strong>then purge</strong>locally, permanent</div>
+      <div class="arrow-cell"><strong>then remote</strong>at the source, opt-in</div>
+    </div>
+
+    <section class="footnotes">
+      <div class="note undo">
+        <span class="note-title">Undo scope</span>
+        <code>--undo &lt;batch-id&gt;</code> restores rows hidden by that dedup batch and cancels the batch's pending remote-deletion manifest where the source has not yet executed it. It does not restore an exact pre-run database state, and it cannot recover rows that have moved past rung 2.
+      </div>
+      <div class="note cross">
+        <span class="note-title">Cross-source rule at rung 4</span>
+        Even under <code>deduplicate --collection</code>, a remote-deletion entry is only staged when the loser and the survivor share the same source. Cross-source duplicate groups produce no remote-deletion entries — the originals on each source server stay put.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

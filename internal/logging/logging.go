@@ -211,10 +211,17 @@ func BuildHandler(opts Options) (*Result, error) {
 				_ = f.Close()
 			})
 		default:
+			target := path
+			if target == "" {
+				target = opts.FilePath
+			}
+			if target == "" {
+				target = opts.LogsDir
+			}
 			_, _ = fmt.Fprintf(stderr,
 				"warning: could not open msgvault log file in %s: %v "+
 					"(continuing with stderr-only logging)\n",
-				opts.LogsDir, err,
+				target, err,
 			)
 		}
 	}

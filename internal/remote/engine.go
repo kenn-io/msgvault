@@ -595,9 +595,17 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	params.Set("limit", strconv.Itoa(limit))
 
 	// Forward filter-only fields that can't be represented in the
-	// query string syntax (AccountID, HideDeleted).
-	if q.AccountID != nil {
-		params.Set("source_id", strconv.FormatInt(*q.AccountID, 10))
+	// query string syntax (AccountIDs, HideDeleted). The remote API
+	// accepts a single source_id; CLI/MCP layers reject collection
+	// scope in remote mode, but defend here against any future caller
+	// that bypasses those checks rather than silently dropping IDs.
+	if len(q.AccountIDs) > 1 {
+		return nil, fmt.Errorf(
+			"remote search does not support multi-account scope; "+
+				"got %d account IDs", len(q.AccountIDs))
+	}
+	if len(q.AccountIDs) == 1 {
+		params.Set("source_id", strconv.FormatInt(q.AccountIDs[0], 10))
 	}
 	if q.HideDeleted {
 		params.Set("hide_deleted", "true")

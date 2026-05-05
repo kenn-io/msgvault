@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Survivor Selection</title>
+  <style>
+    :root {
+      /* msgvault.io palette */
+      --bg: #0a0a0a;
+      --surface-1: #161616;
+      --surface-2: #212121;
+      --hairline: #3a3a3a;
+      --text: #e8e8e8;
+      --text-2: #c0c0c0;
+      --muted: #a0a0a0;
+      --muted-2: #707070;
+      --accent: #ffffff;
+
+      --filter: #d0a04a;
+      --tier: #3fa37e;
+      --tier-1: #6e8ab2;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 1600px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .slide {
+      width: 1600px;
+      padding: 76px 100px 76px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 50px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1200px;
+      color: var(--text-2);
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 24px;
+      margin-top: 40px;
+    }
+
+    .panel {
+      padding: 30px 32px 28px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+    }
+
+    .panel.filter-panel { border-left: 3px solid var(--filter); }
+    .panel.tier-panel { border-left: 3px solid var(--tier); }
+
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.1;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .panel-rule {
+      max-width: 290px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+      text-align: right;
+    }
+
+    /* Filter panel */
+    .stage-label {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 12px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--text-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      margin-bottom: 14px;
+    }
+
+    .filter-card {
+      padding: 22px 24px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      margin-bottom: 18px;
+    }
+
+    .filter-tag {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid rgba(208, 160, 74, 0.4);
+      color: var(--filter);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .filter-title {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+
+    .signal-row {
+      display: grid;
+      gap: 8px;
+    }
+
+    .signal {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 14px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      font-size: 14px;
+      line-height: 1.4;
+      color: var(--text-2);
+    }
+
+    .signal-mark {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 700;
+      color: var(--filter);
+    }
+
+    .signal code {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .or-pill {
+      display: inline-block;
+      margin: 12px 0 0;
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid rgba(208, 160, 74, 0.4);
+      color: var(--filter);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+    }
+
+    .filter-desc {
+      color: var(--text-2);
+      font-size: 15px;
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+
+    .filter-desc strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .determinism-rule {
+      margin-top: 14px;
+      padding: 14px 18px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--muted);
+      color: var(--text-2);
+      font-size: 14.5px;
+      line-height: 1.4;
+    }
+
+    /* Tie-breaker ladder */
+    .tier-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tier {
+      display: grid;
+      grid-template-columns: 50px 1fr 110px;
+      gap: 14px;
+      align-items: center;
+      padding: 13px 16px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+    }
+
+    .tier.win {
+      border-color: rgba(63, 163, 126, 0.5);
+      border-left: 3px solid var(--tier);
+    }
+
+    .tier-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 28px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--text-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .tier.win .tier-num {
+      color: var(--tier);
+      border-color: rgba(63, 163, 126, 0.5);
+    }
+
+    .tier-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+
+    .tier-hint {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .tier-side {
+      text-align: right;
+    }
+
+    .tier-tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    .tier.win .tier-tag {
+      color: var(--tier);
+      border-color: rgba(63, 163, 126, 0.4);
+    }
+
+    .tier-arrow {
+      text-align: center;
+      color: var(--muted-2);
+      font-size: 14px;
+      margin: -1px 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .footer-rule {
+      margin-top: 22px;
+      padding: 16px 20px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--tier);
+      color: var(--text-2);
+      font-size: 15px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">msgvault · how survivors are picked</div>
+    <h1>Survivor Selection: A Filter, Then a Priority List</h1>
+    <p class="subtitle">When any message in a duplicate group looks like a sent copy, only sent copies are eligible to survive. The priority list runs only on the eligible set — earlier rules win outright; later rules only break ties left from earlier ones.</p>
+
+    <section class="stage" aria-label="Survivor selection: filter then priority">
+      <div class="panel filter-panel">
+        <div class="panel-header">
+          <h2>Stage 1 — Eligibility filter</h2>
+          <div class="panel-rule">Runs before any tie-breaking. Removes received copies from the group when a sent copy is present.</div>
+        </div>
+
+        <div class="stage-label">if any sent-signal fires on any copy</div>
+
+        <div class="filter-card">
+          <span class="filter-tag">sent-message safety rule</span>
+          <div class="filter-title">A copy is treated as sent when ANY of these fires:</div>
+          <div class="signal-row">
+            <div class="signal">
+              <span class="signal-mark">A</span>
+              <div>Gmail <code>SENT</code> label on the message</div>
+            </div>
+            <div class="signal">
+              <span class="signal-mark">B</span>
+              <div><code>is_from_me</code> ingest metadata flag set</div>
+            </div>
+            <div class="signal">
+              <span class="signal-mark">C</span>
+              <div><code>From</code> address matches a confirmed identity for the message's account</div>
+            </div>
+          </div>
+          <div class="or-pill">A · or · B · or · C</div>
+        </div>
+
+        <div class="filter-desc">Received-copy candidates are <strong>dropped from the group</strong> before tie-breaking. Losing the sent signal silently changes how the archive reads — "I sent this" is harder to recover than "I received this."</div>
+
+        <div class="determinism-rule">If no sent-signal fires anywhere in the group, every copy stays eligible and the priority list runs over the full group.</div>
+      </div>
+
+      <div class="panel tier-panel">
+        <div class="panel-header">
+          <h2>Stage 2 — Priority list</h2>
+          <div class="panel-rule">Earlier rules win outright. Later rules only apply when all earlier ones tie.</div>
+        </div>
+
+        <div class="tier-list">
+          <div class="tier win">
+            <div class="tier-num">01</div>
+            <div>
+              <div class="tier-name">Source preference (when configured)</div>
+              <div class="tier-hint">user-set ordering, e.g. prefer current sync over old archive</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">policy</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">02</div>
+            <div>
+              <div class="tier-name">Has raw MIME / complete original payload</div>
+              <div class="tier-hint">prefer the copy that preserves the full message bytes</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">payload</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">03</div>
+            <div>
+              <div class="tier-name">Source metadata quality</div>
+              <div class="tier-hint">provider IDs, threading info, message-id presence</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">metadata</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">04</div>
+            <div>
+              <div class="tier-name">Richer label or folder metadata</div>
+              <div class="tier-hint">Gmail labels, IMAP folders, Apple Mail mailboxes</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">organization</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">05</div>
+            <div>
+              <div class="tier-name">Earlier archived timestamp (when meaningful)</div>
+              <div class="tier-hint">older archive entry, all else equal</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">recency</span></div>
+          </div>
+          <div class="tier-arrow">↓</div>
+          <div class="tier">
+            <div class="tier-num">06</div>
+            <div>
+              <div class="tier-name">Stable row ID</div>
+              <div class="tier-hint">final tie-breaker — guarantees deterministic output</div>
+            </div>
+            <div class="tier-side"><span class="tier-tag">deterministic</span></div>
+          </div>
+        </div>
+
+        <div class="footer-rule">Survivor choices are deterministic and visible in dry-run output, so the user can read why one copy survived and another was hidden before any data is touched.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1456,7 +1456,7 @@ func (m Model) confirmDeletion() (tea.Model, tea.Cmd) {
 
 	// Show success
 	m.modal = modalDeleteResult
-	m.modalResult = fmt.Sprintf("Staged %d messages for deletion.\nBatch ID: %s\nRun 'msgvault delete-staged' to execute.",
+	m.modalResult = fmt.Sprintf("Staged %d messages for deletion.\nBatch ID: %s\nInspect: msgvault delete-staged --list\nExecute: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged",
 		len(m.pendingManifest.GmailIDs), m.pendingManifest.ID)
 
 	// Clear selection

@@ -92,6 +92,7 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );
 CREATE TABLE message_bodies (

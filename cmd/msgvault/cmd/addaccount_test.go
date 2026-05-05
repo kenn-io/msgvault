@@ -142,6 +142,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			testCmd.Flags().BoolVar(&headless, "headless", false, "")
 			testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 			testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+			testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 			root := newTestRootCmd()
 			root.AddCommand(testCmd)
@@ -242,6 +243,7 @@ func TestAddAccount_RebindWithExistingToken(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -345,6 +347,7 @@ func TestAddAccount_NewRegistrationRejectsMismatchedToken(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -417,6 +420,7 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -485,6 +489,7 @@ func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	// Pre-cancel so if regression causes auth attempt, it fails fast
 	// instead of opening a browser.
@@ -570,6 +575,7 @@ func TestAddAccount_ForceRebindPreservesBindingOnFailure(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -665,6 +671,7 @@ func TestAddAccount_HeadlessExplicitEmptyOAuthApp(t *testing.T) {
 	testCmd.Flags().BoolVar(&headless, "headless", false, "")
 	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
 	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
 
 	root := newTestRootCmd()
 	root.AddCommand(testCmd)
@@ -689,6 +696,419 @@ func TestAddAccount_HeadlessExplicitEmptyOAuthApp(t *testing.T) {
 				"binding; output contains --oauth-app:\n%s",
 			output,
 		)
+	}
+}
+
+// TestAddAccount_AutoDefaultIdentityFires verifies that running add-account
+// with a reusable token writes an account-identifier identity row.
+func TestAddAccount_AutoDefaultIdentityFires(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	if err := os.MkdirAll(tokensDir, 0700); err != nil {
+		t.Fatalf("mkdir tokens: %v", err)
+	}
+	tokenData, _ := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+	})
+	if err := os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	savedNoDefault := noDefaultIdentityAddAccount
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+		noDefaultIdentityAddAccount = savedNoDefault
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	src, err := findGmailSource(s, "user@example.com")
+	if err != nil {
+		t.Fatalf("find source: %v", err)
+	}
+	if src == nil {
+		t.Fatal("source not found")
+	}
+
+	ids, err := s.ListAccountIdentities(src.ID)
+	if err != nil {
+		t.Fatalf("ListAccountIdentities: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 identity row, got %d", len(ids))
+	}
+	if ids[0].Address != "user@example.com" {
+		t.Errorf("address = %q, want user@example.com", ids[0].Address)
+	}
+	if ids[0].SourceSignal != "account-identifier" {
+		t.Errorf("source_signal = %q, want account-identifier", ids[0].SourceSignal)
+	}
+}
+
+// TestAddAccount_NoDefaultIdentitySuppresses verifies that --no-default-identity
+// prevents the auto-identity write.
+func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	if err := os.MkdirAll(tokensDir, 0700); err != nil {
+		t.Fatalf("mkdir tokens: %v", err)
+	}
+	tokenData, _ := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+	})
+	if err := os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	savedNoDefault := noDefaultIdentityAddAccount
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+		noDefaultIdentityAddAccount = savedNoDefault
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	src, err := findGmailSource(s, "user@example.com")
+	if err != nil {
+		t.Fatalf("find source: %v", err)
+	}
+	if src == nil {
+		t.Fatal("source not found")
+	}
+
+	ids, err := s.ListAccountIdentities(src.ID)
+	if err != nil {
+		t.Fatalf("ListAccountIdentities: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 identity rows with --no-default-identity, got %d", len(ids))
+	}
+}
+
+// TestAddAccount_DeferredLegacyIdentityMigrationFires verifies that legacy
+// [identity] addresses configured before any source exists are migrated
+// onto the first source created in the same add-account invocation.
+// Regression test for iter10: previously, runStartupMigrations ran before
+// GetOrCreateSource, so the deferred migration parked at startup and only
+// applied on the *next* command — leaving the new source without its
+// configured identities until then.
+func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	if err := os.MkdirAll(tokensDir, 0700); err != nil {
+		t.Fatalf("mkdir tokens: %v", err)
+	}
+	tokenData, _ := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+	})
+	if err := os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	savedNoDefault := noDefaultIdentityAddAccount
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+		noDefaultIdentityAddAccount = savedNoDefault
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+		Identity: config.IdentityConfig{
+			Addresses: []string{"alias@example.com", "alt@work.com"},
+		},
+	}
+	var logBuf strings.Builder
+	logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	// --no-default-identity isolates the test to the legacy migration path:
+	// the auto-default would otherwise add a third identity row.
+	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The user-facing notice must only describe the applied path.
+	// Emitting the "deferred — will run on the next command" notice
+	// inside an invocation that DID apply the migration is misleading
+	// and a regression of the iter10 polish fix.
+	logs := logBuf.String()
+	if strings.Contains(logs, "migration deferred until a source exists") {
+		t.Errorf("deferred notice fired in same invocation that applied the migration; logs:\n%s", logs)
+	}
+	if !strings.Contains(logs, "legacy identity migrated") {
+		t.Errorf("expected applied notice in logs; got:\n%s", logs)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	src, err := findGmailSource(s, "user@example.com")
+	if err != nil {
+		t.Fatalf("find source: %v", err)
+	}
+	if src == nil {
+		t.Fatal("source not found")
+	}
+
+	ids, err := s.ListAccountIdentities(src.ID)
+	if err != nil {
+		t.Fatalf("ListAccountIdentities: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 legacy-migrated identity rows on first invocation, got %d: %+v", len(ids), ids)
+	}
+	got := map[string]string{ids[0].Address: ids[0].SourceSignal, ids[1].Address: ids[1].SourceSignal}
+	for _, addr := range []string{"alias@example.com", "alt@work.com"} {
+		signal, ok := got[addr]
+		if !ok {
+			t.Errorf("missing identity row for %q (have %+v)", addr, got)
+			continue
+		}
+		if signal != "config_migration" {
+			t.Errorf("address %q: source_signal = %q, want config_migration", addr, signal)
+		}
+	}
+
+	applied, err := s.IsMigrationApplied("legacy_identity_to_per_account")
+	if err != nil {
+		t.Fatalf("IsMigrationApplied: %v", err)
+	}
+	if !applied {
+		t.Error("migration sentinel should be set after first successful add-account")
+	}
+}
+
+// TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity verifies
+// that the legacy [identity] migration writing rows DOES NOT suppress
+// the auto-default-identity write for the source's own account
+// identifier. Regression test for iter15 codex Medium: previously,
+// runPostSourceCreateMigrations ran BEFORE confirmDefaultIdentity, so
+// the legacy migration populated account_identities first, then
+// confirmDefaultIdentity's `len(existing) > 0` guard skipped the
+// account-identifier write entirely — leaving the source without its
+// own identifier and breaking dedup sent-copy detection.
+func TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	if err := os.MkdirAll(tokensDir, 0700); err != nil {
+		t.Fatalf("mkdir tokens: %v", err)
+	}
+	tokenData, _ := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+	})
+	if err := os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	savedNoDefault := noDefaultIdentityAddAccount
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+		noDefaultIdentityAddAccount = savedNoDefault
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+		// Legacy [identity] block with two addresses, neither of which
+		// is the account being added. The migration must fire BUT also
+		// the auto-default identity must be written for user@example.com.
+		Identity: config.IdentityConfig{
+			Addresses: []string{"alias@example.com", "alt@work.com"},
+		},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	// Note: NOT passing --no-default-identity. The bug only manifests
+	// when the auto-default write is supposed to fire.
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	src, err := findGmailSource(s, "user@example.com")
+	if err != nil {
+		t.Fatalf("find source: %v", err)
+	}
+	if src == nil {
+		t.Fatal("source not found")
+	}
+
+	ids, err := s.ListAccountIdentities(src.ID)
+	if err != nil {
+		t.Fatalf("ListAccountIdentities: %v", err)
+	}
+	// Want 3 rows: 2 legacy-migrated + 1 account-identifier.
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 identity rows (2 legacy + 1 account-identifier), got %d: %+v", len(ids), ids)
+	}
+	got := make(map[string]bool, len(ids))
+	for _, ai := range ids {
+		got[ai.Address] = true
+	}
+	for _, want := range []string{"alias@example.com", "alt@work.com", "user@example.com"} {
+		if !got[want] {
+			t.Errorf("missing identity row for %q (have %v)", want, got)
+		}
 	}
 }
 

@@ -403,12 +403,12 @@ func TestQuery_IsEmpty(t *testing.T) {
 		})
 	}
 
-	t.Run("AccountID only", func(t *testing.T) {
+	t.Run("AccountIDs only", func(t *testing.T) {
 		q := &Query{}
 		id := int64(42)
-		q.AccountID = &id
+		q.AccountIDs = []int64{id}
 		if q.IsEmpty() {
-			t.Error("IsEmpty() = true for query with AccountID set")
+			t.Error("IsEmpty() = true for query with AccountIDs set")
 		}
 	})
 }

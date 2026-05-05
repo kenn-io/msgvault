@@ -55,6 +55,7 @@ func setupTestSQLite(t *testing.T) (string, func()) {
 			deleted_from_source_at TIMESTAMP,
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
+			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
 
@@ -1133,7 +1134,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	db, _ := sql.Open("sqlite3", dbPath)
 	_, _ = db.Exec(`
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
@@ -1178,8 +1179,8 @@ func TestCSVFallbackPath(t *testing.T) {
 		query         string
 		typeOverrides string
 	}{
-		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, deleted_from_source_at FROM messages WHERE sent_at IS NOT NULL",
-			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP'}"},
+		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
+			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
 		{"attachments", "SELECT message_id, size, filename FROM attachments", ""},
@@ -1333,7 +1334,7 @@ func BenchmarkBuildCache(b *testing.B) {
 	// Create schema
 	_, _ = db.Exec(`
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
@@ -1427,6 +1428,7 @@ func setupTestSQLiteEmpty(t *testing.T) (string, func()) {
 			deleted_from_source_at TIMESTAMP,
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
+			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
 		CREATE TABLE participants (
@@ -1887,6 +1889,60 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	}
 }
 
+// TestCacheNeedsBuild_DedupHidesAfterLastSync covers the regression
+// where dedup-hidden rows (deleted_at) added after the cache was built
+// silently stayed in Parquet because the staleness check only watched
+// deleted_from_source_at. The check now treats dedup hides the same
+// way: any row whose deleted_at is at or after LastSyncAt forces a
+// full rebuild.
+func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
+	tmpDir, cleanup := setupTestSQLiteEmpty(t)
+	defer cleanup()
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	stateTime := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	writeSyncStateAt(t, analyticsDir, 5, stateTime)
+	createFakeParquet(t, analyticsDir)
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Insert one live row and one row dedup-hidden after LastSyncAt.
+	if _, err := db.Exec(
+		`INSERT INTO messages
+			(id, source_id, source_message_id, sent_at, deleted_at)
+		 VALUES (1, 1, 'msg1', datetime('now'), NULL)`,
+	); err != nil {
+		t.Fatalf("insert live row: %v", err)
+	}
+	hiddenAt := stateTime.Add(1 * time.Hour).
+		Format("2006-01-02 15:04:05")
+	if _, err := db.Exec(
+		`INSERT INTO messages
+			(id, source_id, source_message_id, sent_at, deleted_at)
+		 VALUES (2, 1, 'msg2', datetime('now'), ?)`,
+		hiddenAt,
+	); err != nil {
+		t.Fatalf("insert dedup-hidden row: %v", err)
+	}
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	if !got.NeedsBuild {
+		t.Fatalf("cacheNeedsBuild() = %+v, want NeedsBuild=true after dedup hide", got)
+	}
+	if !got.FullRebuild {
+		t.Fatalf("cacheNeedsBuild() = %+v, want FullRebuild=true after dedup hide", got)
+	}
+	if !strings.Contains(got.Reason, "dedup-hidden") {
+		t.Errorf("Reason = %q, want substring 'dedup-hidden'", got.Reason)
+	}
+}
+
 func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	tmpDir, cleanup := setupTestSQLite(t)
 	defer cleanup()
@@ -1991,7 +2047,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 	// Create schema and initial data (10000 messages)
 	_, _ = db.Exec(`
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);

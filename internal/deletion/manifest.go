@@ -203,11 +203,12 @@ var statusDirMap = map[Status]string{
 	StatusInProgress: "in_progress",
 	StatusCompleted:  "completed",
 	StatusFailed:     "failed",
+	StatusCancelled:  "cancelled",
 }
 
 // persistedStatuses lists all statuses that have on-disk directories.
 var persistedStatuses = []Status{
-	StatusPending, StatusInProgress, StatusCompleted, StatusFailed,
+	StatusPending, StatusInProgress, StatusCompleted, StatusFailed, StatusCancelled,
 }
 
 // Manager handles deletion manifest files.
@@ -271,6 +272,11 @@ func (m *Manager) ListCompleted() ([]*Manifest, error) {
 // ListFailed returns all failed deletion manifests.
 func (m *Manager) ListFailed() ([]*Manifest, error) {
 	return m.listManifests(m.dirForStatus(StatusFailed))
+}
+
+// ListCancelled returns all cancelled deletion manifests.
+func (m *Manager) ListCancelled() ([]*Manifest, error) {
+	return m.listManifests(m.dirForStatus(StatusCancelled))
 }
 
 func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
@@ -350,7 +356,7 @@ func (m *Manager) MoveManifest(id string, fromStatus, toStatus Status) error {
 	}
 
 	switch toStatus {
-	case StatusInProgress, StatusCompleted, StatusFailed:
+	case StatusInProgress, StatusCompleted, StatusFailed, StatusCancelled:
 		// allowed
 	default:
 		return fmt.Errorf("cannot move to status %s", toStatus)
@@ -361,18 +367,41 @@ func (m *Manager) MoveManifest(id string, fromStatus, toStatus Status) error {
 	return os.Rename(fromPath, toPath)
 }
 
-// CancelManifest removes a pending or in-progress manifest.
+// CancelManifest moves a pending or in-progress manifest to the
+// cancelled directory and updates its inline Status field. Returns
+// an error if the manifest is not found in pending or in_progress.
+//
+// Order: rename first (atomic on same fs), then rewrite inline Status
+// at the new location. The directory is authoritative per spec, so a
+// crash between rename and status rewrite leaves a manifest in
+// cancelled/ with a stale Status=pending field — readers still see
+// it as cancelled and the inline field self-heals on the next save.
+// The reverse order risks the worst outcome: a manifest in pending/
+// with Status=cancelled, which contradicts the authoritative dir.
+//
+// Note: Manifest.String() prints the inline Status field. A concurrent
+// reader that rendered a manifest between the rename and the inline
+// rewrite would see the pre-cancel status. Acceptable because callers
+// re-read after a successful CancelManifest return.
 func (m *Manager) CancelManifest(id string) error {
-	// Try pending first, then in_progress
-	for _, dir := range []string{m.PendingDir(), m.InProgressDir()} {
-		path := filepath.Join(dir, id+".json")
-		err := os.Remove(path)
-		if err == nil {
-			return nil
+	for _, fromStatus := range []Status{StatusPending, StatusInProgress} {
+		fromPath := filepath.Join(m.dirForStatus(fromStatus), id+".json")
+		if _, err := os.Stat(fromPath); os.IsNotExist(err) {
+			continue
 		}
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", path, err)
+		if err := m.MoveManifest(id, fromStatus, StatusCancelled); err != nil {
+			return fmt.Errorf("move manifest %s to cancelled: %w", id, err)
 		}
+		toPath := filepath.Join(m.dirForStatus(StatusCancelled), id+".json")
+		manifest, err := LoadManifest(toPath)
+		if err != nil {
+			return fmt.Errorf("reload manifest %s after move: %w", id, err)
+		}
+		manifest.Status = StatusCancelled
+		if err := manifest.Save(toPath); err != nil {
+			return fmt.Errorf("update inline status for %s: %w", id, err)
+		}
+		return nil
 	}
 	return fmt.Errorf("manifest %s not found in pending or in_progress", id)
 }

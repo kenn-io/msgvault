@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -70,6 +71,11 @@ type RemoteConfig struct {
 }
 
 // Config represents the msgvault configuration.
+// IdentityConfig holds the user's curated identity addresses.
+type IdentityConfig struct {
+	Addresses []string `toml:"addresses"`
+}
+
 type Config struct {
 	Data      DataConfig        `toml:"data"`
 	Log       LogConfig         `toml:"log"`
@@ -80,6 +86,7 @@ type Config struct {
 	Server    ServerConfig      `toml:"server"`
 	Remote    RemoteConfig      `toml:"remote"`
 	Vector    vector.Config     `toml:"vector"`
+	Identity  IdentityConfig    `toml:"identity"`
 	Accounts  []AccountSchedule `toml:"accounts"`
 
 	// Computed paths (not from config file)
@@ -345,6 +352,51 @@ func (c *Config) DatabaseDSN() string {
 		return c.Data.DatabaseURL
 	}
 	return filepath.Join(c.Data.DataDir, "msgvault.db")
+}
+
+// DatabasePath returns the on-disk SQLite filesystem path for backup
+// operations (VACUUM INTO, copies). It accepts the plain filesystem
+// path and the SQLite "file:" URI form, decoding any percent-encoded
+// bytes (e.g. "file:/var/lib/my%20vault.db" -> "/var/lib/my vault.db")
+// and dropping the URI query string. Returns an error for non-file
+// DSNs (e.g. "postgres://..."), which the SQLite-only backup helpers
+// cannot operate on.
+func (c *Config) DatabasePath() (string, error) {
+	dsn := c.DatabaseDSN()
+	if strings.HasPrefix(dsn, "file:") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "", fmt.Errorf("parse file: URI %q: %w", dsn, err)
+		}
+		// SQLite accepts both file:/abs/path (Path) and file:rel/path
+		// (Opaque) shapes. url.Parse decodes percent-encoding for Path
+		// but NOT for Opaque, so a relative file: URI like
+		// "file:my%20vault.db" leaves the encoding intact in u.Opaque
+		// and the on-disk filename never matches. PathUnescape handles
+		// the relative-form case explicitly.
+		path := u.Path
+		if path == "" {
+			decoded, err := url.PathUnescape(u.Opaque)
+			if err != nil {
+				return "", fmt.Errorf("decode file: URI opaque part %q: %w", u.Opaque, err)
+			}
+			path = decoded
+		}
+		if path == "" {
+			return "", fmt.Errorf("empty file: URI in database DSN: %q", dsn)
+		}
+		return path, nil
+	}
+	if strings.Contains(dsn, "://") {
+		// postgres://, mysql://, etc. — non-file DSN; backup is
+		// SQLite-specific and the caller can't operate on these.
+		return "", fmt.Errorf(
+			"backup operations require a SQLite filesystem DSN; "+
+				"got non-file DSN %q (set [data].database_url to a "+
+				"plain filesystem path or file: URI)", dsn,
+		)
+	}
+	return dsn, nil
 }
 
 // AttachmentsDir returns the path to the attachments directory.

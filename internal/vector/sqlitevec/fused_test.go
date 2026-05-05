@@ -341,6 +341,7 @@ CREATE TABLE messages (
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
     sent_at DATETIME,
+    deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );
 CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);

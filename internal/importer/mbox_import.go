@@ -51,6 +51,7 @@ type MboxImportOptions struct {
 }
 
 type MboxImportSummary struct {
+	SourceID       int64
 	WasResumed     bool
 	ResumedOffset  int64
 	FinalOffset    int64
@@ -117,6 +118,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
+	summary.SourceID = src.ID
 
 	// Create or resume the sync run for this source.
 	var (

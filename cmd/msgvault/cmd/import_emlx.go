@@ -24,6 +24,7 @@ var (
 	importEmlxAccountsDB         string
 	importEmlxAccounts           []string
 	importEmlxIdentifier         string
+	noDefaultIdentityImportEmlx  bool
 )
 
 var importEmlxCmd = &cobra.Command{
@@ -159,6 +160,9 @@ Examples:
 		if err := st.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrationsForIngest(st); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importEmlxNoAttachments {
@@ -197,6 +201,31 @@ func importSingleAccount(
 	)
 	if err != nil {
 		return err
+	}
+
+	// Auto-default-identity must run BEFORE the legacy migration
+	// retry — see comment in account_identity.go.
+	if ctx.Err() == nil && !summary.HardErrors && !noDefaultIdentityImportEmlx {
+		if summary.SourceID != 0 {
+			confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, identifier, identifier, "account-identifier")
+		} else {
+			logger.Warn("auto-default-identity: missing source id", "identifier", identifier)
+		}
+	}
+
+	if summary.SourceID != 0 {
+		// Migration error returns before printImportSummary on
+		// purpose: this is the minimal in-scope shape for the deferred
+		// legacy [identity] migration retry that #304 introduces. The
+		// alternative (capture error, print summary, return after)
+		// would restructure pre-existing summary-print code that this
+		// PR otherwise leaves alone. The migration is idempotent — the
+		// next invocation retries and prints the summary then. UX
+		// polish tracked separately in
+		// private/drafts/2026-05-02-issue-import-migration-error-ux.md.
+		if err := runPostSourceCreateMigrations(st); err != nil {
+			return fmt.Errorf("post-source-create migrations: %w", err)
+		}
 	}
 
 	printImportSummary(cmd, ctx, *summary)
@@ -311,6 +340,32 @@ func importAutoAccounts(
 		if summary.MailboxesTotal == 0 {
 			_, _ = fmt.Fprintf(out, "Skipping %s: no mailboxes found\n", identifier)
 			continue
+		}
+
+		// Auto-default-identity must run BEFORE the legacy migration
+		// retry — see comment in account_identity.go.
+		if ctx.Err() == nil && !summary.HardErrors && !noDefaultIdentityImportEmlx {
+			accountDisplay := account.Identifier()
+			if account.Email != "" {
+				accountDisplay = account.Email
+			}
+			if summary.SourceID != 0 {
+				confirmDefaultIdentity(cmd.OutOrStdout(), st, summary.SourceID, accountDisplay, identifier, "account-identifier")
+			} else {
+				logger.Warn("auto-default-identity: missing source id", "identifier", identifier)
+			}
+		}
+
+		if summary.SourceID != 0 {
+			// `continue` skips the per-account summary print on
+			// purpose — same scope rationale as importSingleAccount
+			// above. UX polish tracked in
+			// private/drafts/2026-05-02-issue-import-migration-error-ux.md
+			// for a follow-up PR.
+			if err := runPostSourceCreateMigrations(st); err != nil {
+				importErrors = append(importErrors, fmt.Errorf("%s: post-source-create migrations: %w", identifier, err))
+				continue
+			}
 		}
 
 		printImportSummary(cmd, ctx, *summary)
@@ -433,5 +488,9 @@ func init() {
 	importEmlxCmd.Flags().StringVar(
 		&importEmlxIdentifier, "identifier", "",
 		"Explicit email/identifier for single-directory import (manual fallback)",
+	)
+	importEmlxCmd.Flags().BoolVar(
+		&noDefaultIdentityImportEmlx, "no-default-identity", false,
+		noDefaultIdentityHelp,
 	)
 }

@@ -123,6 +123,7 @@ func DefaultOptions() ImportOptions {
 // ImportSummary holds statistics from a completed import.
 type ImportSummary struct {
 	Duration          time.Duration
+	SourceID          int64
 	ChatsProcessed    int64
 	MessagesProcessed int64
 	MessagesAdded     int64

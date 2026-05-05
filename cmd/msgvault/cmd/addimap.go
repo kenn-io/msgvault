@@ -49,11 +49,12 @@ func choosePasswordStrategy(
 }
 
 var (
-	imapHost     string
-	imapPort     int
-	imapUsername string
-	imapNoTLS    bool
-	imapSTARTTLS bool
+	imapHost                 string
+	imapPort                 int
+	imapUsername             string
+	imapNoTLS                bool
+	imapSTARTTLS             bool
+	noDefaultIdentityAddImap bool
 )
 
 var addIMAPCmd = &cobra.Command{
@@ -148,6 +149,9 @@ Examples:
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrationsForIngest(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		// Build identifier and save credentials
 		identifier := imapCfg.Identifier()
@@ -174,6 +178,15 @@ Examples:
 		// Set display name from username
 		if err := s.UpdateSourceDisplayName(source.ID, imapUsername); err != nil {
 			return fmt.Errorf("set display name: %w", err)
+		}
+
+		// Auto-default-identity must run BEFORE the legacy migration
+		// retry — see comment in account_identity.go.
+		if !noDefaultIdentityAddImap {
+			confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier")
+		}
+		if err := runPostSourceCreateMigrations(s); err != nil {
+			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 
 		fmt.Printf("\nIMAP account added successfully!\n")
@@ -231,5 +244,6 @@ func init() {
 	addIMAPCmd.Flags().StringVar(&imapUsername, "username", "", "IMAP username / email address (required)")
 	addIMAPCmd.Flags().BoolVar(&imapNoTLS, "no-tls", false, "Disable TLS (plain connection, not recommended)")
 	addIMAPCmd.Flags().BoolVar(&imapSTARTTLS, "starttls", false, "Use STARTTLS instead of implicit TLS")
+	addIMAPCmd.Flags().BoolVar(&noDefaultIdentityAddImap, "no-default-identity", false, noDefaultIdentityHelp)
 	rootCmd.AddCommand(addIMAPCmd)
 }

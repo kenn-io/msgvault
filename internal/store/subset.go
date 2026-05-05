@@ -231,12 +231,12 @@ func verifyForeignKeys(db *sql.DB) error {
 func copyData(tx *sql.Tx, rowCount int) (*CopyResult, error) {
 	result := &CopyResult{}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(fmt.Sprintf(`
 		CREATE TEMP TABLE selected_messages AS
 		SELECT id FROM src.messages
-		WHERE deleted_from_source_at IS NULL
+		WHERE %s
 		ORDER BY COALESCE(sent_at, received_at, internal_date)
-			DESC, id DESC LIMIT ?`, rowCount); err != nil {
+			DESC, id DESC LIMIT ?`, LiveMessagesWhere("", true)), rowCount); err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
 

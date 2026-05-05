@@ -37,6 +37,7 @@ func openTestBackend(t *testing.T) *sqlitevec.Backend {
 	schema := `
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
+    deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );`
 	if _, err := main.Exec(schema); err != nil {

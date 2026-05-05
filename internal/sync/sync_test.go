@@ -1549,7 +1549,9 @@ func TestIncrementalSyncMixedOperations(t *testing.T) {
 
 	assertDeletedFromSource(t, env.Store, "existing-1", true)
 	assertMessageHasLabel(t, env.Store, "existing-2", "STARRED")
-	assertMessageCount(t, env.Store, 3) // 2 original (1 deleted but still counted) + 1 new
+	// GetStats now applies the live-message predicate: source-deleted rows are
+	// excluded. Count is 1 surviving original + 1 new = 2.
+	assertMessageCount(t, env.Store, 2)
 }
 
 // TestDeriveThreadKey verifies the MIME-based thread key derivation used for

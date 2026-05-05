@@ -1688,3 +1688,101 @@ func TestMicrosoftConfig_DefaultTenant(t *testing.T) {
 		t.Errorf("EffectiveTenantID() = %q, want %q", cfg.Microsoft.EffectiveTenantID(), "common")
 	}
 }
+
+func TestDatabasePath(t *testing.T) {
+	t.Run("plain filesystem path passes through", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DataDir = "/tmp/data"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		want := filepath.Join("/tmp/data", "msgvault.db")
+		if got != want {
+			t.Errorf("DatabasePath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("file: URI is stripped", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		if got != "/var/lib/msgvault.db" {
+			t.Errorf("DatabasePath() = %q, want '/var/lib/msgvault.db'", got)
+		}
+	})
+
+	t.Run("file: URI with query string drops query", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db?_journal_mode=WAL&_busy_timeout=5000"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		if got != "/var/lib/msgvault.db" {
+			t.Errorf("DatabasePath() = %q, want '/var/lib/msgvault.db'", got)
+		}
+	})
+
+	t.Run("file: URI decodes percent-encoded path", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:/var/lib/my%20vault.db"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		if got != "/var/lib/my vault.db" {
+			t.Errorf("DatabasePath() = %q, want '/var/lib/my vault.db'", got)
+		}
+	})
+
+	t.Run("file: URI relative path (Opaque)", func(t *testing.T) {
+		// SQLite accepts file:rel/path; url.Parse routes that into u.Opaque.
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:msgvault.db"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		if got != "msgvault.db" {
+			t.Errorf("DatabasePath() = %q, want 'msgvault.db'", got)
+		}
+	})
+
+	t.Run("file: URI relative path with percent-encoding (Opaque)", func(t *testing.T) {
+		// url.Parse decodes percent-encoding for u.Path but not u.Opaque,
+		// so DatabasePath has to PathUnescape the relative-form bytes
+		// itself. Without that, "file:my%20vault.db" never matches the
+		// on-disk filename "my vault.db" and backups break.
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:my%20vault.db"
+		got, err := cfg.DatabasePath()
+		if err != nil {
+			t.Fatalf("DatabasePath: %v", err)
+		}
+		if got != "my vault.db" {
+			t.Errorf("DatabasePath() = %q, want 'my vault.db'", got)
+		}
+	})
+
+	t.Run("postgres:// is rejected", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "postgres://user@host:5432/db"
+		_, err := cfg.DatabasePath()
+		if err == nil {
+			t.Fatal("DatabasePath: expected error for non-file DSN, got nil")
+		}
+	})
+
+	t.Run("empty file: URI is rejected", func(t *testing.T) {
+		cfg := &Config{}
+		cfg.Data.DatabaseURL = "file:"
+		_, err := cfg.DatabasePath()
+		if err == nil {
+			t.Fatal("DatabasePath: expected error for empty file: URI, got nil")
+		}
+	})
+}

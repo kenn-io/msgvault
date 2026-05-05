@@ -1240,7 +1240,8 @@ func (m Model) renderDeleteConfirmModal() string {
 	sb.WriteString("\n\n")
 	_, _ = fmt.Fprintf(&sb, "Stage %d messages for deletion?\n\n", len(m.pendingManifest.GmailIDs))
 	sb.WriteString("This creates a deletion batch. Messages will NOT be\n")
-	sb.WriteString("deleted until you run 'msgvault delete-staged'.\n\n")
+	sb.WriteString("deleted until you run 'msgvault delete-staged'\n")
+	sb.WriteString("with MSGVAULT_ENABLE_REMOTE_DELETE=1 set.\n\n")
 	if m.pendingManifest.Filters.Account == "" {
 		sb.WriteString("! Account not set. Use --account when executing.\n\n")
 	}

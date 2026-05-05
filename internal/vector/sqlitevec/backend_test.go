@@ -381,6 +381,56 @@ func TestBackend_CreateGeneration_SkipsDeletedMessages(t *testing.T) {
 	}
 }
 
+// TestBackend_SeedPending_SkipsDedupHidden verifies that seedPending
+// omits messages soft-deleted by dedup (deleted_at IS NOT NULL).
+func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open main: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`); err != nil {
+		t.Fatalf("create messages: %v", err)
+	}
+	// Insert one live and one dedup-hidden message.
+	if _, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`); err != nil {
+		t.Fatalf("insert live: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO messages (id, deleted_at) VALUES (2, CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("insert dedup-hidden: %v", err)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      t.TempDir() + "/vectors.db",
+		Dimension: 768,
+		MainDB:    db,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768)
+	if err != nil {
+		t.Fatalf("CreateGeneration: %v", err)
+	}
+	var n int
+	if err := b.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid).Scan(&n); err != nil {
+		t.Fatalf("count pending: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("pending count = %d, want 1 (dedup-hidden message must be excluded)", n)
+	}
+}
+
 // TestBackend_Upsert_WritesEmbeddingAndVector verifies Upsert's
 // contract: it writes the embeddings row and the dimension-specific
 // vec0 row, and explicitly does NOT touch pending_embeddings. The
@@ -1587,5 +1637,137 @@ func TestBackend_LoadVector_NoActive(t *testing.T) {
 	_, err := b.LoadVector(ctx, 1)
 	if err == nil || !errors.Is(err, vector.ErrNoActiveGeneration) {
 		t.Fatalf("want ErrNoActiveGeneration, got %v", err)
+	}
+}
+
+// TestBackend_Search_ExcludesDedupHidden confirms that Search excludes
+// messages hidden by dedup (deleted_at IS NOT NULL), not just those
+// deleted from source. Uses a minimal main DB without FTS5.
+func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
+	ctx := context.Background()
+
+	// Minimal main DB: two messages, one dedup-hidden. No FTS5 required.
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open main: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`); err != nil {
+		t.Fatalf("create messages: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO messages (id, deleted_at) VALUES (1, NULL), (2, '2026-01-01 00:00:00')`); err != nil {
+		t.Fatalf("insert messages: %v", err)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      t.TempDir() + "/vectors.db",
+		Dimension: 768,
+		MainDB:    db,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768)
+	if err != nil {
+		t.Fatalf("CreateGeneration: %v", err)
+	}
+	chunks := []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(768, 0)},
+		{MessageID: 2, Vector: unitVec(768, 0)},
+	}
+	if err := b.Upsert(ctx, gid, chunks); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	hits, err := b.Search(ctx, gid, unitVec(768, 0), 10, vector.Filter{})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	got := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		got[h.MessageID] = true
+	}
+	if !got[1] {
+		t.Errorf("msg 1 missing (live message must appear)")
+	}
+	if got[2] {
+		t.Errorf("msg 2 present (deleted_at IS NOT NULL, must be excluded)")
+	}
+}
+
+// TestBackend_FilteredMessageIDs_ExcludesDedupHidden confirms that
+// filteredMessageIDs excludes messages with deleted_at set.
+// Uses a minimal main DB without FTS5.
+func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
+	ctx := context.Background()
+
+	// Minimal main DB with source_id for SourceIDs filter.
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open main: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		source_id INTEGER,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`); err != nil {
+		t.Fatalf("create messages: %v", err)
+	}
+	// Three messages: 1 live, 2 dedup-hidden, 3 source-deleted.
+	if _, err := db.Exec(`
+		INSERT INTO messages (id, source_id, deleted_at, deleted_from_source_at) VALUES
+		(1, 1, NULL, NULL),
+		(2, 1, '2026-01-01 00:00:00', NULL),
+		(3, 1, NULL, '2026-01-01 00:00:00')`); err != nil {
+		t.Fatalf("insert messages: %v", err)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      t.TempDir() + "/vectors.db",
+		Dimension: 768,
+		MainDB:    db,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+
+	// Upsert vectors for all three messages directly.
+	gid, err := b.CreateGeneration(ctx, "m", 768)
+	if err != nil {
+		t.Fatalf("CreateGeneration: %v", err)
+	}
+	chunks := []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(768, 0)},
+		{MessageID: 2, Vector: unitVec(768, 0)},
+		{MessageID: 3, Vector: unitVec(768, 0)},
+	}
+	if err := b.Upsert(ctx, gid, chunks); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// Filtered search via a non-empty filter triggers filteredMessageIDs.
+	hits, err := b.Search(ctx, gid, unitVec(768, 0), 10, vector.Filter{SourceIDs: []int64{1}})
+	if err != nil {
+		t.Fatalf("Search with filter: %v", err)
+	}
+	got := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		got[h.MessageID] = true
+	}
+	if got[2] {
+		t.Errorf("msg 2 present (deleted_at, must be excluded)")
+	}
+	if got[3] {
+		t.Errorf("msg 3 present (deleted_from_source_at, must be excluded)")
 	}
 }

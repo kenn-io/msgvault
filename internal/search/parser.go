@@ -22,7 +22,7 @@ type Query struct {
 	AfterDate     *time.Time // after: filter
 	LargerThan    *int64     // larger: filter (bytes)
 	SmallerThan   *int64     // smaller: filter (bytes)
-	AccountID     *int64     // in: account filter
+	AccountIDs    []int64    // in: account filter (one or more source IDs)
 	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
 }
 
@@ -40,7 +40,7 @@ func (q *Query) IsEmpty() bool {
 		q.AfterDate == nil &&
 		q.LargerThan == nil &&
 		q.SmallerThan == nil &&
-		q.AccountID == nil
+		len(q.AccountIDs) == 0
 }
 
 // operatorFn handles a parsed operator:value pair by applying it to the query.

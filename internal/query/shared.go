@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wesm/msgvault/internal/mime"
+	"github.com/wesm/msgvault/internal/store"
 )
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
@@ -184,9 +185,10 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, tablePrefix strin
 }
 
 // getMessageRawShared retrieves and decompresses raw MIME data for a message.
-// Returns nil, nil if no raw data is stored, or if the message has been
-// deleted from source — the listing/search endpoints hide deleted-from-source
-// messages, so the raw-MIME path stays aligned and refuses to serve them.
+// Returns nil, nil if no raw data is stored, or if the message is hidden from
+// normal reads — dedup losers (deleted_at) and source-deleted rows
+// (deleted_from_source_at) are both filtered, matching the visibility rule
+// the list/search endpoints apply via store.LiveMessagesWhere.
 func getMessageRawShared(ctx context.Context, db *sql.DB, tablePrefix string, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
@@ -195,8 +197,8 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, tablePrefix string, me
 		SELECT mr.raw_data, mr.compression
 		FROM %smessage_raw mr
 		JOIN %smessages m ON m.id = mr.message_id
-		WHERE mr.message_id = ? AND m.deleted_from_source_at IS NULL
-	`, tablePrefix, tablePrefix), messageID).Scan(&compressed, &compression)
+		WHERE mr.message_id = ? AND %s
+	`, tablePrefix, tablePrefix, store.LiveMessagesWhere("m", true)), messageID).Scan(&compressed, &compression)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

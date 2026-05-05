@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/wesm/msgvault/internal/store"
 )
 
 // Compile-time interface assertion.
@@ -409,7 +411,7 @@ func (e *DuckDBEngine) TextSearch(
 	}
 
 	// Use FTS5 MATCH on messages_fts, filtered to text message types.
-	sqlQuery := `
+	sqlQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
 			COALESCE(m.source_message_id, '') AS source_message_id,
@@ -433,9 +435,10 @@ func (e *DuckDBEngine) TextSearch(
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE messages_fts MATCH ?
 		  AND m.message_type IN ('whatsapp','imessage','sms','google_voice_text')
+		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`
+	`, store.LiveMessagesWhere("m", true))
 
 	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery,
 		query, limit, offset)

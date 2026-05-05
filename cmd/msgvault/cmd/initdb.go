@@ -28,6 +28,9 @@ created if they don't already exist.`,
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrations(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 
 		logger.Info("database initialized successfully")
 

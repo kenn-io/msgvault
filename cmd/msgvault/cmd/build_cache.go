@@ -83,6 +83,10 @@ Use --full-rebuild to recreate all cache files from scratch.`,
 			_ = s.Close()
 			return fmt.Errorf("init schema: %w", err)
 		}
+		if err := runStartupMigrations(s); err != nil {
+			_ = s.Close()
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 		_ = s.Close()
 
 		result, err := buildCache(dbPath, analyticsDir, fullRebuild)
@@ -301,7 +305,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
-		WHERE m.sent_at IS NOT NULL%s
+		WHERE m.sent_at IS NOT NULL AND m.deleted_at IS NULL%s
 	) TO '%s' (
 		FORMAT PARQUET,
 		PARTITION_BY (year),
@@ -680,8 +684,12 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 		query         string
 		typeOverrides string // DuckDB types parameter for read_csv_auto (empty = infer all)
 	}{
-		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
-			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP'}"},
+		// deleted_at is exported so the main COPY query can apply the
+		// `deleted_at IS NULL` filter on this path the same way it does
+		// on the sqlite_scanner path; otherwise DuckDB binds against a
+		// CSV view that lacks the column and the export fails on Windows.
+		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
+			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
 		{"attachments", "SELECT message_id, size, filename FROM attachments", ""},

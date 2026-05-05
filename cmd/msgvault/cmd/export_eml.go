@@ -94,6 +94,9 @@ func runExportEML(cmd *cobra.Command, messageRef, outputPath string) error {
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	if err := runStartupMigrations(s); err != nil {
+		return fmt.Errorf("startup migrations: %w", err)
+	}
 
 	engine := query.NewSQLiteEngine(s.DB())
 

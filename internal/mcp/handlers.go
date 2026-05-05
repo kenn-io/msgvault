@@ -188,7 +188,9 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	q := search.Parse(queryStr)
-	q.AccountID = sourceID
+	if sourceID != nil {
+		q.AccountIDs = []int64{*sourceID}
+	}
 
 	filter := query.MessageFilter{SourceID: sourceID}
 
@@ -888,7 +890,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	if hasQuery {
 		// Query-based search
 		q := search.Parse(queryStr)
-		q.AccountID = sourceID
+		if sourceID != nil {
+			q.AccountIDs = []int64{*sourceID}
+		}
 
 		// Try fast search first
 		filter := query.MessageFilter{SourceID: sourceID}
@@ -1004,7 +1008,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		BatchID:      manifest.ID,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
-		NextStep:     "Run 'msgvault delete-staged' to execute deletion, or 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
+		NextStep:     "Run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged' to execute deletion (gated for v1), or 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
 	}
 
 	return jsonResult(resp)

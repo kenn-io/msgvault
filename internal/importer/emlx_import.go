@@ -55,6 +55,7 @@ type EmlxImportOptions struct {
 
 // EmlxImportSummary reports the results of an emlx import.
 type EmlxImportSummary struct {
+	SourceID          int64
 	WasResumed        bool
 	Duration          time.Duration
 	MailboxesTotal    int
@@ -130,6 +131,7 @@ func ImportEmlxDir(
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
 	}
+	summary.SourceID = src.ID
 
 	// Resume support.
 	var (

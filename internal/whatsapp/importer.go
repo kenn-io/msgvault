@@ -67,6 +67,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	if opts.DisplayName != "" {
 		_ = imp.store.UpdateSourceDisplayName(source.ID, opts.DisplayName)
 	}
+	summary.SourceID = source.ID
 
 	// Start a sync run for tracking.
 	syncID, err := imp.store.StartSync(source.ID, "whatsapp_import")

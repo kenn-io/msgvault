@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	searchLimit   int
-	searchOffset  int
-	searchJSON    bool
-	searchAccount string
-	searchMode    string
-	searchExplain bool
+	searchLimit      int
+	searchOffset     int
+	searchJSON       bool
+	searchAccount    string
+	searchCollection string
+	searchMode       string
+	searchExplain    bool
 )
 
 var searchCmd = &cobra.Command{
@@ -57,8 +58,8 @@ Examples:
 		// Join all args to form the query (allows unquoted multi-term searches)
 		queryStr := strings.Join(args, " ")
 
-		if queryStr == "" && searchAccount == "" {
-			return fmt.Errorf("provide a search query or --account flag")
+		if queryStr == "" && searchAccount == "" && searchCollection == "" {
+			return fmt.Errorf("provide a search query or --account/--collection flag")
 		}
 
 		// Use remote search if configured
@@ -68,24 +69,140 @@ Examples:
 					"--account is not supported in remote mode",
 				)
 			}
+			if searchCollection != "" {
+				return fmt.Errorf("--collection is not supported in remote mode")
+			}
 			if searchMode != "fts" {
 				return fmt.Errorf("--mode is not supported in remote mode")
 			}
 			return runRemoteSearch(queryStr)
 		}
 
+		// Validate mode before any scope work so we fail fast on a typo.
+		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
+			return fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)
+		}
+		if searchMode != "fts" && searchOffset > 0 {
+			return fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode)
+		}
+		// Vector and hybrid modes need free-text terms to embed; both
+		// an empty raw query and a filter-only query (e.g. `from:alice`)
+		// would fail at the embed call. Check both up front and surface
+		// a CLI error rather than a late engine-level one. FTS still
+		// allows scoped queryless searches.
 		if searchMode != "fts" {
-			if searchMode != "vector" && searchMode != "hybrid" {
-				return fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)
+			if queryStr == "" {
+				return fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode)
 			}
-			if searchOffset > 0 {
-				return fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode)
+			if len(search.Parse(queryStr).TextTerms) == 0 {
+				return fmt.Errorf("--mode=%s requires free-text terms to embed; %q parsed to filters only — add a search phrase or use --mode=fts", searchMode, queryStr)
 			}
-			return runHybridSearch(cmd, queryStr, searchMode, searchExplain)
 		}
 
-		return runLocalSearch(cmd, queryStr)
+		// Resolve --account / --collection once, before the mode branch,
+		// so FTS, vector, and hybrid all see the same SourceIDs. Earlier,
+		// scope was resolved inside runLocalSearch only and the vector
+		// path applied --account directly while ignoring --collection.
+		scope, scopedStore, err := resolveSearchScope(searchAccount, searchCollection)
+		if err != nil {
+			return err
+		}
+
+		if searchMode != "fts" {
+			// Hybrid/vector path opens its own sql.DB directly. When a
+			// scoped store is in hand, schema init has already run on
+			// this DSN; otherwise we have to run it ourselves so the
+			// raw sql.DB inside runHybridSearch sees the deleted_at /
+			// deleted_from_source_at columns the vector backend filters
+			// on. Close immediately — migration state persists in the
+			// file on disk, and runHybridSearch will reopen.
+			if scopedStore != nil {
+				_ = scopedStore.Close()
+			} else {
+				if err := initLocalSchema(); err != nil {
+					return err
+				}
+			}
+			return runHybridSearch(cmd, queryStr, searchMode, searchExplain, scope)
+		}
+		return runLocalSearch(cmd, queryStr, scope, scopedStore)
 	},
+}
+
+// initLocalSchema opens the local store, runs InitSchema and the
+// startup migrations, then closes it. Used by the unscoped vector/
+// hybrid path so the raw sql.DB that runHybridSearch opens sees a
+// fully-migrated schema (notably the deleted_at column the vector
+// backend filters on, added by this branch's ALTER TABLE migration).
+// Scoped queries don't need this because resolveSearchScope already
+// runs the same init on the same DSN.
+func initLocalSchema() error {
+	s, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.InitSchema(); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+	if err := runStartupMigrations(s); err != nil {
+		return fmt.Errorf("startup migrations: %w", err)
+	}
+	return nil
+}
+
+// resolveSearchScope opens the local store just long enough to resolve
+// the user-supplied --account/--collection flag into a Scope. Returning
+// the Scope (rather than just SourceIDs) lets callers print a banner
+// using its DisplayName. The opened store is returned so a caller that
+// needs it (runLocalSearch) can reuse it instead of re-running
+// InitSchema + runStartupMigrations a second time. Callers that don't
+// need the store must Close it themselves.
+//
+// When no scope flag was supplied, returns (Scope{}, nil, nil) and the
+// caller is responsible for opening its own store.
+func resolveSearchScope(account, collection string) (Scope, *store.Store, error) {
+	if account == "" && collection == "" {
+		return Scope{}, nil, nil
+	}
+	s, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return Scope{}, nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := s.InitSchema(); err != nil {
+		_ = s.Close()
+		return Scope{}, nil, fmt.Errorf("init schema: %w", err)
+	}
+	if err := runStartupMigrations(s); err != nil {
+		_ = s.Close()
+		return Scope{}, nil, fmt.Errorf("startup migrations: %w", err)
+	}
+	switch {
+	case account != "":
+		scope, err := ResolveAccountFlag(s, account)
+		if err != nil {
+			_ = s.Close()
+			return Scope{}, nil, err
+		}
+		if scope.IsEmpty() {
+			_ = s.Close()
+			return Scope{}, nil, fmt.Errorf("--account %q resolved to zero sources", account)
+		}
+		return scope, s, nil
+	case collection != "":
+		scope, err := ResolveCollectionFlag(s, collection)
+		if err != nil {
+			_ = s.Close()
+			return Scope{}, nil, err
+		}
+		if len(scope.SourceIDs()) == 0 {
+			_ = s.Close()
+			return Scope{}, nil, fmt.Errorf("--collection %q has no member accounts", collection)
+		}
+		return scope, s, nil
+	}
+	_ = s.Close()
+	return Scope{}, nil, nil
 }
 
 // runRemoteSearch performs a search against the remote API.
@@ -115,44 +232,61 @@ func runRemoteSearch(queryStr string) error {
 	return outputRemoteSearchResultsTable(results, total)
 }
 
-// runLocalSearch performs a search against the local database.
-func runLocalSearch(cmd *cobra.Command, queryStr string) error {
-	// Parse the query
+// runLocalSearch performs a search against the local database. The
+// caller is expected to have resolved scope already; an empty Scope
+// means no --account or --collection was supplied. If scopedStore is
+// non-nil it carries an already-initialized store from scope
+// resolution; runLocalSearch reuses it (avoiding a second
+// InitSchema + runStartupMigrations pass). When scopedStore is nil
+// (no scope flag supplied), runLocalSearch opens and initializes
+// its own store.
+func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStore *store.Store) error {
+	// Parse the query and apply any pre-resolved scope before the
+	// emptiness check so a bare --account/--collection is enough to
+	// produce a non-empty query.
 	q := search.Parse(queryStr)
-
-	// Fail fast on invalid queries before touching the database,
-	// unless --account is set (which requires a DB lookup to resolve).
-	if searchAccount == "" && q.IsEmpty() {
+	if !scope.IsEmpty() {
+		q.AccountIDs = scope.SourceIDs()
+	}
+	if q.IsEmpty() {
+		if scopedStore != nil {
+			_ = scopedStore.Close()
+		}
 		return fmt.Errorf("empty search query")
 	}
 
-	// Open database
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+	var s *store.Store
+	if scopedStore != nil {
+		s = scopedStore
+	} else {
+		var err error
+		s, err = store.Open(cfg.DatabaseDSN())
+		if err != nil {
+			return fmt.Errorf("open database: %w", err)
+		}
+		if err := s.InitSchema(); err != nil {
+			_ = s.Close()
+			return fmt.Errorf("init schema: %w", err)
+		}
+		if err := runStartupMigrations(s); err != nil {
+			_ = s.Close()
+			return fmt.Errorf("startup migrations: %w", err)
+		}
 	}
 	defer func() { _ = s.Close() }()
 
-	// Ensure schema is up to date and FTS index is populated
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
-
-	// Resolve --account and recheck emptiness.
-	if searchAccount != "" {
-		src, err := s.GetSourceByIdentifier(searchAccount)
-		if err != nil {
-			return fmt.Errorf("look up account: %w", err)
+	// Print a scope banner when searching a collection.
+	if scope.IsCollection() {
+		members := scope.SourceIDs()
+		n := len(members)
+		suffix := "s"
+		if n == 1 {
+			suffix = ""
 		}
-		if src == nil {
-			return fmt.Errorf("account %q not found", searchAccount)
-		}
-		q.AccountID = &src.ID
-	}
-
-	if q.IsEmpty() {
-		return fmt.Errorf("empty search query")
+		fmt.Fprintf(os.Stderr,
+			"Searching collection %q (%d account%s)\n",
+			scope.DisplayName(), n, suffix,
+		)
 	}
 
 	fmt.Fprintf(os.Stderr, "Searching...")
@@ -164,7 +298,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string) error {
 	// Log the search operation. Raw query text and account
 	// identifiers may contain PII — log coarse metadata at
 	// info and full values only at debug.
-	hasAccount := q.AccountID != nil
+	hasAccount := len(q.AccountIDs) > 0
 	logger.Info("search start",
 		"query_len", len(queryStr),
 		"has_account", hasAccount,
@@ -279,6 +413,9 @@ func init() {
 	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Skip first N results")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "Output as JSON")
 	searchCmd.Flags().StringVar(&searchAccount, "account", "", "Limit results to a specific account (email address)")
+	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
+		"Limit results to all member accounts of one collection")
+	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
 }

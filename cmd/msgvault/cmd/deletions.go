@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,55 +32,62 @@ with their ID, status, message count, and creation date.`,
 		if err != nil {
 			return fmt.Errorf("create manager: %w", err)
 		}
-
-		// List all statuses
-		pending, err := manager.ListPending()
-		if err != nil {
-			return fmt.Errorf("list pending deletions: %w", err)
-		}
-		inProgress, err := manager.ListInProgress()
-		if err != nil {
-			return fmt.Errorf("list in-progress deletions: %w", err)
-		}
-		completed, err := manager.ListCompleted()
-		if err != nil {
-			return fmt.Errorf("list completed deletions: %w", err)
-		}
-		failed, err := manager.ListFailed()
-		if err != nil {
-			return fmt.Errorf("list failed deletions: %w", err)
-		}
-
-		if len(pending) == 0 && len(inProgress) == 0 && len(completed) == 0 && len(failed) == 0 {
-			fmt.Println("No deletion batches found.")
-			fmt.Println("\nTo stage messages for deletion, use the TUI or create a manifest manually.")
-			return nil
-		}
-
-		printManifestTable := func(status string, manifests []*deletion.Manifest) {
-			if len(manifests) == 0 {
-				return
-			}
-			fmt.Printf("\n%s:\n", status)
-			fmt.Printf("  %-25s  %-10s  %10s  %s\n", "ID", "Status", "Messages", "Created")
-			fmt.Printf("  %-25s  %-10s  %10s  %s\n", "---", "------", "--------", "-------")
-			for _, m := range manifests {
-				fmt.Printf("  %-25s  %-10s  %10d  %s\n",
-					truncate(m.ID, 25),
-					m.Status,
-					len(m.GmailIDs),
-					m.CreatedAt.Format("2006-01-02 15:04"),
-				)
-			}
-		}
-
-		printManifestTable("Pending", pending)
-		printManifestTable("In Progress", inProgress)
-		printManifestTable("Completed (recent)", limitManifests(completed, 10))
-		printManifestTable("Failed", failed)
-
-		return nil
+		return runListDeletionsForManager(manager, cmd.OutOrStdout())
 	},
+}
+
+func runListDeletionsForManager(mgr *deletion.Manager, w io.Writer) error {
+	pending, err := mgr.ListPending()
+	if err != nil {
+		return fmt.Errorf("list pending deletions: %w", err)
+	}
+	inProgress, err := mgr.ListInProgress()
+	if err != nil {
+		return fmt.Errorf("list in-progress deletions: %w", err)
+	}
+	completed, err := mgr.ListCompleted()
+	if err != nil {
+		return fmt.Errorf("list completed deletions: %w", err)
+	}
+	failed, err := mgr.ListFailed()
+	if err != nil {
+		return fmt.Errorf("list failed deletions: %w", err)
+	}
+	cancelled, err := mgr.ListCancelled()
+	if err != nil {
+		return fmt.Errorf("list cancelled deletions: %w", err)
+	}
+
+	if len(pending) == 0 && len(inProgress) == 0 && len(completed) == 0 && len(failed) == 0 && len(cancelled) == 0 {
+		_, _ = fmt.Fprintln(w, "No deletion batches found.")
+		_, _ = fmt.Fprintln(w, "\nTo stage messages for deletion, use the TUI or create a manifest manually.")
+		return nil
+	}
+
+	printManifestTable := func(status string, manifests []*deletion.Manifest) {
+		if len(manifests) == 0 {
+			return
+		}
+		_, _ = fmt.Fprintf(w, "\n%s:\n", status)
+		_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10s  %s\n", "ID", "Status", "Messages", "Created")
+		_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10s  %s\n", "---", "------", "--------", "-------")
+		for _, m := range manifests {
+			_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10d  %s\n",
+				truncate(m.ID, 25),
+				m.Status,
+				len(m.GmailIDs),
+				m.CreatedAt.Format("2006-01-02 15:04"),
+			)
+		}
+	}
+
+	printManifestTable("Pending", pending)
+	printManifestTable("In Progress", inProgress)
+	printManifestTable("Completed (recent)", limitManifests(completed, 10))
+	printManifestTable("Failed", failed)
+	printManifestTable("Cancelled (recent)", limitManifests(cancelled, 10))
+
+	return nil
 }
 
 var showDeletionCmd = &cobra.Command{
@@ -201,27 +210,50 @@ Examples:
 }
 
 var (
-	deleteTrash   bool // Use trash instead of permanent delete
-	deleteYes     bool
-	deleteDryRun  bool
-	deleteList    bool
-	deleteAccount string
+	// deletePermanent opts in to permanent batch deletion. Default is
+	// trash (30-day Gmail recovery), which is the safer choice for the
+	// v1 release: every other rung of the deletion progression
+	// (dedup-hide, local hard delete) is locally reversible, so the
+	// remote rung should be too unless the user explicitly says
+	// otherwise.
+	deletePermanent bool
+	deleteYes       bool
+	deleteDryRun    bool
+	deleteList      bool
+	deleteAccount   string
 )
+
+// remoteDeleteEnvVar gates execution of staged deletions against Gmail
+// for the v1 release. Staging, listing, and inspecting manifests stay
+// available unconditionally so the rest of the pipeline can be exercised;
+// only the destructive Gmail-API call is gated.
+const remoteDeleteEnvVar = "MSGVAULT_ENABLE_REMOTE_DELETE"
+
+func remoteDeleteEnabled() bool {
+	return os.Getenv(remoteDeleteEnvVar) == "1"
+}
 
 var deleteStagedCmd = &cobra.Command{
 	Use:   "delete-staged [batch-id]",
 	Short: "Execute staged deletions",
 	Long: `Execute pending deletion batches.
 
-By default, messages are permanently deleted using batch API (fast, no recovery).
-Use --trash to move messages to Gmail trash instead (recoverable for 30 days, slower).
+By default, messages are moved to Gmail trash (recoverable for 30 days).
+Use --permanent for batch-API permanent deletion (fast, no recovery).
+The default is trash because every other rung of the deletion progression
+in msgvault is locally reversible; the remote rung is too unless the user
+explicitly opts out of recoverability.
+
+Execution is gated for the v1 release. Set MSGVAULT_ENABLE_REMOTE_DELETE=1 to
+opt in. Read-only modes (--list, --dry-run) work without the gate.
 
 Examples:
-  msgvault delete-staged                # Permanent delete all pending (fast)
-  msgvault delete-staged batch-123      # Delete specific batch
-  msgvault delete-staged --list         # Show staged batches without executing
-  msgvault delete-staged --trash        # Move to trash instead (slower)
-  msgvault delete-staged --yes          # Skip confirmation`,
+  msgvault delete-staged --list         # Show staged batches (always allowed)
+  msgvault delete-staged --dry-run      # Preview without executing (always allowed)
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged batch-123
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --permanent
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --yes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
 		manager, err := deletion.NewManager(deletionsDir)
@@ -285,9 +317,9 @@ Examples:
 		}
 
 		// Show summary
-		method := "PERMANENT DELETE (fast, no recovery)"
-		if deleteTrash {
-			method = "trash (30-day recovery, slower)"
+		method := "trash (30-day recovery)"
+		if deletePermanent {
+			method = "PERMANENT DELETE (fast, no recovery)"
 		}
 
 		fmt.Printf("Deletion Summary:\n")
@@ -307,13 +339,46 @@ Examples:
 			return nil
 		}
 
+		// Gate the destructive Gmail-API call for the v1 release.
+		// --list and --dry-run already returned above without hitting this.
+		if !remoteDeleteEnabled() {
+			return fmt.Errorf(
+				"remote deletion is gated in this release; "+
+					"set %s=1 to opt in "+
+					"(use 'msgvault delete-staged --list' or --dry-run to inspect "+
+					"staged batches without executing)",
+				remoteDeleteEnvVar,
+			)
+		}
+
 		// Require confirmation
-		if !deleteYes {
-			fmt.Print("Proceed with deletion? [y/N]: ")
-			var response string
-			_, _ = fmt.Scanln(&response)
-			if response != "y" && response != "Y" {
-				fmt.Println("Cancelled.")
+		if deletePermanent {
+			ok, err := confirmDestructive(cmd.InOrStdin(), cmd.OutOrStdout(), ConfirmModePermanent)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+		} else if !deleteYes {
+			// Trash path is reversible (~30-day Gmail recovery), so the
+			// shared confirmDestructive helper's "irreversible" wording
+			// would be misleading here. Hand-rolled prompt matches the
+			// action's reversibility — accepts y/Y/yes/Yes for parity
+			// with the shared helper's input contract.
+			out := cmd.OutOrStdout()
+			_, _ = fmt.Fprint(out, "Proceed with deletion? Messages move to Gmail/Trash (recoverable ~30 days). [y/N]: ")
+			scanner := bufio.NewScanner(cmd.InOrStdin())
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil {
+					return fmt.Errorf("read confirmation: %w", err)
+				}
+				_, _ = fmt.Fprintln(out, "Cancelled.")
+				return nil
+			}
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				_, _ = fmt.Fprintln(out, "Cancelled.")
 				return nil
 			}
 		}
@@ -328,6 +393,9 @@ Examples:
 
 		if err := s.InitSchema(); err != nil {
 			return fmt.Errorf("init schema: %w", err)
+		}
+		if err := runStartupMigrations(s); err != nil {
+			return fmt.Errorf("startup migrations: %w", err)
 		}
 
 		// Collect unique accounts from manifests
@@ -437,7 +505,7 @@ Examples:
 					return err
 				}
 
-				needsBatchDelete := !deleteTrash
+				needsBatchDelete := deletePermanent
 				if needsBatchDelete {
 					requiredScopes := oauth.ScopesDeletion
 					oauthMgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, requiredScopes)
@@ -467,7 +535,7 @@ Examples:
 				}
 			}
 			scopes := oauth.Scopes
-			if !deleteTrash {
+			if deletePermanent {
 				scopes = oauth.ScopesDeletion
 			}
 			return oauth.NewManagerWithScopes(secretsPath, cfg.TokensDir(), logger, scopes)
@@ -475,7 +543,7 @@ Examples:
 		// For permanent deletion (not trash), service-account flows need the
 		// elevated mail.google.com scope; trash-only uses the standard set.
 		saScopes := oauth.Scopes
-		if !deleteTrash {
+		if deletePermanent {
 			saScopes = oauth.ScopesDeletion
 		}
 		client, err := buildAPIClient(ctx, src, getOAuthMgr, saScopes)
@@ -498,8 +566,8 @@ Examples:
 
 			var execErr error
 			// For in-progress manifests, honor the stored method to avoid
-			// accidentally switching from trash to permanent delete mid-batch
-			useTrash := deleteTrash
+			// accidentally switching between trash and permanent mid-batch.
+			useTrash := !deletePermanent
 			if m.Status == deletion.StatusInProgress && m.Execution != nil {
 				useTrash = (m.Execution.Method == deletion.MethodTrash)
 			}
@@ -714,7 +782,7 @@ func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account
 	_, _ = fmt.Scanln(&response)
 	if response != "y" && response != "Y" {
 		if batchDelete {
-			fmt.Println("Cancelled. Use --trash for slower deletion without elevated permissions.")
+			fmt.Println("Cancelled. Drop --permanent to use trash deletion without elevated permissions.")
 		} else {
 			fmt.Println("Cancelled.")
 		}
@@ -755,12 +823,13 @@ func isInsufficientScopeError(err error) bool {
 }
 
 func init() {
-	deleteStagedCmd.Flags().BoolVar(&deleteTrash, "trash", false, "Move to trash instead of permanent delete (slower)")
+	deleteStagedCmd.Flags().BoolVar(&deletePermanent, "permanent", false, "DESTRUCTIVE: permanently delete via batch API instead of moving to trash (fast, no recovery)")
 	deleteStagedCmd.Flags().BoolVarP(&deleteYes, "yes", "y", false, "Skip confirmation")
 	deleteStagedCmd.Flags().BoolVar(&deleteDryRun, "dry-run", false, "Show what would be deleted")
 	deleteStagedCmd.Flags().BoolVarP(&deleteList, "list", "l", false, "List staged batches without executing")
 	deleteStagedCmd.Flags().StringVar(&deleteAccount, "account", "", "Account to use (Gmail or IMAP)")
 
+	deleteStagedCmd.MarkFlagsMutuallyExclusive("permanent", "yes")
 	rootCmd.AddCommand(listDeletionsCmd)
 	rootCmd.AddCommand(showDeletionCmd)
 	cancelDeletionCmd.Flags().BoolVar(&cancelAll, "all", false, "Cancel all pending and in-progress batches")

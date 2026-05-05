@@ -866,6 +866,38 @@ func TestStore_GetStats_WithData(t *testing.T) {
 	}
 }
 
+func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
+	f := storetest.New(t)
+	ids := f.CreateMessages(3)
+
+	// Soft-delete one via dedup (deleted_at).
+	_, err := f.Store.DB().Exec(
+		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
+	testutil.MustNoErr(t, err, "set deleted_at")
+
+	stats, err := f.Store.GetStats()
+	testutil.MustNoErr(t, err, "GetStats()")
+	if stats.MessageCount != 2 {
+		t.Errorf("MessageCount = %d, want 2 (dedup-hidden row excluded)", stats.MessageCount)
+	}
+}
+
+func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
+	f := storetest.New(t)
+	ids := f.CreateMessages(3)
+
+	// Mark one as deleted from source.
+	_, err := f.Store.DB().Exec(
+		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[1])
+	testutil.MustNoErr(t, err, "set deleted_from_source_at")
+
+	stats, err := f.Store.GetStats()
+	testutil.MustNoErr(t, err, "GetStats()")
+	if stats.MessageCount != 2 {
+		t.Errorf("MessageCount = %d, want 2 (source-deleted row excluded)", stats.MessageCount)
+	}
+}
+
 func TestStore_GetStats_ClosedDB(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
@@ -1578,5 +1610,116 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 	bodyText, _ := f.GetMessageBody(msgID1)
 	if bodyText.String != "updated body" {
 		t.Errorf("body_text = %q, want %q", bodyText.String, "updated body")
+	}
+}
+
+// --- GetStatsForScope tests ---
+
+// makeSecondSource creates a second source and conversation in the same store as f.
+func makeSecondSource(t *testing.T, f *storetest.Fixture, identifier string) (*store.Source, int64) {
+	t.Helper()
+	src, err := f.Store.GetOrCreateSource("gmail", identifier)
+	testutil.MustNoErr(t, err, "GetOrCreateSource "+identifier)
+	convID, err := f.Store.EnsureConversation(src.ID, "thread-b-1", "Thread B")
+	testutil.MustNoErr(t, err, "EnsureConversation "+identifier)
+	return src, convID
+}
+
+// createMessagesForSource inserts count messages under srcID/convID and returns their IDs.
+func createMessagesForSource(t *testing.T, st *store.Store, srcID, convID int64, prefix string, count int) []int64 {
+	t.Helper()
+	ids := make([]int64, 0, count)
+	for i := 0; i < count; i++ {
+		id, err := st.UpsertMessage(&store.Message{
+			ConversationID:  convID,
+			SourceID:        srcID,
+			SourceMessageID: fmt.Sprintf("%s-msg-%d", prefix, i),
+			MessageType:     "email",
+			SizeEstimate:    1000,
+		})
+		testutil.MustNoErr(t, err, fmt.Sprintf("UpsertMessage %s-%d", prefix, i))
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func TestStore_GetStatsForScope_SingleSource(t *testing.T) {
+	f := storetest.New(t)
+	srcB, convB := makeSecondSource(t, f, "b@example.com")
+
+	createMessagesForSource(t, f.Store, f.Source.ID, f.ConvID, "a", 3)
+	createMessagesForSource(t, f.Store, srcB.ID, convB, "b", 2)
+
+	// Scoped to source A only.
+	statsA, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
+	testutil.MustNoErr(t, err, "GetStatsForScope A")
+	if statsA.MessageCount != 3 {
+		t.Errorf("MessageCount (A only) = %d, want 3", statsA.MessageCount)
+	}
+	if statsA.SourceCount != 1 {
+		t.Errorf("SourceCount (A only) = %d, want 1", statsA.SourceCount)
+	}
+
+	// Scoped to both sources.
+	statsAB, err := f.Store.GetStatsForScope([]int64{f.Source.ID, srcB.ID})
+	testutil.MustNoErr(t, err, "GetStatsForScope A+B")
+	if statsAB.MessageCount != 5 {
+		t.Errorf("MessageCount (A+B) = %d, want 5", statsAB.MessageCount)
+	}
+	if statsAB.SourceCount != 2 {
+		t.Errorf("SourceCount (A+B) = %d, want 2", statsAB.SourceCount)
+	}
+
+	// Unscoped (nil) should count all messages across both sources.
+	statsAll, err := f.Store.GetStatsForScope(nil)
+	testutil.MustNoErr(t, err, "GetStatsForScope nil")
+	if statsAll.MessageCount != 5 {
+		t.Errorf("MessageCount (nil/global) = %d, want 5", statsAll.MessageCount)
+	}
+	if statsAll.SourceCount != 2 {
+		t.Errorf("SourceCount (nil/global) = %d, want 2", statsAll.SourceCount)
+	}
+}
+
+func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {
+	f := storetest.New(t)
+	srcB, convB := makeSecondSource(t, f, "b-dedup@example.com")
+
+	idsA := createMessagesForSource(t, f.Store, f.Source.ID, f.ConvID, "a-dedup", 2)
+	createMessagesForSource(t, f.Store, srcB.ID, convB, "b-dedup", 1)
+
+	// Soft-delete one message in source A via dedup (deleted_at).
+	_, err := f.Store.DB().Exec(
+		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), idsA[0])
+	testutil.MustNoErr(t, err, "set deleted_at")
+
+	// Scoped to A: should see only the live message.
+	statsA, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
+	testutil.MustNoErr(t, err, "GetStatsForScope A")
+	if statsA.MessageCount != 1 {
+		t.Errorf("MessageCount (A scoped) = %d, want 1 (dedup-hidden excluded)", statsA.MessageCount)
+	}
+
+	// Unscoped: should also exclude the dedup-hidden message (2 live, not 3).
+	statsAll, err := f.Store.GetStatsForScope(nil)
+	testutil.MustNoErr(t, err, "GetStatsForScope nil")
+	if statsAll.MessageCount != 2 {
+		t.Errorf("MessageCount (nil/global) = %d, want 2 (dedup-hidden excluded)", statsAll.MessageCount)
+	}
+}
+
+func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
+	f := storetest.New(t)
+	ids := createMessagesForSource(t, f.Store, f.Source.ID, f.ConvID, "a-srcdeleted", 2)
+
+	// Mark one as deleted from source.
+	_, err := f.Store.DB().Exec(
+		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
+	testutil.MustNoErr(t, err, "set deleted_from_source_at")
+
+	stats, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
+	testutil.MustNoErr(t, err, "GetStatsForScope")
+	if stats.MessageCount != 1 {
+		t.Errorf("MessageCount = %d, want 1 (source-deleted excluded)", stats.MessageCount)
 	}
 }
