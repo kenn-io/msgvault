@@ -794,8 +794,19 @@ func buildSnippet(body string) string {
 // handleAttachment copies an attachment file into content-addressed
 // storage and returns (storagePath, contentHash, size). All zero values
 // when the file is missing, unreadable, or no AttachmentsDir is configured.
+// Symlinks and non-regular files (devices, sockets, named pipes) are
+// rejected: a malicious DYI export could plant a symlink pointing at a
+// sensitive local file (e.g. ~/.ssh/id_rsa) and we would otherwise copy
+// the target into the attachment store.
 func handleAttachment(att Attachment, attachmentsDir string) (string, string, int) {
 	if attachmentsDir == "" || att.AbsPath == "" {
+		return "", "", 0
+	}
+	linfo, err := os.Lstat(att.AbsPath)
+	if err != nil {
+		return "", "", 0
+	}
+	if !linfo.Mode().IsRegular() {
 		return "", "", 0
 	}
 	f, err := os.Open(att.AbsPath)
@@ -806,6 +817,9 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 
 	info, err := f.Stat()
 	if err != nil {
+		return "", "", 0
+	}
+	if !info.Mode().IsRegular() {
 		return "", "", 0
 	}
 

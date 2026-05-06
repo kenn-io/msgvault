@@ -142,6 +142,45 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 }
 
+// TestDiscover_UnnumberedJSONSiblingNotMisclassified guards against a thread
+// directory that contains valid HTML plus only an unnumbered JSON sibling
+// (e.g. message_final.json) being classified as JSON or "both". ParseJSONThread
+// only accepts numbered message_<N>.json files, so misclassifying as JSON
+// would cause the thread to fail in auto/json mode and the valid HTML to
+// be skipped.
+func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
+	tmp := t.TempDir()
+	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "foo_1")
+	if err := os.MkdirAll(threadDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(threadDir, "message_1.html"),
+		[]byte(`<html><body>hi</body></html>`),
+		0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(threadDir, "message_final.json"),
+		[]byte(`{"unrelated":true}`),
+		0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs, err := Discover(tmp)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(dirs) != 1 {
+		t.Fatalf("discovered %d threads, want 1: %+v", len(dirs), dirs)
+	}
+	if dirs[0].Format != "html" {
+		t.Errorf("format=%q want html (unnumbered JSON sibling must not promote thread to json/both)", dirs[0].Format)
+	}
+}
+
 func TestDiscover_IgnoresDSStore(t *testing.T) {
 	// Create a temp DYI tree with a .DS_Store at the thread level; it
 	// must not turn it into a thread dir.

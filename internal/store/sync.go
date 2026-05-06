@@ -237,10 +237,11 @@ func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 	return run, err
 }
 
-// GetLatestCheckpointedSync returns the most recent incomplete sync run
-// that has a non-empty cursor_before, suitable for resuming interrupted imports.
-// Only running or failed syncs are considered resumable; completed syncs are not,
-// since re-importing the same root must re-scan all threads to pick up new messages.
+// GetLatestCheckpointedSync returns the most recent sync run for a source if
+// (and only if) that latest run is running or failed and has a non-empty
+// cursor_before. A completed run after a failed one means the failed run's
+// checkpoint is stale: re-importing must re-scan all threads, so we return
+// no row in that case.
 func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 	row := s.db.QueryRow(`
 		SELECT id, source_id, started_at, completed_at, status,
@@ -248,11 +249,10 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 		       error_message, cursor_before, cursor_after
 		FROM sync_runs
 		WHERE source_id = ?
-		  AND cursor_before IS NOT NULL AND cursor_before != ''
+		  AND id = (SELECT MAX(id) FROM sync_runs WHERE source_id = ?)
 		  AND status IN ('running', 'failed')
-		ORDER BY id DESC
-		LIMIT 1
-	`, sourceID)
+		  AND cursor_before IS NOT NULL AND cursor_before != ''
+	`, sourceID, sourceID)
 
 	run, err := scanSyncRun(row)
 	if err == sql.ErrNoRows {

@@ -369,6 +369,72 @@ func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
 	}
 }
 
+// TestImportDYI_AttachmentSymlinkRejected verifies that an attachment URI
+// pointing at a symlink (e.g. a malicious DYI export that planted a
+// symlink to a sensitive local file) is not followed: handleAttachment
+// returns no storage_path/content_hash, so the symlink target is never
+// copied into the attachment store.
+func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	tmp := t.TempDir()
+	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "evil_LNK")
+	photosDir := filepath.Join(threadPath, "photos")
+	if err := os.MkdirAll(photosDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create a "secret" file outside the attachment URI tree and a
+	// symlink at the URI path that points at it. The URI itself stays
+	// inside the export root, so the path-escape guard does not catch
+	// it; only the symlink check does.
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("password=hunter2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(photosDir, "innocent.png")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	body := `{"participants":[{"name":"A"},{"name":"B"}],"messages":[
+{"sender_name":"A","timestamp_ms":1600000000000,"type":"Generic","photos":[{"uri":"messages/inbox/evil_LNK/photos/innocent.png"}]}
+],"title":"x"}`
+	if err := os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	attachmentsDir := t.TempDir()
+	summary, err := ImportDYI(context.Background(), st, ImportOptions{
+		Me:             "test.user@facebook.messenger",
+		RootDir:        tmp,
+		AttachmentsDir: attachmentsDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.HardErrors {
+		t.Errorf("HardErrors=true")
+	}
+	var sp, ch string
+	if err := st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch); err != nil {
+		t.Fatal(err)
+	}
+	if sp != "" || ch != "" {
+		t.Errorf("symlinked attachment not rejected: storage_path=%q content_hash=%q", sp, ch)
+	}
+	// Defense in depth: assert nothing under attachmentsDir contains the
+	// secret bytes, so even a future copy regression would be caught.
+	_ = filepath.Walk(attachmentsDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		data, _ := os.ReadFile(p)
+		if strings.Contains(string(data), "hunter2") {
+			t.Errorf("symlink target leaked into attachments store at %s", p)
+		}
+		return nil
+	})
+}
+
 func TestImportDYI_MissingAttachment(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
@@ -987,6 +1053,60 @@ func TestImportDYI_InvalidFormatRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown --format") {
 		t.Errorf("error=%v want mention of 'unknown --format'", err)
+	}
+}
+
+// TestImportDYI_StaleFailedCheckpointIgnoredAfterCompletion verifies that a
+// failed run's checkpoint is not used to resume a later import once a
+// successful run has occurred since. Without the fix,
+// GetLatestCheckpointedSync would still return the older failed run because
+// its status filter (running/failed) excluded the more recent completed
+// run, and a re-import would silently resume from the stale checkpoint
+// and skip threads already covered by the successful run.
+func TestImportDYI_StaleFailedCheckpointIgnoredAfterCompletion(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := writeMultiThreadFixture(t, 3)
+
+	// Seed a failed sync with a checkpoint pointing past thread 0.
+	src, err := st.GetOrCreateSource("facebook_messenger", "test.user@facebook.messenger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failID, err := st.StartSync(src.ID, "import-messenger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpJSON, err := json.Marshal(fbmessengerCheckpoint{RootDir: absRoot, ThreadIndex: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateSyncCheckpoint(failID, &store.Checkpoint{
+		PageToken: string(cpJSON), MessagesProcessed: 2, MessagesAdded: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FailSync(failID, "context canceled"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run a successful import after the failed run. This becomes the
+	// latest sync, so a future re-import must NOT resume from the older
+	// failed checkpoint.
+	first := importFixture(t, st, root)
+	if first.MessagesAdded != 3 {
+		t.Fatalf("first run MessagesAdded=%d want 3", first.MessagesAdded)
+	}
+
+	second := importFixture(t, st, root)
+	if second.WasResumed {
+		t.Errorf("WasResumed=true: stale failed checkpoint resumed despite later completed run")
+	}
+	if second.ThreadsProcessed != 3 {
+		t.Errorf("ThreadsProcessed=%d want 3 (full re-scan)", second.ThreadsProcessed)
 	}
 }
 

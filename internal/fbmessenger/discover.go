@@ -265,8 +265,11 @@ func isKnownMetadataFile(name string) bool {
 }
 
 // detectFormat inspects a thread directory and reports whether it has a
-// message_*.json, a message_*.html, or both. Directories with neither are
-// ignored (returns ok=false).
+// numbered message_<N>.json, a message_*.html, or both. Directories with
+// neither are ignored (returns ok=false). The JSON match mirrors
+// ParseJSONThread's regex so a thread with only an unnumbered JSON
+// sibling (e.g. message_final.json) is not misclassified as JSON and
+// does not crowd out a sibling HTML file.
 func detectFormat(threadPath string) (string, bool) {
 	entries, err := os.ReadDir(threadPath)
 	if err != nil {
@@ -281,7 +284,7 @@ func detectFormat(threadPath string) (string, bool) {
 		if strings.HasPrefix(name, ".") || name == "autofill_information.json" {
 			continue
 		}
-		if strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".json") {
+		if reMessageFile.MatchString(name) {
 			hasJSON = true
 		} else if strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html") {
 			hasHTML = true
