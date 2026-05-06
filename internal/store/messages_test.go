@@ -177,3 +177,301 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
+	st := testutil.NewTestStore(t)
+
+	// Create an unnamed email participant (e.g. inserted by iMessage import
+	// for an Apple ID handle).
+	res, err := st.DB().Exec(
+		`INSERT INTO participants (email_address) VALUES (?)`,
+		"alice@example.com",
+	)
+	if err != nil {
+		t.Fatalf("insert participant: %v", err)
+	}
+	pid, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+
+	// Backfilling on an empty display_name succeeds.
+	updated, err := st.UpdateParticipantDisplayNameByEmail("alice@example.com", "Alice Example")
+	if err != nil {
+		t.Fatalf("UpdateParticipantDisplayNameByEmail: %v", err)
+	}
+	if !updated {
+		t.Fatal("expected backfill to update existing participant")
+	}
+
+	got := readDisplayName(t, st, pid)
+	if got != "Alice Example" {
+		t.Errorf("display_name = %q, want %q", got, "Alice Example")
+	}
+
+	// Lookup is case-insensitive on the email.
+	updatedMixed, err := st.UpdateParticipantDisplayNameByEmail("ALICE@example.com", "Should Not Overwrite")
+	if err != nil {
+		t.Fatalf("UpdateParticipantDisplayNameByEmail (case): %v", err)
+	}
+	if updatedMixed {
+		t.Error("second update should not modify a non-empty display_name")
+	}
+	if got := readDisplayName(t, st, pid); got != "Alice Example" {
+		t.Errorf("display_name overwritten: %q", got)
+	}
+
+	// Empty inputs are no-ops.
+	if updated, err := st.UpdateParticipantDisplayNameByEmail("", "X"); err != nil || updated {
+		t.Errorf("empty email: updated=%v err=%v", updated, err)
+	}
+	if updated, err := st.UpdateParticipantDisplayNameByEmail("x@y.com", ""); err != nil || updated {
+		t.Errorf("empty name: updated=%v err=%v", updated, err)
+	}
+
+	// Unknown email is a no-op (does not create rows).
+	if updated, err := st.UpdateParticipantDisplayNameByEmail("nobody@example.com", "Nobody"); err != nil || updated {
+		t.Errorf("unknown email: updated=%v err=%v", updated, err)
+	}
+}
+
+func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
+	st := testutil.NewTestStore(t)
+
+	// Case 1: legacy iMessage participant with display_name = phone_number.
+	// Should be overwritten by the contact name.
+	legacyID, err := st.EnsureParticipantByPhone("+15551111111", "+15551111111", "imessage")
+	if err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	// Case 2: iMessage participant already named by another source. Real
+	// name must be preserved.
+	namedID, err := st.EnsureParticipantByPhone("+15552222222", "Bob From Gmail", "imessage")
+	if err != nil {
+		t.Fatalf("seed named: %v", err)
+	}
+
+	// Case 3: WhatsApp-only participant with display_name = phone_number.
+	// Not iMessage, must NOT be touched (no imessage identifier exists).
+	otherID, err := st.EnsureParticipantByPhone("+15553333333", "+15553333333", "whatsapp")
+	if err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+
+	// Apply contact-name backfill.
+	updated, err := st.UpdateImessageParticipantDisplayNameByPhone("+15551111111", "Alice Real")
+	if err != nil {
+		t.Fatalf("backfill legacy: %v", err)
+	}
+	if !updated {
+		t.Error("legacy placeholder should be replaced")
+	}
+	if got := readDisplayName(t, st, legacyID); got != "Alice Real" {
+		t.Errorf("legacy display_name = %q, want %q", got, "Alice Real")
+	}
+
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15552222222", "Should Not Win")
+	if err != nil {
+		t.Fatalf("backfill named: %v", err)
+	}
+	if updated {
+		t.Error("real name from another source should be preserved")
+	}
+	if got := readDisplayName(t, st, namedID); got != "Bob From Gmail" {
+		t.Errorf("named display_name = %q, want %q", got, "Bob From Gmail")
+	}
+
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15553333333", "Not Allowed")
+	if err != nil {
+		t.Fatalf("backfill other: %v", err)
+	}
+	if updated {
+		t.Error("non-iMessage participant should not be touched")
+	}
+	if got := readDisplayName(t, st, otherID); got != "+15553333333" {
+		t.Errorf("non-iMessage display_name = %q, want %q", got, "+15553333333")
+	}
+
+	// Empty inputs are no-ops.
+	if updated, err := st.UpdateImessageParticipantDisplayNameByPhone("", "X"); err != nil || updated {
+		t.Errorf("empty phone: updated=%v err=%v", updated, err)
+	}
+	if updated, err := st.UpdateImessageParticipantDisplayNameByPhone("+15551111111", ""); err != nil || updated {
+		t.Errorf("empty name: updated=%v err=%v", updated, err)
+	}
+}
+
+func TestRetitleImessageChats(t *testing.T) {
+	st := testutil.NewTestStore(t)
+
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+
+	otherSrc, err := st.GetOrCreateSource("whatsapp", "+15550000000")
+	if err != nil {
+		t.Fatalf("other source: %v", err)
+	}
+
+	// Named iMessage participant whose phone is the current title of a 1:1.
+	namedID, err := st.EnsureParticipantByPhone("+15551111111", "Alice Real", "imessage")
+	if err != nil {
+		t.Fatalf("seed alice: %v", err)
+	}
+
+	// Email-backed iMessage participants did not always get an iMessage
+	// participant_identifiers row, but the apple_messages conversation is
+	// still enough context to safely refresh the raw email title.
+	emailID, err := st.EnsureParticipant("alice@example.com", "Alice Email", "example.com")
+	if err != nil {
+		t.Fatalf("seed alice email: %v", err)
+	}
+
+	// iMessage participant whose name is still the phone (poisoned). Must
+	// not be used as a title.
+	poisonedID, err := st.EnsureParticipantByPhone("+15552222222", "+15552222222", "imessage")
+	if err != nil {
+		t.Fatalf("seed poisoned: %v", err)
+	}
+
+	// Non-iMessage participant whose phone is a conversation title — must
+	// not be touched even if a real name exists elsewhere.
+	whatsappID, err := st.EnsureParticipantByPhone("+15553333333", "Carol", "whatsapp")
+	if err != nil {
+		t.Fatalf("seed carol: %v", err)
+	}
+
+	// 1:1 with named participant — title is the phone, should be replaced.
+	convNamedID, err := st.EnsureConversationWithType(src.ID, "imsg-1", "direct_chat", "+15551111111")
+	if err != nil {
+		t.Fatalf("conv named: %v", err)
+	}
+	if err := st.EnsureConversationParticipant(convNamedID, namedID, "member"); err != nil {
+		t.Fatalf("link named: %v", err)
+	}
+
+	// 1:1 with email participant — title is the raw email, should be replaced.
+	convEmailID, err := st.EnsureConversationWithType(src.ID, "imsg-email-1", "direct_chat", "alice@example.com")
+	if err != nil {
+		t.Fatalf("conv email: %v", err)
+	}
+	if err := st.EnsureConversationParticipant(convEmailID, emailID, "member"); err != nil {
+		t.Fatalf("link email: %v", err)
+	}
+
+	// 1:1 with poisoned participant — title equals phone but participant
+	// has no real name yet. Must remain unchanged.
+	convPoisonedID, err := st.EnsureConversationWithType(src.ID, "imsg-2", "direct_chat", "+15552222222")
+	if err != nil {
+		t.Fatalf("conv poisoned: %v", err)
+	}
+	if err := st.EnsureConversationParticipant(convPoisonedID, poisonedID, "member"); err != nil {
+		t.Fatalf("link poisoned: %v", err)
+	}
+
+	// Non-iMessage 1:1 — title is a phone, but the source isn't apple_messages.
+	convOtherID, err := st.EnsureConversationWithType(otherSrc.ID, "wa-1", "direct_chat", "+15553333333")
+	if err != nil {
+		t.Fatalf("conv other: %v", err)
+	}
+	if err := st.EnsureConversationParticipant(convOtherID, whatsappID, "member"); err != nil {
+		t.Fatalf("link other: %v", err)
+	}
+
+	// Group chat whose title was generated from raw participant handles
+	// before contacts were backfilled. It should be regenerated with names.
+	bobID, err := st.EnsureParticipantByPhone("+15554444444", "Bob Real", "imessage")
+	if err != nil {
+		t.Fatalf("seed bob: %v", err)
+	}
+	carolID, err := st.EnsureParticipantByPhone("+15555555555", "Carol Real", "imessage")
+	if err != nil {
+		t.Fatalf("seed carol: %v", err)
+	}
+	daveID, err := st.EnsureParticipantByPhone("+15556666666", "Dave Real", "imessage")
+	if err != nil {
+		t.Fatalf("seed dave: %v", err)
+	}
+	convGroupID, err := st.EnsureConversationWithType(
+		src.ID, "imsg-group-1", "group_chat",
+		"+15551111111, +15554444444, +15555555555 +1 more",
+	)
+	if err != nil {
+		t.Fatalf("conv group: %v", err)
+	}
+	for _, pid := range []int64{namedID, bobID, carolID, daveID} {
+		if err := st.EnsureConversationParticipant(convGroupID, pid, "member"); err != nil {
+			t.Fatalf("link group participant %d: %v", pid, err)
+		}
+	}
+
+	// Named group chats must not be overwritten, even when the participant
+	// list would allow a generated title.
+	convNamedGroupID, err := st.EnsureConversationWithType(
+		src.ID, "imsg-group-2", "group_chat", "Road trip",
+	)
+	if err != nil {
+		t.Fatalf("conv named group: %v", err)
+	}
+	for _, pid := range []int64{namedID, bobID, carolID} {
+		if err := st.EnsureConversationParticipant(convNamedGroupID, pid, "member"); err != nil {
+			t.Fatalf("link named group participant %d: %v", pid, err)
+		}
+	}
+
+	n, err := st.RetitleImessageChats()
+	if err != nil {
+		t.Fatalf("RetitleImessageChats: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("rows updated = %d, want 3", n)
+	}
+
+	if got := readConvTitle(t, st, convNamedID); got != "Alice Real" {
+		t.Errorf("named conv title = %q, want %q", got, "Alice Real")
+	}
+	if got := readConvTitle(t, st, convEmailID); got != "Alice Email" {
+		t.Errorf("email conv title = %q, want %q", got, "Alice Email")
+	}
+	if got := readConvTitle(t, st, convPoisonedID); got != "+15552222222" {
+		t.Errorf("poisoned conv title = %q, want unchanged", got)
+	}
+	if got := readConvTitle(t, st, convOtherID); got != "+15553333333" {
+		t.Errorf("non-imessage conv title = %q, want unchanged", got)
+	}
+	if got := readConvTitle(t, st, convGroupID); got != "Alice Real, Bob Real, Carol Real +1 more" {
+		t.Errorf("group conv title = %q, want refreshed generated title", got)
+	}
+	if got := readConvTitle(t, st, convNamedGroupID); got != "Road trip" {
+		t.Errorf("named group conv title = %q, want unchanged", got)
+	}
+
+	// Idempotent: running again is a no-op.
+	if n2, err := st.RetitleImessageChats(); err != nil || n2 != 0 {
+		t.Errorf("idempotent rerun: rows=%d err=%v", n2, err)
+	}
+}
+
+func readConvTitle(t *testing.T, st *store.Store, id int64) string {
+	t.Helper()
+	var title sql.NullString
+	if err := st.DB().QueryRow(
+		`SELECT title FROM conversations WHERE id = ?`, id,
+	).Scan(&title); err != nil {
+		t.Fatalf("scan title: %v", err)
+	}
+	return title.String
+}
+
+func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
+	t.Helper()
+	var name sql.NullString
+	if err := st.DB().QueryRow(
+		`SELECT display_name FROM participants WHERE id = ?`, pid,
+	).Scan(&name); err != nil {
+		t.Fatalf("scan display_name: %v", err)
+	}
+	return name.String
+}

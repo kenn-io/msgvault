@@ -778,7 +778,10 @@ func (c *Client) resolveParticipant(
 		if pid, ok := phoneCache[phone]; ok {
 			return pid, nil
 		}
-		pid, err := s.EnsureParticipantByPhone(phone, phone, "imessage")
+		// Pass empty displayName: chat.db has no contact names, only handles.
+		// Leaving display_name NULL lets later imports (Gmail, Google Voice,
+		// WhatsApp --contacts, or import-contacts) populate the real name.
+		pid, err := s.EnsureParticipantByPhone(phone, "", "imessage")
 		if err != nil {
 			return 0, fmt.Errorf("ensure participant by phone %s: %w", phone, err)
 		}
