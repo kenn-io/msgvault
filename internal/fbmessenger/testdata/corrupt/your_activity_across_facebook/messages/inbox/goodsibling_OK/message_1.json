@@ -1,0 +1,16 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Good Sibling"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Good Sibling",
+      "timestamp_ms": 1600000000000,
+      "content": "Still valid",
+      "type": "Generic"
+    }
+  ],
+  "title": "Good Sibling",
+  "thread_path": "inbox/goodsibling_OK"
+}

@@ -225,9 +225,10 @@ func Execute() error {
 // Installs a panic recovery and closes the log file handler on
 // return so every run ends cleanly in the log.
 func ExecuteContext(ctx context.Context) error {
-	// Defers run LIFO: close the log file first, then recover
-	// panics. This ensures the panic record is written while the
-	// file handle is still open.
+	// Defer ordering is load-bearing. LIFO means recoverAndLogPanic
+	// runs before the log-file close. Because recoverAndLogPanic calls
+	// os.Exit (which skips remaining defers), it closes logResult
+	// itself before exiting. Do not reorder these defers.
 	defer func() {
 		if logResult != nil {
 			logResult.Close()

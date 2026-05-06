@@ -1,0 +1,19 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Carol Altlayout"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Carol Altlayout",
+      "timestamp_ms": 1700000000000,
+      "type": "Generic",
+      "content": "Photo from alt layout",
+      "photos": [
+        {"uri": "messages/inbox/carol_ALT456/photos/tiny.png", "creation_timestamp": 1700000000}
+      ]
+    }
+  ],
+  "title": "Carol Altlayout",
+  "thread_path": "inbox/carol_ALT456"
+}

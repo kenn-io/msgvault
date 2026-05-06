@@ -186,10 +186,6 @@ func optsToFilterConditions(opts AggregateOptions, prefix string) ([]string, []i
 	var conditions []string
 	var args []interface{}
 
-	// Exclude text messages from email-mode queries.
-	// message_type IS NULL and '' handle old data without the column.
-	conditions = append(conditions, "("+prefix+"message_type = 'email' OR "+prefix+"message_type IS NULL OR "+prefix+"message_type = '')")
-
 	// Always exclude rows soft-deleted by deduplicate; gate
 	// source-deleted on opts.HideDeletedFromSource via the helper.
 	conditions = append(conditions, store.LiveMessagesWhere(strings.TrimSuffix(prefix, "."), opts.HideDeletedFromSource))
@@ -257,10 +253,6 @@ func buildFilterJoinsAndConditions(filter MessageFilter, tableAlias string) (str
 	}
 
 	// Include all messages (deleted messages shown with indicator in TUI)
-
-	// Exclude text messages from email-mode queries.
-	// message_type IS NULL and '' handle old data without the column.
-	conditions = append(conditions, "("+prefix+"message_type = 'email' OR "+prefix+"message_type IS NULL OR "+prefix+"message_type = '')")
 
 	// Always exclude rows soft-deleted by deduplicate; gate
 	// source-deleted on filter.HideDeletedFromSource via the helper.

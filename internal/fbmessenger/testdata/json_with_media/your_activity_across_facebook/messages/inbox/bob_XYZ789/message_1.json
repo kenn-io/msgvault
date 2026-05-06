@@ -1,0 +1,19 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Bob Mediafile"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Bob Mediafile",
+      "timestamp_ms": 1600000000000,
+      "type": "Generic",
+      "content": "Here's a photo",
+      "photos": [
+        {"uri": "messages/inbox/bob_XYZ789/photos/tiny.png", "creation_timestamp": 1600000000}
+      ]
+    }
+  ],
+  "title": "Bob Mediafile",
+  "thread_path": "inbox/bob_XYZ789"
+}

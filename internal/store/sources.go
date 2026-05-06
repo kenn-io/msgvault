@@ -163,7 +163,7 @@ func (s *Store) RemoveSourceSerialized(
 
 	var count int
 	if err := conn.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sync_runs WHERE status = 'running'`,
+		s.dialect.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE status = 'running'`),
 	).Scan(&count); err != nil {
 		return false, fmt.Errorf("check active syncs: %w", err)
 	}
@@ -178,7 +178,7 @@ func (s *Store) RemoveSourceSerialized(
 	}
 
 	res, err := conn.ExecContext(
-		ctx, `DELETE FROM sources WHERE id = ?`, sourceID,
+		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
 	if err != nil {
 		return hadActiveSync, fmt.Errorf("delete source: %w", err)

@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS messages (
     rfc822_message_id TEXT,
 
     -- Message classification
-    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp'
+    message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger'
 
     -- Timestamps (sent_at is canonical, others platform-specific)
     sent_at DATETIME,

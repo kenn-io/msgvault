@@ -1,0 +1,29 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Alice Example"},
+    {"name": "Bob Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000000000,
+      "content": "Hey crew",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "Alice Example",
+      "timestamp_ms": 1600000060000,
+      "content": "Hi!",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "Bob Example",
+      "timestamp_ms": 1600000120000,
+      "content": "Hello.",
+      "type": "Generic"
+    }
+  ],
+  "title": "Crew",
+  "thread_path": "inbox/crew_GRP123"
+}

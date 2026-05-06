@@ -1,0 +1,52 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Sam NonText"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000600000,
+      "type": "Generic",
+      "sticker": {"uri": "messages/stickers_used/1.png"}
+    },
+    {
+      "sender_name": "Sam NonText",
+      "timestamp_ms": 1600000500000,
+      "type": "Generic",
+      "photos": [
+        {"uri": "messages/inbox/sam_NONTXT/photos/missing.jpg", "creation_timestamp": 1600000500}
+      ]
+    },
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000400000,
+      "type": "Call",
+      "call_duration": 192
+    },
+    {
+      "sender_name": "Sam NonText",
+      "timestamp_ms": 1600000300000,
+      "type": "Call",
+      "call_duration": 0,
+      "missed": true
+    },
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000200000,
+      "type": "Share",
+      "share": {
+        "link": "https://example.com/article",
+        "share_text": "Example share text"
+      }
+    },
+    {
+      "sender_name": "Sam NonText",
+      "timestamp_ms": 1600000100000,
+      "content": "Sam left the chat",
+      "type": "Unsubscribe"
+    }
+  ],
+  "title": "Sam NonText",
+  "thread_path": "inbox/sam_NONTXT"
+}

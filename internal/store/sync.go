@@ -237,6 +237,30 @@ func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 	return run, err
 }
 
+// GetLatestCheckpointedSync returns the most recent incomplete sync run
+// that has a non-empty cursor_before, suitable for resuming interrupted imports.
+// Only running or failed syncs are considered resumable; completed syncs are not,
+// since re-importing the same root must re-scan all threads to pick up new messages.
+func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
+	row := s.db.QueryRow(`
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after
+		FROM sync_runs
+		WHERE source_id = ?
+		  AND cursor_before IS NOT NULL AND cursor_before != ''
+		  AND status IN ('running', 'failed')
+		ORDER BY id DESC
+		LIMIT 1
+	`, sourceID)
+
+	run, err := scanSyncRun(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return run, err
+}
+
 // HasAnyActiveSync returns true if any source currently has a running sync.
 // Use this as a safety gate before performing destructive file operations that
 // could race with concurrent attachment ingestion.

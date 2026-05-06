@@ -62,6 +62,7 @@ make lint                     # Run linter
 ./msgvault stats                                      # Show archive stats
 
 # Apple Mail import
+./msgvault import-messenger --me you@facebook.messenger ~/facebook-dyi   # Import Facebook Messenger DYI
 ./msgvault import-emlx                                # Auto-discover accounts
 ./msgvault import-emlx ~/Library/Mail                 # Explicit mail directory
 ./msgvault import-emlx --account me@gmail.com         # Specific account(s)
@@ -195,6 +196,10 @@ The TUI automatically builds/updates the Parquet cache on launch when new messag
 ```
 
 Sync is **read-only** - no modifications to Gmail.
+
+## Test Data
+
+Never use real people's names, email addresses, or identifiers in test fixtures. Use obviously synthetic names: `alice`, `bob`, `Test User`, `user@example.com`. Before committing test data, verify no real PII is present.
 
 ## Go Development
 
