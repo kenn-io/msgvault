@@ -724,7 +724,7 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 			nullGuard:  pAlias + ".email_address IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
-		nameExpr := fmt.Sprintf("COALESCE(NULLIF(TRIM(%s.display_name), ''), %s.email_address)", pAlias, pAlias)
+		nameExpr := participantNameExpr(pAlias)
 		return aggViewDef{
 			keyExpr:    nameExpr,
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
@@ -738,12 +738,12 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 			keyColumns: []string{pAlias + ".email_address", pAlias + ".display_name"},
 		}, nil
 	case ViewRecipientNames:
-		nameExpr := fmt.Sprintf("COALESCE(NULLIF(TRIM(%s.display_name), ''), %s.email_address)", pAlias, pAlias)
+		nameExpr := participantNameExpr(pAlias)
 		return aggViewDef{
 			keyExpr:    nameExpr,
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type IN ('to', 'cc', 'bcc')\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
 			nullGuard:  nameExpr + " IS NOT NULL",
-			keyColumns: []string{pAlias + ".email_address", pAlias + ".display_name"},
+			keyColumns: []string{pAlias + ".email_address", pAlias + ".display_name", pAlias + ".phone_number"},
 		}, nil
 	case ViewDomains:
 		return aggViewDef{
@@ -900,31 +900,31 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []in
 
 	// Sender name filter - check both message_recipients (email) and direct sender_id (WhatsApp/chat)
 	if filter.SenderName != "" {
-		conditions = append(conditions, `(EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
+			  AND %s = ?
 		) OR EXISTS (
 			SELECT 1 FROM p
 			WHERE p.id = msg.sender_id
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
-		))`)
+			  AND %s = ?
+		))`, participantNameExpr("p"), participantNameExpr("p")))
 		args = append(args, filter.SenderName, filter.SenderName)
 	} else if filter.MatchesEmpty(ViewSenderNames) {
 		// A message has an "empty sender name" only if it has no from-recipient name AND no direct sender_id with a name.
-		conditions = append(conditions, `(NOT EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`(NOT EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) IS NOT NULL
+			  AND %s IS NOT NULL
 		) AND NOT EXISTS (
 			SELECT 1 FROM p
 			WHERE p.id = msg.sender_id
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) IS NOT NULL
-		))`)
+			  AND %s IS NOT NULL
+		))`, participantNameExpr("p"), participantNameExpr("p")))
 	}
 
 	// Recipient filter - use EXISTS subquery (becomes semi-join)
@@ -943,22 +943,22 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []in
 
 	// Recipient name filter - use EXISTS subquery (becomes semi-join)
 	if filter.RecipientName != "" {
-		conditions = append(conditions, `EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type IN ('to', 'cc', 'bcc')
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
-		)`)
+			  AND %s = ?
+		)`, participantNameExpr("p")))
 		args = append(args, filter.RecipientName)
 	} else if filter.MatchesEmpty(ViewRecipientNames) {
-		conditions = append(conditions, `NOT EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type IN ('to', 'cc', 'bcc')
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) IS NOT NULL
-		)`)
+			  AND %s IS NOT NULL
+		)`, participantNameExpr("p")))
 	}
 
 	// Domain filter - use EXISTS subquery (becomes semi-join)
@@ -1688,17 +1688,17 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	}
 
 	if filter.SenderName != "" {
-		conditions = append(conditions, `(EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
+			  AND %s = ?
 		) OR EXISTS (
 			SELECT 1 FROM p
 			WHERE p.id = msg.sender_id
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
-		))`)
+			  AND %s = ?
+		))`, participantNameExpr("p"), participantNameExpr("p")))
 		args = append(args, filter.SenderName, filter.SenderName)
 	}
 
@@ -1714,13 +1714,13 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	}
 
 	if filter.RecipientName != "" {
-		conditions = append(conditions, `EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type IN ('to', 'cc', 'bcc')
-			  AND COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) = ?
-		)`)
+			  AND %s = ?
+		)`, participantNameExpr("p")))
 		args = append(args, filter.RecipientName)
 	}
 

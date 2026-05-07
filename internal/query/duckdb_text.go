@@ -206,8 +206,7 @@ func textAggViewDef(
 			nullGuard:  keyExpr + " IS NOT NULL",
 		}, nil
 	case TextViewContactNames:
-		nameExpr := "COALESCE(NULLIF(TRIM(p_sender.display_name), ''), " +
-			"NULLIF(p_sender.phone_number, ''), p_sender.email_address)"
+		nameExpr := participantNameExpr("p_sender")
 		senderJoin := `JOIN p p_sender ON p_sender.id = COALESCE(msg.sender_id,
 			(SELECT mr_fb.participant_id FROM mr mr_fb
 			 WHERE mr_fb.message_id = msg.id AND mr_fb.recipient_type = 'from'

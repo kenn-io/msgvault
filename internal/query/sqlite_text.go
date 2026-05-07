@@ -257,8 +257,7 @@ func textAggSQLiteDimension(
 			whereExpr: keyExpr + " IS NOT NULL",
 		}, nil
 	case TextViewContactNames:
-		nameExpr := "COALESCE(NULLIF(TRIM(p_agg.display_name), ''), " +
-			"NULLIF(p_agg.phone_number, ''), p_agg.email_address)"
+		nameExpr := participantNameExpr("p_agg")
 		senderJoin := `JOIN participants p_agg ON p_agg.id = COALESCE(m.sender_id,
 			(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 			 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'

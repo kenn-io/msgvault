@@ -86,6 +86,60 @@ func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 	assertRow(t, rows, "noname@test.com", 1)
 }
 
+// TestAggregateBySenderName_FallbackToPhone covers phone-only iMessage/SMS
+// participants without a contacts entry: display_name and email_address are
+// both empty/NULL but phone_number is set. They must surface under the phone
+// number, not vanish from the SenderNames aggregate.
+func TestAggregateBySenderName_FallbackToPhone(t *testing.T) {
+	env := newTestEnv(t)
+
+	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
+		Phone:       dbtest.StrPtr("+15551234567"),
+		DisplayName: dbtest.StrPtr(""),
+	})
+	env.AddMessage(dbtest.MessageOpts{Subject: "SMS", SentAt: "2024-05-01 10:00:00", FromID: phoneOnlyID})
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
+	if err != nil {
+		t.Fatalf("AggregateBySenderName: %v", err)
+	}
+
+	assertRow(t, rows, "+15551234567", 1)
+
+	// Same fallback drives the SenderName filter.
+	listed := env.MustListMessages(MessageFilter{SenderName: "+15551234567"})
+	if len(listed) != 1 {
+		t.Errorf("ListMessages by phone-fallback name: got %d, want 1", len(listed))
+	}
+}
+
+// TestAggregateByRecipientName_FallbackToPhone is the recipient-side analog.
+func TestAggregateByRecipientName_FallbackToPhone(t *testing.T) {
+	env := newTestEnv(t)
+
+	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
+		Phone:       dbtest.StrPtr("+15557654321"),
+		DisplayName: dbtest.StrPtr(""),
+	})
+	senderID := env.MustLookupParticipant("alice@example.com")
+	env.AddMessage(dbtest.MessageOpts{
+		Subject: "Group", SentAt: "2024-05-01 10:00:00",
+		FromID: senderID, ToIDs: []int64{phoneOnlyID},
+	})
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
+	if err != nil {
+		t.Fatalf("AggregateByRecipientName: %v", err)
+	}
+
+	assertRow(t, rows, "+15557654321", 1)
+
+	listed := env.MustListMessages(MessageFilter{RecipientName: "+15557654321"})
+	if len(listed) != 1 {
+		t.Errorf("ListMessages by phone-fallback recipient name: got %d, want 1", len(listed))
+	}
+}
+
 func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	env := newTestEnv(t)
 

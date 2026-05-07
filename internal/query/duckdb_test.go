@@ -759,6 +759,35 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	requireAggregateRow(t, results, "spaces@test.com")
 }
 
+// TestDuckDBEngine_AggregateBySenderName_PhoneFallback covers phone-only
+// iMessage/SMS participants (display_name and email_address empty,
+// phone_number set). The DuckDB engine reads participants.parquet, where
+// phone_number is COALESCEd to ” on export — NULLIF squashes it correctly.
+func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	b.AddFrom(msg, phoneOnly, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
+	if err != nil {
+		t.Fatalf("AggregateBySenderName: %v", err)
+	}
+	requireAggregateRow(t, results, "+15551234567")
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{SenderName: "+15551234567"})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Errorf("ListMessages by phone-fallback name: got %d, want 1", len(listed))
+	}
+}
+
 func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	// Build Parquet data with a message that has no sender
 	b := NewTestDataBuilder(t)

@@ -21,6 +21,21 @@ const emailOnlyFilterMsg = "(msg.message_type = 'email' OR msg.message_type IS N
 // NULL and empty string handle old data where message_type was not yet populated.
 const emailOnlyFilterM = "(m.message_type = 'email' OR m.message_type IS NULL OR m.message_type = '')"
 
+// participantNameExpr returns the SQL expression for a participant's display
+// label, falling back through display_name → phone_number → email_address.
+// Used by name-based aggregates and filters so phone-only participants
+// (typically iMessage/SMS handles imported without a matching contacts entry)
+// surface under their phone number instead of vanishing because email_address
+// is NULL. alias is the participants-table alias (e.g. "p", "p_filter_to").
+// Works for both SQLite (nullable phone_number) and DuckDB-over-Parquet
+// (phone_number coerced to empty string at export); NULLIF squashes both forms.
+func participantNameExpr(alias string) string {
+	return fmt.Sprintf(
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s.email_address)",
+		alias, alias, alias,
+	)
+}
+
 // fetchLabelsForMessageList adds labels to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, tablePrefix string, messages []MessageSummary) error {
