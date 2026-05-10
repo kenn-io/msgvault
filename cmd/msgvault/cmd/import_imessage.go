@@ -190,6 +190,8 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	}
 
 	var phoneMatches, emailMatches int
+	var phoneErrors, emailErrors int
+	var firstPhoneErr, firstEmailErr error
 	for _, c := range contacts {
 		if c.FullName == "" {
 			continue
@@ -200,6 +202,10 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 			// (older import-imessage runs) get cleared and replaced.
 			updated, err := s.UpdateImessageParticipantDisplayNameByPhone(phone, c.FullName)
 			if err != nil {
+				if firstPhoneErr == nil {
+					firstPhoneErr = err
+				}
+				phoneErrors++
 				continue
 			}
 			if updated {
@@ -209,6 +215,10 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 		for _, email := range c.Emails {
 			updated, err := s.UpdateParticipantDisplayNameByEmail(email, c.FullName)
 			if err != nil {
+				if firstEmailErr == nil {
+					firstEmailErr = err
+				}
+				emailErrors++
 				continue
 			}
 			if updated {
@@ -222,6 +232,17 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	fmt.Printf("  Source:           %s (%d entries)\n", vcfPath, len(contacts))
 	fmt.Printf("  Names backfilled: %d by phone, %d by email\n",
 		phoneMatches, emailMatches)
+	if phoneErrors > 0 || emailErrors > 0 {
+		fmt.Fprintf(os.Stderr,
+			"Warning: %d phone update(s) and %d email update(s) failed.\n",
+			phoneErrors, emailErrors)
+		if firstPhoneErr != nil {
+			fmt.Fprintf(os.Stderr, "  First phone error: %v\n", firstPhoneErr)
+		}
+		if firstEmailErr != nil {
+			fmt.Fprintf(os.Stderr, "  First email error: %v\n", firstEmailErr)
+		}
+	}
 	return phoneMatches > 0 || emailMatches > 0
 }
 
