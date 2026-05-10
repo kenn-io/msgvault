@@ -21,12 +21,18 @@ func TestNormalizePhone(t *testing.T) {
 		{"003-362-4921221", "+33624921221"},
 		{"0033624921221", "+33624921221"},
 		{"004-479-35975580", "+447935975580"},
-		// Local/ambiguous — skipped.
-		{"011-585-73843", ""},
-		{"07738006043", ""},
-		{"077-380-06043", ""},
-		{"447700900000", ""},
-		{"2025551234", ""},
+		// 10-digit numbers default to US (+1) so common Contacts.app exports
+		// match iMessage handles that the importer normalized the same way.
+		{"2025551234", "+12025551234"},
+		{"(202) 555-1234", "+12025551234"},
+		{"202-555-1234", "+12025551234"},
+		// Non-US numbers without explicit country code are E.164-shaped but
+		// won't correspond to real handles — iMessage's importer applies the
+		// same defaulting, so within one archive the keys remain consistent.
+		{"447700900000", "+447700900000"},
+		{"07738006043", "+07738006043"},
+		{"011-585-73843", "+01158573843"},
+		// Empty / too-short / non-numeric — rejected.
 		{"", ""},
 		{"   ", ""},
 		{"abc", ""},
@@ -94,8 +100,8 @@ END:VCARD
 	if contacts[2].FullName != "Claire Mohacek - Amazon Studios" {
 		t.Errorf("contact 2 name = %q", contacts[2].FullName)
 	}
-	if len(contacts[2].Phones) != 0 {
-		t.Errorf("contact 2 phones = %v, want [] (local numbers skipped)", contacts[2].Phones)
+	if len(contacts[2].Phones) != 1 || contacts[2].Phones[0] != "+07738006043" {
+		t.Errorf("contact 2 phones = %v, want [+07738006043]", contacts[2].Phones)
 	}
 
 	if contacts[3].FullName != "Multi Phone Person" {

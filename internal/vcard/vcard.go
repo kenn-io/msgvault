@@ -7,8 +7,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
+
+	"github.com/wesm/msgvault/internal/textimport"
 )
 
 // Contact is a single parsed vCard entry.
@@ -175,30 +176,17 @@ func unhex(c byte) int {
 	}
 }
 
-var nonDigitRe = regexp.MustCompile(`[^\d]`)
-
-// normalizePhone normalizes a vCard phone number to E.164. Handles formats
-// like "+447...", "003-362-...", "+44 (0)7700 ...". Returns "" for
-// country-ambiguous numbers (local "0…" or bare digits) rather than
-// guessing — a wrong country prefix would match the wrong participant.
+// normalizePhone normalizes a vCard phone number to E.164 via the shared
+// textimport.NormalizePhone so vCard inputs match the keys produced when
+// iMessage handles are imported. 10-digit input defaults to "+1" — wrong
+// for users outside the US/Canada with locally-formatted vCards, but
+// symmetric with the iMessage importer (those same digits already get
+// the same defaulting on the import side, so the keys still match).
+// Returns "" when the input is not recognizable as a phone number.
 func normalizePhone(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	normalized, err := textimport.NormalizePhone(raw)
+	if err != nil {
 		return ""
 	}
-
-	hasPlus := strings.HasPrefix(raw, "+")
-	// Trunk prefix (0) common in UK/EU: "+44 (0)7700" means "+447700".
-	raw = strings.ReplaceAll(raw, "(0)", "")
-	digits := nonDigitRe.ReplaceAllString(raw, "")
-	if digits == "" {
-		return ""
-	}
-	if hasPlus {
-		return "+" + digits
-	}
-	if strings.HasPrefix(digits, "00") && len(digits) > 4 {
-		return "+" + digits[2:]
-	}
-	return ""
+	return normalized
 }
