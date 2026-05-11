@@ -843,6 +843,36 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	}
 }
 
+// TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant
+// covers the iMessage shape where message_recipients.display_name is
+// stored as the empty string (not NULL). A plain COALESCE on
+// mr.display_name lets that empty value mask the backfilled
+// participants.display_name. The fix NULLIF-trims the recipient column
+// so backfilled contact names show up in message lists.
+func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	// Phone-only participant with a vCard-backfilled display name.
+	alice := b.AddPhoneParticipant("+15551234567", "Alice Backfilled")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	// Empty recipient display_name — what import-imessage writes.
+	b.AddFrom(msg, alice, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.ListMessages(ctx, MessageFilter{})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d messages, want 1", len(results))
+	}
+	if got := results[0].FromName; got != "Alice Backfilled" {
+		t.Errorf("FromName = %q, want %q (empty mr.display_name should not mask p.display_name)", got, "Alice Backfilled")
+	}
+}
+
 // TestDuckDBEngine_AggregateAttachmentFields verifies attachment_count and attachment_size
 // are correctly scanned from aggregate queries (attachment_size is DOUBLE, attachment_count is INT).
 func TestDuckDBEngine_AggregateAttachmentFields(t *testing.T) {

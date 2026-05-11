@@ -1254,7 +1254,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(mr.display_name, p.display_name, '')) as from_name,
+				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -1863,7 +1863,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(mr.display_name, p.display_name, '')) as from_name,
+				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -1973,7 +1973,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(mr.display_name, p.display_name, '')) as from_name,
+				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -2235,7 +2235,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(p.email_address) as from_email,
-				   FIRST(COALESCE(mr.display_name, p.display_name, '')) as from_name,
+				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id

@@ -373,7 +373,7 @@ LEFT JOIN (
         mr.message_id,
         FIRST(p.email_address) AS from_email,
         FIRST(
-            COALESCE(mr.display_name, p.display_name, '')
+            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
         ) AS from_name,
         FIRST(p.domain) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone

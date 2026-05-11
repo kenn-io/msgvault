@@ -36,6 +36,21 @@ func participantNameExpr(alias string) string {
 	)
 }
 
+// recipientNameExpr returns the SQL expression for a from/to label tied to a
+// specific message_recipients row. Prefers mr.display_name (per-message Gmail
+// "From: Bob <...>" override) and otherwise falls through to the participant's
+// own name, phone, or email. Empty strings count as missing — iMessage rows
+// land in message_recipients with an empty (non-NULL) display_name, so a
+// plain COALESCE would let that empty value mask the backfilled contact name
+// on the participant. mrAlias/pAlias are the message_recipients and
+// participants table aliases (typically "mr" and "p").
+func recipientNameExpr(mrAlias, pAlias string) string {
+	return fmt.Sprintf(
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s.email_address, '')",
+		mrAlias, pAlias, pAlias, pAlias,
+	)
+}
+
 // fetchLabelsForMessageList adds labels to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, tablePrefix string, messages []MessageSummary) error {
@@ -108,11 +123,11 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, tablePrefix strin
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 func fetchParticipantsShared(ctx context.Context, db *sql.DB, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT mr.recipient_type, p.email_address, COALESCE(mr.display_name, p.display_name, '')
+		SELECT mr.recipient_type, p.email_address, %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
-	`, tablePrefix, tablePrefix), msg.ID)
+	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix), msg.ID)
 	if err != nil {
 		return err
 	}
