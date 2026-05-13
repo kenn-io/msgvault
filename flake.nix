@@ -12,12 +12,12 @@
           system: fn nixpkgs.legacyPackages.${system}
         );
 
-      # Pin Go 1.25.9 until nixpkgs-unstable catches up from staging
-      goPinned = pkgs: pkgs.go_1_25.overrideAttrs (old: rec {
-        version = "1.25.9";
+      # Pin Go 1.26.3 until nixpkgs-unstable catches up from staging
+      goPinned = pkgs: pkgs.go_1_26.overrideAttrs (old: rec {
+        version = "1.26.3";
         src = pkgs.fetchurl {
           url = "https://go.dev/dl/go${version}.src.tar.gz";
-          hash = "sha256-DsnvjrzqCXqsN97K6fCachi0Uc2Wvn1u1RPY5Lz5Cc8=";
+          hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
         };
       });
     in

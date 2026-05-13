@@ -43,13 +43,17 @@ func timeToAppleTimestamp(t time.Time, useNano bool) int64 {
 
 // resolveHandle classifies an iMessage handle ID as a phone number,
 // email address, or raw identifier (e.g. system handles).
+//
+// displayName is only set for non-phone, non-email handles (e.g. Apple
+// system identifiers). chat.db carries no contact names — UI layers
+// fall back to phone/email when display_name is empty.
 func resolveHandle(handleID string) (phone, email, displayName string) {
 	if handleID == "" {
 		return "", "", ""
 	}
 	normalized, err := textimport.NormalizePhone(handleID)
 	if err == nil {
-		return normalized, "", normalized
+		return normalized, "", ""
 	}
 	if strings.Contains(handleID, "@") {
 		return "", strings.ToLower(handleID), ""

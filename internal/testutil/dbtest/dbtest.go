@@ -262,6 +262,7 @@ func (tdb *TestDB) AddMessageLabel(messageID, labelID int64) {
 type ParticipantOpts struct {
 	Email       *string // nil = NULL; use StrPtr("x") for a value
 	DisplayName *string // nil = NULL
+	Phone       *string // nil = NULL; E.164 format when set
 	Domain      string
 }
 
@@ -281,9 +282,14 @@ func (tdb *TestDB) AddParticipant(opts ParticipantOpts) int64 {
 		email = *opts.Email
 	}
 
+	var phone interface{}
+	if opts.Phone != nil {
+		phone = *opts.Phone
+	}
+
 	_, err := tdb.DB.Exec(
-		`INSERT INTO participants (id, email_address, display_name, domain) VALUES (?, ?, ?, ?)`,
-		id, email, displayName, opts.Domain,
+		`INSERT INTO participants (id, email_address, display_name, phone_number, domain) VALUES (?, ?, ?, ?, ?)`,
+		id, email, displayName, phone, opts.Domain,
 	)
 	if err != nil {
 		tdb.T.Fatalf("AddParticipant: %v", err)

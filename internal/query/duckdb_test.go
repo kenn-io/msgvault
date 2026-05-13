@@ -759,6 +759,64 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	requireAggregateRow(t, results, "spaces@test.com")
 }
 
+// TestDuckDBEngine_AggregateBySenderName_PhoneFallback covers phone-only
+// iMessage/SMS participants (display_name and email_address empty,
+// phone_number set). The DuckDB engine reads participants.parquet, where
+// phone_number is COALESCEd to ” on export — NULLIF squashes it correctly.
+func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	b.AddFrom(msg, phoneOnly, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
+	if err != nil {
+		t.Fatalf("AggregateBySenderName: %v", err)
+	}
+	requireAggregateRow(t, results, "+15551234567")
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{SenderName: "+15551234567"})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Errorf("ListMessages by phone-fallback name: got %d, want 1", len(listed))
+	}
+}
+
+// TestDuckDBEngine_AggregateBySenderName_SearchByPhone covers the search
+// path for phone-only senders. Without phone_number in the SenderNames
+// keyColumns, a phone-only participant would appear in the unfiltered
+// aggregate but disappear when the user searches for that same phone.
+func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
+	other := b.AddParticipant("alice@test.com", "test.com", "Alice")
+	smsMsg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	b.AddFrom(smsMsg, phoneOnly, "")
+	emailMsg := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	b.AddFrom(emailMsg, other, "Alice")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "+15551234567"
+	results, err := engine.Aggregate(ctx, ViewSenderNames, opts)
+	if err != nil {
+		t.Fatalf("Aggregate ViewSenderNames (search by phone): %v", err)
+	}
+	requireAggregateRow(t, results, "+15551234567")
+	if got := len(results); got != 1 {
+		t.Errorf("phone search should isolate the phone-only sender; got %d rows", got)
+	}
+}
+
 func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	// Build Parquet data with a message that has no sender
 	b := NewTestDataBuilder(t)
@@ -782,6 +840,36 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	}
 	if len(results) > 0 && results[0].Subject != "No Sender" {
 		t.Errorf("expected 'No Sender', got %q", results[0].Subject)
+	}
+}
+
+// TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant
+// covers the iMessage shape where message_recipients.display_name is
+// stored as the empty string (not NULL). A plain COALESCE on
+// mr.display_name lets that empty value mask the backfilled
+// participants.display_name. The fix NULLIF-trims the recipient column
+// so backfilled contact names show up in message lists.
+func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	// Phone-only participant with a vCard-backfilled display name.
+	alice := b.AddPhoneParticipant("+15551234567", "Alice Backfilled")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	// Empty recipient display_name — what import-imessage writes.
+	b.AddFrom(msg, alice, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.ListMessages(ctx, MessageFilter{})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d messages, want 1", len(results))
+	}
+	if got := results[0].FromName; got != "Alice Backfilled" {
+		t.Errorf("FromName = %q, want %q (empty mr.display_name should not mask p.display_name)", got, "Alice Backfilled")
 	}
 }
 

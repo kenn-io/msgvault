@@ -1,6 +1,6 @@
 # Build stage
 # Pin by digest for reproducibility; update periodically
-FROM golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c AS builder
+FROM golang:1.26-bookworm@sha256:252599aeb51ad60b83e4d8821802068127c528c707cb7dd7afd93be057c6011c AS builder
 
 # Install build dependencies for CGO (SQLite, DuckDB)
 RUN apt-get update && apt-get install -y --no-install-recommends \

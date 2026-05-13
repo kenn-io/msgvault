@@ -88,11 +88,12 @@ func aggDimensionForView(view ViewType, timeGranularity TimeGranularity) (aggDim
 			whereExpr: "p.email_address IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
+		nameExpr := participantNameExpr("p")
 		return aggDimension{
-			keyExpr: "COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address)",
+			keyExpr: nameExpr,
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) IS NOT NULL",
+			whereExpr: nameExpr + " IS NOT NULL",
 		}, nil
 	case ViewRecipients:
 		return aggDimension{
@@ -102,11 +103,12 @@ func aggDimensionForView(view ViewType, timeGranularity TimeGranularity) (aggDim
 			whereExpr: "p.email_address IS NOT NULL",
 		}, nil
 	case ViewRecipientNames:
+		nameExpr := participantNameExpr("p")
 		return aggDimension{
-			keyExpr: "COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address)",
+			keyExpr: nameExpr,
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type IN ('to', 'cc', 'bcc')
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "COALESCE(NULLIF(TRIM(p.display_name), ''), p.email_address) IS NOT NULL",
+			whereExpr: nameExpr + " IS NOT NULL",
 		}, nil
 	case ViewDomains:
 		return aggDimension{
@@ -313,24 +315,24 @@ func buildFilterJoinsAndConditions(filter MessageFilter, tableAlias string) (str
 				LEFT JOIN participants p_direct_sender ON p_direct_sender.id = m.sender_id
 			`)
 		}
-		conditions = append(conditions, `(
-			COALESCE(NULLIF(TRIM(p_filter_from.display_name), ''), p_filter_from.email_address) = ?
-			OR COALESCE(NULLIF(TRIM(p_direct_sender.display_name), ''), p_direct_sender.email_address) = ?
-		)`)
+		conditions = append(conditions, fmt.Sprintf(`(
+			%s = ?
+			OR %s = ?
+		)`, participantNameExpr("p_filter_from"), participantNameExpr("p_direct_sender")))
 		args = append(args, filter.SenderName, filter.SenderName)
 	} else if filter.MatchesEmpty(ViewSenderNames) {
 		// A message has an "empty sender name" only if it has no from-recipient name AND no direct sender_id with a name.
-		conditions = append(conditions, `(NOT EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`(NOT EXISTS (
 			SELECT 1 FROM message_recipients mr_sn
 			JOIN participants p_sn ON p_sn.id = mr_sn.participant_id
 			WHERE mr_sn.message_id = m.id
 			  AND mr_sn.recipient_type = 'from'
-			  AND COALESCE(NULLIF(TRIM(p_sn.display_name), ''), p_sn.email_address) IS NOT NULL
+			  AND %s IS NOT NULL
 		) AND NOT EXISTS (
 			SELECT 1 FROM participants p_ds
 			WHERE p_ds.id = m.sender_id
-			  AND COALESCE(NULLIF(TRIM(p_ds.display_name), ''), p_ds.email_address) IS NOT NULL
-		))`)
+			  AND %s IS NOT NULL
+		))`, participantNameExpr("p_sn"), participantNameExpr("p_ds")))
 	}
 
 	// Recipient filter
@@ -364,16 +366,16 @@ func buildFilterJoinsAndConditions(filter MessageFilter, tableAlias string) (str
 				JOIN participants p_filter_to ON p_filter_to.id = mr_filter_to.participant_id
 			`)
 		}
-		conditions = append(conditions, "COALESCE(NULLIF(TRIM(p_filter_to.display_name), ''), p_filter_to.email_address) = ?")
+		conditions = append(conditions, participantNameExpr("p_filter_to")+" = ?")
 		args = append(args, filter.RecipientName)
 	} else if filter.MatchesEmpty(ViewRecipientNames) {
-		conditions = append(conditions, `NOT EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM message_recipients mr_rn
 			JOIN participants p_rn ON p_rn.id = mr_rn.participant_id
 			WHERE mr_rn.message_id = m.id
 			  AND mr_rn.recipient_type IN ('to', 'cc', 'bcc')
-			  AND COALESCE(NULLIF(TRIM(p_rn.display_name), ''), p_rn.email_address) IS NOT NULL
-		)`)
+			  AND %s IS NOT NULL
+		)`, participantNameExpr("p_rn")))
 	}
 
 	// Domain filter
@@ -1039,10 +1041,10 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 				LEFT JOIN participants p_ds ON p_ds.id = m.sender_id
 			`)
 		}
-		conditions = append(conditions, `(
-			COALESCE(NULLIF(TRIM(p_from.display_name), ''), p_from.email_address) = ?
-			OR COALESCE(NULLIF(TRIM(p_ds.display_name), ''), p_ds.email_address) = ?
-		)`)
+		conditions = append(conditions, fmt.Sprintf(`(
+			%s = ?
+			OR %s = ?
+		)`, participantNameExpr("p_from"), participantNameExpr("p_ds")))
 		args = append(args, filter.SenderName, filter.SenderName)
 	}
 
@@ -1065,7 +1067,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 				JOIN participants p_to ON p_to.id = mr_to.participant_id
 			`)
 		}
-		conditions = append(conditions, "COALESCE(NULLIF(TRIM(p_to.display_name), ''), p_to.email_address) = ?")
+		conditions = append(conditions, participantNameExpr("p_to")+" = ?")
 		args = append(args, filter.RecipientName)
 	}
 

@@ -146,6 +146,18 @@ func (b *TestDataBuilder) AddParticipant(email, domain, displayName string) int6
 	return id
 }
 
+// AddPhoneParticipant adds a phone-only participant (no email/domain) and
+// returns its ID. Mirrors the iMessage/SMS shape: phone_number set,
+// email_address NULL/empty.
+func (b *TestDataBuilder) AddPhoneParticipant(phone, displayName string) int64 {
+	id := b.nextPartID
+	b.nextPartID++
+	b.participants = append(b.participants, ParticipantFixture{
+		ID: id, DisplayName: displayName, PhoneNumber: phone,
+	})
+	return id
+}
+
 // AddLabel adds a label and returns its ID. Name must be non-empty.
 func (b *TestDataBuilder) AddLabel(name string) int64 {
 	b.t.Helper()
