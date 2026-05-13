@@ -30,36 +30,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Build multi-arch (no push)
+      - name: Build amd64 image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: false
+          load: true
+          tags: msgvault:test
           build-args: |
             VERSION=test
             COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test (amd64)
         run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --load \
-            --tag msgvault:test \
-            --build-arg VERSION=test \
-            --build-arg COMMIT=$(echo $GITHUB_SHA | cut -c1-8) \
-            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-            .
-
           docker run --rm msgvault:test version
           docker run --rm msgvault:test --help
 
@@ -114,11 +104,13 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
-            VERSION="dev-$(echo $GITHUB_SHA | cut -c1-8)"
+            VERSION="dev-$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "commit=$(echo $GITHUB_SHA | cut -c1-8)" >> $GITHUB_OUTPUT
-          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          {
+            echo "version=$VERSION"
+            echo "commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
