@@ -124,58 +124,6 @@ func (s *Store) UpdateMessageOnDedup(
 	})
 }
 
-// RenameSourceMessageID updates the source_message_id of an existing message
-// without touching labels or any other column. Used to migrate keys forward
-// when an importer's identifier scheme changes (e.g. PST archive fingerprint
-// namespacing).
-func (s *Store) RenameSourceMessageID(messageID int64, newSourceMessageID string) error {
-	if _, err := s.db.Exec(
-		`UPDATE messages SET source_message_id = ? WHERE id = ?`,
-		newSourceMessageID, messageID,
-	); err != nil {
-		return fmt.Errorf("rename source_message_id: %w", err)
-	}
-	return nil
-}
-
-// PstSourceRow is a minimal (id, source_message_id) pair returned by
-// ListPstSourceMessageIDs. The importer uses it to build an EntryID-indexed
-// map for dedup across fingerprint changes.
-type PstSourceRow struct {
-	ID              int64
-	SourceMessageID string
-}
-
-// ListPstSourceMessageIDs returns every row in the given source whose
-// source_message_id starts with "pst-". Used by the PST importer at startup
-// to dedup against rows under any fingerprint (including the pre-fingerprint
-// "pst-<EntryID>" form or a different fingerprint produced by a prior
-// import of the same archive whose header counters have since changed).
-func (s *Store) ListPstSourceMessageIDs(sourceID int64) ([]PstSourceRow, error) {
-	rows, err := s.db.Query(
-		`SELECT id, source_message_id FROM messages
-		 WHERE source_id = ? AND source_message_id LIKE 'pst-%'`,
-		sourceID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query pst rows: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []PstSourceRow
-	for rows.Next() {
-		var r PstSourceRow
-		if err := rows.Scan(&r.ID, &r.SourceMessageID); err != nil {
-			return nil, fmt.Errorf("scan pst row: %w", err)
-		}
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pst rows: %w", err)
-	}
-	return out, nil
-}
-
 // MessageExistsWithRawBatch checks which message IDs already exist in the database
 // and have raw MIME data stored.
 // Returns a map of source_message_id -> internal message_id.

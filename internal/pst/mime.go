@@ -2,9 +2,7 @@ package pst
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"mime"
 	"mime/multipart"
@@ -13,15 +11,6 @@ import (
 	"strings"
 	"time"
 )
-
-// boundaryFor returns a deterministic multipart boundary derived from a
-// PST EntryID and a role string. Stable across re-extractions so the same
-// PST message hashes identically each time it is read, which lets the
-// importer dedup via raw-content hash.
-func boundaryFor(entryID, role string) string {
-	h := sha256.Sum256([]byte(entryID + ":" + role))
-	return "msgvault-pst-" + hex.EncodeToString(h[:12])
-}
 
 // BuildRFC5322 constructs raw RFC 5322/MIME bytes from a MessageEntry and its
 // attachments.
@@ -54,7 +43,6 @@ func BuildRFC5322(msg *MessageEntry, attachments []AttachmentEntry) ([]byte, err
 	case hasAtts:
 		// Wrap body and attachments in multipart/mixed.
 		mw := multipart.NewWriter(&bodyBuf)
-		_ = mw.SetBoundary(boundaryFor(msg.EntryID, "mixed"))
 		fmt.Fprintf(&headerBuf, "MIME-Version: 1.0\r\nContent-Type: multipart/mixed;\r\n\tboundary=%q\r\n\r\n", mw.Boundary())
 
 		// Body sub-part.
@@ -64,7 +52,6 @@ func BuildRFC5322(msg *MessageEntry, attachments []AttachmentEntry) ([]byte, err
 			// the boundary before writing the outer part header.
 			var innerBuf bytes.Buffer
 			altW := multipart.NewWriter(&innerBuf)
-			_ = altW.SetBoundary(boundaryFor(msg.EntryID, "alternative"))
 			writeTextPart(altW, msg.BodyText)
 			writeHTMLPart(altW, msg.BodyHTML)
 			_ = altW.Close()
@@ -118,7 +105,6 @@ func BuildRFC5322(msg *MessageEntry, attachments []AttachmentEntry) ([]byte, err
 	case hasText && hasHTML:
 		// multipart/alternative with no attachments.
 		mw := multipart.NewWriter(&bodyBuf)
-		_ = mw.SetBoundary(boundaryFor(msg.EntryID, "alternative"))
 		fmt.Fprintf(&headerBuf, "MIME-Version: 1.0\r\nContent-Type: multipart/alternative;\r\n\tboundary=%q\r\n\r\n", mw.Boundary())
 		writeTextPart(mw, msg.BodyText)
 		writeHTMLPart(mw, msg.BodyHTML)

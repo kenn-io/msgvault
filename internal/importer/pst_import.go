@@ -1,7 +1,6 @@
 package importer
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,12 +11,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
-	"github.com/wesm/msgvault/internal/mime"
 	pstreader "github.com/wesm/msgvault/internal/pst"
 	"github.com/wesm/msgvault/internal/store"
 )
@@ -149,17 +146,6 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	src, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get/create source: %w", err)
-	}
-
-	// Index existing PST rows in this source by EntryID so the dedup
-	// check below can find rows under any prior key shape — the legacy
-	// "pst-<EntryID>" form, the current "pst-<fingerprint>-<EntryID>"
-	// form, or rows written under a now-stale fingerprint (e.g., the PST
-	// header counters changed between imports). Content equivalence is
-	// verified per match before any row is renamed.
-	existingByEntryID, err := loadExistingPstByEntryID(st, src.ID)
-	if err != nil {
-		return nil, fmt.Errorf("load existing pst rows: %w", err)
 	}
 
 	// Set display name to the PST filename so it appears in list-accounts / get_stats.
@@ -298,16 +284,9 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	)
 
 	type pendingPstMessage struct {
-		Raw         []byte
-		RawHash     string
-		SourceMsgID string
-		// EntryID is the per-archive PST node identifier (a decimal
-		// integer as string). Used to dedup against existing rows whose
-		// source_message_id encodes the same EntryID under a different
-		// (or absent) archive fingerprint — covers both rows imported by
-		// msgvault versions predating the fingerprint and rows imported
-		// from a PST whose header counters changed before re-import.
-		EntryID      string
+		Raw          []byte
+		RawHash      string
+		SourceMsgID  string
 		FallbackDate time.Time
 		LabelID      int64
 		FolderIndex  int
@@ -390,40 +369,6 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 						}
 						continue
 					}
-				}
-			}
-
-			// Cross-fingerprint dedup: an existing row in this source may
-			// already hold this message under a different key — the
-			// legacy "pst-<EntryID>" form, or "pst-<otherFingerprint>-<EntryID>"
-			// from a previous import of the same archive whose header
-			// counters have since shifted. Migrate the row's key forward
-			// only when its parsed body content matches what we just
-			// extracted; a mismatch means a different archive coincidentally
-			// allocated the same EntryID and the existing row must be
-			// preserved.
-			if p.EntryID != "" {
-				migrated := false
-				for _, cand := range existingByEntryID[p.EntryID] {
-					if cand.SourceMsgID == p.SourceMsgID {
-						continue
-					}
-					if migratePstKey(st, cand.MsgID, p.Raw, p.SourceMsgID, log) {
-						summary.MessagesSkipped++
-						if p.LabelID != 0 {
-							if err := st.AddMessageLabels(cand.MsgID, []int64{p.LabelID}); err != nil {
-								log.Warn("add labels to migrated message", "error", err)
-							}
-						}
-						if !checkpointBlocked && cp.MessagesProcessed%int64(opts.CheckpointInterval) == 0 {
-							saveCp(p.FolderIndex, p.FolderPath, p.MsgIndex)
-						}
-						migrated = true
-						break
-					}
-				}
-				if migrated {
-					continue
 				}
 			}
 
@@ -584,7 +529,6 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 				Raw:          raw,
 				RawHash:      rawHash,
 				SourceMsgID:  sourceMsgID,
-				EntryID:      entry.EntryID,
 				FallbackDate: fallbackDate,
 				LabelID:      labelID,
 				FolderIndex:  fi,
@@ -630,149 +574,6 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	}
 
 	return summary, nil
-}
-
-// existingPstRow is the per-EntryID bookkeeping needed to migrate an existing
-// PST row to the current import's key after content verification.
-type existingPstRow struct {
-	MsgID       int64
-	SourceMsgID string
-}
-
-// loadExistingPstByEntryID indexes every PST row in the given source by its
-// trailing EntryID. The same EntryID may map to multiple rows when prior
-// imports recorded the same message under different fingerprint forms (or no
-// fingerprint at all).
-func loadExistingPstByEntryID(st *store.Store, sourceID int64) (map[string][]existingPstRow, error) {
-	rows, err := st.ListPstSourceMessageIDs(sourceID)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string][]existingPstRow, len(rows))
-	for _, r := range rows {
-		eid := entryIDFromPstSourceMessageID(r.SourceMessageID)
-		if eid == "" {
-			continue
-		}
-		out[eid] = append(out[eid], existingPstRow{
-			MsgID:       r.ID,
-			SourceMsgID: r.SourceMessageID,
-		})
-	}
-	return out, nil
-}
-
-// entryIDFromPstSourceMessageID returns the trailing EntryID from a PST
-// source_message_id. Handles both shapes the importer can produce:
-//
-//	pst-<EntryID>                  (pre-fingerprint imports)
-//	pst-<fingerprint>-<EntryID>    (current scheme)
-//
-// EntryIDs are decimal integers and never contain a hyphen themselves, so
-// the segment after the final hyphen identifies the EntryID unambiguously.
-func entryIDFromPstSourceMessageID(key string) string {
-	if !strings.HasPrefix(key, "pst-") {
-		return ""
-	}
-	rest := key[len("pst-"):]
-	if i := strings.LastIndex(rest, "-"); i >= 0 {
-		return rest[i+1:]
-	}
-	return rest
-}
-
-// migratePstKey renames an existing PST row to newSourceMessageID after
-// confirming via a canonical parsed-message digest that the row holds the
-// same message we are about to ingest. Comparing via mime.Parse rather
-// than raw bytes is essential because pre-fingerprint builds emitted
-// random multipart boundaries; the digest goes further and covers
-// Message-ID, Date, From/To, and attachment content hashes so two
-// distinct archives that happen to share an EntryID and a body but
-// differ in any of those identifying fields are not collapsed.
-func migratePstKey(
-	st *store.Store, existingMessageID int64,
-	currentRaw []byte, newSourceMessageID string,
-	log *slog.Logger,
-) bool {
-	existingRaw, err := st.GetMessageRaw(existingMessageID)
-	if err != nil {
-		log.Warn("existing raw fetch failed",
-			"message_id", existingMessageID, "error", err)
-		return false
-	}
-	existingParsed, err := mime.Parse(existingRaw)
-	if err != nil {
-		log.Warn("existing parse failed",
-			"message_id", existingMessageID, "error", err)
-		return false
-	}
-	currentParsed, err := mime.Parse(currentRaw)
-	if err != nil {
-		log.Warn("current parse failed", "error", err)
-		return false
-	}
-	if pstMessageDigest(existingParsed) != pstMessageDigest(currentParsed) {
-		return false
-	}
-	if err := st.RenameSourceMessageID(existingMessageID, newSourceMessageID); err != nil {
-		log.Warn("rename pst key failed",
-			"message_id", existingMessageID, "new", newSourceMessageID, "error", err)
-		return false
-	}
-	return true
-}
-
-// pstMessageDigest returns a stable hex digest of the message's identifying
-// fields. Two parsed messages produce the same digest iff their Subject,
-// Message-ID, Date, From/To addresses, body text/HTML, and attachment
-// content hashes all match. Used by the dedup migration as a stronger
-// equivalence check than body-only comparison — sufficient to refuse
-// renaming when two archives coincidentally share an EntryID but differ
-// in any header or attachment.
-func pstMessageDigest(m *mime.Message) string {
-	var buf bytes.Buffer
-	buf.WriteString("subject:")
-	buf.WriteString(m.Subject)
-	buf.WriteString("\nmsgid:")
-	buf.WriteString(strings.Trim(m.MessageID, "<>"))
-	buf.WriteString("\ndate:")
-	if !m.Date.IsZero() {
-		buf.WriteString(m.Date.UTC().Format(time.RFC3339))
-	}
-	buf.WriteString("\nfrom:")
-	writeSortedEmails(&buf, m.From)
-	buf.WriteString("\nto:")
-	writeSortedEmails(&buf, m.To)
-	buf.WriteString("\ncc:")
-	writeSortedEmails(&buf, m.Cc)
-	buf.WriteString("\ntext:")
-	buf.WriteString(m.BodyText)
-	buf.WriteString("\nhtml:")
-	buf.WriteString(m.BodyHTML)
-	buf.WriteString("\natts:")
-	hashes := make([]string, 0, len(m.Attachments))
-	for _, a := range m.Attachments {
-		hashes = append(hashes, a.ContentHash)
-	}
-	sort.Strings(hashes)
-	for _, h := range hashes {
-		buf.WriteString(h)
-		buf.WriteByte(',')
-	}
-	sum := sha256.Sum256(buf.Bytes())
-	return hex.EncodeToString(sum[:])
-}
-
-func writeSortedEmails(buf *bytes.Buffer, addrs []mime.Address) {
-	emails := make([]string, 0, len(addrs))
-	for _, a := range addrs {
-		emails = append(emails, strings.ToLower(strings.TrimSpace(a.Email)))
-	}
-	sort.Strings(emails)
-	for _, e := range emails {
-		buf.WriteString(e)
-		buf.WriteByte(',')
-	}
 }
 
 // pstArchiveFingerprint returns a short stable identifier for a PST file,
