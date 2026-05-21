@@ -19,10 +19,10 @@ var setupCmd = &cobra.Command{
 	Short: "Interactive setup wizard for first-run configuration",
 	Long: `Interactive setup wizard to configure msgvault for first use.
 
-This command helps you:
-  1. Locate or configure Google OAuth credentials
-  2. Create the config.toml file
-  3. Optionally configure a remote NAS server for token export
+This command helps you optionally configure a remote NAS server for
+token export and headless deployment. msgvault ships with an embedded
+verified OAuth client, so no client_secret.json is required for the
+standard setup.
 
 Run this once after installing msgvault to get started quickly.`,
 	Args: cobra.NoArgs,
@@ -39,45 +39,35 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	fmt.Println("Welcome to msgvault setup!")
 	fmt.Println()
 
-	// Ensure home directory exists
 	if err := cfg.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create home directory: %w", err)
 	}
 
-	// Step 1: Find or prompt for OAuth credentials
-	secretsPath, err := setupOAuthSecrets(reader)
+	// Configure remote NAS (optional). msgvault now ships with an
+	// embedded verified OAuth client, so the old "Step 1: OAuth
+	// credentials" prompt is gone. Operators who want their own OAuth
+	// client can still set [oauth] client_secrets in config.toml
+	// manually.
+	remoteURL, remoteAPIKey, err := setupRemoteServer(reader)
 	if err != nil {
 		return err
 	}
 
-	// Step 2: Optionally configure remote NAS
-	remoteURL, remoteAPIKey, err := setupRemoteServer(reader, secretsPath)
-	if err != nil {
-		return err
-	}
-
-	// Step 3: Update config
-	if secretsPath != "" {
-		cfg.OAuth.ClientSecrets = secretsPath
-	}
 	if remoteURL != "" {
 		cfg.Remote.URL = remoteURL
 		cfg.Remote.APIKey = remoteAPIKey
-		// Auto-set for HTTP: target is Tailscale/LAN, not public internet.
 		if strings.HasPrefix(remoteURL, "http://") {
 			cfg.Remote.AllowInsecure = true
 		}
 	}
 
-	// Only save if we configured something
-	if secretsPath != "" || remoteURL != "" {
+	if remoteURL != "" {
 		if err := cfg.Save(); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
 		fmt.Printf("\nConfiguration saved to %s\n", cfg.ConfigFilePath())
 	}
 
-	// Print next steps
 	fmt.Println()
 	fmt.Println("Setup complete! Next steps:")
 	fmt.Println()
@@ -97,55 +87,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
-	fmt.Println("Step 1: OAuth Credentials")
-	fmt.Println("--------------------------")
-
-	// Check if already configured
-	if cfg.OAuth.ClientSecrets != "" {
-		fmt.Printf("OAuth credentials already configured: %s\n", cfg.OAuth.ClientSecrets)
-		if promptYesNo(reader, "Keep existing configuration?") {
-			return "", nil
-		}
-	}
-
+func setupRemoteServer(reader *bufio.Reader) (string, string, error) {
 	fmt.Println()
-	fmt.Println("You need a Google Cloud OAuth credential (client_secret.json).")
-	fmt.Println()
-	fmt.Println("To get one:")
-	fmt.Println("  1. Go to https://console.cloud.google.com/apis/credentials")
-	fmt.Println("  2. Create OAuth client ID (Desktop app)")
-	fmt.Println("  3. Download the JSON file")
-	fmt.Println()
-
-	// Prompt for path
-	fmt.Print("Path to client_secret.json: ")
-	path, _ := reader.ReadString('\n')
-	path = strings.TrimSpace(path)
-
-	if path == "" {
-		return "", fmt.Errorf("OAuth credentials path is required")
-	}
-
-	// Expand ~ in path
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, path[2:])
-	}
-
-	// Verify file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return "", fmt.Errorf("file not found: %s", path)
-	}
-
-	fmt.Printf("Using: %s\n", path)
-	return path, nil
-}
-
-func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, string, error) {
-	fmt.Println()
-	fmt.Println("Step 2: Remote NAS Server (Optional)")
-	fmt.Println("-------------------------------------")
+	fmt.Println("Remote NAS Server (Optional)")
+	fmt.Println("----------------------------")
 	fmt.Println("Configure a remote msgvault server to export tokens for headless deployment.")
 	fmt.Println()
 
@@ -199,11 +144,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, s
 	fmt.Printf("\nGenerated API key: %s\n", apiKey)
 
 	// Create NAS deployment bundle
-	// Use existing secrets path if user kept their current OAuth config
-	effectiveSecrets := oauthSecretsPath
-	if effectiveSecrets == "" {
-		effectiveSecrets = cfg.OAuth.ClientSecrets
-	}
+	effectiveSecrets := cfg.OAuth.ClientSecrets // empty when operator uses embedded
 	bundleDir := filepath.Join(cfg.HomeDir, "nas-bundle")
 	if err := createNASBundle(bundleDir, apiKey, effectiveSecrets, port); err != nil {
 		fmt.Printf("Warning: Could not create NAS bundle: %v\n", err)
@@ -244,9 +185,6 @@ bind_addr = "0.0.0.0"
 api_port = 8080
 api_key = %q
 
-[oauth]
-client_secrets = "/data/client_secret.json"
-
 [sync]
 rate_limit_qps = 5
 
@@ -257,6 +195,13 @@ rate_limit_qps = 5
 # schedule = "0 2 * * *"
 # enabled = true
 `, apiKey)
+
+	if oauthSecretsPath != "" {
+		nasConfig += `
+[oauth]
+client_secrets = "/data/client_secret.json"
+`
+	}
 
 	configPath := filepath.Join(bundleDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(nasConfig), 0600); err != nil {

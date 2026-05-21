@@ -39,6 +39,12 @@ func TestCreateNASBundle(t *testing.T) {
 	if !strings.Contains(configStr, "0.0.0.0") {
 		t.Error("config.toml should bind to 0.0.0.0")
 	}
+	if !strings.Contains(configStr, "[oauth]") {
+		t.Error("config.toml should contain [oauth] section when secrets are provided")
+	}
+	if !strings.Contains(configStr, `client_secrets = "/data/client_secret.json"`) {
+		t.Error("config.toml should set client_secrets to /data/client_secret.json")
+	}
 
 	// Verify config.toml has secure permissions
 	// Windows doesn't support Unix file permissions.
@@ -95,6 +101,16 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(bundleDir, "client_secret.json")); !os.IsNotExist(err) {
 		t.Error("client_secret.json should not exist when no secrets path given")
 	}
+
+	// config.toml should NOT contain [oauth] section when no secrets provided;
+	// the NAS instance falls back to the embedded verified OAuth client.
+	configBytes, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
+	if err != nil {
+		t.Fatalf("read bundle config: %v", err)
+	}
+	if strings.Contains(string(configBytes), "[oauth]") {
+		t.Error("config.toml should not contain [oauth] section when no secrets provided")
+	}
 }
 
 func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
@@ -125,7 +141,11 @@ func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
 	}
-	if !strings.Contains(string(cfgData), `/data/client_secret.json`) {
+	cfgStr := string(cfgData)
+	if !strings.Contains(cfgStr, "[oauth]") {
+		t.Error("config.toml should contain [oauth] section when secrets are provided")
+	}
+	if !strings.Contains(cfgStr, `/data/client_secret.json`) {
 		t.Error("config.toml should reference /data/client_secret.json")
 	}
 }
