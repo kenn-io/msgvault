@@ -1,51 +1,65 @@
 {
+  description = "msgvault — offline Gmail archive with full-text search";
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    gitignore.url = "github:hercules-ci/gitignore.nix";
+    gitignore.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
-    { nixpkgs, ... }:
-    let
-      forAllSystems =
-        fn:
-        nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ] (
-          system: fn nixpkgs.legacyPackages.${system}
-        );
-
-      # Pin Go 1.26.3 until nixpkgs-unstable catches up from staging
-      goPinned = pkgs: pkgs.go_1_26.overrideAttrs (old: rec {
-        version = "1.26.3";
-        src = pkgs.fetchurl {
-          url = "https://go.dev/dl/go${version}.src.tar.gz";
-          hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
-        };
-      });
-    in
     {
-      packages = forAllSystems (pkgs: {
-        default = (pkgs.buildGoModule.override { go = goPinned pkgs; }) {
-          pname = "msgvault";
-          version = "0.14.1";
-          src = ./.;
-          vendorHash = "sha256-/C+svBQ4b9+l8nY8BZ5Lvd072XLKpRDIR2fvqVqLJUE=";
-          proxyVendor = true;
-          subPackages = [ "cmd/msgvault" ];
-          tags = [ "fts5" ];
-          ldflags = [
-            "-X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=nix-dev"
-          ];
-        };
-      });
+      nixpkgs,
+      flake-utils,
+      gitignore,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
+        # Pin Go 1.26.3 until nixpkgs-unstable ships it (currently 1.26.2).
+        # Scoped to msgvault only — do NOT export via overlay, that would
+        # invalidate every Go derivation in the transitive closure.
+        goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
+          version = "1.26.3";
+          src = pkgs.fetchurl {
+            url = "https://go.dev/dl/go${version}.src.tar.gz";
+            hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
+          };
+        });
+
+        buildGoModule = pkgs.buildGoModule.override { go = goPinned; };
+
+        msgvault = pkgs.callPackage ./nix/package.nix {
+          inherit buildGoModule;
+          inherit (gitignore.lib) gitignoreSource;
+        };
+      in
+      {
+        packages = {
+          default = msgvault;
+          msgvault = msgvault;
+        };
+
+        apps.default = flake-utils.lib.mkApp { drv = msgvault; };
+
+        devShells.default = pkgs.mkShell {
           packages = [
-            (goPinned pkgs)
+            goPinned
+            pkgs.gopls
+            pkgs.gotools
             pkgs.golangci-lint
+            pkgs.delve
             pkgs.gcc
             pkgs.prek
+            pkgs.sqlite-interactive
           ];
         };
-      });
-    };
+
+        formatter = pkgs.nixfmt-rfc-style;
+      }
+    );
 }
