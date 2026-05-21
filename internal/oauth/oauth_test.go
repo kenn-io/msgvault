@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -531,6 +532,26 @@ func TestNewCallbackHandler(t *testing.T) {
 	}
 }
 
+func TestCallbackHandlerAccessDenied(t *testing.T) {
+	mgr := &Manager{logger: slog.Default()}
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	handler := mgr.newCallbackHandler("expected-state", codeChan, errChan)
+
+	req := httptest.NewRequest("GET", "/callback?error=access_denied&state=expected-state", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, errAccessDenied) {
+			t.Errorf("callback error = %v, want errAccessDenied", err)
+		}
+	default:
+		t.Fatal("callback handler did not send an error")
+	}
+}
+
 // TestAuthorize_SavesUnderOriginalIdentifier exercises the real
 // authorize() method end-to-end (with injected browserFlow and
 // profile server) to verify the token is saved under the original
@@ -784,5 +805,72 @@ func TestValidateBrowserURL(t *testing.T) {
 				assertpkg.ErrorContains(t, err, tt.wantErr, "validateBrowserURL(%q)", tt.url)
 			}
 		})
+	}
+}
+
+func TestScopesEmbedded(t *testing.T) {
+	want := []string{
+		"https://www.googleapis.com/auth/gmail.readonly",
+		"https://www.googleapis.com/auth/gmail.modify",
+		"https://mail.google.com/",
+	}
+	if len(ScopesEmbedded) != len(want) {
+		t.Fatalf("ScopesEmbedded has %d entries, want %d", len(ScopesEmbedded), len(want))
+	}
+	for i, scope := range want {
+		if ScopesEmbedded[i] != scope {
+			t.Errorf("ScopesEmbedded[%d] = %q, want %q", i, ScopesEmbedded[i], scope)
+		}
+	}
+}
+
+func TestAuthorizeEmbeddedFallbackMessage(t *testing.T) {
+	tokensDir := t.TempDir()
+	mgr := &Manager{
+		config:     &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
+		tokensDir:  tokensDir,
+		logger:     slog.Default(),
+		isEmbedded: true,
+		browserFlowFn: func(ctx context.Context, email string, launchBrowser bool) (*oauth2.Token, error) {
+			return nil, errAccessDenied
+		},
+	}
+
+	var buf bytes.Buffer
+	origStdout := stdout
+	stdout = &buf
+	defer func() { stdout = origStdout }()
+
+	err := mgr.Authorize(context.Background(), "u@example.com")
+	if !errors.Is(err, errAccessDenied) {
+		t.Fatalf("Authorize error = %v, want errAccessDenied", err)
+	}
+	if !strings.Contains(buf.String(), "still in Google's verification") {
+		t.Errorf("expected fallback message, got: %q", buf.String())
+	}
+}
+
+func TestAuthorizeNonEmbeddedNoFallback(t *testing.T) {
+	mgr := &Manager{
+		config:    &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
+		tokensDir: t.TempDir(),
+		logger:    slog.Default(),
+		// isEmbedded: false (default)
+		browserFlowFn: func(ctx context.Context, email string, launchBrowser bool) (*oauth2.Token, error) {
+			return nil, errAccessDenied
+		},
+	}
+
+	var buf bytes.Buffer
+	origStdout := stdout
+	stdout = &buf
+	defer func() { stdout = origStdout }()
+
+	err := mgr.Authorize(context.Background(), "u@example.com")
+	if !errors.Is(err, errAccessDenied) {
+		t.Fatalf("Authorize error = %v, want errAccessDenied", err)
+	}
+	if strings.Contains(buf.String(), "still in Google's verification") {
+		t.Errorf("did not expect fallback message for non-embedded, got: %q", buf.String())
 	}
 }
