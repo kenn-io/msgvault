@@ -28,19 +28,26 @@ msgvault add-account user@gmail.com
 msgvault add-account user@gmail.com --headless
 ```
 
-Requires `oauth.client_secrets` to be set in `~/.msgvault/config.toml` pointing
-to a Google Cloud OAuth client secrets JSON file.
+msgvault ships with a verified OAuth client, so no Google Cloud Console
+setup is required. Bringing your own OAuth app is optional and advanced —
+see the Configuration section below.
 
 ### Configuration
 
 The config file is at `~/.msgvault/config.toml`:
 
 ```toml
-[oauth]
-client_secrets = "/path/to/client_secret.json"
-
 [sync]
 rate_limit_qps = 5
+```
+
+Advanced: to override the embedded OAuth client with your own Google Cloud
+Desktop OAuth client (Workspace orgs that block third-party apps, custom
+quota, or a verification-window fallback), add:
+
+```toml
+[oauth]
+client_secrets = "/path/to/client_secret.json"
 ```
 
 ## Syncing email
