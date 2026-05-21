@@ -19,8 +19,8 @@ import (
 // flow security. The values below are the dev project's credentials,
 // suitable for contributor builds. Production binaries override both.
 var (
-	oauthClientID     = "TBD-msgvault-dev-client-id"
-	oauthClientSecret = "TBD-msgvault-dev-client-secret"
+	oauthClientID     = "913114107126-tfruv1983bsv811mbjkqjvtd23io5b93.apps.googleusercontent.com"
+	oauthClientSecret = "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"
 )
 
 // HasEmbeddedCredentials reports whether the package vars are non-empty.
