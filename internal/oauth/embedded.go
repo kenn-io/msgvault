@@ -12,7 +12,7 @@ import (
 // msgvault OAuth client credentials. They are package vars (not consts)
 // so release builds can override them via:
 //
-//	go build -ldflags "-X github.com/wesm/msgvault/internal/oauth.oauthClientID=..."
+//	go build -ldflags "-X go.kenn.io/msgvault/internal/oauth.oauthClientID=..."
 //
 // Per https://developers.google.com/identity/protocols/oauth2 the desktop
 // client secret is "obviously not treated as a secret"; PKCE provides the
