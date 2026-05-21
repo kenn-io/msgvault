@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,77 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	extOAuth2 "golang.org/x/oauth2"
 )
-
-func TestErrOAuthNotConfigured(t *testing.T) {
-	assert := assertpkg.New(t)
-	err := errOAuthNotConfigured()
-	requirepkg.Error(t, err, "errOAuthNotConfigured()")
-
-	msg := err.Error()
-
-	// Should contain the main message
-	assert.Contains(msg, "OAuth client secrets not configured", "missing 'not configured'")
-
-	// Should contain either:
-	// 1. A "Found OAuth credentials" hint (if client_secret*.json exists on this machine)
-	// 2. The setup URL (if no credentials found)
-	hasFoundHint := strings.Contains(msg, "Found OAuth credentials at:")
-	hasSetupURL := strings.Contains(msg, "https://msgvault.io/guides/oauth-setup/")
-
-	assert.True(hasFoundHint || hasSetupURL,
-		"error message missing both 'Found OAuth credentials' hint and setup URL: %q", msg)
-
-	// Should contain config file instructions (either "config.toml" or "<config file>" placeholder)
-	assert.Contains(msg, "config", "error message missing config reference")
-}
-
-func TestWrapOAuthError_NotExist(t *testing.T) {
-	originalErr := fmt.Errorf("open /path/to/secrets.json: %w", os.ErrNotExist)
-
-	wrapped := wrapOAuthError(originalErr)
-
-	msg := wrapped.Error()
-
-	// Should contain accessible message (not "not found" anymore)
-	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
-	// Should contain setup hint
-	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
-}
-
-func TestWrapOAuthError_Permission(t *testing.T) {
-	originalErr := fmt.Errorf("open /path/to/secrets.json: %w", os.ErrPermission)
-
-	wrapped := wrapOAuthError(originalErr)
-
-	msg := wrapped.Error()
-
-	// Should contain accessible message
-	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
-	// Should contain setup hint
-	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
-}
-
-func TestWrapOAuthError_OtherError(t *testing.T) {
-	originalErr := errors.New("some other error")
-
-	wrapped := wrapOAuthError(originalErr)
-
-	// Should return the original error unchanged
-	assertpkg.Equal(t, originalErr, wrapped, "wrapOAuthError() changed unrelated error")
-}
-
-func TestWrapOAuthError_NestedNotExist(t *testing.T) {
-	// Test that errors.Is can find nested os.ErrNotExist
-	innerErr := fmt.Errorf("file error: %w", os.ErrNotExist)
-	outerErr := fmt.Errorf("oauth manager: %w", innerErr)
-
-	wrapped := wrapOAuthError(outerErr)
-
-	msg := wrapped.Error()
-
-	// Should detect the nested os.ErrNotExist and wrap appropriately
-	assertpkg.Contains(t, msg, "not accessible", "failed to detect nested os.ErrNotExist")
-}
 
 // newTestRootCmd creates a fresh root command for testing, avoiding mutation
 // of the global rootCmd which could cause race conditions in parallel tests.

@@ -58,7 +58,6 @@ Examples:
 		// Resolve which client secrets to use
 		resolvedApp := oauthAppName
 		oauthAppExplicit := cmd.Flags().Changed("oauth-app")
-		var clientSecretsPath string
 
 		// Initialize database (in case it's new)
 		dbPath := cfg.DatabaseDSN()
@@ -174,19 +173,11 @@ Examples:
 			return nil
 		}
 
-		// Resolve client secrets path (standard OAuth flow)
-		clientSecretsPath, err = cfg.OAuth.ClientSecretsFor(resolvedApp)
+		// Build the OAuth manager. resolveOAuthManager handles named BYO,
+		// global BYO, and the embedded fallback automatically.
+		oauthMgr, err := resolveOAuthManager(cfg, resolvedApp, oauth.Scopes, logger)
 		if err != nil {
-			if !cfg.OAuth.HasAnyConfig() {
-				return errOAuthNotConfigured()
-			}
 			return err
-		}
-
-		// Create OAuth manager
-		oauthMgr, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
-		if err != nil {
-			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 		}
 
 		// If --force, delete existing token so we re-authorize
