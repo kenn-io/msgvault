@@ -118,10 +118,6 @@ Examples:
 			for _, src := range allSources {
 				switch src.SourceType {
 				case "gmail":
-					if !cfg.OAuth.HasAnyConfig() {
-						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
-						continue
-					}
 					appName := sourceOAuthApp(src)
 					// Service accounts are always ready — no per-user token needed
 					if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
@@ -443,14 +439,7 @@ func buildSyncQuery() string {
 		parts = append(parts, syncQuery)
 	}
 
-	result := ""
-	for i, p := range parts {
-		if i > 0 {
-			result += " "
-		}
-		result += p
-	}
-	return result
+	return strings.Join(parts, " ")
 }
 
 // CLIProgress implements gmail.SyncProgressWithDate for terminal output.

@@ -513,7 +513,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	_ = s.Close()
 
 	// Write OAuth client secrets and a fake token so the Gmail
-	// source passes discovery checks (HasAnyConfig + HasToken).
+	// source passes discovery checks.
 	secretsPath := filepath.Join(tmpDir, "client_secret.json")
 	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
 		t.Fatalf("write client secrets: %v", err)

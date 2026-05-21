@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -1221,5 +1222,65 @@ func TestAddAccount_ForceServiceAccountReturnsActionableError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "service accounts do not use --force") {
 		t.Fatalf("error = %v, want service accounts do not use --force", err)
+	}
+}
+
+func TestAddAccount_ResolverBranches(t *testing.T) {
+	tests := []struct {
+		name        string
+		appName     string
+		setup       func(cfg *config.Config, t *testing.T)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "named BYO with client_secrets",
+			appName: "acme",
+			setup: func(cfg *config.Config, t *testing.T) {
+				path := writeStubClientSecrets(t, cfg.Data.DataDir, "acme.json")
+				cfg.OAuth.Apps = map[string]config.OAuthApp{"acme": {ClientSecrets: path}}
+			},
+			wantErr: false,
+		},
+		{
+			name:        "named app without client_secrets",
+			appName:     "missing",
+			setup:       func(cfg *config.Config, t *testing.T) {},
+			wantErr:     true,
+			errContains: "missing",
+		},
+		{
+			name:    "global BYO",
+			appName: "",
+			setup: func(cfg *config.Config, t *testing.T) {
+				cfg.OAuth.ClientSecrets = writeStubClientSecrets(t, cfg.Data.DataDir, "default.json")
+			},
+			wantErr: false,
+		},
+		{
+			name:    "no config falls through to embedded",
+			appName: "",
+			setup:   func(cfg *config.Config, t *testing.T) {},
+			wantErr: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newTestConfig(t)
+			tc.setup(cfg, t)
+			_, err := resolveOAuthManager(cfg, tc.appName, oauth.Scopes, slog.Default())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tc.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
