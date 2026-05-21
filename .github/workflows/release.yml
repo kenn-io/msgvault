@@ -52,12 +52,18 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
+          MSGVAULT_OAUTH_CLIENT_ID: ${{ secrets.MSGVAULT_OAUTH_CLIENT_ID }}
+          MSGVAULT_OAUTH_CLIENT_SECRET: ${{ secrets.MSGVAULT_OAUTH_CLIENT_SECRET }}
         run: |
+          if [ -z "$MSGVAULT_OAUTH_CLIENT_ID" ] || [ -z "$MSGVAULT_OAUTH_CLIENT_SECRET" ]; then
+            echo "FATAL: MSGVAULT_OAUTH_CLIENT_ID and MSGVAULT_OAUTH_CLIENT_SECRET repository secrets must be set" >&2
+            exit 1
+          fi
           export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
           VERSION=${GITHUB_REF#refs/tags/v}
 
           mkdir -p dist
-          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
+          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/wesm/msgvault/internal/oauth.oauthClientID=${MSGVAULT_OAUTH_CLIENT_ID} -X github.com/wesm/msgvault/internal/oauth.oauthClientSecret=${MSGVAULT_OAUTH_CLIENT_SECRET} -extldflags '-lstdc++ -lm'"
           go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
@@ -106,11 +112,17 @@ jobs:
           GOOS: darwin
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
+          MSGVAULT_OAUTH_CLIENT_ID: ${{ secrets.MSGVAULT_OAUTH_CLIENT_ID }}
+          MSGVAULT_OAUTH_CLIENT_SECRET: ${{ secrets.MSGVAULT_OAUTH_CLIENT_SECRET }}
         run: |
+          if [ -z "$MSGVAULT_OAUTH_CLIENT_ID" ] || [ -z "$MSGVAULT_OAUTH_CLIENT_SECRET" ]; then
+            echo "FATAL: MSGVAULT_OAUTH_CLIENT_ID and MSGVAULT_OAUTH_CLIENT_SECRET repository secrets must be set" >&2
+            exit 1
+          fi
           VERSION=${GITHUB_REF#refs/tags/v}
 
           mkdir -p dist
-          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/wesm/msgvault/internal/oauth.oauthClientID=${MSGVAULT_OAUTH_CLIENT_ID} -X github.com/wesm/msgvault/internal/oauth.oauthClientSecret=${MSGVAULT_OAUTH_CLIENT_SECRET}"
           go build -tags "fts5 sqlite_vec" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
@@ -172,11 +184,17 @@ jobs:
           CGO_ENABLED: '1'
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
+          MSGVAULT_OAUTH_CLIENT_ID: ${{ secrets.MSGVAULT_OAUTH_CLIENT_ID }}
+          MSGVAULT_OAUTH_CLIENT_SECRET: ${{ secrets.MSGVAULT_OAUTH_CLIENT_SECRET }}
         run: |
+          if [ -z "$MSGVAULT_OAUTH_CLIENT_ID" ] || [ -z "$MSGVAULT_OAUTH_CLIENT_SECRET" ]; then
+            echo "FATAL: MSGVAULT_OAUTH_CLIENT_ID and MSGVAULT_OAUTH_CLIENT_SECRET repository secrets must be set" >&2
+            exit 1
+          fi
           VERSION="${GITHUB_REF#refs/tags/v}"
 
           mkdir -p dist
-          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/wesm/msgvault/internal/oauth.oauthClientID=${MSGVAULT_OAUTH_CLIENT_ID} -X github.com/wesm/msgvault/internal/oauth.oauthClientSecret=${MSGVAULT_OAUTH_CLIENT_SECRET}"
           go build -tags "fts5 sqlite_vec" -trimpath -ldflags="$LDFLAGS" -o dist/msgvault.exe ./cmd/msgvault
 
           # Smoke test
