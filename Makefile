@@ -13,8 +13,8 @@ LDFLAGS := -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
 # Only inject embedded OAuth credentials when both env vars are set;
 # otherwise leave the compiled-in defaults from internal/oauth/embedded.go.
 ifneq ($(and $(MSGVAULT_OAUTH_CLIENT_ID),$(MSGVAULT_OAUTH_CLIENT_SECRET)),)
-LDFLAGS += -X github.com/wesm/msgvault/internal/oauth.oauthClientID=$(MSGVAULT_OAUTH_CLIENT_ID) \
-           -X github.com/wesm/msgvault/internal/oauth.oauthClientSecret=$(MSGVAULT_OAUTH_CLIENT_SECRET)
+LDFLAGS += -X go.kenn.io/msgvault/internal/oauth.oauthClientID=$(MSGVAULT_OAUTH_CLIENT_ID) \
+           -X go.kenn.io/msgvault/internal/oauth.oauthClientSecret=$(MSGVAULT_OAUTH_CLIENT_SECRET)
 endif
 
 LDFLAGS_RELEASE := $(LDFLAGS) -s -w
