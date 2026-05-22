@@ -12,10 +12,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	testemail "github.com/wesm/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 // panicOnBatchAPI wraps a MockAPI and panics when GetMessagesRawBatch is called.

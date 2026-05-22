@@ -13,8 +13,8 @@ import (
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // sqliteDatetimeFormat is the text DATETIME layout used everywhere

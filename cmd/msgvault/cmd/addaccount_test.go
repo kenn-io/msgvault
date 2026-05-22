@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestFindGmailSource(t *testing.T) {

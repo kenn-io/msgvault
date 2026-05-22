@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // Compile-time check that *Backend satisfies vector.FusingBackend.

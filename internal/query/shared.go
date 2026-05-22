@@ -9,8 +9,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // isNotFoundError checks if an error indicates the message was already deleted.

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // Enqueuer inserts message IDs into pending_embeddings for every

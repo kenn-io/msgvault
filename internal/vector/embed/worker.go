@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // EmbeddingClient is the subset of *Client used by Worker; allowing tests

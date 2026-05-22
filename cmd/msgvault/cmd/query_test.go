@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // setupQueryTestParquet creates a minimal set of Parquet files in a

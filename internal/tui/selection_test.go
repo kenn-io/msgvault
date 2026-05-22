@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestSelectionToggle(t *testing.T) {

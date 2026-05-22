@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // Queue wraps pending_embeddings with a crash-safe claim-mark-complete

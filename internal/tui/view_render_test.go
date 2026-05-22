@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // TestFooterPositionDisplay verifies footer position indicator in message list view.

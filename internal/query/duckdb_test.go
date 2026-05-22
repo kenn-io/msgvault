@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/marcboeker/go-duckdb"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // newParquetEngine creates a DuckDBEngine backed by the standard Parquet test data.

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.

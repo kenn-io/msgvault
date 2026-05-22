@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (

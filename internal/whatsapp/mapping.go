@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // isGroupChat returns true if the chat represents a group conversation.

@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 // EmbedRunner is the subset of *embed.Worker that EmbedJob needs.

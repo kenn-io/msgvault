@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // setupScopeFixture creates a store with one source and one collection for

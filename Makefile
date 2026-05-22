@@ -6,9 +6,9 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-LDFLAGS := -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
-           -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
-           -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
+           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
+           -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE)
 
 LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 

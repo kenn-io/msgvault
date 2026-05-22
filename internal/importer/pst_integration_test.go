@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const pstTestdataDir = "../pst/testdata"

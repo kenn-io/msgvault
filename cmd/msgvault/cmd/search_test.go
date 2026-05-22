@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // captureStdout redirects os.Stdout to a pipe and returns a function

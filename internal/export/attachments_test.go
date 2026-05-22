@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // createAttachmentFile creates a file in the content-addressed storage layout

@@ -7,9 +7,9 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var exportAttachmentsOutput string

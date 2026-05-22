@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestRepairOtherStrings_LogsScanErrors verifies that scan errors during

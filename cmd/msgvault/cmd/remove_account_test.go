@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // seedAttachmentFile creates a file under attachmentsDir at relPath and returns

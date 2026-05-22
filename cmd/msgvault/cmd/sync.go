@@ -12,10 +12,10 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/sync"
 	"golang.org/x/oauth2"
 )
 

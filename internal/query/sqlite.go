@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // SQLiteEngine implements Engine using direct SQLite queries.

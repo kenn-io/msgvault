@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/scheduler"
 )
 
 func TestServeConfigParsing(t *testing.T) {

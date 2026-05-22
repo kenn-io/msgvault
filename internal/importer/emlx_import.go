@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesm/msgvault/internal/emlx"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // EmlxImportOptions configures an Apple Mail .emlx directory import.

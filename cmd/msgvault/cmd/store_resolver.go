@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // runStartupMigrations pulls legacy identity addresses from the global config

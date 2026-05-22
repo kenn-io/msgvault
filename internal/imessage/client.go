@@ -11,8 +11,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const defaultPageSize = 500

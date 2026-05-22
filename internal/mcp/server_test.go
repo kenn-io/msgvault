@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the

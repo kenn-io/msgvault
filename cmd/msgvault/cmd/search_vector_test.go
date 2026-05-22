@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // newVectorSearchTestEnv stands up the CLI prerequisites for a

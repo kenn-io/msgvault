@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mbox"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {

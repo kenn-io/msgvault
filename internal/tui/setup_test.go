@@ -11,9 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ansiStart is the escape sequence prefix found in styled terminal output.

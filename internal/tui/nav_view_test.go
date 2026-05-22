@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // =============================================================================

@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var listDeletionsCmd = &cobra.Command{

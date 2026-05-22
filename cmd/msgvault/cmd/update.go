@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/update"
+	"go.kenn.io/msgvault/internal/update"
 )
 
 var updateCmd = &cobra.Command{

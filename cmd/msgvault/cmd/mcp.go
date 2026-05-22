@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	mcpserver "github.com/wesm/msgvault/internal/mcp"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var mcpForceSQL bool

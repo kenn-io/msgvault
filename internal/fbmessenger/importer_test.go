@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func importFixture(t *testing.T, st *store.Store, rootDir string, extra ...func(*ImportOptions)) *ImportSummary {

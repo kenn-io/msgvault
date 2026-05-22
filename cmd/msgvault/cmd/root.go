@@ -13,10 +13,10 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/logging"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/oauth2"
 )
 

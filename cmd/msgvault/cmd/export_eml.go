@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/fileutil"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const (

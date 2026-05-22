@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // Engine provides query operations for msgvault data.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 )
 
 // =============================================================================

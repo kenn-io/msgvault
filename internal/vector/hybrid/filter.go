@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // BuildFilter translates a parsed Gmail-syntax query into a

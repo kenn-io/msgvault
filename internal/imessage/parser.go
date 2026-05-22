@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textimport"
 	"howett.net/plist"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/emlx"
 )
 
 // AccountInfo describes an Apple Mail account resolved from Accounts4.sqlite.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // MockEngine implements query.Engine for testing. Each method delegates to an

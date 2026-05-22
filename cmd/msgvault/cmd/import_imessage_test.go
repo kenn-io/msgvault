@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestImportIMessage_NoAutoDefaultIdentity pins the documented behavior: the

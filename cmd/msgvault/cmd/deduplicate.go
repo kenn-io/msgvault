@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/dedup"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/dedup"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var deduplicateCmd = &cobra.Command{

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestExportAttachmentsCmd_Registration(t *testing.T) {

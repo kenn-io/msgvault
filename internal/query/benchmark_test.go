@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 const benchMessageCount = 100_000

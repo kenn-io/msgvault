@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // APIMessage represents a message for API responses.

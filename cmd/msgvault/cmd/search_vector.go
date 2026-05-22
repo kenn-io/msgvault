@@ -15,11 +15,11 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // runHybridSearch executes a vector or hybrid search against the local

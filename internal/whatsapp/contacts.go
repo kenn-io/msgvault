@@ -3,8 +3,8 @@ package whatsapp
 import (
 	"fmt"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 // ImportContacts reads a .vcf file and updates participant display names

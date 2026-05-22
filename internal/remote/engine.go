@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ErrNotSupported is returned for operations not available in remote mode.

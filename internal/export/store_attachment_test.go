@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestStoreAttachmentFile_ExistingFileHashMismatch_ReturnsError(t *testing.T) {

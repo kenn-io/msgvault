@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var ErrExtractLimitExceeded = errors.New("zip extraction limit exceeded")

@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/microsoft"
-	"github.com/wesm/msgvault/internal/store"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (

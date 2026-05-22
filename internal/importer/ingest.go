@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // IngestRawMessage parses and stores a raw MIME message into the database.

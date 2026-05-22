@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // NewTestStore creates a temporary database for testing.

@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the

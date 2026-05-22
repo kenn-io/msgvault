@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/msgvault/internal/fileutil"
-	"github.com/wesm/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // key: fullPath + size + expectedHash -> value: modTime (int64)

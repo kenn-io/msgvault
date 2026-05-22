@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil/tbmock"
+	"go.kenn.io/msgvault/internal/testutil/tbmock"
 )
 
 func TestAddLabel_ValidName(t *testing.T) {

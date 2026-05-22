@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textimport"
 )
 
 const defaultPageSize = 500

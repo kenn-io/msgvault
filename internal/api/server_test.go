@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // testLogger returns a logger for tests that discards output

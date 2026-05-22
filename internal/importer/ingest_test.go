@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {

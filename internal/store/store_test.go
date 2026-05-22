@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 var sampleRawMessage = []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")

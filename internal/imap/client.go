@@ -12,7 +12,7 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
-	gmailapi "github.com/wesm/msgvault/internal/gmail"
+	gmailapi "go.kenn.io/msgvault/internal/gmail"
 )
 
 // Option is a functional option for Client.

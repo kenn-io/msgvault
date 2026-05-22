@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestAddAndListAccountIdentities(t *testing.T) {

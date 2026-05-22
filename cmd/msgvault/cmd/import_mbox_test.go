@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/importer/mboxzip"
+	"go.kenn.io/msgvault/internal/importer/mboxzip"
 )
 
 func writeZipFile(t *testing.T, path string, entries map[string]string) {

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var (

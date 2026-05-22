@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil/ptr"
+	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
 func TestParse(t *testing.T) {

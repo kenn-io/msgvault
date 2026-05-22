@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/testutil/ptr"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
 func TestSearch_Filters(t *testing.T) {

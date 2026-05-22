@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestImportDYI_MojibakeFTSIndexed verifies that mojibake-repaired body

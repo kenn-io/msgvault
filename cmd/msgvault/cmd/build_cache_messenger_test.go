@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/wesm/msgvault/internal/fbmessenger"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/fbmessenger"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestBuildCache_AfterMessengerImport verifies invariant #3 from the plan:

@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )

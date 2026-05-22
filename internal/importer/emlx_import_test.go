@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 // mkEmlx creates an .emlx file with the given MIME bytes.

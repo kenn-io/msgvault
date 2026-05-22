@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/importer"
-	"github.com/wesm/msgvault/internal/importer/mboxzip"
-	"github.com/wesm/msgvault/internal/mbox"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/importer/mboxzip"
+	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {

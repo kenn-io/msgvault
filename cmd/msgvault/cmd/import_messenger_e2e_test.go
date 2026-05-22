@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func saveMessengerState(t *testing.T) func() {

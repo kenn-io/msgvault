@@ -1,4 +1,4 @@
-module github.com/wesm/msgvault
+module go.kenn.io/msgvault
 
 go 1.26.3
 

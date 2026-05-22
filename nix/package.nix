@@ -34,7 +34,7 @@ buildGoModule {
   ldflags = [
     "-s"
     "-w"
-    "-X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=${version}"
+    "-X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${version}"
   ];
 
   doCheck = false;

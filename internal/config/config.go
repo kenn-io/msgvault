@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/wesm/msgvault/internal/fileutil"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // ChatConfig holds chat/LLM configuration.

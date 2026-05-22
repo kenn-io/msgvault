@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/tui"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/tui"
 )
 
 var forceSQL bool

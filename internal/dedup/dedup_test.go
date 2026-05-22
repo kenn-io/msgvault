@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/dedup"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/dedup"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func addMessage(

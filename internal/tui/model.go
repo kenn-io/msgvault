@@ -10,10 +10,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/update"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/update"
 )
 
 // defaultAggregateLimit is the maximum number of aggregate rows to load for display.

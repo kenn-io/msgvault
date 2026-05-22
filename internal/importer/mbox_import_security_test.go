@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {

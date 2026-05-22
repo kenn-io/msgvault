@@ -3,8 +3,8 @@ package store_test
 import (
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {

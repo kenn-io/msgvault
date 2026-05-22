@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Scope is the result of resolving a user-supplied --account or

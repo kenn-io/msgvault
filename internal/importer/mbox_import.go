@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/mbox"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 type MboxImportOptions struct {

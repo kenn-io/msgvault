@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jhillyerd/enmime"
-	testemail "github.com/wesm/msgvault/internal/testutil/email"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 // emailOptions is an alias for testemail.Options for local convenience.

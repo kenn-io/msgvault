@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Compile-time interface assertion.

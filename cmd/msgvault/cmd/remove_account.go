@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	imaplib "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/microsoft"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func newRemoveAccountCmd() *cobra.Command {

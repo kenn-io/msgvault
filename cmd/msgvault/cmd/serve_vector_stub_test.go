@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // TestSetupVectorFeatures_EnabledWithoutTag verifies the untagged stub

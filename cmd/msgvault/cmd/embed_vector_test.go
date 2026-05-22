@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // openTestBackend opens a fresh in-memory-ish sqlitevec backend with a

@@ -3,7 +3,7 @@ package store_test
 import (
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestLiveMessagesWhere_NoAlias(t *testing.T) {

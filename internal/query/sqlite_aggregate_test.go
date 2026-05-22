@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil/dbtest"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func TestAggregations(t *testing.T) {

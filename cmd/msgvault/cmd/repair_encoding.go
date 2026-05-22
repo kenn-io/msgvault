@@ -10,9 +10,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var repairEncodingCmd = &cobra.Command{

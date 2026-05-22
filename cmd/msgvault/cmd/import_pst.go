@@ -8,8 +8,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/importer"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (

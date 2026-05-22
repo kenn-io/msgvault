@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textimport"
 )
 
 // Contact is a single parsed vCard entry.

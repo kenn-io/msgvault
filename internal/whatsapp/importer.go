@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Importer handles importing WhatsApp messages from a decrypted msgstore.db

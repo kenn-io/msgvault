@@ -7,9 +7,9 @@ import (
 	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // ExportResultMsg is returned when attachment export completes.

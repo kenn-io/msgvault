@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/testutil/dbtest"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // testEnv encapsulates the DB, Engine, and Context setup for tests.

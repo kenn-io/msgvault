@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/wesm/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // SyncFunc is the callback invoked when a scheduled sync should run.

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/imessage"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/imessage"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 var (

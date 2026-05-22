@@ -1,6 +1,6 @@
 package sync
 
-import testemail "github.com/wesm/msgvault/internal/testutil/email"
+import testemail "go.kenn.io/msgvault/internal/testutil/email"
 
 // testMIME returns a simple plain-text MIME message for testing.
 // Returns a fresh byte slice on each call to prevent cross-test mutation.

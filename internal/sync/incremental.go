@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Incremental performs an incremental sync using the Gmail History API.

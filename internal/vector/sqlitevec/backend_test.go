@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func newBackendForTest(t *testing.T) (*Backend, context.Context) {

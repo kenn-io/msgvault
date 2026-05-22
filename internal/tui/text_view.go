@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // renderTextView renders the current Texts mode view.

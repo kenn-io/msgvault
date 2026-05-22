@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing

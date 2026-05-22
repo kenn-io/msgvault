@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/marcboeker/go-duckdb"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 var queryFormat string

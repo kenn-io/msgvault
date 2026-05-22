@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
-	pstreader "github.com/wesm/msgvault/internal/pst"
+	pstreader "go.kenn.io/msgvault/internal/pst"
 )
 
 const testdataDir = "testdata"

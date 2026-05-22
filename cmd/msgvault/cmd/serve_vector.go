@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // setupVectorFeatures opens vectors.db and builds the vector backend,

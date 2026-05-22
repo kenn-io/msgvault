@@ -8,7 +8,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func newFilterTestDB(t *testing.T) *sql.DB {

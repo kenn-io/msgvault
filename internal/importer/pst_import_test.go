@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // mockIngestFunc records IngestRawMessage calls for inspection in tests.

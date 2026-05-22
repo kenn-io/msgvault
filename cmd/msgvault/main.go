@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/wesm/msgvault/cmd/msgvault/cmd"
+	"go.kenn.io/msgvault/cmd/msgvault/cmd"
 )
 
 const (

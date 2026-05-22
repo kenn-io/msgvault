@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const testEmail = "test@example.com"

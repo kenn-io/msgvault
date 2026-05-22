@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // TestDeduplicateMutualExclusion confirms that passing both --account and

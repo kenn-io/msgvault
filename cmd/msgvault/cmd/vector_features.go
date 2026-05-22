@@ -3,10 +3,10 @@ package cmd
 import (
 	"database/sql"
 
-	"github.com/wesm/msgvault/internal/sync"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // vectorFeatures carries the optional vector-search components that the

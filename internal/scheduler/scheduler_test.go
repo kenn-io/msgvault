@@ -11,9 +11,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 func TestNew(t *testing.T) {

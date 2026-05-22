@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // openMainDBWithOneMessage creates an in-memory *sql.DB that looks enough

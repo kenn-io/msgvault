@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/gvoice"
+	"go.kenn.io/msgvault/internal/gvoice"
 )
 
 var (

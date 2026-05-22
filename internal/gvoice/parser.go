@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textimport"
 	"golang.org/x/net/html"
 )
 

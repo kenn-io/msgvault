@@ -10,9 +10,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // Tool name constants.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // DuplicateGroupKey identifies a group of messages sharing the same

@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ErrNotImplemented is returned by PostgreSQLEngine methods that require

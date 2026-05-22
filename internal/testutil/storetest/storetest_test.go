@@ -3,7 +3,7 @@ package storetest
 import (
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestFixtureNewMessage_UniqueIDs(t *testing.T) {

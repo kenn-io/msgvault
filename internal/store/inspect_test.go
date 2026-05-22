@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // TestInspectMessage_NotFound verifies that InspectMessage returns sql.ErrNoRows

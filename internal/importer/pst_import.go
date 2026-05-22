@@ -15,8 +15,8 @@ import (
 	"time"
 
 	pstlib "github.com/mooijtech/go-pst/v6/pkg"
-	pstreader "github.com/wesm/msgvault/internal/pst"
-	"github.com/wesm/msgvault/internal/store"
+	pstreader "go.kenn.io/msgvault/internal/pst"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // PstImportOptions configures a PST import operation.

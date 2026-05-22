@@ -8,8 +8,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestIntegration exercises the full text message import pipeline:

@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/store"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestIsMicrosoftIMAPSource(t *testing.T) {

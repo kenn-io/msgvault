@@ -14,8 +14,8 @@ import (
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // DuckDBEngine implements Engine using DuckDB for fast Parquet queries.

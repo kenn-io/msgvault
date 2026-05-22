@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const (

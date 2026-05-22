@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/oauth2"
 )
 

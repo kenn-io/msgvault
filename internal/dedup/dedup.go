@@ -55,8 +55,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Config controls the dedup engine behaviour.

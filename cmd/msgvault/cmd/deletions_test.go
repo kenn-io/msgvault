@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/deletion"
 )
 
 func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {

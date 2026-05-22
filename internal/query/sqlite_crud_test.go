@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/testutil/dbtest"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // emptyTargets creates an EmptyValueTargets map for testing with the given ViewType(s).

@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/store"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // passwordMethod describes how to read the password.
