@@ -65,11 +65,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 
-	// Validate config
-	if !cfg.OAuth.HasAnyConfig() {
-		return errOAuthNotConfigured()
-	}
-
 	// Check for scheduled accounts (warn but don't fail - allows token upload first)
 	scheduled := cfg.ScheduledAccounts()
 	if len(scheduled) == 0 {

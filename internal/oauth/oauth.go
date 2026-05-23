@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +38,16 @@ var ScopesDeletion = []string{
 	"https://mail.google.com/",
 }
 
+// ScopesEmbedded is the scope set requested by the centralized verified
+// msgvault OAuth client. It is the union of Scopes and ScopesDeletion so
+// users on the embedded path never need scope escalation for permanent
+// delete.
+var ScopesEmbedded = []string{
+	"https://www.googleapis.com/auth/gmail.readonly",
+	"https://www.googleapis.com/auth/gmail.modify",
+	"https://mail.google.com/",
+}
+
 const defaultProfileURL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 
 // TokenMismatchError is returned when the authorized Google account
@@ -53,6 +65,34 @@ func (e *TokenMismatchError) Error() string {
 	)
 }
 
+// errAccessDenied is returned by the OAuth callback when Google
+// signals that the authorization was rejected. On the embedded path
+// this is the failure mode for "caller is not on the test-user list"
+// and "100-user lifetime cap reached" during the verification window;
+// on the BYO path it usually means the user clicked Deny.
+var errAccessDenied = errors.New("oauth: access_denied")
+
+// embeddedFallbackMessage is printed to the user when the embedded
+// OAuth client receives an access_denied response. This indicates the
+// user is not on the test-user list or the 100-user lifetime cap was
+// reached during the verification window. The message points users to
+// the BYO setup or beta-access channels.
+const embeddedFallbackMessage = `
+msgvault's centralized OAuth client is still in Google's verification
+queue. Two options:
+
+  1. Use the bring-your-own setup (one-time, ~5 minutes):
+     https://msgvault.io/guides/oauth-setup/
+
+  2. Request beta access (open a GitHub issue with your Gmail address):
+     https://github.com/wesm/msgvault/issues/new?template=beta-oauth.md
+
+`
+
+// stdout is the destination for user-facing messages printed during
+// the OAuth flow. Replaceable in tests via the var to capture output.
+var stdout io.Writer = os.Stdout
+
 // Manager handles OAuth2 token acquisition and storage.
 type Manager struct {
 	config     *oauth2.Config
@@ -64,6 +104,12 @@ type Manager struct {
 	// a real HTTP server and browser. When nil, the real browserFlow
 	// is used.
 	browserFlowFn func(ctx context.Context, email string, launchBrowser bool) (*oauth2.Token, error)
+
+	// isEmbedded is true when this manager uses the centralized verified
+	// OAuth client (via NewEmbeddedManager) rather than a BYO
+	// client_secrets file. Used to enable the verification-window
+	// fallback message on access_denied.
+	isEmbedded bool
 }
 
 // NewManager creates an OAuth manager from client secrets.
@@ -186,6 +232,9 @@ func (m *Manager) authorize(
 	}
 	token, err := flow(ctx, email, launchBrowser)
 	if err != nil {
+		if m.isEmbedded && errors.Is(err, errAccessDenied) {
+			_, _ = fmt.Fprint(stdout, embeddedFallbackMessage)
+		}
 		return err
 	}
 
@@ -209,6 +258,16 @@ const (
 // newCallbackHandler returns an HTTP handler that processes the OAuth callback.
 func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- string, errChan chan<- error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if errParam := r.URL.Query().Get("error"); errParam != "" {
+			if errParam == "access_denied" {
+				errChan <- errAccessDenied
+				_, _ = fmt.Fprintf(w, "Authorization denied. You can close this window.")
+				return
+			}
+			errChan <- fmt.Errorf("oauth callback error: %s", errParam)
+			_, _ = fmt.Fprintf(w, "Error: %s", errParam)
+			return
+		}
 		if r.URL.Query().Get("state") != expectedState {
 			errChan <- fmt.Errorf("state mismatch: possible CSRF attack")
 			_, _ = fmt.Fprintf(w, "Error: state mismatch")
@@ -436,12 +495,7 @@ func (m *Manager) HasScope(email string, scope string) bool {
 	if err != nil {
 		return false
 	}
-	for _, s := range tf.Scopes {
-		if s == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tf.Scopes, scope)
 }
 
 // saveToken saves a token for the given email with the specified scopes.

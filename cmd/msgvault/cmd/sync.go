@@ -128,10 +128,6 @@ Examples:
 			for _, src := range allSources {
 				switch src.SourceType {
 				case "gmail":
-					if !cfg.OAuth.HasAnyConfig() {
-						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
-						continue
-					}
 					appName := sourceOAuthApp(src)
 					if !src.SyncCursor.Valid || src.SyncCursor.String == "" {
 						fmt.Printf("Skipping %s (no history ID - run 'sync-full' first)\n", src.Identifier)

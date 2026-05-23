@@ -1237,76 +1237,6 @@ func TestOAuthConfig_ServiceAccountKeyFor(t *testing.T) {
 	}
 }
 
-func TestOAuthConfig_HasAnyConfig(t *testing.T) {
-	tests := []struct {
-		name   string
-		config OAuthConfig
-		want   bool
-	}{
-		{
-			name:   "empty config",
-			config: OAuthConfig{},
-			want:   false,
-		},
-		{
-			name:   "default only",
-			config: OAuthConfig{ClientSecrets: "/path/to/default.json"},
-			want:   true,
-		},
-		{
-			name: "named app only",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"acme": {ClientSecrets: "/path/to/acme.json"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "named app with empty path",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"acme": {ClientSecrets: ""},
-				},
-			},
-			want: false,
-		},
-		{
-			name:   "default service account only",
-			config: OAuthConfig{ServiceAccountKey: "/path/to/service-account.json"},
-			want:   true,
-		},
-		{
-			name: "named service account only",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"workspace": {ServiceAccountKey: "/path/to/workspace.json"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "mixed oauth and service account",
-			config: OAuthConfig{
-				ClientSecrets: "/path/to/default.json",
-				Apps: map[string]OAuthApp{
-					"workspace": {ServiceAccountKey: "/path/to/workspace.json"},
-				},
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.config.HasAnyConfig()
-			if got != tt.want {
-				t.Errorf("HasAnyConfig() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLoadWithNamedOAuthApps(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -1359,11 +1289,6 @@ client_secrets = "/absolute/personal.json"
 	}
 	if personal.ClientSecrets != "/absolute/personal.json" {
 		t.Errorf("Apps[personal].ClientSecrets = %q, want /absolute/personal.json", personal.ClientSecrets)
-	}
-
-	// HasAnyConfig should be true
-	if !cfg.OAuth.HasAnyConfig() {
-		t.Error("HasAnyConfig() = false, want true")
 	}
 }
 
@@ -1600,11 +1525,6 @@ client_secrets = "/path/to/acme.json"
 	// Default should be empty
 	if cfg.OAuth.ClientSecrets != "" {
 		t.Errorf("ClientSecrets = %q, want empty", cfg.OAuth.ClientSecrets)
-	}
-
-	// HasAnyConfig should still be true
-	if !cfg.OAuth.HasAnyConfig() {
-		t.Error("HasAnyConfig() = false, want true")
 	}
 
 	// ClientSecretsFor("") should fail

@@ -95,10 +95,6 @@ Examples:
 			appName = sourceOAuthApp(src)
 		}
 
-		if !cfg.OAuth.HasAnyConfig() {
-			return errOAuthNotConfigured()
-		}
-
 		// Set up context with cancellation
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
@@ -126,13 +122,9 @@ Examples:
 				return fmt.Errorf("service account token for %s: %w", email, err)
 			}
 		} else {
-			clientSecretsPath, secretsErr := cfg.OAuth.ClientSecretsFor(appName)
-			if secretsErr != nil {
-				return secretsErr
-			}
-			oauthMgr, mgrErr := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+			oauthMgr, mgrErr := resolveOAuthManager(cfg, appName, oauth.Scopes, logger)
 			if mgrErr != nil {
-				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr))
+				return mgrErr
 			}
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
