@@ -18,6 +18,16 @@ import (
 )
 
 // PreprocessConfig controls pre-embedding transformations.
+//
+// MaxBodyRunes, when > 0, applies a rune-count cap on the body
+// *between* the cheap pollution-removal pass (CRLF normalize +
+// StripBase64) and the heavier regex transforms (StripHTML,
+// StripURLTracking, quote/signature, whitespace collapse). The
+// ordering matters: a body whose first megabyte is an inline base64
+// PNG would be capped to "just the base64" if the cap fired on raw
+// input, losing every meaningful word that follows the blob. Doing
+// the cheap strip first reclaims that space for the prose tail
+// before the cap looks at the result.
 type PreprocessConfig struct {
 	StripQuotes        bool
 	StripSignatures    bool
@@ -25,6 +35,7 @@ type PreprocessConfig struct {
 	StripBase64        bool
 	StripURLTracking   bool
 	CollapseWhitespace bool
+	MaxBodyRunes       int
 }
 
 var (
@@ -184,11 +195,26 @@ func Preprocess(subject, body string, maxChars int, cfg PreprocessConfig) (strin
 	// `<img src="data:image/...;base64,...">` (which can exceed
 	// reHTMLTag's 500-char bound and slip past the tag stripper) loses
 	// its payload first, leaving a small enough tag for reHTMLTag to
-	// then sweep up.
+	// then sweep up. This pass is also "cheap pollution removal"
+	// relative to MaxBodyRunes — by running it before the cap, a
+	// body whose noise dominates the first megabyte gets its prose
+	// tail preserved instead of chopped off with the blob.
 	if cfg.StripBase64 {
 		s = reDataURI.ReplaceAllString(s, " ")
 		s = reBase64Blob.ReplaceAllString(s, " ")
 		s = reBase64BlobWithSlash.ReplaceAllString(s, " ")
+	}
+	bodyTruncated := false
+	if cfg.MaxBodyRunes > 0 {
+		walked := 0
+		for i := range s {
+			if walked >= cfg.MaxBodyRunes {
+				s = s[:i]
+				bodyTruncated = true
+				break
+			}
+			walked++
+		}
 	}
 	if cfg.StripHTML {
 		s = reStyleBlock.ReplaceAllString(s, " ")
@@ -220,13 +246,13 @@ func Preprocess(subject, body string, maxChars int, cfg PreprocessConfig) (strin
 	combined := prefix + s
 
 	if maxChars <= 0 {
-		return combined, false
+		return combined, bodyTruncated
 	}
 	// Fast path: if every byte is ASCII, len == rune count and we
 	// can skip the scan. Otherwise walk runes forward to find the
 	// cut point at rune boundary maxChars.
 	if len(combined) <= maxChars {
-		return combined, false
+		return combined, bodyTruncated
 	}
 	byteOffset, runes := 0, 0
 	for byteOffset < len(combined) && runes < maxChars {
@@ -236,11 +262,11 @@ func Preprocess(subject, body string, maxChars int, cfg PreprocessConfig) (strin
 	}
 	if runes < maxChars {
 		// Fewer runes than the cap — nothing to truncate.
-		return combined, false
+		return combined, bodyTruncated
 	}
 	if byteOffset == len(combined) {
 		// Exactly maxChars runes and no more — no truncation.
-		return combined, false
+		return combined, bodyTruncated
 	}
 	return combined[:byteOffset], true
 }

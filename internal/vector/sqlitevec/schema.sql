@@ -28,15 +28,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_generations_active
 CREATE UNIQUE INDEX IF NOT EXISTS idx_generations_building
     ON index_generations(state) WHERE state = 'building';
 
+-- embeddings.embedding_id is the synthetic rowid that joins to the
+-- dimension-specific vec0 virtual table (vectors_vec_dN). One row per
+-- chunk: long messages produce multiple rows distinguished by
+-- chunk_index (0-based, dense), short messages keep a single row with
+-- chunk_index = 0. The UNIQUE constraint on (generation_id, message_id,
+-- chunk_index) preserves idempotent re-upsert.
+--
+-- chunk_char_start / chunk_char_end record the rune-space offsets into
+-- the preprocessed text for that chunk. They are debugging metadata
+-- today (search returns one Hit per message; "which chunk matched" is
+-- not yet plumbed to the UI) but ship with the schema so retro-fitting
+-- chunk highlighting later does not require another migration.
 CREATE TABLE IF NOT EXISTS embeddings (
+    embedding_id     INTEGER PRIMARY KEY AUTOINCREMENT,
     generation_id    INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
     message_id       INTEGER NOT NULL,
+    chunk_index      INTEGER NOT NULL DEFAULT 0,
     embedded_at      INTEGER NOT NULL,
     source_char_len  INTEGER NOT NULL,
+    chunk_char_start INTEGER NOT NULL DEFAULT 0,
+    chunk_char_end   INTEGER NOT NULL DEFAULT 0,
     truncated        INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (generation_id, message_id)
+    UNIQUE (generation_id, message_id, chunk_index)
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_gen_msg ON embeddings(generation_id, message_id);
 
 CREATE TABLE IF NOT EXISTS pending_embeddings (
     generation_id INTEGER NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,

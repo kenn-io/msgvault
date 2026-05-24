@@ -35,14 +35,25 @@ type Generation struct {
 	MessageCount int64
 }
 
-// Chunk is a pre-computed embedding to persist in the index. In MVP
-// there is one chunk per message; multi-chunk support (§13 future
-// work) would extend this with a chunk sequence id.
+// Chunk is a pre-computed embedding to persist in the index. A long
+// message produces multiple chunks distinguished by ChunkIndex (0-based,
+// dense, gap-free). Short messages produce exactly one chunk with
+// ChunkIndex=0, which is the legacy single-vector behavior.
+//
+// Backends key vectors by (GenerationID, MessageID, ChunkIndex). Search
+// returns at most one Hit per MessageID; if multiple chunks of the same
+// message match, the backend keeps the best-scoring chunk and discards
+// the rest. ChunkCharStart/ChunkCharEnd are 0-based offsets into the
+// preprocessed text and are stored for debugging only — search results
+// do not currently surface "which chunk matched".
 type Chunk struct {
-	MessageID     int64
-	Vector        []float32
-	SourceCharLen int
-	Truncated     bool
+	MessageID      int64
+	ChunkIndex     int
+	Vector         []float32
+	SourceCharLen  int
+	ChunkCharStart int
+	ChunkCharEnd   int
+	Truncated      bool
 }
 
 // Filter carries the structured filters pushed into both signal CTEs
