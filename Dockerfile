@@ -23,7 +23,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-# Note: Module path must match go.mod (github.com/wesm/msgvault)
+# Note: Module path must match go.mod (go.kenn.io/msgvault)
 RUN CGO_ENABLED=1 go build \
     -tags fts5 \
     -trimpath \

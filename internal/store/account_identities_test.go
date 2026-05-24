@@ -226,7 +226,7 @@ func TestAccountIdentities_FKCascadeOnSourceDelete(t *testing.T) {
 	}
 	var n int
 	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`, f.Source.ID,
+		st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), f.Source.ID,
 	).Scan(&n); err != nil {
 		t.Fatal(err)
 	}

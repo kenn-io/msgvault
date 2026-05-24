@@ -12,6 +12,7 @@ import (
 // TestStore_RebuildFTS_HappyPath verifies RebuildFTS on a healthy database
 // recreates the FTS index with correct searchable content.
 func TestStore_RebuildFTS_HappyPath(t *testing.T) {
+	testutil.SkipIfPostgres(t, "RebuildFTS is SQLite-specific (drop/recreate messages_fts vtable); PG RebuildFTS is not yet implemented (PR4 scope)")
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
@@ -59,6 +60,7 @@ func TestStore_RebuildFTS_HappyPath(t *testing.T) {
 // when the rebuild is needed — BackfillFTS would short-circuit here, but
 // RebuildFTS must not.
 func TestStore_RebuildFTS_BypassesAvailabilityFlag(t *testing.T) {
+	testutil.SkipIfPostgres(t, "RebuildFTS is SQLite-specific (drop/recreate messages_fts vtable); PG RebuildFTS is not yet implemented (PR4 scope)")
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
@@ -96,6 +98,7 @@ func TestStore_RebuildFTS_BypassesAvailabilityFlag(t *testing.T) {
 // messages_fts from scratch when the table is missing entirely — the
 // post-DROP state from the manual recovery procedure in issue #287.
 func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
+	testutil.SkipIfPostgres(t, "RebuildFTS is SQLite-specific (drop/recreate messages_fts vtable); PG RebuildFTS is not yet implemented (PR4 scope)")
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
@@ -127,6 +130,7 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 // TestStore_RebuildFTS_ReportsProgress verifies the progress callback is
 // invoked with monotonic (done, total) values.
 func TestStore_RebuildFTS_ReportsProgress(t *testing.T) {
+	testutil.SkipIfPostgres(t, "RebuildFTS is SQLite-specific (drop/recreate messages_fts vtable); PG RebuildFTS is not yet implemented (PR4 scope)")
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")

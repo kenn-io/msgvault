@@ -36,7 +36,7 @@ func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
 	// Row should be gone.
 	var count int
 	err = f.Store.DB().QueryRow(
-		"SELECT COUNT(*) FROM messages WHERE id = ?", idDrop,
+		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), idDrop,
 	).Scan(&count)
 	testutil.MustNoErr(t, err, "query messages after delete")
 	if count != 0 {
@@ -45,7 +45,7 @@ func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
 
 	// Child message_labels rows should cascade-delete.
 	err = f.Store.DB().QueryRow(
-		"SELECT COUNT(*) FROM message_labels WHERE message_id = ?", idDrop,
+		f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ?"), idDrop,
 	).Scan(&count)
 	testutil.MustNoErr(t, err, "query message_labels after delete")
 	if count != 0 {
@@ -123,7 +123,7 @@ func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
 	// non-dedup soft-delete writer. Should survive DeleteAllDeduped.
 	idBatchless := newRFC822Message(t, f, "batchless", "rfc822-other")
 	_, err = f.Store.DB().Exec(
-		"UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"),
 		idBatchless,
 	)
 	testutil.MustNoErr(t, err, "set batchless deleted_at")
@@ -140,7 +140,7 @@ func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
 	// The batchless row must still exist after the purge.
 	var count int
 	err = f.Store.DB().QueryRow(
-		"SELECT COUNT(*) FROM messages WHERE id = ?", idBatchless,
+		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), idBatchless,
 	).Scan(&count)
 	testutil.MustNoErr(t, err, "query batchless row after delete")
 	if count != 1 {

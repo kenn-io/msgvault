@@ -312,7 +312,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	started := time.Now()
 
 	// Create query engine and execute search
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 	results, err := engine.Search(cmd.Context(), q, searchLimit, searchOffset)
 	fmt.Fprintf(os.Stderr, "\r            \r")
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -24,6 +25,16 @@ import (
 func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string) (*vectorFeatures, error) {
 	if !cfg.Vector.Enabled {
 		return nil, nil
+	}
+	// The vector backend uses sqlite-vec extension and `ATTACH DATABASE`
+	// to fuse vectors.db onto the main store — both SQLite-only. Refuse
+	// up-front on a PG DSN rather than letting one of the four downstream
+	// callers feed `sql.Open("sqlite3", "postgres://…")` or dispatch raw
+	// ? placeholders against pgx. Vector support for PostgreSQL is
+	// tracked under PR4 (see docs/PG_STATUS.md).
+	if store.IsPostgresURL(mainPath) {
+		return nil, fmt.Errorf(
+			"vector features are SQLite-only; set [vector] enabled = false to use msgvault with PostgreSQL (vector support is planned for PR4)")
 	}
 	if err := cfg.Vector.Validate(); err != nil {
 		return nil, fmt.Errorf("vector config: %w", err)

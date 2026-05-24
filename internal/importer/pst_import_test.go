@@ -110,7 +110,7 @@ func TestPstCheckpoint_RoundTrip(t *testing.T) {
 		MessagesProcessed: 42,
 		MessagesAdded:     40,
 	}
-	if err := savePstCheckpoint(st, syncID, "/path/to/file.pst", 3, "Inbox/Archive", 100, cp); err != nil {
+	if err := savePstCheckpoint(st, syncID, "/path/to/file.pst", "abc123", 3, "Inbox/Archive", 100, cp); err != nil {
 		t.Fatalf("savePstCheckpoint: %v", err)
 	}
 
@@ -141,6 +141,9 @@ func TestPstCheckpoint_RoundTrip(t *testing.T) {
 	}
 	if saved.MsgIndex != 100 {
 		t.Errorf("MsgIndex = %d, want 100", saved.MsgIndex)
+	}
+	if saved.ArchiveID != "abc123" {
+		t.Errorf("ArchiveID = %q, want %q", saved.ArchiveID, "abc123")
 	}
 }
 

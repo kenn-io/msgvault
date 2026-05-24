@@ -49,7 +49,7 @@ func runExportAttachments(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 	// Resolve message ID — try numeric first, fallback to Gmail ID
 	var msg *query.MessageDetail

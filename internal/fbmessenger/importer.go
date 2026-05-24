@@ -568,7 +568,7 @@ func writeThreadToStore(
 			// display_name; falling back to what we wrote on the prior
 			// import preserves the sender label for self-authored rows.
 			err := st.DB().QueryRow(
-				`SELECT m.sender_id, m.is_from_me,
+				st.Rebind(`SELECT m.sender_id, m.is_from_me,
 					COALESCE(NULLIF(p.display_name, ''),
 						(SELECT mr.display_name FROM message_recipients mr
 						 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
@@ -576,7 +576,7 @@ func writeThreadToStore(
 					p.email_address
 				 FROM messages m
 				 LEFT JOIN participants p ON p.id = m.sender_id
-				 WHERE m.source_id = ? AND m.source_message_id = ?`,
+				 WHERE m.source_id = ? AND m.source_message_id = ?`),
 				sourceID, srcMsgID,
 			).Scan(&priorID, &priorIsFromMe, &priorName, &priorEmail)
 			if err == nil && priorID.Valid {

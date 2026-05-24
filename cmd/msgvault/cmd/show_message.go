@@ -90,7 +90,7 @@ func showLocalMessage(cmd *cobra.Command, idStr string) error {
 	}
 
 	// Create query engine
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 	// Try to parse as numeric ID first
 	var msg *query.MessageDetail

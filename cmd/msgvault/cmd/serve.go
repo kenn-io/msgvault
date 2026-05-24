@@ -119,28 +119,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create query engine for TUI aggregate support.
 	// Prefer DuckDB over Parquet when the cache is complete and fresh;
 	// otherwise fall back to SQLite so remote endpoints still work.
+	// PostgreSQL bypasses the cache entirely — it is a SQLite-only ETL.
 	analyticsDir := cfg.AnalyticsDir()
 	var engine query.Engine
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
-		duckEngine, engineErr := query.NewDuckDBEngine(
-			analyticsDir, dbPath, s.DB(),
-		)
-		if engineErr != nil {
-			logger.Warn("DuckDB engine failed, falling back to SQLite",
-				"error", engineErr)
-			engine = query.NewSQLiteEngine(s.DB())
-		} else {
-			engine = duckEngine
-		}
+	if s.IsPostgreSQL() {
+		engine = query.NewEngine(s.DB(), true)
 	} else {
-		if staleness.Reason != "" {
-			logger.Info("parquet cache not usable, using SQLite engine",
-				"reason", staleness.Reason)
+		staleness := cacheNeedsBuild(dbPath, analyticsDir)
+		if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
+			duckEngine, engineErr := query.NewDuckDBEngine(
+				analyticsDir, dbPath, s.DB(),
+			)
+			if engineErr != nil {
+				logger.Warn("DuckDB engine failed, falling back to SQLite",
+					"error", engineErr)
+				engine = query.NewEngine(s.DB(), false)
+			} else {
+				engine = duckEngine
+			}
 		} else {
-			logger.Info("parquet cache not built - using SQLite engine (run 'msgvault build-cache' for faster aggregates)")
+			if staleness.Reason != "" {
+				logger.Info("parquet cache not usable, using SQLite engine",
+					"reason", staleness.Reason)
+			} else {
+				logger.Info("parquet cache not built - using SQLite engine (run 'msgvault build-cache' for faster aggregates)")
+			}
+			engine = query.NewEngine(s.DB(), false)
 		}
-		engine = query.NewSQLiteEngine(s.DB())
 	}
 	defer func() { _ = engine.Close() }()
 
@@ -386,8 +391,12 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		"duration", time.Since(startTime),
 	)
 
-	// Rebuild cache if stale (covers new messages and deletions).
+	// Rebuild cache if stale (covers new messages and deletions). The
+	// Parquet cache is SQLite-only; skip on PostgreSQL DSNs.
 	dbPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(dbPath) {
+		return nil
+	}
 	analyticsDir := cfg.AnalyticsDir()
 	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.NeedsBuild {
 		logger.Info("rebuilding cache after sync",

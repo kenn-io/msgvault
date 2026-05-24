@@ -1379,7 +1379,7 @@ func (e *DuckDBEngine) fetchLabelsForMessages(ctx context.Context, messages []Me
 		return nil
 	}
 
-	return fetchLabelsForMessageList(ctx, e.db, "sqlite_db.", messages)
+	return fetchLabelsForMessageList(ctx, e.db, noopRebind, "sqlite_db.", messages)
 }
 
 // GetMessageSummariesByIDs delegates to the SQLite engine — the
@@ -1437,13 +1437,13 @@ func (e *DuckDBEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 // GetMessageRaw returns the decompressed raw MIME data for a message.
 func (e *DuckDBEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	if e.sqliteDB != nil {
-		return getMessageRawShared(ctx, e.sqliteDB, "", id)
+		return getMessageRawShared(ctx, e.sqliteDB, noopRebind, "", id)
 	}
 	return nil, fmt.Errorf("GetMessageRaw requires SQLite: pass sqliteDB to NewDuckDBEngine")
 }
 
 func (e *DuckDBEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...interface{}) (*MessageDetail, error) {
-	return getMessageByQueryShared(ctx, e.db, "sqlite_db.", whereClause, args...)
+	return getMessageByQueryShared(ctx, e.db, noopRebind, "sqlite_db.", whereClause, args...)
 }
 
 // Search performs a Gmail-style search query.

@@ -84,15 +84,17 @@ func TestStore_RemoveSource(t *testing.T) {
 	// Verify labels are gone
 	var labelCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM labels WHERE source_id = ?`, f.Source.ID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id = ?`), f.Source.ID,
 	).Scan(&labelCount)
 	testutil.MustNoErr(t, err, "count labels")
 	if labelCount != 0 {
 		t.Errorf("label count = %d, want 0", labelCount)
 	}
 
-	// Verify FTS rows are gone
-	if f.Store.FTS5Available() {
+	// Verify FTS rows are gone (SQLite FTS5 vtable only; on PG the
+	// equivalent invariant — search_fts cleared — is covered by the
+	// dialect-level FTSDeleteSQL test).
+	if f.Store.FTS5Available() && !f.Store.IsPostgreSQL() {
 		var ftsCount int
 		err = f.Store.DB().QueryRow(
 			`SELECT COUNT(*) FROM messages_fts`,
@@ -141,7 +143,7 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 	// Verify conversations are gone
 	var convCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM conversations WHERE source_id = ?`,
+		f.Store.Rebind(`SELECT COUNT(*) FROM conversations WHERE source_id = ?`),
 		f.Source.ID,
 	).Scan(&convCount)
 	testutil.MustNoErr(t, err, "count conversations")
@@ -152,7 +154,7 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 	// Verify message_bodies are gone (cascaded via messages)
 	var bodyCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_bodies WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_bodies WHERE message_id = ?`), msgID,
 	).Scan(&bodyCount)
 	testutil.MustNoErr(t, err, "count message_bodies")
 	if bodyCount != 0 {
@@ -162,7 +164,7 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 	// Verify message_raw is gone (cascaded via messages)
 	var rawCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`), msgID,
 	).Scan(&rawCount)
 	testutil.MustNoErr(t, err, "count message_raw")
 	if rawCount != 0 {
@@ -172,7 +174,7 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 	// Verify message_recipients are gone (cascaded via messages)
 	var recipCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), msgID,
 	).Scan(&recipCount)
 	testutil.MustNoErr(t, err, "count message_recipients")
 	if recipCount != 0 {
@@ -290,8 +292,8 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	// Attachment with NULL content_hash (must be excluded).
 	nullHashMsg := f.CreateMessage("msg-null-hash")
 	_, err = f.Store.DB().Exec(
-		`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-		 VALUES (?, 'n.pdf', 'application/pdf', 'cc/x', NULL, 30, CURRENT_TIMESTAMP)`,
+		f.Store.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+		 VALUES (?, 'n.pdf', 'application/pdf', 'cc/x', NULL, 30, CURRENT_TIMESTAMP)`),
 		nullHashMsg,
 	)
 	testutil.MustNoErr(t, err, "insert null-hash attachment")
@@ -433,7 +435,7 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 
 	// Verify oauth_app can be written and read back.
 	_, err = st.DB().Exec(
-		`UPDATE sources SET oauth_app = ? WHERE identifier = ?`,
+		st.Rebind(`UPDATE sources SET oauth_app = ? WHERE identifier = ?`),
 		"acme", "legacy@example.com",
 	)
 	if err != nil {

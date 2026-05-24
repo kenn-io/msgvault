@@ -164,6 +164,53 @@ func TestParseSQLiteTime(t *testing.T) {
 	}
 }
 
+// TestNullableTimestampScan exercises the scanner used by ListMessages
+// /SearchMessages /GetMessages for the COALESCE(sent_at, received_at,
+// internal_date) expression. SQLite's go-sqlite3 driver can return
+// that computed column as string or []byte (no declared datetime
+// affinity); pgx/v5 always delivers time.Time for TIMESTAMP columns.
+// The scanner must accept all of these without erroring.
+func TestNullableTimestampScan(t *testing.T) {
+	tref := time.Date(2024, 6, 15, 10, 30, 45, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		src       any
+		wantValid bool
+		wantTime  time.Time
+	}{
+		{"nil", nil, false, time.Time{}},
+		{"time.Time", tref, true, tref},
+		{"zero time.Time treated as invalid", time.Time{}, false, time.Time{}},
+		{"string SQLite datetime", "2024-06-15 10:30:45", true, tref},
+		{"string RFC3339", "2024-06-15T10:30:45Z", true, tref},
+		{"[]byte SQLite datetime", []byte("2024-06-15 10:30:45"), true, tref},
+		{"empty string -> invalid", "", false, time.Time{}},
+		{"unparseable string -> invalid", "not-a-date", false, time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var n nullableTimestamp
+			if err := n.Scan(tt.src); err != nil {
+				t.Fatalf("Scan(%T %v): unexpected error %v", tt.src, tt.src, err)
+			}
+			if n.Valid != tt.wantValid {
+				t.Errorf("Valid = %v, want %v", n.Valid, tt.wantValid)
+			}
+			if !n.Time.Equal(tt.wantTime) {
+				t.Errorf("Time = %v, want %v", n.Time, tt.wantTime)
+			}
+		})
+	}
+
+	t.Run("unsupported type errors", func(t *testing.T) {
+		var n nullableTimestamp
+		if err := n.Scan(42); err == nil {
+			t.Fatalf("Scan(int): expected error, got nil")
+		}
+	})
+}
+
 func TestGetMessageCcBcc(t *testing.T) {
 	st := openTestStore(t)
 

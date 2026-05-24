@@ -128,7 +128,7 @@ func assertDedupDeleted(
 	t.Helper()
 	var deletedAt sql.NullTime
 	err := st.DB().QueryRow(
-		"SELECT deleted_at FROM messages WHERE id = ?", msgID,
+		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
 	testutil.MustNoErr(t, err, "query deleted_at")
 	if wantDeleted && !deletedAt.Valid {
@@ -204,7 +204,7 @@ func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
 
 	var rfc822ID string
 	err = f.Store.DB().QueryRow(
-		"SELECT rfc822_message_id FROM messages WHERE id = ?", id,
+		f.Store.Rebind("SELECT rfc822_message_id FROM messages WHERE id = ?"), id,
 	).Scan(&rfc822ID)
 	testutil.MustNoErr(t, err, "scan rfc822_message_id")
 	if rfc822ID != "unique-123@example.com" {
@@ -219,6 +219,7 @@ func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
 }
 
 func TestStore_BackfillRFC822IDs_DoesNotOvercountRolledBackBatch(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses SQLite-specific CREATE TRIGGER ... NEW.* / RAISE(FAIL,...) syntax to force a mid-batch rollback")
 	f := storetest.New(t)
 
 	idA := newRFC822Message(t, f, "needs-backfill-a", "")

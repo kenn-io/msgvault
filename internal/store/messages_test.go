@@ -25,7 +25,7 @@ func TestRecomputeConversationStats(t *testing.T) {
 	// Verify initial message_count is 0 (stats not maintained on insert).
 	var initialCount int
 	if err := st.DB().QueryRow(
-		`SELECT message_count FROM conversations WHERE id = ?`, convID,
+		st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), convID,
 	).Scan(&initialCount); err != nil {
 		t.Fatalf("initial message_count scan: %v", err)
 	}
@@ -93,8 +93,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 	var lastMsgAt sql.NullTime
 	var preview sql.NullString
 	if err := st.DB().QueryRow(
-		`SELECT message_count, participant_count, last_message_at, last_message_preview
-		 FROM conversations WHERE id = ?`, convID,
+		st.Rebind(`SELECT message_count, participant_count, last_message_at, last_message_preview
+		 FROM conversations WHERE id = ?`), convID,
 	).Scan(&count, &participantCount, &lastMsgAt, &preview); err != nil {
 		t.Fatalf("post-recompute scan: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRecomputeConversationStats(t *testing.T) {
 		t.Fatalf("RecomputeConversationStats (second call): %v", err)
 	}
 	if err := st.DB().QueryRow(
-		`SELECT message_count FROM conversations WHERE id = ?`, convID,
+		st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), convID,
 	).Scan(&count); err != nil {
 		t.Fatalf("idempotency scan: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	// Both participant_identifiers rows should exist
 	var count int
 	err = st.DB().QueryRow(
-		`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ?`,
+		st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ?`),
 		id1,
 	).Scan(&count)
 	if err != nil {
@@ -165,8 +165,8 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	for _, identType := range []string{"whatsapp", "imessage"} {
 		var exists int
 		err = st.DB().QueryRow(
-			`SELECT COUNT(*) FROM participant_identifiers
-			 WHERE participant_id = ? AND identifier_type = ?`,
+			st.Rebind(`SELECT COUNT(*) FROM participant_identifiers
+			 WHERE participant_id = ? AND identifier_type = ?`),
 			id1, identType,
 		).Scan(&exists)
 		if err != nil {
@@ -183,16 +183,12 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 
 	// Create an unnamed email participant (e.g. inserted by iMessage import
 	// for an Apple ID handle).
-	res, err := st.DB().Exec(
-		`INSERT INTO participants (email_address) VALUES (?)`,
+	var pid int64
+	if err := st.DB().QueryRow(
+		st.Rebind(`INSERT INTO participants (email_address) VALUES (?) RETURNING id`),
 		"alice@example.com",
-	)
-	if err != nil {
+	).Scan(&pid); err != nil {
 		t.Fatalf("insert participant: %v", err)
-	}
-	pid, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
 	}
 
 	// Backfilling on an empty display_name succeeds.
@@ -458,7 +454,7 @@ func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	var title sql.NullString
 	if err := st.DB().QueryRow(
-		`SELECT title FROM conversations WHERE id = ?`, id,
+		st.Rebind(`SELECT title FROM conversations WHERE id = ?`), id,
 	).Scan(&title); err != nil {
 		t.Fatalf("scan title: %v", err)
 	}
@@ -469,7 +465,7 @@ func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 	t.Helper()
 	var name sql.NullString
 	if err := st.DB().QueryRow(
-		`SELECT display_name FROM participants WHERE id = ?`, pid,
+		st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), pid,
 	).Scan(&name); err != nil {
 		t.Fatalf("scan display_name: %v", err)
 	}

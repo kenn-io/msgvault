@@ -79,6 +79,11 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 			in:   "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES ",
 			want: "INSERT INTO message_labels (message_id, label_id) VALUES ",
 		},
+		{
+			name: "INSERT ... SELECT gets ON CONFLICT DO NOTHING",
+			in:   "INSERT OR IGNORE INTO collection_sources (collection_id, source_id) SELECT ?, id FROM sources",
+			want: "INSERT INTO collection_sources (collection_id, source_id) SELECT ?, id FROM sources ON CONFLICT DO NOTHING",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,14 +108,53 @@ func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	if join != "" {
 		t.Errorf("join = %q, want empty (PostgreSQL needs no JOIN)", join)
 	}
-	if where != "m.search_fts @@ plainto_tsquery('simple', ?)" {
+	if where != "m.search_fts @@ to_tsquery('simple', ?)" {
 		t.Errorf("where = %q, unexpected", where)
 	}
-	if orderBy != "ts_rank(m.search_fts, plainto_tsquery('simple', ?)) DESC" {
+	if orderBy != "ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC" {
 		t.Errorf("orderBy = %q, unexpected", orderBy)
 	}
 	if orderArgCount != 1 {
 		t.Errorf("orderArgCount = %d, want 1 (ts_rank needs query a second time)", orderArgCount)
+	}
+}
+
+// TestPostgreSQLDialect_BuildFTSArg covers R3: the tsquery argument
+// builder must split user terms on punctuation so inputs like `---`,
+// `foo-bar`, `user@example.com`, and `a.b.c` produce only safe
+// letter/digit lexemes rather than something to_tsquery would reject.
+// The complementary integration test that actually feeds these
+// strings into PG lives in pg_compat_test.go as
+// TestSearchMessages_R3PunctuationTerms.
+func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
+	d := &PostgreSQLDialect{}
+	tests := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"plain", []string{"invoice"}, "invoice:*"},
+		{"two_plain", []string{"invoice", "review"}, "invoice:* & review:*"},
+		{"dashes_only_drops", []string{"---"}, ""},
+		{"hyphenated_splits", []string{"foo-bar"}, "foo:* & bar:*"},
+		{"email_splits",
+			[]string{"user@example.com"},
+			"user:* & example:* & com:*"},
+		{"dotted_acronym_splits",
+			[]string{"a.b.c"}, "a:* & b:* & c:*"},
+		{"mix_of_clean_and_punct",
+			[]string{"invoice", "foo-bar"},
+			"invoice:* & foo:* & bar:*"},
+		{"only_punct_collapses_to_empty",
+			[]string{"---", "..."}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := d.BuildFTSArg(tc.in)
+			if got != tc.want {
+				t.Errorf("BuildFTSArg(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

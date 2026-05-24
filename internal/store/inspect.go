@@ -4,6 +4,19 @@ import (
 	"database/sql"
 )
 
+// inspectTimeLayout is the stable format used to render TIMESTAMP /
+// TIMESTAMPTZ columns scanned out of either backend for test
+// assertions. Date and clock components are spelled out separately so
+// assertDateFallback's `strings.Contains` checks continue to match.
+const inspectTimeLayout = "2006-01-02 15:04:05"
+
+func formatInspectTime(t sql.NullTime) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.UTC().Format(inspectTimeLayout)
+}
+
 // MessageInspection contains detailed message data for test assertions.
 type MessageInspection struct {
 	SentAt               string
@@ -25,8 +38,11 @@ func (s *Store) InspectMessage(sourceMessageID string) (*MessageInspection, erro
 		RecipientDisplayName: make(map[string]string),
 	}
 
-	// Get basic message fields and thread info
-	var sentAt, internalDate sql.NullString
+	// Get basic message fields and thread info. Scan timestamps as
+	// sql.NullTime — pgx decodes TIMESTAMPTZ into time.Time and refuses
+	// the conversion to *sql.NullString that the old code attempted, so
+	// the prior shape errored out on PostgreSQL before returning a row.
+	var sentAt, internalDate sql.NullTime
 	err := s.db.QueryRow(`
 		SELECT m.sent_at, m.internal_date, m.deleted_from_source_at, c.source_conversation_id
 		FROM messages m
@@ -36,12 +52,8 @@ func (s *Store) InspectMessage(sourceMessageID string) (*MessageInspection, erro
 	if err != nil {
 		return nil, err
 	}
-	if sentAt.Valid {
-		insp.SentAt = sentAt.String
-	}
-	if internalDate.Valid {
-		insp.InternalDate = internalDate.String
-	}
+	insp.SentAt = formatInspectTime(sentAt)
+	insp.InternalDate = formatInspectTime(internalDate)
 
 	// Get body text
 	var bodyText sql.NullString
@@ -209,10 +221,18 @@ func (s *Store) InspectAttachment(sourceMessageID string) (filename, mimeType st
 	return
 }
 
-// InspectMessageDates returns sent_at and internal_date for a message.
+// InspectMessageDates returns sent_at and internal_date for a message,
+// formatted as "2006-01-02 15:04:05" in UTC. Scanning directly into
+// *string fails on PostgreSQL — pgx decodes TIMESTAMPTZ into time.Time
+// and refuses the implicit conversion — so the read goes through
+// sql.NullTime first.
 func (s *Store) InspectMessageDates(sourceMessageID string) (sentAt, internalDate string, err error) {
+	var sentAtT, internalDateT sql.NullTime
 	err = s.db.QueryRow(
 		"SELECT sent_at, internal_date FROM messages WHERE source_message_id = ?",
-		sourceMessageID).Scan(&sentAt, &internalDate)
-	return
+		sourceMessageID).Scan(&sentAtT, &internalDateT)
+	if err != nil {
+		return "", "", err
+	}
+	return formatInspectTime(sentAtT), formatInspectTime(internalDateT), nil
 }

@@ -122,7 +122,7 @@ func (f *Fixture) GetMessageBody(msgID int64) (sql.NullString, sql.NullString) {
 	f.T.Helper()
 	var bodyText, bodyHTML sql.NullString
 	err := f.Store.DB().QueryRow(
-		"SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", msgID,
+		f.Store.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), msgID,
 	).Scan(&bodyText, &bodyHTML)
 	testutil.MustNoErr(f.T, err, "GetMessageBody")
 	return bodyText, bodyHTML

@@ -660,7 +660,7 @@ func (c *Client) ensureConversation(
 		title = c.buildGroupTitle(ctx, s, convID)
 		if title != "" {
 			_, _ = s.DB().Exec(
-				"UPDATE conversations SET title = ? WHERE id = ?",
+				s.Rebind("UPDATE conversations SET title = ? WHERE id = ?"),
 				title, convID,
 			)
 		}
@@ -676,16 +676,18 @@ func (c *Client) buildGroupTitle(
 ) string {
 	// Get total non-self participant count
 	var totalCount int
-	_ = s.DB().QueryRowContext(ctx, `
+	_ = s.DB().QueryRowContext(ctx, s.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
 		  AND COALESCE(p.email_address, '') != 'me@imessage.local'
 		  AND COALESCE(p.display_name, '') != 'Me'
-	`, convID).Scan(&totalCount)
+	`), convID).Scan(&totalCount)
 
-	// Get first few names for display
-	rows, err := s.DB().QueryContext(ctx, `
+	// Get first few names for display. The literal '?' in COALESCE is
+	// inside single quotes, so Rebind (which only converts ? outside
+	// quoted strings) leaves it intact.
+	rows, err := s.DB().QueryContext(ctx, s.Rebind(`
 		SELECT COALESCE(
 			NULLIF(p.display_name, ''),
 			NULLIF(p.phone_number, ''),
@@ -699,7 +701,7 @@ func (c *Client) buildGroupTitle(
 		  AND COALESCE(p.display_name, '') != 'Me'
 		ORDER BY p.id
 		LIMIT 3
-	`, convID)
+	`), convID)
 	if err != nil {
 		return ""
 	}

@@ -66,6 +66,13 @@ Use --full-rebuild to recreate all cache files from scratch.`,
 		dbPath := cfg.DatabaseDSN()
 		analyticsDir := cfg.AnalyticsDir()
 
+		// The Parquet cache is a SQLite → DuckDB ETL; feeding a
+		// postgres:// DSN to the SQLite driver inside buildCache
+		// fails immediately with a confusing driver error.
+		if store.IsPostgresURL(dbPath) {
+			return fmt.Errorf("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+		}
+
 		// Check database exists
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 			return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)

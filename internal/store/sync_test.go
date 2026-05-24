@@ -38,6 +38,7 @@ func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
 // the go-sqlite3 driver normalizes to zero time (from invalid input).
 // The driver converts unparseable DATETIME values to "0001-01-01T00:00:00Z".
 func TestScanSyncRun_ZeroTime(t *testing.T) {
+	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -66,6 +67,7 @@ func TestScanSyncRun_ZeroTime(t *testing.T) {
 // TestScanSource_ZeroTime verifies that sources with timestamps that the driver
 // normalizes to zero time are handled correctly.
 func TestScanSource_ZeroTime(t *testing.T) {
+	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	st := testutil.NewTestStore(t)
 
 	// Create a source
@@ -176,7 +178,7 @@ func TestScanSource_NullRequiredTimestamp(t *testing.T) {
 	testutil.MustNoErr(t, err, "GetOrCreateSource")
 
 	// Corrupt created_at to NULL (violates expected schema invariant)
-	_, err = st.DB().Exec(`UPDATE sources SET created_at = NULL WHERE id = ?`, source.ID)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET created_at = NULL WHERE id = ?`), source.ID)
 	testutil.MustNoErr(t, err, "set created_at to NULL")
 
 	// Attempting to retrieve should fail with a clear error

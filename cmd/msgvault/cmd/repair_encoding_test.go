@@ -12,6 +12,7 @@ import (
 // swallowed. We trigger scan errors by recreating the labels table with a
 // TEXT id column and inserting a non-numeric id that can't be scanned into int64.
 func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates labels with TEXT id to trigger a SQLite scan error; PG enforces FK + types differently")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
@@ -55,6 +56,7 @@ func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
 // repairDisplayNames are counted in stats.skippedRows. We trigger scan errors
 // by recreating the participants table with a TEXT id column.
 func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates a table with mismatched id type to trigger a SQLite scan error; PG enforces types differently")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
@@ -122,6 +124,7 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 // pending_embeddings. Snippet-only repairs must NOT appear because the
 // embedder doesn't read snippet.
 func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 
@@ -198,6 +201,7 @@ func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 // TestRepairOtherStrings_FixesNewColumns verifies that repairOtherStrings
 // repairs invalid UTF-8 in source_conversation_id, email_address, and domain.
 func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
+	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
 

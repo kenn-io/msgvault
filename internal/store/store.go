@@ -64,8 +64,10 @@ func isSQLiteError(err error, substr string) bool {
 	return false
 }
 
-// isPostgresURL returns true if the path looks like a PostgreSQL connection URL.
-func isPostgresURL(dbPath string) bool {
+// IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
+// Exported so cmd-side helpers can decide whether to skip SQLite-only code
+// paths (e.g., the Parquet analytics cache) without first opening a Store.
+func IsPostgresURL(dbPath string) bool {
 	return strings.HasPrefix(dbPath, "postgresql://") || strings.HasPrefix(dbPath, "postgres://")
 }
 
@@ -81,7 +83,7 @@ const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OF
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
 // Otherwise, opens a SQLite database at the file path.
 func Open(dbPath string) (*Store, error) {
-	if isPostgresURL(dbPath) {
+	if IsPostgresURL(dbPath) {
 		return openPostgres(dbPath)
 	}
 	return openSQLite(dbPath, defaultSQLiteParams)
@@ -184,7 +186,7 @@ func openPostgres(dbURL string) (*Store, error) {
 // same database concurrently. Does not create the database, run migrations,
 // or checkpoint WAL on close.
 func OpenReadOnly(dbPath string) (*Store, error) {
-	if isPostgresURL(dbPath) {
+	if IsPostgresURL(dbPath) {
 		return openPostgresReadOnly(dbPath)
 	}
 
@@ -338,6 +340,13 @@ func (s *Store) DB() *sql.DB {
 	return s.db.DB
 }
 
+// IsPostgreSQL reports whether this store is backed by PostgreSQL.
+// Engine factories use this to choose between the SQLite and PostgreSQL
+// query paths.
+func (s *Store) IsPostgreSQL() bool {
+	return s.dialect.DriverName() == "pgx"
+}
+
 // WithExclusiveLock executes fn while holding an exclusive write lock on the
 // database. In WAL mode this blocks concurrent writers (e.g. StartSync) while
 // allowing reads (e.g. IsAttachmentPathReferenced) to proceed. Use this to
@@ -352,7 +361,7 @@ func (s *Store) WithExclusiveLock(ctx context.Context, fn func() error) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
 		return fmt.Errorf("begin exclusive: %w", err)
 	}
 
@@ -583,29 +592,40 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Legacy databases may hold duplicate (message_id, content_hash)
+	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
+	// Dedupe before creating the partial unique index that enforces
+	// idempotency going forward. Both steps are idempotent.
+	if err := s.dedupeAttachmentsBeforeUniqueIndex(); err != nil {
+		return fmt.Errorf("dedupe attachments: %w", err)
+	}
+	if _, err := s.db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+		    ON attachments(message_id, content_hash)
+		    WHERE content_hash IS NOT NULL AND content_hash != ''
+	`); err != nil {
+		return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
+	}
+
+	// Legacy databases may have idx_participants_phone as a non-unique
+	// partial index (it was created that way before the schema flipped
+	// to UNIQUE). `CREATE UNIQUE INDEX IF NOT EXISTS` in schema.sql
+	// silently leaves the non-unique index in place, so
+	// EnsureParticipantByPhone's ON CONFLICT (phone_number) finds no
+	// matching unique constraint on upgraded DBs. Run a one-shot
+	// migration that dedupes phone rows, drops the index, and
+	// recreates it as UNIQUE.
+	if err := s.ensureParticipantsPhoneUniqueIndex(); err != nil {
+		return fmt.Errorf("ensure idx_participants_phone unique: %w", err)
+	}
+
 	// Migrations: add columns for databases created before these features.
-	// The dialect determines whether a "duplicate column" error is benign.
-	for _, m := range []struct {
-		sql  string
-		desc string
-	}{
-		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
-		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
-		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
-		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
-		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},
-		{`ALTER TABLE messages ADD COLUMN sender_id INTEGER REFERENCES participants(id)`, "sender_id"},
-		{`ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
-		{`ALTER TABLE messages ADD COLUMN attachment_count INTEGER DEFAULT 0`, "attachment_count"},
-		{`ALTER TABLE messages ADD COLUMN deleted_from_source_at DATETIME`, "deleted_from_source_at"},
-		{`ALTER TABLE messages ADD COLUMN deleted_at DATETIME`, "deleted_at"},
-		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
-		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
-		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
-	} {
-		if _, err := s.db.Exec(m.sql); err != nil {
+	// The dialect determines the list (SQLite: full ALTER TABLE list;
+	// PostgreSQL: empty — schema_pg.sql is always complete).
+	for _, m := range s.dialect.LegacyColumnMigrations() {
+		if _, err := s.db.Exec(m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
-				return fmt.Errorf("migrate schema (%s): %w", m.desc, err)
+				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
 			}
 		}
 	}
@@ -636,6 +656,24 @@ func (s *Store) InitSchema() error {
 	}
 
 	return nil
+}
+
+// dedupeAttachmentsBeforeUniqueIndex removes duplicate
+// (message_id, content_hash) rows from attachments so the partial
+// unique index idx_attachments_msg_content_hash can be created. Pre-fix
+// UpsertAttachment used a SELECT-then-INSERT pattern that could create
+// duplicates under concurrency; this cleans them up once. Idempotent.
+func (s *Store) dedupeAttachmentsBeforeUniqueIndex() error {
+	_, err := s.db.Exec(`
+		DELETE FROM attachments
+		WHERE content_hash IS NOT NULL AND content_hash != ''
+		  AND id NOT IN (
+			SELECT MIN(id) FROM attachments
+			WHERE content_hash IS NOT NULL AND content_hash != ''
+			GROUP BY message_id, content_hash
+		  )
+	`)
+	return err
 }
 
 // NeedsFTSBackfill reports whether the FTS index needs to be populated.
@@ -790,9 +828,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 		}
 	}
 
-	// DatabaseSize is always the global file size; scoped stats cannot decompose it.
-	if info, err := os.Stat(s.dbPath); err == nil {
-		stats.DatabaseSize = info.Size()
+	// DatabaseSize: file size for SQLite, pg_database_size() for PostgreSQL.
+	if size, err := s.dialect.DatabaseSize(s.db.DB, s.dbPath); err == nil {
+		stats.DatabaseSize = size
 	}
 
 	return stats, nil

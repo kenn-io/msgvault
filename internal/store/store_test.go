@@ -1085,6 +1085,7 @@ func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
 }
 
 func TestStore_UpsertFTS(t *testing.T) {
+	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable with MATCH; PG uses a tsvector column tested via FTSSearchClause")
 	f := storetest.New(t)
 
 	if !f.Store.FTS5Available() {
@@ -1146,6 +1147,7 @@ func TestStore_UpsertFTS(t *testing.T) {
 }
 
 func TestStore_BackfillFTS(t *testing.T) {
+	testutil.SkipIfPostgres(t, "directly queries the SQLite FTS5 vtable; PG backfill is exercised separately via FTSBackfillBatchSQL")
 	f := storetest.New(t)
 
 	if !f.Store.FTS5Available() {
@@ -1232,6 +1234,7 @@ func TestStore_FTS5Available(t *testing.T) {
 }
 
 func TestStore_NeedsFTSBackfill(t *testing.T) {
+	testutil.SkipIfPostgres(t, "directly mutates the SQLite FTS5 vtable; PG NeedsFTSBackfill probes the tsvector column instead")
 	f := storetest.New(t)
 
 	if !f.Store.FTS5Available() {

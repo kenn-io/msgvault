@@ -82,7 +82,7 @@ func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKe
 	}
 	query += `
 		GROUP BY rfc822_message_id
-		HAVING cnt > 1`
+		HAVING COUNT(*) > 1`
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -111,13 +111,13 @@ func (s *Store) GetDuplicateGroupMessages(
 		       (CASE WHEN mr.message_id IS NOT NULL THEN 1 ELSE 0 END) AS has_raw,
 		       (SELECT COUNT(*) FROM message_labels ml
 		          WHERE ml.message_id = m.id) AS label_count,
-		       COALESCE(m.is_from_me, 0) AS is_from_me,
-		       CAST(EXISTS (
+		       CASE WHEN COALESCE(m.is_from_me, FALSE) THEN 1 ELSE 0 END AS is_from_me,
+		       CASE WHEN EXISTS (
 		           SELECT 1 FROM message_labels ml2
 		           JOIN labels l ON l.id = ml2.label_id
 		           WHERE ml2.message_id = m.id
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
-		       ) AS INTEGER) AS has_sent_label,
+		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
 		           SELECT p_from.email_address
 		           FROM message_recipients mr_from
@@ -243,13 +243,13 @@ func (s *Store) GetAllRawMIMECandidates(
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       (SELECT COUNT(*) FROM message_labels ml
 		          WHERE ml.message_id = m.id) AS label_count,
-		       COALESCE(m.is_from_me, 0) AS is_from_me,
-		       CAST(EXISTS (
+		       CASE WHEN COALESCE(m.is_from_me, FALSE) THEN 1 ELSE 0 END AS is_from_me,
+		       CASE WHEN EXISTS (
 		           SELECT 1 FROM message_labels ml2
 		           JOIN labels l ON l.id = ml2.label_id
 		           WHERE ml2.message_id = m.id
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
-		       ) AS INTEGER) AS has_sent_label,
+		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
 		           SELECT p_from.email_address
 		           FROM message_recipients mr_from

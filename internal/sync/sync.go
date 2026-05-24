@@ -647,14 +647,14 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		// Correct metadata if any attachments failed to store
 		var storedCount int
 		if err := s.store.DB().QueryRow(
-			`SELECT COUNT(*) FROM attachments WHERE message_id = ?`,
+			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
 			s.logger.Warn("failed to count stored attachments",
 				"message", messageID, "error", err)
 		} else if storedCount != len(data.attachments) {
 			if _, err := s.store.DB().Exec(
-				`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`,
+				s.store.Rebind(`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`),
 				storedCount > 0, storedCount, messageID,
 			); err != nil {
 				s.logger.Warn("failed to update attachment metadata",

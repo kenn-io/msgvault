@@ -151,7 +151,7 @@ func (s *Store) RemoveSourceSerialized(
 	}
 	defer func() { _ = conn.Close() }()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
 		return false, fmt.Errorf("begin exclusive: %w", err)
 	}
 	committed := false

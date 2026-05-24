@@ -1,9 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"unicode"
 
 	"github.com/mattn/go-sqlite3"
 )
@@ -21,6 +25,53 @@ func (d *SQLiteDialect) Now() string { return "datetime('now')" }
 
 // InsertOrIgnore is a no-op for SQLite — the syntax is native.
 func (d *SQLiteDialect) InsertOrIgnore(sql string) string { return sql }
+
+// BoolTrueExpr returns "col = 1" — SQLite stores booleans as 0/1 INTEGER.
+func (d *SQLiteDialect) BoolTrueExpr(col string) string { return col + " = 1" }
+
+// JSONBindExpr is "?" on SQLite — JSON columns are plain TEXT.
+func (d *SQLiteDialect) JSONBindExpr() string { return "?" }
+
+// BuildFTSArg formats search terms as an FTS5 MATCH argument: each
+// term double-quote-escaped, suffixed with "*" for prefix match, and
+// space-joined (FTS5 treats space as implicit AND). Embedded "*" is
+// stripped first so user input cannot break the trailing prefix
+// operator. Matches the shape produced by the query package's
+// SQLiteQueryDialect.BuildFTSTerm so the API search path and the
+// engine deep-search path return the same hits for the same input —
+// searching "invo" must match "invoice" in both paths.
+//
+// Terms that would tokenize to nothing under the default FTS5
+// tokenizer (no Unicode letter or digit — e.g. "!!!", "---", "") are
+// dropped. If all terms drop, returns "" so the caller can
+// short-circuit instead of dispatching a malformed FTS5 MATCH that
+// errors at the driver. Mirrors the empty-fallback shape in
+// PostgreSQLDialect.BuildFTSArg.
+func (d *SQLiteDialect) BuildFTSArg(terms []string) string {
+	quoted := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if !hasFTSToken(t) {
+			continue
+		}
+		t = strings.ReplaceAll(t, `"`, `""`)
+		t = strings.ReplaceAll(t, "*", "")
+		quoted = append(quoted, `"`+t+`"*`)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// hasFTSToken reports whether s contains at least one rune that the
+// default FTS5 tokenizer (unicode61) would emit as part of a token —
+// i.e., a Unicode letter or digit. Punctuation-only strings tokenize
+// to nothing, so a MATCH built from them is a syntax error.
+func hasFTSToken(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
 
 // InsertOrIgnorePrefix is a no-op for SQLite — OR IGNORE stays in the prefix.
 func (d *SQLiteDialect) InsertOrIgnorePrefix(sql string) string { return sql }
@@ -133,6 +184,40 @@ func (d *SQLiteDialect) FTSRebuildSchema(db *sql.DB) error {
 	return nil
 }
 
+// LegacyColumnMigrations returns the ALTER TABLE ADD COLUMN statements that
+// bring older SQLite databases up to the current schema. IsDuplicateColumnError
+// silences these when the column already exists (idempotent migrations).
+func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
+	return []ColumnMigration{
+		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
+		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
+		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
+		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
+		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},
+		{`ALTER TABLE messages ADD COLUMN sender_id INTEGER REFERENCES participants(id)`, "sender_id"},
+		{`ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
+		{`ALTER TABLE messages ADD COLUMN attachment_count INTEGER DEFAULT 0`, "attachment_count"},
+		{`ALTER TABLE messages ADD COLUMN deleted_from_source_at DATETIME`, "deleted_from_source_at"},
+		{`ALTER TABLE messages ADD COLUMN deleted_at DATETIME`, "deleted_at"},
+		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
+		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
+		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
+	}
+}
+
+// DatabaseSize returns the on-disk size of the SQLite database file.
+// Returns (0, nil) for in-memory databases or when the file cannot be stat'd.
+func (d *SQLiteDialect) DatabaseSize(_ *sql.DB, dbPath string) (int64, error) {
+	if dbPath == "" || dbPath == ":memory:" || strings.Contains(dbPath, ":memory:") {
+		return 0, nil
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return 0, nil
+	}
+	return info.Size(), nil
+}
+
 // InitConn is a no-op for SQLite — PRAGMAs are set via DSN parameters.
 func (d *SQLiteDialect) InitConn(db *sql.DB) error { return nil }
 
@@ -191,6 +276,22 @@ func (d *SQLiteDialect) IsReturningError(err error) bool {
 // the result code is more robust than substring matching: BUSY surfaces as
 // "database is locked" but LOCKED surfaces as "database table is locked",
 // so a single substring cannot catch both.
+// BeginExclusive opens a SQLite "BEGIN EXCLUSIVE" transaction on conn.
+// In WAL mode this blocks concurrent writers while readers can proceed.
+func (d *SQLiteDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
+	_, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE")
+	return err
+}
+
+// BeginWriteSQL returns "BEGIN IMMEDIATE" so the transaction reserves
+// the SQLite writer lock at BEGIN, removing the snapshot-isolation race
+// that lets two deferred transactions both read the pre-update value.
+func (d *SQLiteDialect) BeginWriteSQL() string { return "BEGIN IMMEDIATE" }
+
+// SelectForUpdate returns "" — SQLite has no FOR UPDATE; serialization
+// comes from BEGIN IMMEDIATE.
+func (d *SQLiteDialect) SelectForUpdate() string { return "" }
+
 func (d *SQLiteDialect) IsBusyError(err error) bool {
 	if err == nil {
 		return false

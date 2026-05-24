@@ -47,7 +47,7 @@ func assertSoftDeleted(
 	t.Helper()
 	var deletedAt sql.NullTime
 	err := st.DB().QueryRow(
-		"SELECT deleted_at FROM messages WHERE id = ?", msgID,
+		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
 	testutil.MustNoErr(t, err, "query deleted_at")
 	if wantDeleted && !deletedAt.Valid {

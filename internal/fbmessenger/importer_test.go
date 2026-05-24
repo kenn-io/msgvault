@@ -509,10 +509,10 @@ func TestImportDYI_NonTextMessageBodies(t *testing.T) {
 	}
 	for id, wantBody := range want {
 		var body string
-		if err := st.DB().QueryRow(`
+		if err := st.DB().QueryRow(st.Rebind(`
 			SELECT b.body_text FROM message_bodies b
 			JOIN messages m ON m.id = b.message_id
-			WHERE m.source_message_id = ?`, id).Scan(&body); err != nil {
+			WHERE m.source_message_id = ?`), id).Scan(&body); err != nil {
 			t.Errorf("%s: %v", id, err)
 			continue
 		}
@@ -608,7 +608,7 @@ func TestImportDYI_IsFromMe(t *testing.T) {
 	var wesFromMe, aliceFromMe int
 	if err := st.DB().QueryRow(`
 		SELECT COUNT(*) FROM messages m
-		WHERE m.is_from_me = 1 AND m.source_message_id LIKE 'inbox/alice_ABC123__%'
+		WHERE m.is_from_me IS TRUE AND m.source_message_id LIKE 'inbox/alice_ABC123__%'
 	`).Scan(&wesFromMe); err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestImportDYI_IsFromMe(t *testing.T) {
 	}
 	if err := st.DB().QueryRow(`
 		SELECT COUNT(*) FROM messages m
-		WHERE m.is_from_me = 0 AND m.source_message_id LIKE 'inbox/alice_ABC123__%'
+		WHERE m.is_from_me IS NOT TRUE AND m.source_message_id LIKE 'inbox/alice_ABC123__%'
 	`).Scan(&aliceFromMe); err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +632,7 @@ func TestImportDYI_LabelTaxonomy(t *testing.T) {
 	// Messenger and Messenger / Inbox and Messenger / Archived must exist.
 	for _, name := range []string{"Messenger", "Messenger / Inbox", "Messenger / Archived"} {
 		var n int
-		if err := st.DB().QueryRow("SELECT COUNT(*) FROM labels WHERE name = ?", name).Scan(&n); err != nil {
+		if err := st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM labels WHERE name = ?"), name).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		if n != 1 {
@@ -690,7 +690,7 @@ func TestImportDYI_SelfParticipantSeeded(t *testing.T) {
 	}
 	var n int
 	if err := st.DB().QueryRow(
-		"SELECT COUNT(*) FROM participants WHERE email_address = ? AND domain = 'facebook.messenger'",
+		st.Rebind("SELECT COUNT(*) FROM participants WHERE email_address = ? AND domain = 'facebook.messenger'"),
 		"test.user@facebook.messenger",
 	).Scan(&n); err != nil {
 		t.Fatal(err)
@@ -1333,17 +1333,17 @@ func TestImportDYI_SenderIDPreservedOnReimport(t *testing.T) {
 		t.Helper()
 		var s snap
 		if err := st.DB().QueryRow(
-			`SELECT sender_id, is_from_me FROM messages WHERE source_message_id = ?`,
+			st.Rebind(`SELECT sender_id, is_from_me FROM messages WHERE source_message_id = ?`),
 			srcMsgID,
 		).Scan(&s.senderID, &s.isFromMe); err != nil {
 			t.Fatalf("messages row for %s: %v", srcMsgID, err)
 		}
-		if err := st.DB().QueryRow(`
+		if err := st.DB().QueryRow(st.Rebind(`
 			SELECT mr.display_name, mr.participant_id
 			FROM message_recipients mr
 			JOIN messages m ON m.id = mr.message_id
 			WHERE m.source_message_id = ? AND mr.recipient_type = 'from'
-		`, srcMsgID).Scan(&s.fromName, &s.fromPID); err != nil {
+		`), srcMsgID).Scan(&s.fromName, &s.fromPID); err != nil {
 			t.Fatalf("from recipient for %s: %v", srcMsgID, err)
 		}
 		return s
@@ -1409,13 +1409,13 @@ func TestImportDYI_SenderIDPreservedOnReimport(t *testing.T) {
 	// message — otherwise the dropped is_from_me flag would inflate
 	// participant analytics and cause self-to-self recipient rows.
 	var selfInTo int
-	if err := st.DB().QueryRow(`
+	if err := st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = 'inbox/alice_PRES__1'
 		  AND mr.recipient_type = 'to'
 		  AND mr.participant_id = ?
-	`, selfBefore.senderID.Int64).Scan(&selfInTo); err != nil {
+	`), selfBefore.senderID.Int64).Scan(&selfInTo); err != nil {
 		t.Fatal(err)
 	}
 	if selfInTo != 0 {
@@ -1492,7 +1492,7 @@ func TestImportDYI_ReimportRepairsConversationParticipant(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.DB().Exec(
-		`DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`,
+		st.Rebind(`DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`),
 		convID, orphanID,
 	); err != nil {
 		t.Fatal(err)
@@ -1517,7 +1517,7 @@ func TestImportDYI_ReimportRepairsConversationParticipant(t *testing.T) {
 
 	var n int
 	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`,
+		st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`),
 		convID, orphanID,
 	).Scan(&n); err != nil {
 		t.Fatal(err)

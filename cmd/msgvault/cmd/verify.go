@@ -30,7 +30,9 @@ var verifyCmd = &cobra.Command{
 and sampling messages to ensure raw MIME data is intact.
 
 This command:
-1. Runs SQLite integrity checks on the database (unless --skip-db-check)
+1. On SQLite: runs PRAGMA integrity_check on the database (unless --skip-db-check).
+   On PostgreSQL: prints a notice that the in-engine check is skipped — use
+   pg_amcheck out-of-band to validate the cluster.
 2. Compares local message count with Gmail's reported total
 3. Checks how many messages have raw MIME data stored
 4. Samples random messages and verifies their MIME can be decompressed
@@ -60,29 +62,37 @@ Examples:
 
 		// Run SQLite integrity check before any Gmail work. Users with a
 		// corrupt database should see the repair hint even if their OAuth
-		// token is expired or the network is down.
+		// token is expired or the network is down. PostgreSQL has no
+		// in-engine integrity_check; print a notice so users know the
+		// check was skipped intentionally and point them at the right
+		// out-of-band tool.
 		var dbCorrupt bool
 		if !verifySkipDBCheck {
-			fmt.Println("Running database integrity check...")
-			integrityErrors, err := runIntegrityCheck(s)
-			if err != nil {
-				return fmt.Errorf("integrity check failed: %w", err)
-			}
-			if len(integrityErrors) == 0 {
-				fmt.Println("  Database integrity: OK")
+			if s.IsPostgreSQL() {
+				fmt.Println("Skipping database integrity check (PostgreSQL — use pg_amcheck out-of-band).")
+				fmt.Println()
 			} else {
-				dbCorrupt = true
-				fmt.Printf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
-				for i, ie := range integrityErrors {
-					if i >= 10 {
-						fmt.Printf("  ... and %d more errors\n", len(integrityErrors)-10)
-						break
-					}
-					fmt.Printf("  - %s\n", ie)
+				fmt.Println("Running database integrity check...")
+				integrityErrors, err := runIntegrityCheck(s)
+				if err != nil {
+					return fmt.Errorf("integrity check failed: %w", err)
 				}
-				printIntegrityRecoveryHint(integrityErrors)
+				if len(integrityErrors) == 0 {
+					fmt.Println("  Database integrity: OK")
+				} else {
+					dbCorrupt = true
+					fmt.Printf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
+					for i, ie := range integrityErrors {
+						if i >= 10 {
+							fmt.Printf("  ... and %d more errors\n", len(integrityErrors)-10)
+							break
+						}
+						fmt.Printf("  - %s\n", ie)
+					}
+					printIntegrityRecoveryHint(integrityErrors)
+				}
+				fmt.Println()
 			}
-			fmt.Println()
 		}
 
 		// Look up source to get OAuth app binding
@@ -277,7 +287,16 @@ Examples:
 
 // runIntegrityCheck runs PRAGMA integrity_check on the database and returns
 // any error strings. An empty slice means the database is healthy.
+//
+// PostgreSQL has no in-engine analogue; its corruption checks live in
+// external admin tooling (pg_amcheck, pg_dump --section=data) that
+// require server-side privileges this CLI does not assume. On PG we
+// return no errors so the rest of `verify` (Gmail message round-trip)
+// still runs — the user is expected to monitor PG health separately.
 func runIntegrityCheck(s *store.Store) ([]string, error) {
+	if s.IsPostgreSQL() {
+		return nil, nil
+	}
 	rows, err := s.DB().Query("PRAGMA integrity_check(100)")
 	if err != nil {
 		return nil, err

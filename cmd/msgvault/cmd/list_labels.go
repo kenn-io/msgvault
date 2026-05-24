@@ -42,7 +42,7 @@ Examples:
 		}
 
 		// Create query engine
-		engine := query.NewSQLiteEngine(s.DB())
+		engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 		// Execute aggregation
 		results, err := engine.Aggregate(cmd.Context(), query.ViewLabels, opts)

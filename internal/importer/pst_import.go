@@ -75,9 +75,15 @@ type PstImportSummary struct {
 	HardErrors        bool
 }
 
-// pstCheckpoint tracks resume state for PST imports.
+// pstCheckpoint tracks resume state for PST imports. ArchiveID is the
+// content-based fingerprint from pstArchiveFingerprint and is the
+// authoritative identity check during resume — path/inode comparisons
+// can match a replaced file (same path, same inode after copy-over)
+// whose bytes have changed, which would silently skip messages at the
+// resumed offset.
 type pstCheckpoint struct {
 	File        string `json:"file"`
+	ArchiveID   string `json:"archive_id,omitempty"`
 	FolderIndex int    `json:"folder_index"`
 	FolderPath  string `json:"folder_path"`
 	MsgIndex    int64  `json:"msg_index"`
@@ -188,7 +194,26 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 							}
 						}
 					}
-					if sameFile {
+					// If the checkpoint records an ArchiveID and it
+					// differs from the current file's fingerprint, the
+					// PST at this path has been replaced (e.g.,
+					// re-exported from the mail client). Path/inode
+					// equality is not sufficient — a copy-over can keep
+					// the same path and inode while the byte content
+					// changes, which would otherwise resume at an offset
+					// that points into different messages and silently
+					// skip everything before it. Treat as a user-
+					// initiated restart: drop the offsets, log loudly,
+					// and re-import from the beginning.
+					archiveChanged := saved.ArchiveID != "" && saved.ArchiveID != archiveID
+					if sameFile && archiveChanged {
+						log.Warn("pst archive fingerprint changed since last checkpoint; restarting from the beginning",
+							"file", absPath,
+							"saved_archive_id", saved.ArchiveID,
+							"current_archive_id", archiveID,
+						)
+						summary.WasResumed = false
+					} else if sameFile {
 						resume = saved
 						summary.WasResumed = true
 						log.Info("resuming pst import",
@@ -219,7 +244,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 
 	// Save initial checkpoint only for new syncs; resuming preserves the existing cursor.
 	if !summary.WasResumed {
-		if err := savePstCheckpoint(st, syncID, cpFile, 0, "", 0, &cp); err != nil {
+		if err := savePstCheckpoint(st, syncID, cpFile, archiveID, 0, "", 0, &cp); err != nil {
 			log.Warn("failed to save initial checkpoint", "error", err)
 		}
 	}
@@ -303,7 +328,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 	)
 
 	saveCp := func(fi int, fp string, mi int64) {
-		if err := savePstCheckpoint(st, syncID, cpFile, fi, fp, mi, &cp); err != nil {
+		if err := savePstCheckpoint(st, syncID, cpFile, archiveID, fi, fp, mi, &cp); err != nil {
 			cp.ErrorsCount++
 			summary.Errors++
 			log.Warn("failed to save checkpoint", "error", err)
@@ -599,9 +624,10 @@ func pstArchiveFingerprint(path string) (string, error) {
 	return hex.EncodeToString(sum[:6]), nil
 }
 
-func savePstCheckpoint(st *store.Store, syncID int64, file string, folderIndex int, folderPath string, msgIndex int64, cp *store.Checkpoint) error {
+func savePstCheckpoint(st *store.Store, syncID int64, file, archiveID string, folderIndex int, folderPath string, msgIndex int64, cp *store.Checkpoint) error {
 	b, err := json.Marshal(pstCheckpoint{
 		File:        file,
+		ArchiveID:   archiveID,
 		FolderIndex: folderIndex,
 		FolderPath:  folderPath,
 		MsgIndex:    msgIndex,

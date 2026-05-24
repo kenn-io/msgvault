@@ -154,31 +154,24 @@ func (s *Store) MessageExistsWithRawBatch(sourceID int64, sourceMessageIDs []str
 }
 
 // EnsureConversation gets or creates a conversation (thread) for a message.
+// Concurrent first-inserts converge via INSERT ... ON CONFLICT DO UPDATE
+// RETURNING id: the no-op SET fires the RETURNING clause for both the
+// insert and the conflict path, so the second caller still receives the
+// existing row's id instead of a unique-violation error.
 func (s *Store) EnsureConversation(sourceID int64, sourceConversationID, title string) (int64, error) {
-	// Try to get existing
+	now := s.dialect.Now()
 	var id int64
-	err := s.db.QueryRow(`
-		SELECT id FROM conversations
-		WHERE source_id = ? AND source_conversation_id = ?
-	`, sourceID, sourceConversationID).Scan(&id)
-
-	if err == nil {
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	// Create new
-	result, err := s.db.Exec(fmt.Sprintf(`
+	err := s.db.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, 'email_thread', ?, %s, %s)
-	`, s.dialect.Now(), s.dialect.Now()), sourceID, sourceConversationID, title)
+		ON CONFLICT (source_id, source_conversation_id) DO UPDATE
+		SET source_conversation_id = conversations.source_conversation_id
+		RETURNING id
+	`, now, now), sourceID, sourceConversationID, title).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-
-	return result.LastInsertId()
+	return id, nil
 }
 
 // upsertMessageSQL returns the message upsert SQL with dialect-specific timestamp.
@@ -356,31 +349,32 @@ type Participant struct {
 	Domain       sql.NullString
 }
 
-// EnsureParticipant gets or creates a participant by email.
+// EnsureParticipant gets or creates a participant by email. Atomic via
+// INSERT … ON CONFLICT … RETURNING id so two goroutines (or two
+// processes against PostgreSQL) cannot race between a SELECT-empty and
+// the follow-up INSERT and both succeed — one would otherwise lose to
+// the unique constraint on (email_address) with a 23505 error. Display
+// name and domain are left untouched on conflict to preserve any
+// hand-edited values.
 func (s *Store) EnsureParticipant(email, displayName, domain string) (int64, error) {
-	// Try to get existing
+	// ON CONFLICT must mirror the partial unique index on
+	// participants(email_address) WHERE email_address IS NOT NULL — both
+	// PG and SQLite require the WHERE clause on the conflict target to
+	// match the partial index exactly. DO UPDATE (no-op assignment on
+	// the same column) makes RETURNING fire for both INSERT and the
+	// existing-row case, giving us the id either way.
 	var id int64
-	err := s.db.QueryRow(`
-		SELECT id FROM participants WHERE email_address = ?
-	`, email).Scan(&id)
-
-	if err == nil {
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	// Create new
-	result, err := s.db.Exec(fmt.Sprintf(`
+	err := s.db.QueryRow(fmt.Sprintf(`
 		INSERT INTO participants (email_address, display_name, domain, created_at, updated_at)
 		VALUES (?, ?, ?, %s, %s)
-	`, s.dialect.Now(), s.dialect.Now()), email, displayName, domain)
+		ON CONFLICT (email_address) WHERE email_address IS NOT NULL
+			DO UPDATE SET email_address = EXCLUDED.email_address
+		RETURNING id
+	`, s.dialect.Now(), s.dialect.Now()), email, displayName, domain).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-
-	return result.LastInsertId()
+	return id, nil
 }
 
 // EnsureParticipantsBatch gets or creates participants in batch.
@@ -646,8 +640,15 @@ func (s *Store) EnsureLabelsBatch(
 	err := s.withTx(func(tx *loggedTx) error {
 		// Phase 1: Move all renamed labels to temporary names so
 		// that cross-renames don't cause one label to incorrectly
-		// merge the other. Temp names use the row PK (unique by
-		// construction) with a prefix that can't be a real label.
+		// merge the other. Temp names embed the row PK (unique by
+		// construction within this source_id) and a SOH (U+0001)
+		// prefix that real Gmail label names cannot contain — Gmail's
+		// UI rejects control characters, so the temp name cannot
+		// collide with any real label name in the same source. The
+		// SQLite-only X'00' hex literal that previously played this
+		// role is not portable: PostgreSQL doesn't parse X'00' and
+		// PG TEXT rejects embedded NUL bytes outright, so we build
+		// the sentinel in Go and bind it as a parameter.
 		for sourceLabelID, info := range labels {
 			var id int64
 			var curName string
@@ -663,10 +664,10 @@ func (s *Store) EnsureLabelsBatch(
 					"check label %s: %w", sourceLabelID, err,
 				)
 			}
+			tempName := fmt.Sprintf("\x01__msgvault_pending_rename__%d", id)
 			if _, err = tx.Exec(`
-				UPDATE labels SET name = CAST(id AS TEXT) || X'00'
-				WHERE id = ?
-			`, id); err != nil {
+				UPDATE labels SET name = ? WHERE id = ?
+			`, tempName, id); err != nil {
 				return fmt.Errorf(
 					"clear name for label %s: %w", sourceLabelID, err,
 				)
@@ -1111,49 +1112,33 @@ func (s *Store) RecomputeConversationStats(sourceID int64) error {
 	return nil
 }
 
-// EnsureConversationWithType gets or creates a conversation with an explicit conversation_type.
-// Unlike EnsureConversation (which hardcodes 'email_thread'), this accepts the type as a parameter,
-// making it suitable for WhatsApp and other messaging platforms.
+// EnsureConversationWithType gets or creates a conversation with an
+// explicit conversation_type. Unlike EnsureConversation (which hardcodes
+// 'email_thread'), this accepts the type as a parameter, making it
+// suitable for WhatsApp and other messaging platforms.
+//
+// Concurrent first-inserts converge via INSERT ... ON CONFLICT DO UPDATE
+// RETURNING id. On conflict, conversation_type is overwritten with the
+// caller's value and title is overwritten only when the caller supplies
+// a non-empty title — preserves the prior behavior of not blanking out
+// stored titles when re-syncs pass an empty value.
 func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
-	// Try to get existing
-	var id int64
-	err := s.db.QueryRow(`
-		SELECT id FROM conversations
-		WHERE source_id = ? AND source_conversation_id = ?
-	`, sourceID, sourceConversationID).Scan(&id)
-
-	if err == nil {
-		// Update conversation_type and title if they've changed.
-		// Only update title when the new value is non-empty (don't blank out existing titles).
-		now := s.dialect.Now()
-		if title != "" {
-			_, _ = s.db.Exec(fmt.Sprintf(`
-				UPDATE conversations SET conversation_type = ?, title = ?, updated_at = %s
-				WHERE id = ? AND (conversation_type != ? OR title != ? OR title IS NULL)
-			`, now), conversationType, title, id, conversationType, title)
-		} else {
-			_, _ = s.db.Exec(fmt.Sprintf(`
-				UPDATE conversations SET conversation_type = ?, updated_at = %s
-				WHERE id = ? AND conversation_type != ?
-			`, now), conversationType, id, conversationType)
-		}
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	// Create new
 	now := s.dialect.Now()
-	result, err := s.db.Exec(fmt.Sprintf(`
+	var id int64
+	err := s.db.QueryRow(fmt.Sprintf(`
 		INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
 		VALUES (?, ?, ?, ?, %s, %s)
-	`, now, now), sourceID, sourceConversationID, conversationType, title)
+		ON CONFLICT (source_id, source_conversation_id) DO UPDATE
+		SET conversation_type = EXCLUDED.conversation_type,
+		    title = CASE WHEN EXCLUDED.title IS NOT NULL AND EXCLUDED.title != ''
+		                 THEN EXCLUDED.title ELSE conversations.title END,
+		    updated_at = %s
+		RETURNING id
+	`, now, now, now), sourceID, sourceConversationID, conversationType, title).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-
-	return result.LastInsertId()
+	return id, nil
 }
 
 // EnsureParticipantByPhone gets or creates a participant by phone number.
@@ -1169,37 +1154,30 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 		return 0, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", phone)
 	}
 
-	// Try to get existing by phone
+	// Atomic upsert via ON CONFLICT — see EnsureParticipant for the
+	// SELECT-then-INSERT race this collapses. The conflict target
+	// mirrors the partial unique index on participants(phone_number)
+	// WHERE phone_number IS NOT NULL exactly, which is required by
+	// both PG and SQLite for partial-index ON CONFLICT to bind. The
+	// DO UPDATE backfills display_name when the existing row has none,
+	// preserving the prior best-effort behaviour without a second
+	// round-trip.
+	now := s.dialect.Now()
 	var id int64
-	err := s.db.QueryRow(`
-		SELECT id FROM participants WHERE phone_number = ?
-	`, phone).Scan(&id)
-
-	if err == nil {
-		// Update display name if provided and currently empty
-		if displayName != "" {
-			_, _ = s.db.Exec(`
-				UPDATE participants SET display_name = ?
-				WHERE id = ? AND (display_name IS NULL OR display_name = '')
-			`, displayName, id) // best-effort display name update, ignore error
-		}
-	} else if err != sql.ErrNoRows {
-		return 0, err
-	} else {
-		// Create new participant
-		now := s.dialect.Now()
-		result, err := s.db.Exec(fmt.Sprintf(`
-			INSERT INTO participants (phone_number, display_name, created_at, updated_at)
-			VALUES (?, ?, %s, %s)
-		`, now, now), phone, displayName)
-		if err != nil {
-			return 0, fmt.Errorf("insert participant: %w", err)
-		}
-
-		id, err = result.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
+	err := s.db.QueryRow(fmt.Sprintf(`
+		INSERT INTO participants (phone_number, display_name, created_at, updated_at)
+		VALUES (?, ?, %s, %s)
+		ON CONFLICT (phone_number) WHERE phone_number IS NOT NULL
+			DO UPDATE SET display_name = CASE
+				WHEN COALESCE(NULLIF(TRIM(participants.display_name), ''), '') = ''
+				     AND EXCLUDED.display_name != ''
+				THEN EXCLUDED.display_name
+				ELSE participants.display_name
+			END
+		RETURNING id
+	`, now, now), phone, displayName).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("upsert participant by phone: %w", err)
 	}
 
 	// Ensure a participant_identifiers row exists for this identifierType.
@@ -1645,26 +1623,42 @@ func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
 	return count > 0, nil
 }
 
-// UpsertAttachment stores an attachment record.
+// UpsertAttachment stores an attachment record. Idempotency for the
+// common case is enforced by the partial unique index
+// idx_attachments_msg_content_hash on (message_id, content_hash) where
+// content_hash is non-empty; concurrent inserts collapse to one row via
+// ON CONFLICT DO NOTHING. `size` is widened to int64 at the bind
+// boundary so 32-bit builds cannot truncate large attachments before
+// the column (BIGINT on PG, INTEGER on SQLite).
+//
+// When contentHash is empty (the rare untyped-blob path used by some
+// importers), the unique index does not cover the row; a best-effort
+// (message_id, empty-hash) match is used to avoid trivial duplicates,
+// but two concurrent empty-hash inserts on the same message may both
+// succeed.
 func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePath, contentHash string, size int) error {
-	// Check if attachment already exists (by message_id and content_hash)
+	if contentHash != "" {
+		_, err := s.db.Exec(fmt.Sprintf(`
+			INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, %s)
+			ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+		`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, int64(size))
+		return err
+	}
+
 	var existingID int64
 	err := s.db.QueryRow(`
-		SELECT id FROM attachments WHERE message_id = ? AND content_hash = ?
-	`, messageID, contentHash).Scan(&existingID)
-
+		SELECT id FROM attachments WHERE message_id = ? AND (content_hash IS NULL OR content_hash = '')
+	`, messageID).Scan(&existingID)
 	if err == nil {
-		// Already exists, nothing to do
 		return nil
 	}
 	if err != sql.ErrNoRows {
 		return err
 	}
-
-	// Insert new attachment
 	_, err = s.db.Exec(fmt.Sprintf(`
 		INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, %s)
-	`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, size)
+	`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, int64(size))
 	return err
 }

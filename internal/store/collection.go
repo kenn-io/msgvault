@@ -72,8 +72,10 @@ func (s *Store) EnsureDefaultCollection() error {
 
 	// Add all sources not already in it.
 	if _, err := s.db.Exec(
-		`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)
-		 SELECT ?, id FROM sources`,
+		s.dialect.InsertOrIgnore(
+			`INSERT OR IGNORE INTO collection_sources (collection_id, source_id)
+			 SELECT ?, id FROM sources`,
+		),
 		id,
 	); err != nil {
 		return fmt.Errorf("seed default collection membership: %w", err)
@@ -112,22 +114,20 @@ func (s *Store) CreateCollection(
 
 	var created *Collection
 	err := s.withTx(func(tx *loggedTx) error {
-		res, err := tx.Exec(
+		var id int64
+		err := tx.QueryRow(
 			`INSERT INTO collections (name, description)
-			 VALUES (?, ?)`,
+			 VALUES (?, ?)
+			 RETURNING id`,
 			name, description,
-		)
+		).Scan(&id)
 		if err != nil {
-			if isSQLiteError(err, "UNIQUE constraint failed") {
+			if s.dialect.IsConflictError(err) {
 				return fmt.Errorf(
 					"collection %q already exists", name,
 				)
 			}
 			return fmt.Errorf("insert collection: %w", err)
-		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("last insert id: %w", err)
 		}
 
 		for _, sid := range unique {
@@ -243,9 +243,11 @@ func (s *Store) AddSourcesToCollection(name string, sourceIDs []int64) error {
 	return s.withTx(func(tx *loggedTx) error {
 		for _, sid := range sourceIDs {
 			if _, err := tx.Exec(
-				`INSERT OR IGNORE INTO collection_sources
-				  (collection_id, source_id)
-				 VALUES (?, ?)`,
+				s.dialect.InsertOrIgnore(
+					`INSERT OR IGNORE INTO collection_sources
+					  (collection_id, source_id)
+					 VALUES (?, ?)`,
+				),
 				collID, sid,
 			); err != nil {
 				return fmt.Errorf("add source %d: %w", sid, err)

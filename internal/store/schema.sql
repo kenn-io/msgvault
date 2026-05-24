@@ -324,8 +324,10 @@ CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(source_type);
 -- Participants
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_email ON participants(email_address)
     WHERE email_address IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_participants_phone ON participants(phone_number)
-    WHERE phone_number IS NOT NULL;
+-- idx_participants_phone is created (and upgraded from the legacy
+-- non-unique form) in Go by Store.ensureParticipantsPhoneUniqueIndex
+-- so existing DBs whose IF NOT EXISTS no-op'd the schema bump still
+-- end up with a UNIQUE partial index.
 CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_id)
     WHERE canonical_id IS NOT NULL;
 
@@ -358,6 +360,9 @@ CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);
 CREATE INDEX IF NOT EXISTS idx_attachments_storage_path ON attachments(storage_path);
+-- The partial unique index on (message_id, content_hash) for
+-- UpsertAttachment idempotency is created in Go (Store.InitSchema)
+-- after a one-shot dedupe of legacy duplicate rows.
 
 -- Labels
 CREATE INDEX IF NOT EXISTS idx_labels_source ON labels(source_id);

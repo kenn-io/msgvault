@@ -113,21 +113,24 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	`
 
 	var m APIMessage
-	var sentAtStr sql.NullString
-	var deletedAtStr sql.NullString
-	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAtStr, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAtStr)
+	// sentAt is a COALESCE expression; use nullableTimestamp so
+	// SQLite TEXT results parse correctly. deletedAt is a real
+	// TIMESTAMP column but routing it through the same scanner
+	// keeps the API consistent and tolerant of either driver.
+	var sentAt, deletedAt nullableTimestamp
+	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if sentAtStr.Valid && sentAtStr.String != "" {
-		m.SentAt = parseSQLiteTime(sentAtStr.String)
+	if sentAt.Valid {
+		m.SentAt = sentAt.Time
 	}
-	if deletedAtStr.Valid && deletedAtStr.String != "" {
-		deletedAt := parseSQLiteTime(deletedAtStr.String)
-		m.DeletedAt = &deletedAt
+	if deletedAt.Valid {
+		t := deletedAt.Time
+		m.DeletedAt = &t
 	}
 
 	// Get recipients (single message, per-row is fine)
@@ -248,72 +251,28 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 	return ordered, nil
 }
 
-// SearchMessages searches messages using full-text search, with batch-loaded recipients and labels.
+// SearchMessages searches messages using full-text search, with
+// batch-loaded recipients and labels. The raw query string is split on
+// whitespace into TextTerms and the work is delegated to
+// SearchMessagesQuery so both call sites share one FTS-argument
+// pipeline. Previously this function bound the raw user string straight
+// into FTSSearchClause's placeholder, which on PostgreSQL fed
+// to_tsquery un-escaped input (whitespace and metacharacters in user
+// queries broke the parser) and on SQLite let FTS5 metacharacters
+// reach the MATCH parser. Routing through BuildFTSArg sanitizes per
+// dialect and reuses the FALSE fallback for tokenless inputs.
 func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error) {
-	ftsJoin, ftsWhere, ftsOrder, orderArgCount := s.dialect.FTSSearchClause()
-
-	ftsQuery := fmt.Sprintf(`
-		SELECT
-			m.id,
-			COALESCE(m.conversation_id, 0) as conversation_id,
-			COALESCE(m.subject, '') as subject,
-			COALESCE(p.email_address, '') as from_email,
-			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
-			COALESCE(m.snippet, '') as snippet,
-			m.has_attachments,
-			m.size_estimate
-		FROM messages m
-		%s
-		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = mr.participant_id
-		WHERE %s AND %s
-		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, ftsJoin, ftsWhere, LiveMessagesWhere("m", true), ftsOrder)
-
-	// Bind the search term once for WHERE, plus orderArgCount more times
-	// for any ? placeholders the dialect put in the order-by fragment.
-	searchArgs := make([]interface{}, 0, 3+orderArgCount)
-	searchArgs = append(searchArgs, query)
-	for i := 0; i < orderArgCount; i++ {
-		searchArgs = append(searchArgs, query)
-	}
-	searchArgs = append(searchArgs, limit, offset)
-
-	rows, err := s.db.Query(ftsQuery, searchArgs...)
-	if err != nil {
-		// FTS might not be available, fall back to LIKE search
-		return s.searchMessagesLike(query, offset, limit)
-	}
-	defer func() { _ = rows.Close() }()
-
-	messages, ids, err := scanMessageRows(rows)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if len(ids) == 0 {
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		// Whitespace-only / empty input: no search performed. Returning
+		// every row (the "no FTS filter applied" interpretation) would
+		// be a startling UX change vs. the prior behavior, where empty
+		// queries errored at the FTS parser. Treat as "no matches".
 		return []APIMessage{}, 0, nil
 	}
-
-	// Get total count
-	var total int64
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM messages m
-		%s
-		WHERE %s AND %s
-	`, ftsJoin, ftsWhere, LiveMessagesWhere("m", true))
-	if err := s.db.QueryRow(countQuery, query).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count FTS results: %w", err)
-	}
-
-	// Batch-load recipients and labels
-	if err := s.batchPopulate(messages, ids); err != nil {
-		return nil, 0, err
-	}
-
-	return messages, total, nil
+	return s.SearchMessagesQuery(
+		&search.Query{TextTerms: terms}, offset, limit,
+	)
 }
 
 // SearchMessagesQuery searches messages using a parsed query with
@@ -333,13 +292,26 @@ func (s *Store) SearchMessagesQuery(
 	var ftsJoin, ftsOrder, ftsExpr string
 	var ftsOrderArgCount int
 	if ftsEnabled {
-		ftsExpr = buildFTSExpression(q.TextTerms)
-		join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause()
-		ftsJoin = join
-		ftsOrder = orderBy
-		ftsOrderArgCount = orderArgCount
-		conditions = append(conditions, where)
-		args = append(args, ftsExpr)
+		ftsExpr = s.dialect.BuildFTSArg(q.TextTerms)
+		if ftsExpr == "" {
+			// Every text term reduced to nothing usable (punctuation-
+			// only input like "!!!" or "---"). Dispatching the dialect's
+			// FTS WHERE here would feed PG's to_tsquery an empty string
+			// ("text-search query doesn't contain lexemes") and SQLite's
+			// FTS5 MATCH a syntax error. Substitute FALSE so the query
+			// returns zero rows without ever touching the FTS function,
+			// matching the (expr="FALSE", arg="") fallback that the
+			// query package's BuildFTSTerm uses for the same input.
+			conditions = append(conditions, "FALSE")
+			ftsEnabled = false
+		} else {
+			join, where, orderBy, orderArgCount := s.dialect.FTSSearchClause()
+			ftsJoin = join
+			ftsOrder = orderBy
+			ftsOrderArgCount = orderArgCount
+			conditions = append(conditions, where)
+			args = append(args, ftsExpr)
+		}
 	}
 
 	// from: filter
@@ -406,17 +378,21 @@ func (s *Store) SearchMessagesQuery(
 			"%"+escapeLike(strings.ToLower(lbl))+"%")
 	}
 
-	// subject: filter
+	// subject: filter — LOWER on both sides for PG portability.
+	// SQLite's default LIKE is ASCII-case-insensitive; PG's is strict-
+	// case, so a bare `m.subject LIKE '%invoice%'` returned zero hits
+	// against "Invoice from acme" on PG. Every other LIKE in this
+	// function already wraps with LOWER.
 	for _, term := range q.SubjectTerms {
 		conditions = append(conditions,
-			`m.subject LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(term)+"%")
+			`LOWER(m.subject) LIKE LOWER(?) ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(strings.ToLower(term))+"%")
 	}
 
 	// has:attachment
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions,
-			"m.has_attachments = 1")
+			s.dialect.BoolTrueExpr("m.has_attachments"))
 	}
 
 	// larger: / smaller:
@@ -517,15 +493,6 @@ func (s *Store) SearchMessagesQuery(
 	return messages, total, nil
 }
 
-// buildFTSExpression builds an FTS5 MATCH expression from text terms.
-func buildFTSExpression(terms []string) string {
-	quoted := make([]string, len(terms))
-	for i, t := range terms {
-		quoted[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
-	}
-	return strings.Join(quoted, " AND ")
-}
-
 // searchMessagesQueryNoFTS is a fallback when FTS5 is unavailable.
 func (s *Store) searchMessagesQueryNoFTS(
 	q *search.Query, offset, limit int,
@@ -545,14 +512,16 @@ func escapeLike(s string) string {
 	return s
 }
 
-// searchMessagesLike is a fallback search using LIKE with batch-loaded recipients and labels.
+// searchMessagesLike is a fallback search using LIKE with batch-loaded
+// recipients and labels. Wraps both sides in LOWER for PG portability —
+// SQLite's ASCII LIKE is case-insensitive by default but PG's is strict.
 func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessage, int64, error) {
-	likePattern := "%" + escapeLike(query) + "%"
+	likePattern := "%" + escapeLike(strings.ToLower(query)) + "%"
 
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages
 		WHERE %s
-		AND (subject LIKE ? ESCAPE '\' OR snippet LIKE ? ESCAPE '\')
+		AND (LOWER(subject) LIKE ? ESCAPE '\' OR LOWER(snippet) LIKE ? ESCAPE '\')
 	`, LiveMessagesWhere("", true))
 	var total int64
 	if err := s.db.QueryRow(countQuery, likePattern, likePattern).Scan(&total); err != nil {
@@ -573,7 +542,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE %s
-		AND (m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')
+		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
 	`, LiveMessagesWhere("m", true))
@@ -601,20 +570,63 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 	return messages, total, nil
 }
 
+// nullableTimestamp is a sql.Scanner that accepts time.Time (pgx/v5
+// stdlib for TIMESTAMP/TIMESTAMPTZ), string, []byte (SQLite for
+// computed COALESCE expressions whose declared datetime affinity is
+// lost), and nil. The sql.NullTime path that previously covered both
+// drivers is not sufficient for SQLite: when SELECT COALESCE(...) is
+// used over datetime columns, go-sqlite3 may surface the value as
+// TEXT because the COALESCE result has no column type info, and
+// NullTime's Scan rejects strings.
+type nullableTimestamp struct {
+	Time  time.Time
+	Valid bool
+}
+
+// Scan implements sql.Scanner. Strings and []byte are parsed via
+// parseSQLiteTime which already enumerates every layout SQLite emits;
+// unparseable values are treated as "not valid" rather than a hard
+// error so a single malformed row does not abort an entire listing.
+func (n *nullableTimestamp) Scan(src any) error {
+	if src == nil {
+		n.Time, n.Valid = time.Time{}, false
+		return nil
+	}
+	switch v := src.(type) {
+	case time.Time:
+		n.Time, n.Valid = v, !v.IsZero()
+		return nil
+	case string:
+		t := parseSQLiteTime(v)
+		n.Time, n.Valid = t, !t.IsZero()
+		return nil
+	case []byte:
+		t := parseSQLiteTime(string(v))
+		n.Time, n.Valid = t, !t.IsZero()
+		return nil
+	default:
+		return fmt.Errorf("nullableTimestamp: unsupported scan type %T", src)
+	}
+}
+
 // scanMessageRows scans the standard 8-column message row set.
-// Uses string scanning for dates to handle all SQLite datetime formats robustly.
+// Timestamps go through nullableTimestamp because the sent_at column
+// is a COALESCE(m.sent_at, m.received_at, m.internal_date) computed
+// expression with no declared datetime type, which on SQLite can come
+// back as TEXT and trip sql.NullTime.Scan. pgx/v5 still delivers
+// time.Time, which nullableTimestamp also handles.
 func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 	var messages []APIMessage
 	var ids []int64
 	for rows.Next() {
 		var m APIMessage
-		var sentAtStr sql.NullString
-		err := rows.Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAtStr, &m.Snippet, &m.HasAttachments, &m.SizeEstimate)
+		var sentAt nullableTimestamp
+		err := rows.Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate)
 		if err != nil {
 			return nil, nil, err
 		}
-		if sentAtStr.Valid && sentAtStr.String != "" {
-			m.SentAt = parseSQLiteTime(sentAtStr.String)
+		if sentAt.Valid {
+			m.SentAt = sentAt.Time
 		}
 		messages = append(messages, m)
 		ids = append(ids, m.ID)

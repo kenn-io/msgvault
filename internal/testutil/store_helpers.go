@@ -47,6 +47,19 @@ func NewTestStore(t *testing.T) *store.Store {
 	return st
 }
 
+// SkipIfPostgres skips the calling test when MSGVAULT_TEST_DB targets
+// PostgreSQL. Use this for tests that exercise SQLite-only constructs
+// (FTS5 MATCH, PRAGMA, BEGIN EXCLUSIVE, SQLite trigger syntax) where
+// PostgreSQL's portable equivalent is covered by a separate test or
+// by the Dialect interface.
+func SkipIfPostgres(t *testing.T, reason string) {
+	t.Helper()
+	testDB := os.Getenv("MSGVAULT_TEST_DB")
+	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
+		t.Skipf("skipping on PostgreSQL: %s", reason)
+	}
+}
+
 // newPostgresTestStore creates a test-isolated PostgreSQL store using a random schema name.
 // The schema is dropped on test cleanup.
 func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
