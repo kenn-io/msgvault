@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
@@ -468,6 +469,13 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 		}
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
+			// Distinguish transient network failures (DNS lookup timeout,
+			// dial timeout after laptop sleep/wake, Wi-Fi flap) from real
+			// auth errors. Suggesting reauth on every network blip sends
+			// the user down the wrong path.
+			if syncerr.IsTransientNetwork(tsErr) {
+				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
+			}
 			if oauthMgr.HasToken(email) {
 				return nil, fmt.Errorf("get token source: %w (token may be expired; run 'sync %s' or 'verify %s' from an interactive terminal to re-authorize)", tsErr, email, email)
 			}

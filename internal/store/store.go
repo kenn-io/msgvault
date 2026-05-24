@@ -37,7 +37,13 @@ type Store struct {
 	closeCleanup  func()
 }
 
-const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&_foreign_keys=ON"
+// synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
+// (NORMAL only protects against process crashes). msgvault is commonly run as a
+// laptop daemon (`msgvault serve`) where sleep/wake, forced reboots, and OOM kills
+// give many opportunities to leave a torn page on disk; the write volume is tiny
+// so the durability cost is negligible. fullfsync is macOS-only (F_FULLFSYNC
+// fcntl) and a no-op on other platforms.
+const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
 
 // isSQLiteError checks if err is a sqlite3.Error with a message containing substr.
 // This is more robust than strings.Contains on err.Error() because it first
@@ -63,6 +69,14 @@ func isPostgresURL(dbPath string) bool {
 	return strings.HasPrefix(dbPath, "postgresql://") || strings.HasPrefix(dbPath, "postgres://")
 }
 
+// testSQLiteParams configures SQLite for ephemeral test databases: WAL mode
+// for concurrency parity with production, but synchronous=OFF (no fsync per
+// commit). Test DBs live in t.TempDir() and are discarded at test exit, so
+// durability against OS crashes is irrelevant — and on slow-fsync platforms
+// like Windows CI runners, the production FULL setting can push bulk-import
+// tests past their timing tripwires.
+const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON"
+
 // Open opens or creates the database at the given path.
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
 // Otherwise, opens a SQLite database at the file path.
@@ -70,11 +84,25 @@ func Open(dbPath string) (*Store, error) {
 	if isPostgresURL(dbPath) {
 		return openPostgres(dbPath)
 	}
-	return openSQLite(dbPath)
+	return openSQLite(dbPath, defaultSQLiteParams)
 }
 
-// openSQLite opens a SQLite database at the given file path.
-func openSQLite(dbPath string) (*Store, error) {
+// OpenForTest opens or creates a database tuned for test use: ephemeral,
+// fast, with durability disabled. PostgreSQL URLs go through the normal
+// connection path (durability is a server-side concern there).
+//
+// Not for production use — a process crash mid-test can leave a corrupt
+// database, which is fine because tests recreate it from scratch.
+func OpenForTest(dbPath string) (*Store, error) {
+	if isPostgresURL(dbPath) {
+		return openPostgres(dbPath)
+	}
+	return openSQLite(dbPath, testSQLiteParams)
+}
+
+// openSQLite opens a SQLite database at the given file path with the
+// supplied DSN parameters appended.
+func openSQLite(dbPath, params string) (*Store, error) {
 	// Ensure directory exists (skip for in-memory databases)
 	if dbPath != ":memory:" && !strings.Contains(dbPath, ":memory:") {
 		dir := filepath.Dir(dbPath)
@@ -83,7 +111,7 @@ func openSQLite(dbPath string) (*Store, error) {
 		}
 	}
 
-	dsn := dbPath + defaultSQLiteParams
+	dsn := dbPath + params
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

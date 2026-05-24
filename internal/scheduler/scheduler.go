@@ -10,6 +10,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/syncerr"
 )
 
 // SyncFunc is the callback invoked when a scheduled sync should run.
@@ -275,10 +276,20 @@ func (s *Scheduler) runSync(email string) {
 	s.mu.Lock()
 	if err != nil {
 		s.lastErr[email] = err
-		s.logger.Error("scheduled sync failed",
-			"email", email,
-			"duration", time.Since(start),
-			"error", err)
+		// Transient network failures (e.g., DNS lookup timeout after
+		// laptop sleep/wake) aren't actionable — the next scheduled tick
+		// will retry. Log at WARN to keep them out of error dashboards.
+		if syncerr.IsTransientNetwork(err) {
+			s.logger.Warn("scheduled sync skipped (transient network)",
+				"email", email,
+				"duration", time.Since(start),
+				"error", err)
+		} else {
+			s.logger.Error("scheduled sync failed",
+				"email", email,
+				"duration", time.Since(start),
+				"error", err)
+		}
 	} else {
 		s.lastRun[email] = time.Now()
 		s.lastErr[email] = nil

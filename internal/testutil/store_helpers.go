@@ -31,7 +31,7 @@ func NewTestStore(t *testing.T) *store.Store {
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	st, err := store.Open(dbPath)
+	st, err := store.OpenForTest(dbPath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
