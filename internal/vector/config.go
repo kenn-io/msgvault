@@ -204,14 +204,22 @@ func (e EmbeddingsConfig) Fingerprint() string {
 
 // GenerationFingerprint returns the full identifier used to compare an
 // index generation against the configured policy. Format:
-// "<model>:<dimension>:<preprocess>". Both halves are derived from the
-// effective config, so changing either the embedding model/dimension or
-// any preprocessing toggle produces a new fingerprint and the
-// ResolveActiveForFingerprint check forces a --full-rebuild rather than
-// silently embedding new messages under a policy different from the
-// already-active vectors.
+// "<model>:<dimension>:<preprocess>:c<max_input_chars>". Every segment
+// is derived from the effective config, so changing the embedding
+// model/dimension, any preprocessing toggle, OR the truncation cap
+// produces a new fingerprint and the ResolveActiveForFingerprint check
+// forces a --full-rebuild rather than silently embedding new messages
+// under a policy different from the already-active vectors.
+//
+// max_input_chars is part of the policy because the embed worker
+// passes it straight into Preprocess() as the rune-bounded truncation
+// cap (see Worker.run); raising or lowering it changes the embedded
+// text for any message whose preprocessed form exceeds the previous
+// cap, so two cap values produce two different embedding spaces and
+// must not share one generation.
 func (c Config) GenerationFingerprint() string {
-	return c.Embeddings.Fingerprint() + ":" + c.Preprocess.Fingerprint()
+	return fmt.Sprintf("%s:%s:c%d",
+		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars)
 }
 
 // Validate returns a descriptive error if the config is unusable.

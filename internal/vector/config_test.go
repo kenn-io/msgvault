@@ -433,15 +433,16 @@ func TestPreprocessConfig_FingerprintChangesPerToggle(t *testing.T) {
 }
 
 // TestConfig_GenerationFingerprintFolds checks the full identifier
-// composition. The shape is "<model>:<dim>:<preprocess>" — both halves
-// must contribute so an operator switching either model or any
-// preprocess toggle stales the existing index.
+// composition. The shape is "<model>:<dim>:<preprocess>:c<maxchars>"
+// — every segment must contribute so an operator switching the model,
+// any preprocess toggle, or the truncation cap stales the existing
+// index instead of silently mixing inconsistently-prepared vectors.
 func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 	base := Config{
-		Embeddings: EmbeddingsConfig{Model: "nomic-embed", Dimension: 768},
+		Embeddings: EmbeddingsConfig{Model: "nomic-embed", Dimension: 768, MaxInputChars: 6000},
 	}
 	got := base.GenerationFingerprint()
-	want := "nomic-embed:768:p1-111111"
+	want := "nomic-embed:768:p1-111111:c6000"
 	if got != want {
 		t.Errorf("GenerationFingerprint() = %q, want %q", got, want)
 	}
@@ -454,13 +455,45 @@ func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 	}
 
 	// Flipping a preprocess toggle invalidates too — this is the gap
-	// the reviewer flagged. Without folding Preprocess into the
-	// fingerprint, the active generation would keep absorbing new
-	// vectors built under a different sanitization policy.
+	// the reviewer flagged in round one. Without folding Preprocess
+	// into the fingerprint, the active generation would keep absorbing
+	// new vectors built under a different sanitization policy.
 	f := false
 	preprocessChanged := base
 	preprocessChanged.Preprocess.StripHTML = &f
 	if preprocessChanged.GenerationFingerprint() == got {
 		t.Error("GenerationFingerprint() did not change when strip_html flipped to false")
+	}
+}
+
+// TestConfig_GenerationFingerprint_IncludesMaxInputChars pins the gap
+// flagged in roborev round two: MaxInputChars is the rune-bounded
+// truncation cap fed straight into Preprocess() by the embed worker,
+// so changing it produces a different embedded string for any message
+// whose preprocessed form exceeds either the old or new cap. Two
+// different cap values therefore produce two different embedding
+// spaces and must not share one active generation.
+func TestConfig_GenerationFingerprint_IncludesMaxInputChars(t *testing.T) {
+	base := Config{
+		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},
+	}
+	baseline := base.GenerationFingerprint()
+
+	bumped := base
+	bumped.Embeddings.MaxInputChars = 12000
+	if bumped.GenerationFingerprint() == baseline {
+		t.Errorf("GenerationFingerprint() did not change when MaxInputChars went 6000→12000 (still %q)",
+			baseline)
+	}
+
+	// The zero-cap case (Preprocess treats <=0 as "no truncation")
+	// must also be distinguishable from any positive cap, otherwise
+	// disabling truncation later wouldn't stale a generation that had
+	// always been truncating.
+	zeroed := base
+	zeroed.Embeddings.MaxInputChars = 0
+	if zeroed.GenerationFingerprint() == baseline {
+		t.Errorf("GenerationFingerprint() did not change when MaxInputChars went 6000→0 (still %q)",
+			baseline)
 	}
 }
