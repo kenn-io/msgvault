@@ -13,7 +13,7 @@ buildGoModule {
 
   src = gitignoreSource ../.;
 
-  vendorHash = "sha256-/C+svBQ4b9+l8nY8BZ5Lvd072XLKpRDIR2fvqVqLJUE=";
+  vendorHash = "sha256-ntn/Q1CU1Iwew8HlzKz6DHLl0fovl8Rp3WCFZyHD2ug=";
   proxyVendor = true;
 
   subPackages = [ "cmd/msgvault" ];
