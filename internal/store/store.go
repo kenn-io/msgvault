@@ -96,7 +96,7 @@ func Open(dbPath string) (*Store, error) {
 // Not for production use — a process crash mid-test can leave a corrupt
 // database, which is fine because tests recreate it from scratch.
 func OpenForTest(dbPath string) (*Store, error) {
-	if isPostgresURL(dbPath) {
+	if IsPostgresURL(dbPath) {
 		return openPostgres(dbPath)
 	}
 	return openSQLite(dbPath, testSQLiteParams)

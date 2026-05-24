@@ -129,7 +129,7 @@ branch:
 ```bash
 # Start a PostgreSQL instance, then:
 export MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/msgvault_test
-make test
+make test-pg
 ```
 
 Each test creates and drops its own schema (`msgvault_test_<hex>`) for

@@ -86,8 +86,8 @@ jobs:
       - name: Build
         run: nix build
 
-  # PostgreSQL backend lane: runs the portable test suite against a live
-  # PostgreSQL service. The store, query, and concurrency tests all read
+  # PostgreSQL backend lane: runs the full Go test suite against a live
+  # PostgreSQL service. Tests that use testutil.NewTestStore read
   # MSGVAULT_TEST_DB and switch backends without a recompile. Concurrency
   # tests use -count=5 so non-deterministic races (lost updates, missing
   # unique constraints) surface here rather than slipping past a single
@@ -117,8 +117,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Test (PostgreSQL, portable fts5 suite)
-        run: go test -tags fts5 ./internal/store ./internal/query ./internal/testutil
+      - name: Test (PostgreSQL)
+        run: make test-pg
 
       - name: Concurrency tests (-count=5)
         run: |

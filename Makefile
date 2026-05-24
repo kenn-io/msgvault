@@ -17,7 +17,7 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 
-.PHONY: build build-release install clean test test-v fmt lint lint-ci tidy shootout run-shootout install-hooks bench help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci tidy shootout run-shootout install-hooks bench help
 
 # Build the binary (debug)
 build:
