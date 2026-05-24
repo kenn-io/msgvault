@@ -78,7 +78,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 		t.Fatalf("create source: %v", err)
 	}
 
-	ids, err := resolveAccountList(st, fmt.Sprintf("%d", src.ID))
+	ids, err := resolveAccountList(nil, st, fmt.Sprintf("%d", src.ID))
 	if err != nil {
 		t.Fatalf("resolveAccountList(existing id): %v", err)
 	}
@@ -93,7 +93,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 	// identifier (e.g. unprefixed phone "15551234567") that wasn't a
 	// source ID would never get a chance to match by identifier. The
 	// test below asserts the fall-through path is reachable.
-	if _, err := resolveAccountList(st, "999999"); err == nil {
+	if _, err := resolveAccountList(nil, st, "999999"); err == nil {
 		t.Fatal("expected error for missing numeric source ID, got nil")
 	}
 }
@@ -128,7 +128,7 @@ func TestResolveAccountListNumericFallthroughResolvesIdentifier(t *testing.T) {
 		t.Fatalf("test assumption broken: source id %d collides with identifier", src.ID)
 	}
 
-	ids, err := resolveAccountList(st, phoneIdentifier)
+	ids, err := resolveAccountList(nil, st, phoneIdentifier)
 	if err != nil {
 		t.Fatalf("resolveAccountList(numeric identifier): %v", err)
 	}

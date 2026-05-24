@@ -24,7 +24,7 @@ Examples:
 		email := args[0]
 
 		if updateDisplayName == "" {
-			return fmt.Errorf("nothing to update: use --display-name to set a display name")
+			return usageErr(cmd, fmt.Errorf("nothing to update: use --display-name to set a display name"))
 		}
 
 		dbPath := cfg.DatabaseDSN()

@@ -277,10 +277,10 @@ func runIdentityAdd(cmd *cobra.Command, args []string) error {
 	accountArg, identifierArg := args[0], args[1]
 	identifier := strings.TrimSpace(identifierArg)
 	if identifier == "" {
-		return fmt.Errorf("identifier cannot be empty")
+		return usageErr(cmd, fmt.Errorf("identifier cannot be empty"))
 	}
 	if strings.Contains(identityAddSignal, ",") {
-		return fmt.Errorf("signal names cannot contain commas: %q", identityAddSignal)
+		return usageErr(cmd, fmt.Errorf("signal names cannot contain commas: %q", identityAddSignal))
 	}
 
 	scope, err := ResolveAccountFlag(st, accountArg)
@@ -341,7 +341,7 @@ func runIdentityRemove(cmd *cobra.Command, args []string) error {
 
 	identifier := strings.TrimSpace(args[1])
 	if identifier == "" {
-		return fmt.Errorf("identifier must not be empty")
+		return usageErr(cmd, fmt.Errorf("identifier must not be empty"))
 	}
 
 	scope, err := ResolveAccountFlag(st, args[0])

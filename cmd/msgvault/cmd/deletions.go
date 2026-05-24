@@ -415,11 +415,11 @@ Examples:
 			}
 
 			if len(accounts) == 0 {
-				return fmt.Errorf("no account in deletion manifest - use --account flag")
+				return usageErr(cmd, fmt.Errorf("no account in deletion manifest - use --account flag"))
 			} else if len(accounts) == 1 {
 				account = accounts[0]
 			} else {
-				return fmt.Errorf("multiple accounts in pending batches (%v) - use --account flag to specify which account", accounts)
+				return usageErr(cmd, fmt.Errorf("multiple accounts in pending batches (%v) - use --account flag to specify which account", accounts))
 			}
 		} else {
 			// Resolve the user-supplied value to a source.

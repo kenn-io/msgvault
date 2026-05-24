@@ -124,7 +124,7 @@ Add to Claude Desktop config:
 		if mcpHTTPAddr != "" {
 			normalized, err := normalizeMCPHTTPAddr(mcpHTTPAddr, mcpHTTPAllowInsecure)
 			if err != nil {
-				return err
+				return usageErr(cmd, err)
 			}
 			return mcpserver.ServeHTTPWithOptions(ctx, opts, normalized)
 		}

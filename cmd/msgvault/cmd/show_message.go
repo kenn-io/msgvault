@@ -37,7 +37,7 @@ Examples:
 
 		// Use remote if configured
 		if IsRemoteMode() {
-			return showRemoteMessage(idStr)
+			return showRemoteMessage(cmd, idStr)
 		}
 
 		return showLocalMessage(cmd, idStr)
@@ -45,11 +45,11 @@ Examples:
 }
 
 // showRemoteMessage fetches and displays a message from the remote server.
-func showRemoteMessage(idStr string) error {
+func showRemoteMessage(cmd *cobra.Command, idStr string) error {
 	// Parse as numeric ID (remote API only supports numeric IDs)
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		return fmt.Errorf("remote mode requires numeric message ID (got: %s)", idStr)
+		return usageErr(cmd, fmt.Errorf("remote mode requires numeric message ID (got: %s)", idStr))
 	}
 
 	s, err := OpenRemoteStore()

@@ -69,7 +69,7 @@ var (
 	collectionRemoveAccounts string
 )
 
-func runCollectionCreate(_ *cobra.Command, args []string) error {
+func runCollectionCreate(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func runCollectionCreate(_ *cobra.Command, args []string) error {
 	defer func() { _ = st.Close() }()
 
 	name := args[0]
-	sourceIDs, err := resolveAccountList(st, collectionCreateAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionCreateAccounts)
 	if err != nil {
 		return err
 	}
@@ -155,14 +155,14 @@ func runCollectionShow(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCollectionAdd(_ *cobra.Command, args []string) error {
+func runCollectionAdd(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(st, collectionAddAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionAddAccounts)
 	if err != nil {
 		return err
 	}
@@ -174,14 +174,14 @@ func runCollectionAdd(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCollectionRemove(_ *cobra.Command, args []string) error {
+func runCollectionRemove(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(st, collectionRemoveAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionRemoveAccounts)
 	if err != nil {
 		return err
 	}
@@ -207,9 +207,9 @@ func runCollectionDelete(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func resolveAccountList(st *store.Store, accounts string) ([]int64, error) {
+func resolveAccountList(cmd *cobra.Command, st *store.Store, accounts string) ([]int64, error) {
 	if accounts == "" {
-		return nil, fmt.Errorf("--accounts is required")
+		return nil, usageErr(cmd, fmt.Errorf("--accounts is required"))
 	}
 	parts := strings.Split(accounts, ",")
 	var ids []int64
