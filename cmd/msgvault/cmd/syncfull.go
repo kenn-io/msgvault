@@ -51,16 +51,16 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if syncLimit < 0 {
-			return fmt.Errorf("--limit must be a non-negative number")
+			return usageErr(cmd, fmt.Errorf("--limit must be a non-negative number"))
 		}
 		if syncAfter != "" {
 			if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
-				return fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err)
+				return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
 			}
 		}
 		if syncBefore != "" {
 			if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
-				return fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err)
+				return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
 			}
 		}
 

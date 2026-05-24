@@ -50,10 +50,10 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 
 	// Validate phone number.
 	if importPhone == "" {
-		return fmt.Errorf("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)")
+		return usageErr(cmd, fmt.Errorf("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)"))
 	}
 	if !strings.HasPrefix(importPhone, "+") {
-		return fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone)
+		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone))
 	}
 
 	// Validate media dir if provided.

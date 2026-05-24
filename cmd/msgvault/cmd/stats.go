@@ -24,10 +24,10 @@ Use --local to force local database.`,
 
 		if IsRemoteMode() {
 			if statsAccount != "" {
-				return fmt.Errorf("--account is not supported in remote mode")
+				return usageErr(cmd, fmt.Errorf("--account is not supported in remote mode"))
 			}
 			if statsCollection != "" {
-				return fmt.Errorf("--collection is not supported in remote mode")
+				return usageErr(cmd, fmt.Errorf("--collection is not supported in remote mode"))
 			}
 		}
 

@@ -49,8 +49,7 @@ Examples:
   msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
   msgvault import-messenger --me test.user@facebook.messenger --limit 100 ./dyi
 `,
-	Args:         cobra.ExactArgs(1),
-	SilenceUsage: true,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := MustBeLocal("import-messenger"); err != nil {
 			return err

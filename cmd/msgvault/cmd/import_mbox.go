@@ -49,8 +49,7 @@ Examples:
   # HEY.com export (still MBOX)
   msgvault import-mbox you@hey.com hey-export.zip --source-type hey --label hey
 `,
-	Args:         cobra.ExactArgs(2),
-	SilenceUsage: true,
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		identifier := args[0]
 		exportPath := args[1]

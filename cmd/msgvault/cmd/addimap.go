@@ -82,13 +82,13 @@ Examples:
   msgvault add-imap --host mail.example.com --username user@example.com --no-tls`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if imapHost == "" {
-			return fmt.Errorf("--host is required")
+			return usageErr(cmd, fmt.Errorf("--host is required"))
 		}
 		if imapUsername == "" {
-			return fmt.Errorf("--username is required")
+			return usageErr(cmd, fmt.Errorf("--username is required"))
 		}
 		if imapNoTLS && imapSTARTTLS {
-			return fmt.Errorf("--no-tls and --starttls are mutually exclusive")
+			return usageErr(cmd, fmt.Errorf("--no-tls and --starttls are mutually exclusive"))
 		}
 
 		// Build IMAP config

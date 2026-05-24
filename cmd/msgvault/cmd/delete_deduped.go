@@ -46,7 +46,7 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(deleteDedupedBatchIDs) == 0 && !deleteDedupedAllHidden {
-		return fmt.Errorf("must specify --batch or --all-hidden")
+		return usageErr(cmd, fmt.Errorf("must specify --batch or --all-hidden"))
 	}
 
 	st, err := openStoreAndInit()

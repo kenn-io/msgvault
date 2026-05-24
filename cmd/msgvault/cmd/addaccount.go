@@ -43,7 +43,7 @@ Examples:
 		email := args[0]
 
 		if headless && forceReauth {
-			return fmt.Errorf("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode")
+			return usageErr(cmd, fmt.Errorf("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
 		}
 
 		// Resolve which client secrets to use

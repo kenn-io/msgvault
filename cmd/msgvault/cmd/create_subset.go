@@ -49,7 +49,7 @@ func runCreateSubset(cmd *cobra.Command, _ []string) error {
 	}
 
 	if subsetRows <= 0 {
-		return fmt.Errorf("--rows must be a positive integer")
+		return usageErr(cmd, fmt.Errorf("--rows must be a positive integer"))
 	}
 
 	srcDBPath := cfg.DatabaseDSN()

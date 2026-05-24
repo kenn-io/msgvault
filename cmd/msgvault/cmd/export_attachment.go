@@ -54,14 +54,14 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 
 	// Validate flag combinations
 	if exportAttachmentJSON && exportAttachmentBase64 {
-		return fmt.Errorf("--json and --base64 are mutually exclusive")
+		return usageErr(cmd, fmt.Errorf("--json and --base64 are mutually exclusive"))
 	}
 	if exportAttachmentOutput != "" && exportAttachmentOutput != "-" {
 		if exportAttachmentJSON {
-			return fmt.Errorf("--json and --output are mutually exclusive (--json writes to stdout)")
+			return usageErr(cmd, fmt.Errorf("--json and --output are mutually exclusive (--json writes to stdout)"))
 		}
 		if exportAttachmentBase64 {
-			return fmt.Errorf("--base64 and --output are mutually exclusive (--base64 writes to stdout)")
+			return usageErr(cmd, fmt.Errorf("--base64 and --output are mutually exclusive (--base64 writes to stdout)"))
 		}
 	}
 

@@ -59,31 +59,31 @@ Examples:
 		queryStr := strings.Join(args, " ")
 
 		if queryStr == "" && searchAccount == "" && searchCollection == "" {
-			return fmt.Errorf("provide a search query or --account/--collection flag")
+			return usageErr(cmd, fmt.Errorf("provide a search query or --account/--collection flag"))
 		}
 
 		// Use remote search if configured
 		if IsRemoteMode() {
 			if searchAccount != "" {
-				return fmt.Errorf(
+				return usageErr(cmd, fmt.Errorf(
 					"--account is not supported in remote mode",
-				)
+				))
 			}
 			if searchCollection != "" {
-				return fmt.Errorf("--collection is not supported in remote mode")
+				return usageErr(cmd, fmt.Errorf("--collection is not supported in remote mode"))
 			}
 			if searchMode != "fts" {
-				return fmt.Errorf("--mode is not supported in remote mode")
+				return usageErr(cmd, fmt.Errorf("--mode is not supported in remote mode"))
 			}
 			return runRemoteSearch(queryStr)
 		}
 
 		// Validate mode before any scope work so we fail fast on a typo.
 		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
-			return fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)
+			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
 		if searchMode != "fts" && searchOffset > 0 {
-			return fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode)
+			return usageErr(cmd, fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode))
 		}
 		// Vector and hybrid modes need free-text terms to embed; both
 		// an empty raw query and a filter-only query (e.g. `from:alice`)
@@ -92,10 +92,10 @@ Examples:
 		// allows scoped queryless searches.
 		if searchMode != "fts" {
 			if queryStr == "" {
-				return fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode)
+				return usageErr(cmd, fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode))
 			}
 			if len(search.Parse(queryStr).TextTerms) == 0 {
-				return fmt.Errorf("--mode=%s requires free-text terms to embed; %q parsed to filters only — add a search phrase or use --mode=fts", searchMode, queryStr)
+				return usageErr(cmd, fmt.Errorf("--mode=%s requires free-text terms to embed; %q parsed to filters only — add a search phrase or use --mode=fts", searchMode, queryStr))
 			}
 		}
 

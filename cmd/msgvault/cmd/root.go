@@ -49,12 +49,32 @@ email data locally with full-text search capabilities.
 This is the Go implementation providing sync, search, and TUI functionality
 in a single binary.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Cobra's command lifecycle (v1.10.x) is:
+		//   1. ParseFlags + ValidateArgs (Args:)
+		//   2. PersistentPreRunE  ← we are here
+		//   3. PreRunE
+		//   4. ValidateRequiredFlags  ← MarkFlagRequired
+		//   5. ValidateFlagGroups     ← MarkFlagsMutuallyExclusive
+		//   6. RunE
+		//
+		// Errors from (2) (config load, logger setup) are runtime
+		// failures: hide the usage block. Errors from (4)/(5) are
+		// invocation-contract failures: keep the usage block. To get
+		// both, silence usage on entry and clear it before a successful
+		// return so the subsequent built-in validators see the default
+		// (usage on). Each command's RunE is wrapped separately (see
+		// silenceUsageInRunE) to re-silence usage once those validators
+		// have run; usageErr() flips it back on for RunE-internal
+		// invocation-contract violations.
+		cmd.SilenceUsage = true
+
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
 		if cmd.Name() == "version" || cmd.Name() == "update" ||
 			cmd.Name() == "quickstart" || cmd.Name() == "completion" ||
 			cmd.Name() == cobra.ShellCompRequestCmd ||
 			cmd.Name() == cobra.ShellCompNoDescRequestCmd {
+			cmd.SilenceUsage = false
 			return nil
 		}
 
@@ -142,6 +162,10 @@ in a single binary.`,
 		logger.Debug("msgvault startup args",
 			"args", sanitizeArgs(args),
 		)
+		// Restore the default so cobra's required-flag and
+		// mutually-exclusive-flag validators (steps 4/5 above) print
+		// usage if they fail.
+		cmd.SilenceUsage = false
 		return nil
 	},
 	// Note: log file closing is handled by ExecuteContext's deferred
@@ -225,6 +249,8 @@ func Execute() error {
 // Installs a panic recovery and closes the log file handler on
 // return so every run ends cleanly in the log.
 func ExecuteContext(ctx context.Context) error {
+	silenceUsageOnce.Do(func() { silenceUsageInRunE(rootCmd) })
+
 	// Defer ordering is load-bearing. LIFO means recoverAndLogPanic
 	// runs before the log-file close. Because recoverAndLogPanic calls
 	// os.Exit (which skips remaining defers), it closes logResult
@@ -250,6 +276,47 @@ func ExecuteContext(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+// usageErr re-enables the usage block for cmd and returns err. Use inside
+// RunE for validation that's semantically part of the invocation contract
+// (mutually exclusive flags, missing required values, bad enum values).
+// silenceUsageInRunE silences usage at RunE entry; this flips it back for
+// the specific case of "the user invoked me wrong."
+// A nil cmd is tolerated so tests can call RunE-internal helpers without
+// constructing a cobra.Command.
+func usageErr(cmd *cobra.Command, err error) error {
+	if cmd != nil {
+		cmd.SilenceUsage = false
+	}
+	return err
+}
+
+// silenceUsageOnce guards silenceUsageInRunE so each command's RunE is
+// only wrapped once, even if Execute is called more than once (e.g. in
+// tests that drive rootCmd repeatedly).
+var silenceUsageOnce sync.Once
+
+// silenceUsageInRunE walks cmd's subtree and replaces each RunE with a
+// wrapper that sets SilenceUsage = true on entry, then delegates to the
+// original handler. Cobra's required-flag and mutually-exclusive-flag
+// validators run after PersistentPreRunE but before RunE, so wrapping
+// here suppresses usage only for the runtime errors RunE actually
+// returns — leaving the built-in invocation-contract validators free
+// to print the usage block on failure. RunE handlers that detect their
+// own invocation-contract violations flip SilenceUsage back on via
+// usageErr.
+func silenceUsageInRunE(cmd *cobra.Command) {
+	if cmd.RunE != nil {
+		orig := cmd.RunE
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return orig(cmd, args)
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		silenceUsageInRunE(sub)
+	}
 }
 
 // oauthSetupHint returns help text for OAuth configuration issues,
