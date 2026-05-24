@@ -490,7 +490,7 @@ func (f *fakeBackend) BuildingGeneration(ctx context.Context) (*vector.Generatio
 	return f.building, f.buildErr
 }
 
-func (f *fakeBackend) CreateGeneration(ctx context.Context, model string, dim int) (vector.GenerationID, error) {
+func (f *fakeBackend) CreateGeneration(ctx context.Context, model string, dim int, fp string) (vector.GenerationID, error) {
 	panic("unexpected: CreateGeneration")
 }
 func (f *fakeBackend) ActivateGeneration(ctx context.Context, gen vector.GenerationID) error {
@@ -599,6 +599,55 @@ func TestEmbedJob_Run_ActiveGeneration(t *testing.T) {
 	// must NOT fire for the active gen.
 	if got := backend.activations(); len(got) != 0 {
 		t.Errorf("ActivateGeneration calls = %v, want none (target was active)", got)
+	}
+}
+
+func TestEmbedJob_Run_ActiveGenerationFingerprintMismatch(t *testing.T) {
+	// An active generation whose fingerprint differs from the configured
+	// one means the operator changed model, dimension, or preprocessing
+	// policy without running --full-rebuild. Topping it up would let the
+	// daemon embed new messages under the current policy into an index
+	// whose existing vectors used a different policy — silently mixing
+	// two embedding spaces in one generation. pickTarget must refuse,
+	// the same way it refuses a mismatched in-flight build.
+	backend := &fakeBackend{
+		active: vector.Generation{
+			ID: 7, State: vector.GenerationActive, Fingerprint: "old-model:768:p1-111111",
+		},
+	}
+	runner := &fakeRunner{}
+	job := &EmbedJob{Worker: runner, Backend: backend, Fingerprint: "new-model:768:p1-111111"}
+
+	job.Run(context.Background())
+
+	_, run, _ := runner.calls()
+	if run != 0 {
+		t.Errorf("RunOnce calls = %d, want 0 (refuse to top up mismatched active)", run)
+	}
+	if got := backend.activations(); len(got) != 0 {
+		t.Errorf("ActivateGeneration calls = %v, want none", got)
+	}
+}
+
+func TestEmbedJob_Run_ActiveGenerationFingerprintMatch(t *testing.T) {
+	// Counterpart of the mismatch test: when the active fingerprint
+	// matches config exactly, the daemon must continue to top it up.
+	backend := &fakeBackend{
+		active: vector.Generation{
+			ID: 9, State: vector.GenerationActive, Fingerprint: "m:768:p1-111111",
+		},
+	}
+	runner := &fakeRunner{}
+	job := &EmbedJob{Worker: runner, Backend: backend, Fingerprint: "m:768:p1-111111"}
+
+	job.Run(context.Background())
+
+	_, run, gen := runner.calls()
+	if run != 1 {
+		t.Errorf("RunOnce calls = %d, want 1 (matching active should top up)", run)
+	}
+	if gen != 9 {
+		t.Errorf("RunOnce gen = %d, want 9", gen)
 	}
 }
 

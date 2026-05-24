@@ -173,7 +173,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Worker:      vf.Worker,
 			Backend:     vf.Backend,
 			VectorsDB:   vf.VectorsDB,
-			Fingerprint: vf.Cfg.Embeddings.Fingerprint(),
+			Fingerprint: vf.Cfg.GenerationFingerprint(),
 			Log:         logger,
 		}
 		schedule := cfg.Vector.Embed.Schedule.Cron

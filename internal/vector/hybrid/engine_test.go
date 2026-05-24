@@ -120,7 +120,7 @@ CREATE TABLE message_recipients (
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "fake-model", 4)
+	gid, err := b.CreateGeneration(ctx, "fake-model", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestEngine_BuildingOnly_ReturnsBuilding(t *testing.T) {
 	}
 	// A new building generation must be present; CreateGeneration
 	// writes one directly.
-	if _, err := f.Backend.CreateGeneration(ctx, "fake-model", 4); err != nil {
+	if _, err := f.Backend.CreateGeneration(ctx, "fake-model", 4, ""); err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
 	_, _, err := f.Engine.Search(ctx, SearchRequest{

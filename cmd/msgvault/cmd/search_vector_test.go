@@ -56,7 +56,25 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 	if err != nil {
 		t.Fatalf("sqlitevec.Open: %v", err)
 	}
-	gid, err := b.CreateGeneration(ctx, "fake-model", 4)
+	// Build the vector config first so the generation can be seeded
+	// with the same fingerprint the search command will compute at run
+	// time. Otherwise ResolveActiveForFingerprint rejects the active
+	// generation as stale before the search ever reaches the index.
+	vecCfg := vector.Config{
+		Enabled: true,
+		Backend: "sqlite-vec",
+		DBPath:  vecPath,
+		Embeddings: vector.EmbeddingsConfig{
+			Endpoint:  embedSrvURL + "/v1",
+			Model:     "fake-model",
+			Dimension: 4,
+		},
+		Search: vector.SearchConfig{
+			RRFK:       60,
+			KPerSignal: 10,
+		},
+	}
+	gid, err := b.CreateGeneration(ctx, "fake-model", 4, vecCfg.GenerationFingerprint())
 	if err != nil {
 		_ = b.Close()
 		t.Fatalf("CreateGeneration: %v", err)
@@ -73,20 +91,7 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 	cfg = &config.Config{
 		HomeDir: dir,
 		Data:    config.DataConfig{DataDir: dir},
-		Vector: vector.Config{
-			Enabled: true,
-			Backend: "sqlite-vec",
-			DBPath:  vecPath,
-			Embeddings: vector.EmbeddingsConfig{
-				Endpoint:  embedSrvURL + "/v1",
-				Model:     "fake-model",
-				Dimension: 4,
-			},
-			Search: vector.SearchConfig{
-				RRFK:       60,
-				KPerSignal: 10,
-			},
-		},
+		Vector:  vecCfg,
 	}
 
 	restore := func() {

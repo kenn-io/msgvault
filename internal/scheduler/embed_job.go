@@ -42,10 +42,15 @@ type EmbedJob struct {
 	// case the daemon will not auto-activate building generations.
 	VectorsDB *sql.DB
 
-	// Fingerprint is the configured "<model>:<dim>" string. When set,
-	// a building generation whose fingerprint differs is left alone
-	// (CLI is the only entry point that can resolve a mismatch). When
-	// empty, the daemon falls back to "any building generation".
+	// Fingerprint is the configured generation fingerprint (typically
+	// vector.Config.GenerationFingerprint() — "model:dim:preprocess").
+	// When set, a building OR active generation whose fingerprint
+	// differs is left alone: the CLI is the only entry point that can
+	// resolve a mismatch (`build-embeddings --full-rebuild` or retire).
+	// When empty, the daemon falls back to "any building generation"
+	// for building gens and "the active generation as-is" for active —
+	// see pickTarget for why empty-fingerprint plus a present building
+	// is still refused.
 	Fingerprint string
 
 	// running guards against overlapping Run calls (cron fires while a
@@ -161,7 +166,12 @@ func (j *EmbedJob) Run(ctx context.Context) {
 //  2. Mismatched building generation — log and bail. Resolution
 //     requires the CLI (`msgvault build-embeddings --full-rebuild` or retire),
 //     not the daemon.
-//  3. Active generation — incremental top-up.
+//  3. Active generation whose fingerprint matches config — incremental
+//     top-up. A mismatched active fingerprint is treated the same as a
+//     mismatched building: log and bail. Topping it up would let the
+//     daemon embed new messages under the current preprocessing policy
+//     into an index whose existing vectors used a different policy,
+//     silently mixing two embedding spaces in one generation.
 //
 // The bool is false when there's nothing to do or a lookup error
 // occurred (already logged); the caller should return.
@@ -195,6 +205,11 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 	active, err := j.Backend.ActiveGeneration(ctx)
 	switch {
 	case err == nil:
+		if j.Fingerprint != "" && active.Fingerprint != j.Fingerprint {
+			log.Warn("embed: active generation fingerprint differs from config — leaving for CLI to resolve",
+				"active_fingerprint", active.Fingerprint, "config_fingerprint", j.Fingerprint)
+			return 0, false, false
+		}
 		return active.ID, false, true
 	case errors.Is(err, vector.ErrNoActiveGeneration):
 		return 0, false, false // nothing to do

@@ -76,7 +76,7 @@ func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string) (
 	})
 
 	engine := hybrid.NewEngine(backend, mainDB, client, hybrid.Config{
-		ExpectedFingerprint: cfg.Vector.Embeddings.Fingerprint(),
+		ExpectedFingerprint: cfg.Vector.GenerationFingerprint(),
 		RRFK:                cfg.Vector.Search.RRFK,
 		KPerSignal:          cfg.Vector.Search.KPerSignal,
 		SubjectBoost:        cfg.Vector.Search.SubjectBoost,

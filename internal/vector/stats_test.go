@@ -44,7 +44,7 @@ func (f *statsFakeBackend) Stats(_ context.Context, gen GenerationID) (Stats, er
 	return f.statsByGen[gen], nil
 }
 
-func (f *statsFakeBackend) CreateGeneration(context.Context, string, int) (GenerationID, error) {
+func (f *statsFakeBackend) CreateGeneration(context.Context, string, int, string) (GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
 

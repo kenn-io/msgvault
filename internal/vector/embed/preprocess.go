@@ -1,5 +1,14 @@
 package embed
 
+// IMPORTANT: any change in this file that would shift Preprocess()'s
+// output for an unchanged PreprocessConfig (new regex, modified
+// existing regex, new entry in trackingParams, new default-on
+// transform) MUST be paired with a bump of preprocessVersion in
+// internal/vector/config.go. That constant feeds the generation
+// fingerprint so flipping it forces operators to --full-rebuild rather
+// than silently embedding new messages under a different policy from
+// the already-active vectors.
+
 import (
 	"html"
 	"net/url"
@@ -42,23 +51,51 @@ var (
 	reScriptBlock = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
 	// reHTMLTag matches a single HTML tag.
 	//
-	// The leading `</?` allows opening or closing tags. The tag-name
-	// rule (`[a-zA-Z][a-zA-Z0-9-]*`) is intentionally strict so the
-	// stripper does NOT eat angle-bracketed prose that resembles a tag
-	// but isn't one:
+	// Structure:
+	//   `</?`                          opening or closing slash
+	//   `[a-z][a-zA-Z0-9-]*`           tag name (lowercase-leading)
+	//   `(?:\s+ATTR)*`                 zero or more attributes
+	//   `\s*/?>`                       optional self-close + `>`
 	//
-	//   <john@example.com>          – inline email address, `@` rejects
-	//   <https://example.com>       – URL, the `:` rejects
-	//   2 < 3 and 5 > 4             – math, space-then-digit rejects
-	//   <Aug 6, 2026>               – date placeholder, space rejects
+	// where ATTR is `name=value` with a real `=` and a quoted or
+	// unquoted value:
+	//   `[a-zA-Z_:][a-zA-Z0-9_:.-]*\s*=\s*(?:"…"|'…'|[^\s>"']+)`
 	//
-	// The optional whitespace-then-attributes group `(?:\s[^>]{0,400})?`
-	// only fires when an attribute would actually follow — every real
-	// HTML tag puts whitespace between the name and the first
-	// attribute. The {0,400} cap inside the attribute body bounds
-	// backtracking on adversarial input. The trailing `/?>` covers
-	// self-closing tags like <br/> and <img .../>.
-	reHTMLTag = regexp.MustCompile(`</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]{0,400})?\s*/?>`)
+	// Two constraints exist to keep angle-bracketed prose alive:
+	//
+	//   - The tag name must start with a lowercase ASCII letter. HTML
+	//     emails overwhelmingly use lowercase tags (<p>, <table>,
+	//     <br/>), while mail-merge / placeholder conventions are Title
+	//     Case (<First Name>, <Company>, <Aug 6, 2026>). Restricting
+	//     the leading char to lowercase preserves the placeholders at
+	//     the cost of leaving rare uppercase `<P>`-style legacy HTML
+	//     alone. The body of the name still allows mixed case so SVG
+	//     and custom elements like `viewBox` or `myCustomElement` work.
+	//
+	//   - Attributes REQUIRE a literal `=value`. Bareword attribute
+	//     names alone would match phrases like `<First Last>` — the
+	//     `=` requirement is the only thing distinguishing
+	//     `<tag attr=val>` from `<two words>`. Tradeoff: bareword bool
+	//     attributes like `<input disabled>` no longer strip. Rare in
+	//     body_text.
+	//
+	// Survival examples:
+	//   <john@example.com> – `@` not a name body char, fails
+	//   <https://x.com>    – `:` not a name body char, fails
+	//   x < 3 and y > 4    – digit after `<`, fails the name-start
+	//   <First Name>       – capital `F`, fails the lowercase-leading rule
+	//   <Company>          – capital `C`, fails likewise
+	//   <Aug 6, 2026>      – capital `A`, fails likewise
+	//
+	// `{0,400}` / `{1,400}` caps on the value bodies bound the maximum
+	// tag length to a few KB per attribute, so a stray unmatched quote
+	// inside a long body cannot swallow the rest of the message.
+	reHTMLTag = regexp.MustCompile(
+		`</?[a-z][a-zA-Z0-9-]*` +
+			`(?:\s+[a-zA-Z_:][a-zA-Z0-9_:.-]*\s*=\s*` +
+			`(?:"[^"]{0,400}"|'[^']{0,400}'|[^\s>"']{1,400}))*` +
+			`\s*/?>`,
+	)
 
 	// reDataURI matches data:...;base64,XXXX blobs (typically inline
 	// images that leaked into body_text). These can be tens of KB each
@@ -95,7 +132,10 @@ var (
 		"fbclid": true, "gclid": true, "dclid": true, "gbraid": true,
 		"wbraid": true, "msclkid": true, "yclid": true, "twclid": true,
 		"mc_cid": true, "mc_eid": true, "ml_subscriber": true,
-		"_hsenc": true, "_hsmi": true, "hsCtaTracking": true,
+		// Keys are stored lowercase because the lookup at the call site
+		// normalises the query-param name to lowercase first (so
+		// "?HsCtaTracking=" matches the same key as "?hsctatracking=").
+		"_hsenc": true, "_hsmi": true, "hsctatracking": true,
 		"vero_conv": true, "vero_id": true, "ck_subscriber_id": true,
 		"_branch_match_id": true, "ref": true, "ref_src": true,
 		"s_cid": true, "icid": true, "spm": true,

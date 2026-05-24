@@ -33,7 +33,7 @@ func newBackendForTest(t *testing.T) (*Backend, context.Context) {
 func TestBackend_CreateActivateRetire(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	gid, err := b.CreateGeneration(ctx, "nomic-embed-text-v1.5", 768)
+	gid, err := b.CreateGeneration(ctx, "nomic-embed-text-v1.5", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 
 func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -92,12 +92,12 @@ func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
 func TestBackend_CreateGeneration_ResumesBuilding(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	first, err := b.CreateGeneration(ctx, "m", 768)
+	first, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
 
-	second, err := b.CreateGeneration(ctx, "m", 768)
+	second, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("second Create with matching fingerprint: %v", err)
 	}
@@ -114,11 +114,11 @@ func TestBackend_CreateGeneration_ResumesBuilding(t *testing.T) {
 func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	if _, err := b.CreateGeneration(ctx, "model-a", 768); err != nil {
+	if _, err := b.CreateGeneration(ctx, "model-a", 768, ""); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
 
-	_, err := b.CreateGeneration(ctx, "model-b", 768)
+	_, err := b.CreateGeneration(ctx, "model-b", 768, "")
 	if err == nil {
 		t.Fatal("second Create with different fingerprint: want error, got nil")
 	}
@@ -138,7 +138,7 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	gen, err := b.CreateGeneration(ctx, "m", 768)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
 
 	// Resume: CreateGeneration must reuse the existing building gen
 	// and NOT re-enqueue the completed message.
-	resumed, err := b.CreateGeneration(ctx, "m", 768)
+	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("resume Create: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
 func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	gen, err := b.CreateGeneration(ctx, "m", 768)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) 
 		t.Fatalf("clear pending: %v", err)
 	}
 
-	resumed, err := b.CreateGeneration(ctx, "m", 768)
+	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("resume Create: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestBackend_CreateGeneration_SeedCommitsVisibleFirst(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := b.CreateGeneration(ctx, "m", 768)
+		_, err := b.CreateGeneration(ctx, "m", 768, "")
 		done <- err
 	}()
 
@@ -369,7 +369,7 @@ func TestBackend_CreateGeneration_SkipsDeletedMessages(t *testing.T) {
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := context.Background()
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 // claim.
 func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 
 func TestBackend_Upsert_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestBackend_Upsert_DimensionMismatch(t *testing.T) {
 
 func TestBackend_Upsert_EmptyChunks(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
 
 func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
 
 func TestBackend_Upsert_ReplacesExisting(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestBackend_Search_ReturnsRankedHits(t *testing.T) {
 
 func TestBackend_Search_EmptyQueryVector(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestBackend_Search_UnknownGeneration(t *testing.T) {
 
 func TestBackend_Search_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -733,7 +733,7 @@ func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
 		vecs[i] = unitVec(768, 0)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -802,7 +802,7 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 		}
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 		}
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1027,7 +1027,7 @@ func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
 		t.Fatalf("insert mr 3: %v", err)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1100,7 +1100,7 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 		}
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1169,7 +1169,7 @@ func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
 		t.Fatalf("insert messages: %v", err)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1225,7 +1225,7 @@ func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
 		t.Fatalf("insert messages: %v", err)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1306,7 +1306,7 @@ func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testin
 		t.Fatalf("insert messages: %v", err)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1375,7 +1375,7 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 		t.Fatalf("insert messages: %v", err)
 	}
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1425,7 +1425,7 @@ func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
 
 func TestBackend_Delete_EmptyIDsIsNoop(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1463,7 +1463,7 @@ func TestBackend_Stats_CountsCorrectly(t *testing.T) {
 
 func TestBackend_Stats_PendingCountAfterCreate(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1502,7 +1502,7 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 func TestBackend_Upsert_UpdatesMessageCount(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1576,7 +1576,7 @@ func TestBackend_Stats_UnknownGeneration(t *testing.T) {
 
 func TestBackend_LoadVector(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1609,7 +1609,7 @@ func TestBackend_LoadVector(t *testing.T) {
 
 func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1674,7 +1674,7 @@ func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1742,7 +1742,7 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 	t.Cleanup(func() { _ = b.Close() })
 
 	// Upsert vectors for all three messages directly.
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}

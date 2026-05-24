@@ -99,11 +99,20 @@ func (b *Backend) Path() string { return b.path }
 // sees the new generation and dual-enqueues newly-synced messages. The
 // seed loop then uses INSERT OR IGNORE, so any rows the Enqueuer has
 // already written are silently de-duplicated and nothing is missed.
-func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int) (vector.GenerationID, error) {
+func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, fingerprint string) (vector.GenerationID, error) {
 	if err := EnsureVectorTable(ctx, b.db, dim); err != nil {
 		return 0, err
 	}
-	fp := fmt.Sprintf("%s:%d", model, dim)
+	fp := fingerprint
+	if fp == "" {
+		// Defensive default: a missing fingerprint loses the staleness
+		// signal that callers depend on. Fall back to the legacy
+		// model:dim format rather than write an empty string into the
+		// DB, but log nothing — tests intentionally pass an empty
+		// fingerprint to exercise the old shape, and adding noise
+		// there hides real failures.
+		fp = fmt.Sprintf("%s:%d", model, dim)
+	}
 	now := time.Now().Unix()
 
 	gen, isNew, err := b.claimOrInsertBuilding(ctx, model, dim, fp, now)

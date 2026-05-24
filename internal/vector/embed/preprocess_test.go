@@ -219,6 +219,63 @@ func TestPreprocess(t *testing.T) {
 			wantTrunc: false,
 		},
 		{
+			// Regression: roborev medium follow-up. A date placeholder
+			// like `<Aug 6, 2026>` starts with a letter and contains a
+			// space, which an earlier looser regex treated as
+			// `tag-name + attributes`. The attribute branch now requires
+			// `name=value` with a literal `=`, so `<Aug 6, 2026>`
+			// (no `=`) falls through and survives.
+			name:      "StripHTMLPreservesAngleBracketDatePlaceholder",
+			subject:   "",
+			body:      "Schedule for <Aug 6, 2026> still good?",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripHTML: true},
+			checkWant: true,
+			want:      "Schedule for <Aug 6, 2026> still good?",
+			wantTrunc: false,
+		},
+		{
+			// Regression: mail-merge placeholders like `<First Name>`,
+			// `<Last Name>`, `<Company>` are ubiquitous in templated
+			// emails. Same fix path as the date placeholder above —
+			// no `=` in the body means no attribute match, the tag-
+			// matching falls through, and the prose survives.
+			name:      "StripHTMLPreservesMailMergePlaceholder",
+			subject:   "",
+			body:      "Hi <First Name>, welcome to <Company>.",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripHTML: true},
+			checkWant: true,
+			want:      "Hi <First Name>, welcome to <Company>.",
+			wantTrunc: false,
+		},
+		{
+			// Single-quoted attribute values must strip the same as
+			// double-quoted, otherwise pollution like
+			// `<a href='https://campaign'>` would survive.
+			name:      "StripHTMLDropsSingleQuotedAttrValue",
+			subject:   "",
+			body:      "Click <a href='https://campaign.example.com'>here</a> now.",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripHTML: true},
+			checkWant: true,
+			want:      "Click  here  now.",
+			wantTrunc: false,
+		},
+		{
+			// Unquoted attribute values must strip too — HTML5 allows
+			// them, and email-generator templates occasionally emit
+			// `<img src=cid:abc width=1 height=1>` for tracking pixels.
+			name:      "StripHTMLDropsUnquotedAttrValues",
+			subject:   "",
+			body:      "Pixel <img src=cid:abc width=1 height=1> end.",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripHTML: true},
+			checkWant: true,
+			want:      "Pixel   end.",
+			wantTrunc: false,
+		},
+		{
 			// <style>…</style> wraps CSS that should never reach the
 			// embedder. The whole block (tags + body) must be removed
 			// before the generic HTML-tag stripper would otherwise leave
@@ -297,6 +354,22 @@ func TestPreprocess(t *testing.T) {
 			cfg:       PreprocessConfig{StripURLTracking: true},
 			checkWant: true,
 			want:      "Visit https://example.com/page?id=42 today",
+			wantTrunc: false,
+		},
+		{
+			// Regression: HubSpot's hsCtaTracking param is stored in the
+			// trackingParams map but the lookup lowercases the query key
+			// at the call site. With the map key in its canonical lower
+			// form ("hsctatracking"), an incoming "?hsCtaTracking=" must
+			// still be stripped. Originally the key was stored as
+			// camelCase and silently never matched.
+			name:      "StripURLTrackingHandlesHubSpotMixedCase",
+			subject:   "",
+			body:      "Click https://hub.example.com/cta?hsCtaTracking=abc&id=7 now",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripURLTracking: true},
+			checkWant: true,
+			want:      "Click https://hub.example.com/cta?id=7 now",
 			wantTrunc: false,
 		},
 		{

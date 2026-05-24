@@ -255,7 +255,7 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}

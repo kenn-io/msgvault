@@ -83,7 +83,7 @@ func TestPickEmbedGeneration_ResumesBuildingGeneration(t *testing.T) {
 
 	// Simulate an interrupted full rebuild: a building generation
 	// exists but no active generation.
-	gen, err := b.CreateGeneration(ctx, "fake", 4)
+	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
 func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 	ctx := context.Background()
 	b := openTestBackend(t)
-	if _, err := b.CreateGeneration(ctx, "old-model", 4); err != nil {
+	if _, err := b.CreateGeneration(ctx, "old-model", 4, ""); err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
 
@@ -173,14 +173,14 @@ func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *te
 	// Build state: an active generation exists, and a second building
 	// generation has been created for the SAME model+dim (the typical
 	// "I want to refresh my index" pattern).
-	activeGen, err := b.CreateGeneration(ctx, "fake", 4)
+	activeGen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration (active): %v", err)
 	}
 	if err := b.ActivateGeneration(ctx, activeGen); err != nil {
 		t.Fatalf("ActivateGeneration: %v", err)
 	}
-	buildingGen, err := b.CreateGeneration(ctx, "fake", 4)
+	buildingGen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration (building): %v", err)
 	}
@@ -217,7 +217,7 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 
 	// State: building generation exists for an old model. No active
 	// generation, and config now points at a different model.
-	if _, err := b.CreateGeneration(ctx, "old-model", 4); err != nil {
+	if _, err := b.CreateGeneration(ctx, "old-model", 4, ""); err != nil {
 		t.Fatalf("CreateGeneration (building): %v", err)
 	}
 
@@ -249,14 +249,14 @@ func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
 	ctx := context.Background()
 	b := openTestBackend(t)
 
-	staleActive, err := b.CreateGeneration(ctx, "old-model", 4)
+	staleActive, err := b.CreateGeneration(ctx, "old-model", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration (stale active): %v", err)
 	}
 	if err := b.ActivateGeneration(ctx, staleActive); err != nil {
 		t.Fatalf("ActivateGeneration: %v", err)
 	}
-	matchingBuilding, err := b.CreateGeneration(ctx, "new-model", 4)
+	matchingBuilding, err := b.CreateGeneration(ctx, "new-model", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration (matching building): %v", err)
 	}
@@ -292,14 +292,14 @@ func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) 
 	ctx := context.Background()
 	b := openTestBackend(t)
 
-	matchingActive, err := b.CreateGeneration(ctx, "fake", 4)
+	matchingActive, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration (active): %v", err)
 	}
 	if err := b.ActivateGeneration(ctx, matchingActive); err != nil {
 		t.Fatalf("ActivateGeneration: %v", err)
 	}
-	if _, err := b.CreateGeneration(ctx, "old-model", 4); err != nil {
+	if _, err := b.CreateGeneration(ctx, "old-model", 4, ""); err != nil {
 		t.Fatalf("CreateGeneration (stale building): %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestPickEmbedGeneration_ResumeReseedsUnseededBuilding(t *testing.T) {
 
 	// Step 1: create a building gen the normal way (which seeds + marks
 	// seeded_at).
-	gen, err := b.CreateGeneration(ctx, "fake", 4)
+	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestPickEmbedGeneration_ResumeRacesActivation(t *testing.T) {
 	// Create the building generation as if the operator had just run
 	// `msgvault build-embeddings --full-rebuild`. CreateGeneration seeds pending
 	// rows for id=1 via openTestBackend's seed message.
-	gen, err := b.CreateGeneration(ctx, "fake", 4)
+	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}

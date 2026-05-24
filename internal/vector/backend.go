@@ -20,10 +20,14 @@ const (
 // Generation describes an index generation — a complete corpus
 // embedding under one model+dimension.
 type Generation struct {
-	ID           GenerationID
-	Model        string
-	Dimension    int
-	Fingerprint  string // Model:Dimension
+	ID        GenerationID
+	Model     string
+	Dimension int
+	// Fingerprint is the opaque identifier supplied by the caller at
+	// CreateGeneration time (typically Config.GenerationFingerprint(),
+	// which folds the preprocessing policy into the model+dimension
+	// pair). Callers compare equality only — do not parse it.
+	Fingerprint  string
 	State        GenerationState
 	StartedAt    time.Time
 	CompletedAt  *time.Time
@@ -113,7 +117,13 @@ type Stats struct {
 
 // Backend is the minimum contract a vector store must implement.
 type Backend interface {
-	CreateGeneration(ctx context.Context, model string, dimension int) (GenerationID, error)
+	// CreateGeneration starts (or resumes) a building generation.
+	// fingerprint is stored verbatim on the row; pass
+	// Config.GenerationFingerprint() so a later config change (model,
+	// dimension, or any preprocess toggle) trips
+	// ResolveActiveForFingerprint and forces a --full-rebuild instead
+	// of silently mixing inconsistently-prepared vectors.
+	CreateGeneration(ctx context.Context, model string, dimension int, fingerprint string) (GenerationID, error)
 	ActivateGeneration(ctx context.Context, gen GenerationID) error
 	RetireGeneration(ctx context.Context, gen GenerationID) error
 

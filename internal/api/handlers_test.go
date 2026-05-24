@@ -1985,7 +1985,7 @@ type fakeVectorBackend struct {
 	searchErr  error
 }
 
-func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int) (vector.GenerationID, error) {
+func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
 func (f *fakeVectorBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID) error {

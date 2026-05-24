@@ -50,7 +50,7 @@ func runEmbed(ctx context.Context) error {
 		FullRebuild: embedFullRebuild,
 		Model:       cfg.Vector.Embeddings.Model,
 		Dimension:   cfg.Vector.Embeddings.Dimension,
-		Fingerprint: cfg.Vector.Embeddings.Fingerprint(),
+		Fingerprint: cfg.Vector.GenerationFingerprint(),
 		Confirm: func() bool {
 			return embedYes ||
 				confirmEmbed("Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
@@ -174,12 +174,12 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 		if opts.Confirm != nil && !opts.Confirm() {
 			return 0, false, fmt.Errorf("aborted")
 		}
-		gen, err := backend.CreateGeneration(ctx, opts.Model, opts.Dimension)
+		gen, err := backend.CreateGeneration(ctx, opts.Model, opts.Dimension, opts.Fingerprint)
 		if err != nil {
 			return 0, false, fmt.Errorf("create generation: %w", err)
 		}
-		_, _ = fmt.Fprintf(opts.Stderr, "Building generation %d (%s:%d).\n",
-			gen, opts.Model, opts.Dimension)
+		_, _ = fmt.Fprintf(opts.Stderr, "Building generation %d (%s).\n",
+			gen, opts.Fingerprint)
 		return gen, true, nil
 	}
 

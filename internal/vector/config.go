@@ -7,8 +7,20 @@ package vector
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 )
+
+// preprocessVersion identifies the embed/preprocess.go implementation
+// generation. Bump whenever a change to that file produces a different
+// Preprocess() output for the same PreprocessConfig flags — for
+// example: tightening a regex, adding a tracking-param key, or adding
+// a new default-on transform. Combined with the effective flag tuple
+// in PreprocessConfig.Fingerprint, it makes Config.GenerationFingerprint
+// invalidate any index built under a different preprocessing policy so
+// the operator must --full-rebuild rather than silently mixing
+// inconsistently-prepared vectors in one generation.
+const preprocessVersion = 1
 
 // Config is the top-level vector-search configuration, loaded from the
 // [vector] TOML table.
@@ -112,6 +124,36 @@ func (p PreprocessConfig) CollapseWhitespaceEnabled() bool {
 	return *p.CollapseWhitespace
 }
 
+// Fingerprint returns a stable, debuggable identifier for the effective
+// preprocessing policy. Format: "p<ver>-<flags>" where ver is the
+// preprocessVersion constant (bumped on regex/policy changes inside
+// internal/vector/embed/preprocess.go) and flags is a 0/1 string in
+// field-declaration order: strip_quotes, strip_signatures, strip_html,
+// strip_base64, strip_url_tracking, collapse_whitespace. New toggles
+// append to the right so adding one cannot collide with an existing
+// fingerprint by accident.
+func (p PreprocessConfig) Fingerprint() string {
+	flags := []bool{
+		p.StripQuotesEnabled(),
+		p.StripSignaturesEnabled(),
+		p.StripHTMLEnabled(),
+		p.StripBase64Enabled(),
+		p.StripURLTrackingEnabled(),
+		p.CollapseWhitespaceEnabled(),
+	}
+	var b strings.Builder
+	b.Grow(len("p999-") + len(flags))
+	fmt.Fprintf(&b, "p%d-", preprocessVersion)
+	for _, on := range flags {
+		if on {
+			b.WriteByte('1')
+		} else {
+			b.WriteByte('0')
+		}
+	}
+	return b.String()
+}
+
 // SearchConfig controls hybrid-search ranking and result limits.
 //
 // MaxPageSizeHybrid is a *int so an omitted field (nil) can be told
@@ -151,10 +193,25 @@ type EmbedScheduleConfig struct {
 	RunAfterSync bool   `toml:"run_after_sync"` // trigger after each successful sync
 }
 
-// Fingerprint returns the "<model>:<dimension>" identifier used by the
-// index-generation check (§6.7 of the spec).
+// Fingerprint returns the "<model>:<dimension>" identifier for the
+// embedding endpoint half of the policy (§6.7 of the spec). Use
+// Config.GenerationFingerprint when storing or comparing index
+// generations — that variant also folds in the preprocessing policy so
+// flipping a strip_* toggle stales the index.
 func (e EmbeddingsConfig) Fingerprint() string {
 	return fmt.Sprintf("%s:%d", e.Model, e.Dimension)
+}
+
+// GenerationFingerprint returns the full identifier used to compare an
+// index generation against the configured policy. Format:
+// "<model>:<dimension>:<preprocess>". Both halves are derived from the
+// effective config, so changing either the embedding model/dimension or
+// any preprocessing toggle produces a new fingerprint and the
+// ResolveActiveForFingerprint check forces a --full-rebuild rather than
+// silently embedding new messages under a policy different from the
+// already-active vectors.
+func (c Config) GenerationFingerprint() string {
+	return c.Embeddings.Fingerprint() + ":" + c.Preprocess.Fingerprint()
 }
 
 // Validate returns a descriptive error if the config is unusable.

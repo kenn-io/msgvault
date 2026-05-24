@@ -1368,7 +1368,7 @@ func (f *fakeBackend) ActiveGeneration(_ context.Context) (vector.Generation, er
 func (f *fakeBackend) Search(_ context.Context, _ vector.GenerationID, _ []float32, _ int, _ vector.Filter) ([]vector.Hit, error) {
 	return f.searchHits, f.searchErr
 }
-func (f *fakeBackend) CreateGeneration(_ context.Context, _ string, _ int) (vector.GenerationID, error) {
+func (f *fakeBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
 func (f *fakeBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID) error {

@@ -372,3 +372,95 @@ func TestSearchConfig_PointerSemantics_FromTOML(t *testing.T) {
 		})
 	}
 }
+
+// TestPreprocessConfig_FingerprintFormat pins the human-readable format
+// (p<ver>-<flags>) so the generation-fingerprint string in stats output
+// and DB rows is stable for operators.
+func TestPreprocessConfig_FingerprintFormat(t *testing.T) {
+	allOn := PreprocessConfig{}
+	if got := allOn.Fingerprint(); got != "p1-111111" {
+		t.Errorf("default Fingerprint() = %q, want p1-111111", got)
+	}
+
+	f := false
+	allOff := PreprocessConfig{
+		StripQuotes:        &f,
+		StripSignatures:    &f,
+		StripHTML:          &f,
+		StripBase64:        &f,
+		StripURLTracking:   &f,
+		CollapseWhitespace: &f,
+	}
+	if got := allOff.Fingerprint(); got != "p1-000000" {
+		t.Errorf("all-off Fingerprint() = %q, want p1-000000", got)
+	}
+}
+
+// TestPreprocessConfig_FingerprintChangesPerToggle ensures every toggle
+// participates in the fingerprint so flipping any one of them stales
+// the index. Without per-toggle coverage a future refactor could
+// accidentally drop one from the hash and re-introduce the silent
+// mid-generation policy drift this fingerprint was built to prevent.
+func TestPreprocessConfig_FingerprintChangesPerToggle(t *testing.T) {
+	baseline := PreprocessConfig{}.Fingerprint()
+	f := false
+	cases := []struct {
+		name string
+		cfg  PreprocessConfig
+	}{
+		{"strip_quotes", PreprocessConfig{StripQuotes: &f}},
+		{"strip_signatures", PreprocessConfig{StripSignatures: &f}},
+		{"strip_html", PreprocessConfig{StripHTML: &f}},
+		{"strip_base64", PreprocessConfig{StripBase64: &f}},
+		{"strip_url_tracking", PreprocessConfig{StripURLTracking: &f}},
+		{"collapse_whitespace", PreprocessConfig{CollapseWhitespace: &f}},
+	}
+	seen := map[string]string{baseline: "all-on baseline"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.cfg.Fingerprint()
+			if got == baseline {
+				t.Errorf("Fingerprint() with %s=false = %q, want different from baseline %q",
+					tc.name, got, baseline)
+			}
+			if other, dup := seen[got]; dup {
+				t.Errorf("Fingerprint() with %s=false = %q, collides with %s",
+					tc.name, got, other)
+			}
+			seen[got] = tc.name
+		})
+	}
+}
+
+// TestConfig_GenerationFingerprintFolds checks the full identifier
+// composition. The shape is "<model>:<dim>:<preprocess>" — both halves
+// must contribute so an operator switching either model or any
+// preprocess toggle stales the existing index.
+func TestConfig_GenerationFingerprintFolds(t *testing.T) {
+	base := Config{
+		Embeddings: EmbeddingsConfig{Model: "nomic-embed", Dimension: 768},
+	}
+	got := base.GenerationFingerprint()
+	want := "nomic-embed:768:p1-111111"
+	if got != want {
+		t.Errorf("GenerationFingerprint() = %q, want %q", got, want)
+	}
+
+	// Flipping the model invalidates.
+	modelChanged := base
+	modelChanged.Embeddings.Model = "snowflake-arctic"
+	if modelChanged.GenerationFingerprint() == got {
+		t.Error("GenerationFingerprint() did not change when Model changed")
+	}
+
+	// Flipping a preprocess toggle invalidates too — this is the gap
+	// the reviewer flagged. Without folding Preprocess into the
+	// fingerprint, the active generation would keep absorbing new
+	// vectors built under a different sanitization policy.
+	f := false
+	preprocessChanged := base
+	preprocessChanged.Preprocess.StripHTML = &f
+	if preprocessChanged.GenerationFingerprint() == got {
+		t.Error("GenerationFingerprint() did not change when strip_html flipped to false")
+	}
+}

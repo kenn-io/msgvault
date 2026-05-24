@@ -126,7 +126,7 @@ CREATE TABLE message_bodies (
 	}
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "fake", 4)
+	gid, err := b.CreateGeneration(ctx, "fake", 4, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
