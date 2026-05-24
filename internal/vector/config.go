@@ -40,11 +40,14 @@ type EmbeddingsConfig struct {
 //
 // Fields are pointers so the decoder can distinguish "unset" (nil,
 // defaults to true) from an explicit `false` in the TOML file. Call the
-// StripQuotesEnabled / StripSignaturesEnabled helpers to resolve the
-// effective value.
+// XxxEnabled helpers to resolve the effective value.
 type PreprocessConfig struct {
-	StripQuotes     *bool `toml:"strip_quotes"`
-	StripSignatures *bool `toml:"strip_signatures"`
+	StripQuotes        *bool `toml:"strip_quotes"`
+	StripSignatures    *bool `toml:"strip_signatures"`
+	StripHTML          *bool `toml:"strip_html"`
+	StripBase64        *bool `toml:"strip_base64"`
+	StripURLTracking   *bool `toml:"strip_url_tracking"`
+	CollapseWhitespace *bool `toml:"collapse_whitespace"`
 }
 
 // StripQuotesEnabled returns the effective strip_quotes setting.
@@ -63,6 +66,50 @@ func (p PreprocessConfig) StripSignaturesEnabled() bool {
 		return true
 	}
 	return *p.StripSignatures
+}
+
+// StripHTMLEnabled returns the effective strip_html setting.
+// Defaults to true when the field is unset — HTML markup that leaks into
+// body_text tokenizes densely (punctuation-heavy) without contributing
+// semantic content.
+func (p PreprocessConfig) StripHTMLEnabled() bool {
+	if p.StripHTML == nil {
+		return true
+	}
+	return *p.StripHTML
+}
+
+// StripBase64Enabled returns the effective strip_base64 setting.
+// Defaults to true when the field is unset — inline base64 blobs (images,
+// embedded MIME parts) inflate token counts without contributing
+// retrievable meaning.
+func (p PreprocessConfig) StripBase64Enabled() bool {
+	if p.StripBase64 == nil {
+		return true
+	}
+	return *p.StripBase64
+}
+
+// StripURLTrackingEnabled returns the effective strip_url_tracking setting.
+// Defaults to true when the field is unset — utm_*, fbclid, etc. add no
+// semantic value and make otherwise-identical URLs look distinct to the
+// embedder.
+func (p PreprocessConfig) StripURLTrackingEnabled() bool {
+	if p.StripURLTracking == nil {
+		return true
+	}
+	return *p.StripURLTracking
+}
+
+// CollapseWhitespaceEnabled returns the effective collapse_whitespace setting.
+// Defaults to true when the field is unset — HTML→text conversion routinely
+// produces runs of empty lines and double-spaces that crowd out real content
+// under the max_input_chars cap.
+func (p PreprocessConfig) CollapseWhitespaceEnabled() bool {
+	if p.CollapseWhitespace == nil {
+		return true
+	}
+	return *p.CollapseWhitespace
 }
 
 // SearchConfig controls hybrid-search ranking and result limits.

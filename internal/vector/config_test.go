@@ -194,6 +194,69 @@ strip_signatures = false
 	}
 }
 
+// TestPreprocessConfig_NewToggleDefaults exercises the pointer-bool
+// behavior of the four sanitization toggles added alongside the original
+// strip_quotes / strip_signatures pair: each defaults to true when
+// omitted, and an explicit false in TOML is preserved verbatim.
+func TestPreprocessConfig_NewToggleDefaults(t *testing.T) {
+	t.Run("all_omitted_default_true", func(t *testing.T) {
+		var p PreprocessConfig
+		if _, err := toml.Decode(``, &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !p.StripHTMLEnabled() {
+			t.Error("StripHTMLEnabled() = false, want true")
+		}
+		if !p.StripBase64Enabled() {
+			t.Error("StripBase64Enabled() = false, want true")
+		}
+		if !p.StripURLTrackingEnabled() {
+			t.Error("StripURLTrackingEnabled() = false, want true")
+		}
+		if !p.CollapseWhitespaceEnabled() {
+			t.Error("CollapseWhitespaceEnabled() = false, want true")
+		}
+	})
+
+	t.Run("all_explicit_false", func(t *testing.T) {
+		var p PreprocessConfig
+		raw := `
+strip_html = false
+strip_base64 = false
+strip_url_tracking = false
+collapse_whitespace = false
+`
+		if _, err := toml.Decode(raw, &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if p.StripHTMLEnabled() {
+			t.Error("StripHTMLEnabled() = true, want false")
+		}
+		if p.StripBase64Enabled() {
+			t.Error("StripBase64Enabled() = true, want false")
+		}
+		if p.StripURLTrackingEnabled() {
+			t.Error("StripURLTrackingEnabled() = true, want false")
+		}
+		if p.CollapseWhitespaceEnabled() {
+			t.Error("CollapseWhitespaceEnabled() = true, want false")
+		}
+	})
+
+	t.Run("one_false_others_default_true", func(t *testing.T) {
+		var p PreprocessConfig
+		if _, err := toml.Decode(`strip_base64 = false`, &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if p.StripBase64Enabled() {
+			t.Error("StripBase64Enabled() should be false (explicit)")
+		}
+		if !p.StripHTMLEnabled() || !p.StripURLTrackingEnabled() || !p.CollapseWhitespaceEnabled() {
+			t.Error("omitted toggles should still default to true")
+		}
+	})
+}
+
 // TestApplyDefaults_OverridesZeroValues verifies that zero-valued numeric
 // fields get normalized to the documented defaults, so an omitted (or
 // explicit 0) max_retries / timeout in TOML doesn't silently disable the
