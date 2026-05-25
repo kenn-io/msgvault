@@ -314,6 +314,25 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
     PRIMARY KEY (source_id, checkpoint_type)
 );
 
+-- Imported source items (files/objects already processed for resumable adapters)
+CREATE TABLE IF NOT EXISTS source_import_items (
+    id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    checksum TEXT,
+    size INTEGER DEFAULT 0,
+    modified_at DATETIME,
+    imported_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'pending',
+    records_imported INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, provider, provider_id)
+);
+
 -- ============================================================================
 -- INDEXES
 -- ============================================================================
@@ -370,6 +389,8 @@ CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 -- Sync
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider
+    ON source_import_items(source_id, provider, status);
 
 -- ============================================================================
 -- COLLECTIONS

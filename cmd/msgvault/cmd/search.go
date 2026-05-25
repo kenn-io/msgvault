@@ -348,7 +348,7 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 
 	for _, msg := range results {
 		date := msg.SentAt.Format("2006-01-02")
-		from := truncate(msg.FromEmail, 30)
+		from := truncate(summaryFromDisplay(msg), 30)
 		subject := truncate(msg.Subject, 50)
 		size := formatSize(msg.SizeEstimate)
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", msg.ID, date, from, subject, size)
@@ -357,6 +357,15 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 	_ = w.Flush()
 	fmt.Printf("\nShowing %d results\n", len(results))
 	return nil
+}
+
+func summaryFromDisplay(msg query.MessageSummary) string {
+	for _, value := range []string{msg.FromEmail, msg.FromName, msg.FromPhone} {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) error {

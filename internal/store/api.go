@@ -14,6 +14,7 @@ type APIMessage struct {
 	ID             int64
 	ConversationID int64
 	Subject        string
+	MessageType    string
 	From           string
 	To             []string
 	Cc             []string
@@ -55,6 +56,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
 			COALESCE(p.email_address, '') as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
@@ -100,6 +102,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
 			COALESCE(p.email_address, '') as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
@@ -118,7 +121,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	// TIMESTAMP column but routing it through the same scanner
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
-	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
+	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -209,6 +212,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
 			COALESCE(p.email_address, '') as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
@@ -288,7 +292,7 @@ func (s *Store) SearchMessagesQuery(
 	// FTS text terms. ftsEnabled is the authoritative signal that FTS is
 	// active — ftsJoin may be empty on dialects (e.g. PostgreSQL) whose
 	// tsvector lives on the main table and needs no extra join.
-	ftsEnabled := len(q.TextTerms) > 0
+	ftsEnabled := len(q.TextTerms) > 0 && s.fts5Available
 	var ftsJoin, ftsOrder, ftsExpr string
 	var ftsOrderArgCount int
 	if ftsEnabled {
@@ -445,6 +449,7 @@ func (s *Store) SearchMessagesQuery(
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
 			COALESCE(p.email_address, '') as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
@@ -533,6 +538,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
 			COALESCE(p.email_address, '') as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
@@ -621,7 +627,7 @@ func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 	for rows.Next() {
 		var m APIMessage
 		var sentAt nullableTimestamp
-		err := rows.Scan(&m.ID, &m.ConversationID, &m.Subject, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate)
+		err := rows.Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate)
 		if err != nil {
 			return nil, nil, err
 		}

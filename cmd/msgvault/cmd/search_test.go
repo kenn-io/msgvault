@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -62,6 +63,38 @@ func resetSearchFlags() {
 	// pairs (--account / --collection) trip when a subsequent test only
 	// passes one of them.
 	searchCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+}
+
+func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  query.MessageSummary
+		want string
+	}{
+		{
+			name: "email first",
+			msg:  query.MessageSummary{FromEmail: "alice@example.com", FromName: "Alice", FromPhone: "+15551234567"},
+			want: "alice@example.com",
+		},
+		{
+			name: "display name fallback",
+			msg:  query.MessageSummary{FromName: "Alice", FromPhone: "+15551234567"},
+			want: "Alice",
+		},
+		{
+			name: "phone fallback",
+			msg:  query.MessageSummary{FromPhone: "+15551234567"},
+			want: "+15551234567",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := summaryFromDisplay(tt.msg); got != tt.want {
+				t.Fatalf("summaryFromDisplay() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestSearchCmd_AccountFlagRejectsRemoteMode(t *testing.T) {

@@ -113,6 +113,55 @@ func TestStore_ListSources(t *testing.T) {
 	}
 }
 
+func TestStore_SourceImportItems(t *testing.T) {
+	f := storetest.New(t)
+	src, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
+	testutil.MustNoErr(t, err, "GetOrCreateSource")
+
+	item := store.SourceImportItem{
+		SourceID:   src.ID,
+		Provider:   "drive",
+		ProviderID: "drive-file-1",
+		Name:       "sms-2024.xml",
+		Checksum:   "abc123",
+		Size:       42,
+		Status:     "imported",
+	}
+	testutil.MustNoErr(t, f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem")
+
+	got, err := f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
+	testutil.MustNoErr(t, err, "GetSourceImportItem")
+	if got == nil {
+		t.Fatal("GetSourceImportItem returned nil")
+	}
+	if got.Name != "sms-2024.xml" || got.Checksum != "abc123" || got.Status != "imported" {
+		t.Fatalf("import item mismatch: %#v", got)
+	}
+
+	item.Size = 99
+	item.Status = "failed"
+	item.ErrorMessage = sql.NullString{String: "boom", Valid: true}
+	testutil.MustNoErr(t, f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem update")
+	got, err = f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
+	testutil.MustNoErr(t, err, "GetSourceImportItem after update")
+	if got.Size != 99 || got.Status != "failed" || got.ErrorMessage.String != "boom" {
+		t.Fatalf("updated import item mismatch: %#v", got)
+	}
+
+	checksums, err := f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	testutil.MustNoErr(t, err, "ListImportedSourceItemChecksums")
+	if checksums["drive-file-1"] != "" {
+		t.Fatalf("failed item should not be returned as imported: %#v", checksums)
+	}
+	item.Status = "imported"
+	testutil.MustNoErr(t, f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem imported")
+	checksums, err = f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	testutil.MustNoErr(t, err, "ListImportedSourceItemChecksums imported")
+	if checksums["drive-file-1"] != "abc123" {
+		t.Fatalf("imported checksums = %#v, want drive-file-1 abc123", checksums)
+	}
+}
+
 func TestStore_Conversation(t *testing.T) {
 	f := storetest.New(t)
 
@@ -130,6 +179,20 @@ func TestStore_Conversation(t *testing.T) {
 
 	if convID2 != convID {
 		t.Errorf("second call ID = %d, want %d", convID2, convID)
+	}
+}
+
+func TestStore_EnsureParticipantByIdentifierAllowsShortCode(t *testing.T) {
+	f := storetest.New(t)
+	id, err := f.Store.EnsureParticipantByIdentifier("synctech_sms", "12345", "Bank alerts")
+	testutil.MustNoErr(t, err, "EnsureParticipantByIdentifier")
+	if id == 0 {
+		t.Fatal("participant id is zero")
+	}
+	id2, err := f.Store.EnsureParticipantByIdentifier("synctech_sms", "12345", "Bank alerts")
+	testutil.MustNoErr(t, err, "EnsureParticipantByIdentifier second")
+	if id2 != id {
+		t.Fatalf("id2 = %d, want %d", id2, id)
 	}
 }
 

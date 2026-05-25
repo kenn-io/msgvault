@@ -60,9 +60,22 @@ func (e *SQLiteEngine) hasFTSTable(ctx context.Context) bool {
 		// but don't cache so next call can retry
 		return false
 	}
+	if count == 0 {
+		e.ftsResult = false
+		e.ftsChecked = true
+		return false
+	}
+
+	var probe int
+	err = e.db.QueryRowContext(ctx, `SELECT 1 FROM messages_fts LIMIT 1`).Scan(&probe)
+	if err != nil && err != sql.ErrNoRows {
+		e.ftsResult = false
+		e.ftsChecked = true
+		return false
+	}
 
 	// Cache successful result
-	e.ftsResult = count > 0
+	e.ftsResult = true
 	e.ftsChecked = true
 	return e.ftsResult
 }
@@ -307,6 +320,11 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 
 	if filter.WithAttachmentsOnly {
 		conditions = append(conditions, e.dialect.BoolTrueExpr(prefix+"has_attachments"))
+	}
+
+	if filter.MessageType != "" {
+		conditions = append(conditions, prefix+"message_type = ?")
+		args = append(args, filter.MessageType)
 	}
 
 	// Sender filter - check both message_recipients (email) and direct sender_id (WhatsApp/chat)
@@ -729,6 +747,9 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 
 	// Fetch labels for each message (batch would be more efficient but this is simpler)
 	if len(results) > 0 {
+		if err := fetchParticipantsForMessageList(ctx, e.db, "", results); err != nil {
+			return nil, fmt.Errorf("fetch participants: %w", err)
+		}
 		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
 			return nil, fmt.Errorf("fetch labels: %w", err)
 		}
@@ -1244,8 +1265,6 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 // buildSearchQueryParts builds the WHERE conditions, args, joins, and FTS join
 // for a search query. This is shared between Search and SearchFastCount.
 func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []interface{}, joins []string, ftsJoin string) {
-	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	conditions = append(conditions, emailOnlyFilterM)
 	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
 	// q.HideDeleted via the helper.
 	conditions = append(conditions, store.LiveMessagesWhere("m", q.HideDeleted))

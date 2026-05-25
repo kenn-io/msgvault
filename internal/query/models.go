@@ -29,6 +29,9 @@ type MessageSummary struct {
 	FromEmail            string     `json:"from_email"`
 	FromName             string     `json:"from_name"`
 	FromPhone            string     `json:"from_phone,omitempty"` // Phone number (for WhatsApp/chat sources)
+	To                   []Address  `json:"to,omitempty"`
+	Cc                   []Address  `json:"cc,omitempty"`
+	Bcc                  []Address  `json:"bcc,omitempty"`
 	SentAt               time.Time  `json:"sent_at"`
 	SizeEstimate         int64      `json:"size_estimate"`
 	HasAttachments       bool       `json:"has_attachments"`
@@ -47,6 +50,7 @@ type MessageDetail struct {
 	ConversationID       int64      `json:"conversation_id"`
 	SourceConversationID string     `json:"source_conversation_id"` // Gmail Thread ID
 	Subject              string     `json:"subject"`
+	MessageType          string     `json:"message_type,omitempty"`
 	Snippet              string     `json:"snippet"`
 	SentAt               time.Time  `json:"sent_at"`
 	ReceivedAt           *time.Time `json:"received_at,omitempty"`
@@ -197,6 +201,7 @@ type MessageFilter struct {
 	RecipientName string // filter by recipient display name (COALESCE(display_name, email))
 	Domain        string // filter by sender domain
 	Label         string // filter by label name
+	MessageType   string // filter by messages.message_type
 
 	// Filter by conversation (thread)
 	ConversationID *int64 // filter by conversation/thread ID

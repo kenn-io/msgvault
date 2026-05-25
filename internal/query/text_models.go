@@ -92,7 +92,7 @@ type TextStatsOptions struct {
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", "imessage", "sms", "google_voice_text",
+	"whatsapp", "imessage", "sms", "mms", "google_voice_text",
 }
 
 // textSortFieldToSortField converts a TextSortField to the generic SortField

@@ -123,6 +123,51 @@ msgvault import-emlx                                        # auto-discover Appl
 msgvault import-emlx you@example.com ~/Library/Mail/V10     # explicit path
 ```
 
+### Import SMS Backup & Restore for Android (`synctech-sms`)
+
+Msgvault can import XML backups produced by **[SMS Backup & Restore](https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore)** by SyncTech Pty Ltd. The Android app is listed in Google Play as `SMS Backup & Restore` and uses package `com.riteshsahu.SMSBackupRestore`; the Pro app uses `com.riteshsahu.SMSBackupRestorePro`.
+
+Install the Android app on the phone that owns the messages, then configure a scheduled backup:
+
+1. Open SMS Backup & Restore.
+2. Choose **Set Up A Backup**.
+3. Include **Messages**, **MMS media**, and **Call logs**.
+4. Choose **Google Drive** as the backup location.
+5. Use a dedicated Drive folder for Msgvault imports.
+6. Choose **Incremental** backups for daily operation. Full and archive backups also import correctly, but incremental backups keep each daily upload smaller.
+7. Schedule the Android backup for a quiet time such as `4:00 AM`.
+8. Leave backup encryption off. Msgvault does not import encrypted Pro backups.
+
+Configure Msgvault to read that Drive folder:
+
+```bash
+msgvault add-synctech-sms-drive pixel \
+  --owner-phone +15550000001 \
+  --folder-id 1exampleDriveFolderId \
+  --google-account you@gmail.com \
+  --schedule "30 4 * * *"
+```
+
+The folder ID is the final path segment in a Google Drive folder URL. For example, in `https://drive.google.com/drive/folders/1exampleDriveFolderId`, the folder ID is `1exampleDriveFolderId`.
+
+Run the source immediately:
+
+```bash
+msgvault sync-synctech-sms pixel
+```
+
+You can also import local files, folders, or unencrypted ZIP backups:
+
+```bash
+msgvault import-synctech-sms --owner-phone +15550000001 ~/Downloads/sms-backup.xml
+msgvault import-synctech-sms --owner-phone +15550000001 ~/Downloads/sms-backups/
+msgvault import-synctech-sms --owner-phone +15550000001 ~/Downloads/sms-backup.zip
+```
+
+SMS and MMS messages appear in text-message search. Call logs are imported as searchable call records with `message_type = synctech_sms_call`, so missed and outgoing calls do not mix into normal text threads.
+
+Msgvault stores Google OAuth refresh tokens under the Msgvault home directory with file permissions restricted to the current user. Tokens and client secrets are not written into `config.toml`, logs, README examples, or exported fixtures.
+
 ## Configuration
 
 All data lives in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).

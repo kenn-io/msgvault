@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,21 @@ type AccountStatus struct {
 	LastError string    `json:"last_error,omitempty"`
 }
 
+type Job struct {
+	Name     string
+	Schedule string
+	Run      func(context.Context) error
+}
+
+type JobStatus struct {
+	Name      string    `json:"name"`
+	Running   bool      `json:"running"`
+	LastRun   time.Time `json:"last_run,omitempty"`
+	NextRun   time.Time `json:"next_run"`
+	Schedule  string    `json:"schedule"`
+	LastError string    `json:"last_error,omitempty"`
+}
+
 // Scheduler manages cron-based email sync scheduling.
 type Scheduler struct {
 	cron     *cron.Cron
@@ -39,6 +55,13 @@ type Scheduler struct {
 	running   map[string]bool         // email -> currently syncing
 	lastRun   map[string]time.Time    // email -> last successful run
 	lastErr   map[string]error        // email -> last error
+
+	genericJobs      map[string]cron.EntryID
+	genericSchedules map[string]string
+	genericRunning   map[string]bool
+	genericLastRun   map[string]time.Time
+	genericLastErr   map[string]error
+	genericFuncs     map[string]func(context.Context) error
 
 	// Embed job state (optional). Set via SetEmbedJob; cron.EntryID 0
 	// may be valid, so embedEntrySet tracks whether an entry exists.
@@ -61,15 +84,21 @@ func New(syncFunc SyncFunc) *Scheduler {
 		cron: cron.New(cron.WithParser(cron.NewParser(
 			cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
 		))),
-		syncFunc:  syncFunc,
-		logger:    slog.Default(),
-		jobs:      make(map[string]cron.EntryID),
-		schedules: make(map[string]string),
-		running:   make(map[string]bool),
-		lastRun:   make(map[string]time.Time),
-		lastErr:   make(map[string]error),
-		ctx:       ctx,
-		cancel:    cancel,
+		syncFunc:         syncFunc,
+		logger:           slog.Default(),
+		jobs:             make(map[string]cron.EntryID),
+		schedules:        make(map[string]string),
+		running:          make(map[string]bool),
+		lastRun:          make(map[string]time.Time),
+		lastErr:          make(map[string]error),
+		genericJobs:      make(map[string]cron.EntryID),
+		genericSchedules: make(map[string]string),
+		genericRunning:   make(map[string]bool),
+		genericLastRun:   make(map[string]time.Time),
+		genericLastErr:   make(map[string]error),
+		genericFuncs:     make(map[string]func(context.Context) error),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 }
 
@@ -133,6 +162,28 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 	}
 
 	return scheduled, errors
+}
+
+func (s *Scheduler) AddJob(job Job) error {
+	if job.Name == "" || job.Run == nil {
+		return fmt.Errorf("job name and run function are required")
+	}
+	entryID, err := s.cron.AddFunc(job.Schedule, func() {
+		_ = s.TriggerJob(job.Name)
+	})
+	if err != nil {
+		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, exists := s.genericJobs[job.Name]; exists {
+		s.cron.Remove(old)
+	}
+	s.genericJobs[job.Name] = entryID
+	s.genericSchedules[job.Name] = job.Schedule
+	s.genericFuncs[job.Name] = job.Run
+	s.logger.Info("scheduled job", "job", job.Name, "schedule", job.Schedule, "next_run", s.cron.Entry(entryID).Next)
+	return nil
 }
 
 // RemoveAccount removes the schedule for an account.
@@ -348,6 +399,46 @@ func (s *Scheduler) TriggerSync(email string) error {
 	return nil
 }
 
+func (s *Scheduler) IsJobScheduled(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.genericJobs[name]
+	return ok
+}
+
+func (s *Scheduler) TriggerJob(name string) error {
+	s.mu.Lock()
+	run := s.genericFuncs[name]
+	if run == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("job %q is not scheduled", name)
+	}
+	if s.stopped {
+		s.mu.Unlock()
+		return fmt.Errorf("scheduler is stopped")
+	}
+	if s.genericRunning[name] {
+		s.mu.Unlock()
+		return nil
+	}
+	s.genericRunning[name] = true
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
+
+	err := run(s.ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.genericRunning[name] = false
+	if err != nil {
+		s.genericLastErr[name] = err
+		return err
+	}
+	s.genericLastRun[name] = time.Now()
+	delete(s.genericLastErr, name)
+	return nil
+}
+
 // Status returns the current status of all scheduled accounts.
 func (s *Scheduler) Status() []AccountStatus {
 	s.mu.RLock()
@@ -369,6 +460,28 @@ func (s *Scheduler) Status() []AccountStatus {
 		statuses = append(statuses, status)
 	}
 	return statuses
+}
+
+func (s *Scheduler) JobStatus() []JobStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]JobStatus, 0, len(s.genericJobs))
+	for name, entryID := range s.genericJobs {
+		var lastErr string
+		if err := s.genericLastErr[name]; err != nil {
+			lastErr = err.Error()
+		}
+		out = append(out, JobStatus{
+			Name:      name,
+			Running:   s.genericRunning[name],
+			LastRun:   s.genericLastRun[name],
+			NextRun:   s.cron.Entry(entryID).Next,
+			Schedule:  s.genericSchedules[name],
+			LastError: lastErr,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // ValidateCronExpr validates a cron expression without scheduling anything.

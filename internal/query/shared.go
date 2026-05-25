@@ -105,6 +105,65 @@ func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFun
 	return rows.Err()
 }
 
+// fetchParticipantsForMessageList adds recipients to message summaries using a batch query.
+// tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
+func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, tablePrefix string, messages []MessageSummary) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	ids := make([]interface{}, len(messages))
+	placeholders := make([]string, len(messages))
+	idToIndex := make(map[int64]int, len(messages))
+	for i, msg := range messages {
+		ids[i] = msg.ID
+		placeholders[i] = "?"
+		idToIndex[msg.ID] = i
+	}
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT mr.message_id,
+		       mr.recipient_type,
+		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s
+		FROM %smessage_recipients mr
+		JOIN %sparticipants p ON p.id = mr.participant_id
+		WHERE mr.message_id IN (%s)
+		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
+		ORDER BY mr.message_id, mr.id
+	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ",")), ids...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var messageID int64
+		var recipType, email, name string
+		if err := rows.Scan(&messageID, &recipType, &email, &name); err != nil {
+			return err
+		}
+		idx, ok := idToIndex[messageID]
+		if !ok {
+			continue
+		}
+		appendSummaryRecipient(&messages[idx], recipType, Address{Email: email, Name: name})
+	}
+
+	return rows.Err()
+}
+
+func appendSummaryRecipient(msg *MessageSummary, recipType string, addr Address) {
+	switch recipType {
+	case "to":
+		msg.To = append(msg.To, addr)
+	case "cc":
+		msg.Cc = append(msg.Cc, addr)
+	case "bcc":
+		msg.Bcc = append(msg.Bcc, addr)
+	}
+}
+
 // fetchMessageLabelsDetail fetches labels for a single message detail.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use.
@@ -136,7 +195,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db *sql.DB, rebind rebindFunc
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT mr.recipient_type, p.email_address, %s
+		SELECT mr.recipient_type, COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''), %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ?
@@ -279,6 +338,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 			m.conversation_id,
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
+			COALESCE(m.message_type, ''),
 			COALESCE(m.snippet, ''),
 			m.sent_at,
 			m.received_at,
@@ -298,6 +358,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		&msg.ConversationID,
 		&msg.SourceConversationID,
 		&msg.Subject,
+		&msg.MessageType,
 		&msg.Snippet,
 		&sentAt,
 		&receivedAt,

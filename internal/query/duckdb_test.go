@@ -873,6 +873,33 @@ func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *t
 	}
 }
 
+func TestDuckDBEngine_ListMessages_PhoneBackedSMSParticipants(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSourceWithType("sms-backup", "synctech-sms")
+	sender := b.AddPhoneParticipant("+15551234567", "SMS Sender")
+	recipient := b.AddPhoneParticipant("+15557654321", "Me")
+	msg := b.AddMessage(MessageOpt{Subject: "", Snippet: "known sms snippet", SentAt: makeDate(2024, 4, 1), SizeEstimate: 17})
+	b.AddFrom(msg, sender, "")
+	b.AddTo(msg, recipient, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.ListMessages(ctx, MessageFilter{})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d messages, want 1", len(results))
+	}
+	if results[0].FromPhone != "+15551234567" || results[0].FromName != "SMS Sender" {
+		t.Fatalf("summary sender = name %q phone %q, want phone-backed SMS sender", results[0].FromName, results[0].FromPhone)
+	}
+	if len(results[0].To) != 1 || results[0].To[0].Email != "+15557654321" || results[0].To[0].Name != "Me" {
+		t.Fatalf("summary To = %#v, want phone-backed SMS recipient", results[0].To)
+	}
+}
+
 // TestDuckDBEngine_AggregateAttachmentFields verifies attachment_count and attachment_size
 // are correctly scanned from aggregate queries (attachment_size is DOUBLE, attachment_count is INT).
 func TestDuckDBEngine_AggregateAttachmentFields(t *testing.T) {

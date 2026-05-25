@@ -126,3 +126,58 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 		t.Errorf("want 0 results after source delete, got %d", len(results))
 	}
 }
+
+func TestTextModeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
+	db, _ := openTextSearchDB(t)
+	engine := NewSQLiteEngine(db)
+	ctx := context.Background()
+
+	insertTextSearchMessage(t, db, 2, "sms", "sms body")
+	insertTextSearchMessage(t, db, 3, "mms", "mms body")
+	insertTextSearchMessage(t, db, 4, "synctech_sms_call", "missed call body")
+
+	results, err := engine.TextSearch(ctx, "body", 10, 0)
+	if err != nil {
+		t.Fatalf("TextSearch: %v", err)
+	}
+	var types []string
+	for _, r := range results {
+		types = append(types, r.MessageType)
+	}
+	if !containsString(types, "sms") || !containsString(types, "mms") {
+		t.Fatalf("text mode types = %#v, want sms and mms", types)
+	}
+	if containsString(types, "synctech_sms_call") {
+		t.Fatalf("text mode included call log: %#v", types)
+	}
+}
+
+func TestIsTextMessageTypeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
+	if !IsTextMessageType("mms") {
+		t.Fatal("mms should be a text message type")
+	}
+	if IsTextMessageType("synctech_sms_call") {
+		t.Fatal("synctech_sms_call should not be a text message type")
+	}
+}
+
+func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, body string) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, snippet, message_type) VALUES (?, 1, 1, ?, ?, ?)`, id, body, body, messageType)
+	if err != nil {
+		t.Fatalf("insert %s message: %v", messageType, err)
+	}
+	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, id, body, body)
+	if err != nil {
+		t.Fatalf("insert %s fts: %v", messageType, err)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}

@@ -182,6 +182,35 @@ func TestAddAccountsFromConfigWithErrors(t *testing.T) {
 	}
 }
 
+func TestSchedulerGenericJobStatus(t *testing.T) {
+	var ran int
+	s := New(func(context.Context, string) error { return nil })
+	err := s.AddJob(Job{
+		Name:     "synctech-sms:pixel",
+		Schedule: "30 4 * * *",
+		Run: func(ctx context.Context) error {
+			ran++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	if !s.IsJobScheduled("synctech-sms:pixel") {
+		t.Fatal("job not scheduled")
+	}
+	if err := s.TriggerJob("synctech-sms:pixel"); err != nil {
+		t.Fatalf("TriggerJob: %v", err)
+	}
+	if ran != 1 {
+		t.Fatalf("ran = %d, want 1", ran)
+	}
+	status := s.JobStatus()
+	if len(status) != 1 || status[0].Name != "synctech-sms:pixel" || status[0].Schedule != "30 4 * * *" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestStartStop(t *testing.T) {
 	s := New(func(ctx context.Context, email string) error {
 		return nil

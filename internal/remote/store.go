@@ -166,6 +166,7 @@ type messageResponse struct {
 	ID             int64    `json:"id"`
 	ConversationID int64    `json:"conversation_id,omitempty"`
 	Subject        string   `json:"subject"`
+	MessageType    string   `json:"message_type,omitempty"`
 	From           string   `json:"from"`
 	To             []string `json:"to"`
 	SentAt         string   `json:"sent_at"`
@@ -223,6 +224,7 @@ func toAPIMessage(m messageResponse) store.APIMessage {
 		ID:             m.ID,
 		ConversationID: m.ConversationID,
 		Subject:        m.Subject,
+		MessageType:    m.MessageType,
 		From:           m.From,
 		To:             m.To,
 		SentAt:         parseTime(m.SentAt),

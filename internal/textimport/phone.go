@@ -68,3 +68,23 @@ func NormalizePhone(raw string) (string, error) {
 
 	return digits, nil
 }
+
+type AddressKind string
+
+const (
+	AddressPhone AddressKind = "phone"
+	AddressRaw   AddressKind = "raw"
+)
+
+type AddressNormalization struct {
+	Kind  AddressKind
+	Value string
+}
+
+func NormalizeAddress(raw string) AddressNormalization {
+	phone, err := NormalizePhone(raw)
+	if err == nil && phone != "" {
+		return AddressNormalization{Kind: AddressPhone, Value: phone}
+	}
+	return AddressNormalization{Kind: AddressRaw, Value: strings.TrimSpace(raw)}
+}

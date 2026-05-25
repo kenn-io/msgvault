@@ -202,6 +202,53 @@ func TestGetAccountScheduleReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestSynctechSMSSourcesConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	data := []byte(`
+[[synctech_sms.sources]]
+name = "pixel"
+backend = "drive"
+owner_phone = "+15550000001"
+folder_id = "drive-folder-id"
+google_account = "user@example.com"
+schedule = "30 4 * * *"
+include_sms = true
+include_mms = true
+include_calls = true
+include_attachments = true
+stable_after = "10m"
+oauth_app = "personal"
+`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(configPath, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	src := cfg.GetSynctechSMSSource("pixel")
+	if src == nil {
+		t.Fatal("GetSynctechSMSSource returned nil")
+	}
+	if src.Backend != "drive" || src.OwnerPhone != "+15550000001" || src.FolderID != "drive-folder-id" || src.GoogleAccount != "user@example.com" || src.StableAfter != "10m" {
+		t.Fatalf("source mismatch: %#v", src)
+	}
+}
+
+func TestSynctechSMSScheduledSources(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.SynctechSMS.Sources = []SynctechSMSSource{
+		{Name: "enabled", Enabled: true, Schedule: "30 4 * * *", OwnerPhone: "+15550000001", Backend: "local", Path: "/tmp/inbox"},
+		{Name: "disabled", Enabled: false, Schedule: "30 4 * * *", OwnerPhone: "+15550000002", Backend: "local", Path: "/tmp/inbox"},
+		{Name: "unscheduled", Enabled: true, OwnerPhone: "+15550000003", Backend: "local", Path: "/tmp/inbox"},
+	}
+	got := cfg.ScheduledSynctechSMSSources()
+	if len(got) != 1 || got[0].Name != "enabled" {
+		t.Fatalf("ScheduledSynctechSMSSources = %#v", got)
+	}
+}
+
 func TestExpandPath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

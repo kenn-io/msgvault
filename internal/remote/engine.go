@@ -96,6 +96,7 @@ type messageSummaryJSON struct {
 	ID             int64    `json:"id"`
 	ConversationID int64    `json:"conversation_id,omitempty"`
 	Subject        string   `json:"subject"`
+	MessageType    string   `json:"message_type,omitempty"`
 	From           string   `json:"from"`
 	To             []string `json:"to"`
 	SentAt         string   `json:"sent_at"`
@@ -258,6 +259,9 @@ func buildFilterQuery(filter query.MessageFilter) url.Values {
 	if filter.Label != "" {
 		params.Set("label", filter.Label)
 	}
+	if filter.MessageType != "" {
+		params.Set("message_type", filter.MessageType)
+	}
 	if filter.TimeRange.Period != "" {
 		params.Set("time_period", filter.TimeRange.Period)
 	}
@@ -372,6 +376,7 @@ func parseMessageSummaries(msgs []messageSummaryJSON) []query.MessageSummary {
 			ID:             m.ID,
 			ConversationID: m.ConversationID,
 			Subject:        m.Subject,
+			MessageType:    m.MessageType,
 			FromEmail:      m.From,
 			SentAt:         sentAt,
 			DeletedAt:      deletedAt,

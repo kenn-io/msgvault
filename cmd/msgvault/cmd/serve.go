@@ -172,6 +172,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Warn("no accounts scheduled - upload tokens via API and add accounts to config.toml")
 	}
 
+	for _, src := range cfg.ScheduledSynctechSMSSources() {
+		source := src
+		jobName := "synctech-sms:" + source.Name
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredSynctechSMSSource(ctx, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
+		} else {
+			logger.Info("scheduled synctech-sms source", "source", source.Name, "schedule", source.Schedule)
+		}
+	}
+
 	// Register the embed job (cron-driven plus optional post-sync hook).
 	// Only when vector search is enabled and wired.
 	if vf != nil {

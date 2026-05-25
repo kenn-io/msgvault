@@ -77,6 +77,7 @@ type MessageSummary struct {
 	ID             int64    `json:"id"`
 	ConversationID int64    `json:"conversation_id,omitempty"`
 	Subject        string   `json:"subject"`
+	MessageType    string   `json:"message_type,omitempty"`
 	From           string   `json:"from"`
 	To             []string `json:"to"`
 	Cc             []string `json:"cc,omitempty"`
@@ -177,11 +178,7 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	from := ""
 	if len(qMsg.From) > 0 {
-		if qMsg.From[0].Name != "" {
-			from = fmt.Sprintf("%s <%s>", qMsg.From[0].Name, qMsg.From[0].Email)
-		} else {
-			from = qMsg.From[0].Email
-		}
+		from = formatQueryAddress(qMsg.From[0])
 	}
 
 	toAddrs := make([]string, 0, len(qMsg.To))
@@ -221,6 +218,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 			ID:             qMsg.ID,
 			ConversationID: qMsg.ConversationID,
 			Subject:        qMsg.Subject,
+			MessageType:    qMsg.MessageType,
 			From:           from,
 			To:             toAddrs,
 			Cc:             ccAddrs,
@@ -252,6 +250,7 @@ func toMessageSummary(m APIMessage) MessageSummary {
 		ID:             m.ID,
 		ConversationID: m.ConversationID,
 		Subject:        m.Subject,
+		MessageType:    m.MessageType,
 		From:           m.From,
 		To:             to,
 		Cc:             m.Cc,
@@ -1161,6 +1160,7 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 	filter.RecipientName = r.URL.Query().Get("recipient_name")
 	filter.Domain = r.URL.Query().Get("domain")
 	filter.Label = r.URL.Query().Get("label")
+	filter.MessageType = r.URL.Query().Get("message_type")
 
 	if v := r.URL.Query().Get("time_period"); v != "" {
 		filter.TimeRange.Period = v
@@ -1280,12 +1280,22 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 	if labels == nil {
 		labels = []string{}
 	}
+	from := m.FromEmail
+	if from == "" && m.FromPhone != "" {
+		from = m.FromPhone
+	}
+	if m.FromName != "" && from != "" {
+		from = fmt.Sprintf("%s <%s>", m.FromName, from)
+	}
 	return MessageSummary{
 		ID:             m.ID,
 		ConversationID: m.ConversationID,
 		Subject:        m.Subject,
-		From:           m.FromEmail,
-		To:             []string{}, // Query summary doesn't include recipients
+		MessageType:    m.MessageType,
+		From:           from,
+		To:             formatQueryAddresses(m.To),
+		Cc:             formatQueryAddresses(m.Cc),
+		Bcc:            formatQueryAddresses(m.Bcc),
 		SentAt:         m.SentAt.UTC().Format(time.RFC3339),
 		DeletedAt:      formatDeletedAt(m.DeletedAt),
 		Snippet:        m.Snippet,
@@ -1293,6 +1303,24 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 		HasAttach:      m.HasAttachments,
 		SizeBytes:      m.SizeEstimate,
 	}
+}
+
+func formatQueryAddresses(addrs []query.Address) []string {
+	if addrs == nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		out = append(out, formatQueryAddress(addr))
+	}
+	return out
+}
+
+func formatQueryAddress(addr query.Address) string {
+	if addr.Name != "" && addr.Email != "" {
+		return fmt.Sprintf("%s <%s>", addr.Name, addr.Email)
+	}
+	return addr.Email
 }
 
 func formatDeletedAt(deletedAt *time.Time) string {

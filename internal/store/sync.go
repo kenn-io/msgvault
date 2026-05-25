@@ -135,6 +135,21 @@ type Checkpoint struct {
 	ErrorsCount       int64
 }
 
+type SourceImportItem struct {
+	ID              int64
+	SourceID        int64
+	Provider        string
+	ProviderID      string
+	Name            string
+	Checksum        string
+	Size            int64
+	ModifiedAt      sql.NullTime
+	ImportedAt      sql.NullTime
+	Status          string
+	RecordsImported int
+	ErrorMessage    sql.NullString
+}
+
 // StartSync creates a new sync run record and returns its ID. The
 // supersede UPDATE and the INSERT run inside a writer-locked
 // transaction so concurrent StartSync calls cannot both find no
@@ -301,6 +316,77 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 		return nil, nil
 	}
 	return run, err
+}
+
+func (s *Store) UpsertSourceImportItem(item SourceImportItem) error {
+	_, err := s.db.Exec(fmt.Sprintf(`
+		INSERT INTO source_import_items (
+			source_id, provider, provider_id, name, checksum, size, modified_at,
+			imported_at, status, records_imported, error_message, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s, %s)
+		ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET
+			name = excluded.name,
+			checksum = excluded.checksum,
+			size = excluded.size,
+			modified_at = excluded.modified_at,
+			imported_at = excluded.imported_at,
+			status = excluded.status,
+			records_imported = excluded.records_imported,
+			error_message = excluded.error_message,
+			updated_at = %s
+	`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()),
+		item.SourceID, item.Provider, item.ProviderID, item.Name, item.Checksum,
+		item.Size, item.ModifiedAt, item.ImportedAt, item.Status,
+		item.RecordsImported, item.ErrorMessage)
+	if err != nil {
+		return fmt.Errorf("upsert source import item: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetSourceImportItem(sourceID int64, provider, providerID string) (*SourceImportItem, error) {
+	var item SourceImportItem
+	err := s.db.QueryRow(`
+		SELECT id, source_id, provider, provider_id, name, checksum, size,
+		       modified_at, imported_at, status, records_imported, error_message
+		FROM source_import_items
+		WHERE source_id = ? AND provider = ? AND provider_id = ?
+	`, sourceID, provider, providerID).Scan(
+		&item.ID, &item.SourceID, &item.Provider, &item.ProviderID, &item.Name,
+		&item.Checksum, &item.Size, &item.ModifiedAt, &item.ImportedAt,
+		&item.Status, &item.RecordsImported, &item.ErrorMessage,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get source import item: %w", err)
+	}
+	return &item, nil
+}
+
+func (s *Store) ListImportedSourceItemChecksums(sourceID int64, provider string) (map[string]string, error) {
+	rows, err := s.db.Query(`
+		SELECT provider_id, checksum
+		FROM source_import_items
+		WHERE source_id = ? AND provider = ? AND status = 'imported'
+	`, sourceID, provider)
+	if err != nil {
+		return nil, fmt.Errorf("list imported source import items: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var providerID, checksum string
+		if err := rows.Scan(&providerID, &checksum); err != nil {
+			return nil, fmt.Errorf("scan source import item checksum: %w", err)
+		}
+		out[providerID] = checksum
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate source import item checksums: %w", err)
+	}
+	return out, nil
 }
 
 // HasAnyActiveSync returns true if any source currently has a running sync.

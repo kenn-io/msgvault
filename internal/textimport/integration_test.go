@@ -10,7 +10,19 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textimport"
 )
+
+func TestNormalizeAddressClassifiesPhoneAndRaw(t *testing.T) {
+	phone := textimport.NormalizeAddress("+1 (555) 123-4567")
+	if phone.Kind != textimport.AddressPhone || phone.Value != "+15551234567" {
+		t.Fatalf("phone normalization = %#v", phone)
+	}
+	short := textimport.NormalizeAddress("12345")
+	if short.Kind != textimport.AddressRaw || short.Value != "12345" {
+		t.Fatalf("short code normalization = %#v", short)
+	}
+}
 
 // TestIntegration exercises the full text message import pipeline:
 // store methods, participant deduplication across sources,

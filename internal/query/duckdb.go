@@ -870,6 +870,11 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []in
 		conditions = append(conditions, "msg.has_attachments = true")
 	}
 
+	if filter.MessageType != "" {
+		conditions = append(conditions, "msg.message_type = ?")
+		args = append(args, filter.MessageType)
+	}
+
 	// Sender filter - check both message_recipients (email) and direct sender_id (WhatsApp/chat)
 	// Also checks phone_number for phone-based lookups (e.g., from:+447...)
 	if filter.Sender != "" {
@@ -1344,7 +1349,63 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
 
+	if len(results) > 0 {
+		if err := e.fetchParticipantsForMessages(ctx, results); err != nil {
+			return nil, fmt.Errorf("fetch participants: %w", err)
+		}
+	}
+
 	return results, nil
+}
+
+func (e *DuckDBEngine) fetchParticipantsForMessages(ctx context.Context, messages []MessageSummary) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	if e.sqliteEngine != nil {
+		return fetchParticipantsForMessageList(ctx, e.sqliteEngine.db, "", messages)
+	}
+
+	ids := make([]interface{}, len(messages))
+	placeholders := make([]string, len(messages))
+	idToIndex := make(map[int64]int, len(messages))
+	for i, msg := range messages {
+		ids[i] = msg.ID
+		placeholders[i] = "?"
+		idToIndex[msg.ID] = i
+	}
+
+	rows, err := e.db.QueryContext(ctx, fmt.Sprintf(`
+		WITH %s
+		SELECT mr.message_id,
+		       mr.recipient_type,
+		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
+		       %s AS name
+		FROM mr
+		JOIN p ON p.id = mr.participant_id
+		WHERE mr.message_id IN (%s)
+		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
+		ORDER BY mr.message_id
+	`, e.parquetCTEs(), recipientNameExpr("mr", "p"), strings.Join(placeholders, ",")), ids...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var messageID int64
+		var recipType, email, name string
+		if err := rows.Scan(&messageID, &recipType, &email, &name); err != nil {
+			return err
+		}
+		idx, ok := idToIndex[messageID]
+		if !ok {
+			continue
+		}
+		appendSummaryRecipient(&messages[idx], recipType, Address{Email: email, Name: name})
+	}
+
+	return rows.Err()
 }
 
 // parseLabelsJSON parses JSON array format into string slice.
