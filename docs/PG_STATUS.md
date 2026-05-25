@@ -108,9 +108,20 @@ branch:
 
 ## Remaining for PR4
 
-- **FTS weight differences**: PostgreSQL applies `setweight('A')` to the
-  subject and `'B'` to the sender; SQLite FTS5 has no weighting. Ranking
-  results will still differ between backends.
+- **FTS rank ordering (partially resolved)**:
+  `SQLiteDialect.FTSSearchClause()` now orders by
+  `bm25(messages_fts, 1.0, 10.0, 1.0, 4.0, 1.0, 1.0)` — weights are
+  positional over every declared FTS5 column (the leading 1.0 is the
+  slot for `message_id UNINDEXED`; the rest map to subject, body,
+  from, to, cc). The 10:4:1 ratio across subject/sender/body mirrors
+  PostgreSQL's `setweight 'A'=1.0 / 'B'=0.4 / 'D'=0.1`, so
+  subject-only matches outrank sender-only, which outrank body-only
+  on both backends. Verified by `TestFTSRankWeightsAcrossBackends`.
+  Note: bm25 (Okapi BM25) and `ts_rank` (cover-density) remain
+  different scorer functions, so intra-class tie-breaking (e.g. two
+  body-only matches) can still diverge. Top-N ordering is consistent
+  for most queries; expect occasional reorderings deep in the result
+  list.
 - **Deletion execution path on PostgreSQL**: end-to-end testing of
   staged-deletion → Gmail delete → archive update.
 - **Attachment storage paths** under PostgreSQL — content-hash dedup

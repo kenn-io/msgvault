@@ -93,11 +93,23 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 }
 
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
-// "rank" is an implicit FTS5 column, so orderArgCount is 0.
+// The bm25 weights mirror the PostgreSQL dialect's setweight scheme so the
+// two backends order results consistently. Weights are positional over
+// every column declared in messages_fts — UNINDEXED columns count too even
+// though they cannot match — so the leading 1.0 is the placeholder for
+// `message_id UNINDEXED`. The remaining slots map to (subject, body,
+// from_addr, to_addr, cc_addr). PostgreSQL applies setweight 'A'=1.0 to
+// subject and 'B'=0.4 to sender, leaving body and other recipients at
+// default 'D'=0.1 — a 10:4:1 ratio. bm25 multiplies per-column scores by
+// these weights, so 10/1/4/1/1 across (subject, body, from, to, cc)
+// reproduces that ordering: subject-only > sender-only > body/recipient-
+// only matches. bm25 returns lower (more negative) scores for more
+// relevant rows, so callers ORDER BY this expression ascending (the
+// default).
 func (d *SQLiteDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
-	return "JOIN messages_fts fts ON fts.rowid = m.id",
+	return "JOIN messages_fts ON messages_fts.rowid = m.id",
 		"messages_fts MATCH ?",
-		"rank",
+		"bm25(messages_fts, 1.0, 10.0, 1.0, 4.0, 1.0, 1.0)",
 		0
 }
 
