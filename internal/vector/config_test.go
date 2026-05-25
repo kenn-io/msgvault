@@ -1,6 +1,7 @@
 package vector
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -433,16 +434,18 @@ func TestPreprocessConfig_FingerprintChangesPerToggle(t *testing.T) {
 }
 
 // TestConfig_GenerationFingerprintFolds checks the full identifier
-// composition. The shape is "<model>:<dim>:<preprocess>:c<maxchars>"
-// — every segment must contribute so an operator switching the model,
-// any preprocess toggle, or the truncation cap stales the existing
-// index instead of silently mixing inconsistently-prepared vectors.
+// composition. The shape is
+// "<model>:<dim>:<preprocess>:c<maxchars>:e<embed_policy>" — every
+// segment must contribute so an operator switching the model, any
+// preprocess toggle, the truncation cap, or the embed-worker output
+// layout stales the existing index instead of silently mixing
+// inconsistently-prepared vectors.
 func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 	base := Config{
 		Embeddings: EmbeddingsConfig{Model: "nomic-embed", Dimension: 768, MaxInputChars: 6000},
 	}
 	got := base.GenerationFingerprint()
-	want := "nomic-embed:768:p1-111111:c6000"
+	want := fmt.Sprintf("nomic-embed:768:p1-111111:c6000:e%d", embedPolicyVersion)
 	if got != want {
 		t.Errorf("GenerationFingerprint() = %q, want %q", got, want)
 	}
@@ -495,5 +498,23 @@ func TestConfig_GenerationFingerprint_IncludesMaxInputChars(t *testing.T) {
 	if zeroed.GenerationFingerprint() == baseline {
 		t.Errorf("GenerationFingerprint() did not change when MaxInputChars went 6000→0 (still %q)",
 			baseline)
+	}
+}
+
+// TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion pins the
+// trailing :e<embedPolicyVersion> segment. The embed worker switched
+// from one-vector-per-message-with-truncation to N-vectors-per-message-
+// via-ChunkText; without this segment an active generation seeded
+// under the old single-vector policy would silently accept new chunked
+// entries from an upgraded worker, mixing two incompatible vector
+// layouts inside one generation.
+func TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion(t *testing.T) {
+	base := Config{
+		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},
+	}
+	got := base.GenerationFingerprint()
+	suffix := fmt.Sprintf(":e%d", embedPolicyVersion)
+	if !strings.HasSuffix(got, suffix) {
+		t.Errorf("GenerationFingerprint() = %q, want suffix %q", got, suffix)
 	}
 }

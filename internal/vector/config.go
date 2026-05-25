@@ -22,6 +22,21 @@ import (
 // inconsistently-prepared vectors in one generation.
 const preprocessVersion = 1
 
+// embedPolicyVersion identifies the embed-worker output layout for a
+// given Preprocess result. Bump whenever a change to internal/vector/
+// embed/worker.go (or its chunking helpers) would shift the set of
+// vectors written for the same Preprocess output — for example: the
+// switch from single-vector-per-message to multi-chunk-per-message, a
+// change to the chunk window/overlap derivation, or a change to the
+// per-message chunk cap. Like preprocessVersion this is folded into
+// GenerationFingerprint so flipping the policy stales the active
+// index and forces --full-rebuild rather than mixing single-vector
+// and chunked entries inside one generation.
+//
+// v1: chunked layout (the worker passes maxChars=0 to Preprocess and
+// splits the result into MaxInputChars-bounded chunks via ChunkText).
+const embedPolicyVersion = 1
+
 // Config is the top-level vector-search configuration, loaded from the
 // [vector] TOML table.
 type Config struct {
@@ -204,22 +219,30 @@ func (e EmbeddingsConfig) Fingerprint() string {
 
 // GenerationFingerprint returns the full identifier used to compare an
 // index generation against the configured policy. Format:
-// "<model>:<dimension>:<preprocess>:c<max_input_chars>". Every segment
-// is derived from the effective config, so changing the embedding
-// model/dimension, any preprocessing toggle, OR the truncation cap
-// produces a new fingerprint and the ResolveActiveForFingerprint check
-// forces a --full-rebuild rather than silently embedding new messages
-// under a policy different from the already-active vectors.
+// "<model>:<dimension>:<preprocess>:c<max_input_chars>:e<embed_policy>".
+// Every segment is derived from the effective config (or a code-level
+// version constant), so changing the embedding model/dimension, any
+// preprocessing toggle, the truncation cap, or the embed-worker output
+// layout produces a new fingerprint and the ResolveActiveForFingerprint
+// check forces a --full-rebuild rather than silently embedding new
+// messages under a policy different from the already-active vectors.
 //
-// max_input_chars is part of the policy because the embed worker
-// passes it straight into Preprocess() as the rune-bounded truncation
-// cap (see Worker.run); raising or lowering it changes the embedded
-// text for any message whose preprocessed form exceeds the previous
-// cap, so two cap values produce two different embedding spaces and
-// must not share one generation.
+// max_input_chars is part of the policy because the embed worker uses
+// it as the per-chunk rune cap fed into ChunkText (and, before
+// chunking, as the rune-bounded truncation cap fed into Preprocess);
+// raising or lowering it changes which chunks a long message produces,
+// so two cap values produce two different embedding layouts and must
+// not share one generation.
+//
+// embed_policy (the embedPolicyVersion constant) covers worker-side
+// changes that shift the vector layout for the same Preprocess output
+// — most notably the switch from one-vector-per-message-with-truncation
+// to N-vectors-per-message-via-ChunkText. Without folding this version
+// in, an active generation built under the old single-vector policy
+// would silently accept new chunked entries from an upgraded worker.
 func (c Config) GenerationFingerprint() string {
-	return fmt.Sprintf("%s:%s:c%d",
-		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars)
+	return fmt.Sprintf("%s:%s:c%d:e%d",
+		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
 }
 
 // Validate returns a descriptive error if the config is unusable.

@@ -821,6 +821,27 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		return nil, nil
 	}
 
+	// Filtered-message ceiling: count distinct filtered messages
+	// that have at least one chunk in this generation. The widening
+	// loop below uses this as an early exit so a selective filter
+	// (few matching messages) doesn't drive the loop all the way to
+	// the generation-wide chunkCeiling: once len(hits) reaches the
+	// filtered-message count, every filtered message is in the
+	// result set with its best-distance chunk (further iterations
+	// only fetch chunks with worse distances, so neither the set of
+	// messages nor each message's MIN(distance) can change).
+	filteredMessageCeiling := chunkCeiling // empty-filter falls through to the fast path above; this clause runs only for non-empty filters
+	ceilingSQL := `SELECT COUNT(DISTINCT message_id) FROM embeddings e WHERE e.generation_id = ? ` + idClause
+	ceilingArgs := make([]any, 0, 1+len(filterArgs))
+	ceilingArgs = append(ceilingArgs, int64(gen))
+	ceilingArgs = append(ceilingArgs, filterArgs...)
+	if err := b.db.QueryRowContext(ctx, ceilingSQL, ceilingArgs...).Scan(&filteredMessageCeiling); err != nil {
+		return nil, fmt.Errorf("lookup filtered message count: %w", err)
+	}
+	if filteredMessageCeiling == 0 {
+		return nil, nil
+	}
+
 	q := fmt.Sprintf(`
 		SELECT e.message_id, MIN(v.distance) AS distance
 		  FROM %s v
@@ -849,7 +870,16 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		if err != nil {
 			return nil, err
 		}
-		if len(hits) >= k || fetch >= chunkCeiling {
+		// Exit when either: we have k distinct messages (caller is
+		// satisfied), every filtered message has been found (no new
+		// messages will appear regardless of further iterations —
+		// see filteredMessageCeiling comment above), or we've
+		// scanned the entire generation. Without the middle
+		// condition, a selective filter that matches m < k messages
+		// would drive the loop all the way to chunkCeiling doing
+		// wasted ANN work; with it, the loop terminates as soon as
+		// the filtered universe has been fully resolved.
+		if len(hits) >= k || len(hits) >= filteredMessageCeiling || fetch >= chunkCeiling {
 			if len(hits) > k {
 				hits = hits[:k]
 			}
@@ -1208,8 +1238,20 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	// denominator, generation summary, etc.) is "how many messages are
 	// embedded" — counting rows would inflate by avg_chunks_per_msg
 	// and break Done/Total invariants in internal/vector/stats.go.
-	if err := b.db.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT message_id) FROM embeddings `+where, args...).Scan(&s.EmbeddingCount); err != nil {
+	//
+	// The aggregate path (gen == 0) counts DISTINCT (generation_id,
+	// message_id) pairs rather than DISTINCT message_id alone: a
+	// message that lives in both the active and a building generation
+	// represents two units of embedded work, and the aggregate Stats
+	// view exists precisely so operators can see total work done
+	// across generations. Per-generation paths are already constrained
+	// by the WHERE clause, so DISTINCT message_id there has no
+	// undercount hazard.
+	embeddingCountSQL := `SELECT COUNT(DISTINCT message_id) FROM embeddings ` + where
+	if gen == 0 {
+		embeddingCountSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT generation_id, message_id FROM embeddings)`
+	}
+	if err := b.db.QueryRowContext(ctx, embeddingCountSQL, args...).Scan(&s.EmbeddingCount); err != nil {
 		return s, fmt.Errorf("count embeddings: %w", err)
 	}
 	if err := b.db.QueryRowContext(ctx,

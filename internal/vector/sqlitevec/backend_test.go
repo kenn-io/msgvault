@@ -592,7 +592,7 @@ func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
 // and 1) and two vec0 rows, joined back through embedding_id.
 func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -653,7 +653,7 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 // Half-replace would leave an orphan row pointing at stale text.
 func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	gid, err := b.CreateGeneration(ctx, "m", 768)
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	if err != nil {
 		t.Fatalf("CreateGeneration: %v", err)
 	}
@@ -1605,6 +1605,57 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 	}
 	if s.EmbeddingCount != 1 {
 		t.Errorf("aggregate EmbeddingCount=%d want 1", s.EmbeddingCount)
+	}
+}
+
+// TestBackend_Stats_AggregateCountsPerGenerationDuplicates pins the
+// fix for the aggregate undercount: when one message exists in both
+// the active generation and an in-flight building generation, the
+// aggregate path should report two units of embedded work (one per
+// generation) rather than collapsing to one via DISTINCT message_id.
+func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+
+	// First generation: embed message 1, then activate so the next
+	// CreateGeneration produces a building gen alongside it instead of
+	// reusing the same row.
+	genA := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
+	if err := b.ActivateGeneration(ctx, genA); err != nil {
+		t.Fatalf("ActivateGeneration(genA): %v", err)
+	}
+
+	// Second generation: re-embed the same message 1, mirroring the
+	// "rebuild in progress" state where every message is dual-embedded
+	// across active + building.
+	genB, err := b.CreateGeneration(ctx, "m", 768, "fp-b")
+	if err != nil {
+		t.Fatalf("CreateGeneration(genB): %v", err)
+	}
+	if err := b.Upsert(ctx, genB, []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(768, 1)},
+	}); err != nil {
+		t.Fatalf("Upsert into genB: %v", err)
+	}
+
+	s, err := b.Stats(ctx, vector.GenerationID(0))
+	if err != nil {
+		t.Fatalf("Stats(0): %v", err)
+	}
+	if s.EmbeddingCount != 2 {
+		t.Errorf("aggregate EmbeddingCount=%d want 2 (one (gen, msg) pair per generation)", s.EmbeddingCount)
+	}
+
+	// Per-generation counts remain semantically "distinct messages in
+	// this generation", so each gen still reports 1.
+	if sa, err := b.Stats(ctx, genA); err != nil {
+		t.Fatalf("Stats(genA): %v", err)
+	} else if sa.EmbeddingCount != 1 {
+		t.Errorf("genA EmbeddingCount=%d want 1", sa.EmbeddingCount)
+	}
+	if sb, err := b.Stats(ctx, genB); err != nil {
+		t.Fatalf("Stats(genB): %v", err)
+	} else if sb.EmbeddingCount != 1 {
+		t.Errorf("genB EmbeddingCount=%d want 1", sb.EmbeddingCount)
 	}
 }
 

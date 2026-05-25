@@ -135,29 +135,12 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	//     saturation when the pool runs full, identical to the BM25 side.
 	chunkK := kPlus1 * chunkOverfetchFactor
 
-	// Look up the upper bound for the widening loop: total chunks in
-	// this generation. Without this ceiling the loop could grow
-	// chunkK unboundedly when the corpus genuinely has fewer than
-	// KPerSignal distinct vector matches.
-	var chunkCeiling int
-	if req.QueryVec != nil {
-		if err := b.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
-			int64(req.Generation)).Scan(&chunkCeiling); err != nil {
-			return nil, false, fmt.Errorf("lookup chunk count: %w", err)
-		}
-	}
-	// buildQuery interpolates a fresh query string for a given chunkK,
-	// so the widening loop below can re-issue the fused CTE with a
-	// growing ANN over-fetch when the first pass collapses to fewer
-	// than KPerSignal distinct messages after GROUP BY.
-	buildQuery := func(currentChunkK int) string {
-		return fmt.Sprintf(`
-WITH
-  filtered AS (
-    SELECT m.id
-      FROM messages m
-     WHERE %s
+	// filterWhere is the WHERE clause shared by both the chunk-ceiling
+	// pre-query and the `filtered` CTE inside the fused query: this
+	// guarantees the ceiling's "is this message included" predicate
+	// stays bit-for-bit aligned with the live one without forcing
+	// callers (or the test suite) to keep two copies in sync.
+	filterWhere := fmt.Sprintf(`%s
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
        %s
        %s
@@ -171,7 +154,20 @@ WITH
        AND (:subject_patterns IS NULL OR NOT EXISTS (
              SELECT 1 FROM json_each(:subject_patterns) sp
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
-       %s
+       %s`,
+		store.LiveMessagesWhere("m", true), senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
+
+	// buildQuery interpolates a fresh query string for a given chunkK,
+	// so the widening loop below can re-issue the fused CTE with a
+	// growing ANN over-fetch when the first pass collapses to fewer
+	// than KPerSignal distinct messages after GROUP BY.
+	buildQuery := func(currentChunkK int) string {
+		return fmt.Sprintf(`
+WITH
+  filtered AS (
+    SELECT m.id
+      FROM messages m
+     WHERE %s
   ),
   bm25 AS (
     SELECT fts.rowid AS message_id,
@@ -224,8 +220,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
   FROM fused
  ORDER BY rrf_score DESC, message_id ASC
  LIMIT :limit
-`, store.LiveMessagesWhere("m", true), senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL,
-			kPlus1, req.KPerSignal, vecTable, currentChunkK, req.KPerSignal)
+`, filterWhere, kPlus1, req.KPerSignal, vecTable, currentChunkK, req.KPerSignal)
 	}
 
 	var queryVecArg any
@@ -257,7 +252,12 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		}
 	}
 
-	args := []any{
+	// Filter-only named args feed both the chunk-ceiling pre-query
+	// and the main fused query. The split keeps the ceiling query
+	// from binding fts_query / query_vec / rrf_k / limit (none of
+	// which it references) — the go-sqlite3 driver rejects extra
+	// named binds when its placeholder count check fails.
+	filterArgs := []any{
 		sql.Named("source_ids", sourceIDs),
 		sql.Named("has_attachment", hasAttachment),
 		sql.Named("after", after),
@@ -265,24 +265,62 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		sql.Named("larger_than", largerThan),
 		sql.Named("smaller_than", smallerThan),
 		sql.Named("subject_patterns", subjectPatterns),
+		sql.Named("gen", int64(req.Generation)),
+	}
+	filterArgs = append(filterArgs, senderGroupArgs...)
+	filterArgs = append(filterArgs, toGroupArgs...)
+	filterArgs = append(filterArgs, ccGroupArgs...)
+	filterArgs = append(filterArgs, bccGroupArgs...)
+	filterArgs = append(filterArgs, labelGroupArgs...)
+
+	// Two ceilings bound the widening loop. The generation-wide
+	// chunkCeiling is the hard upper bound on currentChunkK so the
+	// loop terminates even when the BM25/ANN signals disagree
+	// completely. The filteredMessageCeiling is an early-exit:
+	// once the ANN pool covers every filtered message with at
+	// least one chunk, no further iteration can introduce a new
+	// message (a chunk fetched at higher rank has a worse distance
+	// than what's already in MIN(v.distance) per message, so neither
+	// the pool's membership nor its rankings can change). Without
+	// this early exit, a tight filter that matches a handful of
+	// messages drives the loop all the way to chunkCeiling doing
+	// wasted ANN+JOIN work on every pass.
+	var chunkCeiling, filteredMessageCeiling int
+	if req.QueryVec != nil {
+		if err := b.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
+			int64(req.Generation)).Scan(&chunkCeiling); err != nil {
+			return nil, false, fmt.Errorf("lookup chunk count: %w", err)
+		}
+		ceilingSQL := fmt.Sprintf(`
+			SELECT COUNT(DISTINCT ve.message_id) FROM vec.embeddings ve
+			 WHERE ve.generation_id = :gen
+			   AND ve.message_id IN (
+			       SELECT m.id FROM messages m WHERE %s
+			   )`, filterWhere)
+		if err := conn.QueryRowContext(ctx, ceilingSQL, filterArgs...).Scan(&filteredMessageCeiling); err != nil {
+			return nil, false, fmt.Errorf("lookup filtered message count: %w", err)
+		}
+	}
+
+	// Query-specific named args: only the main fused query
+	// references these. Concatenated onto filterArgs at the end so
+	// both args slices share storage for the filter-side names.
+	args := make([]any, 0, len(filterArgs)+4)
+	args = append(args, filterArgs...)
+	args = append(args,
 		sql.Named("fts_query", ftsArg),
 		sql.Named("query_vec", queryVecArg),
-		sql.Named("gen", int64(req.Generation)),
 		sql.Named("rrf_k", req.RRFK),
 		sql.Named("limit", sqlLimit),
-	}
-	args = append(args, senderGroupArgs...)
-	args = append(args, toGroupArgs...)
-	args = append(args, ccGroupArgs...)
-	args = append(args, bccGroupArgs...)
-	args = append(args, labelGroupArgs...)
+	)
 
 	// Loop the fused query with growing chunkK until either the ANN
 	// pool covers req.KPerSignal+1 distinct messages (so saturation
 	// detection on the ANN side is accurate) or the chunk fetch
-	// reaches the corpus ceiling. Without this loop, a query whose
-	// top chunks pile up onto a few long messages collapses to far
-	// fewer than KPerSignal distinct vector candidates and the
+	// reaches the filtered chunk ceiling. Without this loop, a query
+	// whose top chunks pile up onto a few long messages collapses to
+	// far fewer than KPerSignal distinct vector candidates and the
 	// caller sees an under-populated ANN pool even when more
 	// matching messages exist further down the chunk-distance
 	// ordering. Bounded by chunkCeiling so the loop always
@@ -340,10 +378,15 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		// Decide whether to widen. Only the ANN side benefits — the
 		// BM25 side is per-message-rowid and never collapses.
 		// Stop when the ANN pool covered req.KPerSignal+1 distinct
-		// messages (so saturation is observable), or when there's
-		// no query vector to widen for, or when we've fetched the
-		// whole chunk corpus.
-		if req.QueryVec == nil || annPoolSize >= kPlus1 || chunkK >= chunkCeiling {
+		// messages (so saturation is observable), when the ANN
+		// pool has reached the filtered-message ceiling (no further
+		// iteration can introduce a new filtered message), when
+		// there's no query vector to widen for, or when we've
+		// fetched the whole chunk corpus.
+		if req.QueryVec == nil ||
+			annPoolSize >= kPlus1 ||
+			annPoolSize >= filteredMessageCeiling ||
+			chunkK >= chunkCeiling {
 			break
 		}
 		next := chunkK * 2
