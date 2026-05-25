@@ -1219,16 +1219,14 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 		return 0, fmt.Errorf("lookup participant identifier: %w", err)
 	}
 
-	result, err := s.db.Exec(fmt.Sprintf(`
+	now := s.dialect.Now()
+	err = s.db.QueryRow(fmt.Sprintf(`
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES (?, %s, %s)
-	`, s.dialect.Now(), s.dialect.Now()), displayName)
+		RETURNING id
+	`, now, now), displayName).Scan(&participantID)
 	if err != nil {
 		return 0, fmt.Errorf("insert participant: %w", err)
-	}
-	participantID, err = result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("participant id: %w", err)
 	}
 	_, err = s.db.Exec(`
 		INSERT INTO participant_identifiers (

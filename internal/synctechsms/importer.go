@@ -394,7 +394,7 @@ func (i *Importer) importMMSAttachments(sourceMessageID string, mms MMS) (int, e
 		return 0, fmt.Errorf("attachments directory is required when importing MMS attachments")
 	}
 	var messageID int64
-	if err := i.store.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = ?`, sourceMessageID).Scan(&messageID); err != nil {
+	if err := i.store.DB().QueryRow(i.store.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&messageID); err != nil {
 		return 0, fmt.Errorf("lookup MMS message for attachments: %w", err)
 	}
 	maxBytes := i.opts.MaxAttachmentBytes

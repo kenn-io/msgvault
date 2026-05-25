@@ -284,6 +284,15 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 func (s *Store) SearchMessagesQuery(
 	q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
+	// FTS5 is unavailable but the caller wants a text search: route to
+	// the LIKE-based fallback so the terms still narrow the result set.
+	// Without this, ftsEnabled stays false and TextTerms are silently
+	// dropped, returning every message that matches the structured
+	// filters alone.
+	if len(q.TextTerms) > 0 && !s.fts5Available {
+		return s.searchMessagesQueryNoFTS(q, offset, limit)
+	}
+
 	var conditions []string
 	var args []interface{}
 
@@ -615,7 +624,10 @@ func (n *nullableTimestamp) Scan(src any) error {
 	}
 }
 
-// scanMessageRows scans the standard 8-column message row set.
+// scanMessageRows scans the standard 9-column message row set
+// (id, conversation_id, subject, message_type, from_email, sent_at,
+// snippet, has_attachments, size_estimate). All SELECT statements that
+// feed this scanner must produce the same column order.
 // Timestamps go through nullableTimestamp because the sent_at column
 // is a COALESCE(m.sent_at, m.received_at, m.internal_date) computed
 // expression with no declared datetime type, which on SQLite can come

@@ -44,6 +44,14 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 			if cfg.GetSynctechSMSSource(name) != nil {
 				return fmt.Errorf("synctech-sms source %q already exists", name)
 			}
+			// Complete OAuth before persisting the source so a failed or
+			// cancelled browser flow does not leave a half-configured
+			// source in the config that blocks a retry.
+			if !opts.SkipAuthForTest {
+				if err := ensureSynctechSMSDriveToken(cmd.Context(), opts.GoogleAccount, opts.OAuthApp); err != nil {
+					return err
+				}
+			}
 			cfg.SynctechSMS.Sources = append(cfg.SynctechSMS.Sources, config.SynctechSMSSource{
 				Name:               name,
 				Enabled:            true,
@@ -63,9 +71,6 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 				return fmt.Errorf("save config: %w", err)
 			}
 			if !opts.SkipAuthForTest {
-				if err := ensureSynctechSMSDriveToken(cmd.Context(), opts.GoogleAccount, opts.OAuthApp); err != nil {
-					return err
-				}
 				cmd.Println("Drive source configured.")
 			}
 			return nil
@@ -171,22 +176,30 @@ func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.
 			_ = st.UpsertSourceImportItem(item)
 			return err
 		}
-		summary, err := imp.ImportPath(staged)
-		if err != nil {
-			item.Status = "failed"
-			item.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
-			_ = st.UpsertSourceImportItem(item)
-			return err
-		}
-		item.Status = "imported"
-		item.ImportedAt = sql.NullTime{Time: time.Now(), Valid: true}
-		item.RecordsImported = summary.SMSImported + summary.MMSImported + summary.CallsImported
-		item.ErrorMessage = sql.NullString{}
-		if err := st.UpsertSourceImportItem(item); err != nil {
+		// Successful import is tracked in source_import_items; the staged
+		// XML/ZIP file itself is no longer needed and would otherwise
+		// accumulate across scheduled runs.
+		if err := importAndCleanupSynctechSMSDriveFile(st, imp, &item, staged); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func importAndCleanupSynctechSMSDriveFile(st *store.Store, imp *synctechsms.Importer, item *store.SourceImportItem, staged string) error {
+	defer func() { _ = os.Remove(staged) }()
+	summary, err := imp.ImportPath(staged)
+	if err != nil {
+		item.Status = "failed"
+		item.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+		_ = st.UpsertSourceImportItem(*item)
+		return err
+	}
+	item.Status = "imported"
+	item.ImportedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	item.RecordsImported = summary.SMSImported + summary.MMSImported + summary.CallsImported
+	item.ErrorMessage = sql.NullString{}
+	return st.UpsertSourceImportItem(*item)
 }
 
 func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource) (synctechsms.DriveClient, error) {
