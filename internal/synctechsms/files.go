@@ -63,7 +63,7 @@ func classifyPath(path string) ([]BackupFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open backup file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	kind, ok := classifyXML(f)
 	if !ok {
 		return nil, nil
@@ -87,7 +87,7 @@ func discoverZip(path string) ([]BackupFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open zip backup: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	var out []BackupFile
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || !strings.EqualFold(filepath.Ext(f.Name), ".xml") {

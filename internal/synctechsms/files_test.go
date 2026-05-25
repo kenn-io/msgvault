@@ -84,7 +84,7 @@ func createZip(t *testing.T, path string, entries map[string]string) {
 	if err != nil {
 		t.Fatalf("create zip: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	for name, body := range entries {
 		w, err := zw.Create(name)

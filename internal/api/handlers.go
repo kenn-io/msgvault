@@ -1284,8 +1284,11 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 	if from == "" && m.FromPhone != "" {
 		from = m.FromPhone
 	}
-	if m.FromName != "" && from != "" {
+	switch {
+	case m.FromName != "" && from != "":
 		from = fmt.Sprintf("%s <%s>", m.FromName, from)
+	case from == "" && m.FromName != "":
+		from = m.FromName
 	}
 	return MessageSummary{
 		ID:             m.ID,
@@ -1317,10 +1320,14 @@ func formatQueryAddresses(addrs []query.Address) []string {
 }
 
 func formatQueryAddress(addr query.Address) string {
-	if addr.Name != "" && addr.Email != "" {
+	switch {
+	case addr.Name != "" && addr.Email != "":
 		return fmt.Sprintf("%s <%s>", addr.Name, addr.Email)
+	case addr.Email != "":
+		return addr.Email
+	default:
+		return addr.Name
 	}
-	return addr.Email
 }
 
 func formatDeletedAt(deletedAt *time.Time) string {

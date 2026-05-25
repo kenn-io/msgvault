@@ -1290,6 +1290,51 @@ func TestHandleFilteredMessagesFormatsPhoneBackedSMSParticipants(t *testing.T) {
 	}
 }
 
+func TestHandleFilteredMessagesFallsBackToContactNameWhenAddressMissing(t *testing.T) {
+	engine := &querytest.MockEngine{
+		ListResults: []query.MessageSummary{
+			{
+				ID:          1,
+				Subject:     "",
+				MessageType: "sms",
+				FromName:    "ShortCode Alerts",
+				// No email or phone — e.g. a short-code sender stored only via
+				// participant_identifiers. Without the fallback the From
+				// field would render empty.
+				To:      []query.Address{{Name: "Me"}},
+				SentAt:  time.Date(2024, 4, 1, 8, 0, 0, 0, time.UTC),
+				Snippet: "your code is 123456",
+			},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest("GET", "/api/v1/messages/filter?message_type=sms&limit=1", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Messages []MessageSummary `json:"messages"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("messages count = %d, want 1", len(resp.Messages))
+	}
+	if resp.Messages[0].From != "ShortCode Alerts" {
+		t.Fatalf("from = %q, want name-only fallback", resp.Messages[0].From)
+	}
+	if len(resp.Messages[0].To) != 1 || resp.Messages[0].To[0] != "Me" {
+		t.Fatalf("to = %#v, want name-only recipient", resp.Messages[0].To)
+	}
+}
+
 func TestHandleTotalStats(t *testing.T) {
 	engine := &querytest.MockEngine{
 		Stats: &query.TotalStats{

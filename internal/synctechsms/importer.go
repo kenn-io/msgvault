@@ -123,7 +123,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) error {
 		senderID = ownerID
 		recipientIDs = []int64{remoteID}
 	}
-	convID, err := i.ensureConversation(sourceID, "sms:"+canonicalAddress(sms.Address), sms.ContactName.String)
+	convID, err := i.ensureConversation(sourceID, textConversationKey([]int64{ownerID, remoteID}), sms.ContactName.String)
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) error {
 		return err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, sms)
+	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
@@ -147,8 +147,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
 		return 0, err
 	}
 	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox
-	convKey := "mms:" + sortedKey(participantIDs)
-	convID, err := i.ensureConversation(sourceID, convKey, mms.ContactName.String)
+	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
 		return 0, err
 	}
@@ -163,7 +162,8 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
 		srcIDPart = body
 	}
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
-	if err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, mms); err != nil {
+	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
+	if err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms); err != nil {
 		return 0, err
 	}
 	return i.importMMSAttachments(msgID, mms)
@@ -198,10 +198,10 @@ func (i *Importer) importCall(sourceID int64, call Call) error {
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), fmt.Sprint(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, call)
+	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
 }
 
-func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, raw any) error {
+func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) error {
 	msgID, err := i.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        sourceID,
@@ -213,6 +213,8 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:         sql.NullString{String: body, Valid: body != ""},
 		SizeEstimate:    int64(len(body)),
+		HasAttachments:  attachmentCount > 0,
+		AttachmentCount: attachmentCount,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
@@ -302,6 +304,29 @@ func callParticipantAddress(call Call) string {
 		return number
 	}
 	return fmt.Sprintf("unknown-call:%d", call.Presentation)
+}
+
+// textConversationKey returns the conversation key shared by SMS and MMS so
+// one-on-one threads between the same participants stay unified across both
+// message types. Call logs use a different prefix so they remain separate.
+func textConversationKey(participantIDs []int64) string {
+	return "text:" + sortedKey(participantIDs)
+}
+
+// countImportableAttachments returns the number of MMS parts that will be
+// written to disk so the parent message records the right has_attachments
+// and attachment_count up front.
+func countImportableAttachments(mms MMS, include bool) int {
+	if !include {
+		return 0
+	}
+	count := 0
+	for _, part := range mms.Parts {
+		if len(part.Data) > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func sortedKey(ids []int64) string {

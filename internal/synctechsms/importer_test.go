@@ -43,6 +43,12 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	if summary.SMSImported != 1 || summary.MMSImported != 1 || summary.CallsImported != 1 || summary.AttachmentsImported != 1 {
 		t.Fatalf("summary = %#v", summary)
 	}
+	// SMS and MMS with the same other party share one conversation; calls
+	// stay on a separate thread.
+	assertConversationCount(t, f.Store, 2)
+	// The MMS parent message must record attachment metadata so the UI
+	// shows an attachment badge and attachment-only filters match.
+	assertMMSHasAttachmentMetadata(t, f.Store, 1)
 	writeFile(t, filepath.Join(dir, "messages-copy.xml"), `<smses count="1">
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
 </smses>`)
@@ -103,5 +109,31 @@ func assertRawFormats(t *testing.T, st *store.Store, format string, want int) {
 	}
 	if got != want {
 		t.Fatalf("raw format count = %d, want %d", got, want)
+	}
+}
+
+func assertConversationCount(t *testing.T, st *store.Store, want int) {
+	t.Helper()
+	var got int
+	// Filter to conversations created by this importer; the shared store
+	// fixture seeds a default-thread row that is unrelated.
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got); err != nil {
+		t.Fatalf("count conversations: %v", err)
+	}
+	if got != want {
+		t.Fatalf("conversation count = %d, want %d", got, want)
+	}
+}
+
+func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int) {
+	t.Helper()
+	var hasAttachments bool
+	var count int
+	err := st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE message_type = 'mms'`).Scan(&hasAttachments, &count)
+	if err != nil {
+		t.Fatalf("read mms attachment metadata: %v", err)
+	}
+	if !hasAttachments || count != wantCount {
+		t.Fatalf("mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 	}
 }
