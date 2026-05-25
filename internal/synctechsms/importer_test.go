@@ -104,7 +104,7 @@ func assertMessageCount(t *testing.T, st *store.Store, want int) {
 func assertRawFormats(t *testing.T, st *store.Store, format string, want int) {
 	t.Helper()
 	var got int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`, format).Scan(&got); err != nil {
+	if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`), format).Scan(&got); err != nil {
 		t.Fatalf("count raw formats: %v", err)
 	}
 	if got != want {
