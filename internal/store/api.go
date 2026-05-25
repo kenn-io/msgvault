@@ -284,15 +284,16 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 func (s *Store) SearchMessagesQuery(
 	q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	// FTS5 is unavailable but the caller wants a text search: route to
-	// the LIKE-based fallback so the terms still narrow the result set.
-	// Without this, ftsEnabled stays false and TextTerms are silently
-	// dropped, returning every message that matches the structured
-	// filters alone.
-	if len(q.TextTerms) > 0 && !s.fts5Available {
-		return s.searchMessagesQueryNoFTS(q, offset, limit)
-	}
+	return s.searchMessagesQueryImpl(q, offset, limit, s.fts5Available)
+}
 
+// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag is
+// taken as an explicit parameter so the runtime FTS-error fallback
+// (searchMessagesQueryNoFTS) can force the LIKE path even when
+// s.fts5Available was true at startup.
+func (s *Store) searchMessagesQueryImpl(
+	q *search.Query, offset, limit int, ftsAvailable bool,
+) ([]APIMessage, int64, error) {
 	var conditions []string
 	var args []interface{}
 
@@ -301,7 +302,7 @@ func (s *Store) SearchMessagesQuery(
 	// FTS text terms. ftsEnabled is the authoritative signal that FTS is
 	// active — ftsJoin may be empty on dialects (e.g. PostgreSQL) whose
 	// tsvector lives on the main table and needs no extra join.
-	ftsEnabled := len(q.TextTerms) > 0 && s.fts5Available
+	ftsEnabled := len(q.TextTerms) > 0 && ftsAvailable
 	var ftsJoin, ftsOrder, ftsExpr string
 	var ftsOrderArgCount int
 	if ftsEnabled {
@@ -324,6 +325,17 @@ func (s *Store) SearchMessagesQuery(
 			ftsOrderArgCount = orderArgCount
 			conditions = append(conditions, where)
 			args = append(args, ftsExpr)
+		}
+	} else if len(q.TextTerms) > 0 {
+		// FTS unavailable but the caller still has free-text terms.
+		// Match each term against subject OR snippet so the no-FTS
+		// path catches snippet hits, not just subjects. Per CLAUDE.md,
+		// search queries never scan message_bodies.
+		for _, term := range q.TextTerms {
+			like := "%" + escapeLike(strings.ToLower(term)) + "%"
+			conditions = append(conditions,
+				`(LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')`)
+			args = append(args, like, like)
 		}
 	}
 
@@ -507,14 +519,14 @@ func (s *Store) SearchMessagesQuery(
 	return messages, total, nil
 }
 
-// searchMessagesQueryNoFTS is a fallback when FTS5 is unavailable.
+// searchMessagesQueryNoFTS retries the query with the LIKE-based text
+// branch. Used when the FTS path errored at runtime even though the
+// startup probe said FTS5 was available; passing ftsAvailable=false
+// forces the subject+snippet LIKE branch in searchMessagesQueryImpl.
 func (s *Store) searchMessagesQueryNoFTS(
 	q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	fallbackQ := *q
-	fallbackQ.SubjectTerms = append(fallbackQ.SubjectTerms, q.TextTerms...)
-	fallbackQ.TextTerms = nil
-	return s.SearchMessagesQuery(&fallbackQ, offset, limit)
+	return s.searchMessagesQueryImpl(q, offset, limit, false)
 }
 
 // escapeLike escapes SQL LIKE special characters (%, _) so they are

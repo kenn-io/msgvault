@@ -156,50 +156,52 @@ func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.
 	}
 	imp := synctechsms.NewImporter(st, opts)
 	for _, file := range selected {
-		staged := filepath.Join(stagingDir, file.ID+"-"+filepath.Base(file.Name))
-		item := store.SourceImportItem{
-			SourceID:   source.ID,
-			Provider:   "drive",
-			ProviderID: file.ID,
-			Name:       file.Name,
-			Checksum:   file.Checksum,
-			Size:       file.Size,
-			ModifiedAt: sql.NullTime{Time: file.ModifiedTime, Valid: !file.ModifiedTime.IsZero()},
-			Status:     "pending",
-		}
-		if err := st.UpsertSourceImportItem(item); err != nil {
-			return err
-		}
-		if err := client.DownloadToFile(ctx, file.ID, staged); err != nil {
-			item.Status = "failed"
-			item.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
-			_ = st.UpsertSourceImportItem(item)
-			return err
-		}
-		// Successful import is tracked in source_import_items; the staged
-		// XML/ZIP file itself is no longer needed and would otherwise
-		// accumulate across scheduled runs.
-		if err := importAndCleanupSynctechSMSDriveFile(st, imp, &item, staged); err != nil {
+		if err := importOneDriveBackup(ctx, st, imp, client, source.ID, file, stagingDir); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func importAndCleanupSynctechSMSDriveFile(st *store.Store, imp *synctechsms.Importer, item *store.SourceImportItem, staged string) error {
+func importOneDriveBackup(ctx context.Context, st *store.Store, imp *synctechsms.Importer, client synctechsms.DriveClient, sourceID int64, file synctechsms.DriveFile, stagingDir string) error {
+	staged := filepath.Join(stagingDir, file.ID+"-"+filepath.Base(file.Name))
+	// Defer cleanup before the download starts so a partial file from a
+	// failed DownloadToFile is removed too, not just successful imports.
+	// Scoping this to a per-file helper keeps defers from piling up
+	// across many files in a single scheduled run.
 	defer func() { _ = os.Remove(staged) }()
+
+	item := store.SourceImportItem{
+		SourceID:   sourceID,
+		Provider:   "drive",
+		ProviderID: file.ID,
+		Name:       file.Name,
+		Checksum:   file.Checksum,
+		Size:       file.Size,
+		ModifiedAt: sql.NullTime{Time: file.ModifiedTime, Valid: !file.ModifiedTime.IsZero()},
+		Status:     "pending",
+	}
+	if err := st.UpsertSourceImportItem(item); err != nil {
+		return err
+	}
+	if err := client.DownloadToFile(ctx, file.ID, staged); err != nil {
+		item.Status = "failed"
+		item.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
+		_ = st.UpsertSourceImportItem(item)
+		return err
+	}
 	summary, err := imp.ImportPath(staged)
 	if err != nil {
 		item.Status = "failed"
 		item.ErrorMessage = sql.NullString{String: err.Error(), Valid: true}
-		_ = st.UpsertSourceImportItem(*item)
+		_ = st.UpsertSourceImportItem(item)
 		return err
 	}
 	item.Status = "imported"
 	item.ImportedAt = sql.NullTime{Time: time.Now(), Valid: true}
 	item.RecordsImported = summary.SMSImported + summary.MMSImported + summary.CallsImported
 	item.ErrorMessage = sql.NullString{}
-	return st.UpsertSourceImportItem(*item)
+	return st.UpsertSourceImportItem(item)
 }
 
 func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource) (synctechsms.DriveClient, error) {
