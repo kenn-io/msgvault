@@ -1363,7 +1363,7 @@ func (e *DuckDBEngine) fetchParticipantsForMessages(ctx context.Context, message
 		return nil
 	}
 	if e.sqliteEngine != nil {
-		return fetchParticipantsForMessageList(ctx, e.sqliteEngine.db, "", messages)
+		return fetchParticipantsForMessageList(ctx, e.sqliteEngine.db, noopRebind, "", messages)
 	}
 
 	ids := make([]interface{}, len(messages))

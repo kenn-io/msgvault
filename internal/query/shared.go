@@ -107,7 +107,8 @@ func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFun
 
 // fetchParticipantsForMessageList adds recipients to message summaries using a batch query.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
-func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, tablePrefix string, messages []MessageSummary) error {
+// rebind rewrites the ? placeholders for the driver in use.
+func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, messages []MessageSummary) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -121,7 +122,7 @@ func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, tablePrefi
 		idToIndex[msg.ID] = i
 	}
 
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.message_id,
 		       mr.recipient_type,
 		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
@@ -131,7 +132,7 @@ func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, tablePrefi
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
 		ORDER BY mr.message_id, mr.id
-	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ",")), ids...)
+	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
 	}
