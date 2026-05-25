@@ -331,6 +331,24 @@ func TestPreprocess(t *testing.T) {
 			wantTrunc: false,
 		},
 		{
+			// Realistic bare base64 includes '/' at the alphabet's
+			// natural ~1/64 frequency, so the original slash-free
+			// 200+ regex split such payloads into short subruns and
+			// missed them entirely. The slash-allowing companion regex
+			// (300+ threshold) catches them. The fixture below has '/'
+			// every 11 chars over 330 chars — much denser than real
+			// base64 yet still representative of "the slashes break my
+			// 200-char run" failure mode the reviewer flagged.
+			name:      "StripBase64DropsBareBlobWithSlashes",
+			subject:   "",
+			body:      "Before " + strings.Repeat("abcdefghij/", 30) + " After",
+			maxChars:  1000,
+			cfg:       PreprocessConfig{StripBase64: true, CollapseWhitespace: true},
+			checkWant: true,
+			want:      "Before After",
+			wantTrunc: false,
+		},
+		{
 			// Short base64-looking strings (URLs, hashes, tokens) must
 			// survive — only 200+ char runs are treated as embedded
 			// blobs.
@@ -410,10 +428,12 @@ func TestPreprocess(t *testing.T) {
 			wantTrunc: false,
 		},
 		{
-			// Regression: a long URL path that *looks* base64-ish (200+
-			// unbroken chars) must survive. Earlier `[A-Za-z0-9+/]{200,}`
-			// included `/` and swallowed URL paths and signed-URL
-			// signatures whole. Removing `/` from the class fixes this.
+			// Counterpart guarantee for the slash-allowing regex
+			// (reBase64BlobWithSlash): a long URL path that *looks*
+			// base64-ish (240 unbroken chars of "a/b/a/b/...") must
+			// survive. The slash-allowing regex's 300-char threshold
+			// is the lever that protects URL paths; this fixture pins
+			// a representative path right under that threshold.
 			name:      "StripBase64KeepsLongURLPath",
 			subject:   "",
 			body:      "https://example.com/" + strings.Repeat("a/b", 80) + "/end",
