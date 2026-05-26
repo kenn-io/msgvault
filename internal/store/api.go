@@ -9,6 +9,32 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+// participantDisplaySQL formats a participant joined as `p` (with the
+// optional per-recipient `mr.display_name` row) into one display string
+// the way the query-backed engines do: "Name <addr>" when both name
+// and addr are present, otherwise the bare email/phone, otherwise the
+// bare name. The store-backed API used to read only p.email_address,
+// which dropped phone-only and identifier-only participants (synctech
+// SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
+const participantDisplaySQL = `COALESCE(
+		CASE
+			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
+			  AND COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
+				|| ' <'
+				|| COALESCE(NULLIF(p.email_address, ''), p.phone_number)
+				|| '>'
+			ELSE COALESCE(
+				NULLIF(p.email_address, ''),
+				NULLIF(p.phone_number, ''),
+				NULLIF(TRIM(mr.display_name), ''),
+				NULLIF(TRIM(p.display_name), ''),
+				''
+			)
+		END,
+		''
+	)`
+
 // APIMessage represents a message for API responses.
 type APIMessage struct {
 	ID             int64
@@ -57,7 +83,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			COALESCE(p.email_address, '') as from_email,
+			%s as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -68,7 +94,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
-	`, LiveMessagesWhere("m", true))
+	`, participantDisplaySQL, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(query, limit, offset)
 	if err != nil {
@@ -97,13 +123,13 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 // GetMessage returns a single message with full details.
 // Only this method accesses message_bodies (single PK lookup).
 func (s *Store) GetMessage(id int64) (*APIMessage, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT
 			m.id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			COALESCE(p.email_address, '') as from_email,
+			%s as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -113,7 +139,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE m.id = ?
-	`
+	`, participantDisplaySQL)
 
 	var m APIMessage
 	// sentAt is a COALESCE expression; use nullableTimestamp so
@@ -213,7 +239,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			COALESCE(p.email_address, '') as from_email,
+			%s as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -222,7 +248,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE m.id IN (%s) AND %s
-	`, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	`, participantDisplaySQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
@@ -471,7 +497,7 @@ func (s *Store) searchMessagesQueryImpl(
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			COALESCE(p.email_address, '') as from_email,
+			%s as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -484,7 +510,7 @@ func (s *Store) searchMessagesQueryImpl(
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, ftsJoin, whereClause, orderBy)
+	`, participantDisplaySQL, ftsJoin, whereClause, orderBy)
 
 	// If the dialect's order-by fragment has ? placeholders, bind the FTS
 	// expression that many extra times — right after the WHERE args and
@@ -560,7 +586,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			COALESCE(m.conversation_id, 0) as conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			COALESCE(p.email_address, '') as from_email,
+			%s as from_email,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -572,7 +598,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
-	`, LiveMessagesWhere("m", true))
+	`, participantDisplaySQL, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(searchQuery, likePattern, likePattern, limit, offset)
 	if err != nil {
@@ -734,11 +760,11 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, COALESCE(p.email_address, '')
+		SELECT mr.message_id, %s
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
-	`, strings.Join(placeholders, ","))
+	`, participantDisplaySQL, strings.Join(placeholders, ","))
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -749,12 +775,12 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 	result := make(map[int64][]string, len(messageIDs))
 	for rows.Next() {
 		var msgID int64
-		var email string
-		if err := rows.Scan(&msgID, &email); err != nil {
+		var display string
+		if err := rows.Scan(&msgID, &display); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
-		if email != "" {
-			result[msgID] = append(result[msgID], email)
+		if display != "" {
+			result[msgID] = append(result[msgID], display)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -807,12 +833,12 @@ func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
 // Single-message helpers (still used by GetMessage for single PK lookups)
 
 func (s *Store) getRecipients(messageID int64, recipientType string) ([]string, error) {
-	query := `
-		SELECT COALESCE(p.email_address, '')
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
-	`
+	`, participantDisplaySQL)
 	rows, err := s.db.Query(query, messageID, recipientType)
 	if err != nil {
 		return nil, fmt.Errorf("get recipients: %w", err)
@@ -821,12 +847,12 @@ func (s *Store) getRecipients(messageID int64, recipientType string) ([]string, 
 
 	var recipients []string
 	for rows.Next() {
-		var email string
-		if err := rows.Scan(&email); err != nil {
+		var display string
+		if err := rows.Scan(&display); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
-		if email != "" {
-			recipients = append(recipients, email)
+		if display != "" {
+			recipients = append(recipients, display)
 		}
 	}
 	if err := rows.Err(); err != nil {

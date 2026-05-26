@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestEscapeLike(t *testing.T) {
@@ -342,6 +344,149 @@ func TestListMessagesCcBcc(t *testing.T) {
 	if len(messages[0].Bcc) != 1 || messages[0].Bcc[0] != "bcc@example.com" {
 		t.Errorf("Bcc = %v, want [bcc@example.com]", messages[0].Bcc)
 	}
+}
+
+// TestListAndSearchSurfacePhoneAndIdentifierParticipants exercises the
+// store-backed list/search path for SMS-style participants that have no
+// email_address: phone-only (synctech-sms phone backups) and identifier-
+// only with a contact name (synctech-sms short codes routed through
+// EnsureParticipantByIdentifier). Before the participantDisplaySQL fix
+// these rendered with blank From/To because the SELECT only read
+// p.email_address.
+func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
+	st := openTestStore(t)
+
+	source, err := st.GetOrCreateSource("synctech-sms", "+15550000001")
+	if err != nil {
+		t.Fatalf("GetOrCreateSource: %v", err)
+	}
+	convID, err := st.EnsureConversation(source.ID, "text:1,2", "Alice")
+	if err != nil {
+		t.Fatalf("EnsureConversation: %v", err)
+	}
+
+	phoneSenderID, err := st.EnsureParticipantByPhone("+15551234567", "Alice", "synctech-sms")
+	if err != nil {
+		t.Fatalf("EnsureParticipantByPhone: %v", err)
+	}
+	ownerID, err := st.EnsureParticipantByPhone("+15550000001", "Me", "synctech-sms")
+	if err != nil {
+		t.Fatalf("EnsureParticipantByPhone(owner): %v", err)
+	}
+	shortCodeID, err := st.EnsureParticipantByIdentifier("synctech-sms", "22000", "ShortCode Alerts")
+	if err != nil {
+		t.Fatalf("EnsureParticipantByIdentifier: %v", err)
+	}
+
+	// Phone-backed sender, phone-backed recipient.
+	smsID, err := st.UpsertMessage(&Message{
+		ConversationID:  convID,
+		SourceID:        source.ID,
+		SourceMessageID: "sms-phone",
+		MessageType:     "sms",
+		Subject:         sql.NullString{String: "hello", Valid: true},
+		Snippet:         sql.NullString{String: "hello from sms", Valid: true},
+		SenderID:        sql.NullInt64{Int64: phoneSenderID, Valid: true},
+		SizeEstimate:    14,
+	})
+	if err != nil {
+		t.Fatalf("UpsertMessage(sms-phone): %v", err)
+	}
+	if err := st.ReplaceMessageRecipients(smsID, "from", []int64{phoneSenderID}, []string{""}); err != nil {
+		t.Fatalf("ReplaceMessageRecipients(from): %v", err)
+	}
+	if err := st.ReplaceMessageRecipients(smsID, "to", []int64{ownerID}, []string{""}); err != nil {
+		t.Fatalf("ReplaceMessageRecipients(to): %v", err)
+	}
+	if err := st.UpsertFTS(smsID, "hello", "hello from sms", "", "", ""); err != nil {
+		t.Fatalf("UpsertFTS(sms-phone): %v", err)
+	}
+
+	// Short-code sender with a contact name but no email/phone.
+	shortID, err := st.UpsertMessage(&Message{
+		ConversationID:  convID,
+		SourceID:        source.ID,
+		SourceMessageID: "sms-shortcode",
+		MessageType:     "sms",
+		Subject:         sql.NullString{String: "code", Valid: true},
+		Snippet:         sql.NullString{String: "your code is 123456", Valid: true},
+		SenderID:        sql.NullInt64{Int64: shortCodeID, Valid: true},
+		SizeEstimate:    20,
+	})
+	if err != nil {
+		t.Fatalf("UpsertMessage(sms-shortcode): %v", err)
+	}
+	if err := st.ReplaceMessageRecipients(shortID, "from", []int64{shortCodeID}, []string{""}); err != nil {
+		t.Fatalf("ReplaceMessageRecipients(short-from): %v", err)
+	}
+	if err := st.UpsertFTS(shortID, "code", "your code is 123456", "", "", ""); err != nil {
+		t.Fatalf("UpsertFTS(sms-shortcode): %v", err)
+	}
+
+	want := map[string]struct {
+		from string
+		to   []string
+	}{
+		"sms-phone":     {from: "Alice <+15551234567>", to: []string{"Me <+15550000001>"}},
+		"sms-shortcode": {from: "ShortCode Alerts", to: nil},
+	}
+
+	// ListMessages and SearchMessages take different code paths but
+	// share the same scanner/recipient loader.
+	msgs, _, err := st.ListMessages(0, 100)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	gotByID := make(map[string]APIMessage, len(msgs))
+	for _, m := range msgs {
+		row, err := st.GetMessage(m.ID)
+		if err != nil {
+			t.Fatalf("GetMessage(%d): %v", m.ID, err)
+		}
+		// Detail call populates To from getRecipients; pull both for
+		// per-key assertions.
+		m.To = row.To
+		gotByID[sourceMessageIDForTest(t, st, m.ID)] = m
+	}
+	for srcMsgID, w := range want {
+		got, ok := gotByID[srcMsgID]
+		if !ok {
+			t.Fatalf("ListMessages missing %s", srcMsgID)
+		}
+		if got.From != w.from {
+			t.Errorf("%s ListMessages From = %q, want %q", srcMsgID, got.From, w.from)
+		}
+		if len(w.to) == 0 {
+			if len(got.To) != 0 {
+				t.Errorf("%s ListMessages To = %v, want empty", srcMsgID, got.To)
+			}
+		} else if len(got.To) != len(w.to) || got.To[0] != w.to[0] {
+			t.Errorf("%s ListMessages To = %v, want %v", srcMsgID, got.To, w.to)
+		}
+	}
+
+	// SearchMessagesLike covers the FTS-disabled search code path used
+	// when the FTS index errors at runtime. It composes the same SELECT
+	// columns, so the no-FTS path must surface phone/name too.
+	results, _, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{"123456"}}, 0, 100)
+	if err != nil {
+		t.Fatalf("SearchMessagesQuery: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchMessagesQuery results = %d, want 1", len(results))
+	}
+	if got := results[0].From; got != want["sms-shortcode"].from {
+		t.Errorf("SearchMessagesQuery From = %q, want %q", got, want["sms-shortcode"].from)
+	}
+}
+
+func sourceMessageIDForTest(t *testing.T, st *Store, id int64) string {
+	t.Helper()
+	var sourceMsgID string
+	if err := st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), id).Scan(&sourceMsgID); err != nil {
+		t.Fatalf("lookup source_message_id: %v", err)
+	}
+	return sourceMsgID
 }
 
 func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
