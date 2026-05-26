@@ -90,7 +90,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
 		LIMIT ? OFFSET ?
@@ -137,7 +137,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 			m.deleted_from_source_at
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE m.id = ?
 	`, participantDisplaySQL)
 
@@ -246,7 +246,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE m.id IN (%s) AND %s
 	`, participantDisplaySQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
 	rows, err := s.db.Query(q, args...)
@@ -506,7 +506,7 @@ func (s *Store) searchMessagesQueryImpl(
 		%s
 		LEFT JOIN message_recipients mr
 			ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
@@ -593,7 +593,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			m.size_estimate
 		FROM messages m
 		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE %s
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC

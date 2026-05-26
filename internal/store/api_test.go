@@ -423,12 +423,38 @@ func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
 		t.Fatalf("UpsertFTS(sms-shortcode): %v", err)
 	}
 
+	// WhatsApp-style sender: messages.sender_id is set but no 'from'
+	// row exists in message_recipients. The store-backed SELECT used
+	// to join participants only through mr.participant_id, so this
+	// message rendered with a blank From.
+	waSenderID, err := st.EnsureParticipantByPhone("+15559998888", "Carol", "whatsapp")
+	if err != nil {
+		t.Fatalf("EnsureParticipantByPhone(whatsapp): %v", err)
+	}
+	waID, err := st.UpsertMessage(&Message{
+		ConversationID:  convID,
+		SourceID:        source.ID,
+		SourceMessageID: "wa-sender-only",
+		MessageType:     "whatsapp",
+		Subject:         sql.NullString{String: "wa", Valid: true},
+		Snippet:         sql.NullString{String: "wa snippet", Valid: true},
+		SenderID:        sql.NullInt64{Int64: waSenderID, Valid: true},
+		SizeEstimate:    10,
+	})
+	if err != nil {
+		t.Fatalf("UpsertMessage(wa-sender-only): %v", err)
+	}
+	if err := st.UpsertFTS(waID, "wa", "wa snippet", "", "", ""); err != nil {
+		t.Fatalf("UpsertFTS(wa-sender-only): %v", err)
+	}
+
 	want := map[string]struct {
 		from string
 		to   []string
 	}{
-		"sms-phone":     {from: "Alice <+15551234567>", to: []string{"Me <+15550000001>"}},
-		"sms-shortcode": {from: "ShortCode Alerts", to: nil},
+		"sms-phone":      {from: "Alice <+15551234567>", to: []string{"Me <+15550000001>"}},
+		"sms-shortcode":  {from: "ShortCode Alerts", to: nil},
+		"wa-sender-only": {from: "Carol <+15559998888>", to: nil},
 	}
 
 	// ListMessages and SearchMessages take different code paths but
