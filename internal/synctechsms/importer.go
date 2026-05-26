@@ -116,7 +116,10 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) error {
 	if err != nil {
 		return err
 	}
-	fromMe := sms.Type == SMSTypeSent || sms.Type == SMSTypeOutbox || sms.Type == SMSTypeFailed || sms.Type == SMSTypeQueued
+	// Drafts are owner-authored messages that never made it out, but
+	// they still belong on the owner's side of the conversation. Without
+	// SMSTypeDraft here a draft imports as if it came from the contact.
+	fromMe := sms.Type == SMSTypeSent || sms.Type == SMSTypeOutbox || sms.Type == SMSTypeFailed || sms.Type == SMSTypeQueued || sms.Type == SMSTypeDraft
 	senderID := remoteID
 	recipientIDs := []int64{ownerID}
 	if fromMe {
@@ -146,7 +149,8 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox
+	// Drafts belong to the owner — see the matching note in importSMS.
+	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
 	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
 		return 0, err
@@ -258,7 +262,8 @@ func (i *Importer) ensureConversation(sourceID int64, sourceConversationID, titl
 func (i *Importer) mmsParticipants(mms MMS, ownerID int64) ([]int64, int64, []int64, error) {
 	ids := []int64{ownerID}
 	senderID := ownerID
-	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox
+	// Drafts belong to the owner — see the matching note in importSMS.
+	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
 	var recipients []int64
 	for _, addr := range mms.Addresses {
 		if strings.TrimSpace(addr.Address) == "" || addr.Address == "insert-address-token" {

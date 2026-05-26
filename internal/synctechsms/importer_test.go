@@ -90,6 +90,59 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 	assertMessageCount(t, f.Store, 1)
 }
 
+// TestImporterMarksDraftsAsFromMe guards against regressing the
+// draft-handling fix. SMSTypeDraft and MMSBoxDraft are owner-authored
+// messages; treating them as incoming hides them on the wrong side of
+// the conversation in TUI/API renderings of is_from_me.
+func TestImporterMarksDraftsAsFromMe(t *testing.T) {
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="2">
+  <sms address="+15551234567" date="1717214400000" type="3" body="draft sms reply" read="1" status="-1" contact_name="Alice" />
+  <mms date="1717214460000" msg_box="3" read="1" m_id="mms-draft" sub="null">
+    <parts>
+      <part seq="0" ct="text/plain" text="draft mms reply" />
+    </parts>
+    <addrs>
+      <addr address="+15550000001" type="137" charset="106" />
+      <addr address="+15551234567" type="151" charset="106" />
+    </addrs>
+  </mms>
+</smses>`)
+
+	imp := NewImporter(f.Store, ImportOptions{
+		OwnerPhone: "+15550000001",
+		IncludeSMS: true,
+		IncludeMMS: true,
+	})
+	if _, err := imp.ImportPath(dir); err != nil {
+		t.Fatalf("ImportPath: %v", err)
+	}
+
+	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
+	if err != nil {
+		t.Fatalf("query messages: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string]bool{}
+	for rows.Next() {
+		var srcID string
+		var fromMe bool
+		if err := rows.Scan(&srcID, &fromMe); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[srcID] = fromMe
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d messages, want 2: %#v", len(got), got)
+	}
+	for srcID, fromMe := range got {
+		if !fromMe {
+			t.Errorf("%s is_from_me = false, want true (draft)", srcID)
+		}
+	}
+}
+
 func assertMessageCount(t *testing.T, st *store.Store, want int) {
 	t.Helper()
 	var got int

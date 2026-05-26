@@ -1525,12 +1525,16 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	// Reject filter fields that the search engines cannot honor.
 	// SenderName/RecipientName use display names that aren't indexed
 	// for search, ConversationID scoping isn't implemented, and
-	// EmptyValueTargets is an aggregate-only concept.
+	// EmptyValueTargets is an aggregate-only concept. MessageType is
+	// not propagated by MergeFilterIntoQuery — accepting it here would
+	// silently return unscoped results, so reject until the search
+	// pipeline gains a message_type predicate.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
-		filter.ConversationID != nil || filter.HasEmptyTargets() {
+		filter.ConversationID != nil || filter.HasEmptyTargets() ||
+		filter.MessageType != "" {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Fast search does not support sender_name, recipient_name, "+
-				"conversation_id, or empty_targets filters")
+				"conversation_id, empty_targets, or message_type filters")
 		return
 	}
 
@@ -1596,13 +1600,15 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// Reject filter fields that MergeFilterIntoQuery cannot represent
 	// in search.Query. Without this check the parameters parse
 	// successfully but silently do nothing, letting deep search
-	// escape the current drill-down scope.
+	// escape the current drill-down scope. MessageType is one of these
+	// silently-dropped fields.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.TimeRange.Period != "" || filter.ConversationID != nil ||
-		filter.HasEmptyTargets() {
+		filter.HasEmptyTargets() || filter.MessageType != "" {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Deep search does not support sender_name, recipient_name, "+
-				"time_period, conversation_id, or empty_targets filters")
+				"time_period, conversation_id, empty_targets, or "+
+				"message_type filters")
 		return
 	}
 

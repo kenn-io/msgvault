@@ -1446,6 +1446,39 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	}
 }
 
+// TestSearchRejectsMessageTypeFilter guards against silently dropping
+// the message_type filter. MergeFilterIntoQuery does not propagate
+// MessageType, so accepting it in fast/deep search would let
+// /search/fast?q=hello&message_type=sms return unscoped results. Reject
+// until the search pipeline gains a message_type predicate.
+func TestSearchRejectsMessageTypeFilter(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/search/fast?q=hello&message_type=sms",
+		"/api/v1/search/deep?q=hello&message_type=sms",
+	} {
+		t.Run(path, func(t *testing.T) {
+			engine := &querytest.MockEngine{}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest("GET", path, nil)
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			var errResp map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+				t.Fatalf("decode error: %v", err)
+			}
+			if errResp["error"] != "unsupported_filter" {
+				t.Fatalf("error = %q, want unsupported_filter", errResp["error"])
+			}
+		})
+	}
+}
+
 func TestHandleDeepSearch(t *testing.T) {
 	engine := &querytest.MockEngine{
 		SearchResults: []query.MessageSummary{
