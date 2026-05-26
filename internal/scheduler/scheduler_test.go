@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/vector"
@@ -21,15 +23,9 @@ func TestNew(t *testing.T) {
 		return nil
 	})
 
-	if s == nil {
-		t.Fatal("New() returned nil")
-	}
-	if s.cron == nil {
-		t.Error("cron is nil")
-	}
-	if s.jobs == nil {
-		t.Error("jobs map is nil")
-	}
+	requirepkg.NotNil(t, s, "New()")
+	assertpkg.NotNil(t, s.cron, "cron")
+	assertpkg.NotNil(t, s.jobs, "jobs map")
 }
 
 func TestAddAccount(t *testing.T) {
@@ -38,18 +34,14 @@ func TestAddAccount(t *testing.T) {
 	})
 
 	// Valid cron expression
-	if err := s.AddAccount("test@gmail.com", "0 2 * * *"); err != nil {
-		t.Errorf("AddAccount() with valid cron = %v, want nil", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount() with valid cron")
 
 	// Check job was added
 	s.mu.RLock()
 	_, exists := s.jobs["test@gmail.com"]
 	s.mu.RUnlock()
 
-	if !exists {
-		t.Error("job was not added to jobs map")
-	}
+	assertpkg.True(t, exists, "job was not added to jobs map")
 }
 
 func TestAddAccountInvalidCron(t *testing.T) {
@@ -58,9 +50,7 @@ func TestAddAccountInvalidCron(t *testing.T) {
 	})
 
 	err := s.AddAccount("test@gmail.com", "invalid cron")
-	if err == nil {
-		t.Error("AddAccount() with invalid cron = nil, want error")
-	}
+	assertpkg.Error(t, err, "AddAccount() with invalid cron")
 }
 
 func TestAddAccountReplacesExisting(t *testing.T) {
@@ -69,26 +59,20 @@ func TestAddAccountReplacesExisting(t *testing.T) {
 	})
 
 	// Add initial schedule
-	if err := s.AddAccount("test@gmail.com", "0 2 * * *"); err != nil {
-		t.Fatalf("AddAccount() = %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount()")
 
 	s.mu.RLock()
 	firstID := s.jobs["test@gmail.com"]
 	s.mu.RUnlock()
 
 	// Replace with new schedule
-	if err := s.AddAccount("test@gmail.com", "0 3 * * *"); err != nil {
-		t.Fatalf("AddAccount() replacement = %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 3 * * *"), "AddAccount() replacement")
 
 	s.mu.RLock()
 	secondID := s.jobs["test@gmail.com"]
 	s.mu.RUnlock()
 
-	if firstID == secondID {
-		t.Error("job ID was not updated after replacement")
-	}
+	assertpkg.NotEqual(t, firstID, secondID, "job ID was not updated after replacement")
 }
 
 func TestRemoveAccount(t *testing.T) {
@@ -96,18 +80,14 @@ func TestRemoveAccount(t *testing.T) {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 2 * * *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount")
 	s.RemoveAccount("test@gmail.com")
 
 	s.mu.RLock()
 	_, exists := s.jobs["test@gmail.com"]
 	s.mu.RUnlock()
 
-	if exists {
-		t.Error("job still exists after RemoveAccount()")
-	}
+	assertpkg.False(t, exists, "job still exists after RemoveAccount()")
 }
 
 func TestRemoveAccountNonExistent(t *testing.T) {
@@ -120,6 +100,7 @@ func TestRemoveAccountNonExistent(t *testing.T) {
 }
 
 func TestAddAccountsFromConfig(t *testing.T) {
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
 	})
@@ -135,29 +116,17 @@ func TestAddAccountsFromConfig(t *testing.T) {
 
 	scheduled, errs := s.AddAccountsFromConfig(cfg)
 
-	if len(errs) != 0 {
-		t.Errorf("AddAccountsFromConfig() errors = %v", errs)
-	}
-	if scheduled != 2 {
-		t.Errorf("AddAccountsFromConfig() scheduled = %d, want 2", scheduled)
-	}
+	assert.Empty(errs, "AddAccountsFromConfig() errors")
+	assert.Equal(2, scheduled, "AddAccountsFromConfig() scheduled")
 
 	// Check only enabled accounts with schedules were added
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, ok := s.jobs["user1@gmail.com"]; !ok {
-		t.Error("user1@gmail.com should be scheduled")
-	}
-	if _, ok := s.jobs["user2@gmail.com"]; !ok {
-		t.Error("user2@gmail.com should be scheduled")
-	}
-	if _, ok := s.jobs["disabled@gmail.com"]; ok {
-		t.Error("disabled@gmail.com should not be scheduled")
-	}
-	if _, ok := s.jobs["noschedule@gmail.com"]; ok {
-		t.Error("noschedule@gmail.com should not be scheduled")
-	}
+	assert.Contains(s.jobs, "user1@gmail.com", "user1@gmail.com should be scheduled")
+	assert.Contains(s.jobs, "user2@gmail.com", "user2@gmail.com should be scheduled")
+	assert.NotContains(s.jobs, "disabled@gmail.com", "disabled@gmail.com should not be scheduled")
+	assert.NotContains(s.jobs, "noschedule@gmail.com", "noschedule@gmail.com should not be scheduled")
 }
 
 func TestAddAccountsFromConfigWithErrors(t *testing.T) {
@@ -174,15 +143,13 @@ func TestAddAccountsFromConfigWithErrors(t *testing.T) {
 
 	scheduled, errs := s.AddAccountsFromConfig(cfg)
 
-	if scheduled != 1 {
-		t.Errorf("scheduled = %d, want 1", scheduled)
-	}
-	if len(errs) != 1 {
-		t.Errorf("len(errs) = %d, want 1", len(errs))
-	}
+	assertpkg.Equal(t, 1, scheduled, "scheduled")
+	assertpkg.Len(t, errs, 1, "errs")
 }
 
 func TestSchedulerGenericJobStatus(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	var ran int
 	s := New(func(context.Context, string) error { return nil })
 	err := s.AddJob(Job{
@@ -193,22 +160,14 @@ func TestSchedulerGenericJobStatus(t *testing.T) {
 			return nil
 		},
 	})
-	if err != nil {
-		t.Fatalf("AddJob: %v", err)
-	}
-	if !s.IsJobScheduled("synctech-sms:pixel") {
-		t.Fatal("job not scheduled")
-	}
-	if err := s.TriggerJob("synctech-sms:pixel"); err != nil {
-		t.Fatalf("TriggerJob: %v", err)
-	}
-	if ran != 1 {
-		t.Fatalf("ran = %d, want 1", ran)
-	}
+	require.NoError(err, "AddJob")
+	require.True(s.IsJobScheduled("synctech-sms:pixel"), "job not scheduled")
+	require.NoError(s.TriggerJob("synctech-sms:pixel"), "TriggerJob")
+	assert.Equal(1, ran, "ran")
 	status := s.JobStatus()
-	if len(status) != 1 || status[0].Name != "synctech-sms:pixel" || status[0].Schedule != "30 4 * * *" {
-		t.Fatalf("status = %#v", status)
-	}
+	require.Len(status, 1, "status")
+	assert.Equal("synctech-sms:pixel", status[0].Name, "status[0].Name")
+	assert.Equal("30 4 * * *", status[0].Schedule, "status[0].Schedule")
 }
 
 func TestStartStop(t *testing.T) {
@@ -223,43 +182,40 @@ func TestStartStop(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		t.Error("Stop() did not complete in time")
+		assertpkg.Fail(t, "Stop() did not complete in time")
 	}
 }
 
 func TestIsRunning(t *testing.T) {
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
 	})
 
 	// Not running before Start
-	if s.IsRunning() {
-		t.Error("IsRunning() = true before Start()")
-	}
+	assert.False(s.IsRunning(), "IsRunning() before Start()")
 
 	s.Start()
 
 	// Running after Start
-	if !s.IsRunning() {
-		t.Error("IsRunning() = false after Start()")
-	}
+	assert.True(s.IsRunning(), "IsRunning() after Start()")
 
 	ctx := s.Stop()
 
 	// Not running after Stop
-	if s.IsRunning() {
-		t.Error("IsRunning() = true after Stop()")
-	}
+	assert.False(s.IsRunning(), "IsRunning() after Stop()")
 
 	// Wait for stop
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		t.Error("Stop() did not complete in time")
+		assert.Fail("Stop() did not complete in time")
 	}
 }
 
 func TestStopCancelsRunningSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	syncStarted := make(chan struct{})
 	s := New(func(ctx context.Context, email string) error {
 		close(syncStarted)
@@ -267,20 +223,16 @@ func TestStopCancelsRunningSync(t *testing.T) {
 		return ctx.Err()
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Trigger sync
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	// Wait for sync to start
 	select {
 	case <-syncStarted:
 	case <-time.After(time.Second):
-		t.Fatal("sync did not start")
+		require.Fail("sync did not start")
 	}
 
 	// Stop should cancel the running sync
@@ -289,22 +241,21 @@ func TestStopCancelsRunningSync(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(2 * time.Second):
-		t.Error("Stop() did not complete after cancelling sync")
+		assert.Fail("Stop() did not complete after cancelling sync")
 	}
 
 	// Verify the error was recorded
 	statuses := s.Status()
 	for _, status := range statuses {
 		if status.Email == "test@gmail.com" {
-			if status.LastError == "" {
-				t.Error("expected error after cancelled sync")
-			}
+			assert.NotEmpty(status.LastError, "expected error after cancelled sync")
 			return
 		}
 	}
 }
 
 func TestTriggerSync(t *testing.T) {
+	assert := assertpkg.New(t)
 	var called atomic.Int32
 	s := New(func(ctx context.Context, email string) error {
 		called.Add(1)
@@ -312,31 +263,23 @@ func TestTriggerSync(t *testing.T) {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Trigger manually
 	err := s.TriggerSync("test@gmail.com")
-	if err != nil {
-		t.Errorf("TriggerSync() = %v", err)
-	}
+	assert.NoError(err, "TriggerSync()")
 
 	// Wait for sync to start
 	time.Sleep(10 * time.Millisecond)
 
 	// Second trigger should fail (already running)
 	err = s.TriggerSync("test@gmail.com")
-	if err == nil {
-		t.Error("TriggerSync() while running = nil, want error")
-	}
+	assert.Error(err, "TriggerSync() while running")
 
 	// Wait for completion
 	time.Sleep(100 * time.Millisecond)
 
-	if called.Load() != 1 {
-		t.Errorf("syncFunc called %d times, want 1", called.Load())
-	}
+	assert.Equal(int32(1), called.Load(), "syncFunc called times")
 }
 
 func TestSyncPreventsDoubleRun(t *testing.T) {
@@ -353,9 +296,7 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Try to trigger multiple times concurrently
 	for i := 0; i < 5; i++ {
@@ -364,103 +305,81 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	if maxConcurrent.Load() > 1 {
-		t.Errorf("max concurrent = %d, want 1", maxConcurrent.Load())
-	}
+	assertpkg.LessOrEqual(t, maxConcurrent.Load(), int32(1), "max concurrent")
 }
 
 func TestStatus(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 2 * * *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
-	if err := s.AddAccount("other@gmail.com", "0 3 * * *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount")
+	require.NoError(s.AddAccount("other@gmail.com", "0 3 * * *"), "AddAccount")
 	s.Start()
 	defer s.Stop()
 
 	statuses := s.Status()
 
-	if len(statuses) != 2 {
-		t.Errorf("len(Status()) = %d, want 2", len(statuses))
-	}
+	assert.Len(statuses, 2, "Status()")
 
 	// Find test@gmail.com status
 	var found bool
 	for _, status := range statuses {
 		if status.Email == "test@gmail.com" {
 			found = true
-			if status.Running {
-				t.Error("status.Running = true, want false")
-			}
-			if status.NextRun.IsZero() {
-				t.Error("status.NextRun is zero")
-			}
+			assert.False(status.Running, "status.Running")
+			assert.False(status.NextRun.IsZero(), "status.NextRun is zero")
 			break
 		}
 	}
-	if !found {
-		t.Error("test@gmail.com not found in status")
-	}
+	assert.True(found, "test@gmail.com not found in status")
 }
 
 func TestStatusAfterSyncSuccess(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	time.Sleep(50 * time.Millisecond)
 
 	statuses := s.Status()
 	for _, status := range statuses {
 		if status.Email == "test@gmail.com" {
-			if status.LastRun.IsZero() {
-				t.Error("LastRun should be set after successful sync")
-			}
-			if status.LastError != "" {
-				t.Errorf("LastError = %q, want empty", status.LastError)
-			}
+			assert.False(status.LastRun.IsZero(), "LastRun should be set after successful sync")
+			assert.Empty(status.LastError, "LastError")
 			return
 		}
 	}
-	t.Error("test@gmail.com not found in status")
+	assert.Fail("test@gmail.com not found in status")
 }
 
 func TestStatusAfterSyncError(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return errors.New("sync failed")
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	time.Sleep(50 * time.Millisecond)
 
 	statuses := s.Status()
 	for _, status := range statuses {
 		if status.Email == "test@gmail.com" {
-			if status.LastError == "" {
-				t.Error("LastError should be set after failed sync")
-			}
+			assert.NotEmpty(status.LastError, "LastError should be set after failed sync")
 			return
 		}
 	}
-	t.Error("test@gmail.com not found in status")
+	assert.Fail("test@gmail.com not found in status")
 }
 
 func TestTriggerSyncAfterStop(t *testing.T) {
@@ -468,21 +387,17 @@ func TestTriggerSyncAfterStop(t *testing.T) {
 		return nil
 	})
 
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	ctx := s.Stop()
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		t.Fatal("Stop() did not complete in time")
+		requirepkg.Fail(t, "Stop() did not complete in time")
 	}
 
 	err := s.TriggerSync("test@gmail.com")
-	if err == nil {
-		t.Error("TriggerSync() after Stop() = nil, want error")
-	}
+	assertpkg.Error(t, err, "TriggerSync() after Stop()")
 }
 
 // ---------- fakes for EmbedJob tests ----------
@@ -607,6 +522,7 @@ func (r *fakeRunner) calls() (reclaim, run int, lastGen vector.GenerationID) {
 // ---------- EmbedJob tests ----------
 
 func TestEmbedJob_Run_ActiveGeneration(t *testing.T) {
+	assert := assertpkg.New(t)
 	backend := &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}}
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
@@ -614,21 +530,13 @@ func TestEmbedJob_Run_ActiveGeneration(t *testing.T) {
 	job.Run(context.Background())
 
 	reclaim, run, gen := runner.calls()
-	if reclaim != 1 {
-		t.Errorf("ReclaimStale calls = %d, want 1", reclaim)
-	}
-	if run != 1 {
-		t.Errorf("RunOnce calls = %d, want 1", run)
-	}
-	if gen != 5 {
-		t.Errorf("RunOnce gen = %d, want 5", gen)
-	}
+	assert.Equal(1, reclaim, "ReclaimStale calls")
+	assert.Equal(1, run, "RunOnce calls")
+	assert.Equal(vector.GenerationID(5), gen, "RunOnce gen")
 	// New precedence: BuildingGeneration is consulted first; with no
 	// building present we then fall through to active. Activation
 	// must NOT fire for the active gen.
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("ActivateGeneration calls = %v, want none (target was active)", got)
-	}
+	assert.Empty(backend.activations(), "ActivateGeneration calls (target was active)")
 }
 
 func TestEmbedJob_Run_ActiveGenerationFingerprintMismatch(t *testing.T) {
@@ -650,12 +558,8 @@ func TestEmbedJob_Run_ActiveGenerationFingerprintMismatch(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 (refuse to top up mismatched active)", run)
-	}
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("ActivateGeneration calls = %v, want none", got)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls (refuse to top up mismatched active)")
+	assertpkg.Empty(t, backend.activations(), "ActivateGeneration calls")
 }
 
 func TestEmbedJob_Run_ActiveGenerationFingerprintMatch(t *testing.T) {
@@ -672,12 +576,8 @@ func TestEmbedJob_Run_ActiveGenerationFingerprintMatch(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, gen := runner.calls()
-	if run != 1 {
-		t.Errorf("RunOnce calls = %d, want 1 (matching active should top up)", run)
-	}
-	if gen != 9 {
-		t.Errorf("RunOnce gen = %d, want 9", gen)
-	}
+	assertpkg.Equal(t, 1, run, "RunOnce calls (matching active should top up)")
+	assertpkg.Equal(t, vector.GenerationID(9), gen, "RunOnce gen")
 }
 
 func TestEmbedJob_Run_BuildingRefusedWithoutFingerprint(t *testing.T) {
@@ -697,12 +597,8 @@ func TestEmbedJob_Run_BuildingRefusedWithoutFingerprint(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 (refuse to drain without fingerprint)", run)
-	}
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("ActivateGeneration calls = %v, want none", got)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls (refuse to drain without fingerprint)")
+	assertpkg.Empty(t, backend.activations(), "ActivateGeneration calls")
 }
 
 func TestEmbedJob_Run_NothingToDo(t *testing.T) {
@@ -716,9 +612,7 @@ func TestEmbedJob_Run_NothingToDo(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 (nothing to do)", run)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls (nothing to do)")
 }
 
 func TestEmbedJob_Run_ReclaimStaleFailureContinues(t *testing.T) {
@@ -729,12 +623,8 @@ func TestEmbedJob_Run_ReclaimStaleFailureContinues(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, gen := runner.calls()
-	if run != 1 {
-		t.Errorf("RunOnce calls = %d, want 1 (should proceed despite reclaim error)", run)
-	}
-	if gen != 3 {
-		t.Errorf("RunOnce gen = %d, want 3", gen)
-	}
+	assertpkg.Equal(t, 1, run, "RunOnce calls (should proceed despite reclaim error)")
+	assertpkg.Equal(t, vector.GenerationID(3), gen, "RunOnce gen")
 }
 
 func TestEmbedJob_Run_ActiveGenerationError(t *testing.T) {
@@ -745,9 +635,7 @@ func TestEmbedJob_Run_ActiveGenerationError(t *testing.T) {
 	job.Run(context.Background())
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 on active lookup error", run)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls on active lookup error")
 }
 
 // TestEmbedJob_Run_PrefersBuildingOverActive regresses the daemon
@@ -771,10 +659,9 @@ func TestEmbedJob_Run_PrefersBuildingOverActive(t *testing.T) {
 	job.Run(context.Background())
 
 	_, _, gen := runner.calls()
-	if gen != 99 {
-		t.Errorf("RunOnce gen = %d, want building (%d) — active (%d) would strand the rebuild",
-			gen, building.ID, backend.active.ID)
-	}
+	assertpkg.Equal(t, vector.GenerationID(99), gen,
+		"RunOnce gen should be building (%d) — active (%d) would strand the rebuild",
+		building.ID, backend.active.ID)
 }
 
 // TestEmbedJob_Run_ActivatesBuildingWhenDrained verifies the
@@ -795,10 +682,7 @@ func TestEmbedJob_Run_ActivatesBuildingWhenDrained(t *testing.T) {
 
 	job.Run(context.Background())
 
-	got := backend.activations()
-	if len(got) != 1 || got[0] != 77 {
-		t.Errorf("activations = %v, want [77]", got)
-	}
+	assertpkg.Equal(t, []vector.GenerationID{77}, backend.activations(), "activations")
 }
 
 // TestEmbedJob_Run_DoesNotActivateWhilePending guards the inverse
@@ -806,9 +690,8 @@ func TestEmbedJob_Run_ActivatesBuildingWhenDrained(t *testing.T) {
 // be activated yet (its index is incomplete).
 func TestEmbedJob_Run_DoesNotActivateWhilePending(t *testing.T) {
 	db := newPendingDB(t)
-	if _, err := db.Exec(`INSERT INTO pending_embeddings (generation_id, message_id) VALUES (77, 1)`); err != nil {
-		t.Fatalf("seed pending: %v", err)
-	}
+	_, err := db.Exec(`INSERT INTO pending_embeddings (generation_id, message_id) VALUES (77, 1)`)
+	requirepkg.NoError(t, err, "seed pending")
 	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
 	backend := &fakeBackend{
 		activeErr: vector.ErrNoActiveGeneration,
@@ -819,9 +702,7 @@ func TestEmbedJob_Run_DoesNotActivateWhilePending(t *testing.T) {
 
 	job.Run(context.Background())
 
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("activations = %v, want none (pending still > 0)", got)
-	}
+	assertpkg.Empty(t, backend.activations(), "activations (pending still > 0)")
 }
 
 // TestEmbedJob_Run_LeavesMismatchedBuildingForCLI guards against the
@@ -840,12 +721,9 @@ func TestEmbedJob_Run_LeavesMismatchedBuildingForCLI(t *testing.T) {
 
 	job.Run(context.Background())
 
-	if _, run, _ := runner.calls(); run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 (mismatched build must be left alone)", run)
-	}
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("activations = %v, want none", got)
-	}
+	_, run, _ := runner.calls()
+	assertpkg.Equal(t, 0, run, "RunOnce calls (mismatched build must be left alone)")
+	assertpkg.Empty(t, backend.activations(), "activations")
 }
 
 // TestEmbedJob_Run_EnsuresSeededBeforeRunOnce regresses the crash
@@ -867,13 +745,9 @@ func TestEmbedJob_Run_EnsuresSeededBeforeRunOnce(t *testing.T) {
 
 	job.Run(context.Background())
 
-	got := backend.ensureSeededCalls()
-	if len(got) != 1 || got[0] != 99 {
-		t.Errorf("EnsureSeeded calls = %v, want [99]", got)
-	}
-	if _, run, _ := runner.calls(); run != 1 {
-		t.Errorf("RunOnce calls = %d, want 1 (should run after seeding)", run)
-	}
+	assertpkg.Equal(t, []vector.GenerationID{99}, backend.ensureSeededCalls(), "EnsureSeeded calls")
+	_, run, _ := runner.calls()
+	assertpkg.Equal(t, 1, run, "RunOnce calls (should run after seeding)")
 }
 
 // TestEmbedJob_Run_EnsureSeededErrorBailsOut guards the error path:
@@ -894,12 +768,9 @@ func TestEmbedJob_Run_EnsureSeededErrorBailsOut(t *testing.T) {
 
 	job.Run(context.Background())
 
-	if _, run, _ := runner.calls(); run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 (EnsureSeeded failed — must not proceed)", run)
-	}
-	if got := backend.activations(); len(got) != 0 {
-		t.Errorf("activations = %v, want none (EnsureSeeded failed)", got)
-	}
+	_, run, _ := runner.calls()
+	assertpkg.Equal(t, 0, run, "RunOnce calls (EnsureSeeded failed — must not proceed)")
+	assertpkg.Empty(t, backend.activations(), "activations (EnsureSeeded failed)")
 }
 
 // TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun is the
@@ -911,6 +782,8 @@ func TestEmbedJob_Run_EnsureSeededErrorBailsOut(t *testing.T) {
 // run must pick the now-active generation as its target — proving
 // the post-activation top-up path runs and the system converges.
 func TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	db := newPendingDB(t)
 	gen := vector.Generation{ID: 88, State: vector.GenerationBuilding, Fingerprint: "m:768"}
 	backend := &fakeBackend{
@@ -922,16 +795,13 @@ func TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun(t *testing.T) {
 
 	// Tick 1: building drained, activation flips to active.
 	job.Run(context.Background())
-	if got := backend.activations(); len(got) != 1 || got[0] != 88 {
-		t.Fatalf("tick 1 activations = %v, want [88]", got)
-	}
+	require.Equal([]vector.GenerationID{88}, backend.activations(), "tick 1 activations")
 
 	// Simulate the race: a sync.EnqueueMessages commit lands AFTER
 	// activation, adding a pending row bound to the (now-active)
 	// generation. The fakeBackend reflects the post-activation state.
-	if _, err := db.Exec(`INSERT INTO pending_embeddings (generation_id, message_id) VALUES (88, 1)`); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	_, err := db.Exec(`INSERT INTO pending_embeddings (generation_id, message_id) VALUES (88, 1)`)
+	require.NoError(err, "enqueue")
 	backend.building = nil
 	backend.active = vector.Generation{ID: 88, State: vector.GenerationActive, Fingerprint: "m:768"}
 	backend.activeErr = nil
@@ -939,14 +809,11 @@ func TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun(t *testing.T) {
 	// Tick 2: the active path picks it up and drains.
 	job.Run(context.Background())
 	_, run, gen2 := runner.calls()
-	if run != 2 || gen2 != 88 {
-		t.Errorf("tick 2 RunOnce calls=%d gen=%d, want 2 / 88", run, gen2)
-	}
+	assert.Equal(2, run, "tick 2 RunOnce calls")
+	assert.Equal(vector.GenerationID(88), gen2, "tick 2 RunOnce gen")
 	// Activation must NOT fire a second time (idempotency: active-mode
 	// runs never call ActivateGeneration).
-	if got := backend.activations(); len(got) != 1 {
-		t.Errorf("activations = %v, want only the first activation", got)
-	}
+	assert.Len(backend.activations(), 1, "activations (only first activation)")
 }
 
 // newPendingDB returns an in-memory SQLite handle with just the
@@ -954,18 +821,15 @@ func TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun(t *testing.T) {
 func newPendingDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	requirepkg.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`
+	_, err = db.Exec(`
 CREATE TABLE pending_embeddings (
     generation_id INTEGER NOT NULL,
     message_id    INTEGER NOT NULL,
     PRIMARY KEY (generation_id, message_id)
-);`); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
+);`)
+	requirepkg.NoError(t, err, "schema")
 	return db
 }
 
@@ -1018,7 +882,7 @@ func TestEmbedJob_Run_SkipsWhenAlreadyRunning(t *testing.T) {
 	select {
 	case <-gate:
 	case <-time.After(time.Second):
-		t.Fatal("first RunOnce did not start")
+		requirepkg.Fail(t, "first RunOnce did not start")
 	}
 
 	// Second call must return immediately (no waiters queued).
@@ -1030,12 +894,10 @@ func TestEmbedJob_Run_SkipsWhenAlreadyRunning(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("second Run blocked; TryLock guard did not short-circuit")
+		requirepkg.Fail(t, "second Run blocked; TryLock guard did not short-circuit")
 	}
 
-	if got := runner.calls(); got != 1 {
-		t.Errorf("RunOnce calls = %d during overlap, want 1", got)
-	}
+	assertpkg.Equal(t, 1, runner.calls(), "RunOnce calls during overlap")
 
 	// Release the first call so the job can complete.
 	close(release)
@@ -1059,50 +921,32 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 		})
 	}
 	_, run, _ := touchy.calls()
-	if run != 0 {
-		t.Errorf("nil-safe Run should not invoke worker; got runCalls=%d", run)
-	}
+	assertpkg.Equal(t, 0, run, "nil-safe Run should not invoke worker")
 }
 
 // ---------- SetEmbedJob tests ----------
 
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error { return nil })
 	backend := &fakeBackend{active: vector.Generation{ID: 1}}
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	if err := s.SetEmbedJob(job, "*/5 * * * *", false); err != nil {
-		t.Fatalf("SetEmbedJob first = %v", err)
-	}
-	if !s.embedEntrySet {
-		t.Error("embedEntrySet should be true after first SetEmbedJob")
-	}
+	require.NoError(s.SetEmbedJob(job, "*/5 * * * *", false), "SetEmbedJob first")
+	assert.True(s.embedEntrySet, "embedEntrySet should be true after first SetEmbedJob")
 
 	// Replacing with a new schedule should not error.
-	if err := s.SetEmbedJob(job, "0 * * * *", true); err != nil {
-		t.Fatalf("SetEmbedJob replace = %v", err)
-	}
-	if !s.embedEntrySet {
-		t.Error("embedEntrySet should remain true after replacement")
-	}
-	if !s.runEmbedAfterSync {
-		t.Error("runEmbedAfterSync should be true after replacement with runAfterSync=true")
-	}
+	require.NoError(s.SetEmbedJob(job, "0 * * * *", true), "SetEmbedJob replace")
+	assert.True(s.embedEntrySet, "embedEntrySet should remain true after replacement")
+	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true after replacement with runAfterSync=true")
 
 	// Clearing.
-	if err := s.SetEmbedJob(nil, "", false); err != nil {
-		t.Fatalf("SetEmbedJob clear = %v", err)
-	}
-	if s.embedEntrySet {
-		t.Error("embedEntrySet should be false after clear")
-	}
-	if s.embedJob != nil {
-		t.Error("embedJob should be nil after clear")
-	}
-	if s.runEmbedAfterSync {
-		t.Error("runEmbedAfterSync should be false after clear")
-	}
+	require.NoError(s.SetEmbedJob(nil, "", false), "SetEmbedJob clear")
+	assert.False(s.embedEntrySet, "embedEntrySet should be false after clear")
+	assert.Nil(s.embedJob, "embedJob should be nil after clear")
+	assert.False(s.runEmbedAfterSync, "runEmbedAfterSync should be false after clear")
 }
 
 func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
@@ -1112,15 +956,13 @@ func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	err := s.SetEmbedJob(job, "not a cron", false)
-	if err == nil {
-		t.Fatal("SetEmbedJob with invalid cron = nil, want error")
-	}
-	if s.embedEntrySet {
-		t.Error("embedEntrySet should remain false after invalid cron")
-	}
+	requirepkg.Error(t, err, "SetEmbedJob with invalid cron")
+	assertpkg.False(t, s.embedEntrySet, "embedEntrySet should remain false after invalid cron")
 }
 
 func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// After a successful SetEmbedJob, a later call with an invalid cron
 	// must leave the previous job, schedule, and post-sync flag intact.
 	s := New(func(ctx context.Context, email string) error { return nil })
@@ -1128,48 +970,33 @@ func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
 	job1 := &EmbedJob{Worker: &fakeRunner{}, Backend: backend}
 	job2 := &EmbedJob{Worker: &fakeRunner{}, Backend: backend}
 
-	if err := s.SetEmbedJob(job1, "*/5 * * * *", true); err != nil {
-		t.Fatalf("SetEmbedJob(job1) = %v", err)
-	}
+	require.NoError(s.SetEmbedJob(job1, "*/5 * * * *", true), "SetEmbedJob(job1)")
 	prevEntry := s.embedEntry
 
-	if err := s.SetEmbedJob(job2, "bogus cron", true); err == nil {
-		t.Fatal("SetEmbedJob(job2, invalid) = nil, want error")
-	}
+	require.Error(s.SetEmbedJob(job2, "bogus cron", true), "SetEmbedJob(job2, invalid)")
 
-	if s.embedJob != job1 {
-		t.Errorf("embedJob was replaced on invalid cron; want job1")
-	}
-	if !s.runEmbedAfterSync {
-		t.Error("runEmbedAfterSync should remain true")
-	}
-	if !s.embedEntrySet || s.embedEntry != prevEntry {
-		t.Errorf("cron entry should still be job1's (entrySet=%v, entry=%v, want %v)",
-			s.embedEntrySet, s.embedEntry, prevEntry)
-	}
+	assert.Same(job1, s.embedJob, "embedJob was replaced on invalid cron; want job1")
+	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should remain true")
+	assert.True(s.embedEntrySet, "cron entry should still be job1's (entrySet)")
+	assert.Equal(prevEntry, s.embedEntry, "cron entry should still be job1's")
 }
 
 func TestScheduler_SetEmbedJob_EmptyScheduleNoCronEntry(t *testing.T) {
+	assert := assertpkg.New(t)
 	s := New(func(ctx context.Context, email string) error { return nil })
 	backend := &fakeBackend{}
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	if err := s.SetEmbedJob(job, "", true); err != nil {
-		t.Fatalf("SetEmbedJob = %v", err)
-	}
-	if s.embedEntrySet {
-		t.Error("empty schedule should not create a cron entry")
-	}
-	if s.embedJob == nil {
-		t.Error("embedJob should be set even with empty schedule")
-	}
-	if !s.runEmbedAfterSync {
-		t.Error("runEmbedAfterSync should be true")
-	}
+	requirepkg.NoError(t, s.SetEmbedJob(job, "", true), "SetEmbedJob")
+	assert.False(s.embedEntrySet, "empty schedule should not create a cron entry")
+	assert.NotNil(s.embedJob, "embedJob should be set even with empty schedule")
+	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true")
 }
 
 func TestScheduler_RunAfterSync_Fires(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	syncDone := make(chan struct{})
 	s := New(func(ctx context.Context, email string) error {
 		close(syncDone)
@@ -1180,12 +1007,8 @@ func TestScheduler_RunAfterSync_Fires(t *testing.T) {
 	runner := &fakeRunner{runDone: runDone}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	if err := s.SetEmbedJob(job, "", true); err != nil {
-		t.Fatalf("SetEmbedJob = %v", err)
-	}
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.SetEmbedJob(job, "", true), "SetEmbedJob")
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	s.Start()
 	defer func() {
@@ -1193,43 +1016,34 @@ func TestScheduler_RunAfterSync_Fires(t *testing.T) {
 		<-ctx.Done()
 	}()
 
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	select {
 	case <-syncDone:
 	case <-time.After(time.Second):
-		t.Fatal("syncFunc did not run")
+		require.Fail("syncFunc did not run")
 	}
 	select {
 	case <-runDone:
 	case <-time.After(time.Second):
-		t.Fatal("embed RunOnce did not fire after sync")
+		require.Fail("embed RunOnce did not fire after sync")
 	}
 
 	_, run, gen := runner.calls()
-	if run != 1 {
-		t.Errorf("RunOnce calls = %d, want 1", run)
-	}
-	if gen != 42 {
-		t.Errorf("RunOnce gen = %d, want 42", gen)
-	}
+	assert.Equal(1, run, "RunOnce calls")
+	assert.Equal(vector.GenerationID(42), gen, "RunOnce gen")
 }
 
 func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
+	require := requirepkg.New(t)
 	s := New(func(ctx context.Context, email string) error { return nil })
 	backend := &fakeBackend{active: vector.Generation{ID: 1}}
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	// runAfterSync = false
-	if err := s.SetEmbedJob(job, "", false); err != nil {
-		t.Fatalf("SetEmbedJob = %v", err)
-	}
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.SetEmbedJob(job, "", false), "SetEmbedJob")
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	s.Start()
 	defer func() {
@@ -1237,20 +1051,17 @@ func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
 		<-ctx.Done()
 	}()
 
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	// Give runSync a chance to finish.
 	time.Sleep(50 * time.Millisecond)
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 when runAfterSync is false", run)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls when runAfterSync is false")
 }
 
 func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
+	require := requirepkg.New(t)
 	// When a sync's post-sync window coincides with Stop(), the embed
 	// hook must skip. We gate the syncFunc on a release channel so the
 	// test can Stop the scheduler before the sync completes.
@@ -1263,17 +1074,11 @@ func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	if err := s.SetEmbedJob(job, "", true); err != nil {
-		t.Fatalf("SetEmbedJob = %v", err)
-	}
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.SetEmbedJob(job, "", true), "SetEmbedJob")
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	s.Start()
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	// Ask the scheduler to stop while the sync is still in-flight.
 	stopCtx := s.Stop()
@@ -1281,12 +1086,11 @@ func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
 	<-stopCtx.Done()
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 when scheduler is stopped", run)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls when scheduler is stopped")
 }
 
 func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
+	require := requirepkg.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return errors.New("sync failed")
 	})
@@ -1294,12 +1098,8 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	if err := s.SetEmbedJob(job, "", true); err != nil {
-		t.Fatalf("SetEmbedJob = %v", err)
-	}
-	if err := s.AddAccount("test@gmail.com", "0 0 1 1 *"); err != nil {
-		t.Fatalf("AddAccount: %v", err)
-	}
+	require.NoError(s.SetEmbedJob(job, "", true), "SetEmbedJob")
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	s.Start()
 	defer func() {
@@ -1307,16 +1107,12 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 		<-ctx.Done()
 	}()
 
-	if err := s.TriggerSync("test@gmail.com"); err != nil {
-		t.Fatalf("TriggerSync: %v", err)
-	}
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
 
 	time.Sleep(50 * time.Millisecond)
 
 	_, run, _ := runner.calls()
-	if run != 0 {
-		t.Errorf("RunOnce calls = %d, want 0 when sync failed", run)
-	}
+	assertpkg.Equal(t, 0, run, "RunOnce calls when sync failed")
 }
 
 func TestValidateCronExpr(t *testing.T) {
@@ -1336,8 +1132,10 @@ func TestValidateCronExpr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			err := ValidateCronExpr(tt.expr)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateCronExpr(%q) error = %v, wantErr = %v", tt.expr, err, tt.wantErr)
+			if tt.wantErr {
+				assertpkg.Error(t, err, "ValidateCronExpr(%q)", tt.expr)
+			} else {
+				assertpkg.NoError(t, err, "ValidateCronExpr(%q)", tt.expr)
 			}
 		})
 	}

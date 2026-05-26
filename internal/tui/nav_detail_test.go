@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	assertpkg "github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -31,15 +32,9 @@ func TestDetailLineCountResetOnLoad(t *testing.T) {
 	m := applyMessageListKey(t, model, keyEnter())
 
 	// detailLineCount and detailScroll should be reset
-	if m.detailLineCount != 0 {
-		t.Errorf("expected detailLineCount = 0 on load start, got %d", m.detailLineCount)
-	}
-	if m.detailScroll != 0 {
-		t.Errorf("expected detailScroll = 0 on load start, got %d", m.detailScroll)
-	}
-	if m.messageDetail != nil {
-		t.Error("expected messageDetail = nil on load start")
-	}
+	assertpkg.Equal(t, 0, m.detailLineCount, "expected detailLineCount = 0 on load start")
+	assertpkg.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 on load start")
+	assertpkg.Nil(t, m.messageDetail, "expected messageDetail = nil on load start")
 }
 
 func TestDetailScrollClamping(t *testing.T) {
@@ -57,18 +52,14 @@ func TestDetailScrollClamping(t *testing.T) {
 	// Max scroll should be lineCount - detailPageSize = 25 - 12 = 13
 	// (detailPageSize = pageSize + 2 because detail view has no table header/separator)
 	expectedMax := 13
-	if model.detailScroll != expectedMax {
-		t.Errorf("expected detailScroll clamped to %d, got %d", expectedMax, model.detailScroll)
-	}
+	assertpkg.Equal(t, expectedMax, model.detailScroll, "expected detailScroll clamped")
 
 	// Test when content fits in one page
 	model.detailLineCount = 5 // Less than detailPageSize (12)
 	model.detailScroll = 10
 	model.clampDetailScroll()
 
-	if model.detailScroll != 0 {
-		t.Errorf("expected detailScroll = 0 when content fits page, got %d", model.detailScroll)
-	}
+	assertpkg.Equal(t, 0, model.detailScroll, "expected detailScroll = 0 when content fits page")
 }
 
 func TestResizeRecalculatesDetailLineCount(t *testing.T) {
@@ -92,9 +83,7 @@ func TestResizeRecalculatesDetailLineCount(t *testing.T) {
 	// Line count should be recalculated (narrower width = more wrapping = more lines)
 	if m.detailLineCount == initialLineCount && m.width != 80 {
 		// Note: This might be equal if wrapping doesn't change, but width should be updated
-		if m.width != 40 {
-			t.Errorf("expected width = 40 after resize, got %d", m.width)
-		}
+		assertpkg.Equal(t, 40, m.width, "expected width = 40 after resize")
 	}
 
 	// Scroll should be clamped if it exceeds new bounds
@@ -104,9 +93,7 @@ func TestResizeRecalculatesDetailLineCount(t *testing.T) {
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if m.detailScroll > maxScroll {
-		t.Errorf("expected detailScroll <= %d after clamp, got %d", maxScroll, m.detailScroll)
-	}
+	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "expected detailScroll clamped")
 }
 
 func TestEndKeyWithZeroLineCount(t *testing.T) {
@@ -121,9 +108,7 @@ func TestEndKeyWithZeroLineCount(t *testing.T) {
 	m := applyDetailKey(t, model, key('G'))
 
 	// Should not crash and scroll should remain 0
-	if m.detailScroll != 0 {
-		t.Errorf("expected detailScroll = 0 with zero line count, got %d", m.detailScroll)
-	}
+	assertpkg.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 with zero line count")
 }
 
 func TestFillScreenDetailLineCount(t *testing.T) {
@@ -138,27 +123,21 @@ func TestFillScreenDetailLineCount(t *testing.T) {
 	view := model.messageDetailView()
 	lines := strings.Split(view, "\n")
 	// View should have detailPageSize lines (last line has no trailing newline)
-	if len(lines) != expectedLines {
-		t.Errorf("loading state: expected %d lines, got %d", expectedLines, len(lines))
-	}
+	assertpkg.Len(t, lines, expectedLines, "loading state")
 
 	// Test error state
 	model.loading = false
 	model.err = fmt.Errorf("test error")
 	view = model.messageDetailView()
 	lines = strings.Split(view, "\n")
-	if len(lines) != expectedLines {
-		t.Errorf("error state: expected %d lines, got %d", expectedLines, len(lines))
-	}
+	assertpkg.Len(t, lines, expectedLines, "error state")
 
 	// Test nil detail state
 	model.err = nil
 	model.messageDetail = nil
 	view = model.messageDetailView()
 	lines = strings.Split(view, "\n")
-	if len(lines) != expectedLines {
-		t.Errorf("nil detail state: expected %d lines, got %d", expectedLines, len(lines))
-	}
+	assertpkg.Len(t, lines, expectedLines, "nil detail state")
 }
 
 func TestScrollClampingAfterResize(t *testing.T) {
@@ -181,9 +160,7 @@ func TestScrollClampingAfterResize(t *testing.T) {
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if m.detailScroll > maxScroll {
-		t.Errorf("detailScroll=%d exceeds maxScroll=%d after resize", m.detailScroll, maxScroll)
-	}
+	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "detailScroll exceeds maxScroll after resize")
 }
 
 // =============================================================================
@@ -193,6 +170,7 @@ func TestScrollClampingAfterResize(t *testing.T) {
 // TestDetailNavigationPrevNext verifies left/right arrow navigation in message detail view.
 // Left = previous in list (lower index), Right = next in list (higher index).
 func TestDetailNavigationPrevNext(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -207,37 +185,24 @@ func TestDetailNavigationPrevNext(t *testing.T) {
 	// Press right arrow to go to next message in list (higher index)
 	m, cmd := sendKey(t, model, keyRight())
 
-	if m.detailMessageIndex != 2 {
-		t.Errorf("expected detailMessageIndex=2 after right, got %d", m.detailMessageIndex)
-	}
-	if m.cursor != 2 {
-		t.Errorf("expected cursor=2 after right, got %d", m.cursor)
-	}
-	if m.pendingDetailSubject != "Third message" {
-		t.Errorf("expected pendingDetailSubject='Third message', got %q", m.pendingDetailSubject)
-	}
-	if cmd == nil {
-		t.Error("expected command to load message detail")
-	}
+	assert.Equal(2, m.detailMessageIndex, "after right")
+	assert.Equal(2, m.cursor, "after right")
+	assert.Equal("Third message", m.pendingDetailSubject)
+	assert.NotNil(cmd, "expected command to load message detail")
 
 	// Press left arrow to go to previous message in list (lower index)
 	m.detailMessageIndex = 2
 	m.cursor = 2
 	m, cmd = sendKey(t, m, keyLeft())
 
-	if m.detailMessageIndex != 1 {
-		t.Errorf("expected detailMessageIndex=1 after left, got %d", m.detailMessageIndex)
-	}
-	if m.cursor != 1 {
-		t.Errorf("expected cursor=1 after left, got %d", m.cursor)
-	}
-	if cmd == nil {
-		t.Error("expected command to load message detail")
-	}
+	assert.Equal(1, m.detailMessageIndex, "after left")
+	assert.Equal(1, m.cursor, "after left")
+	assert.NotNil(cmd, "expected command to load message detail")
 }
 
 // TestDetailNavigationAtBoundary verifies flash message at first/last message.
 func TestDetailNavigationAtBoundary(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -250,15 +215,9 @@ func TestDetailNavigationAtBoundary(t *testing.T) {
 	// Press left arrow at first message - should show flash
 	m, cmd := sendKey(t, model, keyLeft())
 
-	if m.detailMessageIndex != 0 {
-		t.Errorf("expected detailMessageIndex=0 (unchanged), got %d", m.detailMessageIndex)
-	}
-	if m.flashMessage != "At first message" {
-		t.Errorf("expected flashMessage='At first message', got %q", m.flashMessage)
-	}
-	if cmd == nil {
-		t.Error("expected command to clear flash message")
-	}
+	assert.Equal(0, m.detailMessageIndex, "expected detailMessageIndex unchanged")
+	assert.Equal("At first message", m.flashMessage)
+	assert.NotNil(cmd, "expected command to clear flash message")
 
 	// Clear flash and test at last message
 	m.flashMessage = ""
@@ -269,15 +228,9 @@ func TestDetailNavigationAtBoundary(t *testing.T) {
 	// Press right arrow at last message - should show flash
 	m, cmd = sendKey(t, m, keyRight())
 
-	if m.detailMessageIndex != 1 {
-		t.Errorf("expected detailMessageIndex=1 (unchanged), got %d", m.detailMessageIndex)
-	}
-	if m.flashMessage != "At last message" {
-		t.Errorf("expected flashMessage='At last message', got %q", m.flashMessage)
-	}
-	if cmd == nil {
-		t.Error("expected command to clear flash message")
-	}
+	assert.Equal(1, m.detailMessageIndex, "expected detailMessageIndex unchanged")
+	assert.Equal("At last message", m.flashMessage)
+	assert.NotNil(cmd, "expected command to clear flash message")
 }
 
 // TestDetailNavigationHLKeys verifies h/l keys also work for prev/next.
@@ -297,18 +250,14 @@ func TestDetailNavigationHLKeys(t *testing.T) {
 	// Press 'l' to go to next message in list (higher index)
 	m, _ := sendKey(t, model, key('l'))
 
-	if m.detailMessageIndex != 2 {
-		t.Errorf("expected detailMessageIndex=2 after 'l', got %d", m.detailMessageIndex)
-	}
+	assertpkg.Equal(t, 2, m.detailMessageIndex, "after 'l'")
 
 	// Reset and press 'h' to go to previous message in list (lower index)
 	m.detailMessageIndex = 1
 	m.cursor = 1
 	m, _ = sendKey(t, m, key('h'))
 
-	if m.detailMessageIndex != 0 {
-		t.Errorf("expected detailMessageIndex=0 after 'h', got %d", m.detailMessageIndex)
-	}
+	assertpkg.Equal(t, 0, m.detailMessageIndex, "after 'h'")
 }
 
 // TestDetailNavigationEmptyList verifies navigation with empty message list.
@@ -320,17 +269,13 @@ func TestDetailNavigationEmptyList(t *testing.T) {
 	newModel, _ := model.navigateDetailNext()
 	m := newModel.(Model)
 
-	if m.flashMessage != "No messages loaded" {
-		t.Errorf("expected flashMessage='No messages loaded', got %q", m.flashMessage)
-	}
+	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
 
 	// Press left arrow - should show flash, not panic
 	newModel, _ = m.navigateDetailPrev()
 	m = newModel.(Model)
 
-	if m.flashMessage != "No messages loaded" {
-		t.Errorf("expected flashMessage='No messages loaded', got %q", m.flashMessage)
-	}
+	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
 }
 
 // TestDetailNavigationOutOfBoundsIndex verifies clamping of stale index.
@@ -348,17 +293,14 @@ func TestDetailNavigationOutOfBoundsIndex(t *testing.T) {
 
 	// Index should be clamped to 0, then show "At first message"
 	// because we can't go before the only message
-	if m.detailMessageIndex != 0 {
-		t.Errorf("expected detailMessageIndex=0 (clamped), got %d", m.detailMessageIndex)
-	}
-	if m.flashMessage != "At first message" {
-		t.Errorf("expected flashMessage='At first message', got %q", m.flashMessage)
-	}
+	assertpkg.Equal(t, 0, m.detailMessageIndex, "expected detailMessageIndex clamped")
+	assertpkg.Equal(t, "At first message", m.flashMessage)
 }
 
 // TestDetailNavigationOutOfBoundsWithMultipleMessages verifies that when the index is
 // out of bounds but there are multiple messages, navigation succeeds after clamping.
 func TestDetailNavigationOutOfBoundsWithMultipleMessages(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -375,22 +317,12 @@ func TestDetailNavigationOutOfBoundsWithMultipleMessages(t *testing.T) {
 	m := newModel.(Model)
 
 	// Index should be clamped from 10 to 2, then decremented to 1
-	if m.detailMessageIndex != 1 {
-		t.Errorf("expected detailMessageIndex=1 (clamped and navigated), got %d", m.detailMessageIndex)
-	}
-	if m.cursor != 1 {
-		t.Errorf("expected cursor=1, got %d", m.cursor)
-	}
-	if m.pendingDetailSubject != "Second message" {
-		t.Errorf("expected pendingDetailSubject='Second message', got %q", m.pendingDetailSubject)
-	}
+	assert.Equal(1, m.detailMessageIndex, "expected detailMessageIndex clamped and navigated")
+	assert.Equal(1, m.cursor)
+	assert.Equal("Second message", m.pendingDetailSubject)
 	// Should trigger loadMessageDetail, not just show flash
-	if cmd == nil {
-		t.Error("expected command to load message detail after clamping and navigating")
-	}
-	if m.flashMessage != "" {
-		t.Errorf("expected no flash message after successful navigation, got %q", m.flashMessage)
-	}
+	assert.NotNil(cmd, "expected command to load message detail after clamping and navigating")
+	assert.Empty(m.flashMessage, "expected no flash message after successful navigation")
 }
 
 // TestDetailNavigationCursorPreservedOnGoBack verifies cursor position is preserved
@@ -427,15 +359,14 @@ func TestDetailNavigationCursorPreservedOnGoBack(t *testing.T) {
 	// Cursor should be preserved at position 2 (where we navigated to)
 	// not restored to position 0 (where we entered)
 	assertLevel(t, m, levelMessageList)
-	if m.cursor != 2 {
-		t.Errorf("expected cursor=2 (preserved from navigation), got %d", m.cursor)
-	}
+	assertpkg.Equal(t, 2, m.cursor, "expected cursor preserved from navigation")
 }
 
 // TestDetailNavigationFromThreadView verifies that left/right navigation in detail view
 // uses threadMessages (not messages) when entered from thread view, and keeps
 // threadCursor and threadScrollOffset in sync.
 func TestDetailNavigationFromThreadView(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "List msg 1"},
@@ -462,49 +393,29 @@ func TestDetailNavigationFromThreadView(t *testing.T) {
 	// Press right arrow - should navigate within threadMessages
 	m, cmd := sendKey(t, model, keyRight())
 
-	if m.detailMessageIndex != 2 {
-		t.Errorf("expected detailMessageIndex=2 after right, got %d", m.detailMessageIndex)
-	}
-	if m.threadCursor != 2 {
-		t.Errorf("expected threadCursor=2 after right, got %d", m.threadCursor)
-	}
+	assert.Equal(2, m.detailMessageIndex, "after right")
+	assert.Equal(2, m.threadCursor, "after right")
 	// cursor (for list view) should NOT be modified
-	if m.cursor != 0 {
-		t.Errorf("expected cursor=0 (unchanged), got %d", m.cursor)
-	}
-	if m.pendingDetailSubject != "Thread msg 3" {
-		t.Errorf("expected pendingDetailSubject='Thread msg 3', got %q", m.pendingDetailSubject)
-	}
-	if cmd == nil {
-		t.Error("expected command to load message detail")
-	}
+	assert.Equal(0, m.cursor, "expected cursor unchanged")
+	assert.Equal("Thread msg 3", m.pendingDetailSubject)
+	assert.NotNil(cmd, "expected command to load message detail")
 
 	// Press right again - now cursor should be at index 3 and scroll offset should adjust
 	m.detailMessageIndex = 2
 	m.threadCursor = 2
 	m, _ = sendKey(t, m, keyRight())
 
-	if m.detailMessageIndex != 3 {
-		t.Errorf("expected detailMessageIndex=3 after right, got %d", m.detailMessageIndex)
-	}
-	if m.threadCursor != 3 {
-		t.Errorf("expected threadCursor=3 after right, got %d", m.threadCursor)
-	}
+	assert.Equal(3, m.detailMessageIndex, "after right")
+	assert.Equal(3, m.threadCursor, "after right")
 	// With pageSize=3, views render pageSize-1=2 data rows (1 reserved for info line).
 	// threadCursor (3) >= threadScrollOffset (0) + visibleRows (2), so offset should be 2
-	if m.threadScrollOffset != 2 {
-		t.Errorf("expected threadScrollOffset=2 to keep cursor visible, got %d", m.threadScrollOffset)
-	}
+	assert.Equal(2, m.threadScrollOffset, "expected threadScrollOffset to keep cursor visible")
 
 	// Press left arrow - should navigate back
 	m, _ = sendKey(t, m, keyLeft())
 
-	if m.detailMessageIndex != 2 {
-		t.Errorf("expected detailMessageIndex=2 after left, got %d", m.detailMessageIndex)
-	}
-	if m.threadCursor != 2 {
-		t.Errorf("expected threadCursor=2 after left, got %d", m.threadCursor)
-	}
+	assert.Equal(2, m.detailMessageIndex, "after left")
+	assert.Equal(2, m.threadCursor, "after left")
 
 	// Navigate all the way to first message
 	m.detailMessageIndex = 1
@@ -512,14 +423,8 @@ func TestDetailNavigationFromThreadView(t *testing.T) {
 	m.threadScrollOffset = 1 // Scroll offset is still 1 from before
 	m, _ = sendKey(t, m, keyLeft())
 
-	if m.detailMessageIndex != 0 {
-		t.Errorf("expected detailMessageIndex=0 after left, got %d", m.detailMessageIndex)
-	}
-	if m.threadCursor != 0 {
-		t.Errorf("expected threadCursor=0 after left, got %d", m.threadCursor)
-	}
+	assert.Equal(0, m.detailMessageIndex, "after left")
+	assert.Equal(0, m.threadCursor, "after left")
 	// threadCursor (0) < threadScrollOffset (1), so offset should be adjusted to 0
-	if m.threadScrollOffset != 0 {
-		t.Errorf("expected threadScrollOffset=0 to keep cursor visible, got %d", m.threadScrollOffset)
-	}
+	assert.Equal(0, m.threadScrollOffset, "expected threadScrollOffset to keep cursor visible")
 }

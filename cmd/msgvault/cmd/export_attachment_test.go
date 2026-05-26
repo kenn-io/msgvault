@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // setupTestAttachment creates a temp dir with an attachment file stored using
@@ -17,9 +20,7 @@ func setupTestAttachment(t *testing.T) (string, string, []byte, func()) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "msgvault-export-att-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
+	requirepkg.NoError(t, err, "create temp dir")
 
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("test attachment content")
@@ -27,17 +28,19 @@ func setupTestAttachment(t *testing.T) (string, string, []byte, func()) {
 	subDir := filepath.Join(tmpDir, contentHash[:2])
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		t.Fatalf("create subdir: %v", err)
+		requirepkg.NoError(t, err, "create subdir")
 	}
 	if err := os.WriteFile(filepath.Join(subDir, contentHash), data, 0600); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		t.Fatalf("write test file: %v", err)
+		requirepkg.NoError(t, err, "write test file")
 	}
 
 	return tmpDir, contentHash, data, func() { _ = os.RemoveAll(tmpDir) }
 }
 
 func TestExportAttachment_BinaryToFile(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	attDir, contentHash, wantData, cleanup := setupTestAttachment(t)
 	defer cleanup()
 
@@ -50,28 +53,22 @@ func TestExportAttachment_BinaryToFile(t *testing.T) {
 	exportAttachmentBase64 = false
 	defer func() { exportAttachmentOutput = "" }()
 
-	if err := exportAttachmentBinary(storagePath, contentHash); err != nil {
-		t.Fatalf("exportAttachmentBinary: %v", err)
-	}
+	require.NoError(exportAttachmentBinary(storagePath, contentHash), "exportAttachmentBinary")
 
 	got, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	if string(got) != string(wantData) {
-		t.Errorf("output = %q, want %q", got, wantData)
-	}
+	require.NoError(err, "read output")
+	assert.Equal(string(wantData), string(got), "output")
 
 	// Verify file permissions (Windows does not support Unix permissions)
 	if runtime.GOOS != "windows" {
 		info, _ := os.Stat(outFile)
-		if perm := info.Mode().Perm(); perm != 0600 {
-			t.Errorf("file permissions = %o, want 0600", perm)
-		}
+		assert.Equal(os.FileMode(0600), info.Mode().Perm(), "file permissions")
 	}
 }
 
 func TestExportAttachment_JSONOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	attDir, contentHash, wantData, cleanup := setupTestAttachment(t)
 	defer cleanup()
 
@@ -86,29 +83,17 @@ func TestExportAttachment_JSONOutput(t *testing.T) {
 	_ = w.Close()
 	os.Stdout = oldStdout
 
-	if err != nil {
-		t.Fatalf("exportAttachmentAsJSON: %v", err)
-	}
+	require.NoError(err, "exportAttachmentAsJSON")
 
 	var result map[string]any
-	if err := json.NewDecoder(r).Decode(&result); err != nil {
-		t.Fatalf("decode JSON: %v", err)
-	}
+	require.NoError(json.NewDecoder(r).Decode(&result), "decode JSON")
 
-	if result["content_hash"] != contentHash {
-		t.Errorf("content_hash = %v, want %s", result["content_hash"], contentHash)
-	}
-	if int(result["size"].(float64)) != len(wantData) {
-		t.Errorf("size = %v, want %d", result["size"], len(wantData))
-	}
+	assert.Equal(contentHash, result["content_hash"], "content_hash")
+	assert.Equal(len(wantData), int(result["size"].(float64)), "size")
 
 	decoded, err := base64.StdEncoding.DecodeString(result["data_base64"].(string))
-	if err != nil {
-		t.Fatalf("decode base64: %v", err)
-	}
-	if string(decoded) != string(wantData) {
-		t.Errorf("decoded data = %q, want %q", decoded, wantData)
-	}
+	require.NoError(err, "decode base64")
+	assert.Equal(string(wantData), string(decoded), "decoded data")
 }
 
 func TestExportAttachment_Base64Output(t *testing.T) {
@@ -126,37 +111,27 @@ func TestExportAttachment_Base64Output(t *testing.T) {
 	_ = w.Close()
 	os.Stdout = oldStdout
 
-	if err != nil {
-		t.Fatalf("exportAttachmentAsBase64: %v", err)
-	}
+	requirepkg.NoError(t, err, "exportAttachmentAsBase64")
 
 	outputBytes, _ := io.ReadAll(r)
 	output := string(outputBytes)
 
 	// Strip trailing newline
 	expected := base64.StdEncoding.EncodeToString(wantData) + "\n"
-	if output != expected {
-		t.Errorf("base64 output = %q, want %q", output, expected)
-	}
+	assertpkg.Equal(t, expected, output, "base64 output")
 }
 
 func TestExportAttachment_MissingFile(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "msgvault-export-att-missing-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
+	requirepkg.NoError(t, err, "create temp dir")
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	storagePath := filepath.Join(tmpDir, hash[:2], hash)
 
 	_, err = openAttachmentFile(storagePath)
-	if err == nil {
-		t.Fatal("expected error for missing file, got nil")
-	}
-	if !contains(err.Error(), "attachment not found") {
-		t.Errorf("error = %q, want 'attachment not found'", err)
-	}
+	requirepkg.Error(t, err, "expected error for missing file")
+	assertpkg.ErrorContains(t, err, "attachment not found")
 }
 
 func TestExportAttachment_FlagMutualExclusivity(t *testing.T) {
@@ -188,12 +163,8 @@ func TestExportAttachment_FlagMutualExclusivity(t *testing.T) {
 				"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			})
 
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.errMsg)
-			}
-			if !contains(err.Error(), tc.errMsg) {
-				t.Errorf("error = %q, want containing %q", err, tc.errMsg)
-			}
+			requirepkg.Error(t, err, "expected error containing %q", tc.errMsg)
+			assertpkg.ErrorContains(t, err, tc.errMsg)
 		})
 	}
 }
@@ -216,25 +187,8 @@ func TestExportAttachment_HashValidation(t *testing.T) {
 			exportAttachmentBase64 = false
 
 			err := runExportAttachment(nil, []string{tc.hash})
-			if err == nil {
-				t.Fatal("expected error for invalid hash, got nil")
-			}
-			if !contains(err.Error(), "invalid content hash") {
-				t.Errorf("error = %q, want containing 'invalid content hash'", err)
-			}
+			requirepkg.Error(t, err, "expected error for invalid hash")
+			assertpkg.ErrorContains(t, err, "invalid content hash")
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

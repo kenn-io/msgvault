@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+)
 
 func TestPostgreSQLDialect_Rebind(t *testing.T) {
 	d := &PostgreSQLDialect{}
@@ -42,19 +46,14 @@ func TestPostgreSQLDialect_Rebind(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := d.Rebind(tc.in)
-			if got != tc.want {
-				t.Errorf("Rebind(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, d.Rebind(tc.in), "Rebind(%q)", tc.in)
 		})
 	}
 }
 
 func TestPostgreSQLDialect_Now(t *testing.T) {
 	d := &PostgreSQLDialect{}
-	if got := d.Now(); got != "NOW()" {
-		t.Errorf("Now() = %q, want %q", got, "NOW()")
-	}
+	assertpkg.Equal(t, "NOW()", d.Now())
 }
 
 func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
@@ -87,36 +86,24 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := d.InsertOrIgnore(tc.in)
-			if got != tc.want {
-				t.Errorf("InsertOrIgnore(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, d.InsertOrIgnore(tc.in), "InsertOrIgnore(%q)", tc.in)
 		})
 	}
 }
 
 func TestPostgreSQLDialect_InsertOrIgnoreSuffix(t *testing.T) {
 	d := &PostgreSQLDialect{}
-	if got := d.InsertOrIgnoreSuffix(); got != " ON CONFLICT DO NOTHING" {
-		t.Errorf("InsertOrIgnoreSuffix() = %q, want %q", got, " ON CONFLICT DO NOTHING")
-	}
+	assertpkg.Equal(t, " ON CONFLICT DO NOTHING", d.InsertOrIgnoreSuffix())
 }
 
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
+	assert := assertpkg.New(t)
 	d := &PostgreSQLDialect{}
 	join, where, orderBy, orderArgCount := d.FTSSearchClause()
-	if join != "" {
-		t.Errorf("join = %q, want empty (PostgreSQL needs no JOIN)", join)
-	}
-	if where != "m.search_fts @@ to_tsquery('simple', ?)" {
-		t.Errorf("where = %q, unexpected", where)
-	}
-	if orderBy != "ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC" {
-		t.Errorf("orderBy = %q, unexpected", orderBy)
-	}
-	if orderArgCount != 1 {
-		t.Errorf("orderArgCount = %d, want 1 (ts_rank needs query a second time)", orderArgCount)
-	}
+	assert.Empty(join, "join (PostgreSQL needs no JOIN)")
+	assert.Equal("m.search_fts @@ to_tsquery('simple', ?)", where)
+	assert.Equal("ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC", orderBy)
+	assert.Equal(1, orderArgCount, "orderArgCount (ts_rank needs query a second time)")
 }
 
 // TestPostgreSQLDialect_BuildFTSArg covers R3: the tsquery argument
@@ -150,10 +137,7 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := d.BuildFTSArg(tc.in)
-			if got != tc.want {
-				t.Errorf("BuildFTSArg(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, d.BuildFTSArg(tc.in), "BuildFTSArg(%q)", tc.in)
 		})
 	}
 }
@@ -162,7 +146,5 @@ func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {
 	d := &PostgreSQLDialect{}
 	in := "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "
 	want := "INSERT INTO message_labels (message_id, label_id) VALUES "
-	if got := d.InsertOrIgnorePrefix(in); got != want {
-		t.Errorf("InsertOrIgnorePrefix(%q) = %q, want %q", in, got, want)
-	}
+	assertpkg.Equal(t, want, d.InsertOrIgnorePrefix(in), "InsertOrIgnorePrefix(%q)", in)
 }

@@ -1,6 +1,11 @@
 package imap
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestXOAuth2Client_Start(t *testing.T) {
 	tests := []struct {
@@ -29,15 +34,9 @@ func TestXOAuth2Client_Start(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewXOAuth2Client(tt.username, tt.token)
 			mech, ir, err := c.Start()
-			if err != nil {
-				t.Fatalf("Start() error: %v", err)
-			}
-			if mech != tt.wantMech {
-				t.Errorf("mech = %q, want %q", mech, tt.wantMech)
-			}
-			if string(ir) != tt.wantIR {
-				t.Errorf("ir = %q, want %q", string(ir), tt.wantIR)
-			}
+			require.NoError(t, err, "Start()")
+			assert.Equal(t, tt.wantMech, mech, "mech")
+			assert.Equal(t, tt.wantIR, string(ir), "ir")
 		})
 	}
 }
@@ -48,10 +47,6 @@ func TestXOAuth2Client_Next(t *testing.T) {
 	// XOAUTH2 response is an empty byte slice; the server then sends NO and
 	// the IMAP AUTHENTICATE command returns the server's error message.
 	resp, err := c.Next([]byte(`{"status":"401","schemes":"bearer","scope":"..."}`))
-	if err != nil {
-		t.Fatalf("Next() returned unexpected error: %v", err)
-	}
-	if len(resp) != 0 {
-		t.Errorf("Next() = %q, want empty response", resp)
-	}
+	require.NoError(t, err, "Next() returned unexpected error")
+	assert.Empty(t, resp, "Next() should return empty response")
 }

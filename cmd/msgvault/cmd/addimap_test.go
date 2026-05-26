@@ -5,6 +5,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestPasswordPromptStrategy(t *testing.T) {
@@ -102,12 +105,8 @@ func TestPasswordPromptStrategy(t *testing.T) {
 			method, output := choosePasswordStrategy(
 				tt.stdinNat, tt.stdinCyg, tt.stderrTTY, tt.stdoutTTY,
 			)
-			if method != tt.wantMethod {
-				t.Errorf("method = %v, want %v", method, tt.wantMethod)
-			}
-			if output != tt.wantOutput {
-				t.Errorf("output = %v, want %v", output, tt.wantOutput)
-			}
+			assertpkg.Equal(t, tt.wantMethod, method, "method")
+			assertpkg.Equal(t, tt.wantOutput, output, "output")
 		})
 	}
 }
@@ -158,23 +157,16 @@ func TestReadPasswordFromPipe(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
 			r := strings.NewReader(tt.input)
 			got, err := readPasswordFromPipe(r)
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error %q does not contain %q", err.Error(), tt.wantErr)
-				}
+				require.Error(err, "expected error containing %q", tt.wantErr)
+				require.ErrorContains(err, tt.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
+			require.NoError(err)
+			assertpkg.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -184,12 +176,8 @@ func TestReadPasswordFromPipeLargeInput(t *testing.T) {
 	input := "firstline\nsecondline\n"
 	r := strings.NewReader(input)
 	got, err := readPasswordFromPipe(r)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "firstline" {
-		t.Errorf("got %q, want %q", got, "firstline")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "firstline", got)
 }
 
 // Verify the function signature accepts io.Reader.

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -43,13 +45,13 @@ func saveMessengerState(t *testing.T) func() {
 }
 
 func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/json_simple")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
@@ -60,42 +62,28 @@ func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 		"--me", "test.user@facebook.messenger",
 		fixture,
 	})
-	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("import-messenger: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "Import complete") {
-		t.Errorf("stdout missing Import complete: %q", stdout.String())
-	}
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-messenger")
+	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
 	var n int
-	if err := st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE message_type='fbmessenger'").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 4 {
-		t.Errorf("messages=%d want 4", n)
-	}
-	if err := st.DB().QueryRow("SELECT COUNT(*) FROM participants WHERE email_address='test.user@facebook.messenger'").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Errorf("self participant count=%d want 1", n)
-	}
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE message_type='fbmessenger'").Scan(&n))
+	assert.Equal(4, n, "messages")
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM participants WHERE email_address='test.user@facebook.messenger'").Scan(&n))
+	assert.Equal(1, n, "self participant count")
 }
 
 func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/html_simple")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
@@ -106,32 +94,18 @@ func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
 		"--me", "test.user@facebook.messenger",
 		fixture,
 	})
-	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("import-messenger: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "Import complete") {
-		t.Errorf("stdout missing Import complete: %q", stdout.String())
-	}
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-messenger")
+	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 
 	var n int
-	if err := st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE message_type='fbmessenger'").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 3 {
-		t.Errorf("messages=%d want 3", n)
-	}
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE message_type='fbmessenger'").Scan(&n))
+	assert.Equal(3, n, "messages")
 	var rawFormat string
-	if err := st.DB().QueryRow("SELECT DISTINCT raw_format FROM message_raw").Scan(&rawFormat); err != nil {
-		t.Fatal(err)
-	}
-	if rawFormat != "fbmessenger_html" {
-		t.Errorf("raw_format=%q want fbmessenger_html", rawFormat)
-	}
+	require.NoError(st.DB().QueryRow("SELECT DISTINCT raw_format FROM message_raw").Scan(&rawFormat))
+	assert.Equal("fbmessenger_html", rawFormat, "raw_format")
 }
 
 func TestImportMessenger_MissingDir(t *testing.T) {
@@ -147,10 +121,8 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 		filepath.Join(tmp, "does", "not", "exist"),
 	})
 	err := rootCmd.ExecuteContext(context.Background())
-	if err == nil {
-		t.Fatal("expected error for missing dir")
-	}
-	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such") {
-		t.Errorf("error should describe missing path, got %v", err)
-	}
+	requirepkg.Error(t, err, "expected error for missing dir")
+	msg := err.Error()
+	assertpkg.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
+		"error should describe missing path, got %v", err)
 }

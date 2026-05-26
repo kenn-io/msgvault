@@ -12,6 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -37,12 +39,8 @@ func TestFullSync_PanicReturnsError(t *testing.T) {
 
 	// Should return an error, NOT panic and crash the program
 	_, err := env.Syncer.Full(env.Context, testEmail)
-	if err == nil {
-		t.Fatal("expected error from panic recovery, got nil")
-	}
-	if !strings.Contains(err.Error(), "panic") {
-		t.Errorf("expected error to mention panic, got: %v", err)
-	}
+	requirepkg.Error(t, err, "expected error from panic recovery")
+	assertpkg.ErrorContains(t, err, "panic")
 }
 
 // panicOnHistoryAPI wraps a MockAPI and panics when ListHistory is called.
@@ -67,12 +65,8 @@ func TestIncrementalSync_PanicReturnsError(t *testing.T) {
 
 	// Should return an error, NOT panic and crash the program
 	_, err := env.Syncer.Incremental(env.Context, source)
-	if err == nil {
-		t.Fatal("expected error from panic recovery, got nil")
-	}
-	if !strings.Contains(err.Error(), "panic") {
-		t.Errorf("expected error to mention panic, got: %v", err)
-	}
+	requirepkg.Error(t, err, "expected error from panic recovery")
+	assertpkg.ErrorContains(t, err, "panic")
 }
 
 func TestFullSync(t *testing.T) {
@@ -83,9 +77,7 @@ func TestFullSync(t *testing.T) {
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: intPtr(3), Errors: intPtr(0)})
-	if summary.FinalHistoryID != 12345 {
-		t.Errorf("expected history ID 12345, got %d", summary.FinalHistoryID)
-	}
+	assertpkg.Equal(t, uint64(12345), summary.FinalHistoryID, "history ID")
 
 	assertMockCalls(t, env, 1, 1, 3)
 	assertMessageCount(t, env.Store, 3)
@@ -158,6 +150,7 @@ func TestMIMEParsing(t *testing.T) {
 }
 
 func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
+	require := requirepkg.New(t)
 	env := newTestEnv(t)
 
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
@@ -167,18 +160,14 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 
 	src := env.CreateSource(t)
 	convID, err := env.Store.EnsureConversation(src.ID, "t1", "Thread")
-	if err != nil {
-		t.Fatalf("EnsureConversation: %v", err)
-	}
+	require.NoError(err, "EnsureConversation")
 	messageID, err := env.Store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: "m1",
 		MessageType:     "email",
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage: %v", err)
-	}
+	require.NoError(err, "UpsertMessage")
 
 	content := []byte("hello")
 	sum := sha256.Sum256(content)
@@ -191,32 +180,21 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 		ContentHash: "",
 		Content:     content,
 	}
-	if err := env.Syncer.storeAttachment(messageID, &att); err != nil {
-		t.Fatalf("storeAttachment: %v", err)
-	}
-	if att.ContentHash != wantHash {
-		t.Fatalf("ContentHash = %q, want %q", att.ContentHash, wantHash)
-	}
+	require.NoError(env.Syncer.storeAttachment(messageID, &att), "storeAttachment")
+	require.Equal(wantHash, att.ContentHash, "ContentHash")
 
 	var gotHash, storagePath string
-	if err := env.Store.DB().QueryRow(`SELECT content_hash, storage_path FROM attachments WHERE message_id = ?`, messageID).Scan(&gotHash, &storagePath); err != nil {
-		t.Fatalf("select attachment: %v", err)
-	}
-	if gotHash != wantHash {
-		t.Fatalf("db content_hash = %q, want %q", gotHash, wantHash)
-	}
+	require.NoError(env.Store.DB().QueryRow(`SELECT content_hash, storage_path FROM attachments WHERE message_id = ?`, messageID).Scan(&gotHash, &storagePath), "select attachment")
+	require.Equal(wantHash, gotHash, "db content_hash")
 
 	fullPath := filepath.Join(attachmentsDir, filepath.FromSlash(storagePath))
 	b, err := os.ReadFile(fullPath)
-	if err != nil {
-		t.Fatalf("read attachment file: %v", err)
-	}
-	if string(b) != string(content) {
-		t.Fatalf("attachment file contents = %q, want %q", string(b), string(content))
-	}
+	require.NoError(err, "read attachment file")
+	require.Equal(string(content), string(b), "attachment file contents")
 }
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
+	require := requirepkg.New(t)
 	env := newTestEnv(t)
 
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
@@ -226,18 +204,14 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 
 	src := env.CreateSource(t)
 	convID, err := env.Store.EnsureConversation(src.ID, "t1", "Thread")
-	if err != nil {
-		t.Fatalf("EnsureConversation: %v", err)
-	}
+	require.NoError(err, "EnsureConversation")
 	messageID, err := env.Store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: "m1",
 		MessageType:     "email",
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage: %v", err)
-	}
+	require.NoError(err, "UpsertMessage")
 
 	content := []byte("hello")
 	att := mime.Attachment{
@@ -247,21 +221,14 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 		ContentHash: "nope", // malformed
 		Content:     content,
 	}
-	if err := env.Syncer.storeAttachment(messageID, &att); err == nil {
-		t.Fatalf("expected error")
-	}
+	require.Error(env.Syncer.storeAttachment(messageID, &att), "expected error")
 
-	if _, statErr := os.Stat(attachmentsDir); statErr == nil {
-		t.Fatalf("attachments dir should not have been created for invalid content hash")
-	}
+	_, statErr := os.Stat(attachmentsDir)
+	require.Error(statErr, "attachments dir should not have been created for invalid content hash")
 
 	var count int
-	if err := env.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, messageID).Scan(&count); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("count = %d, want 0", count)
-	}
+	require.NoError(env.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, messageID).Scan(&count), "count attachments")
+	require.Zero(count, "count")
 }
 
 func TestFullSyncEmptyInbox(t *testing.T) {
@@ -278,9 +245,7 @@ func TestFullSyncProfileError(t *testing.T) {
 	env.Mock.ProfileError = fmt.Errorf("auth failed")
 
 	_, err := env.Syncer.Full(env.Context, testEmail)
-	if err == nil {
-		t.Error("expected error when profile fails")
-	}
+	assertpkg.Error(t, err, "expected error when profile fails")
 }
 
 func TestFullSyncAllDuplicates(t *testing.T) {
@@ -304,9 +269,7 @@ func TestFullSyncNoResume(t *testing.T) {
 	})
 
 	summary := runFullSync(t, env)
-	if summary.WasResumed {
-		t.Error("expected WasResumed to be false with NoResume option")
-	}
+	assertpkg.False(t, summary.WasResumed, "expected WasResumed to be false with NoResume option")
 	assertSummary(t, summary, WantSummary{Added: intPtr(2)})
 }
 
@@ -332,9 +295,7 @@ func TestFullSyncWithQuery(t *testing.T) {
 
 	summary := runFullSync(t, env)
 
-	if env.Mock.LastQuery != "before:2024/06/01" {
-		t.Errorf("expected query %q, got %q", "before:2024/06/01", env.Mock.LastQuery)
-	}
+	assertpkg.Equal(t, "before:2024/06/01", env.Mock.LastQuery, "query")
 	assertSummary(t, summary, WantSummary{Added: intPtr(2)})
 }
 
@@ -351,17 +312,13 @@ func TestFullSyncPagination(t *testing.T) {
 func TestSyncerWithLogger(t *testing.T) {
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithLogger(nil)
-	if syncer == nil {
-		t.Error("WithLogger should return syncer for chaining")
-	}
+	assertpkg.NotNil(t, syncer, "WithLogger should return syncer for chaining")
 }
 
 func TestSyncerWithProgress(t *testing.T) {
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithProgress(gmail.NullProgress{})
-	if syncer == nil {
-		t.Error("WithProgress should return syncer for chaining")
-	}
+	assertpkg.NotNil(t, syncer, "WithProgress should return syncer for chaining")
 }
 
 // Tests for incremental sync
@@ -370,9 +327,7 @@ func TestIncrementalSyncNilSource(t *testing.T) {
 	env := newTestEnv(t)
 
 	_, err := env.Syncer.Incremental(env.Context, nil)
-	if err == nil {
-		t.Error("expected error for nil source")
-	}
+	assertpkg.Error(t, err, "expected error for nil source")
 }
 
 func TestIncrementalSyncNoHistoryID(t *testing.T) {
@@ -381,9 +336,7 @@ func TestIncrementalSyncNoHistoryID(t *testing.T) {
 	source := env.CreateSource(t)
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	if err == nil {
-		t.Error("expected error for incremental sync without history ID")
-	}
+	assertpkg.Error(t, err, "expected error for incremental sync without history ID")
 }
 
 func TestIncrementalSyncAlreadyUpToDate(t *testing.T) {
@@ -441,9 +394,7 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 	env.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	if err == nil {
-		t.Error("expected error for expired history")
-	}
+	assertpkg.Error(t, err, "expected error for expired history")
 }
 
 func TestIncrementalSyncProfileError(t *testing.T) {
@@ -452,9 +403,7 @@ func TestIncrementalSyncProfileError(t *testing.T) {
 	env.Mock.ProfileError = fmt.Errorf("auth failed")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	if err == nil {
-		t.Error("expected error when profile fails")
-	}
+	assertpkg.Error(t, err, "expected error when profile fails")
 }
 
 func TestIncrementalSyncWithLabelAdded(t *testing.T) {
@@ -476,10 +425,8 @@ func TestIncrementalSyncWithLabelAdded(t *testing.T) {
 
 	// No additional GetMessageRaw calls should have been made for the existing message
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	if callsAfterIncr != callsAfterFull {
-		t.Errorf("expected 0 GetMessageRaw calls during incremental, got %d (full: %d, after: %d)",
-			callsAfterIncr-callsAfterFull, callsAfterFull, callsAfterIncr)
-	}
+	assertpkg.Equal(t, callsAfterFull, callsAfterIncr,
+		"expected 0 GetMessageRaw calls during incremental")
 
 	// Verify the label was actually added in the database
 	assertMessageHasLabel(t, env.Store, "msg1", "STARRED")
@@ -507,10 +454,8 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 
 	// No additional GetMessageRaw calls should have been made
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	if callsAfterIncr != callsAfterFull {
-		t.Errorf("expected 0 GetMessageRaw calls during incremental, got %d",
-			callsAfterIncr-callsAfterFull)
-	}
+	assertpkg.Equal(t, callsAfterFull, callsAfterIncr,
+		"expected 0 GetMessageRaw calls during incremental")
 
 	// Verify the label was actually removed in the database
 	assertMessageNotHasLabel(t, env.Store, "msg1", "STARRED")
@@ -521,12 +466,10 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
-	if _, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", "system"); err != nil {
-		t.Fatalf("EnsureLabel INBOX: %v", err)
-	}
-	if _, err := env.Store.EnsureLabel(source.ID, "STARRED", "Starred", "system"); err != nil {
-		t.Fatalf("EnsureLabel STARRED: %v", err)
-	}
+	_, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", "system")
+	requirepkg.NoError(t, err, "EnsureLabel INBOX")
+	_, err = env.Store.EnsureLabel(source.ID, "STARRED", "Starred", "system")
+	requirepkg.NoError(t, err, "EnsureLabel STARRED")
 
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12350
@@ -534,10 +477,8 @@ func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 
 	env.SetHistory(12350, historyLabelAdded("new-msg", "STARRED"))
 
-	_, err := env.Syncer.Incremental(env.Context, source)
-	if err != nil {
-		t.Fatalf("incremental sync: %v", err)
-	}
+	_, err = env.Syncer.Incremental(env.Context, source)
+	requirepkg.NoError(t, err, "incremental sync")
 
 	assertMessageCount(t, env.Store, 1)
 }
@@ -566,9 +507,8 @@ func TestFullSyncWithAttachment(t *testing.T) {
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: intPtr(1)})
 
-	if _, err := os.Stat(attachDir); os.IsNotExist(err) {
-		t.Error("attachments directory should have been created")
-	}
+	_, statErr := os.Stat(attachDir)
+	assertpkg.False(t, os.IsNotExist(statErr), "attachments directory should have been created")
 
 	assertAttachmentCount(t, env.Store, 1)
 }
@@ -604,9 +544,7 @@ func TestFullSyncAttachmentDeduplication(t *testing.T) {
 	runFullSync(t, env)
 	assertAttachmentCount(t, env.Store, 2)
 
-	if fileCount := countFiles(t, attachDir); fileCount != 1 {
-		t.Errorf("expected 1 file in attachments dir (deduped), got %d", fileCount)
-	}
+	assertpkg.Equal(t, 1, countFiles(t, attachDir), "files in attachments dir (deduped)")
 }
 
 // TestFullSync_MessageVariations consolidates tests for various MIME message formats.
@@ -667,6 +605,8 @@ func TestFullSync_MessageVariations(t *testing.T) {
 }
 
 func TestFullSync_Latin1InFromName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -692,26 +632,20 @@ func TestFullSync_Latin1InFromName(t *testing.T) {
 	// Before the fix, raw Latin-1 bytes would be stored as-is, causing DuckDB errors
 	// when exporting to Parquet.
 	displayName, err := env.Store.InspectParticipantDisplayName("sender@example.com")
-	if err != nil {
-		t.Fatalf("InspectParticipantDisplayName: %v", err)
-	}
+	require.NoError(err, "InspectParticipantDisplayName")
 	// EnsureUTF8 should convert the Latin-1 \xC9 to the UTF-8 É (U+00C9)
 	want := "Jane DoeÉric"
-	if displayName != want {
-		t.Errorf("participant display_name = %q, want %q", displayName, want)
-	}
+	assert.Equal(want, displayName, "participant display_name")
 
 	// Also verify the message_recipients display_name is valid
 	recipDisplayName, err := env.Store.InspectDisplayName("msg", "from", "sender@example.com")
-	if err != nil {
-		t.Fatalf("InspectDisplayName: %v", err)
-	}
-	if recipDisplayName != want {
-		t.Errorf("recipient display_name = %q, want %q", recipDisplayName, want)
-	}
+	require.NoError(err, "InspectDisplayName")
+	assert.Equal(want, recipDisplayName, "recipient display_name")
 }
 
 func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -748,27 +682,20 @@ func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
 	for _, tt := range tests {
 		// Verify participants table has valid UTF-8
 		displayName, err := env.Store.InspectParticipantDisplayName(tt.email)
-		if err != nil {
-			t.Fatalf("InspectParticipantDisplayName(%s): %v", tt.email, err)
-		}
+		require.NoError(err, "InspectParticipantDisplayName(%s)", tt.email)
 		titled := strings.ToUpper(tt.recipType[:1]) + tt.recipType[1:]
 		want := "\u201c" + titled + "\u201d Name"
-		if displayName != want {
-			t.Errorf("participant %s display_name = %q, want %q", tt.email, displayName, want)
-		}
+		assert.Equal(want, displayName, "participant %s display_name", tt.email)
 
 		// Verify message_recipients table has valid UTF-8
 		recipName, err := env.Store.InspectDisplayName("msg", tt.recipType, tt.email)
-		if err != nil {
-			t.Fatalf("InspectDisplayName(%s, %s): %v", tt.recipType, tt.email, err)
-		}
-		if recipName != want {
-			t.Errorf("recipient %s/%s display_name = %q, want %q", tt.recipType, tt.email, recipName, want)
-		}
+		require.NoError(err, "InspectDisplayName(%s, %s)", tt.recipType, tt.email)
+		assert.Equal(want, recipName, "recipient %s/%s display_name", tt.recipType, tt.email)
 	}
 }
 
 func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Construct a MIME message with raw Latin-1 byte \xE9 (é) in the attachment
@@ -801,27 +728,22 @@ func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
 	assertAttachmentCount(t, env.Store, 1)
 
 	filename, mimeType, err := env.Store.InspectAttachment("msg-attach")
-	if err != nil {
-		t.Fatalf("InspectAttachment: %v", err)
-	}
+	requirepkg.NoError(t, err, "InspectAttachment")
 
 	// Enmime replaces the invalid \xE9 byte with U+FFFD (replacement character).
 	// Our EnsureUTF8 would convert it to the proper é if enmime didn't sanitize first.
 	// Either way, the stored filename must be valid UTF-8 and preserve the base name.
-	if !utf8.ValidString(filename) {
-		t.Errorf("attachment filename %q is not valid UTF-8", filename)
-	}
-	if !strings.HasPrefix(filename, "caf") || !strings.HasSuffix(filename, ".pdf") {
-		t.Errorf("attachment filename = %q, want caf*.pdf pattern", filename)
-	}
+	assert.True(utf8.ValidString(filename), "attachment filename %q is not valid UTF-8", filename)
+	assert.True(strings.HasPrefix(filename, "caf"), "attachment filename = %q, want caf*.pdf pattern", filename)
+	assert.True(strings.HasSuffix(filename, ".pdf"), "attachment filename = %q, want caf*.pdf pattern", filename)
 
 	// Content-type should be the clean base MIME type
-	if mimeType != "application/pdf" {
-		t.Errorf("attachment mime_type = %q, want %q", mimeType, "application/pdf")
-	}
+	assert.Equal("application/pdf", mimeType, "attachment mime_type")
 }
 
 func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -843,30 +765,18 @@ func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
 
 	// From name: Latin-1 \xC9 → UTF-8 É
 	fromName, err := env.Store.InspectParticipantDisplayName("from@example.com")
-	if err != nil {
-		t.Fatalf("InspectParticipantDisplayName(from): %v", err)
-	}
-	if fromName != "DoeÉric" {
-		t.Errorf("from display_name = %q, want %q", fromName, "DoeÉric")
-	}
+	require.NoError(err, "InspectParticipantDisplayName(from)")
+	assert.Equal("DoeÉric", fromName, "from display_name")
 
 	// To name: Windows-1252 \x93/\x94 → Unicode left/right double quotes
 	toName, err := env.Store.InspectParticipantDisplayName("to@example.com")
-	if err != nil {
-		t.Fatalf("InspectParticipantDisplayName(to): %v", err)
-	}
-	if toName != "\u201cQuoted\u201d" {
-		t.Errorf("to display_name = %q, want %q", toName, "\u201cQuoted\u201d")
-	}
+	require.NoError(err, "InspectParticipantDisplayName(to)")
+	assert.Equal("\u201cQuoted\u201d", toName, "to display_name")
 
 	// Subject: Latin-1 \xE9 → UTF-8 é (already validated by existing code path)
 	insp, err := env.Store.InspectMessage("msg")
-	if err != nil {
-		t.Fatalf("InspectMessage: %v", err)
-	}
-	if !strings.Contains(insp.RecipientDisplayName["from:from@example.com"], "É") {
-		t.Errorf("from recipient display_name %q should contain É", insp.RecipientDisplayName["from:from@example.com"])
-	}
+	require.NoError(err, "InspectMessage")
+	assert.Contains(insp.RecipientDisplayName["from:from@example.com"], "É", "from recipient display_name should contain É")
 }
 
 func TestFullSyncWithMIMEParseError(t *testing.T) {
@@ -912,12 +822,12 @@ func TestIncrementalSyncLabelsError(t *testing.T) {
 	env.Mock.LabelsError = fmt.Errorf("labels API error")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	if err == nil {
-		t.Error("expected error when labels sync fails")
-	}
+	assertpkg.Error(t, err, "expected error when labels sync fails")
 }
 
 func TestFullSyncResumeWithCursor(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
 	seedPagedMessages(env, 4, 2, "msg")
@@ -937,27 +847,19 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	env.Mock.ListMessagesCalls = 0
 
 	syncID, err := env.Store.StartSync(source.ID, "full")
-	if err != nil {
-		t.Fatalf("StartSync: %v", err)
-	}
+	require.NoError(err, "StartSync")
 
 	checkpoint := &store.Checkpoint{
 		PageToken:         "page_1",
 		MessagesProcessed: 2,
 		MessagesAdded:     2,
 	}
-	if err := env.Store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
-		t.Fatalf("UpdateSyncCheckpoint: %v", err)
-	}
+	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
 
 	summary := runFullSync(t, env)
 
-	if !summary.WasResumed {
-		t.Error("expected WasResumed = true")
-	}
-	if summary.ResumedFromToken != "page_1" {
-		t.Errorf("expected ResumedFromToken = 'page_1', got %q", summary.ResumedFromToken)
-	}
+	assert.True(summary.WasResumed, "expected WasResumed = true")
+	assert.Equal("page_1", summary.ResumedFromToken, "ResumedFromToken")
 	assertSummary(t, summary, WantSummary{Added: intPtr(4)})
 
 	assertListMessagesCalls(t, env, 1)
@@ -1056,37 +958,28 @@ func TestFullSyncListEmptyThreadIDRawPresent(t *testing.T) {
 // Tests for initSyncState
 
 func TestInitSyncState_NewSync(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 
 	state, err := env.Syncer.initSyncState(source.ID)
-	if err != nil {
-		t.Fatalf("initSyncState: %v", err)
-	}
+	requirepkg.NoError(t, err, "initSyncState")
 
-	if state.wasResumed {
-		t.Error("expected wasResumed = false for new sync")
-	}
-	if state.pageToken != "" {
-		t.Errorf("expected empty pageToken, got %q", state.pageToken)
-	}
-	if state.syncID == 0 {
-		t.Error("expected non-zero syncID")
-	}
-	if state.checkpoint.MessagesProcessed != 0 {
-		t.Errorf("expected MessagesProcessed = 0, got %d", state.checkpoint.MessagesProcessed)
-	}
+	assert.False(state.wasResumed, "expected wasResumed = false for new sync")
+	assert.Empty(state.pageToken, "pageToken")
+	assert.NotZero(state.syncID, "expected non-zero syncID")
+	assert.Equal(int64(0), state.checkpoint.MessagesProcessed, "MessagesProcessed")
 }
 
 func TestInitSyncState_Resume(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 
 	// Create an active sync with checkpoint
 	syncID, err := env.Store.StartSync(source.ID, "full")
-	if err != nil {
-		t.Fatalf("StartSync: %v", err)
-	}
+	require.NoError(err, "StartSync")
 	checkpoint := &store.Checkpoint{
 		PageToken:         "resume_token_123",
 		MessagesProcessed: 50,
@@ -1094,33 +987,21 @@ func TestInitSyncState_Resume(t *testing.T) {
 		MessagesUpdated:   3,
 		ErrorsCount:       2,
 	}
-	if err := env.Store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
-		t.Fatalf("UpdateSyncCheckpoint: %v", err)
-	}
+	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
 
 	state, err := env.Syncer.initSyncState(source.ID)
-	if err != nil {
-		t.Fatalf("initSyncState: %v", err)
-	}
+	require.NoError(err, "initSyncState")
 
-	if !state.wasResumed {
-		t.Error("expected wasResumed = true")
-	}
-	if state.pageToken != "resume_token_123" {
-		t.Errorf("expected pageToken = 'resume_token_123', got %q", state.pageToken)
-	}
-	if state.syncID != syncID {
-		t.Errorf("expected syncID = %d, got %d", syncID, state.syncID)
-	}
-	if state.checkpoint.MessagesProcessed != 50 {
-		t.Errorf("expected MessagesProcessed = 50, got %d", state.checkpoint.MessagesProcessed)
-	}
-	if state.checkpoint.MessagesAdded != 45 {
-		t.Errorf("expected MessagesAdded = 45, got %d", state.checkpoint.MessagesAdded)
-	}
+	assert.True(state.wasResumed, "expected wasResumed = true")
+	assert.Equal("resume_token_123", state.pageToken, "pageToken")
+	assert.Equal(syncID, state.syncID, "syncID")
+	assert.Equal(int64(50), state.checkpoint.MessagesProcessed, "MessagesProcessed")
+	assert.Equal(int64(45), state.checkpoint.MessagesAdded, "MessagesAdded")
 }
 
 func TestInitSyncState_NoResumeOption(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
 		o.NoResume = true
@@ -1129,36 +1010,25 @@ func TestInitSyncState_NoResumeOption(t *testing.T) {
 
 	// Create an active sync with checkpoint
 	syncID, err := env.Store.StartSync(source.ID, "full")
-	if err != nil {
-		t.Fatalf("StartSync: %v", err)
-	}
+	require.NoError(err, "StartSync")
 	checkpoint := &store.Checkpoint{
 		PageToken:         "resume_token_123",
 		MessagesProcessed: 50,
 	}
-	if err := env.Store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
-		t.Fatalf("UpdateSyncCheckpoint: %v", err)
-	}
+	require.NoError(env.Store.UpdateSyncCheckpoint(syncID, checkpoint), "UpdateSyncCheckpoint")
 
 	state, err := env.Syncer.initSyncState(source.ID)
-	if err != nil {
-		t.Fatalf("initSyncState: %v", err)
-	}
+	require.NoError(err, "initSyncState")
 
-	if state.wasResumed {
-		t.Error("expected wasResumed = false with NoResume option")
-	}
-	if state.pageToken != "" {
-		t.Errorf("expected empty pageToken with NoResume, got %q", state.pageToken)
-	}
-	if state.syncID == syncID {
-		t.Error("expected new syncID, not the existing one")
-	}
+	assert.False(state.wasResumed, "expected wasResumed = false with NoResume option")
+	assert.Empty(state.pageToken, "pageToken with NoResume")
+	assert.NotEqual(syncID, state.syncID, "expected new syncID, not the existing one")
 }
 
 // Tests for processBatch
 
 func TestProcessBatch_EmptyBatch(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap := make(map[string]int64)
@@ -1170,22 +1040,15 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
-	if result.processed != 0 {
-		t.Errorf("expected processed = 0, got %d", result.processed)
-	}
-	if result.added != 0 {
-		t.Errorf("expected added = 0, got %d", result.added)
-	}
-	if result.skipped != 0 {
-		t.Errorf("expected skipped = 0, got %d", result.skipped)
-	}
+	assert.Equal(int64(0), result.processed, "processed")
+	assert.Equal(int64(0), result.added, "added")
+	assert.Equal(int64(0), result.skipped, "skipped")
 }
 
 func TestProcessBatch_AllNew(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1205,22 +1068,15 @@ func TestProcessBatch_AllNew(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
-	if result.processed != 2 {
-		t.Errorf("expected processed = 2, got %d", result.processed)
-	}
-	if result.added != 2 {
-		t.Errorf("expected added = 2, got %d", result.added)
-	}
-	if result.skipped != 0 {
-		t.Errorf("expected skipped = 0, got %d", result.skipped)
-	}
+	assert.Equal(int64(2), result.processed, "processed")
+	assert.Equal(int64(2), result.added, "added")
+	assert.Equal(int64(0), result.skipped, "skipped")
 }
 
 func TestProcessBatch_AllExisting(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 
@@ -1242,22 +1098,15 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
-	if result.processed != 2 {
-		t.Errorf("expected processed = 2, got %d", result.processed)
-	}
-	if result.added != 0 {
-		t.Errorf("expected added = 0 (all existing), got %d", result.added)
-	}
-	if result.skipped != 2 {
-		t.Errorf("expected skipped = 2, got %d", result.skipped)
-	}
+	assert.Equal(int64(2), result.processed, "processed")
+	assert.Equal(int64(0), result.added, "added (all existing)")
+	assert.Equal(int64(2), result.skipped, "skipped")
 }
 
 func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
 
@@ -1282,22 +1131,15 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
-	if result.processed != 2 {
-		t.Errorf("expected processed = 2, got %d", result.processed)
-	}
-	if result.added != 1 {
-		t.Errorf("expected added = 1, got %d", result.added)
-	}
-	if result.skipped != 1 {
-		t.Errorf("expected skipped = 1, got %d", result.skipped)
-	}
+	assert.Equal(int64(2), result.processed, "processed")
+	assert.Equal(int64(1), result.added, "added")
+	assert.Equal(int64(1), result.skipped, "skipped")
 }
 
 func TestProcessBatch_OldestDatePropagation(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1331,19 +1173,14 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
 	// oldestDate should be Jan 10, 2024
-	if result.oldestDate.IsZero() {
-		t.Error("expected oldestDate to be set")
-	}
-	expectedYear, expectedMonth, expectedDay := 2024, 1, 10
+	assert.False(result.oldestDate.IsZero(), "expected oldestDate to be set")
 	gotYear, gotMonth, gotDay := result.oldestDate.Year(), int(result.oldestDate.Month()), result.oldestDate.Day()
-	if gotYear != expectedYear || gotMonth != expectedMonth || gotDay != expectedDay {
-		t.Errorf("expected oldestDate = 2024-01-10, got %d-%02d-%02d", gotYear, gotMonth, gotDay)
-	}
+	assert.Equal(2024, gotYear, "year")
+	assert.Equal(1, gotMonth, "month")
+	assert.Equal(10, gotDay, "day")
 }
 
 func TestProcessBatch_ErrorsCount(t *testing.T) {
@@ -1367,21 +1204,16 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 	}
 
 	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	if err != nil {
-		t.Fatalf("processBatch: %v", err)
-	}
+	requirepkg.NoError(t, err, "processBatch")
 
-	if result.added != 1 {
-		t.Errorf("expected added = 1, got %d", result.added)
-	}
-	if checkpoint.ErrorsCount != 1 {
-		t.Errorf("expected ErrorsCount = 1, got %d", checkpoint.ErrorsCount)
-	}
+	assertpkg.Equal(t, int64(1), result.added, "added")
+	assertpkg.Equal(t, int64(1), checkpoint.ErrorsCount, "ErrorsCount")
 }
 
 // TestAttachmentFilePermissions verifies that attachment files are saved with
 // restrictive permissions (0600) to protect email content.
 func TestAttachmentFilePermissions(t *testing.T) {
+	require := requirepkg.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12345
@@ -1402,26 +1234,16 @@ func TestAttachmentFilePermissions(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("WalkDir(%s): %v", attachDir, err)
-	}
-	if attachmentPath == "" {
-		t.Fatal("no attachment file found")
-	}
+	require.NoError(err, "WalkDir(%s)", attachDir)
+	require.NotEmpty(attachmentPath, "no attachment file found")
 
 	info, err := os.Stat(attachmentPath)
-	if err != nil {
-		t.Fatalf("Stat(%s) error = %v", attachmentPath, err)
-	}
+	require.NoError(err, "Stat(%s)", attachmentPath)
 
 	// File should have 0600 permissions (owner read/write only)
 	// Windows does not support Unix permissions.
 	if runtime.GOOS != "windows" {
-		got := info.Mode().Perm()
-		want := os.FileMode(0600)
-		if got != want {
-			t.Errorf("attachment file permissions = %04o, want %04o", got, want)
-		}
+		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "attachment file permissions")
 	}
 }
 
@@ -1453,10 +1275,7 @@ func TestIncrementalSyncLabelAddAndRemoveOnExisting(t *testing.T) {
 
 	// Zero additional API calls
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	if callsAfterIncr != callsAfterFull {
-		t.Errorf("expected 0 GetMessageRaw calls during incremental, got %d",
-			callsAfterIncr-callsAfterFull)
-	}
+	assertpkg.Equal(t, callsAfterFull, callsAfterIncr, "expected 0 GetMessageRaw calls during incremental")
 
 	// Verify label state: TRASH and STARRED remain, INBOX removed
 	assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
@@ -1543,9 +1362,7 @@ func TestIncrementalSyncMixedOperations(t *testing.T) {
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
 	// GetMessagesRawBatch calls GetMessageRaw internally in MockAPI, so 1 call for new-1
 	newCalls := callsAfterIncr - callsAfterFull
-	if newCalls != 1 {
-		t.Errorf("expected 1 GetMessageRaw call for new message, got %d", newCalls)
-	}
+	assertpkg.Equal(t, 1, newCalls, "GetMessageRaw call count for new message")
 
 	assertDeletedFromSource(t, env.Store, "existing-1", true)
 	assertMessageHasLabel(t, env.Store, "existing-2", "STARRED")
@@ -1608,11 +1425,9 @@ func TestDeriveThreadKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := deriveThreadKey(tt.msg)
 			if tt.wantEmpty {
-				if got != "" {
-					t.Errorf("expected empty, got %q", got)
-				}
-			} else if got != tt.wantKey {
-				t.Errorf("got %q, want %q", got, tt.wantKey)
+				assertpkg.Empty(t, got, "expected empty")
+			} else {
+				assertpkg.Equal(t, tt.wantKey, got, "thread key")
 			}
 		})
 	}
@@ -1680,18 +1495,16 @@ func TestIMAPThreading(t *testing.T) {
 	// standalone gets its own.
 	var convCount int
 	err := env.Store.DB().QueryRow(`SELECT COUNT(DISTINCT conversation_id) FROM messages`).Scan(&convCount)
-	if err != nil {
-		t.Fatalf("count conversations: %v", err)
-	}
-	if convCount != 2 {
-		t.Errorf("expected 2 conversations (1 thread + 1 standalone), got %d", convCount)
-	}
+	requirepkg.NoError(t, err, "count conversations")
+	assertpkg.Equal(t, 2, convCount, "expected 2 conversations (1 thread + 1 standalone)")
 }
 
 // TestIMAPCrossSyncDedup verifies that a message imported from one mailbox
 // is not re-imported when it appears under a different mailbox|uid on a
 // subsequent sync (e.g. moved from All Mail to Trash).
 func TestIMAPCrossSyncDedup(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
 		o.SourceType = "imap"
@@ -1722,12 +1535,8 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 	var count int
 	err := env.Store.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages`).Scan(&count)
-	if err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected 1 message, got %d (duplicate imported)", count)
-	}
+	require.NoError(err, "count messages")
+	assert.Equal(1, count, "expected 1 message (duplicate imported)")
 
 	// The existing row's source_message_id should be updated to the
 	// new composite ID so future syncs don't re-download the message.
@@ -1735,13 +1544,8 @@ func TestIMAPCrossSyncDedup(t *testing.T) {
 	err = env.Store.DB().QueryRow(
 		`SELECT source_message_id FROM messages LIMIT 1`,
 	).Scan(&srcMsgID)
-	if err != nil {
-		t.Fatalf("get source_message_id: %v", err)
-	}
-	if srcMsgID != "TRASH|99" {
-		t.Errorf("source_message_id not updated: got %q, want %q",
-			srcMsgID, "TRASH|99")
-	}
+	require.NoError(err, "get source_message_id")
+	assert.Equal("TRASH|99", srcMsgID, "source_message_id not updated")
 
 	// Labels should reflect the new mailbox.
 	assertMessageHasLabel(t, env.Store, "TRASH|99", "TRASH")
@@ -1768,9 +1572,7 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 		DELETE FROM message_raw WHERE message_id = (
 			SELECT id FROM messages WHERE source_message_id = 'msg1'
 		)`)
-	if err != nil {
-		t.Fatalf("delete raw data: %v", err)
-	}
+	requirepkg.NoError(t, err, "delete raw data")
 
 	// Record raw fetch count before incremental sync
 	callsBeforeIncr := len(env.Mock.GetMessageCalls)
@@ -1783,9 +1585,7 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 
 	// No raw fetches should occur for label-only changes
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	if newCalls := callsAfterIncr - callsBeforeIncr; newCalls != 0 {
-		t.Errorf("expected 0 GetMessageRaw calls for label removal, got %d", newCalls)
-	}
+	assertpkg.Equal(t, callsBeforeIncr, callsAfterIncr, "expected 0 GetMessageRaw calls for label removal")
 
 	// Label should be removed despite missing raw data
 	assertMessageNotHasLabel(t, env.Store, "msg1", "STARRED")

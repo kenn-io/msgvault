@@ -1,9 +1,10 @@
 package query
 
 import (
-	"bytes"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -20,6 +21,7 @@ func emptyTargets(views ...ViewType) map[ViewType]bool {
 // TestMessageFilter_Clone verifies that Clone creates an independent copy
 // of the filter, especially the EmptyValueTargets map.
 func TestMessageFilter_Clone(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Create original filter with EmptyValueTargets
 	original := MessageFilter{
 		Sender: "alice@example.com",
@@ -33,33 +35,23 @@ func TestMessageFilter_Clone(t *testing.T) {
 	clone := original.Clone()
 
 	// Verify scalar fields are copied
-	if clone.Sender != "alice@example.com" {
-		t.Errorf("expected Sender 'alice@example.com', got %q", clone.Sender)
-	}
-	if clone.Label != "INBOX" {
-		t.Errorf("expected Label 'INBOX', got %q", clone.Label)
-	}
+	assert.Equal("alice@example.com", clone.Sender)
+	assert.Equal("INBOX", clone.Label)
 
 	// Verify EmptyValueTargets is deeply copied
-	if !clone.MatchesEmpty(ViewSenders) {
-		t.Error("clone should have ViewSenders in EmptyValueTargets")
-	}
+	assert.True(clone.MatchesEmpty(ViewSenders), "clone should have ViewSenders in EmptyValueTargets")
 
 	// Mutate the clone's map
 	clone.SetEmptyTarget(ViewLabels)
 
 	// Verify original is NOT affected
-	if original.MatchesEmpty(ViewLabels) {
-		t.Error("original should NOT have ViewLabels after mutating clone")
-	}
+	assert.False(original.MatchesEmpty(ViewLabels), "original should NOT have ViewLabels after mutating clone")
 
 	// Mutate the original's map
 	original.SetEmptyTarget(ViewDomains)
 
 	// Verify clone is NOT affected
-	if clone.MatchesEmpty(ViewDomains) {
-		t.Error("clone should NOT have ViewDomains after mutating original")
-	}
+	assert.False(clone.MatchesEmpty(ViewDomains), "clone should NOT have ViewDomains after mutating original")
 }
 
 // TestMessageFilter_Clone_NilMap verifies Clone handles nil EmptyValueTargets.
@@ -67,18 +59,12 @@ func TestMessageFilter_Clone_NilMap(t *testing.T) {
 	original := MessageFilter{Sender: "bob@example.com"}
 	clone := original.Clone()
 
-	if clone.Sender != "bob@example.com" {
-		t.Errorf("expected Sender 'bob@example.com', got %q", clone.Sender)
-	}
-	if clone.EmptyValueTargets != nil {
-		t.Errorf("expected nil EmptyValueTargets, got %v", clone.EmptyValueTargets)
-	}
+	assertpkg.Equal(t, "bob@example.com", clone.Sender)
+	assertpkg.Nil(t, clone.EmptyValueTargets)
 
 	// Mutating clone should not affect original
 	clone.SetEmptyTarget(ViewSenders)
-	if original.EmptyValueTargets != nil {
-		t.Errorf("original EmptyValueTargets should still be nil")
-	}
+	assertpkg.Nil(t, original.EmptyValueTargets, "original EmptyValueTargets should still be nil")
 }
 
 // TestMessageFilter_HasEmptyTargets verifies HasEmptyTargets checks for true values.
@@ -117,10 +103,7 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.filter.HasEmptyTargets()
-			if got != tt.want {
-				t.Errorf("HasEmptyTargets() = %v, want %v", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, tt.filter.HasEmptyTargets())
 		})
 	}
 }
@@ -204,9 +187,7 @@ func TestListMessages_Filters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messages := env.MustListMessages(tt.filter)
-			if len(messages) != tt.wantCount {
-				t.Errorf("got %d messages, want %d", len(messages), tt.wantCount)
-			}
+			assertpkg.Len(t, messages, tt.wantCount)
 			if tt.validate != nil {
 				tt.validate(t, messages)
 			}
@@ -225,9 +206,7 @@ func TestListMessages_NoDuplicates(t *testing.T) {
 		seen[m.ID]++
 	}
 	for id, count := range seen {
-		if count > 1 {
-			t.Errorf("message ID %d returned %d times (expected once)", id, count)
-		}
+		assertpkg.LessOrEqual(t, count, 1, "message ID %d returned %d times (expected once)", id, count)
 	}
 }
 
@@ -237,117 +216,76 @@ func TestListMessagesWithLabels(t *testing.T) {
 	messages := env.MustListMessages(MessageFilter{})
 
 	msg1 := messages[len(messages)-1]
-	if len(msg1.Labels) != 2 {
-		t.Errorf("expected 2 labels on msg1, got %d", len(msg1.Labels))
-	}
+	assertpkg.Len(t, msg1.Labels, 2, "msg1 labels")
 }
 
 func TestGetMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Fatal("expected message, got nil")
-	}
-	if msg.Subject != "Hello World" {
-		t.Errorf("expected subject 'Hello World', got %q", msg.Subject)
-	}
-	if len(msg.From) != 1 || msg.From[0].Email != "alice@example.com" {
-		t.Errorf("expected from alice, got %v", msg.From)
-	}
-	if len(msg.To) != 2 {
-		t.Errorf("expected 2 recipients, got %d", len(msg.To))
-	}
-	if len(msg.Labels) != 2 {
-		t.Errorf("expected 2 labels, got %d", len(msg.Labels))
-	}
-	if msg.BodyText != "Message body 1" {
-		t.Errorf("expected body text 'Message body 1', got %q", msg.BodyText)
-	}
+	require.NoError(err, "GetMessage")
+	require.NotNil(msg, "expected message")
+	assert.Equal("Hello World", msg.Subject)
+	require.Len(msg.From, 1, "from list")
+	assert.Equal("alice@example.com", msg.From[0].Email)
+	assert.Len(msg.To, 2, "recipients")
+	assert.Len(msg.Labels, 2, "labels")
+	assert.Equal("Message body 1", msg.BodyText)
 }
 
 func TestGetMessageWithAttachments(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 2)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if len(msg.Attachments) != 2 {
-		t.Errorf("expected 2 attachments, got %d", len(msg.Attachments))
-	}
+	require.NoError(err, "GetMessage")
+	require.Len(msg.Attachments, 2)
 	found := false
 	for _, att := range msg.Attachments {
 		if att.Filename == "doc.pdf" {
 			found = true
-			if att.MimeType != "application/pdf" {
-				t.Errorf("expected mime type application/pdf, got %s", att.MimeType)
-			}
-			if att.Size != 10000 {
-				t.Errorf("expected size 10000, got %d", att.Size)
-			}
+			assert.Equal("application/pdf", att.MimeType)
+			assert.Equal(int64(10000), att.Size)
 		}
 	}
-	if !found {
-		t.Error("expected to find doc.pdf attachment")
-	}
+	assert.True(found, "expected to find doc.pdf attachment")
 }
 
 func TestGetMessageBySourceID(t *testing.T) {
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3")
-	if err != nil {
-		t.Fatalf("GetMessageBySourceID: %v", err)
-	}
-	if msg == nil {
-		t.Fatal("expected message, got nil")
-	}
-	if msg.Subject != "Follow up" {
-		t.Errorf("expected subject 'Follow up', got %q", msg.Subject)
-	}
+	requirepkg.NoError(t, err, "GetMessageBySourceID")
+	requirepkg.NotNil(t, msg, "expected message")
+	assertpkg.Equal(t, "Follow up", msg.Subject)
 }
 
 func TestListAccounts(t *testing.T) {
 	env := newTestEnv(t)
 
 	accounts, err := env.Engine.ListAccounts(env.Ctx)
-	if err != nil {
-		t.Fatalf("ListAccounts: %v", err)
-	}
-	if len(accounts) != 1 {
-		t.Errorf("expected 1 account, got %d", len(accounts))
-	}
-	if accounts[0].Identifier != "test@gmail.com" {
-		t.Errorf("expected test@gmail.com, got %s", accounts[0].Identifier)
-	}
+	requirepkg.NoError(t, err, "ListAccounts")
+	requirepkg.Len(t, accounts, 1)
+	assertpkg.Equal(t, "test@gmail.com", accounts[0].Identifier)
 }
 
 func TestGetTotalStats(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	stats := env.MustGetTotalStats(StatsOptions{})
 
-	if stats.MessageCount != 5 {
-		t.Errorf("expected 5 messages, got %d", stats.MessageCount)
-	}
-	if stats.AttachmentCount != 3 {
-		t.Errorf("expected 3 attachments, got %d", stats.AttachmentCount)
-	}
-	expectedSize := int64(1000 + 2000 + 1500 + 3000 + 500)
-	if stats.TotalSize != expectedSize {
-		t.Errorf("expected total size %d, got %d", expectedSize, stats.TotalSize)
-	}
-	expectedAttSize := int64(10000 + 5000 + 20000)
-	if stats.AttachmentSize != expectedAttSize {
-		t.Errorf("expected attachment size %d, got %d", expectedAttSize, stats.AttachmentSize)
-	}
+	assert.Equal(int64(5), stats.MessageCount, "MessageCount")
+	assert.Equal(int64(3), stats.AttachmentCount, "AttachmentCount")
+	assert.Equal(int64(1000+2000+1500+3000+500), stats.TotalSize, "TotalSize")
+	assert.Equal(int64(10000+5000+20000), stats.AttachmentSize, "AttachmentSize")
 }
 
 func TestGetTotalStatsWithSourceID(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	src2 := env.AddSource(dbtest.SourceOpts{Identifier: "other@gmail.com", DisplayName: "Other Account"})
@@ -363,67 +301,44 @@ func TestGetTotalStatsWithSourceID(t *testing.T) {
 	})
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	if allStats.MessageCount != 6 {
-		t.Errorf("expected 6 total messages, got %d", allStats.MessageCount)
-	}
-	if allStats.LabelCount != 5 {
-		t.Errorf("expected 5 total labels, got %d", allStats.LabelCount)
-	}
-	if allStats.AccountCount != 2 {
-		t.Errorf("expected 2 accounts, got %d", allStats.AccountCount)
-	}
+	assert.Equal(int64(6), allStats.MessageCount, "total messages")
+	assert.Equal(int64(5), allStats.LabelCount, "total labels")
+	assert.Equal(int64(2), allStats.AccountCount, "total accounts")
 
 	sourceID := int64(1)
 	source1Stats := env.MustGetTotalStats(StatsOptions{SourceID: &sourceID})
-	if source1Stats.MessageCount != 5 {
-		t.Errorf("expected 5 messages for source 1, got %d", source1Stats.MessageCount)
-	}
-	if source1Stats.LabelCount != 3 {
-		t.Errorf("expected 3 labels for source 1, got %d", source1Stats.LabelCount)
-	}
-	if source1Stats.AccountCount != 1 {
-		t.Errorf("expected account count 1 when filtering by source, got %d", source1Stats.AccountCount)
-	}
+	assert.Equal(int64(5), source1Stats.MessageCount, "messages for source 1")
+	assert.Equal(int64(3), source1Stats.LabelCount, "labels for source 1")
+	assert.Equal(int64(1), source1Stats.AccountCount, "account count when filtering by source")
 }
 
 func TestGetTotalStatsWithInvalidSourceID(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	nonExistentID := int64(9999)
 	stats := env.MustGetTotalStats(StatsOptions{SourceID: &nonExistentID})
 
-	if stats.MessageCount != 0 {
-		t.Errorf("expected 0 messages for non-existent source, got %d", stats.MessageCount)
-	}
-	if stats.LabelCount != 0 {
-		t.Errorf("expected 0 labels for non-existent source, got %d", stats.LabelCount)
-	}
-	if stats.AccountCount != 0 {
-		t.Errorf("expected 0 account count for non-existent source, got %d", stats.AccountCount)
-	}
-	if stats.AttachmentCount != 0 {
-		t.Errorf("expected 0 attachments for non-existent source, got %d", stats.AttachmentCount)
-	}
+	assert.Equal(int64(0), stats.MessageCount, "MessageCount")
+	assert.Equal(int64(0), stats.LabelCount, "LabelCount")
+	assert.Equal(int64(0), stats.AccountCount, "AccountCount")
+	assert.Equal(int64(0), stats.AttachmentCount, "AttachmentCount")
 }
 
 func TestWithAttachmentsOnlyStats(t *testing.T) {
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	if allStats.MessageCount != 5 {
-		t.Errorf("expected 5 total messages, got %d", allStats.MessageCount)
-	}
+	assertpkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	attStats := env.MustGetTotalStats(StatsOptions{WithAttachmentsOnly: true})
-	if attStats.MessageCount != 2 {
-		t.Errorf("expected 2 messages with attachments, got %d", attStats.MessageCount)
-	}
-	if attStats.AttachmentCount == 0 {
-		t.Error("expected non-zero attachment count for messages with attachments")
-	}
+	assertpkg.Equal(t, int64(2), attStats.MessageCount, "messages with attachments")
+	assertpkg.NotZero(t, attStats.AttachmentCount, "non-zero attachment count for messages with attachments")
 }
 
 func TestHideDeletedFromSourceSearchFast(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Mark message 1 as deleted
@@ -434,144 +349,104 @@ func TestHideDeletedFromSourceSearchFast(t *testing.T) {
 
 	// SearchFast without filter: all 5 messages
 	all, err := env.Engine.SearchFast(env.Ctx, q, MessageFilter{}, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchFast: %v", err)
-	}
-	if len(all) != 5 {
-		t.Errorf("SearchFast without filter: expected 5, got %d", len(all))
-	}
+	require.NoError(err, "SearchFast")
+	assert.Len(all, 5, "SearchFast without filter")
 
 	// SearchFast with HideDeletedFromSource: 4 messages
 	hidden, err := env.Engine.SearchFast(env.Ctx, q, MessageFilter{HideDeletedFromSource: true}, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchFast(hide-deleted): %v", err)
-	}
-	if len(hidden) != 4 {
-		t.Errorf("SearchFast with hide-deleted: expected 4, got %d", len(hidden))
-	}
+	require.NoError(err, "SearchFast(hide-deleted)")
+	assert.Len(hidden, 4, "SearchFast with hide-deleted")
 
 	// SearchFastCount must agree
 	count, err := env.Engine.SearchFastCount(env.Ctx, q, MessageFilter{HideDeletedFromSource: true})
-	if err != nil {
-		t.Fatalf("SearchFastCount(hide-deleted): %v", err)
-	}
-	if count != 4 {
-		t.Errorf("SearchFastCount with hide-deleted: expected 4, got %d", count)
-	}
+	require.NoError(err, "SearchFastCount(hide-deleted)")
+	assert.Equal(int64(4), count, "SearchFastCount with hide-deleted")
 }
 
 func TestHideDeletedFromSourceStats(t *testing.T) {
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	if allStats.MessageCount != 5 {
-		t.Errorf("expected 5 total messages, got %d", allStats.MessageCount)
-	}
+	assertpkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	// Mark message 1 as deleted
 	env.MarkDeletedByID(1)
 
 	// Without HideDeletedFromSource: still 5
 	stats := env.MustGetTotalStats(StatsOptions{})
-	if stats.MessageCount != 5 {
-		t.Errorf("expected 5 messages (deleted included), got %d", stats.MessageCount)
-	}
+	assertpkg.Equal(t, int64(5), stats.MessageCount, "messages (deleted included)")
 
 	// With HideDeletedFromSource: 4
 	hiddenStats := env.MustGetTotalStats(StatsOptions{HideDeletedFromSource: true})
-	if hiddenStats.MessageCount != 4 {
-		t.Errorf("expected 4 messages (deleted hidden), got %d", hiddenStats.MessageCount)
-	}
+	assertpkg.Equal(t, int64(4), hiddenStats.MessageCount, "messages (deleted hidden)")
 }
 
 func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedByID(1)
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("Aggregate(ViewSenders): %v", err)
-	}
+	requirepkg.NoError(t, err, "Aggregate(ViewSenders)")
 	for _, row := range rows {
-		if row.Key == "alice@example.com" && row.Count != 3 {
-			t.Errorf("expected alice count 3 (including deleted), got %d", row.Count)
+		if row.Key == "alice@example.com" {
+			assert.Equal(int64(3), row.Count, "alice count (including deleted)")
 		}
 	}
 
 	messages := env.MustListMessages(MessageFilter{})
-	if len(messages) != 5 {
-		t.Errorf("expected 5 messages (including deleted), got %d", len(messages))
-	}
+	assert.Len(messages, 5, "messages (including deleted)")
 
 	var foundDeleted bool
 	for _, msg := range messages {
 		if msg.ID == 1 {
-			if msg.DeletedAt == nil {
-				t.Error("expected DeletedAt to be set for deleted message")
-			}
+			assert.NotNil(msg.DeletedAt, "expected DeletedAt to be set for deleted message")
 			foundDeleted = true
 		} else {
-			if msg.DeletedAt != nil {
-				t.Errorf("expected DeletedAt to be nil for non-deleted message %d", msg.ID)
-			}
+			assert.Nil(msg.DeletedAt, "expected DeletedAt to be nil for non-deleted message %d", msg.ID)
 		}
 	}
-	if !foundDeleted {
-		t.Error("deleted message not found in results")
-	}
+	assert.True(foundDeleted, "deleted message not found in results")
 
 	stats := env.MustGetTotalStats(StatsOptions{})
-	if stats.MessageCount != 5 {
-		t.Errorf("expected 5 messages in stats (including deleted), got %d", stats.MessageCount)
-	}
+	assert.Equal(int64(5), stats.MessageCount, "messages in stats (including deleted)")
 }
 
 func TestGetMessageIncludesDeleted(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedByID(1)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected deleted message to be returned, got nil")
-	}
+	require.NoError(err, "GetMessage")
+	assert.NotNil(msg, "expected deleted message to be returned")
 
 	msg, err = env.Engine.GetMessage(env.Ctx, 2)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected message, got nil")
-	}
+	require.NoError(err, "GetMessage")
+	assert.NotNil(msg, "expected message")
 }
 
 func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedBySourceID("msg3")
 
 	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3")
-	if err != nil {
-		t.Fatalf("GetMessageBySourceID: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected deleted message to be returned, got nil")
-	}
+	require.NoError(err, "GetMessageBySourceID")
+	assert.NotNil(msg, "expected deleted message to be returned")
 
 	msg, err = env.Engine.GetMessageBySourceID(env.Ctx, "msg2")
-	if err != nil {
-		t.Fatalf("GetMessageBySourceID: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected message, got nil")
-	}
+	require.NoError(err, "GetMessageBySourceID")
+	assert.NotNil(msg, "expected message")
 }
 
 func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	env.AddMessage(dbtest.MessageOpts{Subject: "Ghost Message", SentAt: "2024-06-01 10:00:00"})
@@ -579,16 +454,13 @@ func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
 	filter := MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)}
 	messages := env.MustListMessages(filter)
 
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message with empty sender name, got %d", len(messages))
-	}
-	if len(messages) > 0 && messages[0].Subject != "Ghost Message" {
-		t.Errorf("expected 'Ghost Message', got %q", messages[0].Subject)
+	assert.Len(messages, 1, "messages with empty sender name")
+	if len(messages) > 0 {
+		assert.Equal("Ghost Message", messages[0].Subject)
 	}
 	for _, m := range messages {
-		if m.Subject == "Hello World" || m.Subject == "Re: Hello" {
-			t.Errorf("should not match message with valid sender: %q", m.Subject)
-		}
+		assert.NotEqual("Hello World", m.Subject, "should not match message with valid sender")
+		assert.NotEqual("Re: Hello", m.Subject, "should not match message with valid sender")
 	}
 }
 
@@ -602,17 +474,14 @@ func TestMatchEmptySenderName_MixedFromRecipients(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "Mixed From", SentAt: "2024-06-01 10:00:00", FromID: aliceID})
 	lastMsgID := env.LastMessageID()
 	_, err := env.DB.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`, lastMsgID, nullID)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
+	requirepkg.NoError(t, err, "insert")
 
 	filter := MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)}
 	messages := env.MustListMessages(filter)
 
 	for _, m := range messages {
-		if m.Subject == "Mixed From" {
-			t.Error("MatchEmptySenderName should not match message with at least one valid from sender")
-		}
+		assertpkg.NotEqual(t, "Mixed From", m.Subject,
+			"MatchEmptySenderName should not match message with at least one valid from sender")
 	}
 }
 
@@ -625,9 +494,7 @@ func TestMatchEmptySenderName_CombinedWithDomain(t *testing.T) {
 	}
 	messages := env.MustListMessages(filter)
 
-	if len(messages) != 0 {
-		t.Errorf("expected 0 messages for MatchEmptySenderName+Domain, got %d", len(messages))
-	}
+	assertpkg.Empty(t, messages, "expected 0 messages for MatchEmptySenderName+Domain")
 }
 
 func TestGetGmailIDsByFilter_Label(t *testing.T) {
@@ -648,12 +515,8 @@ func TestGetGmailIDsByFilter_Label(t *testing.T) {
 			ids, err := env.Engine.GetGmailIDsByFilter(
 				env.Ctx, MessageFilter{Label: tt.label},
 			)
-			if err != nil {
-				t.Fatalf("GetGmailIDsByFilter: %v", err)
-			}
-			if len(ids) != tt.wantLen {
-				t.Errorf("got %d IDs, want %d", len(ids), tt.wantLen)
-			}
+			requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+			assertpkg.Len(t, ids, tt.wantLen)
 		})
 	}
 }
@@ -662,24 +525,16 @@ func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice Smith"})
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Errorf("expected 3 gmail IDs for Alice Smith, got %d", len(ids))
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs for Alice Smith")
 }
 
 func TestGetGmailIDsByFilter_RecipientName(t *testing.T) {
 	env := newTestEnv(t)
 
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob Jones"})
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Errorf("expected 3 gmail IDs for Bob Jones, got %d", len(ids))
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs for Bob Jones")
 }
 
 func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
@@ -690,15 +545,12 @@ func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T)
 		EmptyValueTargets: emptyTargets(ViewRecipients),
 	}
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, filter)
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Errorf("expected 3 gmail IDs, got %d", len(ids))
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs")
 }
 
 func TestListMessages_ConversationIDFilter(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
@@ -725,23 +577,15 @@ func TestListMessages_ConversationIDFilter(t *testing.T) {
 
 	convID1 := int64(1)
 	messages1 := env.MustListMessages(MessageFilter{ConversationID: &convID1})
-	if len(messages1) != 5 {
-		t.Errorf("expected 5 messages in conversation 1, got %d", len(messages1))
-	}
+	assert.Len(messages1, 5, "messages in conversation 1")
 	for _, msg := range messages1 {
-		if msg.ConversationID != 1 {
-			t.Errorf("expected conversation_id=1, got %d for message %d", msg.ConversationID, msg.ID)
-		}
+		assert.Equal(int64(1), msg.ConversationID, "message %d conversation_id", msg.ID)
 	}
 
 	messages2 := env.MustListMessages(MessageFilter{ConversationID: &conv2})
-	if len(messages2) != 2 {
-		t.Errorf("expected 2 messages in conversation 2, got %d", len(messages2))
-	}
+	assert.Len(messages2, 2, "messages in conversation 2")
 	for _, msg := range messages2 {
-		if msg.ConversationID != conv2 {
-			t.Errorf("expected conversation_id=%d, got %d for message %d", conv2, msg.ConversationID, msg.ID)
-		}
+		assert.Equal(conv2, msg.ConversationID, "message %d conversation_id", msg.ID)
 	}
 
 	filter2Asc := MessageFilter{
@@ -749,15 +593,9 @@ func TestListMessages_ConversationIDFilter(t *testing.T) {
 		Sorting:        MessageSorting{Field: MessageSortByDate, Direction: SortAsc},
 	}
 	messagesAsc := env.MustListMessages(filter2Asc)
-	if len(messagesAsc) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messagesAsc))
-	}
-	if messagesAsc[0].Subject != "Thread 2 Message 1" {
-		t.Errorf("expected first message to be 'Thread 2 Message 1', got %q", messagesAsc[0].Subject)
-	}
-	if messagesAsc[1].Subject != "Thread 2 Message 2" {
-		t.Errorf("expected second message to be 'Thread 2 Message 2', got %q", messagesAsc[1].Subject)
-	}
+	requirepkg.Len(t, messagesAsc, 2)
+	assert.Equal("Thread 2 Message 1", messagesAsc[0].Subject, "first message")
+	assert.Equal("Thread 2 Message 2", messagesAsc[1].Subject, "second message")
 }
 
 // =============================================================================
@@ -778,9 +616,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
-				if msgs[0].Subject != "No Sender" {
-					t.Errorf("expected 'No Sender', got %q", msgs[0].Subject)
-				}
+				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 		{
@@ -788,9 +624,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenders)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
-				if msgs[0].Subject != "No Sender" {
-					t.Errorf("expected 'No Sender' message, got %q", msgs[0].Subject)
-				}
+				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 		{
@@ -817,30 +651,22 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 				for _, m := range msgs {
 					subjects[m.Subject] = true
 				}
-				if !subjects["No Labels"] {
-					t.Error("expected 'No Labels' message")
-				}
-				if !subjects["No Recipients"] {
-					t.Error("expected 'No Recipients' message")
-				}
+				assertpkg.True(t, subjects["No Labels"], "expected 'No Labels' message")
+				assertpkg.True(t, subjects["No Recipients"], "expected 'No Recipients' message")
 			},
 		},
 		{
 			name:   "Empty recipient name includes no-recipients message",
 			filter: MessageFilter{EmptyValueTargets: emptyTargets(ViewRecipientNames)},
 			validate: func(t *testing.T, msgs []MessageSummary) {
-				if len(msgs) == 0 {
-					t.Fatal("expected at least 1 message with empty recipient name, got 0")
-				}
+				requirepkg.NotEmpty(t, msgs, "expected at least 1 message with empty recipient name")
 				found := false
 				for _, m := range msgs {
 					if m.Subject == "No Recipients" {
 						found = true
 					}
 				}
-				if !found {
-					t.Errorf("expected 'No Recipients' message in results")
-				}
+				assertpkg.True(t, found, "expected 'No Recipients' message in results")
 			},
 		},
 		{
@@ -848,9 +674,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenders)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
-				if msgs[0].Subject != "No Sender" {
-					t.Errorf("expected 'No Sender' message, got %q", msgs[0].Subject)
-				}
+				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 	}
@@ -858,8 +682,8 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messages := env.MustListMessages(tt.filter)
-			if tt.wantCount > 0 && len(messages) != tt.wantCount {
-				t.Fatalf("got %d messages, want %d", len(messages), tt.wantCount)
+			if tt.wantCount > 0 {
+				requirepkg.Len(t, messages, tt.wantCount)
 			}
 			if tt.validate != nil {
 				tt.validate(t, messages)
@@ -869,6 +693,8 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 }
 
 func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	filter := MessageFilter{
@@ -878,17 +704,12 @@ func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
 	}
 
 	messages := env.MustListMessages(filter)
-	if len(messages) != 3 {
-		t.Errorf("ListMessages: expected 3 messages, got %d", len(messages))
-	}
+	assert.Len(messages, 3, "ListMessages")
 
 	rows, err := env.Engine.SubAggregate(env.Ctx, filter, ViewSenders, AggregateOptions{Limit: 100})
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
-	if len(rows) != 1 || rows[0].Key != "alice@example.com" {
-		t.Errorf("SubAggregate: unexpected rows: %v", rows)
-	}
+	require.NoError(err, "SubAggregate")
+	require.Len(rows, 1)
+	assert.Equal("alice@example.com", rows[0].Key)
 }
 
 // TestRecipientNameFilter_IncludesBCC verifies that RecipientName filter includes BCC recipients.
@@ -911,16 +732,12 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 
 	t.Run("ListMessages", func(t *testing.T) {
 		messages := env.MustListMessages(MessageFilter{RecipientName: "Secret Bob"})
-		if len(messages) != 1 {
-			t.Errorf("expected 1 message, got %d", len(messages))
-		}
+		assertpkg.Len(t, messages, 1)
 	})
 
 	t.Run("AggregateByRecipientName", func(t *testing.T) {
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, AggregateOptions{Limit: 100})
-		if err != nil {
-			t.Fatalf("AggregateByRecipientName: %v", err)
-		}
+		requirepkg.NoError(t, err, "AggregateByRecipientName")
 		found := false
 		for _, row := range rows {
 			if row.Key == "Secret Bob" {
@@ -928,36 +745,25 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Errorf("expected BCC recipient 'Secret Bob' in aggregate, got: %v", rows)
-		}
+		assertpkg.True(t, found, "expected BCC recipient 'Secret Bob' in aggregate, got: %v", rows)
 	})
 
 	t.Run("SubAggregate", func(t *testing.T) {
 		rows, err := env.Engine.SubAggregate(env.Ctx, MessageFilter{RecipientName: "Secret Bob"}, ViewSenders, AggregateOptions{Limit: 100})
-		if err != nil {
-			t.Fatalf("SubAggregate: %v", err)
-		}
-		if len(rows) != 1 || rows[0].Key != "alice-bcc@example.com" {
-			t.Errorf("expected sender alice-bcc@example.com, got: %v", rows)
-		}
+		requirepkg.NoError(t, err, "SubAggregate")
+		requirepkg.Len(t, rows, 1)
+		assertpkg.Equal(t, "alice-bcc@example.com", rows[0].Key)
 	})
 
 	t.Run("GetGmailIDsByFilter", func(t *testing.T) {
 		ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Secret Bob"})
-		if err != nil {
-			t.Fatalf("GetGmailIDsByFilter: %v", err)
-		}
-		if len(ids) != 1 {
-			t.Errorf("expected 1 gmail ID, got: %v", ids)
-		}
+		requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+		assertpkg.Len(t, ids, 1)
 	})
 
 	t.Run("Recipient_email_also_finds_BCC", func(t *testing.T) {
 		messages := env.MustListMessages(MessageFilter{Recipient: "secret@example.com"})
-		if len(messages) != 1 {
-			t.Errorf("expected 1 message, got %d", len(messages))
-		}
+		assertpkg.Len(t, messages, 1)
 	})
 }
 
@@ -965,6 +771,7 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 // preserves both empty constraints. This tests the fix for the bug where
 // EmptyValueTarget could only hold one dimension.
 func TestMultipleEmptyTargets(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnvWithEmptyBuckets(t)
 
 	// Scenario: User drills into "empty sender names" then into "empty labels".
@@ -977,15 +784,14 @@ func TestMultipleEmptyTargets(t *testing.T) {
 
 	// From the test fixture, "No Sender" has no sender name AND no labels.
 	// It should be the only message matching both constraints.
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message matching both empty sender name AND empty labels, got %d", len(messages))
+	if !assert.Len(messages, 1, "messages matching both empty sender name AND empty labels") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
 	}
 
-	if len(messages) == 1 && messages[0].Subject != "No Sender" {
-		t.Errorf("expected 'No Sender', got %q", messages[0].Subject)
+	if len(messages) == 1 {
+		assert.Equal("No Sender", messages[0].Subject)
 	}
 
 	// Test another constraint: empty senders AND empty recipients.
@@ -997,15 +803,14 @@ func TestMultipleEmptyTargets(t *testing.T) {
 	messages2 := env.MustListMessages(filter2)
 
 	// "No Sender" has BOTH empty sender AND empty recipients
-	if len(messages2) != 1 {
-		t.Errorf("expected 1 message matching both empty senders AND empty recipients, got %d", len(messages2))
+	if !assert.Len(messages2, 1, "messages matching both empty senders AND empty recipients") {
 		for _, m := range messages2 {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
 	}
 
-	if len(messages2) == 1 && messages2[0].Subject != "No Sender" {
-		t.Errorf("expected 'No Sender', got %q", messages2[0].Subject)
+	if len(messages2) == 1 {
+		assert.Equal("No Sender", messages2[0].Subject)
 	}
 
 	// Test constraint: empty recipients AND empty labels.
@@ -1018,8 +823,7 @@ func TestMultipleEmptyTargets(t *testing.T) {
 	messages3 := env.MustListMessages(filter3)
 
 	// Both "No Sender" and "No Recipients" have no recipients AND no labels
-	if len(messages3) != 2 {
-		t.Errorf("expected 2 messages matching empty recipients AND empty labels, got %d", len(messages3))
+	if !assert.Len(messages3, 2, "messages matching empty recipients AND empty labels") {
 		for _, m := range messages3 {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
@@ -1030,9 +834,8 @@ func TestMultipleEmptyTargets(t *testing.T) {
 	for _, m := range messages3 {
 		subjects[m.Subject] = true
 	}
-	if !subjects["No Sender"] || !subjects["No Recipients"] {
-		t.Errorf("expected both 'No Sender' and 'No Recipients', got %v", subjects)
-	}
+	assert.True(subjects["No Sender"], "expected 'No Sender' message")
+	assert.True(subjects["No Recipients"], "expected 'No Recipients' message")
 
 	// Test truly exclusive constraint: combine empty senders with a specific label
 	// "No Sender" has no sender but also no labels, so combining with Label should return 0
@@ -1044,8 +847,7 @@ func TestMultipleEmptyTargets(t *testing.T) {
 	messages4 := env.MustListMessages(filter4)
 
 	// No message has both empty sender AND label INBOX
-	if len(messages4) != 0 {
-		t.Errorf("expected 0 messages matching empty senders AND label INBOX, got %d", len(messages4))
+	if !assert.Empty(messages4, "messages matching empty senders AND label INBOX") {
 		for _, m := range messages4 {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
@@ -1053,15 +855,11 @@ func TestMultipleEmptyTargets(t *testing.T) {
 
 	// Also test via SubAggregate: drilling from empty senders + labels into domains view
 	rows, err := env.Engine.SubAggregate(env.Ctx, filter, ViewDomains, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate with multiple empty targets: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate with multiple empty targets")
 
 	// "No Sender" has no sender so no domain - expect empty or just the empty bucket
 	// Since it has no sender, there's no domain to aggregate on
-	if len(rows) != 0 {
-		t.Errorf("expected 0 domain sub-aggregate rows for no-sender message, got %d", len(rows))
-	}
+	assert.Empty(rows, "domain sub-aggregate rows for no-sender message")
 }
 
 // TestGetTotalStatsWithSearchQuery verifies that GetTotalStats filters stats
@@ -1069,32 +867,21 @@ func TestMultipleEmptyTargets(t *testing.T) {
 // for a bug where SQLiteEngine.GetTotalStats ignored opts.SearchQuery, returning
 // global stats instead of search-filtered stats.
 func TestGetTotalStatsWithSearchQuery(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Without search: 5 messages total
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	if allStats.MessageCount != 5 {
-		t.Fatalf("expected 5 total messages, got %d", allStats.MessageCount)
-	}
+	requirepkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	// Search "Hello" matches 2 messages: "Hello World" (id=1, size=1000, no att)
 	// and "Re: Hello" (id=2, size=2000, 2 attachments: 10000+5000 bytes).
 	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "Hello"})
 
-	if stats.MessageCount != 2 {
-		t.Errorf("SearchQuery=Hello: expected 2 messages, got %d", stats.MessageCount)
-	}
-	expectedSize := int64(1000 + 2000)
-	if stats.TotalSize != expectedSize {
-		t.Errorf("SearchQuery=Hello: expected total size %d, got %d", expectedSize, stats.TotalSize)
-	}
-	if stats.AttachmentCount != 2 {
-		t.Errorf("SearchQuery=Hello: expected 2 attachments, got %d", stats.AttachmentCount)
-	}
-	expectedAttSize := int64(10000 + 5000)
-	if stats.AttachmentSize != expectedAttSize {
-		t.Errorf("SearchQuery=Hello: expected attachment size %d, got %d", expectedAttSize, stats.AttachmentSize)
-	}
+	assert.Equal(int64(2), stats.MessageCount, "SearchQuery=Hello messages")
+	assert.Equal(int64(1000+2000), stats.TotalSize, "SearchQuery=Hello total size")
+	assert.Equal(int64(2), stats.AttachmentCount, "SearchQuery=Hello attachments")
+	assert.Equal(int64(10000+5000), stats.AttachmentSize, "SearchQuery=Hello attachment size")
 }
 
 // TestGetTotalStatsWithSearchQuery_FromFilter verifies that from: search
@@ -1105,13 +892,8 @@ func TestGetTotalStatsWithSearchQuery_FromFilter(t *testing.T) {
 	// "from:alice" should match 3 messages (ids 1,2,3)
 	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "from:alice@example.com"})
 
-	if stats.MessageCount != 3 {
-		t.Errorf("SearchQuery=from:alice: expected 3 messages, got %d", stats.MessageCount)
-	}
-	expectedSize := int64(1000 + 2000 + 1500)
-	if stats.TotalSize != expectedSize {
-		t.Errorf("SearchQuery=from:alice: expected total size %d, got %d", expectedSize, stats.TotalSize)
-	}
+	assertpkg.Equal(t, int64(3), stats.MessageCount, "SearchQuery=from:alice messages")
+	assertpkg.Equal(t, int64(1000+2000+1500), stats.TotalSize, "SearchQuery=from:alice total size")
 }
 
 // TestGetTotalStatsWithSearchQuery_Combined verifies that SearchQuery combines
@@ -1125,12 +907,8 @@ func TestGetTotalStatsWithSearchQuery_Combined(t *testing.T) {
 		WithAttachmentsOnly: true,
 	})
 
-	if stats.MessageCount != 1 {
-		t.Errorf("SearchQuery+WithAttachments: expected 1 message, got %d", stats.MessageCount)
-	}
-	if stats.TotalSize != 2000 {
-		t.Errorf("SearchQuery+WithAttachments: expected total size 2000, got %d", stats.TotalSize)
-	}
+	assertpkg.Equal(t, int64(1), stats.MessageCount, "SearchQuery+WithAttachments messages")
+	assertpkg.Equal(t, int64(2000), stats.TotalSize, "SearchQuery+WithAttachments total size")
 }
 
 func TestGetMessageRaw(t *testing.T) {
@@ -1142,29 +920,19 @@ func TestGetMessageRaw(t *testing.T) {
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
 	)
-	if err != nil {
-		t.Fatalf("insert message_raw: %v", err)
-	}
+	requirepkg.NoError(t, err, "insert message_raw")
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
-	if err != nil {
-		t.Fatalf("GetMessageRaw: %v", err)
-	}
-	if !bytes.Equal(got, rawMIME) {
-		t.Errorf("GetMessageRaw = %q, want %q", got, rawMIME)
-	}
+	requirepkg.NoError(t, err, "GetMessageRaw")
+	assertpkg.Equal(t, rawMIME, got)
 }
 
 func TestGetMessageRaw_NotFound(t *testing.T) {
 	env := newTestEnv(t)
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, 999999)
-	if err != nil {
-		t.Fatalf("GetMessageRaw unexpected error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("GetMessageRaw = %q, want nil", got)
-	}
+	requirepkg.NoError(t, err, "GetMessageRaw unexpected error")
+	assertpkg.Nil(t, got)
 }
 
 // TestGetMessageRaw_FiltersDeletedFromSource verifies that GetMessageRaw
@@ -1172,54 +940,43 @@ func TestGetMessageRaw_NotFound(t *testing.T) {
 // set, keeping the raw-MIME endpoint aligned with how list/search hide
 // deleted-from-source messages.
 func TestGetMessageRaw_FiltersDeletedFromSource(t *testing.T) {
+	require := requirepkg.New(t)
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Deleted", SentAt: "2024-06-01 12:00:00"})
-	if _, err := env.DB.Exec(
+	_, err := env.DB.Exec(
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
-	); err != nil {
-		t.Fatalf("insert message_raw: %v", err)
-	}
-	if _, err := env.DB.Exec(
+	)
+	require.NoError(err, "insert message_raw")
+	_, err = env.DB.Exec(
 		`UPDATE messages SET deleted_from_source_at = '2024-06-02 12:00:00' WHERE id = ?`,
 		msgID,
-	); err != nil {
-		t.Fatalf("mark deleted: %v", err)
-	}
+	)
+	require.NoError(err, "mark deleted")
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
-	if err != nil {
-		t.Fatalf("GetMessageRaw: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil for deleted-from-source message, got %d bytes", len(got))
-	}
+	require.NoError(err, "GetMessageRaw")
+	assertpkg.Nil(t, got, "expected nil for deleted-from-source message")
 }
 
 // TestGetMessage_PopulatesDeletedAt verifies that the engine's GetMessage
 // surfaces deleted_from_source_at via MessageDetail.DeletedAt so the API
 // can include it in detail responses.
 func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
+	require := requirepkg.New(t)
 	env := newTestEnv(t)
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Soft-deleted", SentAt: "2024-06-01 12:00:00"})
-	if _, err := env.DB.Exec(
+	_, err := env.DB.Exec(
 		`UPDATE messages SET deleted_from_source_at = '2024-06-02 12:00:00' WHERE id = ?`,
 		msgID,
-	); err != nil {
-		t.Fatalf("mark deleted: %v", err)
-	}
+	)
+	require.NoError(err, "mark deleted")
 
 	msg, err := env.Engine.GetMessage(env.Ctx, msgID)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Fatal("GetMessage returned nil for deleted message; expected the message with DeletedAt set")
-	}
-	if msg.DeletedAt == nil {
-		t.Errorf("DeletedAt = nil, want non-nil for deleted message")
-	}
+	require.NoError(err, "GetMessage")
+	require.NotNil(msg, "GetMessage returned nil for deleted message; expected the message with DeletedAt set")
+	assertpkg.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
 }

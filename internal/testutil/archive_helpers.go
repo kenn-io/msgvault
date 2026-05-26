@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ArchiveEntry describes a single entry in a tar.gz archive for testing.
@@ -23,9 +25,7 @@ type ArchiveEntry struct {
 func CreateTarGz(t *testing.T, path string, entries []ArchiveEntry) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 
 	gzw := gzip.NewWriter(f)
@@ -45,13 +45,10 @@ func CreateTarGz(t *testing.T, path string, entries []ArchiveEntry) {
 			Typeflag: e.TypeFlag,
 			Linkname: e.LinkName,
 		}
-		if err := tw.WriteHeader(h); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, tw.WriteHeader(h))
 		if len(e.Content) > 0 {
-			if _, err := tw.Write([]byte(e.Content)); err != nil {
-				t.Fatal(err)
-			}
+			_, err := tw.Write([]byte(e.Content))
+			require.NoError(t, err)
 		}
 	}
 }
@@ -60,26 +57,19 @@ func CreateTarGz(t *testing.T, path string, entries []ArchiveEntry) {
 func CreateZip(t *testing.T, path string, entries []ArchiveEntry) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 
 	w := zip.NewWriter(f)
 	for _, e := range entries {
 		fw, err := w.Create(e.Name)
-		if err != nil {
-			t.Fatalf("create zip entry %s: %v", e.Name, err)
-		}
+		require.NoErrorf(t, err, "create zip entry %s", e.Name)
 		if len(e.Content) > 0 {
-			if _, err := fw.Write([]byte(e.Content)); err != nil {
-				t.Fatalf("write zip entry %s: %v", e.Name, err)
-			}
+			_, err := fw.Write([]byte(e.Content))
+			require.NoErrorf(t, err, "write zip entry %s", e.Name)
 		}
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close zip writer: %v", err)
-	}
+	require.NoError(t, w.Close(), "close zip writer")
 }
 
 // CreateTempZip creates a zip file in a temporary directory containing the
@@ -89,9 +79,7 @@ func CreateTempZip(t *testing.T, entries map[string]string) string {
 
 	zipPath := filepath.Join(t.TempDir(), "test.zip")
 	f, err := os.Create(zipPath)
-	if err != nil {
-		t.Fatalf("create zip file: %v", err)
-	}
+	require.NoError(t, err, "create zip file")
 	defer func() { _ = f.Close() }()
 
 	w := zip.NewWriter(f)
@@ -103,16 +91,11 @@ func CreateTempZip(t *testing.T, entries map[string]string) string {
 	for _, name := range keys {
 		content := entries[name]
 		fw, err := w.Create(name)
-		if err != nil {
-			t.Fatalf("create zip entry %s: %v", name, err)
-		}
-		if _, err := fw.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %s: %v", name, err)
-		}
+		require.NoErrorf(t, err, "create zip entry %s", name)
+		_, err = fw.Write([]byte(content))
+		require.NoErrorf(t, err, "write zip entry %s", name)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close zip writer: %v", err)
-	}
+	require.NoError(t, w.Close(), "close zip writer")
 
 	return zipPath
 }

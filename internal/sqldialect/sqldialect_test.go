@@ -1,8 +1,9 @@
 package sqldialect
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRebindPostgreSQL(t *testing.T) {
@@ -20,9 +21,7 @@ func TestRebindPostgreSQL(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := RebindPostgreSQL(tc.in); got != tc.want {
-				t.Errorf("RebindPostgreSQL(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assert.Equal(t, tc.want, RebindPostgreSQL(tc.in), "RebindPostgreSQL(%q)", tc.in)
 		})
 	}
 }
@@ -55,10 +54,7 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := EscapeTSQueryTerm(tc.in)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("EscapeTSQueryTerm(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assert.Equal(t, tc.want, EscapeTSQueryTerm(tc.in), "EscapeTSQueryTerm(%q)", tc.in)
 		})
 	}
 }

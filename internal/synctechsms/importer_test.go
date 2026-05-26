@@ -4,11 +4,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="2">
@@ -37,12 +40,11 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 		IncludeAttachments: true,
 	})
 	summary, err := imp.ImportPath(dir)
-	if err != nil {
-		t.Fatalf("ImportPath: %v", err)
-	}
-	if summary.SMSImported != 1 || summary.MMSImported != 1 || summary.CallsImported != 1 || summary.AttachmentsImported != 1 {
-		t.Fatalf("summary = %#v", summary)
-	}
+	require.NoError(err, "ImportPath")
+	require.Equal(1, summary.SMSImported, "summary = %#v", summary)
+	require.Equal(1, summary.MMSImported, "summary = %#v", summary)
+	require.Equal(1, summary.CallsImported, "summary = %#v", summary)
+	require.Equal(1, summary.AttachmentsImported, "summary = %#v", summary)
 	// SMS and MMS with the same other party share one conversation; calls
 	// stay on a separate thread.
 	assertConversationCount(t, f.Store, 2)
@@ -53,9 +55,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
 </smses>`)
 	summary, err = imp.ImportPath(dir)
-	if err != nil {
-		t.Fatalf("ImportPath second: %v", err)
-	}
+	require.NoError(err, "ImportPath second")
 	assertMessageCount(t, f.Store, 3)
 	assertRawFormats(t, f.Store, RawFormat, 3)
 }
@@ -64,9 +64,7 @@ func TestImporterRejectsMissingOwnerPhone(t *testing.T) {
 	f := storetest.New(t)
 	imp := NewImporter(f.Store, ImportOptions{IncludeSMS: true})
 	_, err := imp.ImportPath(t.TempDir())
-	if err == nil {
-		t.Fatal("ImportPath returned nil error")
-	}
+	requirepkg.Error(t, err, "ImportPath returned nil error")
 }
 
 func TestImporterImportsCallWithBlankNumber(t *testing.T) {
@@ -81,12 +79,8 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 		IncludeCalls: true,
 	})
 	summary, err := imp.ImportPath(dir)
-	if err != nil {
-		t.Fatalf("ImportPath: %v", err)
-	}
-	if summary.CallsImported != 1 {
-		t.Fatalf("CallsImported = %d, want 1", summary.CallsImported)
-	}
+	requirepkg.NoError(t, err, "ImportPath")
+	requirepkg.Equal(t, 1, summary.CallsImported)
 	assertMessageCount(t, f.Store, 1)
 }
 
@@ -95,6 +89,7 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 // messages; treating them as incoming hides them on the wrong side of
 // the conversation in TUI/API renderings of is_from_me.
 func TestImporterMarksDraftsAsFromMe(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="2">
@@ -115,54 +110,37 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 		IncludeSMS: true,
 		IncludeMMS: true,
 	})
-	if _, err := imp.ImportPath(dir); err != nil {
-		t.Fatalf("ImportPath: %v", err)
-	}
+	_, err := imp.ImportPath(dir)
+	require.NoError(err, "ImportPath")
 
 	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
-	if err != nil {
-		t.Fatalf("query messages: %v", err)
-	}
+	require.NoError(err, "query messages")
 	defer func() { _ = rows.Close() }()
 	got := map[string]bool{}
 	for rows.Next() {
 		var srcID string
 		var fromMe bool
-		if err := rows.Scan(&srcID, &fromMe); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
+		require.NoError(rows.Scan(&srcID, &fromMe), "scan")
 		got[srcID] = fromMe
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d messages, want 2: %#v", len(got), got)
-	}
+	require.Len(got, 2, "got %#v", got)
 	for srcID, fromMe := range got {
-		if !fromMe {
-			t.Errorf("%s is_from_me = false, want true (draft)", srcID)
-		}
+		assertpkg.True(t, fromMe, "%s is_from_me = false, want true (draft)", srcID)
 	}
 }
 
 func assertMessageCount(t *testing.T, st *store.Store, want int) {
 	t.Helper()
 	var got int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&got); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if got != want {
-		t.Fatalf("message count = %d, want %d", got, want)
-	}
+	requirepkg.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&got), "count messages")
+	requirepkg.Equal(t, want, got, "message count")
 }
 
 func assertRawFormats(t *testing.T, st *store.Store, format string, want int) {
 	t.Helper()
 	var got int
-	if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`), format).Scan(&got); err != nil {
-		t.Fatalf("count raw formats: %v", err)
-	}
-	if got != want {
-		t.Fatalf("raw format count = %d, want %d", got, want)
-	}
+	requirepkg.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_raw WHERE raw_format = ?`), format).Scan(&got), "count raw formats")
+	requirepkg.Equal(t, want, got, "raw format count")
 }
 
 func assertConversationCount(t *testing.T, st *store.Store, want int) {
@@ -170,12 +148,8 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 	var got int
 	// Filter to conversations created by this importer; the shared store
 	// fixture seeds a default-thread row that is unrelated.
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got); err != nil {
-		t.Fatalf("count conversations: %v", err)
-	}
-	if got != want {
-		t.Fatalf("conversation count = %d, want %d", got, want)
-	}
+	requirepkg.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got), "count conversations")
+	requirepkg.Equal(t, want, got, "conversation count")
 }
 
 func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int) {
@@ -183,10 +157,7 @@ func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int
 	var hasAttachments bool
 	var count int
 	err := st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE message_type = 'mms'`).Scan(&hasAttachments, &count)
-	if err != nil {
-		t.Fatalf("read mms attachment metadata: %v", err)
-	}
-	if !hasAttachments || count != wantCount {
-		t.Fatalf("mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
-	}
+	requirepkg.NoError(t, err, "read mms attachment metadata")
+	requirepkg.True(t, hasAttachments, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
+	requirepkg.Equal(t, wantCount, count, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 }

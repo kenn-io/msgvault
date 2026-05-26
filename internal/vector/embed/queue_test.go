@@ -7,48 +7,37 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestQueue_ClaimReleaseComplete(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := openVectorsDBWithPending(t, 5)
 	q := NewQueue(db)
 
 	ids, token, err := q.Claim(ctx, 1, 3)
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if len(ids) != 3 || token == "" {
-		t.Fatalf("claimed ids=%v token=%q, want 3 ids and non-empty token", ids, token)
-	}
+	require.NoError(err, "Claim")
+	require.Len(ids, 3)
+	require.NotEmpty(token, "claim token")
 
 	// Second claim sees only 2 available.
 	more, token2, err := q.Claim(ctx, 1, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(more) != 2 || token2 == token {
-		t.Errorf("second claim got %d ids (want 2) / token collision=%v", len(more), token2 == token)
-	}
+	require.NoError(err)
+	assert.Len(more, 2)
+	assert.NotEqual(token, token2, "token collision")
 
-	if err := q.Release(ctx, 1, token, ids); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	if got := countAvailable(t, db, 1); got != 3 {
-		t.Errorf("available after release = %d, want 3", got)
-	}
+	require.NoError(q.Release(ctx, 1, token, ids), "Release")
+	assert.Equal(3, countAvailable(t, db, 1), "available after release")
 
 	// Now complete the second batch; pending count should drop by 2.
-	if err := q.Complete(ctx, 1, token2, more); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
+	require.NoError(q.Complete(ctx, 1, token2, more), "Complete")
 	var total int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&total); err != nil {
-		t.Fatalf("total: %v", err)
-	}
-	if total != 3 {
-		t.Errorf("pending total after complete = %d, want 3 (5 - 2)", total)
-	}
+	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&total), "total")
+	assert.Equal(3, total, "pending total after complete (5 - 2)")
 }
 
 func TestQueue_Claim_EmptyBatchIsNoop(t *testing.T) {
@@ -56,12 +45,9 @@ func TestQueue_Claim_EmptyBatchIsNoop(t *testing.T) {
 	db := openVectorsDBWithPending(t, 1)
 	q := NewQueue(db)
 	ids, token, err := q.Claim(ctx, 1, 0)
-	if err != nil {
-		t.Fatalf("Claim(0): %v", err)
-	}
-	if len(ids) != 0 || token != "" {
-		t.Errorf("expected empty ids and token, got ids=%v token=%q", ids, token)
-	}
+	requirepkg.NoError(t, err, "Claim(0)")
+	assertpkg.Empty(t, ids)
+	assertpkg.Empty(t, token)
 }
 
 func TestQueue_Claim_NoAvailableReturnsEmpty(t *testing.T) {
@@ -69,33 +55,23 @@ func TestQueue_Claim_NoAvailableReturnsEmpty(t *testing.T) {
 	db := openVectorsDBWithPending(t, 0)
 	q := NewQueue(db)
 	ids, token, err := q.Claim(ctx, 1, 10)
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if len(ids) != 0 || token != "" {
-		t.Errorf("expected empty ids and token with no available, got %v %q", ids, token)
-	}
+	requirepkg.NoError(t, err, "Claim")
+	assertpkg.Empty(t, ids)
+	assertpkg.Empty(t, token)
 }
 
 func TestQueue_Complete_WrongTokenNoop(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	db := openVectorsDBWithPending(t, 2)
 	q := NewQueue(db)
 	ids, _, err := q.Claim(ctx, 1, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	// Wrong token — rows should remain.
-	if err := q.Complete(ctx, 1, "deadbeef", ids); err != nil {
-		t.Fatalf("Complete with wrong token: %v", err)
-	}
+	require.NoError(q.Complete(ctx, 1, "deadbeef", ids), "Complete with wrong token")
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Errorf("rows remaining = %d, want 2 (Complete should not delete on token mismatch)", n)
-	}
+	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&n))
+	assertpkg.Equal(t, 2, n, "Complete should not delete on token mismatch")
 }
 
 func TestQueue_Release_WrongTokenNoop(t *testing.T) {
@@ -103,50 +79,35 @@ func TestQueue_Release_WrongTokenNoop(t *testing.T) {
 	db := openVectorsDBWithPending(t, 2)
 	q := NewQueue(db)
 	ids, _, err := q.Claim(ctx, 1, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := q.Release(ctx, 1, "deadbeef", ids); err != nil {
-		t.Fatalf("Release with wrong token: %v", err)
-	}
-	if got := countAvailable(t, db, 1); got != 0 {
-		t.Errorf("available after wrong-token release = %d, want 0 (still claimed)", got)
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NoError(t, q.Release(ctx, 1, "deadbeef", ids), "Release with wrong token")
+	assertpkg.Equal(t, 0, countAvailable(t, db, 1), "still claimed")
 }
 
 func TestQueue_ReclaimStale(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := openVectorsDBWithPending(t, 2)
 	q := NewQueue(db)
 	_, _, err := q.Claim(ctx, 1, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	// Back-date the claim past the threshold.
-	if _, err := db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`UPDATE pending_embeddings SET claimed_at = ? WHERE generation_id = 1`,
-		time.Now().Add(-20*time.Minute).Unix()); err != nil {
-		t.Fatal(err)
-	}
+		time.Now().Add(-20*time.Minute).Unix())
+	require.NoError(err)
 	n, err := q.ReclaimStale(ctx, 10*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Errorf("reclaimed %d, want 2", n)
-	}
-	if got := countAvailable(t, db, 1); got != 2 {
-		t.Errorf("available after reclaim = %d, want 2", got)
-	}
+	require.NoError(err)
+	assert.Equal(2, n, "reclaimed")
+	assert.Equal(2, countAvailable(t, db, 1), "available after reclaim")
 }
 
 func TestQueue_Complete_EmptyIDsIsNoop(t *testing.T) {
 	ctx := context.Background()
 	db := openVectorsDBWithPending(t, 1)
 	q := NewQueue(db)
-	if err := q.Complete(ctx, 1, "token", nil); err != nil {
-		t.Errorf("Complete(nil): %v", err)
-	}
+	assertpkg.NoError(t, q.Complete(ctx, 1, "token", nil), "Complete(nil)")
 }
 
 // TestQueue_Claim_ReturnsIDsAscending verifies that Claim's returned
@@ -160,15 +121,10 @@ func TestQueue_Claim_ReturnsIDsAscending(t *testing.T) {
 	q := NewQueue(db)
 
 	ids, _, err := q.Claim(ctx, 1, 10)
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if len(ids) != 10 {
-		t.Fatalf("len(ids) = %d, want 10", len(ids))
-	}
-	if !sort.SliceIsSorted(ids, func(i, j int) bool { return ids[i] < ids[j] }) {
-		t.Errorf("ids not ascending: %v", ids)
-	}
+	requirepkg.NoError(t, err, "Claim")
+	requirepkg.Len(t, ids, 10)
+	assertpkg.True(t, sort.SliceIsSorted(ids, func(i, j int) bool { return ids[i] < ids[j] }),
+		"ids not ascending: %v", ids)
 }
 
 // TestQueue_Complete_AfterReclaim_PreservesNewClaim simulates the
@@ -178,67 +134,45 @@ func TestQueue_Claim_ReturnsIDsAscending(t *testing.T) {
 // Complete with its old token. The token check must prevent A from
 // deleting B's row.
 func TestQueue_Complete_AfterReclaim_PreservesNewClaim(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := openVectorsDBWithPending(t, 2)
 	q := NewQueue(db)
 
 	idsA, tokenA, err := q.Claim(ctx, 1, 2)
-	if err != nil {
-		t.Fatalf("Claim A: %v", err)
-	}
-	if len(idsA) != 2 {
-		t.Fatalf("Claim A ids=%v, want 2", idsA)
-	}
+	require.NoError(err, "Claim A")
+	require.Len(idsA, 2, "Claim A ids")
 
 	// Back-date A's claim past the threshold, then reclaim.
-	if _, err := db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`UPDATE pending_embeddings SET claimed_at = ? WHERE generation_id = 1`,
-		time.Now().Add(-20*time.Minute).Unix()); err != nil {
-		t.Fatal(err)
-	}
-	if n, err := q.ReclaimStale(ctx, 10*time.Minute); err != nil || n != 2 {
-		t.Fatalf("ReclaimStale: n=%d err=%v, want n=2 err=nil", n, err)
-	}
+		time.Now().Add(-20*time.Minute).Unix())
+	require.NoError(err)
+	n, err := q.ReclaimStale(ctx, 10*time.Minute)
+	require.NoError(err)
+	require.Equal(2, n, "ReclaimStale n")
 
 	idsB, tokenB, err := q.Claim(ctx, 1, 2)
-	if err != nil {
-		t.Fatalf("Claim B: %v", err)
-	}
-	if len(idsB) != 2 || tokenB == tokenA {
-		t.Fatalf("Claim B ids=%v token=%q (A=%q)", idsB, tokenB, tokenA)
-	}
+	require.NoError(err, "Claim B")
+	require.Len(idsB, 2)
+	require.NotEqual(tokenA, tokenB)
 
 	// Stale worker A finishes and calls Complete with its dead token.
 	// The token check must keep B's rows intact.
-	if err := q.Complete(ctx, 1, tokenA, idsA); err != nil {
-		t.Fatalf("Complete(stale tokenA): %v", err)
-	}
+	require.NoError(q.Complete(ctx, 1, tokenA, idsA), "Complete(stale tokenA)")
 	var remaining int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&remaining); err != nil {
-		t.Fatal(err)
-	}
-	if remaining != 2 {
-		t.Fatalf("pending rows after stale Complete = %d, want 2 (stale token must not delete)", remaining)
-	}
+	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&remaining))
+	require.Equal(2, remaining, "pending rows after stale Complete; stale token must not delete")
 
 	// B's claim should still be intact (claim_token matches tokenB).
 	var claimed int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM pending_embeddings WHERE claim_token = ?`, tokenB).Scan(&claimed); err != nil {
-		t.Fatal(err)
-	}
-	if claimed != 2 {
-		t.Errorf("rows still holding B's token = %d, want 2", claimed)
-	}
+	require.NoError(db.QueryRow(
+		`SELECT COUNT(*) FROM pending_embeddings WHERE claim_token = ?`, tokenB).Scan(&claimed))
+	assert.Equal(2, claimed, "rows still holding B's token")
 
 	// B can now legitimately Complete.
-	if err := q.Complete(ctx, 1, tokenB, idsB); err != nil {
-		t.Fatalf("Complete(tokenB): %v", err)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&remaining); err != nil {
-		t.Fatal(err)
-	}
-	if remaining != 0 {
-		t.Errorf("pending rows after B's Complete = %d, want 0", remaining)
-	}
+	require.NoError(q.Complete(ctx, 1, tokenB, idsB), "Complete(tokenB)")
+	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&remaining))
+	assert.Equal(0, remaining, "pending rows after B's Complete")
 }

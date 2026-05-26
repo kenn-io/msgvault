@@ -4,12 +4,14 @@ package embed
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestDerivedStaleThreshold(t *testing.T) {
@@ -33,10 +35,8 @@ func TestDerivedStaleThreshold(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := derivedStaleThreshold(tc.timeout, tc.maxRetries)
-			if got != tc.want {
-				t.Errorf("derivedStaleThreshold(%v, %d) = %v, want %v",
-					tc.timeout, tc.maxRetries, got, tc.want)
-			}
+			assertpkg.Equalf(t, tc.want, got,
+				"derivedStaleThreshold(%v, %d)", tc.timeout, tc.maxRetries)
 		})
 	}
 }
@@ -49,6 +49,8 @@ func TestDerivedStaleThreshold(t *testing.T) {
 // limits and tripping API timeouts (the very failure mode caught by
 // roborev #323).
 func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 1)
 
@@ -60,9 +62,8 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		body += "lorem ipsum dolor sit amet consectetur adipiscing elit. "
 	}
-	if _, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	require.NoError(err, "update body")
 
 	// Capture the size of every Embed call so we can prove the split
 	// happened and that no sub-batch exceeded BatchSize.
@@ -88,20 +89,13 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 		MaxInputChars: 80,
 		BatchSize:     batchSize,
 	})
-	if _, err := w.RunOnce(ctx, f.BuildingGen); err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce")
 
-	if len(sizes) < 2 {
-		t.Fatalf("expected >= 2 sub-batches, got %d (sizes=%v)", len(sizes), sizes)
-	}
+	require.GreaterOrEqual(len(sizes), 2, "expected >= 2 sub-batches, got sizes=%v", sizes)
 	for i, n := range sizes {
-		if n > batchSize {
-			t.Errorf("sub-batch %d had %d inputs, want <= %d", i, n, batchSize)
-		}
-		if n == 0 {
-			t.Errorf("sub-batch %d was empty", i)
-		}
+		assert.LessOrEqualf(n, batchSize, "sub-batch %d size", i)
+		assert.NotZerof(n, "sub-batch %d was empty", i)
 	}
 }
 
@@ -122,9 +116,8 @@ func TestWorker_CapsRawBodyBeforePreprocess(t *testing.T) {
 	// 102,400 runes), but well-defined under regex passes if those
 	// run unbounded.
 	hugeBody := strings.Repeat("a", 5_000_000)
-	if _, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, hugeBody); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, hugeBody)
+	requirepkg.NoError(t, err, "update body")
 
 	// Capture every input the worker hands to the embedder. The
 	// individual input slices together represent the chunker's
@@ -150,9 +143,8 @@ func TestWorker_CapsRawBodyBeforePreprocess(t *testing.T) {
 		MaxInputChars: 100,
 		BatchSize:     8,
 	})
-	if _, err := w.RunOnce(ctx, f.BuildingGen); err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	requirepkg.NoError(t, err, "RunOnce")
 
 	// All inputs must fit within the chunker's output window
 	// (maxSpansPerMessage * MaxInputChars = 6400 runes). The raw
@@ -161,9 +153,8 @@ func TestWorker_CapsRawBodyBeforePreprocess(t *testing.T) {
 	for _, s := range observed {
 		totalRunes += utf8.RuneCountInString(s)
 	}
-	if totalRunes > maxSpansPerMessage*100 {
-		t.Errorf("total embedder input runes = %d, want <= %d (chunker window)", totalRunes, maxSpansPerMessage*100)
-	}
+	assertpkg.LessOrEqualf(t, totalRunes, maxSpansPerMessage*100,
+		"total embedder input runes = %d, want <= %d (chunker window)", totalRunes, maxSpansPerMessage*100)
 }
 
 // TestWorker_PrefixBase64DoesNotHidePoseTail is the roborev #323
@@ -185,9 +176,8 @@ func TestWorker_PrefixBase64DoesNotHidePoseTail(t *testing.T) {
 	// sentinel.
 	hugeBase64 := strings.Repeat("A", 2_000_000)
 	body := "data:image/png;base64," + hugeBase64 + " " + sentinel + " end."
-	if _, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	requirepkg.NoError(t, err, "update body")
 
 	var observed []string
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
@@ -210,9 +200,8 @@ func TestWorker_PrefixBase64DoesNotHidePoseTail(t *testing.T) {
 		MaxInputChars: 100,
 		BatchSize:     8,
 	})
-	if _, err := w.RunOnce(ctx, f.BuildingGen); err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	requirepkg.NoError(t, err, "RunOnce")
 
 	// The sentinel — sitting past 2 MB of base64 in the raw body —
 	// must appear in at least one chunk handed to the embedder.
@@ -225,9 +214,8 @@ func TestWorker_PrefixBase64DoesNotHidePoseTail(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Errorf("sentinel %q absent from embedder inputs; the prose tail was lost behind the base64 blob", sentinel)
-	}
+	assertpkg.Truef(t, found,
+		"sentinel %q absent from embedder inputs; the prose tail was lost behind the base64 blob", sentinel)
 }
 
 // TestWorker_TruncatedCountedPerMessageNotPerChunk pins the
@@ -237,6 +225,8 @@ func TestWorker_PrefixBase64DoesNotHidePoseTail(t *testing.T) {
 // metrics inflate (a single oversized message could read as N
 // truncations in a Succeeded=1 batch).
 func TestWorker_TruncatedCountedPerMessageNotPerChunk(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 1)
 
@@ -244,9 +234,8 @@ func TestWorker_TruncatedCountedPerMessageNotPerChunk(t *testing.T) {
 	// the last span as Trunc=true. With MaxInputChars=100 the body
 	// produces several truncated chunks before maxSpans caps it.
 	body := strings.Repeat("a", 600)
-	if _, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	require.NoError(err, "update body")
 
 	w := NewWorker(WorkerDeps{
 		Backend:       f.Backend,
@@ -258,26 +247,19 @@ func TestWorker_TruncatedCountedPerMessageNotPerChunk(t *testing.T) {
 		BatchSize:     8,
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 1 {
-		t.Errorf("Succeeded = %d, want 1", res.Succeeded)
-	}
+	require.NoError(err, "RunOnce")
+	assert.Equal(1, res.Succeeded)
 	// Confirm the chunks table actually has multiple truncated
 	// rows for this message — otherwise the test wouldn't be
 	// exercising the per-message-vs-per-chunk distinction.
 	var truncChunks int
-	if err := f.VectorsDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings WHERE message_id = 1 AND truncated = 1`).Scan(&truncChunks); err != nil {
-		t.Fatalf("count truncated chunks: %v", err)
-	}
-	if truncChunks < 2 {
-		t.Fatalf("test produced %d truncated chunks, expected >= 2 to exercise the metric", truncChunks)
-	}
-	if res.Truncated != 1 {
-		t.Errorf("Truncated = %d, want 1 (one message, regardless of %d truncated chunks)", res.Truncated, truncChunks)
-	}
+	err = f.VectorsDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM embeddings WHERE message_id = 1 AND truncated = 1`).Scan(&truncChunks)
+	require.NoError(err, "count truncated chunks")
+	require.GreaterOrEqualf(truncChunks, 2,
+		"test produced %d truncated chunks, expected >= 2 to exercise the metric", truncChunks)
+	assert.Equalf(1, res.Truncated,
+		"Truncated = %d, want 1 (one message, regardless of %d truncated chunks)", res.Truncated, truncChunks)
 }
 
 // TestWorker_FansOutLongMessageIntoMultipleChunks confirms the
@@ -287,6 +269,8 @@ func TestWorker_TruncatedCountedPerMessageNotPerChunk(t *testing.T) {
 // the queue is drained in one shot (not N times) — Complete is
 // keyed on message_id, not on (message_id, chunk_index).
 func TestWorker_FansOutLongMessageIntoMultipleChunks(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 1)
 
@@ -300,9 +284,8 @@ func TestWorker_FansOutLongMessageIntoMultipleChunks(t *testing.T) {
 			"ut enim ad minim veniam quis nostrud exercitation. " +
 			"\n\n"
 	}
-	if _, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
+	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
+	require.NoError(err, "update body")
 
 	w := NewWorker(WorkerDeps{
 		Backend:       f.Backend,
@@ -314,71 +297,53 @@ func TestWorker_FansOutLongMessageIntoMultipleChunks(t *testing.T) {
 		BatchSize:     8,
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 1 {
-		t.Errorf("succeeded=%d, want 1 (one distinct message embedded)", res.Succeeded)
-	}
-	if res.Failed != 0 {
-		t.Errorf("failed=%d, want 0", res.Failed)
-	}
+	require.NoError(err, "RunOnce")
+	assert.Equal(1, res.Succeeded, "one distinct message embedded")
+	assert.Equal(0, res.Failed)
 
 	// embeddings should hold N > 1 rows for the message, with
 	// consecutive chunk_index values starting at 0.
 	var rowCount int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(f.BuildingGen)).Scan(&rowCount); err != nil {
-		t.Fatalf("count chunks: %v", err)
-	}
-	if rowCount < 2 {
-		t.Fatalf("expected >= 2 chunk rows, got %d", rowCount)
-	}
+		int64(f.BuildingGen)).Scan(&rowCount)
+	require.NoError(err, "count chunks")
+	require.GreaterOrEqual(rowCount, 2)
 	var distinctCI int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT chunk_index) FROM embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(f.BuildingGen)).Scan(&distinctCI); err != nil {
-		t.Fatalf("count distinct chunk_index: %v", err)
-	}
-	if distinctCI != rowCount {
-		t.Errorf("distinct chunk_index=%d, want %d (each chunk should be uniquely indexed)", distinctCI, rowCount)
-	}
+		int64(f.BuildingGen)).Scan(&distinctCI)
+	require.NoError(err, "count distinct chunk_index")
+	assert.Equal(rowCount, distinctCI, "each chunk should be uniquely indexed")
 	var minCI, maxCI int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT MIN(chunk_index), MAX(chunk_index) FROM embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&minCI, &maxCI); err != nil {
-		t.Fatalf("min/max chunk_index: %v", err)
-	}
-	if minCI != 0 || maxCI != rowCount-1 {
-		t.Errorf("chunk_index range = [%d, %d], want [0, %d]", minCI, maxCI, rowCount-1)
-	}
+		int64(f.BuildingGen)).Scan(&minCI, &maxCI)
+	require.NoError(err, "min/max chunk_index")
+	assert.Equal(0, minCI, "chunk_index minimum")
+	assert.Equal(rowCount-1, maxCI, "chunk_index maximum")
 	// message_count tracks distinct messages, so it must read as 1
 	// despite the multi-chunk fan-out.
 	var msgCount int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT message_count FROM index_generations WHERE id = ?`,
-		int64(f.BuildingGen)).Scan(&msgCount); err != nil {
-		t.Fatalf("read message_count: %v", err)
-	}
-	if msgCount != 1 {
-		t.Errorf("message_count = %d, want 1", msgCount)
-	}
+		int64(f.BuildingGen)).Scan(&msgCount)
+	require.NoError(err, "read message_count")
+	assert.Equal(1, msgCount)
 	// Queue is fully drained: Complete is keyed on message_id, so all
 	// chunks of message 1 finish together when its singleton pending
 	// row is removed.
 	var pending int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&pending); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if pending != 0 {
-		t.Errorf("pending remaining: %d", pending)
-	}
+		int64(f.BuildingGen)).Scan(&pending)
+	require.NoError(err, "count pending")
+	assert.Equal(0, pending, "pending remaining")
 }
 
 func TestWorker_DrainsPendingEndToEnd(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 3)
 
@@ -393,25 +358,16 @@ func TestWorker_DrainsPendingEndToEnd(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 3 {
-		t.Errorf("succeeded=%d, want 3", res.Succeeded)
-	}
-	if res.Failed != 0 {
-		t.Errorf("failed=%d, want 0", res.Failed)
-	}
+	require.NoError(err, "RunOnce")
+	assert.Equal(3, res.Succeeded)
+	assert.Equal(0, res.Failed)
 
 	var n int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&n); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("pending remaining: %d", n)
-	}
+		int64(f.BuildingGen)).Scan(&n)
+	require.NoError(err, "count pending")
+	assert.Equal(0, n, "pending remaining")
 }
 
 func TestWorker_ReleasesOnClientError(t *testing.T) {
@@ -429,16 +385,10 @@ func TestWorker_ReleasesOnClientError(t *testing.T) {
 		BatchSize:     1, // batch of 1 so the first Embed fails exactly one id
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Failed < 1 {
-		t.Errorf("expected at least 1 failure, got %d", res.Failed)
-	}
+	requirepkg.NoError(t, err, "RunOnce")
+	assertpkg.GreaterOrEqual(t, res.Failed, 1, "expected at least 1 failure")
 	// The worker retries the released row and eventually drains everything.
-	if res.Succeeded != 3 {
-		t.Errorf("succeeded=%d, want 3 (failed row gets retried after Release)", res.Succeeded)
-	}
+	assertpkg.Equal(t, 3, res.Succeeded, "failed row gets retried after Release")
 }
 
 func TestWorker_ReleasesOnUpsertError(t *testing.T) {
@@ -450,6 +400,7 @@ func TestWorker_ReleasesOnUpsertError(t *testing.T) {
 }
 
 func TestWorker_EmptyPendingReturnsZeroResult(t *testing.T) {
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 0) // 0 messages → no pending rows
 
@@ -461,12 +412,10 @@ func TestWorker_EmptyPendingReturnsZeroResult(t *testing.T) {
 		BatchSize: 10,
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Claimed != 0 || res.Succeeded != 0 || res.Failed != 0 {
-		t.Errorf("expected empty result, got %+v", res)
-	}
+	requirepkg.NoError(t, err, "RunOnce")
+	assert.Equal(0, res.Claimed)
+	assert.Equal(0, res.Succeeded)
+	assert.Equal(0, res.Failed)
 }
 
 func TestWorker_RespectsContextCancel(t *testing.T) {
@@ -482,12 +431,12 @@ func TestWorker_RespectsContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled
 	_, err := w.RunOnce(ctx, f.BuildingGen)
-	if err == nil {
-		t.Fatal("expected cancellation error, got nil")
-	}
+	requirepkg.Error(t, err, "expected cancellation error")
 }
 
 func TestWorker_ReclaimStale_FromStartup(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 2)
 
@@ -503,33 +452,24 @@ func TestWorker_ReclaimStale_FromStartup(t *testing.T) {
 	// Simulate a crashed worker: claim 2 rows, then back-date the claim.
 	q := NewQueue(f.VectorsDB)
 	ids, _, err := q.Claim(ctx, f.BuildingGen, 2)
-	if err != nil || len(ids) != 2 {
-		t.Fatalf("Claim setup: ids=%v err=%v", ids, err)
-	}
-	if _, err := f.VectorsDB.ExecContext(ctx,
+	require.NoError(err, "Claim setup")
+	require.Len(ids, 2)
+	_, err = f.VectorsDB.ExecContext(ctx,
 		`UPDATE pending_embeddings SET claimed_at = ? WHERE generation_id = ?`,
-		time.Now().Add(-20*time.Minute).Unix(), int64(f.BuildingGen)); err != nil {
-		t.Fatalf("backdate: %v", err)
-	}
+		time.Now().Add(-20*time.Minute).Unix(), int64(f.BuildingGen))
+	require.NoError(err, "backdate")
 
 	n, err := w.ReclaimStale(ctx)
-	if err != nil {
-		t.Fatalf("ReclaimStale: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("reclaimed %d, want 2", n)
-	}
+	require.NoError(err, "ReclaimStale")
+	assert.Equal(2, n, "reclaimed")
 
 	// Verify the rows are available again.
 	var available int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND claimed_at IS NULL`,
-		int64(f.BuildingGen)).Scan(&available); err != nil {
-		t.Fatalf("count available: %v", err)
-	}
-	if available != 2 {
-		t.Errorf("available after reclaim = %d, want 2", available)
-	}
+		int64(f.BuildingGen)).Scan(&available)
+	require.NoError(err, "count available")
+	assert.Equal(2, available, "available after reclaim")
 }
 
 func TestWorker_StaleThresholdDefault(t *testing.T) {
@@ -540,18 +480,16 @@ func TestWorker_StaleThresholdDefault(t *testing.T) {
 		MainDB:    f.MainDB,
 		Client:    f.FakeClient,
 	})
-	if w.deps.StaleThreshold != 10*time.Minute {
-		t.Errorf("default StaleThreshold=%v, want 10m", w.deps.StaleThreshold)
-	}
-	if w.deps.MaxConsecutiveFailures != 5 {
-		t.Errorf("default MaxConsecutiveFailures=%d, want 5", w.deps.MaxConsecutiveFailures)
-	}
+	assertpkg.Equal(t, 10*time.Minute, w.deps.StaleThreshold, "default StaleThreshold")
+	assertpkg.Equal(t, 5, w.deps.MaxConsecutiveFailures, "default MaxConsecutiveFailures")
 }
 
 // TestWorker_AbortsAfterConsecutiveFailures verifies that a
 // persistently failing embedder causes RunOnce to return an error
 // rather than loop forever releasing and re-claiming.
 func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 3)
 	// Force every Embed call to fail — a huge failure budget ensures
@@ -568,22 +506,15 @@ func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err == nil {
-		t.Fatal("RunOnce: want error after consecutive failures, got nil")
-	}
-	if res.Failed < 3 {
-		t.Errorf("Failed=%d, want >= 3 (one per consecutive failure)", res.Failed)
-	}
+	require.Error(err, "want error after consecutive failures")
+	assert.GreaterOrEqual(res.Failed, 3, "one per consecutive failure")
 	// Any leftover claims should have been released; pending is non-empty.
 	var pending int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&pending); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if pending == 0 {
-		t.Errorf("pending rows after abort = 0, want non-zero (rows should have been released)")
-	}
+		int64(f.BuildingGen)).Scan(&pending)
+	require.NoError(err, "count pending")
+	assert.NotZero(pending, "rows should have been released")
 }
 
 // TestWorker_ConsecutiveFailureCounterResetsOnSuccess confirms that
@@ -604,12 +535,8 @@ func TestWorker_ConsecutiveFailureCounterResetsOnSuccess(t *testing.T) {
 		MaxConsecutiveFailures: 3,
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v (2 failures, budget 3 — should not abort)", err)
-	}
-	if res.Succeeded != 4 {
-		t.Errorf("Succeeded=%d, want 4 (all 4 messages ultimately drain)", res.Succeeded)
-	}
+	requirepkg.NoError(t, err, "2 failures, budget 3 — should not abort")
+	assertpkg.Equal(t, 4, res.Succeeded, "all 4 messages ultimately drain")
 }
 
 // TestWorker_RuneCountUsedForSourceCharLen regresses the
@@ -619,6 +546,7 @@ func TestWorker_ConsecutiveFailureCounterResetsOnSuccess(t *testing.T) {
 // subject (whose UTF-8 byte length is much larger than its rune
 // count) and assert the persisted source_char_len matches runes.
 func TestWorker_RuneCountUsedForSourceCharLen(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 0) // start empty so we control the message text
 
@@ -627,15 +555,13 @@ func TestWorker_RuneCountUsedForSourceCharLen(t *testing.T) {
 	// preprocessed string has 18 runes and 32 bytes — a 1.78x
 	// inflation if we record bytes by mistake.
 	const subject = "こんにちは世界"
-	if _, err := f.MainDB.ExecContext(ctx,
-		`INSERT INTO messages (id, subject) VALUES (1, ?)`, subject); err != nil {
-		t.Fatalf("insert message: %v", err)
-	}
-	if _, err := f.VectorsDB.ExecContext(ctx,
+	_, err := f.MainDB.ExecContext(ctx,
+		`INSERT INTO messages (id, subject) VALUES (1, ?)`, subject)
+	require.NoError(err, "insert message")
+	_, err = f.VectorsDB.ExecContext(ctx,
 		`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES (?, 1, 0)`,
-		int64(f.BuildingGen)); err != nil {
-		t.Fatalf("seed pending: %v", err)
-	}
+		int64(f.BuildingGen))
+	require.NoError(err, "seed pending")
 
 	w := NewWorker(WorkerDeps{
 		Backend:   f.Backend,
@@ -645,23 +571,16 @@ func TestWorker_RuneCountUsedForSourceCharLen(t *testing.T) {
 		BatchSize: 1,
 	})
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 1 {
-		t.Fatalf("Succeeded=%d, want 1", res.Succeeded)
-	}
+	require.NoError(err, "RunOnce")
+	require.Equal(1, res.Succeeded)
 
 	const wantRunes = 18 // len("Subject: \n\n") + 7 runes for the kanji
 	var got int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT source_char_len FROM embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(f.BuildingGen)).Scan(&got); err != nil {
-		t.Fatalf("read source_char_len: %v", err)
-	}
-	if got != wantRunes {
-		t.Errorf("source_char_len=%d, want %d (rune count, not byte length)", got, wantRunes)
-	}
+		int64(f.BuildingGen)).Scan(&got)
+	require.NoError(err, "read source_char_len")
+	assertpkg.Equal(t, wantRunes, got, "source_char_len (rune count, not byte length)")
 }
 
 // TestWorker_FallsBackToHTMLWhenBodyTextEmpty guards the HTML-only
@@ -669,23 +588,22 @@ func TestWorker_RuneCountUsedForSourceCharLen(t *testing.T) {
 // be embedded using HTML-stripped text rather than silently degrading
 // to subject-only embeddings.
 func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 0)
 
 	const html = `<html><body><p>planning offsite agenda</p><p>Thursday afternoon</p></body></html>`
-	if _, err := f.MainDB.ExecContext(ctx,
-		`INSERT INTO messages (id, subject) VALUES (1, ?)`, "meeting"); err != nil {
-		t.Fatalf("insert message: %v", err)
-	}
-	if _, err := f.MainDB.ExecContext(ctx,
-		`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (1, '', ?)`, html); err != nil {
-		t.Fatalf("insert body: %v", err)
-	}
-	if _, err := f.VectorsDB.ExecContext(ctx,
+	_, err := f.MainDB.ExecContext(ctx,
+		`INSERT INTO messages (id, subject) VALUES (1, ?)`, "meeting")
+	require.NoError(err, "insert message")
+	_, err = f.MainDB.ExecContext(ctx,
+		`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (1, '', ?)`, html)
+	require.NoError(err, "insert body")
+	_, err = f.VectorsDB.ExecContext(ctx,
 		`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES (?, 1, 0)`,
-		int64(f.BuildingGen)); err != nil {
-		t.Fatalf("seed pending: %v", err)
-	}
+		int64(f.BuildingGen))
+	require.NoError(err, "seed pending")
 
 	w := NewWorker(WorkerDeps{
 		Backend:       f.Backend,
@@ -695,25 +613,17 @@ func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
 		MaxInputChars: 8000,
 		BatchSize:     1,
 	})
-	if _, err := w.RunOnce(ctx, f.BuildingGen); err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce")
 
-	if len(f.FakeClient.LastInputs) != 1 {
-		t.Fatalf("captured %d inputs, want 1", len(f.FakeClient.LastInputs))
-	}
+	require.Len(f.FakeClient.LastInputs, 1)
 	got := f.FakeClient.LastInputs[0]
 	// The preprocessed text should contain the HTML paragraph text,
 	// not just the subject — that's the whole point of the fallback.
-	if !strings.Contains(got, "planning offsite agenda") {
-		t.Errorf("embed input missing HTML body text: %q", got)
-	}
-	if !strings.Contains(got, "Thursday afternoon") {
-		t.Errorf("embed input missing second paragraph: %q", got)
-	}
-	if strings.Contains(got, "<p>") || strings.Contains(got, "</body>") {
-		t.Errorf("embed input still contains HTML tags: %q", got)
-	}
+	assert.Contains(got, "planning offsite agenda", "embed input missing HTML body text")
+	assert.Contains(got, "Thursday afternoon", "embed input missing second paragraph")
+	assert.NotContains(got, "<p>", "embed input still contains HTML tags")
+	assert.NotContains(got, "</body>", "embed input still contains HTML tags")
 }
 
 // TestWorker_CompleteFailureCountsAsBatchFailure regresses the bug
@@ -733,6 +643,8 @@ func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
 // the loop noticed the stuck state instead of silently treating an
 // empty Claim as a clean drain.
 func TestWorker_CompleteFailureCountsAsBatchFailure(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	// Need ≥ MaxConsecutiveFailures messages so successive claims pull
 	// fresh rows; otherwise a single failed Complete leaves one stuck-
@@ -741,14 +653,13 @@ func TestWorker_CompleteFailureCountsAsBatchFailure(t *testing.T) {
 	// against would never trip with a single-message fixture).
 	f := newWorkerFixture(t, 3)
 
-	if _, err := f.VectorsDB.ExecContext(ctx, `
+	_, err := f.VectorsDB.ExecContext(ctx, `
         CREATE TRIGGER block_pending_delete
         BEFORE DELETE ON pending_embeddings
         BEGIN
             SELECT RAISE(FAIL, 'simulated complete failure');
-        END`); err != nil {
-		t.Fatalf("install trigger: %v", err)
-	}
+        END`)
+	require.NoError(err, "install trigger")
 
 	w := NewWorker(WorkerDeps{
 		Backend:                f.Backend,
@@ -760,15 +671,9 @@ func TestWorker_CompleteFailureCountsAsBatchFailure(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err == nil {
-		t.Fatal("RunOnce: want error after Complete failures, got nil (regression: silent success)")
-	}
-	if res.Succeeded != 0 {
-		t.Errorf("Succeeded=%d, want 0 (Complete failed, work was not durably finished)", res.Succeeded)
-	}
-	if res.Failed == 0 {
-		t.Errorf("Failed=%d, want > 0 (Complete failure should count as a batch failure)", res.Failed)
-	}
+	require.Error(err, "want error after Complete failures (regression: silent success)")
+	assert.Equal(0, res.Succeeded, "Complete failed, work was not durably finished")
+	assert.NotZero(res.Failed, "Complete failure should count as a batch failure")
 
 	// Stuck-claim check: pending_embeddings row is still there (the
 	// trigger blocked Complete's DELETE) and is marked claimed (the
@@ -776,19 +681,14 @@ func TestWorker_CompleteFailureCountsAsBatchFailure(t *testing.T) {
 	// Complete handler would silently report success; the failure
 	// counter is what makes RunOnce notice and abort.
 	var pending, claimed int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*),
                 COALESCE(SUM(CASE WHEN claimed_at IS NOT NULL THEN 1 ELSE 0 END), 0)
            FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&pending, &claimed); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if pending == 0 {
-		t.Errorf("pending=%d, want > 0 — Complete should have failed and left the row in place", pending)
-	}
-	if claimed == 0 {
-		t.Errorf("claimed=%d, want > 0 — Claim's UPDATE should have left the row marked claimed", claimed)
-	}
+		int64(f.BuildingGen)).Scan(&pending, &claimed)
+	require.NoError(err, "count pending")
+	assert.NotZero(pending, "Complete should have failed and left the row in place")
+	assert.NotZero(claimed, "Claim's UPDATE should have left the row marked claimed")
 }
 
 // TestWorker_OrphanCompleteFailureDoesNotStrandValidWork regresses
@@ -807,33 +707,32 @@ func TestWorker_CompleteFailureCountsAsBatchFailure(t *testing.T) {
 //     orphan-drain failure as a non-nil error so the user knows the
 //     run was incomplete.
 func TestWorker_OrphanCompleteFailureDoesNotStrandValidWork(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	// 2 messages enqueued; we'll delete one from the main DB so it
 	// reaches embedBatch as "missing".
 	f := newWorkerFixture(t, 2)
 
 	const orphanID = 2
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM messages WHERE id = ?`, orphanID); err != nil {
-		t.Fatalf("delete orphan from main: %v", err)
-	}
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM message_bodies WHERE message_id = ?`, orphanID); err != nil {
-		t.Fatalf("delete orphan body: %v", err)
-	}
+	_, err := f.MainDB.ExecContext(ctx,
+		`DELETE FROM messages WHERE id = ?`, orphanID)
+	require.NoError(err, "delete orphan from main")
+	_, err = f.MainDB.ExecContext(ctx,
+		`DELETE FROM message_bodies WHERE message_id = ?`, orphanID)
+	require.NoError(err, "delete orphan body")
 
 	// Selective trigger: only the orphan's Complete DELETE fails. The
 	// embedded row's Complete must still succeed so we can prove the
 	// valid work is durably finished even when the orphan drain fails.
-	if _, err := f.VectorsDB.ExecContext(ctx, fmt.Sprintf(`
+	_, err = f.VectorsDB.ExecContext(ctx, fmt.Sprintf(`
         CREATE TRIGGER block_orphan_drain
         BEFORE DELETE ON pending_embeddings
         WHEN OLD.message_id = %d
         BEGIN
             SELECT RAISE(FAIL, 'simulated orphan complete failure');
-        END`, orphanID)); err != nil {
-		t.Fatalf("install trigger: %v", err)
-	}
+        END`, orphanID))
+	require.NoError(err, "install trigger")
 
 	var reports []ProgressReport
 	w := NewWorker(WorkerDeps{
@@ -850,88 +749,63 @@ func TestWorker_OrphanCompleteFailureDoesNotStrandValidWork(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err == nil {
-		t.Fatal("RunOnce: want non-nil error (orphan drain failed and orphan remained stuck), got nil")
-	}
-	if !strings.Contains(err.Error(), "orphan-drain") {
-		t.Errorf("RunOnce err = %q, want it to mention 'orphan-drain'", err.Error())
-	}
-	if !strings.Contains(err.Error(), "ReclaimStale") {
-		t.Errorf("RunOnce err = %q, want it to mention 'ReclaimStale' so the user knows recovery is automatic", err.Error())
-	}
-	if res.Succeeded != 1 {
-		t.Errorf("Succeeded=%d, want 1 (the valid message must be counted as completed)", res.Succeeded)
-	}
-	if res.Failed == 0 {
-		t.Errorf("Failed=%d, want > 0 (orphan drain failure should be reported)", res.Failed)
-	}
-	if len(reports) == 0 {
-		t.Fatalf("expected progress for valid embedded row even though orphan drain failed")
-	}
+	require.Error(err, "want non-nil error (orphan drain failed and orphan remained stuck)")
+	assert.ErrorContains(err, "orphan-drain")
+	assert.ErrorContains(err, "ReclaimStale", "user knows recovery is automatic")
+	assert.Equal(1, res.Succeeded, "the valid message must be counted as completed")
+	assert.NotZero(res.Failed, "orphan drain failure should be reported")
+	require.NotEmpty(reports, "expected progress for valid embedded row even though orphan drain failed")
 	final := reports[len(reports)-1]
-	if final.Done != 1 {
-		t.Errorf("final progress Done=%d, want 1 durable embedded row", final.Done)
-	}
-	if final.BatchMsgs != 1 {
-		t.Errorf("final progress BatchMsgs=%d, want 1 durable embedded row", final.BatchMsgs)
-	}
+	assert.Equal(1, final.Done, "final progress Done = 1 durable embedded row")
+	assert.Equal(1, final.BatchMsgs, "final progress BatchMsgs = 1 durable embedded row")
 
 	// The valid message's pending row must be GONE (Complete succeeded).
 	// The original bug left it claimed-but-not-completed because the
 	// orphan-drain failure short-circuited before Upsert.
 	var validPending int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(f.BuildingGen)).Scan(&validPending); err != nil {
-		t.Fatalf("count valid pending: %v", err)
-	}
-	if validPending != 0 {
-		t.Errorf("valid pending = %d, want 0 (R53a regression: valid row stranded by orphan drain failure)", validPending)
-	}
+		int64(f.BuildingGen)).Scan(&validPending)
+	require.NoError(err, "count valid pending")
+	assert.Equal(0, validPending, "R53a regression: valid row stranded by orphan drain failure")
 
 	// And the embedded row should be in the embeddings table.
 	var embedded int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(f.BuildingGen)).Scan(&embedded); err != nil {
-		t.Fatalf("count embedded: %v", err)
-	}
-	if embedded != 1 {
-		t.Errorf("embedded count = %d, want 1 (Upsert should have run before orphan drain)", embedded)
-	}
+		int64(f.BuildingGen)).Scan(&embedded)
+	require.NoError(err, "count embedded")
+	assert.Equal(1, embedded, "Upsert should have run before orphan drain")
 
 	// The orphan row stays claimed (token is non-NULL) — that's the
 	// state ReclaimStale is built to recover from. The error returned
 	// above is what tells the caller "this run isn't actually clean".
 	var orphanClaimed int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings
 		  WHERE generation_id = ? AND message_id = ? AND claim_token IS NOT NULL`,
-		int64(f.BuildingGen), orphanID).Scan(&orphanClaimed); err != nil {
-		t.Fatalf("count orphan claimed: %v", err)
-	}
-	if orphanClaimed != 1 {
-		t.Errorf("orphan claimed rows = %d, want 1 (the trigger blocks the Complete DELETE)", orphanClaimed)
-	}
+		int64(f.BuildingGen), orphanID).Scan(&orphanClaimed)
+	require.NoError(err, "count orphan claimed")
+	assert.Equal(1, orphanClaimed, "the trigger blocks the Complete DELETE")
 }
 
 // TestWorker_MissingMessagesDrainedFromQueue verifies that claimed
 // rows whose messages were deleted from the main DB are dropped from
 // the queue (via Complete) rather than silently re-looped forever.
 func TestWorker_MissingMessagesDrainedFromQueue(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 3)
 
 	// Simulate sync deleting messages 2 and 3 from the main DB
 	// AFTER CreateGeneration seeded the queue.
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM messages WHERE id IN (2, 3)`); err != nil {
-		t.Fatalf("delete messages: %v", err)
-	}
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM message_bodies WHERE message_id IN (2, 3)`); err != nil {
-		t.Fatalf("delete bodies: %v", err)
-	}
+	_, err := f.MainDB.ExecContext(ctx,
+		`DELETE FROM messages WHERE id IN (2, 3)`)
+	require.NoError(err, "delete messages")
+	_, err = f.MainDB.ExecContext(ctx,
+		`DELETE FROM message_bodies WHERE message_id IN (2, 3)`)
+	require.NoError(err, "delete bodies")
 
 	w := NewWorker(WorkerDeps{
 		Backend:   f.Backend,
@@ -942,61 +816,50 @@ func TestWorker_MissingMessagesDrainedFromQueue(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	require.NoError(err, "RunOnce")
 	// Message 1 embedded; 2 and 3 dropped as missing.
-	if res.Succeeded != 1 {
-		t.Errorf("Succeeded=%d, want 1", res.Succeeded)
-	}
+	assert.Equal(1, res.Succeeded)
 	// Queue should be fully drained (no infinite loop on missing rows).
 	var pending int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&pending); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if pending != 0 {
-		t.Errorf("pending after drain = %d, want 0 (missing rows should be removed)", pending)
-	}
+		int64(f.BuildingGen)).Scan(&pending)
+	require.NoError(err, "count pending")
+	assert.Equal(0, pending, "missing rows should be removed")
 	// Only one embedding row (for message 1).
 	var embedded int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&embedded); err != nil {
-		t.Fatalf("count embeddings: %v", err)
-	}
-	if embedded != 1 {
-		t.Errorf("embeddings = %d, want 1", embedded)
-	}
+		int64(f.BuildingGen)).Scan(&embedded)
+	require.NoError(err, "count embeddings")
+	assert.Equal(1, embedded)
 }
 
 // TestWorker_EmptyPreprocessedMessagesDrainedFromQueue verifies that
 // messages whose content is stripped to empty are dropped from the
 // queue instead of being sent to embedders that reject empty inputs.
 func TestWorker_EmptyPreprocessedMessagesDrainedFromQueue(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 0)
 
 	// Message 1 becomes empty after quote stripping; message 2 remains
 	// embeddable so the batch must still succeed.
-	if _, err := f.MainDB.ExecContext(ctx,
-		`INSERT INTO messages (id, subject) VALUES (1, ''), (2, 'kept')`); err != nil {
-		t.Fatalf("insert messages: %v", err)
-	}
-	if _, err := f.MainDB.ExecContext(ctx,
+	_, err := f.MainDB.ExecContext(ctx,
+		`INSERT INTO messages (id, subject) VALUES (1, ''), (2, 'kept')`)
+	require.NoError(err, "insert messages")
+	_, err = f.MainDB.ExecContext(ctx,
 		`INSERT INTO message_bodies (message_id, body_text) VALUES
 		 (1, '> quoted only'),
-		 (2, 'actual body')`); err != nil {
-		t.Fatalf("insert bodies: %v", err)
-	}
-	if _, err := f.VectorsDB.ExecContext(ctx,
+		 (2, 'actual body')`)
+	require.NoError(err, "insert bodies")
+	_, err = f.VectorsDB.ExecContext(ctx,
 		`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES
 		 (?, 1, 0),
 		 (?, 2, 0)`,
-		int64(f.BuildingGen), int64(f.BuildingGen)); err != nil {
-		t.Fatalf("seed pending: %v", err)
-	}
+		int64(f.BuildingGen), int64(f.BuildingGen))
+	require.NoError(err, "seed pending")
 
 	w := NewWorker(WorkerDeps{
 		Backend:       f.Backend,
@@ -1009,44 +872,33 @@ func TestWorker_EmptyPreprocessedMessagesDrainedFromQueue(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 1 {
-		t.Errorf("Succeeded=%d, want 1", res.Succeeded)
-	}
-	if len(f.FakeClient.LastInputs) != 1 {
-		t.Fatalf("captured %d inputs, want 1", len(f.FakeClient.LastInputs))
-	}
-	if got := f.FakeClient.LastInputs[0]; strings.TrimSpace(got) == "" {
-		t.Fatalf("embedder received empty input %q", got)
-	}
+	require.NoError(err, "RunOnce")
+	assert.Equal(1, res.Succeeded)
+	require.Len(f.FakeClient.LastInputs, 1)
+	require.NotEmpty(strings.TrimSpace(f.FakeClient.LastInputs[0]),
+		"embedder received empty input %q", f.FakeClient.LastInputs[0])
 
 	var pending int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&pending); err != nil {
-		t.Fatalf("count pending: %v", err)
-	}
-	if pending != 0 {
-		t.Errorf("pending after drain = %d, want 0", pending)
-	}
+		int64(f.BuildingGen)).Scan(&pending)
+	require.NoError(err, "count pending")
+	assert.Equal(0, pending, "pending after drain")
 
 	var embedded int
-	if err := f.VectorsDB.QueryRowContext(ctx,
+	err = f.VectorsDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
-		int64(f.BuildingGen)).Scan(&embedded); err != nil {
-		t.Fatalf("count embeddings: %v", err)
-	}
-	if embedded != 1 {
-		t.Errorf("embeddings = %d, want 1", embedded)
-	}
+		int64(f.BuildingGen)).Scan(&embedded)
+	require.NoError(err, "count embeddings")
+	assert.Equal(1, embedded)
 }
 
 // Progress fires once per fully-successful batch and carries cumulative
 // Done, batch size, and char counts — enough for an ETA printer to work
 // off of without peeking at worker internals.
 func TestWorker_ProgressCalledPerSuccessfulBatch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 5)
 
@@ -1066,54 +918,36 @@ func TestWorker_ProgressCalledPerSuccessfulBatch(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 5 {
-		t.Fatalf("succeeded=%d, want 5", res.Succeeded)
-	}
+	require.NoError(err, "RunOnce")
+	require.Equal(5, res.Succeeded)
 	// 5 messages, batch=2 → batches of 2, 2, 1 → three Progress calls.
-	if len(reports) != 3 {
-		t.Fatalf("progress called %d times, want 3", len(reports))
-	}
+	require.Len(reports, 3)
 
 	wantDone := []int{2, 4, 5}
 	wantBatchMsgs := []int{2, 2, 1}
 	for i, p := range reports {
-		if p.Done != wantDone[i] {
-			t.Errorf("report[%d].Done=%d, want %d", i, p.Done, wantDone[i])
-		}
-		if p.BatchMsgs != wantBatchMsgs[i] {
-			t.Errorf("report[%d].BatchMsgs=%d, want %d", i, p.BatchMsgs, wantBatchMsgs[i])
-		}
-		if p.TotalPending != 5 {
-			t.Errorf("report[%d].TotalPending=%d, want 5", i, p.TotalPending)
-		}
-		if p.BatchChars <= 0 {
-			t.Errorf("report[%d].BatchChars=%d, want >0 (non-empty fixture bodies)", i, p.BatchChars)
-		}
-		if p.BatchElapsed < 0 {
-			t.Errorf("report[%d].BatchElapsed=%s, want >=0", i, p.BatchElapsed)
-		}
-		if p.RunElapsed < p.BatchElapsed {
-			t.Errorf("report[%d].RunElapsed=%s < BatchElapsed=%s", i, p.RunElapsed, p.BatchElapsed)
-		}
+		assert.Equalf(wantDone[i], p.Done, "report[%d].Done", i)
+		assert.Equalf(wantBatchMsgs[i], p.BatchMsgs, "report[%d].BatchMsgs", i)
+		assert.Equalf(5, p.TotalPending, "report[%d].TotalPending", i)
+		assert.Greaterf(p.BatchChars, 0, "report[%d].BatchChars (non-empty fixture bodies)", i)
+		assert.GreaterOrEqualf(p.BatchElapsed, time.Duration(0), "report[%d].BatchElapsed", i)
+		assert.GreaterOrEqualf(p.RunElapsed, p.BatchElapsed,
+			"report[%d].RunElapsed=%s < BatchElapsed=%s", i, p.RunElapsed, p.BatchElapsed)
 	}
 }
 
 func TestWorker_ProgressCountsDroppedRowsTowardTotal(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	f := newWorkerFixture(t, 3)
 
 	const missingID = 2
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM messages WHERE id = ?`, missingID); err != nil {
-		t.Fatalf("delete missing message: %v", err)
-	}
-	if _, err := f.MainDB.ExecContext(ctx,
-		`DELETE FROM message_bodies WHERE message_id = ?`, missingID); err != nil {
-		t.Fatalf("delete missing body: %v", err)
-	}
+	_, err := f.MainDB.ExecContext(ctx,
+		`DELETE FROM messages WHERE id = ?`, missingID)
+	require.NoError(err, "delete missing message")
+	_, err = f.MainDB.ExecContext(ctx,
+		`DELETE FROM message_bodies WHERE message_id = ?`, missingID)
+	require.NoError(err, "delete missing body")
 
 	var reports []ProgressReport
 	w := NewWorker(WorkerDeps{
@@ -1130,22 +964,12 @@ func TestWorker_ProgressCountsDroppedRowsTowardTotal(t *testing.T) {
 	})
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 2 {
-		t.Fatalf("succeeded=%d, want 2 embedded rows", res.Succeeded)
-	}
-	if len(reports) == 0 {
-		t.Fatalf("expected progress report for mixed embed/drop batch")
-	}
+	require.NoError(err, "RunOnce")
+	require.Equal(2, res.Succeeded, "embedded rows")
+	require.NotEmpty(reports, "expected progress report for mixed embed/drop batch")
 	final := reports[len(reports)-1]
-	if final.Done != 3 {
-		t.Fatalf("final progress Done=%d, want 3 pending rows processed", final.Done)
-	}
-	if final.BatchMsgs != 3 {
-		t.Fatalf("final progress BatchMsgs=%d, want 3 pending rows processed in batch", final.BatchMsgs)
-	}
+	require.Equal(3, final.Done, "final progress Done = pending rows processed")
+	require.Equal(3, final.BatchMsgs, "final progress BatchMsgs = pending rows processed in batch")
 }
 
 // TestWorker_DownshiftDrain_HappyPath_AllSingletonsSucceed verifies
@@ -1170,15 +994,9 @@ func TestWorker_DownshiftDrain_HappyPath_AllSingletonsSucceed(t *testing.T) {
 		BatchSize: 3,
 	})
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 3 {
-		t.Fatalf("Succeeded: got %d, want 3", res.Succeeded)
-	}
-	if res.Failed != 0 {
-		t.Fatalf("Failed: got %d, want 0", res.Failed)
-	}
+	requirepkg.NoError(t, err, "RunOnce")
+	requirepkg.Equal(t, 3, res.Succeeded, "Succeeded")
+	requirepkg.Equal(t, 0, res.Failed, "Failed")
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
 }
 
@@ -1208,20 +1026,14 @@ func TestWorker_DownshiftDrain_PartialDrop(t *testing.T) {
 		BatchSize: 3,
 	})
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
-	if res.Succeeded != 2 {
-		t.Errorf("Succeeded: got %d, want 2", res.Succeeded)
-	}
+	requirepkg.NoError(t, err, "RunOnce")
+	assertpkg.Equal(t, 2, res.Succeeded, "Succeeded")
 	// Singleton 4xx drops are NOT counted as Failed — Complete
 	// succeeded, so the worker treated the unembeddable message
 	// the same way the main loop treats missing/empty drops.
 	// res.Failed is reserved for genuine processing failures
 	// (Complete errors, transient embed failures, etc.).
-	if res.Failed != 0 {
-		t.Errorf("Failed (no Complete errors expected): got %d, want 0", res.Failed)
-	}
+	assertpkg.Equal(t, 0, res.Failed, "no Complete errors expected")
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
 }
 
@@ -1243,15 +1055,9 @@ func TestWorker_DownshiftDrain_AllDrop_StillTripsCap(t *testing.T) {
 		MaxConsecutiveFailures: 2,
 	})
 	_, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err == nil {
-		t.Fatalf("expected abort error, got nil")
-	}
-	if !strings.Contains(err.Error(), "consecutive failures") {
-		t.Errorf("expected abort message, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "misconfigured") {
-		t.Errorf("expected original 4xx body in error, got %v", err)
-	}
+	requirepkg.Error(t, err, "expected abort error")
+	assertpkg.ErrorContains(t, err, "consecutive failures")
+	assertpkg.ErrorContains(t, err, "misconfigured", "expected original 4xx body in error")
 }
 
 // TestWorker_DownshiftDrain_AllDropClean_NoSilentDelete covers the
@@ -1265,6 +1071,7 @@ func TestWorker_DownshiftDrain_AllDrop_StillTripsCap(t *testing.T) {
 // AND the rows still in the queue for retry after fixing the
 // config.
 func TestWorker_DownshiftDrain_AllDropClean_NoSilentDelete(t *testing.T) {
+	assert := assertpkg.New(t)
 	f := newWorkerFixture(t, 4)
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
 		return nil, fmt.Errorf("embed: HTTP 401: bad-api-key: %w", ErrPermanent4xx)
@@ -1284,18 +1091,10 @@ func TestWorker_DownshiftDrain_AllDropClean_NoSilentDelete(t *testing.T) {
 		BatchSize: 2,
 	})
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err == nil {
-		t.Fatalf("expected cap-trip error on misconfigured endpoint, got nil")
-	}
-	if res.Succeeded != 0 {
-		t.Errorf("Succeeded: got %d, want 0 (no embeds during all-drop)", res.Succeeded)
-	}
-	if !strings.Contains(err.Error(), "consecutive failures") {
-		t.Errorf("expected cap-trip error, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "bad-api-key") {
-		t.Errorf("expected original 4xx body in error, got %v", err)
-	}
+	requirepkg.Error(t, err, "expected cap-trip error on misconfigured endpoint")
+	assert.Equal(0, res.Succeeded, "no embeds during all-drop")
+	assert.ErrorContains(err, "consecutive failures", "expected cap-trip error")
+	assert.ErrorContains(err, "bad-api-key", "expected original 4xx body in error")
 	// Critical: rows must NOT have been silently deleted. They
 	// should still be in pending_embeddings (released back, not
 	// Completed) so a corrected config can re-claim them on the
@@ -1326,12 +1125,8 @@ func TestWorker_SingletonBatch_4xx_NoSilentDelete(t *testing.T) {
 		MaxConsecutiveFailures: 3,
 	})
 	_, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err == nil {
-		t.Fatalf("expected abort after cap, got nil")
-	}
-	if !strings.Contains(err.Error(), "consecutive failures") {
-		t.Errorf("expected cap abort message, got %v", err)
-	}
+	requirepkg.Error(t, err, "expected abort after cap")
+	assertpkg.ErrorContains(t, err, "consecutive failures")
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 1)
 }
 
@@ -1364,13 +1159,12 @@ func TestWorker_DownshiftDrain_CtxCancelMidDrain(t *testing.T) {
 		BatchSize: 3,
 	})
 	_, err := w.RunOnce(ctx, f.BuildingGen)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
+	requirepkg.ErrorIs(t, err, context.Canceled)
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 2)
 }
 
 func TestWorker_DownshiftDrain_TransientErrorReleasesRemainingAndErrors(t *testing.T) {
+	require := requirepkg.New(t)
 	f := newWorkerFixture(t, 3)
 	var singletonCalls int
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
@@ -1394,17 +1188,9 @@ func TestWorker_DownshiftDrain_TransientErrorReleasesRemainingAndErrors(t *testi
 	})
 
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
-	if err == nil {
-		t.Fatalf("expected transient mid-drain error, got nil")
-	}
-	if !strings.Contains(err.Error(), "temporary network failure") {
-		t.Fatalf("expected original transient error, got %v", err)
-	}
-	if res.Succeeded != 1 {
-		t.Fatalf("Succeeded=%d, want 1 completed singleton before transient error", res.Succeeded)
-	}
+	require.Error(err, "expected transient mid-drain error")
+	require.ErrorContains(err, "temporary network failure")
+	require.Equal(1, res.Succeeded, "completed singleton before transient error")
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 2)
-	if available := countAvailable(t, f.VectorsDB, int64(f.BuildingGen)); available != 2 {
-		t.Fatalf("available pending rows=%d, want 2 released rows", available)
-	}
+	require.Equal(2, countAvailable(t, f.VectorsDB, int64(f.BuildingGen)), "released rows")
 }

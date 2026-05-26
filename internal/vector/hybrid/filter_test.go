@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -14,9 +16,7 @@ import (
 func newFilterTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	requirepkg.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
 
 	schema := `
@@ -29,9 +29,8 @@ CREATE TABLE labels (
     name TEXT
 );
 `
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
+	_, err = db.Exec(schema)
+	requirepkg.NoError(t, err, "schema")
 	participants := []string{
 		"alice@example.com",
 		"bob@example.com",
@@ -39,14 +38,12 @@ CREATE TABLE labels (
 		"dave.work@example.com",
 	}
 	for _, p := range participants {
-		if _, err := db.Exec(`INSERT INTO participants (email_address) VALUES (?)`, p); err != nil {
-			t.Fatalf("insert participant: %v", err)
-		}
+		_, err := db.Exec(`INSERT INTO participants (email_address) VALUES (?)`, p)
+		requirepkg.NoError(t, err, "insert participant")
 	}
 	for _, l := range []string{"INBOX", "Work", "Archive"} {
-		if _, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, l); err != nil {
-			t.Fatalf("insert label: %v", err)
-		}
+		_, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, l)
+		requirepkg.NoError(t, err, "insert label")
 	}
 	return db
 }
@@ -62,77 +59,67 @@ func sortedIDs(ids []int64) []int64 {
 // existing SQLite search path, so vector/hybrid and FTS agree on which
 // participants match a token.
 func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:example.com to:alice cc:other.com`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
+	require.NoError(err, "BuildFilter")
 
 	// from:example.com → alice, bob, dave.work (all @example.com).
 	// Single from: token, so SenderGroups has one group with the
 	// substring-match set.
-	if len(f.SenderGroups) != 1 || len(f.SenderGroups[0]) != 3 {
-		t.Errorf("SenderGroups = %v, want one group with 3 ids (all @example.com)", f.SenderGroups)
-	}
+	require.Len(f.SenderGroups, 1, "SenderGroups should have one group")
+	assert.Lenf(f.SenderGroups[0], 3, "want 3 ids (all @example.com); got %v", f.SenderGroups)
 	// to:alice → one group with one id.
-	if len(f.ToGroups) != 1 || len(f.ToGroups[0]) != 1 {
-		t.Errorf("ToGroups = %v, want one group with one id (alice)", f.ToGroups)
-	}
+	require.Len(f.ToGroups, 1, "ToGroups should have one group")
+	assert.Lenf(f.ToGroups[0], 1, "want one group with one id (alice); got %v", f.ToGroups)
 	// cc:other.com → one group with one id (carol).
-	if len(f.CcGroups) != 1 || len(f.CcGroups[0]) != 1 {
-		t.Errorf("CcGroups = %v, want one group with one id (carol)", f.CcGroups)
-	}
+	require.Len(f.CcGroups, 1, "CcGroups should have one group")
+	assert.Lenf(f.CcGroups[0], 1, "want one group with one id (carol); got %v", f.CcGroups)
 }
 
 // TestBuildFilter_SizeAndSubjectAndDate confirms that larger:/smaller:,
 // subject:, and date bounds flow through to the Filter struct unchanged.
 func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`larger:1M smaller:10M subject:quarterly subject:"offsite plan" after:2025-01-01 before:2025-06-01`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
+	require.NoError(err, "BuildFilter")
+	if assert.NotNil(f.LargerThan, "LargerThan") {
+		assert.Equal(int64(1024*1024), *f.LargerThan)
 	}
-	if f.LargerThan == nil || *f.LargerThan != 1024*1024 {
-		t.Errorf("LargerThan = %v, want 1048576", f.LargerThan)
+	if assert.NotNil(f.SmallerThan, "SmallerThan") {
+		assert.Equal(int64(10*1024*1024), *f.SmallerThan)
 	}
-	if f.SmallerThan == nil || *f.SmallerThan != 10*1024*1024 {
-		t.Errorf("SmallerThan = %v, want 10485760", f.SmallerThan)
-	}
-	if len(f.SubjectSubstrings) != 2 ||
-		f.SubjectSubstrings[0] != "quarterly" ||
-		f.SubjectSubstrings[1] != "offsite plan" {
-		t.Errorf("SubjectSubstrings = %v, want [quarterly offsite plan]", f.SubjectSubstrings)
-	}
-	if f.After == nil {
-		t.Error("After = nil, want parsed")
-	}
-	if f.Before == nil {
-		t.Error("Before = nil, want parsed")
-	}
+	require.Len(f.SubjectSubstrings, 2)
+	assert.Equal("quarterly", f.SubjectSubstrings[0])
+	assert.Equal("offsite plan", f.SubjectSubstrings[1])
+	assert.NotNil(f.After, "After should be parsed")
+	assert.NotNil(f.Before, "Before should be parsed")
 }
 
 // TestBuildFilter_LabelsAndAttachments checks the label: and
 // has:attachment operators.
 func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:Work has:attachment`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if len(f.LabelGroups) != 1 || len(f.LabelGroups[0]) != 1 {
-		t.Errorf("LabelGroups = %v, want one group with one id (Work)", f.LabelGroups)
-	}
-	if f.HasAttachment == nil || !*f.HasAttachment {
-		t.Errorf("HasAttachment = %v, want true", f.HasAttachment)
+	require.NoError(err, "BuildFilter")
+	require.Len(f.LabelGroups, 1, "LabelGroups should have one group")
+	assert.Lenf(f.LabelGroups[0], 1, "want one group with one id (Work); got %v", f.LabelGroups)
+	if assert.NotNil(f.HasAttachment, "HasAttachment") {
+		assert.True(*f.HasAttachment)
 	}
 }
 
@@ -144,12 +131,8 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 
 	q := search.Parse(`lunch plans`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if !f.IsEmpty() {
-		t.Errorf("filter not empty: %+v", f)
-	}
+	requirepkg.NoError(t, err, "BuildFilter")
+	assertpkg.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
 }
 
 // TestBuildFilter_NonexistentSenderReturnsSentinel guards the
@@ -158,34 +141,32 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 // SenderGroups slice, which the backend treats as "no filter" —
 // broadening the search instead of returning zero hits.
 func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:nobody@nowhere.invalid`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if len(f.SenderGroups) != 1 || len(f.SenderGroups[0]) != 1 || f.SenderGroups[0][0] >= 0 {
-		t.Errorf("SenderGroups=%v, want one group with the negative sentinel id", f.SenderGroups)
-	}
+	require.NoError(err, "BuildFilter")
+	require.Lenf(f.SenderGroups, 1, "want one group with sentinel; got %v", f.SenderGroups)
+	require.Len(f.SenderGroups[0], 1)
+	assertpkg.Less(t, f.SenderGroups[0][0], int64(0), "want negative sentinel id")
 }
 
 // TestBuildFilter_NonexistentLabelReturnsSentinel: same as above but
 // for labels. Critical because the label path used to do exact-name
 // lookups with IN (...), and an unknown label silently became a no-op.
 func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:nonexistent-label-xyz`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if len(f.LabelGroups) != 1 || len(f.LabelGroups[0]) != 1 || f.LabelGroups[0][0] >= 0 {
-		t.Errorf("LabelGroups=%v, want one group with the negative sentinel id", f.LabelGroups)
-	}
+	require.NoError(err, "BuildFilter")
+	require.Lenf(f.LabelGroups, 1, "want one group with sentinel; got %v", f.LabelGroups)
+	require.Len(f.LabelGroups[0], 1)
+	assertpkg.Less(t, f.LabelGroups[0][0], int64(0), "want negative sentinel id")
 }
 
 // TestBuildFilter_RepeatedSenderTokens_PerTokenGroups asserts that
@@ -202,55 +183,46 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	t.Run("two real tokens become two non-sentinel groups", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		q := search.Parse(`from:alice from:bob`)
 		f, err := BuildFilter(ctx, db, q)
-		if err != nil {
-			t.Fatalf("BuildFilter: %v", err)
-		}
-		if len(f.SenderGroups) != 2 {
-			t.Fatalf("SenderGroups=%v, want 2 groups (one per from: token)", f.SenderGroups)
-		}
+		require.NoError(err, "BuildFilter")
+		require.Lenf(f.SenderGroups, 2, "want 2 groups (one per from: token); got %v", f.SenderGroups)
 		for i, g := range f.SenderGroups {
-			if len(g) != 1 || g[0] < 0 {
-				t.Errorf("SenderGroups[%d]=%v, want exactly one positive id", i, g)
+			assert.Lenf(g, 1, "SenderGroups[%d]=%v, want exactly one positive id", i, g)
+			if len(g) == 1 {
+				assert.GreaterOrEqualf(g[0], int64(0), "SenderGroups[%d]=%v, want positive id", i, g)
 			}
 		}
 	})
 
 	t.Run("one missing token sentinels only that group", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		q := search.Parse(`from:alice from:nobody@nowhere.invalid`)
 		f, err := BuildFilter(ctx, db, q)
-		if err != nil {
-			t.Fatalf("BuildFilter: %v", err)
-		}
-		if len(f.SenderGroups) != 2 {
-			t.Fatalf("SenderGroups=%v, want 2 groups", f.SenderGroups)
-		}
-		if len(f.SenderGroups[0]) != 1 || f.SenderGroups[0][0] < 0 {
-			t.Errorf("SenderGroups[0]=%v, want positive id (alice resolved)", f.SenderGroups[0])
-		}
-		if len(f.SenderGroups[1]) != 1 || f.SenderGroups[1][0] >= 0 {
-			t.Errorf("SenderGroups[1]=%v, want sentinel (nobody resolves empty)", f.SenderGroups[1])
-		}
+		require.NoError(err, "BuildFilter")
+		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
+		require.Len(f.SenderGroups[0], 1)
+		assert.GreaterOrEqualf(f.SenderGroups[0][0], int64(0), "alice resolved")
+		require.Len(f.SenderGroups[1], 1)
+		assert.Lessf(f.SenderGroups[1][0], int64(0), "want sentinel (nobody resolves empty)")
 	})
 
 	t.Run("substring tokens collect all matching participants per group", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		// from:example.com → alice, bob, dave.work all match @example.com.
 		// from:work → only dave.work. Two groups, IDs preserved per group.
 		q := search.Parse(`from:example.com from:work`)
 		f, err := BuildFilter(ctx, db, q)
-		if err != nil {
-			t.Fatalf("BuildFilter: %v", err)
-		}
-		if len(f.SenderGroups) != 2 {
-			t.Fatalf("SenderGroups=%v, want 2 groups", f.SenderGroups)
-		}
-		if len(f.SenderGroups[0]) != 3 {
-			t.Errorf("SenderGroups[0]=%v, want 3 ids (@example.com matches alice/bob/dave.work)", sortedIDs(f.SenderGroups[0]))
-		}
-		if len(f.SenderGroups[1]) != 1 {
-			t.Errorf("SenderGroups[1]=%v, want 1 id (only dave.work has 'work' substring)", f.SenderGroups[1])
-		}
+		require.NoError(err, "BuildFilter")
+		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
+		assert.Lenf(f.SenderGroups[0], 3,
+			"@example.com matches alice/bob/dave.work; got %v", sortedIDs(f.SenderGroups[0]))
+		assert.Lenf(f.SenderGroups[1], 1,
+			"only dave.work has 'work' substring; got %v", f.SenderGroups[1])
 	})
 }
 
@@ -261,23 +233,19 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 // `to` recipient matching bob — preserving the SQLite path's per-token
 // AND semantics for multi-valued recipient fields.
 func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:bob`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if len(f.ToGroups) != 2 {
-		t.Fatalf("ToGroups=%v, want 2 groups (one per to: token)", f.ToGroups)
-	}
+	require.NoError(err, "BuildFilter")
+	require.Lenf(f.ToGroups, 2, "want 2 groups (one per to: token); got %v", f.ToGroups)
 	for i, g := range f.ToGroups {
-		if len(g) != 1 {
-			t.Errorf("ToGroups[%d]=%v, want exactly 1 id (alice/bob each match one participant)", i, g)
-		}
-		if g[0] < 0 {
-			t.Errorf("ToGroups[%d]=%v contains negative sentinel; both tokens resolved", i, g)
+		assert.Lenf(g, 1, "ToGroups[%d]=%v, want exactly 1 id (alice/bob each match one participant)", i, g)
+		if len(g) == 1 {
+			assert.GreaterOrEqualf(g[0], int64(0), "ToGroups[%d]=%v should not contain negative sentinel", i, g)
 		}
 	}
 }
@@ -290,23 +258,19 @@ func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
 // match), so the message set narrows to zero — same effect as the FTS
 // path, but without conflating the two tokens at resolution time.
 func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:nobody@nowhere.invalid`)
 	f, err := BuildFilter(ctx, db, q)
-	if err != nil {
-		t.Fatalf("BuildFilter: %v", err)
-	}
-	if len(f.ToGroups) != 2 {
-		t.Fatalf("ToGroups=%v, want 2 groups", f.ToGroups)
-	}
-	if len(f.ToGroups[0]) != 1 || f.ToGroups[0][0] < 0 {
-		t.Errorf("ToGroups[0]=%v, want one positive id (alice resolved)", f.ToGroups[0])
-	}
-	if len(f.ToGroups[1]) != 1 || f.ToGroups[1][0] >= 0 {
-		t.Errorf("ToGroups[1]=%v, want sentinel (nobody resolves empty)", f.ToGroups[1])
-	}
+	require.NoError(err, "BuildFilter")
+	require.Lenf(f.ToGroups, 2, "want 2 groups; got %v", f.ToGroups)
+	require.Len(f.ToGroups[0], 1)
+	assert.GreaterOrEqualf(f.ToGroups[0][0], int64(0), "alice resolved")
+	require.Len(f.ToGroups[1], 1)
+	assert.Lessf(f.ToGroups[1][0], int64(0), "want sentinel (nobody resolves empty)")
 }
 
 // TestBuildFilter_RepeatedLabelTokens_PerTokenGroups is the label-side
@@ -316,36 +280,31 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	t.Run("two real labels become two groups", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		q := search.Parse(`label:Work label:Archive`)
 		f, err := BuildFilter(ctx, db, q)
-		if err != nil {
-			t.Fatalf("BuildFilter: %v", err)
-		}
-		if len(f.LabelGroups) != 2 {
-			t.Fatalf("LabelGroups=%v, want 2 groups", f.LabelGroups)
-		}
+		require.NoError(err, "BuildFilter")
+		require.Lenf(f.LabelGroups, 2, "want 2 groups; got %v", f.LabelGroups)
 		for i, g := range f.LabelGroups {
-			if len(g) != 1 || g[0] < 0 {
-				t.Errorf("LabelGroups[%d]=%v, want one positive id", i, g)
+			assert.Lenf(g, 1, "LabelGroups[%d]=%v, want one positive id", i, g)
+			if len(g) == 1 {
+				assert.GreaterOrEqualf(g[0], int64(0), "LabelGroups[%d]=%v, want positive id", i, g)
 			}
 		}
 	})
 
 	t.Run("one missing token sentinels only that group", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		q := search.Parse(`label:Work label:nonexistent-xyz`)
 		f, err := BuildFilter(ctx, db, q)
-		if err != nil {
-			t.Fatalf("BuildFilter: %v", err)
-		}
-		if len(f.LabelGroups) != 2 {
-			t.Fatalf("LabelGroups=%v, want 2 groups", f.LabelGroups)
-		}
-		if len(f.LabelGroups[0]) != 1 || f.LabelGroups[0][0] < 0 {
-			t.Errorf("LabelGroups[0]=%v, want positive id (Work resolved)", f.LabelGroups[0])
-		}
-		if len(f.LabelGroups[1]) != 1 || f.LabelGroups[1][0] >= 0 {
-			t.Errorf("LabelGroups[1]=%v, want sentinel", f.LabelGroups[1])
-		}
+		require.NoError(err, "BuildFilter")
+		require.Lenf(f.LabelGroups, 2, "want 2 groups; got %v", f.LabelGroups)
+		require.Len(f.LabelGroups[0], 1)
+		assert.GreaterOrEqualf(f.LabelGroups[0][0], int64(0), "Work resolved")
+		require.Len(f.LabelGroups[1], 1)
+		assert.Lessf(f.LabelGroups[1][0], int64(0), "want sentinel")
 	})
 }
 
@@ -375,18 +334,11 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			q := search.Parse(c.query)
 			f, err := BuildFilter(ctx, db, q)
-			if err != nil {
-				t.Fatalf("BuildFilter: %v", err)
-			}
-			if len(f.LabelGroups) != c.wantGroups {
-				t.Errorf("query %q: len(LabelGroups)=%d, want %d (got %v)",
-					c.query, len(f.LabelGroups), c.wantGroups, f.LabelGroups)
-				return
-			}
-			if len(f.LabelGroups[0]) != c.wantInOnly {
-				t.Errorf("query %q: len(LabelGroups[0])=%d, want %d (got %v)",
-					c.query, len(f.LabelGroups[0]), c.wantInOnly, f.LabelGroups[0])
-			}
+			requirepkg.NoError(t, err, "BuildFilter")
+			requirepkg.Lenf(t, f.LabelGroups, c.wantGroups,
+				"query %q: LabelGroups %v", c.query, f.LabelGroups)
+			assertpkg.Lenf(t, f.LabelGroups[0], c.wantInOnly,
+				"query %q: LabelGroups[0] %v", c.query, f.LabelGroups[0])
 		})
 	}
 }

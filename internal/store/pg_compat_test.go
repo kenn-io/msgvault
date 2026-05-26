@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -19,6 +21,8 @@ import (
 // and refuses to convert to *string. Under SQLite the test asserts
 // the formatted string still contains the expected date/time pieces.
 func TestInspectMessage_TimestampScan(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	sent := time.Date(2025, 6, 15, 12, 30, 45, 0, time.UTC)
@@ -31,27 +35,14 @@ func TestInspectMessage_TimestampScan(t *testing.T) {
 	_ = mid
 
 	insp, err := f.Store.InspectMessage("inspect-msg-1")
-	if err != nil {
-		t.Fatalf("InspectMessage: %v", err)
-	}
-	if insp.SentAt == "" {
-		t.Error("SentAt should not be empty after a non-NULL insert")
-	}
-	if insp.InternalDate == "" {
-		t.Error("InternalDate should not be empty after a non-NULL insert")
-	}
+	require.NoError(err, "InspectMessage")
+	assert.NotEmpty(insp.SentAt, "SentAt should not be empty after a non-NULL insert")
+	assert.NotEmpty(insp.InternalDate, "InternalDate should not be empty after a non-NULL insert")
 
 	sentAtStr, internalDateStr, err := f.Store.InspectMessageDates("inspect-msg-1")
-	if err != nil {
-		t.Fatalf("InspectMessageDates: %v", err)
-	}
-	if sentAtStr != insp.SentAt {
-		t.Errorf("InspectMessageDates sentAt = %q, want %q", sentAtStr, insp.SentAt)
-	}
-	if internalDateStr != insp.InternalDate {
-		t.Errorf("InspectMessageDates internalDate = %q, want %q",
-			internalDateStr, insp.InternalDate)
-	}
+	require.NoError(err, "InspectMessageDates")
+	assert.Equal(insp.SentAt, sentAtStr, "InspectMessageDates sentAt")
+	assert.Equal(insp.InternalDate, internalDateStr, "InspectMessageDates internalDate")
 }
 
 // TestSearchMessagesQuery_SubjectLikeCaseInsensitive covers H3+H4: the
@@ -60,6 +51,7 @@ func TestInspectMessage_TimestampScan(t *testing.T) {
 // PG's is strict-case. The fix wraps both sides in LOWER so a query
 // for "Invoice" matches "invoice from acme".
 func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 
 	mid := f.NewMessage().
@@ -67,23 +59,17 @@ func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
 		WithSubject("invoice from acme").
 		WithSnippet("see attached").
 		Create(t, f.Store)
-	if err := f.Store.UpsertMessageBody(mid,
-		sql.NullString{String: "body", Valid: true}, sql.NullString{}); err != nil {
-		t.Fatalf("UpsertMessageBody: %v", err)
-	}
-	if _, err := f.Store.BackfillFTS(nil); err != nil {
-		t.Fatalf("BackfillFTS: %v", err)
-	}
+	require.NoError(f.Store.UpsertMessageBody(mid,
+		sql.NullString{String: "body", Valid: true}, sql.NullString{}), "UpsertMessageBody")
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
 
 	msgs, total, err := f.Store.SearchMessagesQuery(
 		&search.Query{SubjectTerms: []string{"Invoice"}}, 0, 50,
 	)
-	if err != nil {
-		t.Fatalf("SearchMessagesQuery: %v", err)
-	}
-	if total != 1 || len(msgs) != 1 {
-		t.Fatalf("Subject:Invoice → got %d hits, want 1 (case-insensitive on both backends)", total)
-	}
+	require.NoError(err, "SearchMessagesQuery")
+	require.Equal(int64(1), total, "Subject:Invoice (case-insensitive on both backends)")
+	require.Len(msgs, 1)
 }
 
 // TestSearchMessagesQuery_ToFilterCaseInsensitive covers M2: the To/Cc/
@@ -91,32 +77,28 @@ func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
 // the LOWER(p.email_address) IN (...) predicate matches against
 // case-folded participants.
 func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 
 	to, err := f.Store.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	testutil.MustNoErr(t, err, "EnsureParticipant")
+	require.NoError(err, "EnsureParticipant")
 
 	mid := f.NewMessage().
 		WithSourceMessageID("to-msg-1").
 		WithSubject("greetings").
 		Create(t, f.Store)
-	testutil.MustNoErr(t,
-		f.Store.ReplaceMessageRecipients(mid, "to", []int64{to}, []string{"Alice"}),
+	require.NoError(f.Store.ReplaceMessageRecipients(mid, "to", []int64{to}, []string{"Alice"}),
 		"ReplaceMessageRecipients to")
 
-	if _, err := f.Store.BackfillFTS(nil); err != nil {
-		t.Fatalf("BackfillFTS: %v", err)
-	}
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
 
 	msgs, total, err := f.Store.SearchMessagesQuery(
 		&search.Query{ToAddrs: []string{"Alice@Example.COM"}}, 0, 50,
 	)
-	if err != nil {
-		t.Fatalf("SearchMessagesQuery: %v", err)
-	}
-	if total != 1 || len(msgs) != 1 {
-		t.Fatalf("to:Alice@Example.COM → got %d hits, want 1 (case-insensitive)", total)
-	}
+	require.NoError(err, "SearchMessagesQuery")
+	require.Equal(int64(1), total, "to:Alice@Example.COM (case-insensitive)")
+	require.Len(msgs, 1)
 }
 
 // TestSearchMessages_R3PunctuationTerms covers R3: the raw search path
@@ -143,7 +125,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 		WithSubject("project foo bar").
 		WithSnippet("foo bar baz").
 		Create(t, f.Store)
-	testutil.MustNoErr(t, f.Store.UpsertMessageBody(msg1,
+	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg1,
 		sql.NullString{String: "foo and bar appear together here", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 1")
 
@@ -152,13 +134,12 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 		WithSubject("email from alice").
 		WithSnippet("contact us at user@example.com please").
 		Create(t, f.Store)
-	testutil.MustNoErr(t, f.Store.UpsertMessageBody(msg2,
+	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg2,
 		sql.NullString{String: "reach us at user@example.com for support", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 2")
 
-	if _, err := f.Store.BackfillFTS(nil); err != nil {
-		t.Fatalf("BackfillFTS: %v", err)
-	}
+	_, err := f.Store.BackfillFTS(nil)
+	requirepkg.NoError(t, err, "BackfillFTS")
 
 	queries := []string{
 		"---",              // dashes-only — used to crash to_tsquery
@@ -172,9 +153,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 	for _, q := range queries {
 		t.Run(q, func(t *testing.T) {
 			_, _, err := f.Store.SearchMessages(q, 0, 50)
-			if err != nil {
-				t.Errorf("SearchMessages(%q): unexpected error %v (must accept punctuation-heavy input without erroring)", q, err)
-			}
+			assertpkg.NoError(t, err, "SearchMessages(%q): must accept punctuation-heavy input without erroring", q)
 		})
 	}
 }
@@ -184,6 +163,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 // one row and no errors. The fix collapsed the SELECT-then-INSERT
 // race into a single INSERT … ON CONFLICT … RETURNING id statement.
 func TestEnsureParticipant_Concurrent(t *testing.T) {
+	assert := assertpkg.New(t)
 	st := testutil.NewTestStore(t)
 
 	const N = 50
@@ -202,27 +182,19 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: EnsureParticipant: %v", i, err)
-		}
+		assert.NoError(err, "goroutine %d: EnsureParticipant", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
-		if id != first {
-			t.Errorf("goroutine %d returned id %d, want %d (every caller must observe the same row)", i, id, first)
-		}
+		assert.Equal(first, id, "goroutine %d should observe the same row", i)
 	}
 
 	var count int
-	if err := st.DB().QueryRow(
+	requirepkg.NoError(t, st.DB().QueryRow(
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE email_address = ?"),
 		"race@example.com",
-	).Scan(&count); err != nil {
-		t.Fatalf("count participants: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("got %d participant rows for race@example.com, want exactly 1", count)
-	}
+	).Scan(&count), "count participants")
+	assert.Equal(1, count, "want exactly 1 participant row for race@example.com")
 }
 
 // TestEnsureParticipantByPhone_Concurrent covers H6: same race shape
@@ -230,6 +202,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 // now in place, concurrent inserts collapse to one row via the
 // ON CONFLICT clause.
 func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
+	assert := assertpkg.New(t)
 	st := testutil.NewTestStore(t)
 
 	const N = 50
@@ -248,36 +221,30 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: EnsureParticipantByPhone: %v", i, err)
-		}
+		assert.NoError(err, "goroutine %d: EnsureParticipantByPhone", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
-		if id != first {
-			t.Errorf("goroutine %d returned id %d, want %d", i, id, first)
-		}
+		assert.Equal(first, id, "goroutine %d", i)
 	}
 
 	var count int
-	if err := st.DB().QueryRow(
+	requirepkg.NoError(t, st.DB().QueryRow(
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE phone_number = ?"),
 		"+15555550100",
-	).Scan(&count); err != nil {
-		t.Fatalf("count participants: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("got %d participant rows for +15555550100, want exactly 1", count)
-	}
+	).Scan(&count), "count participants")
+	assert.Equal(1, count, "want exactly 1 participant row for +15555550100")
 }
 
 // TestAddAccountIdentity_Concurrent covers M1: concurrent confirmations
 // of the same (source_id, address) collapse to exactly one row, and
 // merging different signals across calls preserves the union.
 func TestAddAccountIdentity_Concurrent(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "race-identity@example.com")
-	testutil.MustNoErr(t, err, "GetOrCreateSource")
+	require.NoError(err, "GetOrCreateSource")
 
 	const N = 50
 	signals := []string{"manual", "account-identifier", "header"}
@@ -294,24 +261,16 @@ func TestAddAccountIdentity_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: AddAccountIdentity: %v", i, err)
-		}
+		assert.NoError(err, "goroutine %d: AddAccountIdentity", i)
 	}
 
 	identities, err := st.ListAccountIdentities(src.ID)
-	if err != nil {
-		t.Fatalf("ListAccountIdentities: %v", err)
-	}
-	if len(identities) != 1 {
-		t.Fatalf("got %d identity rows, want exactly 1", len(identities))
-	}
+	require.NoError(err, "ListAccountIdentities")
+	require.Len(identities, 1)
 	got := identities[0].SourceSignal
 	// All three signals must appear in the merged comma-separated set.
 	for _, want := range signals {
-		if !containsSignal(got, want) {
-			t.Errorf("merged source_signal %q missing %q", got, want)
-		}
+		assert.True(containsSignal(got, want), "merged source_signal %q missing %q", got, want)
 	}
 }
 
@@ -362,21 +321,15 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: UpsertAttachment: %v", i, err)
-		}
+		assertpkg.NoError(t, err, "goroutine %d: UpsertAttachment", i)
 	}
 
 	var count int
-	if err := f.Store.DB().QueryRow(
+	requirepkg.NoError(t, f.Store.DB().QueryRow(
 		f.Store.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?"),
 		mid, "abcd1234",
-	).Scan(&count); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("got %d attachment rows, want exactly 1", count)
-	}
+	).Scan(&count), "count attachments")
+	assertpkg.Equal(t, 1, count, "want exactly 1 attachment row")
 }
 
 // silenceUnused references the imports the test would otherwise drop on

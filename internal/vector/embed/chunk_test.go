@@ -4,34 +4,31 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestChunkText(t *testing.T) {
 	t.Run("EmptyInputReturnsNil", func(t *testing.T) {
-		if got, _ := ChunkText("", 100, 10, 0); got != nil {
-			t.Errorf("got %v, want nil", got)
-		}
+		got, _ := ChunkText("", 100, 10, 0)
+		assertpkg.Nil(t, got)
 	})
 
 	t.Run("ShortInputReturnsSingleSpan", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		got, _ := ChunkText("hello world", 100, 10, 0)
-		if len(got) != 1 {
-			t.Fatalf("len = %d, want 1", len(got))
-		}
-		if got[0].Text != "hello world" {
-			t.Errorf("Text = %q, want %q", got[0].Text, "hello world")
-		}
-		if got[0].CharStart != 0 || got[0].CharEnd != 11 {
-			t.Errorf("span = [%d,%d), want [0,11)", got[0].CharStart, got[0].CharEnd)
-		}
+		requirepkg.Len(t, got, 1)
+		assert.Equal("hello world", got[0].Text)
+		assert.Equal(0, got[0].CharStart)
+		assert.Equal(11, got[0].CharEnd)
 	})
 
 	t.Run("MaxRunesZeroDisablesChunking", func(t *testing.T) {
 		text := strings.Repeat("x", 1000)
 		got, _ := ChunkText(text, 0, 10, 0)
-		if len(got) != 1 || got[0].Text != text {
-			t.Errorf("expected single span covering whole text")
-		}
+		requirepkg.Len(t, got, 1, "expected single span covering whole text")
+		assertpkg.Equal(t, text, got[0].Text)
 	})
 
 	t.Run("CutsAtParagraphBreakInBackQuarter", func(t *testing.T) {
@@ -43,15 +40,10 @@ func TestChunkText(t *testing.T) {
 		second := strings.Repeat("b", 50)
 		text := first + "\n\n" + second
 		got, _ := ChunkText(text, 100, 10, 0)
-		if len(got) < 2 {
-			t.Fatalf("expected >= 2 chunks, got %d", len(got))
-		}
-		if got[0].CharEnd != 82 {
-			t.Errorf("first chunk ends at %d, want 82 (right after \\n\\n)", got[0].CharEnd)
-		}
-		if !strings.HasSuffix(got[0].Text, "\n\n") {
-			t.Errorf("first chunk should end with paragraph break; got %q", got[0].Text[len(got[0].Text)-5:])
-		}
+		requirepkg.GreaterOrEqual(t, len(got), 2, "expected >= 2 chunks")
+		assertpkg.Equal(t, 82, got[0].CharEnd, "first chunk ends at 82 (right after \\n\\n)")
+		assertpkg.True(t, strings.HasSuffix(got[0].Text, "\n\n"),
+			"first chunk should end with paragraph break; got %q", got[0].Text[len(got[0].Text)-5:])
 	})
 
 	t.Run("CutsAtSentenceBoundaryWhenNoParagraph", func(t *testing.T) {
@@ -59,13 +51,9 @@ func TestChunkText(t *testing.T) {
 		// Sentence terminator at offset 80 ("end. ").
 		text := first + ". " + strings.Repeat("b", 50)
 		got, _ := ChunkText(text, 100, 10, 0)
-		if len(got) < 2 {
-			t.Fatalf("expected >= 2 chunks")
-		}
+		requirepkg.GreaterOrEqual(t, len(got), 2, "expected >= 2 chunks")
 		// findSoftBreak returns the index *after* ". " (so 82).
-		if got[0].CharEnd != 82 {
-			t.Errorf("first chunk ends at %d, want 82", got[0].CharEnd)
-		}
+		assertpkg.Equal(t, 82, got[0].CharEnd)
 	})
 
 	t.Run("CutsAtWordBoundaryWhenNoSentence", func(t *testing.T) {
@@ -74,12 +62,8 @@ func TestChunkText(t *testing.T) {
 		// last space inside [75, 100).
 		text := strings.Repeat("a", 90) + " " + strings.Repeat("b", 50)
 		got, _ := ChunkText(text, 100, 10, 0)
-		if len(got) < 2 {
-			t.Fatalf("expected >= 2 chunks")
-		}
-		if got[0].CharEnd != 91 {
-			t.Errorf("first chunk ends at %d, want 91 (one past space at 90)", got[0].CharEnd)
-		}
+		requirepkg.GreaterOrEqual(t, len(got), 2, "expected >= 2 chunks")
+		assertpkg.Equal(t, 91, got[0].CharEnd, "one past space at 90")
 	})
 
 	t.Run("HardCutsWhenNoSoftBreakInBackQuarter", func(t *testing.T) {
@@ -87,27 +71,19 @@ func TestChunkText(t *testing.T) {
 		// window should land on the hard cut at maxRunes.
 		text := strings.Repeat("a", 1000)
 		got, _ := ChunkText(text, 100, 0, 0)
-		if len(got) != 10 {
-			t.Fatalf("len = %d, want 10", len(got))
-		}
+		requirepkg.Len(t, got, 10)
 		for i, s := range got {
-			if s.CharEnd-s.CharStart != 100 {
-				t.Errorf("chunk %d: %d runes, want 100", i, s.CharEnd-s.CharStart)
-			}
+			assertpkg.Equal(t, 100, s.CharEnd-s.CharStart, "chunk %d", i)
 		}
 	})
 
 	t.Run("OverlapBetweenConsecutiveChunks", func(t *testing.T) {
 		text := strings.Repeat("a", 300)
 		got, _ := ChunkText(text, 100, 20, 0)
-		if len(got) < 2 {
-			t.Fatalf("expected >= 2 chunks")
-		}
+		requirepkg.GreaterOrEqual(t, len(got), 2, "expected >= 2 chunks")
 		// With overlap=20, the second chunk should start 80 runes
 		// after the first chunk's start.
-		if got[1].CharStart != 80 {
-			t.Errorf("chunk[1] starts at %d, want 80", got[1].CharStart)
-		}
+		assertpkg.Equal(t, 80, got[1].CharStart)
 	})
 
 	t.Run("OverlapClampedToHalfWindow", func(t *testing.T) {
@@ -116,16 +92,15 @@ func TestChunkText(t *testing.T) {
 		// overlap=500, effective overlap should be 50.
 		text := strings.Repeat("a", 300)
 		got, _ := ChunkText(text, 100, 500, 0)
-		if len(got) == 0 {
-			t.Fatal("got no chunks (overlap not clamped → infinite loop)")
-		}
+		requirepkg.NotEmpty(t, got, "got no chunks (overlap not clamped → infinite loop)")
 		// With effective overlap=50, chunk[1] starts at 50.
-		if len(got) >= 2 && got[1].CharStart != 50 {
-			t.Errorf("chunk[1] starts at %d, want 50", got[1].CharStart)
+		if len(got) >= 2 {
+			assertpkg.Equal(t, 50, got[1].CharStart)
 		}
 	})
 
 	t.Run("AllSpansHaveValidUTF8AndCorrectText", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		// Mixed-script input with multi-byte runes scattered through.
 		var b strings.Builder
 		for i := 0; i < 50; i++ {
@@ -134,25 +109,19 @@ func TestChunkText(t *testing.T) {
 		}
 		text := b.String()
 		got, _ := ChunkText(text, 80, 10, 0)
-		if len(got) < 2 {
-			t.Fatalf("expected >= 2 chunks")
-		}
+		requirepkg.GreaterOrEqual(t, len(got), 2, "expected >= 2 chunks")
 		for i, s := range got {
-			if !utf8.ValidString(s.Text) {
-				t.Errorf("chunk %d: invalid UTF-8 in span text", i)
-			}
+			assert.True(utf8.ValidString(s.Text), "chunk %d: invalid UTF-8 in span text", i)
 			// Span text must match the substring derived from the
 			// CharStart/CharEnd offsets — guards against off-by-one in
 			// the byte/rune translation.
 			runes := []rune(text)
 			if s.CharStart < 0 || s.CharEnd > len(runes) || s.CharStart >= s.CharEnd {
-				t.Errorf("chunk %d: invalid span [%d, %d)", i, s.CharStart, s.CharEnd)
+				assert.Failf("invalid span", "chunk %d: [%d, %d)", i, s.CharStart, s.CharEnd)
 				continue
 			}
 			expect := string(runes[s.CharStart:s.CharEnd])
-			if s.Text != expect {
-				t.Errorf("chunk %d: Text != runes[Start:End]", i)
-			}
+			assert.Equal(expect, s.Text, "chunk %d: Text != runes[Start:End]", i)
 		}
 	})
 
@@ -167,14 +136,10 @@ func TestChunkText(t *testing.T) {
 		// cap it stays at the same cost as the 1K-rune cases below.
 		text := strings.Repeat("a", 10_000_000)
 		got, _ := ChunkText(text, 100, 0, 3)
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3 (input cap kicks in before allocating offsets for 10M runes)", len(got))
-		}
+		requirepkg.Len(t, got, 3, "input cap kicks in before allocating offsets for 10M runes")
 		// All emitted spans come from the head of the input.
 		for i, s := range got {
-			if s.CharEnd > 300 {
-				t.Errorf("chunk %d ends at %d, want <= 300 (the cap window)", i, s.CharEnd)
-			}
+			assertpkg.LessOrEqual(t, s.CharEnd, 300, "chunk %d should end at most at 300 (the cap window)", i)
 		}
 	})
 
@@ -186,16 +151,10 @@ func TestChunkText(t *testing.T) {
 		// from embedding system-generated dumps).
 		text := strings.Repeat("a", 1000)
 		got, _ := ChunkText(text, 100, 0, 3)
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3 (capped)", len(got))
-		}
-		if got[0].CharStart != 0 {
-			t.Errorf("first chunk should start at 0, got %d", got[0].CharStart)
-		}
+		requirepkg.Len(t, got, 3, "capped")
+		assertpkg.Equal(t, 0, got[0].CharStart, "first chunk should start at 0")
 		last := got[len(got)-1]
-		if last.CharEnd >= 1000 {
-			t.Errorf("last capped chunk ends at %d; expected dropped tail beyond it", last.CharEnd)
-		}
+		assertpkg.Less(t, last.CharEnd, 1000, "expected dropped tail beyond last capped chunk")
 	})
 
 	t.Run("TailDroppedFlagsCapWhenLastChunkLandsOnSoftBreak", func(t *testing.T) {
@@ -216,13 +175,10 @@ func TestChunkText(t *testing.T) {
 		}
 		text := b.String()
 		got, tailDropped := ChunkText(text, 90, 0, 2)
-		if len(got) != 2 {
-			t.Fatalf("len = %d, want 2 (maxSpans cap)", len(got))
-		}
-		if !tailDropped {
-			t.Errorf("tailDropped = false, want true (maxSpans dropped %d runes past chunk[1].CharEnd=%d)",
-				utf8.RuneCountInString(text)-got[1].CharEnd, got[1].CharEnd)
-		}
+		requirepkg.Len(t, got, 2, "maxSpans cap")
+		assertpkg.True(t, tailDropped,
+			"tailDropped should be true (maxSpans dropped %d runes past chunk[1].CharEnd=%d)",
+			utf8.RuneCountInString(text)-got[1].CharEnd, got[1].CharEnd)
 	})
 
 	t.Run("TailDroppedFalseWhenAllContentEmitted", func(t *testing.T) {
@@ -230,59 +186,45 @@ func TestChunkText(t *testing.T) {
 		// fewer than maxSpans chunks must not flag tailDropped.
 		text := strings.Repeat("a", 150)
 		got, tailDropped := ChunkText(text, 100, 0, 10)
-		if len(got) < 1 {
-			t.Fatalf("expected >= 1 chunk")
-		}
-		if tailDropped {
-			t.Errorf("tailDropped = true on a short input that fit in %d chunks; should be false", len(got))
-		}
+		requirepkg.NotEmpty(t, got, "expected >= 1 chunk")
+		assertpkg.False(t, tailDropped, "short input that fit in %d chunks should not flag tailDropped", len(got))
 	})
 
 	t.Run("MaxSpansZeroIsUnlimited", func(t *testing.T) {
 		text := strings.Repeat("a", 1000)
 		got, _ := ChunkText(text, 100, 0, 0)
-		if len(got) != 10 {
-			t.Errorf("len = %d, want 10 (no cap)", len(got))
-		}
+		assertpkg.Len(t, got, 10, "no cap")
 	})
 
 	t.Run("MaxSpansLargerThanNaturalChunkCountIsNoop", func(t *testing.T) {
 		text := strings.Repeat("a", 300)
 		got, _ := ChunkText(text, 100, 0, 100)
-		if len(got) != 3 {
-			t.Errorf("len = %d, want 3 (cap above natural)", len(got))
-		}
+		assertpkg.Len(t, got, 3, "cap above natural")
 	})
 
 	t.Run("ConcatenationCoversInputModuloOverlap", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		// Stitching the chunks back together (advancing by stride =
 		// window - overlap from each chunk's start) must reconstruct
 		// the input verbatim. This is the property the overlap
 		// guarantee depends on for recall.
 		text := strings.Repeat("Lorem ipsum dolor sit amet. ", 200)
 		spans, _ := ChunkText(text, 200, 30, 0)
-		if len(spans) < 2 {
-			t.Fatalf("need >= 2 chunks to test stitching")
-		}
+		requirepkg.GreaterOrEqual(t, len(spans), 2, "need >= 2 chunks to test stitching")
 		// Each chunk starts at spans[i].CharStart; the unique part of
 		// chunk i (not seen in chunk i-1) starts at spans[i].CharStart
 		// + overlap-with-prev. For correctness it's enough to verify
 		// spans cover [0, totalRunes) end-to-end.
-		if spans[0].CharStart != 0 {
-			t.Errorf("first chunk should start at 0, got %d", spans[0].CharStart)
-		}
+		assert.Equal(0, spans[0].CharStart, "first chunk should start at 0")
 		last := spans[len(spans)-1]
 		runeCount := utf8.RuneCountInString(text)
-		if last.CharEnd != runeCount {
-			t.Errorf("last chunk ends at %d, want %d (end of text)", last.CharEnd, runeCount)
-		}
+		assert.Equal(runeCount, last.CharEnd, "last chunk should end at end of text")
 		// Every gap between consecutive chunks must be <= window so
 		// no input runes are dropped on the floor.
 		for i := 1; i < len(spans); i++ {
-			if spans[i].CharStart > spans[i-1].CharEnd {
-				t.Errorf("chunks %d,%d leave a gap [%d, %d)",
-					i-1, i, spans[i-1].CharEnd, spans[i].CharStart)
-			}
+			assert.LessOrEqualf(spans[i].CharStart, spans[i-1].CharEnd,
+				"chunks %d,%d leave a gap [%d, %d)",
+				i-1, i, spans[i-1].CharEnd, spans[i].CharStart)
 		}
 	})
 }

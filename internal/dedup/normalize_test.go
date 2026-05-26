@@ -3,6 +3,8 @@ package dedup
 import (
 	"bytes"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
 )
 
 func TestNormalizeRawMIME(t *testing.T) {
@@ -60,26 +62,23 @@ func TestNormalizeRawMIME(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			inputCopy := make([]byte, len(tt.input))
 			copy(inputCopy, tt.input)
 
 			result := normalizeRawMIME(tt.input)
 
-			if !bytes.Equal(tt.input, inputCopy) {
-				t.Error("normalizeRawMIME mutated its input buffer")
-			}
+			assert.True(bytes.Equal(tt.input, inputCopy), "normalizeRawMIME mutated its input buffer")
 
 			if tt.wantSame {
-				if !bytes.Equal(result, tt.input) {
-					t.Errorf("expected unchanged output, got:\n%s", result)
-				}
+				assert.True(bytes.Equal(result, tt.input), "expected unchanged output, got:\n%s", result)
 				return
 			}
-			if tt.contains != "" && !bytes.Contains(result, []byte(tt.contains)) {
-				t.Errorf("output missing %q:\n%s", tt.contains, result)
+			if tt.contains != "" {
+				assert.True(bytes.Contains(result, []byte(tt.contains)), "output missing %q:\n%s", tt.contains, result)
 			}
-			if tt.excludes != "" && bytes.Contains(result, []byte(tt.excludes)) {
-				t.Errorf("output should not contain %q:\n%s", tt.excludes, result)
+			if tt.excludes != "" {
+				assert.False(bytes.Contains(result, []byte(tt.excludes)), "output should not contain %q:\n%s", tt.excludes, result)
 			}
 		})
 	}
@@ -91,7 +90,5 @@ func TestNormalizeRawMIME_DeterministicOutput(t *testing.T) {
 
 	hash1 := sha256Hex(normalizeRawMIME(raw1))
 	hash2 := sha256Hex(normalizeRawMIME(raw2))
-	if hash1 != hash2 {
-		t.Errorf("same message with different transport headers produced different hashes")
-	}
+	assertpkg.Equal(t, hash1, hash2, "same message with different transport headers produced different hashes")
 }

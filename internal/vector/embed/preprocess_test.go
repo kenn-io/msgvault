@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	assertpkg "github.com/stretchr/testify/assert"
 )
 
 func TestPreprocess(t *testing.T) {
@@ -83,7 +85,7 @@ func TestPreprocess(t *testing.T) {
 			// each) should produce a 30-byte result.
 			name:      "TruncateAtRuneBoundary",
 			subject:   "",
-			body:      strings.Repeat("\u2603", 50),
+			body:      strings.Repeat("☃", 50),
 			maxChars:  10,
 			cfg:       PreprocessConfig{},
 			lenLE:     30,
@@ -127,7 +129,7 @@ func TestPreprocess(t *testing.T) {
 			// under the old byte-counting rule.
 			name:      "MultiByteRunesUnderCap",
 			subject:   "",
-			body:      strings.Repeat("\u2603", 33),
+			body:      strings.Repeat("☃", 33),
 			maxChars:  100,
 			cfg:       PreprocessConfig{},
 			wantTrunc: false,
@@ -501,19 +503,18 @@ func TestPreprocess(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			out, tr := Preprocess(tt.subject, tt.body, tt.maxChars, tt.cfg)
-			if tt.checkWant && out != tt.want {
-				t.Errorf("got %q\nwant %q", out, tt.want)
+			if tt.checkWant {
+				assert.Equal(tt.want, out)
 			}
-			if tt.lenLE > 0 && len(out) > tt.lenLE {
-				t.Errorf("len(out)=%d > %d", len(out), tt.lenLE)
+			if tt.lenLE > 0 {
+				assert.LessOrEqual(len(out), tt.lenLE)
 			}
-			if tt.wantValid && !utf8.ValidString(out) {
-				t.Error("out is not valid UTF-8")
+			if tt.wantValid {
+				assert.True(utf8.ValidString(out), "out is not valid UTF-8")
 			}
-			if tr != tt.wantTrunc {
-				t.Errorf("truncated=%v, want %v", tr, tt.wantTrunc)
-			}
+			assert.Equal(tt.wantTrunc, tr, "truncated")
 		})
 	}
 }

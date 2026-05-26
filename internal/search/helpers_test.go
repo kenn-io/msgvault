@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 )
 
 // assertQueryEqual compares two Query structs, treating nil slices and empty
@@ -14,7 +15,6 @@ import (
 // checks which treat nil and empty identically.
 func assertQueryEqual(t *testing.T, got, want Query) {
 	t.Helper()
-	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
-		t.Errorf("Query mismatch (-want +got):\n%s", diff)
-	}
+	diff := cmp.Diff(want, got, cmpopts.EquateEmpty())
+	assert.Empty(t, diff, "Query mismatch (-want +got):\n%s", diff)
 }

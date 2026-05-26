@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeBackend implements Backend for ResolveActiveForFingerprint tests.
@@ -63,23 +66,15 @@ func (f *fakeBackend) EnsureSeeded(context.Context, GenerationID) error {
 func TestResolveActiveForFingerprint_Matches(t *testing.T) {
 	b := &fakeBackend{active: &Generation{ID: 1, Fingerprint: "m:768:p1-111111"}}
 	g, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
-	if err != nil {
-		t.Fatalf("ResolveActiveForFingerprint: %v", err)
-	}
-	if g.Fingerprint != "m:768:p1-111111" {
-		t.Errorf("fingerprint = %q, want m:768:p1-111111", g.Fingerprint)
-	}
-	if g.ID != 1 {
-		t.Errorf("ID = %d, want 1", g.ID)
-	}
+	require.NoError(t, err, "ResolveActiveForFingerprint")
+	assert.Equal(t, "m:768:p1-111111", g.Fingerprint)
+	assert.Equal(t, GenerationID(1), g.ID)
 }
 
 func TestResolveActiveForFingerprint_Stale(t *testing.T) {
 	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:1024:p1-111111")
-	if !errors.Is(err, ErrIndexStale) {
-		t.Errorf("err = %v, want ErrIndexStale", err)
-	}
+	assert.ErrorIs(t, err, ErrIndexStale)
 }
 
 // TestResolveActiveForFingerprint_StaleOnPreprocessFlip pins the
@@ -90,41 +85,33 @@ func TestResolveActiveForFingerprint_Stale(t *testing.T) {
 func TestResolveActiveForFingerprint_StaleOnPreprocessFlip(t *testing.T) {
 	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-101111")
-	if !errors.Is(err, ErrIndexStale) {
-		t.Errorf("err = %v, want ErrIndexStale", err)
-	}
+	assert.ErrorIs(t, err, ErrIndexStale)
 }
 
 func TestResolveActiveForFingerprint_NoneAndBuildingReturnsBuildingError(t *testing.T) {
 	b := &fakeBackend{building: &Generation{ID: 42, Fingerprint: "m:768:p1-111111"}}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
-	if !errors.Is(err, ErrIndexBuilding) {
-		t.Errorf("err = %v, want ErrIndexBuilding", err)
-	}
+	assert.ErrorIs(t, err, ErrIndexBuilding)
 }
 
 func TestResolveActiveForFingerprint_NothingReturnsNotEnabled(t *testing.T) {
 	b := &fakeBackend{}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
-	if !errors.Is(err, ErrNotEnabled) {
-		t.Errorf("err = %v, want ErrNotEnabled", err)
-	}
+	assert.ErrorIs(t, err, ErrNotEnabled)
 }
 
 func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
 	wantErr := fmt.Errorf("db down")
 	b := &fakeBackend{activeErr: wantErr}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want wraps db down", err)
-	}
+	require.Error(t, err, "expected error wrapping db down")
+	assert.ErrorIs(t, err, wantErr)
 }
 
 func TestResolveActiveForFingerprint_BuildingBackendError(t *testing.T) {
 	wantErr := fmt.Errorf("building failed")
 	b := &fakeBackend{buildErr: wantErr}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want wraps building failed", err)
-	}
+	require.Error(t, err, "expected error wrapping building failed")
+	assert.ErrorIs(t, err, wantErr)
 }

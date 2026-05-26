@@ -2,8 +2,10 @@ package store
 
 import (
 	"database/sql"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresColumnExistsSQLScopesToCurrentSchema(t *testing.T) {
@@ -14,31 +16,21 @@ func TestPostgresColumnExistsSQLScopesToCurrentSchema(t *testing.T) {
 		"table_name = 'messages'",
 		"column_name = 'search_fts'",
 	} {
-		if !strings.Contains(query, want) {
-			t.Fatalf("postgres column query should contain %q, got %q", want, query)
-		}
+		assert.Contains(t, query, want, "postgres column query")
 	}
 }
 
 func TestPostgresConnConfigRuntimeParams(t *testing.T) {
 	cfg, err := postgresConnConfig("postgres://user:pass@example.com:5432/msgvault", true)
-	if err != nil {
-		t.Fatalf("postgresConnConfig: %v", err)
-	}
+	require.NoError(t, err, "postgresConnConfig")
 
-	if got := cfg.RuntimeParams["statement_timeout"]; got != "30s" {
-		t.Fatalf("statement_timeout = %q, want 30s", got)
-	}
-	if got := cfg.RuntimeParams["default_transaction_read_only"]; got != "on" {
-		t.Fatalf("default_transaction_read_only = %q, want on", got)
-	}
+	assert.Equal(t, "30s", cfg.RuntimeParams["statement_timeout"])
+	assert.Equal(t, "on", cfg.RuntimeParams["default_transaction_read_only"])
 }
 
 func TestStoreCloseRunsRegisteredCleanup(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	require.NoError(t, err, "open sqlite")
 
 	called := false
 	st := &Store{
@@ -49,10 +41,6 @@ func TestStoreCloseRunsRegisteredCleanup(t *testing.T) {
 		},
 	}
 
-	if err := st.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if !called {
-		t.Fatal("Close did not run registered cleanup")
-	}
+	require.NoError(t, st.Close(), "Close")
+	assert.True(t, called, "Close did not run registered cleanup")
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -20,20 +21,16 @@ import (
 func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open main: %v", err)
-	}
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`CREATE TABLE messages (
+	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
-	)`); err != nil {
-		t.Fatalf("create messages: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`); err != nil {
-		t.Fatalf("insert message: %v", err)
-	}
+	)`)
+	require.NoError(t, err, "create messages")
+	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	require.NoError(t, err, "insert message")
 	return db
 }
 
@@ -43,20 +40,16 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open main: %v", err)
-	}
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(`CREATE TABLE messages (
+	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
-	)`); err != nil {
-		t.Fatalf("create messages: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO messages (id, deleted_from_source_at) VALUES (1, CURRENT_TIMESTAMP)`); err != nil {
-		t.Fatalf("insert deleted message: %v", err)
-	}
+	)`)
+	require.NoError(t, err, "create messages")
+	_, err = db.Exec(`INSERT INTO messages (id, deleted_from_source_at) VALUES (1, CURRENT_TIMESTAMP)`)
+	require.NoError(t, err, "insert deleted message")
 
 	ctx := context.Background()
 	b, err := Open(ctx, Options{
@@ -64,9 +57,7 @@ func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 		Dimension: 768,
 		MainDB:    db,
 	})
-	if err != nil {
-		t.Fatalf("Open backend: %v", err)
-	}
+	require.NoError(t, err, "Open backend")
 	return b
 }
 
@@ -87,9 +78,7 @@ func openFusedMainDB(t *testing.T) (*sql.DB, string) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.db")
 	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatalf("open main: %v", err)
-	}
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
 
 	// sent_at is DATETIME (text in canonical "2006-01-02 15:04:05"
@@ -120,9 +109,8 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
+	_, err = db.Exec(schema)
+	require.NoError(t, err, "schema")
 
 	rows := []struct {
 		id      int64
@@ -134,14 +122,12 @@ CREATE TABLE message_recipients (
 		{3, "travel itinerary", "flight confirmation"},
 	}
 	for _, r := range rows {
-		if _, err := db.Exec(`INSERT INTO messages (id) VALUES (?)`, r.id); err != nil {
-			t.Fatalf("insert msg: %v", err)
-		}
-		if _, err := db.Exec(
+		_, err := db.Exec(`INSERT INTO messages (id) VALUES (?)`, r.id)
+		require.NoError(t, err, "insert msg")
+		_, err = db.Exec(
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
-			r.id, r.subject, r.body); err != nil {
-			t.Fatalf("insert fts: %v", err)
-		}
+			r.id, r.subject, r.body)
+		require.NoError(t, err, "insert fts")
 	}
 	return db, path
 }
@@ -159,9 +145,7 @@ func newFusedBackendForTest(t *testing.T) (*Backend, context.Context, func()) {
 		Dimension: 768,
 		MainDB:    main,
 	})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err, "Open")
 	cleanup := func() { _ = b.Close() }
 	t.Cleanup(cleanup)
 	return b, ctx, cleanup
@@ -172,9 +156,7 @@ func newFusedBackendForTest(t *testing.T) (*Backend, context.Context, func()) {
 // supplied vectors as chunks. Returns the generation ID.
 func seedAndEmbed(t *testing.T, b *Backend, vecs map[int64][]float32) vector.GenerationID {
 	t.Helper()
-	if len(vecs) == 0 {
-		t.Fatal("seedAndEmbed: no vectors supplied")
-	}
+	require.NotEmpty(t, vecs, "seedAndEmbed: no vectors supplied")
 	ctx := context.Background()
 
 	ids := make([]int64, 0, len(vecs))
@@ -185,37 +167,29 @@ func seedAndEmbed(t *testing.T, b *Backend, vecs map[int64][]float32) vector.Gen
 
 	expectedDim := len(vecs[ids[0]])
 	for _, id := range ids {
-		if v := vecs[id]; len(v) != expectedDim {
-			t.Fatalf("seedAndEmbed: vector for msg %d has %d dims, want %d", id, len(v), expectedDim)
-		}
+		require.Lenf(t, vecs[id], expectedDim, "seedAndEmbed: vector for msg %d", id)
 	}
 
 	for _, id := range ids {
-		if _, err := b.mainDB.ExecContext(ctx,
-			`INSERT OR IGNORE INTO messages (id) VALUES (?)`, id); err != nil {
-			t.Fatalf("seed message %d: %v", id, err)
-		}
+		_, err := b.mainDB.ExecContext(ctx,
+			`INSERT OR IGNORE INTO messages (id) VALUES (?)`, id)
+		require.NoErrorf(t, err, "seed message %d", id)
 	}
 
 	gid, err := b.CreateGeneration(ctx, "m", expectedDim, "")
-	if err != nil {
-		t.Fatalf("CreateGeneration: %v", err)
-	}
+	require.NoError(t, err, "CreateGeneration")
 
 	chunks := make([]vector.Chunk, 0, len(ids))
 	for _, id := range ids {
 		chunks = append(chunks, vector.Chunk{MessageID: id, Vector: vecs[id]})
 	}
-	if err := b.Upsert(ctx, gid, chunks); err != nil {
-		t.Fatalf("Upsert: %v", err)
-	}
+	require.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
 	// Upsert intentionally does not clear pending_embeddings — that
 	// belongs to the queue's token-aware Complete. For helper
 	// scenarios that want the "fully embedded" end state, we clear
 	// pending here directly.
-	if _, err := b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gid)); err != nil {
-		t.Fatalf("clear pending: %v", err)
-	}
+	_, err = b.db.ExecContext(ctx,
+		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gid))
+	require.NoError(t, err, "clear pending")
 	return gid
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for test setup
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -32,17 +33,13 @@ func NewTestStore(t *testing.T) *store.Store {
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	st, err := store.OpenForTest(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(t, err, "open store")
 
 	t.Cleanup(func() {
 		_ = st.Close()
 	})
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(t, st.InitSchema(), "init schema")
 
 	return st
 }
@@ -67,21 +64,16 @@ func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 
 	// Generate a random schema name for test isolation
 	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		t.Fatalf("random schema name: %v", err)
-	}
+	_, err := rand.Read(buf)
+	require.NoError(t, err, "random schema name")
 	schemaName := "msgvault_test_" + hex.EncodeToString(buf)
 
 	// Create the schema using a separate connection
 	setupDB, err := sql.Open("pgx", dbURL)
-	if err != nil {
-		t.Fatalf("open setup connection: %v", err)
-	}
-	if _, err := setupDB.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName)); err != nil {
-		_ = setupDB.Close()
-		t.Fatalf("create schema %s: %v", schemaName, err)
-	}
+	require.NoError(t, err, "open setup connection")
+	_, schemaErr := setupDB.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName))
 	_ = setupDB.Close()
+	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
 
 	// Register schema cleanup immediately so that any failure below this
 	// point (store.Open, InitSchema) doesn't leak the schema.
@@ -107,13 +99,8 @@ func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	testURL += sep + "search_path=" + schemaName
 
 	st, err = store.Open(testURL)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(t, err, "open store")
+	require.NoError(t, st.InitSchema(), "init schema")
 
 	return st
 }

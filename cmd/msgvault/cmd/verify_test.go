@@ -1,6 +1,10 @@
 package cmd
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 // TestIsFTSIntegrityError_Classification verifies that the hint-classifier
 // cleanly separates FTS5 shadow-table errors (which rebuild-fts can fix)
@@ -34,8 +38,7 @@ func TestIsFTSIntegrityError_Classification(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		if got := isFTSIntegrityError(tc.msg); got != tc.wantFT {
-			t.Errorf("isFTSIntegrityError(%q) = %v, want %v", tc.msg, got, tc.wantFT)
-		}
+		got := isFTSIntegrityError(tc.msg)
+		assert.Equal(t, tc.wantFT, got, "isFTSIntegrityError(%q)", tc.msg)
 	}
 }

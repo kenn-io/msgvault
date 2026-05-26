@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique simulates an
@@ -26,6 +29,8 @@ import (
 // id (proving ON CONFLICT (phone_number) now binds to a real UNIQUE
 // constraint).
 func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// SQLite-only: this test pokes at sqlite_master and reseats the
 	// applied_migrations row directly. The PG equivalent of the
 	// migration is exercised by TestEnsureParticipantByPhone_Concurrent
@@ -33,43 +38,32 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	// real UNIQUE constraint).
 	dbPath := filepath.Join(t.TempDir(), "phone_unique.db")
 	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(err, "Open")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("InitSchema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "InitSchema")
 
 	// Roll back to the "legacy" state: clear the applied_migrations
 	// sentinel, drop the unique index, recreate as non-unique.
-	if _, err := st.db.Exec(
+	_, err = st.db.Exec(
 		`DELETE FROM applied_migrations WHERE name = ?`, migrationPhoneUniqueIndex,
-	); err != nil {
-		t.Fatalf("clear migration sentinel: %v", err)
-	}
-	if _, err := st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`); err != nil {
-		t.Fatalf("drop unique idx: %v", err)
-	}
-	if _, err := st.db.Exec(`
+	)
+	require.NoError(err, "clear migration sentinel")
+	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	require.NoError(err, "drop unique idx")
+	_, err = st.db.Exec(`
 		CREATE INDEX idx_participants_phone ON participants(phone_number)
 		    WHERE phone_number IS NOT NULL
-	`); err != nil {
-		t.Fatalf("create legacy non-unique idx: %v", err)
-	}
+	`)
+	require.NoError(err, "create legacy non-unique idx")
 
 	// Seed two duplicate-phone participants directly (the public API
 	// no longer allows this, which is exactly the bug the unique
 	// index closes). Use a source + conversation + messages so the
 	// FK-repoint paths are also exercised.
 	source, err := st.GetOrCreateSource("imessage", "+15555550100")
-	if err != nil {
-		t.Fatalf("GetOrCreateSource: %v", err)
-	}
+	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(source.ID, "thread-phone-dup", "")
-	if err != nil {
-		t.Fatalf("EnsureConversation: %v", err)
-	}
+	require.NoError(err, "EnsureConversation")
 
 	// Two raw inserts that share +15555551234. id1 wins, id2 loses.
 	insertParticipant := func(phone, displayName string) int64 {
@@ -80,18 +74,14 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 			VALUES (?, ?, datetime('now'), datetime('now'))
 			RETURNING id
 		`, phone, displayName).Scan(&id)
-		if err != nil {
-			t.Fatalf("insert participant %s: %v", phone, err)
-		}
+		require.NoError(err, "insert participant %s", phone)
 		return id
 	}
 	winner := insertParticipant("+15555551234", "Alice")
 	loser := insertParticipant("+15555551234", "Alice (dup)")
 
 	// Make sure the legacy schema actually permitted the duplicate.
-	if winner == loser {
-		t.Fatalf("seeded participants must have distinct ids (got %d, %d)", winner, loser)
-	}
+	require.NotEqual(winner, loser, "seeded participants must have distinct ids")
 
 	// Attach FK references to BOTH participants so we can prove the
 	// repoint+dedupe logic runs end-to-end:
@@ -110,9 +100,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		Subject:         sql.NullString{String: "A", Valid: true},
 		SizeEstimate:    100,
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage A: %v", err)
-	}
+	require.NoError(err, "UpsertMessage A")
 	msgB, err := st.UpsertMessage(&Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -121,9 +109,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		Subject:         sql.NullString{String: "B", Valid: true},
 		SizeEstimate:    100,
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage B: %v", err)
-	}
+	require.NoError(err, "UpsertMessage B")
 	msgC, err := st.UpsertMessage(&Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -132,15 +118,12 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 		Subject:         sql.NullString{String: "C", Valid: true},
 		SizeEstimate:    100,
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage C: %v", err)
-	}
+	require.NoError(err, "UpsertMessage C")
 
 	exec := func(q string, args ...any) {
 		t.Helper()
-		if _, err := st.db.Exec(q, args...); err != nil {
-			t.Fatalf("exec %q: %v", q, err)
-		}
+		_, err := st.db.Exec(q, args...)
+		require.NoError(err, "exec %q", q)
 	}
 	// Recipient on msg-A: only loser → survives, repoints to winner.
 	exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'to')`,
@@ -155,106 +138,71 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, loser, msgC)
 
 	// Run the migration we are testing.
-	if err := st.ensureParticipantsPhoneUniqueIndex(); err != nil {
-		t.Fatalf("ensureParticipantsPhoneUniqueIndex: %v", err)
-	}
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(), "ensureParticipantsPhoneUniqueIndex")
 
 	// 1) Loser row must be gone.
 	var loserCount int
-	if err := st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ?`, loser).Scan(&loserCount); err != nil {
-		t.Fatalf("count loser: %v", err)
-	}
-	if loserCount != 0 {
-		t.Errorf("loser participant %d still present after merge", loser)
-	}
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ?`, loser).Scan(&loserCount),
+		"count loser")
+	assert.Equal(0, loserCount, "loser participant %d still present after merge", loser)
 
 	// 2) Exactly one participant for the duplicated phone.
 	var phoneCount int
-	if err := st.db.QueryRow(
+	require.NoError(st.db.QueryRow(
 		`SELECT COUNT(*) FROM participants WHERE phone_number = ?`,
 		"+15555551234",
-	).Scan(&phoneCount); err != nil {
-		t.Fatalf("count duplicates: %v", err)
-	}
-	if phoneCount != 1 {
-		t.Errorf("phone +15555551234 row count = %d, want 1 after dedupe", phoneCount)
-	}
+	).Scan(&phoneCount), "count duplicates")
+	assert.Equal(1, phoneCount, "phone +15555551234 row count after dedupe")
 
 	// 3) msg-A recipient now points at winner (repoint succeeded).
 	var msgAParticipant int64
-	if err := st.db.QueryRow(
+	require.NoError(st.db.QueryRow(
 		`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`,
 		msgA,
-	).Scan(&msgAParticipant); err != nil {
-		t.Fatalf("read msg-A recipient: %v", err)
-	}
-	if msgAParticipant != winner {
-		t.Errorf("msg-A recipient = %d, want winner %d", msgAParticipant, winner)
-	}
+	).Scan(&msgAParticipant), "read msg-A recipient")
+	assert.Equal(winner, msgAParticipant, "msg-A recipient")
 
 	// 4) msg-B has exactly one 'to' recipient (winner) — the loser
 	//    row was collapsed into the winner row by the dedupe step.
 	var msgBCount int
-	if err := st.db.QueryRow(
+	require.NoError(st.db.QueryRow(
 		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`,
 		msgB,
-	).Scan(&msgBCount); err != nil {
-		t.Fatalf("count msg-B recipients: %v", err)
-	}
-	if msgBCount != 1 {
-		t.Errorf("msg-B 'to' recipient count = %d, want 1", msgBCount)
-	}
+	).Scan(&msgBCount), "count msg-B recipients")
+	assert.Equal(1, msgBCount, "msg-B 'to' recipient count")
 	var msgBParticipant int64
-	if err := st.db.QueryRow(
+	require.NoError(st.db.QueryRow(
 		`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`,
 		msgB,
-	).Scan(&msgBParticipant); err != nil {
-		t.Fatalf("read msg-B recipient: %v", err)
-	}
-	if msgBParticipant != winner {
-		t.Errorf("msg-B recipient = %d, want winner %d", msgBParticipant, winner)
-	}
+	).Scan(&msgBParticipant), "read msg-B recipient")
+	assert.Equal(winner, msgBParticipant, "msg-B recipient")
 
 	// 5) msg-C sender_id repointed to winner.
 	var msgCSender sql.NullInt64
-	if err := st.db.QueryRow(`SELECT sender_id FROM messages WHERE id = ?`, msgC).Scan(&msgCSender); err != nil {
-		t.Fatalf("read msg-C sender: %v", err)
-	}
-	if !msgCSender.Valid || msgCSender.Int64 != winner {
-		t.Errorf("msg-C sender = %+v, want winner %d", msgCSender, winner)
-	}
+	require.NoError(st.db.QueryRow(`SELECT sender_id FROM messages WHERE id = ?`, msgC).Scan(&msgCSender),
+		"read msg-C sender")
+	assert.True(msgCSender.Valid, "msg-C sender = %+v, want winner %d", msgCSender, winner)
+	assert.Equal(winner, msgCSender.Int64, "msg-C sender")
 
 	// 6) The index is now UNIQUE. Verify via sqlite_master.
 	var sqlDef string
-	if err := st.db.QueryRow(
+	require.NoError(st.db.QueryRow(
 		`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_participants_phone'`,
-	).Scan(&sqlDef); err != nil {
-		t.Fatalf("read idx_participants_phone sql: %v", err)
-	}
-	if !strings.Contains(strings.ToUpper(sqlDef), "UNIQUE") {
-		t.Errorf("idx_participants_phone is not UNIQUE after migration; got %q", sqlDef)
-	}
+	).Scan(&sqlDef), "read idx_participants_phone sql")
+	assert.Contains(strings.ToUpper(sqlDef), "UNIQUE",
+		"idx_participants_phone is not UNIQUE after migration; got %q", sqlDef)
 
 	// 7) Migration sentinel is set, so a re-run is a no-op.
 	applied, err := st.IsMigrationApplied(migrationPhoneUniqueIndex)
-	if err != nil {
-		t.Fatalf("IsMigrationApplied: %v", err)
-	}
-	if !applied {
-		t.Errorf("migration sentinel not set after successful run")
-	}
-	if err := st.ensureParticipantsPhoneUniqueIndex(); err != nil {
-		t.Errorf("re-run of ensureParticipantsPhoneUniqueIndex must be a no-op, got %v", err)
-	}
+	require.NoError(err, "IsMigrationApplied")
+	assert.True(applied, "migration sentinel not set after successful run")
+	assert.NoError(st.ensureParticipantsPhoneUniqueIndex(),
+		"re-run of ensureParticipantsPhoneUniqueIndex must be a no-op")
 
 	// 8) Public API: EnsureParticipantByPhone with the duplicated
 	//    number returns the winner id (the unique index is now
 	//    actually enforcing ON CONFLICT (phone_number)).
 	gotID, err := st.EnsureParticipantByPhone("+15555551234", "Alice (later call)", "imessage")
-	if err != nil {
-		t.Fatalf("EnsureParticipantByPhone: %v", err)
-	}
-	if gotID != winner {
-		t.Errorf("EnsureParticipantByPhone returned id %d, want winner %d (ON CONFLICT must find the unique index)", gotID, winner)
-	}
+	require.NoError(err, "EnsureParticipantByPhone")
+	assert.Equal(winner, gotID, "EnsureParticipantByPhone returned id %d, want winner %d (ON CONFLICT must find the unique index)", gotID, winner)
 }
