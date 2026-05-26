@@ -65,13 +65,47 @@ function Invoke-WebRequestCompat {
 }
 
 function Get-LatestVersion {
-    $url = "https://api.github.com/repos/$repo/releases/latest"
-    try {
-        $response = Invoke-WebRequestCompat -Uri $url
-        return $response.tag_name
-    } catch {
-        throw "Failed to fetch latest version: $_"
+    # Use the HTML /releases/latest endpoint, which 302-redirects to
+    # /releases/tag/<version>. Unlike api.github.com it is not rate-limited
+    # at 60 req/hr per IP, so users behind shared NAT / VPN don't get 403.
+    $url = "https://github.com/$repo/releases/latest"
+
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     }
+
+    $params = @{
+        Uri = $url
+        MaximumRedirection = 0
+        ErrorAction = 'Stop'
+    }
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $params.UseBasicParsing = $true
+    }
+
+    $location = $null
+    try {
+        # PowerShell 7+ returns the 302 as a normal response.
+        $response = Invoke-WebRequest @params
+        $location = $response.Headers.Location
+    } catch {
+        # PowerShell 5.x throws System.Net.WebException for 3xx when
+        # MaximumRedirection=0. The Location header lives on the response.
+        if ($_.Exception.Response) {
+            $location = $_.Exception.Response.Headers['Location']
+        } else {
+            throw "Failed to fetch latest version: $_"
+        }
+    }
+
+    if ($location -is [array]) { $location = $location[0] }
+    if (-not $location) {
+        throw "Failed to fetch latest version: no Location header from $url"
+    }
+    if ($location -notmatch '/releases/tag/([^/]+)/?$') {
+        throw "Failed to fetch latest version: unexpected redirect target $location"
+    }
+    return $Matches[1]
 }
 
 function Get-InstallDir {

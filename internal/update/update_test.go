@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -346,66 +348,124 @@ func TestIsNewer(t *testing.T) {
 	}
 }
 
-func TestFindAssets(t *testing.T) {
+func TestResolveLatestTag(t *testing.T) {
 	t.Parallel()
-	assets := []Asset{
-		{Name: "msgvault_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux_amd64"},
-		{Name: "msgvault_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin_arm64"},
-		{Name: "SHA256SUMS", Size: 500, BrowserDownloadURL: "https://example.com/checksums"},
-		{Name: "msgvault_darwin_amd64.tar.gz", Size: 3000, BrowserDownloadURL: "https://example.com/darwin_amd64"},
-	}
-
 	tests := []struct {
-		name             string
-		assetName        string
-		wantAssetURL     string
-		wantAssetSize    int64
-		wantChecksumsURL string
-		wantAssetNil     bool
+		name       string
+		status     int
+		location   string
+		wantTag    string
+		wantErrSub string
 	}{
 		{
-			name:             "find darwin_arm64",
-			assetName:        "msgvault_darwin_arm64.tar.gz",
-			wantAssetURL:     "https://example.com/darwin_arm64",
-			wantAssetSize:    2000,
-			wantChecksumsURL: "https://example.com/checksums",
+			name:     "valid 302 redirect",
+			status:   http.StatusFound,
+			location: "https://github.com/wesm/msgvault/releases/tag/v0.30.1",
+			wantTag:  "v0.30.1",
 		},
 		{
-			name:             "find linux_amd64",
-			assetName:        "msgvault_linux_amd64.tar.gz",
-			wantAssetURL:     "https://example.com/linux_amd64",
-			wantAssetSize:    1000,
-			wantChecksumsURL: "https://example.com/checksums",
+			name:     "pre-release tag",
+			status:   http.StatusFound,
+			location: "https://github.com/wesm/msgvault/releases/tag/v0.9.0-rc1",
+			wantTag:  "v0.9.0-rc1",
 		},
 		{
-			name:             "asset not found",
-			assetName:        "msgvault_freebsd_amd64.tar.gz",
-			wantAssetNil:     true,
-			wantChecksumsURL: "https://example.com/checksums",
+			name:       "200 OK is not a redirect",
+			status:     http.StatusOK,
+			wantErrSub: "expected redirect",
+		},
+		{
+			name:       "redirect target without /tag/",
+			status:     http.StatusFound,
+			location:   "https://github.com/wesm/msgvault/releases",
+			wantErrSub: "unexpected redirect target",
+		},
+		{
+			name:       "empty tag after /tag/",
+			status:     http.StatusFound,
+			location:   "https://github.com/wesm/msgvault/releases/tag/",
+			wantErrSub: "empty tag",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			asset, checksums := findAssets(assets, tt.assetName)
+			srv := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) {
+					if tt.location != "" {
+						w.Header().Set("Location", tt.location)
+					}
+					w.WriteHeader(tt.status)
+				},
+			))
+			defer srv.Close()
 
-			if tt.wantAssetNil {
-				if asset != nil {
-					t.Errorf("expected asset to be nil, got %+v", asset)
+			tag, err := resolveLatestTag(srv.URL)
+			if tt.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrSub)
 				}
-			} else {
-				if asset == nil {
-					t.Fatal("expected asset to be non-nil")
+				if !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
 				}
-				testutil.AssertEqual(t, asset.BrowserDownloadURL, tt.wantAssetURL)
-				testutil.AssertEqual(t, asset.Size, tt.wantAssetSize)
+				return
 			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			testutil.AssertEqual(t, tag, tt.wantTag)
+		})
+	}
+}
 
-			if checksums == nil {
-				t.Fatal("expected checksums to be non-nil")
+func TestFetchContentLength(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		status     int
+		bodySize   int
+		wantSize   int64
+		wantErrSub string
+	}{
+		{
+			name:     "200 with body",
+			status:   http.StatusOK,
+			bodySize: 1234,
+			wantSize: 1234,
+		},
+		{
+			name:       "404",
+			status:     http.StatusNotFound,
+			wantErrSub: "404",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) {
+					if tt.bodySize > 0 {
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", tt.bodySize))
+					}
+					w.WriteHeader(tt.status)
+				},
+			))
+			defer srv.Close()
+
+			size, err := fetchContentLength(srv.URL)
+			if tt.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
+				}
+				return
 			}
-			testutil.AssertEqual(t, checksums.BrowserDownloadURL, tt.wantChecksumsURL)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			testutil.AssertEqual(t, size, tt.wantSize)
 		})
 	}
 }
