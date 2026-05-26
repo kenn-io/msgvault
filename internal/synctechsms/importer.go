@@ -166,7 +166,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int, error) {
 	if err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms); err != nil {
 		return 0, err
 	}
-	return i.importMMSAttachments(msgID, mms)
+	return i.importMMSAttachments(sourceID, msgID, mms)
 }
 
 func (i *Importer) importCall(sourceID int64, call Call) error {
@@ -386,15 +386,19 @@ func callTypeLabel(t CallType) string {
 	}
 }
 
-func (i *Importer) importMMSAttachments(sourceMessageID string, mms MMS) (int, error) {
+func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, mms MMS) (int, error) {
 	if !i.opts.IncludeAttachments {
 		return 0, nil
 	}
 	if strings.TrimSpace(i.opts.AttachmentsDir) == "" {
 		return 0, fmt.Errorf("attachments directory is required when importing MMS attachments")
 	}
+	// Filter by source_id: source_message_id is unique only per source
+	// (the messages table key is (source_id, source_message_id)), so two
+	// SyncTech sources backing up the same conversation can produce
+	// colliding hashes and would otherwise attach to the wrong row.
 	var messageID int64
-	if err := i.store.DB().QueryRow(i.store.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&messageID); err != nil {
+	if err := i.store.DB().QueryRow(i.store.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, sourceMessageID).Scan(&messageID); err != nil {
 		return 0, fmt.Errorf("lookup MMS message for attachments: %w", err)
 	}
 	maxBytes := i.opts.MaxAttachmentBytes
