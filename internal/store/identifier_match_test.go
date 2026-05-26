@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 // TestNormalizeIdentifierForCompare locks down the identity-map
 // canonicalization rule used by the dedup engine's per-source
@@ -23,9 +27,8 @@ func TestNormalizeIdentifierForCompare(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NormalizeIdentifierForCompare(tc.in); got != tc.want {
-				t.Errorf("NormalizeIdentifierForCompare(%q) = %q, want %q", tc.in, got, tc.want)
-			}
+			assert.Equal(t, tc.want, NormalizeIdentifierForCompare(tc.in),
+				"NormalizeIdentifierForCompare(%q)", tc.in)
 		})
 	}
 }
@@ -56,9 +59,8 @@ func TestEqualIdentifier(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := EqualIdentifier(tc.a, tc.b); got != tc.want {
-				t.Errorf("EqualIdentifier(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
-			}
+			assert.Equal(t, tc.want, EqualIdentifier(tc.a, tc.b),
+				"EqualIdentifier(%q, %q)", tc.a, tc.b)
 		})
 	}
 }
@@ -88,12 +90,9 @@ func TestIdentifierMatch_TableDriven(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newIdentifierMatch(tc.input)
-			if got := m.WhereClause("address"); got != tc.wantWhere {
-				t.Errorf("WhereClause(%q) = %q, want %q", tc.input, got, tc.wantWhere)
-			}
-			if got := m.BindValue(); got != tc.input {
-				t.Errorf("BindValue() = %q, want %q (raw)", got, tc.input)
-			}
+			assert.Equal(t, tc.wantWhere, m.WhereClause("address"),
+				"WhereClause(%q)", tc.input)
+			assert.Equal(t, tc.input, m.BindValue(), "BindValue() (raw)")
 		})
 	}
 }
@@ -103,13 +102,9 @@ func TestIdentifierMatch_TableDriven(t *testing.T) {
 // (today every site uses "address", but the contract supports more).
 func TestIdentifierMatch_WhereClauseAcceptsCustomColumn(t *testing.T) {
 	m := newIdentifierMatch("foo@x.com")
-	if got := m.WhereClause("normalized"); got != "LOWER(normalized) = LOWER(?)" {
-		t.Errorf("WhereClause(\"normalized\") = %q", got)
-	}
+	assert.Equal(t, "LOWER(normalized) = LOWER(?)", m.WhereClause("normalized"))
 	m2 := newIdentifierMatch("AliceHandle")
-	if got := m2.WhereClause("col"); got != "col = ?" {
-		t.Errorf("WhereClause(\"col\") = %q", got)
-	}
+	assert.Equal(t, "col = ?", m2.WhereClause("col"))
 }
 
 // TestLooksLikeEmail asserts the email-shape predicate directly. The
@@ -137,9 +132,8 @@ func TestLooksLikeEmail(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := looksLikeEmail(tc.input); got != tc.want {
-				t.Errorf("looksLikeEmail(%q) = %v, want %v", tc.input, got, tc.want)
-			}
+			assert.Equal(t, tc.want, looksLikeEmail(tc.input),
+				"looksLikeEmail(%q)", tc.input)
 		})
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
 )
 
 func TestCORSMiddleware(t *testing.T) {
@@ -54,22 +56,20 @@ func TestCORSMiddleware(t *testing.T) {
 
 			handler.ServeHTTP(w, req)
 
-			if w.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
-			}
+			assertpkg.Equal(t, tt.wantStatus, w.Code, "status")
 
 			corsHeader := w.Header().Get("Access-Control-Allow-Origin")
-			if tt.wantCORSHeader && corsHeader == "" {
-				t.Error("expected CORS header to be set")
-			}
-			if !tt.wantCORSHeader && corsHeader != "" {
-				t.Errorf("unexpected CORS header: %s", corsHeader)
+			if tt.wantCORSHeader {
+				assertpkg.NotEmpty(t, corsHeader, "expected CORS header to be set")
+			} else {
+				assertpkg.Empty(t, corsHeader, "unexpected CORS header")
 			}
 		})
 	}
 }
 
 func TestCORSPreflightHeaders(t *testing.T) {
+	assert := assertpkg.New(t)
 	cfg := DefaultCORSConfig()
 	middleware := CORSMiddleware(cfg)
 
@@ -84,40 +84,25 @@ func TestCORSPreflightHeaders(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	// Check all preflight headers
-	if w.Header().Get("Access-Control-Allow-Origin") == "" {
-		t.Error("missing Access-Control-Allow-Origin")
-	}
-	if w.Header().Get("Access-Control-Allow-Methods") == "" {
-		t.Error("missing Access-Control-Allow-Methods")
-	}
-	if w.Header().Get("Access-Control-Allow-Headers") == "" {
-		t.Error("missing Access-Control-Allow-Headers")
-	}
-	if w.Header().Get("Access-Control-Max-Age") == "" {
-		t.Error("missing Access-Control-Max-Age")
-	}
+	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Origin"), "missing Access-Control-Allow-Origin")
+	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Methods"), "missing Access-Control-Allow-Methods")
+	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Headers"), "missing Access-Control-Allow-Headers")
+	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
 }
 
 func TestRateLimiter(t *testing.T) {
+	assert := assertpkg.New(t)
 	rl := NewRateLimiter(2, 2) // 2 req/sec with burst of 2
 
 	// First two requests should succeed (burst)
-	if !rl.Allow("127.0.0.1") {
-		t.Error("first request should be allowed")
-	}
-	if !rl.Allow("127.0.0.1") {
-		t.Error("second request should be allowed (burst)")
-	}
+	assert.True(rl.Allow("127.0.0.1"), "first request should be allowed")
+	assert.True(rl.Allow("127.0.0.1"), "second request should be allowed (burst)")
 
 	// Third request should be rate limited
-	if rl.Allow("127.0.0.1") {
-		t.Error("third request should be rate limited")
-	}
+	assert.False(rl.Allow("127.0.0.1"), "third request should be rate limited")
 
 	// Different IP should still be allowed
-	if !rl.Allow("192.168.1.1") {
-		t.Error("different IP should be allowed")
-	}
+	assert.True(rl.Allow("192.168.1.1"), "different IP should be allowed")
 }
 
 func TestRateLimiterCloseConcurrent(t *testing.T) {
@@ -155,9 +140,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, req1)
 
-	if w1.Code != http.StatusOK {
-		t.Errorf("first request status = %d, want %d", w1.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w1.Code, "first request status")
 
 	// Second immediate request should be rate limited
 	req2 := httptest.NewRequest("GET", "/test", nil)
@@ -165,12 +148,8 @@ func TestRateLimitMiddleware(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 
-	if w2.Code != http.StatusTooManyRequests {
-		t.Errorf("second request status = %d, want %d", w2.Code, http.StatusTooManyRequests)
-	}
+	assertpkg.Equal(t, http.StatusTooManyRequests, w2.Code, "second request status")
 
 	// Check Retry-After header
-	if w2.Header().Get("Retry-After") == "" {
-		t.Error("missing Retry-After header on rate limited response")
-	}
+	assertpkg.NotEmpty(t, w2.Header().Get("Retry-After"), "missing Retry-After header on rate limited response")
 }

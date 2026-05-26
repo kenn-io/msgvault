@@ -1,12 +1,14 @@
 package fbmessenger
 
 import (
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 var convergenceWS = regexp.MustCompile(`\s+`)
@@ -16,19 +18,15 @@ func normalizeConvergence(s string) string {
 }
 
 func TestJSONHTMLConvergence_Simple(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	jsonRoot := "testdata/json_simple"
 	htmlRoot := "testdata/html_simple"
 	jsonTh, err := ParseJSONThread(jsonRoot, threadDir(t, jsonRoot, "inbox", "alice_ABC123"))
-	if err != nil {
-		t.Fatalf("json: %v", err)
-	}
+	require.NoError(err, "json")
 	htmlTh, err := ParseHTMLThread(htmlRoot, threadDir(t, htmlRoot, "inbox", "alice_ABC123"))
-	if err != nil {
-		t.Fatalf("html: %v", err)
-	}
-	if len(jsonTh.Messages) != len(htmlTh.Messages) {
-		t.Fatalf("message count: json=%d html=%d", len(jsonTh.Messages), len(htmlTh.Messages))
-	}
+	require.NoError(err, "html")
+	require.Equal(len(htmlTh.Messages), len(jsonTh.Messages), "message count")
 	// Participants equal by slug.
 	var jSlugs, hSlugs []string
 	for _, p := range jsonTh.Participants {
@@ -39,9 +37,7 @@ func TestJSONHTMLConvergence_Simple(t *testing.T) {
 	}
 	sort.Strings(jSlugs)
 	sort.Strings(hSlugs)
-	if !reflect.DeepEqual(jSlugs, hSlugs) {
-		t.Errorf("participant slugs differ: json=%v html=%v", jSlugs, hSlugs)
-	}
+	assert.Equal(hSlugs, jSlugs, "participant slugs differ")
 	// Per-message bodies and timestamps.
 	//
 	// Reactions are a JSON-only feature (HTML exports do not expose
@@ -51,17 +47,12 @@ func TestJSONHTMLConvergence_Simple(t *testing.T) {
 	for i := range jsonTh.Messages {
 		jb := normalizeConvergence(stripReactionSuffix(jsonTh.Messages[i].Body))
 		hb := normalizeConvergence(htmlTh.Messages[i].Body)
-		if jb != hb {
-			t.Errorf("message[%d] body differs:\n  json=%q\n  html=%q", i, jb, hb)
-		}
+		assert.Equal(hb, jb, "message[%d] body differs", i)
 		jt := jsonTh.Messages[i].SentAt.Truncate(time.Minute)
 		ht := htmlTh.Messages[i].SentAt.Truncate(time.Minute)
-		if !jt.Equal(ht) {
-			t.Errorf("message[%d] timestamp differs: json=%v html=%v", i, jt, ht)
-		}
-		if Slug(jsonTh.Messages[i].SenderName) != Slug(htmlTh.Messages[i].SenderName) {
-			t.Errorf("message[%d] sender differs: json=%q html=%q",
-				i, jsonTh.Messages[i].SenderName, htmlTh.Messages[i].SenderName)
-		}
+		assert.True(jt.Equal(ht), "message[%d] timestamp differs: json=%v html=%v", i, jt, ht)
+		assert.Equal(Slug(htmlTh.Messages[i].SenderName), Slug(jsonTh.Messages[i].SenderName),
+			"message[%d] sender differs: json=%q html=%q",
+			i, jsonTh.Messages[i].SenderName, htmlTh.Messages[i].SenderName)
 	}
 }

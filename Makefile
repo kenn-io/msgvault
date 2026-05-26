@@ -17,7 +17,7 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci tidy shootout run-shootout install-hooks bench help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench help
 
 # Build the binary (debug)
 build:
@@ -83,12 +83,16 @@ lint:
 	golangci-lint run --fix ./...
 
 # Run linter (CI, no auto-fix)
-lint-ci:
+lint-ci: testify-helper-check
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
 	golangci-lint run ./...
+
+# Enforce testify helper usage in assertion-heavy tests
+testify-helper-check:
+	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
 # Install pre-commit hook via prek
 install-hooks:
@@ -133,7 +137,8 @@ help:
 	@echo "  test-v         - Run tests (verbose)"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
-	@echo "  lint-ci        - Run linter (CI, no auto-fix)"
+	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
+	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"

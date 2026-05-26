@@ -3,6 +3,9 @@ package testutil
 import (
 	"bytes"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEncodedSamplesDefensiveCopy verifies that EncodedSamples returns a fresh
@@ -16,10 +19,7 @@ func TestEncodedSamplesDefensiveCopy(t *testing.T) {
 
 	// A second call must return the original, unmodified bytes
 	second := EncodedSamples()
-	if !bytes.Equal(second.ShiftJIS_Konnichiwa, original) {
-		t.Fatalf("EncodedSamples() returned mutated data: got %x, want %x",
-			second.ShiftJIS_Konnichiwa, original)
-	}
+	require.Equal(t, original, second.ShiftJIS_Konnichiwa, "EncodedSamples() returned mutated data")
 }
 
 // TestEncodedSamplesNonEmpty verifies all sample fields have content.
@@ -52,9 +52,7 @@ func TestEncodedSamplesNonEmpty(t *testing.T) {
 		"EUCKR_Long":              s.EUCKR_Long,
 	}
 	for name, data := range byteFields {
-		if len(data) == 0 {
-			t.Errorf("%s is empty", name)
-		}
+		assert.NotEmpty(t, data, "%s is empty", name)
 	}
 
 	// String fields - verify non-empty
@@ -65,9 +63,7 @@ func TestEncodedSamplesNonEmpty(t *testing.T) {
 		"EUCKR_Long_UTF8":    s.EUCKR_Long_UTF8,
 	}
 	for name, data := range stringFields {
-		if len(data) == 0 {
-			t.Errorf("%s is empty", name)
-		}
+		assert.NotEmpty(t, data, "%s is empty", name)
 	}
 }
 

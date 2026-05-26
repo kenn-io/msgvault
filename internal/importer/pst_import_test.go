@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -52,13 +54,9 @@ func openTestStorePst(t *testing.T) *store.Store {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	requirepkg.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	requirepkg.NoError(t, st.InitSchema(), "init schema")
 	return st
 }
 
@@ -73,12 +71,8 @@ func TestImportPst_MissingFile(t *testing.T) {
 		NoResume:   true,
 		IngestFunc: mock.fn,
 	})
-	if err == nil {
-		t.Fatal("expected error for non-existent PST file, got nil")
-	}
-	if len(mock.calls) != 0 {
-		t.Errorf("expected 0 ingest calls, got %d", len(mock.calls))
-	}
+	requirepkg.Error(t, err, "expected error for non-existent PST file")
+	assertpkg.Empty(t, mock.calls, "expected 0 ingest calls")
 }
 
 // TestImportPst_RequiresIdentifier verifies that ImportPst rejects an empty identifier.
@@ -87,64 +81,41 @@ func TestImportPst_RequiresIdentifier(t *testing.T) {
 	_, err := ImportPst(context.Background(), st, "any.pst", PstImportOptions{
 		Identifier: "",
 	})
-	if err == nil {
-		t.Fatal("expected error for empty identifier")
-	}
+	requirepkg.Error(t, err, "expected error for empty identifier")
 }
 
 // TestPstCheckpoint_RoundTrip verifies that savePstCheckpoint stores a checkpoint
 // that can be decoded back to the original values.
 func TestPstCheckpoint_RoundTrip(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	st := openTestStorePst(t)
 	src, err := st.GetOrCreateSource("pst", "user@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 
 	syncID, err := st.StartSync(src.ID, "import-pst")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
+	require.NoError(err, "start sync")
 
 	cp := &store.Checkpoint{
 		MessagesProcessed: 42,
 		MessagesAdded:     40,
 	}
-	if err := savePstCheckpoint(st, syncID, "/path/to/file.pst", "abc123", 3, "Inbox/Archive", 100, cp); err != nil {
-		t.Fatalf("savePstCheckpoint: %v", err)
-	}
+	require.NoError(savePstCheckpoint(st, syncID, "/path/to/file.pst", "abc123", 3, "Inbox/Archive", 100, cp),
+		"savePstCheckpoint")
 
 	active, err := st.GetActiveSync(src.ID)
-	if err != nil {
-		t.Fatalf("get active sync: %v", err)
-	}
-	if active == nil {
-		t.Fatal("expected active sync, got nil")
-	}
-	if !active.CursorBefore.Valid {
-		t.Fatal("expected cursor_before to be set")
-	}
+	require.NoError(err, "get active sync")
+	require.NotNil(active, "expected active sync")
+	require.True(active.CursorBefore.Valid, "expected cursor_before to be set")
 
 	var saved pstCheckpoint
-	if err := json.Unmarshal([]byte(active.CursorBefore.String), &saved); err != nil {
-		t.Fatalf("unmarshal checkpoint: %v", err)
-	}
+	require.NoError(json.Unmarshal([]byte(active.CursorBefore.String), &saved), "unmarshal checkpoint")
 
-	if saved.File != "/path/to/file.pst" {
-		t.Errorf("File = %q, want %q", saved.File, "/path/to/file.pst")
-	}
-	if saved.FolderIndex != 3 {
-		t.Errorf("FolderIndex = %d, want 3", saved.FolderIndex)
-	}
-	if saved.FolderPath != "Inbox/Archive" {
-		t.Errorf("FolderPath = %q, want %q", saved.FolderPath, "Inbox/Archive")
-	}
-	if saved.MsgIndex != 100 {
-		t.Errorf("MsgIndex = %d, want 100", saved.MsgIndex)
-	}
-	if saved.ArchiveID != "abc123" {
-		t.Errorf("ArchiveID = %q, want %q", saved.ArchiveID, "abc123")
-	}
+	assert.Equal("/path/to/file.pst", saved.File)
+	assert.Equal(3, saved.FolderIndex)
+	assert.Equal("Inbox/Archive", saved.FolderPath)
+	assert.Equal(int64(100), saved.MsgIndex)
+	assert.Equal("abc123", saved.ArchiveID)
 }
 
 // TestPstArchiveFingerprint verifies the helper produces stable, distinct
@@ -152,6 +123,8 @@ func TestPstCheckpoint_RoundTrip(t *testing.T) {
 // same source identifier would collide on PST EntryIDs (which are unique
 // only within a single archive) and falsely skip or update unrelated rows.
 func TestPstArchiveFingerprint(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dir := t.TempDir()
 
 	// Two files with different headers — fingerprints must differ.
@@ -159,43 +132,25 @@ func TestPstArchiveFingerprint(t *testing.T) {
 	headerB := append([]byte("!BDN\xff\xff\xff\xff"), make([]byte, 4096)...)
 	pathA := filepath.Join(dir, "a.pst")
 	pathB := filepath.Join(dir, "b.pst")
-	if err := os.WriteFile(pathA, headerA, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(pathB, headerB, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(pathA, headerA, 0o644))
+	require.NoError(os.WriteFile(pathB, headerB, 0o644))
 
 	fpA, err := pstArchiveFingerprint(pathA)
-	if err != nil {
-		t.Fatalf("fingerprint A: %v", err)
-	}
+	require.NoError(err, "fingerprint A")
 	fpB, err := pstArchiveFingerprint(pathB)
-	if err != nil {
-		t.Fatalf("fingerprint B: %v", err)
-	}
+	require.NoError(err, "fingerprint B")
 
-	if fpA == fpB {
-		t.Errorf("expected distinct fingerprints, got %q twice", fpA)
-	}
-	if len(fpA) != 12 || len(fpB) != 12 {
-		t.Errorf("expected 12-hex-char fingerprints, got %q (%d) and %q (%d)",
-			fpA, len(fpA), fpB, len(fpB))
-	}
+	assert.NotEqual(fpB, fpA, "expected distinct fingerprints")
+	assert.Len(fpA, 12, "expected 12-hex-char fingerprints")
+	assert.Len(fpB, 12, "expected 12-hex-char fingerprints")
 
 	// Same bytes → same fingerprint, regardless of path. This is what
 	// makes re-importing the same file idempotent under the new key.
 	pathC := filepath.Join(dir, "renamed.pst")
-	if err := os.WriteFile(pathC, headerA, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(pathC, headerA, 0o644))
 	fpC, err := pstArchiveFingerprint(pathC)
-	if err != nil {
-		t.Fatalf("fingerprint C: %v", err)
-	}
-	if fpC != fpA {
-		t.Errorf("same bytes should fingerprint the same: %q vs %q", fpA, fpC)
-	}
+	require.NoError(err, "fingerprint C")
+	assert.Equal(fpA, fpC, "same bytes should fingerprint the same")
 }
 
 // TestImportPst_ContextCancelledBeforeOpen ensures that context cancellation
@@ -212,7 +167,5 @@ func TestImportPst_ContextCancelledBeforeOpen(t *testing.T) {
 		NoResume:   true,
 	})
 	// Either ctx error or open error is acceptable — we just must not hang.
-	if err == nil {
-		t.Error("expected error (either ctx or open), got nil")
-	}
+	assertpkg.Error(t, err, "expected error (either ctx or open)")
 }

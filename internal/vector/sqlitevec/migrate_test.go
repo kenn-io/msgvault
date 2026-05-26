@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestMigrate_FreshAndIdempotent(t *testing.T) {
@@ -18,9 +21,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
 
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("first migrate: %v", err)
-	}
+	requirepkg.NoError(t, Migrate(ctx, db, 768), "first migrate")
 
 	for _, tbl := range []string{
 		"index_generations", "embeddings", "embed_runs",
@@ -28,15 +29,11 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
-		if err != nil {
-			t.Errorf("table %s missing: %v", tbl, err)
-		}
+		assertpkg.NoErrorf(t, err, "table %s missing", tbl)
 	}
 
 	// Idempotent: running again must not error.
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("second migrate: %v", err)
-	}
+	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate")
 }
 
 // TestMigrate_LegacyToChunked builds a pre-chunking vectors.db
@@ -54,6 +51,8 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 //     rowids;
 //   - a second Migrate is a no-op (idempotent).
 func TestMigrate_LegacyToChunked(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -104,23 +103,20 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 		)`,
 	}
 	for _, q := range legacyDDL {
-		if _, err := db.ExecContext(ctx, q); err != nil {
-			t.Fatalf("seed legacy DDL %q: %v", q, err)
-		}
+		_, err := db.ExecContext(ctx, q)
+		require.NoErrorf(err, "seed legacy DDL %q", q)
 	}
 	// Seed one generation and two embedded rows. message_count =
 	// 2 to mirror what the pre-chunking Upsert path would have left
 	// behind.
-	if _, err := db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO index_generations (id, model, dimension, fingerprint, started_at, state, message_count)
-		 VALUES (1, 'm', 768, 'm:768', 100, 'active', 2)`); err != nil {
-		t.Fatalf("seed generation: %v", err)
-	}
-	if _, err := db.ExecContext(ctx,
+		 VALUES (1, 'm', 768, 'm:768', 100, 'active', 2)`)
+	require.NoError(err, "seed generation")
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO embeddings (generation_id, message_id, embedded_at, source_char_len, truncated)
-		 VALUES (1, 10, 100, 50, 0), (1, 20, 100, 75, 1)`); err != nil {
-		t.Fatalf("seed embeddings: %v", err)
-	}
+		 VALUES (1, 10, 100, 50, 0), (1, 20, 100, 75, 1)`)
+	require.NoError(err, "seed embeddings")
 	// vec0 demands its rowid match the second PK column; here the
 	// legacy schema uses message_id, so 10 and 20 both go in directly.
 	blob := func(v []float32) []byte { return float32SliceBlob(v) }
@@ -130,28 +126,22 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 		v10[i] = 0.1
 		v20[i] = 0.2
 	}
-	if _, err := db.ExecContext(ctx,
-		`INSERT INTO vectors_vec_d768 (generation_id, message_id, embedding) VALUES (1, 10, ?)`, blob(v10)); err != nil {
-		t.Fatalf("seed vec rowid 10: %v", err)
-	}
-	if _, err := db.ExecContext(ctx,
-		`INSERT INTO vectors_vec_d768 (generation_id, message_id, embedding) VALUES (1, 20, ?)`, blob(v20)); err != nil {
-		t.Fatalf("seed vec rowid 20: %v", err)
-	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO vectors_vec_d768 (generation_id, message_id, embedding) VALUES (1, 10, ?)`, blob(v10))
+	require.NoError(err, "seed vec rowid 10")
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO vectors_vec_d768 (generation_id, message_id, embedding) VALUES (1, 20, ?)`, blob(v20))
+	require.NoError(err, "seed vec rowid 20")
 
 	// Run the migration.
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
+	require.NoError(Migrate(ctx, db, 768), "Migrate")
 
 	// embeddings now has the chunked-layout columns, and the legacy
 	// rows survived as chunk_index=0 with embedding_id == old message_id.
 	rows, err := db.QueryContext(ctx,
 		`SELECT embedding_id, message_id, chunk_index, source_char_len, truncated
 		   FROM embeddings ORDER BY message_id`)
-	if err != nil {
-		t.Fatalf("select embeddings: %v", err)
-	}
+	require.NoError(err, "select embeddings")
 	defer func() { _ = rows.Close() }()
 	type row struct {
 		eid, mid, ci, charLen, trunc int64
@@ -159,54 +149,43 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 	var got []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.eid, &r.mid, &r.ci, &r.charLen, &r.trunc); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
+		require.NoError(rows.Scan(&r.eid, &r.mid, &r.ci, &r.charLen, &r.trunc), "scan")
 		got = append(got, r)
 	}
 	// AUTOINCREMENT allocates fresh embedding_ids — they must be
 	// distinct and positive. The actual values depend on insertion
 	// order, so verify the *shape* (distinct, all > 0) rather than
 	// pin specific numbers.
-	if len(got) != 2 {
-		t.Fatalf("rows = %d, want 2 (%v)", len(got), got)
-	}
-	if got[0].mid != 10 || got[0].ci != 0 || got[0].charLen != 50 || got[0].trunc != 0 {
-		t.Errorf("row[0] non-eid fields = %+v, want mid=10 ci=0 charLen=50 trunc=0", got[0])
-	}
-	if got[1].mid != 20 || got[1].ci != 0 || got[1].charLen != 75 || got[1].trunc != 1 {
-		t.Errorf("row[1] non-eid fields = %+v, want mid=20 ci=0 charLen=75 trunc=1", got[1])
-	}
-	if got[0].eid <= 0 || got[1].eid <= 0 || got[0].eid == got[1].eid {
-		t.Errorf("embedding_ids = %d, %d; want distinct positive values", got[0].eid, got[1].eid)
-	}
+	require.Lenf(got, 2, "rows = %v", got)
+	assert.Equalf(int64(10), got[0].mid, "row[0]")
+	assert.Equalf(int64(0), got[0].ci, "row[0]")
+	assert.Equalf(int64(50), got[0].charLen, "row[0]")
+	assert.Equalf(int64(0), got[0].trunc, "row[0]")
+	assert.Equalf(int64(20), got[1].mid, "row[1]")
+	assert.Equalf(int64(0), got[1].ci, "row[1]")
+	assert.Equalf(int64(75), got[1].charLen, "row[1]")
+	assert.Equalf(int64(1), got[1].trunc, "row[1]")
+	assert.Greater(got[0].eid, int64(0), "embedding_id should be positive")
+	assert.Greater(got[1].eid, int64(0), "embedding_id should be positive")
+	assert.NotEqual(got[0].eid, got[1].eid, "embedding_ids should be distinct")
 
 	// vec0 rowid is now the AUTOINCREMENT embedding_id (not the
 	// legacy message_id). Verify the rebuild used the mapping so
 	// every legacy vec0 row joins back to its embedding.
 	var n int
-	if err := db.QueryRowContext(ctx,
+	err = db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM vectors_vec_d768 v
 		   JOIN embeddings e ON e.embedding_id = v.embedding_id
-		  WHERE v.generation_id = 1`).Scan(&n); err != nil {
-		t.Fatalf("join count: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("joined vec rows = %d, want 2", n)
-	}
+		  WHERE v.generation_id = 1`).Scan(&n)
+	require.NoError(err, "join count")
+	assert.Equal(2, n, "joined vec rows")
 
 	// Idempotent: a second Migrate must do nothing and leave the rows
 	// untouched.
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("second Migrate: %v", err)
-	}
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings`).Scan(&n); err != nil {
-		t.Fatalf("post-2nd count: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("post-2nd embeddings = %d, want 2", n)
-	}
+	require.NoError(Migrate(ctx, db, 768), "second Migrate")
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&n)
+	require.NoError(err, "post-2nd count")
+	assert.Equal(2, n, "post-2nd embeddings")
 }
 
 // TestMigrate_LegacyToChunked_MultiGenerationCollision is the
@@ -220,6 +199,8 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 // embedding_ids per (gen, msg) pair and preserving every legacy
 // vec0 row through the rebuild.
 func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -268,9 +249,8 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 		)`,
 	}
 	for _, q := range legacyDDL {
-		if _, err := db.ExecContext(ctx, q); err != nil {
-			t.Fatalf("seed legacy DDL %q: %v", q, err)
-		}
+		_, err := db.ExecContext(ctx, q)
+		require.NoErrorf(err, "seed legacy DDL %q", q)
 	}
 	// Two generations: gen 1 active, gen 2 building. Both contain
 	// embeddings rows for message 10 (the realistic case: an active
@@ -285,64 +265,47 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 	// gen=2/msg=10 row collided on the UNIQUE(gen,msg,ci) constraint
 	// because eid=10 was already taken by gen=1/msg=10. The fixed
 	// migration lets AUTOINCREMENT allocate distinct eids.
-	if _, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO index_generations (id, model, dimension, fingerprint, started_at, state, message_count) VALUES
 		  (1, 'm', 768, 'm:768', 100, 'active',   1),
-		  (2, 'm', 768, 'm:768', 200, 'building', 1)`); err != nil {
-		t.Fatalf("seed generations: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `
+		  (2, 'm', 768, 'm:768', 200, 'building', 1)`)
+	require.NoError(err, "seed generations")
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO embeddings (generation_id, message_id, embedded_at, source_char_len, truncated) VALUES
 		  (1, 10, 100, 50, 0),
-		  (2, 10, 200, 50, 0)`); err != nil {
-		t.Fatalf("seed embeddings: %v", err)
-	}
+		  (2, 10, 200, 50, 0)`)
+	require.NoError(err, "seed embeddings")
 	v := make([]float32, 768)
 	for i := range v {
 		v[i] = 0.1
 	}
-	if _, err := db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO vectors_vec_d768 (generation_id, message_id, embedding) VALUES (1, 10, ?)`,
-		float32SliceBlob(v)); err != nil {
-		t.Fatalf("seed vec gen=1 msg=10: %v", err)
-	}
+		float32SliceBlob(v))
+	require.NoError(err, "seed vec gen=1 msg=10")
 
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("Migrate (this is what the old migration could not survive): %v", err)
-	}
+	require.NoError(Migrate(ctx, db, 768), "Migrate (this is what the old migration could not survive)")
 
 	// Both legacy embeddings rows preserved with distinct
 	// embedding_ids — the AUTOINCREMENT allocation steps around the
 	// (gen=1, msg=10) / (gen=2, msg=10) collision that broke the old
 	// hard-coded eid=msg shortcut.
 	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&n); err != nil {
-		t.Fatalf("count embeddings: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("embeddings rows = %d, want 2", n)
-	}
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT embedding_id) FROM embeddings`).Scan(&n); err != nil {
-		t.Fatalf("count distinct eid: %v", err)
-	}
-	if n != 2 {
-		t.Errorf("distinct embedding_ids = %d, want 2 (one per (gen, msg))", n)
-	}
+	require.NoError(db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings`).Scan(&n), "count embeddings")
+	assert.Equal(2, n, "embeddings rows")
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT embedding_id) FROM embeddings`).Scan(&n), "count distinct eid")
+	assert.Equal(2, n, "distinct embedding_ids (one per (gen, msg))")
 
 	// vec0 join still resolves cleanly for the row that was actually
 	// embedded (gen=1, msg=10). The mapping looked up the new eid via
 	// the embeddings table rather than the now-invalid eid=msg
 	// shortcut.
-	if err := db.QueryRowContext(ctx, `
+	require.NoError(db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM vectors_vec_d768 v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
-		 WHERE v.generation_id = 1 AND e.message_id = 10`).Scan(&n); err != nil {
-		t.Fatalf("join: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("join returned %d rows, want 1", n)
-	}
+		 WHERE v.generation_id = 1 AND e.message_id = 10`).Scan(&n), "join")
+	assert.Equal(1, n, "join rows")
 }
 
 func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
@@ -350,28 +313,19 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 	db := openTestDB(t, filepath.Join(t.TempDir(), "v.db"))
 	t.Cleanup(func() { _ = db.Close() })
 
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("migrate 768: %v", err)
-	}
-	if err := EnsureVectorTable(ctx, db, 1024); err != nil {
-		t.Fatalf("ensure 1024: %v", err)
-	}
+	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate 768")
+	requirepkg.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
 	var name string
-	if err := db.QueryRow(
-		`SELECT name FROM sqlite_master WHERE name = 'vectors_vec_d1024'`).Scan(&name); err != nil {
-		t.Errorf("vectors_vec_d1024 not created: %v", err)
-	}
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE name = 'vectors_vec_d1024'`).Scan(&name)
+	assertpkg.NoError(t, err, "vectors_vec_d1024 not created")
 }
 
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	if err := RegisterExtension(); err != nil {
-		t.Fatalf("register: %v", err)
-	}
+	requirepkg.NoError(t, RegisterExtension(), "register")
 	db, err := sql.Open(DriverName(), path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	requirepkg.NoError(t, err, "open")
 	return db
 }
 
@@ -387,15 +341,15 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 // db.Conn() calls or db.ExecContext() calls can all be served by the
 // same pooled conn, which would let a buggy hook hide undetected.
 func TestForeignKeys_PerConnection(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vectors.db")
 
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
-	if err := Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	require.NoError(Migrate(ctx, db, 768), "migrate")
 
 	const conns = 4
 	db.SetMaxOpenConns(conns)
@@ -408,9 +362,7 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 	held := make([]*sql.Conn, conns)
 	for i := 0; i < conns; i++ {
 		c, err := db.Conn(ctx)
-		if err != nil {
-			t.Fatalf("conn %d: %v", i, err)
-		}
+		require.NoErrorf(err, "conn %d", i)
 		held[i] = c
 	}
 	t.Cleanup(func() {
@@ -423,22 +375,17 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 	// back as 1, and an FK-violating insert must fail on every conn.
 	for i, c := range held {
 		var fk int
-		if err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
-			t.Fatalf("conn %d pragma read: %v", i, err)
-		}
-		if fk != 1 {
-			t.Errorf("conn %d: foreign_keys = %d, want 1 (ConnectHook missed this conn)", i, fk)
-		}
-		_, err := c.ExecContext(ctx,
+		err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk)
+		require.NoErrorf(err, "conn %d pragma read", i)
+		assert.Equalf(1, fk, "conn %d: foreign_keys (ConnectHook missed this conn)", i)
+		_, err = c.ExecContext(ctx,
 			`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
 			 VALUES (?, ?, ?)`, 9999999, int64(i), int64(i))
-		if err == nil {
-			t.Errorf("conn %d: FK-violating insert succeeded; foreign_keys not enforced", i)
+		if !assert.Errorf(err, "conn %d: FK-violating insert should fail", i) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "FOREIGN KEY") && !strings.Contains(msg, "foreign key") {
-			t.Errorf("conn %d: error = %v; want FOREIGN KEY violation", i, err)
-		}
+		assert.Truef(strings.Contains(msg, "FOREIGN KEY") || strings.Contains(msg, "foreign key"),
+			"conn %d: error = %v; want FOREIGN KEY violation", i, err)
 	}
 }

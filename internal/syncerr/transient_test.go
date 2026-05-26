@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIsTransientNetwork(t *testing.T) {
@@ -62,9 +64,7 @@ func TestIsTransientNetwork(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := IsTransientNetwork(tc.err)
-			if got != tc.want {
-				t.Errorf("IsTransientNetwork(%v) = %v, want %v", tc.err, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "IsTransientNetwork(%v)", tc.err)
 		})
 	}
 }

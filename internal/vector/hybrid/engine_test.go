@@ -5,12 +5,13 @@ package hybrid
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"math"
 	"path/filepath"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -47,9 +48,7 @@ func newEngineFixture(t *testing.T) *engineFixture {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	mainDB, err := sql.Open("sqlite3", mainPath)
-	if err != nil {
-		t.Fatalf("open main: %v", err)
-	}
+	requirepkg.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = mainDB.Close() })
 
 	// sent_at is DATETIME (text) to match the production schema.
@@ -81,9 +80,8 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	if _, err := mainDB.Exec(schema); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
+	_, err = mainDB.Exec(schema)
+	requirepkg.NoError(t, err, "schema")
 	rows := []struct {
 		id      int64
 		subject string
@@ -94,18 +92,15 @@ CREATE TABLE message_recipients (
 		{3, "travel itinerary", "Flight confirmation attached."},
 	}
 	for _, r := range rows {
-		if _, err := mainDB.Exec(
-			`INSERT INTO messages (id, subject) VALUES (?, ?)`, r.id, r.subject); err != nil {
-			t.Fatalf("insert msg: %v", err)
-		}
-		if _, err := mainDB.Exec(
-			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, r.id, r.body); err != nil {
-			t.Fatalf("insert body: %v", err)
-		}
-		if _, err := mainDB.Exec(
-			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, r.id, r.subject, r.body); err != nil {
-			t.Fatalf("insert fts: %v", err)
-		}
+		_, err := mainDB.Exec(
+			`INSERT INTO messages (id, subject) VALUES (?, ?)`, r.id, r.subject)
+		requirepkg.NoError(t, err, "insert msg")
+		_, err = mainDB.Exec(
+			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, r.id, r.body)
+		requirepkg.NoError(t, err, "insert body")
+		_, err = mainDB.Exec(
+			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, r.id, r.subject, r.body)
+		requirepkg.NoError(t, err, "insert fts")
 	}
 
 	vecPath := filepath.Join(dir, "vectors.db")
@@ -115,26 +110,18 @@ CREATE TABLE message_recipients (
 		Dimension: 4,
 		MainDB:    mainDB,
 	})
-	if err != nil {
-		t.Fatalf("sqlitevec.Open: %v", err)
-	}
+	requirepkg.NoError(t, err, "sqlitevec.Open")
 	t.Cleanup(func() { _ = b.Close() })
 
 	gid, err := b.CreateGeneration(ctx, "fake-model", 4, "")
-	if err != nil {
-		t.Fatalf("CreateGeneration: %v", err)
-	}
+	requirepkg.NoError(t, err, "CreateGeneration")
 	chunks := []vector.Chunk{
 		{MessageID: 1, Vector: unitVec(4, 0), SourceCharLen: 50},
 		{MessageID: 2, Vector: unitVec(4, 1), SourceCharLen: 30},
 		{MessageID: 3, Vector: unitVec(4, 2), SourceCharLen: 40},
 	}
-	if err := b.Upsert(ctx, gid, chunks); err != nil {
-		t.Fatalf("Upsert: %v", err)
-	}
-	if err := b.ActivateGeneration(ctx, gid); err != nil {
-		t.Fatalf("Activate: %v", err)
-	}
+	requirepkg.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid), "Activate")
 
 	fp := "fake-model:4"
 	eng := NewEngine(b, mainDB, &fakeEmbedder{dim: 4}, Config{
@@ -159,6 +146,8 @@ func unitVec(dim, axis int) []float32 {
 }
 
 func TestEngine_Hybrid_HappyPath(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -167,24 +156,16 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 		FreeText: "meeting",
 		Limit:    5,
 	})
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) == 0 {
-		t.Fatal("empty results")
-	}
-	if results[0].MessageID != 1 {
-		t.Errorf("top = %d, want 1", results[0].MessageID)
-	}
-	if meta.Generation.ID != f.GenID {
-		t.Errorf("meta.Generation.ID = %d, want %d", meta.Generation.ID, f.GenID)
-	}
-	if meta.ReturnedCount != len(results) {
-		t.Errorf("ReturnedCount=%d, len(results)=%d", meta.ReturnedCount, len(results))
-	}
+	require.NoError(err, "Search")
+	require.NotEmpty(results, "empty results")
+	assert.Equal(int64(1), results[0].MessageID, "top")
+	assert.Equal(f.GenID, meta.Generation.ID, "meta.Generation.ID")
+	assert.Equal(len(results), meta.ReturnedCount)
 }
 
 func TestEngine_Vector_HappyPath(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -193,26 +174,16 @@ func TestEngine_Vector_HappyPath(t *testing.T) {
 		FreeText: "anything",
 		Limit:    5,
 	})
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) == 0 {
-		t.Fatal("empty results")
-	}
-	if results[0].MessageID != 1 {
-		t.Errorf("top = %d, want 1", results[0].MessageID)
-	}
+	require.NoError(err, "Search")
+	require.NotEmpty(results, "empty results")
+	assert.Equal(int64(1), results[0].MessageID, "top")
 	// Vector-mode hits carry VectorScore and BM25Score=NaN — the
 	// FusedHit contract treats NaN as "absent from this signal" so
 	// generic rendering code can skip the BM25 column rather than
 	// showing a spurious zero.
 	for _, r := range results {
-		if !math.IsNaN(r.BM25Score) {
-			t.Errorf("msg %d: BM25Score=%v, want NaN for vector-only hits", r.MessageID, r.BM25Score)
-		}
-		if math.IsNaN(r.VectorScore) {
-			t.Errorf("msg %d: VectorScore=%v, want non-NaN", r.MessageID, r.VectorScore)
-		}
+		assert.Truef(math.IsNaN(r.BM25Score), "msg %d: BM25Score=%v, want NaN for vector-only hits", r.MessageID, r.BM25Score)
+		assert.Falsef(math.IsNaN(r.VectorScore), "msg %d: VectorScore=%v, want non-NaN", r.MessageID, r.VectorScore)
 	}
 	_ = meta
 }
@@ -230,9 +201,7 @@ func TestEngine_StaleIndexRejected(t *testing.T) {
 	_, _, err := badEng.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	if !errors.Is(err, vector.ErrIndexStale) {
-		t.Errorf("err = %v, want ErrIndexStale", err)
-	}
+	assertpkg.ErrorIs(t, err, vector.ErrIndexStale)
 }
 
 func TestEngine_FTSMode_Rejected(t *testing.T) {
@@ -241,9 +210,7 @@ func TestEngine_FTSMode_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeFTS, FreeText: "meeting", Limit: 5,
 	})
-	if err == nil {
-		t.Error("expected error for mode=fts, got nil")
-	}
+	assertpkg.Error(t, err, "expected error for mode=fts")
 }
 
 func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
@@ -252,9 +219,7 @@ func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "", Limit: 5,
 	})
-	if err == nil {
-		t.Error("expected error for empty FreeText, got nil")
-	}
+	assertpkg.Error(t, err, "expected error for empty FreeText")
 }
 
 func TestEngine_UnknownMode_Rejected(t *testing.T) {
@@ -263,9 +228,7 @@ func TestEngine_UnknownMode_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: "bogus", FreeText: "x", Limit: 5,
 	})
-	if err == nil {
-		t.Error("expected error for unknown mode, got nil")
-	}
+	assertpkg.Error(t, err, "expected error for unknown mode")
 }
 
 // TestEngine_PoolSaturated_WhenLimitBelowK verifies the fix for a
@@ -274,23 +237,21 @@ func TestEngine_UnknownMode_Rejected(t *testing.T) {
 // that threshold, so the engine incorrectly reported an unsaturated
 // pool even when the BM25 branch had more than K candidates.
 func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
+	require := requirepkg.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
 	// Seed a batch of FTS-matching messages well above KPerSignal=2.
 	for i := int64(100); i < 110; i++ {
-		if _, err := f.MainDB.ExecContext(ctx,
-			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, "meeting"); err != nil {
-			t.Fatalf("insert msg %d: %v", i, err)
-		}
-		if _, err := f.MainDB.ExecContext(ctx,
+		_, err := f.MainDB.ExecContext(ctx,
+			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, "meeting")
+		require.NoErrorf(err, "insert msg %d", i)
+		_, err = f.MainDB.ExecContext(ctx,
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
-			i, "meeting", "meeting meeting"); err != nil {
-			t.Fatalf("insert fts %d: %v", i, err)
-		}
-		if err := f.Backend.Upsert(ctx, f.GenID, []vector.Chunk{{MessageID: i, Vector: unitVec(4, 0), SourceCharLen: 10}}); err != nil {
-			t.Fatalf("upsert msg %d: %v", i, err)
-		}
+			i, "meeting", "meeting meeting")
+		require.NoErrorf(err, "insert fts %d", i)
+		require.NoErrorf(f.Backend.Upsert(ctx, f.GenID, []vector.Chunk{{MessageID: i, Vector: unitVec(4, 0), SourceCharLen: 10}}),
+			"upsert msg %d", i)
 	}
 
 	tightEng := NewEngine(f.Backend, f.MainDB, &fakeEmbedder{dim: 4}, Config{
@@ -305,15 +266,9 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 		FreeText: "meeting",
 		Limit:    1, // intentionally below KPerSignal
 	})
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("len(results)=%d, want 1 (Limit=1)", len(results))
-	}
-	if !meta.PoolSaturated {
-		t.Errorf("PoolSaturated=false despite Limit(1) < KPerSignal(2) and abundant candidates")
-	}
+	require.NoError(err, "Search")
+	require.Len(results, 1, "Limit=1")
+	assertpkg.True(t, meta.PoolSaturated, "PoolSaturated should be true despite Limit(1) < KPerSignal(2)")
 }
 
 // TestEngine_NoGenerations_ReturnsNotEnabled verifies the Search
@@ -324,15 +279,11 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 func TestEngine_NoGenerations_ReturnsNotEnabled(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	if err := f.Backend.RetireGeneration(ctx, f.GenID); err != nil {
-		t.Fatalf("Retire: %v", err)
-	}
+	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID), "Retire")
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	if !errors.Is(err, vector.ErrNotEnabled) {
-		t.Errorf("err = %v, want ErrNotEnabled", err)
-	}
+	assertpkg.ErrorIs(t, err, vector.ErrNotEnabled)
 }
 
 // TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout covers the
@@ -353,12 +304,8 @@ func TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout(t *testing.T) {
 	_, _, err := timingOutEng.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	if !errors.Is(err, vector.ErrEmbeddingTimeout) {
-		t.Errorf("err = %v, want wrapped ErrEmbeddingTimeout", err)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("err = %v, must also wrap context.DeadlineExceeded", err)
-	}
+	assertpkg.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
+	assertpkg.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 // timeoutEmbedder always reports the request context's deadline-exceeded
@@ -377,18 +324,13 @@ func (timeoutEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error)
 func TestEngine_BuildingOnly_ReturnsBuilding(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	if err := f.Backend.RetireGeneration(ctx, f.GenID); err != nil {
-		t.Fatalf("Retire: %v", err)
-	}
+	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID), "Retire")
 	// A new building generation must be present; CreateGeneration
 	// writes one directly.
-	if _, err := f.Backend.CreateGeneration(ctx, "fake-model", 4, ""); err != nil {
-		t.Fatalf("CreateGeneration: %v", err)
-	}
-	_, _, err := f.Engine.Search(ctx, SearchRequest{
+	_, err := f.Backend.CreateGeneration(ctx, "fake-model", 4, "")
+	requirepkg.NoError(t, err, "CreateGeneration")
+	_, _, err = f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	if !errors.Is(err, vector.ErrIndexBuilding) {
-		t.Errorf("err = %v, want ErrIndexBuilding", err)
-	}
+	assertpkg.ErrorIs(t, err, vector.ErrIndexBuilding)
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -15,6 +17,8 @@ import (
 )
 
 func TestServeConfigParsing(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Create temp config with scheduled accounts
 	tmpDir := t.TempDir()
 	configContent := `
@@ -41,43 +45,27 @@ schedule = "0 4 * * *"
 enabled = false
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	require.NoError(os.WriteFile(configPath, []byte(configContent), 0644), "write config")
 
 	cfg, err := config.Load(configPath, "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	require.NoError(err, "Load")
 
 	// Verify server config
-	if cfg.Server.APIPort != 9090 {
-		t.Errorf("APIPort = %d, want 9090", cfg.Server.APIPort)
-	}
-	if cfg.Server.APIKey != "test-key" {
-		t.Errorf("APIKey = %q, want test-key", cfg.Server.APIKey)
-	}
+	assert.Equal(9090, cfg.Server.APIPort, "APIPort")
+	assert.Equal("test-key", cfg.Server.APIKey, "APIKey")
 
 	// Verify scheduled accounts
 	scheduled := cfg.ScheduledAccounts()
-	if len(scheduled) != 2 {
-		t.Errorf("len(ScheduledAccounts()) = %d, want 2", len(scheduled))
-	}
+	assert.Len(scheduled, 2, "len(ScheduledAccounts())")
 
 	// Verify specific accounts
 	acc := cfg.GetAccountSchedule("user1@gmail.com")
-	if acc == nil {
-		t.Fatal("GetAccountSchedule(user1) = nil")
-	}
-	if acc.Schedule != "0 2 * * *" {
-		t.Errorf("user1 schedule = %q, want '0 2 * * *'", acc.Schedule)
-	}
+	require.NotNil(acc, "GetAccountSchedule(user1)")
+	assert.Equal("0 2 * * *", acc.Schedule, "user1 schedule")
 
 	// Disabled account should still be retrievable but not in scheduled list
 	disabled := cfg.GetAccountSchedule("disabled@gmail.com")
-	if disabled == nil {
-		t.Error("GetAccountSchedule(disabled) = nil, want non-nil")
-	}
+	assert.NotNil(disabled, "GetAccountSchedule(disabled)")
 }
 
 func TestSchedulerWithConfig(t *testing.T) {
@@ -98,20 +86,14 @@ func TestSchedulerWithConfig(t *testing.T) {
 	count, errs := sched.AddAccountsFromConfig(cfg)
 
 	// Should schedule 2 valid accounts
-	if count != 2 {
-		t.Errorf("scheduled = %d, want 2", count)
-	}
+	assertpkg.Equal(t, 2, count, "scheduled count")
 
 	// Should have 1 error for invalid cron
-	if len(errs) != 1 {
-		t.Errorf("len(errs) = %d, want 1", len(errs))
-	}
+	assertpkg.Len(t, errs, 1, "len(errs)")
 
 	// Verify status
 	statuses := sched.Status()
-	if len(statuses) != 2 {
-		t.Errorf("len(Status()) = %d, want 2", len(statuses))
-	}
+	assertpkg.Len(t, statuses, 2, "len(Status())")
 }
 
 func TestServeCmdNoAccounts(t *testing.T) {
@@ -122,19 +104,13 @@ func TestServeCmdNoAccounts(t *testing.T) {
 client_secrets = "/path/to/secrets.json"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "write config")
 
 	cfg, err := config.Load(configPath, "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "Load")
 
 	scheduled := cfg.ScheduledAccounts()
-	if len(scheduled) != 0 {
-		t.Errorf("expected no scheduled accounts, got %d", len(scheduled))
-	}
+	assertpkg.Empty(t, scheduled, "expected no scheduled accounts")
 }
 
 // TestSetupVectorFeatures_Disabled verifies that when
@@ -147,12 +123,8 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 	cfg.Vector.Enabled = false
 
 	vf, err := setupVectorFeatures(context.Background(), nil, "")
-	if err != nil {
-		t.Fatalf("setupVectorFeatures error = %v, want nil", err)
-	}
-	if vf != nil {
-		t.Errorf("setupVectorFeatures = %v, want nil when disabled", vf)
-	}
+	requirepkg.NoError(t, err, "setupVectorFeatures")
+	assertpkg.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
 }
 
 // TestSetupVectorFeatures_RefusesPostgres verifies setupVectorFeatures
@@ -167,12 +139,8 @@ func TestSetupVectorFeatures_RefusesPostgres(t *testing.T) {
 	cfg.Vector.Enabled = true
 
 	_, err := setupVectorFeatures(context.Background(), nil, "postgres://user@host/db")
-	if err == nil {
-		t.Fatal("setupVectorFeatures with postgres DSN = nil error, want refusal")
-	}
-	if !strings.Contains(err.Error(), "SQLite-only") {
-		t.Errorf("error %q should mention SQLite-only", err.Error())
-	}
+	requirepkg.Error(t, err, "setupVectorFeatures with postgres DSN")
+	assertpkg.ErrorContains(t, err, "SQLite-only")
 }
 
 // TestFindScheduledSyncSource verifies that the scheduler's
@@ -180,24 +148,18 @@ func TestSetupVectorFeatures_RefusesPostgres(t *testing.T) {
 // non-syncable source types (mbox, apple-mail, etc.). Regression for
 // the daemon-mode IMAP dispatch (#329).
 func TestFindScheduledSyncSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "init schema")
 
 	// No rows: returns nil, allowing the Gmail token-first fallback.
 	got, err := findScheduledSyncSource(s, "missing@example.com")
-	if err != nil {
-		t.Fatalf("findScheduledSyncSource(missing) error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("findScheduledSyncSource(missing) = %v, want nil", got)
-	}
+	require.NoError(err, "findScheduledSyncSource(missing)")
+	assert.Nil(got, "findScheduledSyncSource(missing) should be nil")
 
 	// IMAP source created by add-imap: identifier is the imaps:// URL,
 	// display_name is the user-facing email. Both lookups must resolve
@@ -205,63 +167,43 @@ func TestFindScheduledSyncSource(t *testing.T) {
 	const imapID = "imaps://user@example.com@imap.example.com:993"
 	const imapEmail = "user@example.com"
 	imapSrc, err := s.GetOrCreateSource("imap", imapID)
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
-	if err := s.UpdateSourceDisplayName(imapSrc.ID, imapEmail); err != nil {
-		t.Fatalf("set imap display_name: %v", err)
-	}
+	require.NoError(err, "create imap source")
+	require.NoError(s.UpdateSourceDisplayName(imapSrc.ID, imapEmail), "set imap display_name")
 
 	got, err = findScheduledSyncSource(s, imapID)
-	if err != nil {
-		t.Fatalf("findScheduledSyncSource(imap by identifier) error: %v", err)
-	}
-	if got == nil || got.SourceType != "imap" {
-		t.Fatalf("findScheduledSyncSource(imap by identifier) = %v, want imap source", got)
-	}
+	require.NoError(err, "findScheduledSyncSource(imap by identifier)")
+	require.NotNil(got, "findScheduledSyncSource(imap by identifier) should not be nil")
+	require.Equal("imap", got.SourceType, "findScheduledSyncSource(imap by identifier) SourceType")
 
 	// Lookup by display_name (the typical config.toml `email = "..."`
 	// shape) must also resolve the IMAP source — otherwise the daemon
 	// falls back to Gmail and produces a misleading token error.
 	got, err = findScheduledSyncSource(s, imapEmail)
-	if err != nil {
-		t.Fatalf("findScheduledSyncSource(imap by display_name) error: %v", err)
-	}
-	if got == nil || got.SourceType != "imap" {
-		t.Fatalf("findScheduledSyncSource(imap by display_name) = %v, want imap source", got)
-	}
+	require.NoError(err, "findScheduledSyncSource(imap by display_name)")
+	require.NotNil(got, "findScheduledSyncSource(imap by display_name) should not be nil")
+	require.Equal("imap", got.SourceType, "findScheduledSyncSource(imap by display_name) SourceType")
 
 	// Identifier shared by an unsyncable mbox row + a gmail row:
 	// gmail wins, the unsyncable row is ignored.
 	const sharedID = "shared@example.com"
-	if _, err := s.GetOrCreateSource("mbox", sharedID); err != nil {
-		t.Fatalf("create mbox source: %v", err)
-	}
-	if _, err := s.GetOrCreateSource("gmail", sharedID); err != nil {
-		t.Fatalf("create gmail source: %v", err)
-	}
+	_, err = s.GetOrCreateSource("mbox", sharedID)
+	require.NoError(err, "create mbox source")
+	_, err = s.GetOrCreateSource("gmail", sharedID)
+	require.NoError(err, "create gmail source")
 	got, err = findScheduledSyncSource(s, sharedID)
-	if err != nil {
-		t.Fatalf("findScheduledSyncSource(shared) error: %v", err)
-	}
-	if got == nil || got.SourceType != "gmail" {
-		t.Fatalf("findScheduledSyncSource(shared) = %v, want gmail source", got)
-	}
+	require.NoError(err, "findScheduledSyncSource(shared)")
+	require.NotNil(got, "findScheduledSyncSource(shared) should not be nil")
+	require.Equal("gmail", got.SourceType, "findScheduledSyncSource(shared) SourceType")
 
 	// Identifier with only an unsyncable row: returns nil so the
 	// dispatcher's Gmail fallback fires and produces a Gmail-shaped
 	// error (rather than misclassifying as imap).
 	const mboxID = "mbox-only@example.com"
-	if _, err := s.GetOrCreateSource("mbox", mboxID); err != nil {
-		t.Fatalf("create mbox source: %v", err)
-	}
+	_, err = s.GetOrCreateSource("mbox", mboxID)
+	require.NoError(err, "create mbox source")
 	got, err = findScheduledSyncSource(s, mboxID)
-	if err != nil {
-		t.Fatalf("findScheduledSyncSource(mbox-only) error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("findScheduledSyncSource(mbox-only) = %v, want nil", got)
-	}
+	require.NoError(err, "findScheduledSyncSource(mbox-only)")
+	assert.Nil(got, "findScheduledSyncSource(mbox-only) should be nil")
 }
 
 // TestRunScheduledIMAPSync_NoCredentials verifies that the IMAP path
@@ -270,43 +212,36 @@ func TestFindScheduledSyncSource(t *testing.T) {
 // rather than the misleading "oauth2: token expired and refresh token
 // is not set" message reported in #329.
 func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "init schema")
 
 	const imapID = "imaps://user@example.com@imap.example.com:993"
-	if _, err := s.GetOrCreateSource("imap", imapID); err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	_, err = s.GetOrCreateSource("imap", imapID)
+	require.NoError(err, "create imap source")
 
 	// getOAuthMgr is only invoked on the Gmail path; fail loudly so
 	// any wrong-path dispatch is obvious.
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
-		t.Fatalf("Gmail OAuth manager unexpectedly requested for IMAP source (app=%q)", app)
+		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
 		return nil, nil
 	}
 
 	err = runScheduledSync(context.Background(), imapID, s, getOAuthMgr, nil)
-	if err == nil {
-		t.Fatal("runScheduledSync(imap, no creds) = nil error, want credentials error")
-	}
+	require.Error(err, "runScheduledSync(imap, no creds) want credentials error")
 	msg := err.Error()
-	if strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired") {
-		t.Errorf("IMAP path produced Gmail-flavoured error %q — dispatch is still Gmail-only", msg)
-	}
-	if !strings.Contains(msg, "no credentials") && !strings.Contains(msg, "IMAP") {
-		t.Errorf("error %q does not mention IMAP credentials", msg)
-	}
+	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
+		"IMAP path produced Gmail-flavoured error %q — dispatch is still Gmail-only", msg)
+	assert.True(strings.Contains(msg, "no credentials") || strings.Contains(msg, "IMAP"),
+		"error %q does not mention IMAP credentials", msg)
 }
 
 // TestRunScheduledIMAPSync_DispatchByDisplayName verifies the daemon
@@ -316,34 +251,28 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 // matched against identifier, so config-driven scheduled syncs fell
 // through to the Gmail OAuth path (#329).
 func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "init schema")
 
 	const (
 		imapID    = "imaps://user@example.com@imap.example.com:993"
 		imapEmail = "user@example.com"
 	)
 	src, err := s.GetOrCreateSource("imap", imapID)
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
-	if err := s.UpdateSourceDisplayName(src.ID, imapEmail); err != nil {
-		t.Fatalf("set display_name: %v", err)
-	}
+	require.NoError(err, "create imap source")
+	require.NoError(s.UpdateSourceDisplayName(src.ID, imapEmail), "set display_name")
 
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
-		t.Fatalf("Gmail OAuth manager unexpectedly requested for IMAP source (app=%q)", app)
+		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
 		return nil, nil
 	}
 
@@ -351,16 +280,11 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 	// not the imaps:// identifier. Dispatch must still land on the
 	// IMAP path; absence of credentials produces an IMAP-shaped error.
 	err = runScheduledSync(context.Background(), imapEmail, s, getOAuthMgr, nil)
-	if err == nil {
-		t.Fatal("runScheduledSync(email, no creds) = nil error, want IMAP credentials error")
-	}
+	require.Error(err, "runScheduledSync(email, no creds) want IMAP credentials error")
 	msg := err.Error()
-	if strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired") {
-		t.Errorf("dispatch fell through to Gmail path: %q", msg)
-	}
-	if !strings.Contains(msg, "IMAP") {
-		t.Errorf("error %q does not mention IMAP — dispatch likely missed the source", msg)
-	}
+	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
+		"dispatch fell through to Gmail path: %q", msg)
+	assert.Contains(msg, "IMAP", "error %q does not mention IMAP — dispatch likely missed the source", msg)
 }
 
 // TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName verifies the
@@ -370,19 +294,17 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 // would inject e.g. "imaps://user@host:993" into account_identities
 // when the user had cleared their identities.
 func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
 	cfg.Data.DataDir = t.TempDir()
 
 	s, err := store.Open(filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "init schema")
 
 	// Use a closed port on loopback so buildAPIClient succeeds (the
 	// client doesn't dial in its constructor) and confirmDefaultIdentity
@@ -392,23 +314,15 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 		imapEmail = "user@example.com"
 	)
 	src, err := s.GetOrCreateSource("imap", imapID)
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
-	if err := s.UpdateSourceDisplayName(src.ID, imapEmail); err != nil {
-		t.Fatalf("set display_name: %v", err)
-	}
-	if err := s.UpdateSourceSyncConfig(src.ID,
+	require.NoError(err, "create imap source")
+	require.NoError(s.UpdateSourceDisplayName(src.ID, imapEmail), "set display_name")
+	require.NoError(s.UpdateSourceSyncConfig(src.ID,
 		`{"host":"127.0.0.1","port":1,"username":"user@example.com","tls":true}`,
-	); err != nil {
-		t.Fatalf("set sync_config: %v", err)
-	}
-	if err := imaplib.SaveCredentials(cfg.TokensDir(), imapID, "unused"); err != nil {
-		t.Fatalf("save credentials: %v", err)
-	}
+	), "set sync_config")
+	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), imapID, "unused"), "save credentials")
 
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
-		t.Fatalf("Gmail OAuth manager unexpectedly requested (app=%q)", app)
+		assert.Fail("Gmail OAuth manager unexpectedly requested", "app=%q", app)
 		return nil, nil
 	}
 
@@ -417,17 +331,14 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 	_ = runScheduledSync(context.Background(), imapID, s, getOAuthMgr, nil)
 
 	identities, err := s.ListAccountIdentities(src.ID)
-	if err != nil {
-		t.Fatalf("ListAccountIdentities: %v", err)
-	}
-	if len(identities) == 0 {
-		t.Fatal("no identities written — confirmDefaultIdentity did not fire on the IMAP path")
-	}
+	require.NoError(err, "ListAccountIdentities")
+	require.NotEmpty(identities, "no identities written — confirmDefaultIdentity did not fire on the IMAP path")
 	for _, id := range identities {
 		if strings.HasPrefix(id.Address, "imaps://") ||
 			strings.HasPrefix(id.Address, "imap://") ||
 			strings.HasPrefix(id.Address, "imap+starttls://") {
-			t.Errorf("identity %q is an IMAP URL — daemon polluted account_identities", id.Address)
+			assert.Fail("identity is an IMAP URL — daemon polluted account_identities",
+				"address=%q", id.Address)
 		}
 	}
 	var foundEmail bool
@@ -437,9 +348,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 			break
 		}
 	}
-	if !foundEmail {
-		t.Errorf("identities = %+v, want one with Address=%q", identities, imapEmail)
-	}
+	assert.True(foundEmail, "identities = %+v, want one with Address=%q", identities, imapEmail)
 }
 
 func TestCronExpressionValidation(t *testing.T) {
@@ -461,8 +370,10 @@ func TestCronExpressionValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := scheduler.ValidateCronExpr(tt.expr)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateCronExpr(%q) error = %v, wantErr = %v", tt.expr, err, tt.wantErr)
+			if tt.wantErr {
+				assertpkg.Error(t, err, "ValidateCronExpr(%q)", tt.expr)
+			} else {
+				assertpkg.NoError(t, err, "ValidateCronExpr(%q)", tt.expr)
 			}
 		})
 	}

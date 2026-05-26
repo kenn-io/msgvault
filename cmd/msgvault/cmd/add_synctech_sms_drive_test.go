@@ -6,10 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -25,23 +29,16 @@ func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
 		"--oauth-app", "personal",
 		"--skip-auth-for-test",
 	})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	require.NoError(cmd.Execute(), "Execute")
 	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
+	require.NoError(err, "read config")
 	text := string(data)
 	for _, want := range []string{`[[synctech_sms.sources]]`, `name = "pixel"`, `backend = "drive"`, `folder_id = "drive-folder-id"`, `google_account = "user@example.com"`, `owner_phone = "+15550000001"`} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("config missing %q:\n%s", want, text)
-		}
+		require.Contains(text, want, "config missing %q", want)
 	}
 	lower := strings.ToLower(text)
 	refreshTokenKey := "refresh" + "_token"
 	clientSecretKey := "client" + "_secret\""
-	if strings.Contains(lower, refreshTokenKey) || strings.Contains(lower, clientSecretKey) {
-		t.Fatalf("config contains secret material:\n%s", text)
-	}
+	assert.NotContains(lower, refreshTokenKey, "config contains secret material:\n%s", text)
+	assert.NotContains(lower, clientSecretKey, "config contains secret material:\n%s", text)
 }

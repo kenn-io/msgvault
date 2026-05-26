@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDriveImportSkipsUnstableAndAlreadyImportedFiles(t *testing.T) {
@@ -13,13 +16,10 @@ func TestDriveImportSkipsUnstableAndAlreadyImportedFiles(t *testing.T) {
 		{ID: "old", Name: "old.xml", Size: 100, Checksum: "oldsum", ModifiedTime: now.Add(-30 * time.Minute)},
 	}
 	got := SelectStableDriveFiles(files, now, 10*time.Minute, map[string]string{"old": "oldsum"})
-	if len(got) != 0 {
-		t.Fatalf("stable selection = %#v, want none", got)
-	}
+	assert.Empty(t, got, "stable selection should be empty when only old is already imported")
 	got = SelectStableDriveFiles(files, now, 10*time.Minute, map[string]string{})
-	if len(got) != 1 || got[0].ID != "old" {
-		t.Fatalf("stable selection = %#v, want old only", got)
-	}
+	require.Len(t, got, 1, "stable selection should pick only old")
+	assert.Equal(t, "old", got[0].ID)
 }
 
 func TestDriveClientInterfaceIsSmall(t *testing.T) {

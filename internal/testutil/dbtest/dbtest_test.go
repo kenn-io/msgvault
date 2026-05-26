@@ -3,19 +3,32 @@ package dbtest
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const schemaPath = "../../store/schema.sql"
 
-// fakeT implements testing.TB and captures Fatalf calls instead of aborting.
+// fakeT implements testing.TB and captures fatal/error calls instead of aborting.
+// It records the last Errorf or Fatalf message and panics on FailNow so callers
+// can detect that a fatal path was reached. This supports both stdlib t.Fatalf
+// usage and testify require.* helpers (which call Errorf + FailNow).
 type fakeT struct {
 	testing.TB
 	fatalMsg string
 }
 
+func (f *fakeT) Errorf(format string, args ...interface{}) {
+	f.fatalMsg = fmt.Sprintf(format, args...)
+}
+
 func (f *fakeT) Fatalf(format string, args ...interface{}) {
 	f.fatalMsg = fmt.Sprintf(format, args...)
 	panic("fatalf") // stop execution in the caller
+}
+
+func (f *fakeT) FailNow() {
+	panic("failnow")
 }
 
 func (f *fakeT) Helper() {}
@@ -31,9 +44,7 @@ func TestAddMessage_SourceIDMatchesConversation(t *testing.T) {
 		Subject:        "match",
 		SentAt:         "2024-06-01 10:00:00",
 	})
-	if id == 0 {
-		t.Fatal("expected non-zero message ID")
-	}
+	require.NotZero(t, id, "expected non-zero message ID")
 }
 
 func TestAddMessage_MismatchedSourceID(t *testing.T) {
@@ -64,9 +75,8 @@ func TestAddMessage_MismatchedSourceID(t *testing.T) {
 		})
 	}()
 
-	if !caught || ft.fatalMsg == "" {
-		t.Fatal("expected fatal for mismatched SourceID")
-	}
+	require.True(t, caught, "expected fatal for mismatched SourceID")
+	require.NotEmpty(t, ft.fatalMsg, "expected fatal for mismatched SourceID")
 	t.Logf("got expected fatal: %s", ft.fatalMsg)
 }
 
@@ -93,9 +103,7 @@ func TestAddMessage_DBErrorFailsTest(t *testing.T) {
 		})
 	}()
 
-	if ft.fatalMsg == "" {
-		t.Fatal("expected fatal for DB error on source_id lookup")
-	}
+	require.NotEmpty(t, ft.fatalMsg, "expected fatal for DB error on source_id lookup")
 	t.Logf("got expected fatal: %s", ft.fatalMsg)
 }
 
@@ -125,8 +133,7 @@ func TestAddMessage_MissingConversation(t *testing.T) {
 		})
 	}()
 
-	if !caught || ft.fatalMsg == "" {
-		t.Fatal("expected fatal for missing conversation")
-	}
+	require.True(t, caught, "expected fatal for missing conversation")
+	require.NotEmpty(t, ft.fatalMsg, "expected fatal for missing conversation")
 	t.Logf("got expected fatal: %s", ft.fatalMsg)
 }

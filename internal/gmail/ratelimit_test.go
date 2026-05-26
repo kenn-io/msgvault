@@ -5,6 +5,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockClock provides deterministic time control for tests.
@@ -79,7 +82,7 @@ func waitForTimers(t *testing.T, clk *mockClock, n int) {
 		select {
 		case <-clk.timerNotify:
 		case <-timeout:
-			t.Fatalf("timed out waiting for %d timer(s); have %d", n, clk.TimerCount())
+			require.Failf(t, "timed out waiting for timers", "timed out waiting for %d timer(s); have %d", n, clk.TimerCount())
 		}
 	}
 }
@@ -137,9 +140,7 @@ func (f *rlFixture) state() (tokens, refillRate float64, throttledUntil time.Tim
 // assertAvailable checks the current available tokens.
 func (f *rlFixture) assertAvailable(t *testing.T, expected float64) {
 	t.Helper()
-	if got := f.rl.Available(); got != expected {
-		t.Errorf("Available() = %v, want %v", got, expected)
-	}
+	assert.Equal(t, expected, f.rl.Available(), "Available()")
 }
 
 // acquireAsync runs Acquire in a background goroutine and returns a channel
@@ -166,7 +167,7 @@ func (f *rlFixture) acquireAsync(t *testing.T, ctx context.Context, op Operation
 		case <-done:
 			return ch
 		case <-timeout:
-			t.Fatal("acquireAsync: timed out waiting for timer or completion")
+			require.Fail(t, "acquireAsync: timed out waiting for timer or completion")
 			return ch
 		}
 	}
@@ -191,62 +192,41 @@ func TestOperationCost(t *testing.T) {
 
 	for _, tc := range tests {
 		got := tc.op.Cost()
-		if got != tc.cost {
-			t.Errorf("Operation(%d).Cost() = %d, want %d", tc.op, got, tc.cost)
-		}
+		assert.Equal(t, tc.cost, got, "Operation(%d).Cost()", tc.op)
 	}
 }
 
 func TestNewRateLimiter(t *testing.T) {
 	rl := NewRateLimiter(5.0)
 
-	if rl.capacity != DefaultCapacity {
-		t.Errorf("capacity = %v, want %v", rl.capacity, DefaultCapacity)
-	}
-
-	if rl.tokens != DefaultCapacity {
-		t.Errorf("initial tokens = %v, want %v", rl.tokens, DefaultCapacity)
-	}
-
-	if rl.refillRate != DefaultRefillRate {
-		t.Errorf("refillRate = %v, want %v", rl.refillRate, DefaultRefillRate)
-	}
+	assert.Equal(t, float64(DefaultCapacity), rl.capacity, "capacity")
+	assert.Equal(t, float64(DefaultCapacity), rl.tokens, "initial tokens")
+	assert.Equal(t, DefaultRefillRate, rl.refillRate, "refillRate")
 }
 
 func TestNewRateLimiter_ScaledQPS(t *testing.T) {
 	rl := NewRateLimiter(2.5)
 	expectedRate := DefaultRefillRate * 0.5
-	if rl.refillRate != expectedRate {
-		t.Errorf("refillRate at 2.5 QPS = %v, want %v", rl.refillRate, expectedRate)
-	}
+	assert.Equal(t, expectedRate, rl.refillRate, "refillRate at 2.5 QPS")
 
 	rl = NewRateLimiter(10.0)
-	if rl.refillRate != DefaultRefillRate {
-		t.Errorf("refillRate at 10 QPS = %v, want %v (capped)", rl.refillRate, DefaultRefillRate)
-	}
+	assert.Equal(t, DefaultRefillRate, rl.refillRate, "refillRate at 10 QPS (capped)")
 }
 
 func TestNewRateLimiter_NilClockPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("newRateLimiter(nil, ...) should panic")
-		}
-	}()
-	newRateLimiter(nil, 5.0)
+	assert.Panics(t, func() {
+		newRateLimiter(nil, 5.0)
+	}, "newRateLimiter(nil, ...) should panic")
 }
 
 func TestRateLimiter_TryAcquire(t *testing.T) {
 	f := newRLFixture()
 
-	if !f.rl.TryAcquire(OpProfile) {
-		t.Error("TryAcquire(OpProfile) should succeed when bucket is full")
-	}
+	assert.True(t, f.rl.TryAcquire(OpProfile), "TryAcquire(OpProfile) should succeed when bucket is full")
 
 	f.drain()
 
-	if f.rl.TryAcquire(OpMessagesBatchDelete) {
-		t.Error("TryAcquire(OpMessagesBatchDelete) should fail when bucket is empty")
-	}
+	assert.False(t, f.rl.TryAcquire(OpMessagesBatchDelete), "TryAcquire(OpMessagesBatchDelete) should fail when bucket is empty")
 }
 
 func TestRateLimiter_Acquire_Success(t *testing.T) {
@@ -255,9 +235,7 @@ func TestRateLimiter_Acquire_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := f.rl.Acquire(ctx, OpProfile)
-	if err != nil {
-		t.Errorf("Acquire() error = %v", err)
-	}
+	assert.NoError(t, err, "Acquire()")
 }
 
 func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
@@ -268,9 +246,7 @@ func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := f.rl.Acquire(ctx, OpMessagesGet)
-	if err != context.Canceled {
-		t.Errorf("Acquire() with cancelled context = %v, want context.Canceled", err)
-	}
+	assert.ErrorIs(t, err, context.Canceled, "Acquire() with cancelled context")
 }
 
 func TestRateLimiter_Acquire_ContextTimeout(t *testing.T) {
@@ -300,11 +276,9 @@ func TestRateLimiter_Acquire_ContextTimeout(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != context.Canceled {
-			t.Errorf("Acquire() = %v, want context.Canceled", err)
-		}
+		assert.ErrorIs(t, err, context.Canceled, "Acquire()")
 	case <-time.After(2 * time.Second):
-		t.Fatal("Acquire() did not return after context cancelled")
+		require.Fail(t, "Acquire() did not return after context cancelled")
 	}
 }
 
@@ -354,7 +328,7 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	close(errors)
 
 	for err := range errors {
-		t.Errorf("concurrent Acquire() error = %v", err)
+		assert.NoError(t, err, "concurrent Acquire()")
 	}
 }
 
@@ -365,9 +339,7 @@ func TestRateLimiter_CapacityLimit(t *testing.T) {
 	f.clk.Advance(10 * time.Second)
 
 	avail := f.rl.Available()
-	if avail > float64(DefaultCapacity) {
-		t.Errorf("Available() = %v, should not exceed capacity %v", avail, DefaultCapacity)
-	}
+	assert.LessOrEqual(t, avail, float64(DefaultCapacity), "Available() should not exceed capacity %v", DefaultCapacity)
 }
 
 func TestRateLimiter_Throttle(t *testing.T) {
@@ -384,9 +356,7 @@ func TestRateLimiter_Throttle(t *testing.T) {
 
 		// Advance past throttle expiry
 		f.clk.Advance(60 * time.Millisecond)
-		if got := f.rl.Available(); got <= 0 {
-			t.Errorf("Available() after throttle expiry = %v, expected > 0", got)
-		}
+		assert.Greater(t, f.rl.Available(), float64(0), "Available() after throttle expiry")
 	})
 
 	t.Run("RecoverRate", func(t *testing.T) {
@@ -395,16 +365,12 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(10 * time.Millisecond)
 
 		_, rate, _ := f.state()
-		if rate != DefaultRefillRate*0.5 {
-			t.Errorf("refillRate after Throttle = %v, want %v", rate, DefaultRefillRate*0.5)
-		}
+		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
 
 		f.rl.RecoverRate()
 
 		_, rate, _ = f.state()
-		if rate != DefaultRefillRate {
-			t.Errorf("refillRate after RecoverRate = %v, want %v", rate, DefaultRefillRate)
-		}
+		assert.Equal(t, DefaultRefillRate, rate, "refillRate after RecoverRate")
 	})
 
 	t.Run("DoesNotShortenBackoff", func(t *testing.T) {
@@ -416,9 +382,7 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(50 * time.Millisecond)
 		_, _, second := f.state()
 
-		if second.Before(first) {
-			t.Errorf("Throttle shortened existing backoff: first=%v, second=%v", first, second)
-		}
+		assert.False(t, second.Before(first), "Throttle shortened existing backoff: first=%v, second=%v", first, second)
 	})
 
 	t.Run("ExtendsBackoff", func(t *testing.T) {
@@ -431,9 +395,7 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(50 * time.Millisecond)
 		_, _, second := f.state()
 
-		if !second.After(first) {
-			t.Errorf("Throttle did not extend backoff: first=%v, second=%v", first, second)
-		}
+		assert.True(t, second.After(first), "Throttle did not extend backoff: first=%v, second=%v", first, second)
 	})
 
 	t.Run("AutoRecoverRate", func(t *testing.T) {
@@ -442,17 +404,13 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(50 * time.Millisecond)
 
 		_, rate, _ := f.state()
-		if rate != DefaultRefillRate*0.5 {
-			t.Errorf("refillRate after Throttle = %v, want %v", rate, DefaultRefillRate*0.5)
-		}
+		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
 
 		f.clk.Advance(100 * time.Millisecond)
 		f.rl.Available() // triggers refill and auto-recovery
 
 		_, rate, _ = f.state()
-		if rate != DefaultRefillRate {
-			t.Errorf("refillRate after throttle expiry = %v, want %v", rate, DefaultRefillRate)
-		}
+		assert.Equal(t, DefaultRefillRate, rate, "refillRate after throttle expiry")
 	})
 }
 
@@ -468,11 +426,9 @@ func TestRateLimiter_Acquire_WaitsForThrottle(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Errorf("Acquire() error = %v", err)
-		}
+		assert.NoError(t, err, "Acquire()")
 	case <-time.After(1 * time.Second):
-		t.Fatal("Acquire() did not complete after advancing clock past throttle")
+		require.Fail(t, "Acquire() did not complete after advancing clock past throttle")
 	}
 }
 
@@ -482,12 +438,8 @@ func TestMockClock_ZeroValueSafe(t *testing.T) {
 
 	// After should work without hanging
 	ch := clk.After(10 * time.Millisecond)
-	if ch == nil {
-		t.Fatal("After() returned nil channel")
-	}
+	require.NotNil(t, ch, "After() returned nil channel")
 
 	// timerNotify should be lazily initialized
-	if clk.timerNotify == nil {
-		t.Fatal("timerNotify should be initialized after After() call")
-	}
+	require.NotNil(t, clk.timerNotify, "timerNotify should be initialized after After() call")
 }

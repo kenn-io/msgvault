@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -31,9 +33,7 @@ func newTestEnv(t *testing.T) *testEnv {
 func (e *testEnv) MustListMessages(filter MessageFilter) []MessageSummary {
 	e.T.Helper()
 	messages, err := e.Engine.ListMessages(e.Ctx, filter)
-	if err != nil {
-		e.T.Fatalf("ListMessages: %v", err)
-	}
+	require.NoError(e.T, err, "ListMessages")
 	return messages
 }
 
@@ -41,9 +41,7 @@ func (e *testEnv) MustListMessages(filter MessageFilter) []MessageSummary {
 func (e *testEnv) MustSearch(q *search.Query, limit, offset int) []MessageSummary {
 	e.T.Helper()
 	results, err := e.Engine.Search(e.Ctx, q, limit, offset)
-	if err != nil {
-		e.T.Fatalf("Search: %v", err)
-	}
+	require.NoError(e.T, err, "Search")
 	return results
 }
 
@@ -51,9 +49,7 @@ func (e *testEnv) MustSearch(q *search.Query, limit, offset int) []MessageSummar
 func (e *testEnv) MustGetTotalStats(opts StatsOptions) *TotalStats {
 	e.T.Helper()
 	stats, err := e.Engine.GetTotalStats(e.Ctx, opts)
-	if err != nil {
-		e.T.Fatalf("GetTotalStats: %v", err)
-	}
+	require.NoError(e.T, err, "GetTotalStats")
 	return stats
 }
 
@@ -77,9 +73,8 @@ func aggRowMap(t *testing.T, rows []AggregateRow) map[string]int64 {
 	t.Helper()
 	m := make(map[string]int64, len(rows))
 	for _, r := range rows {
-		if _, exists := m[r.Key]; exists {
-			t.Errorf("duplicate key %q in results", r.Key)
-		}
+		_, exists := m[r.Key]
+		assert.False(t, exists, "duplicate key %q in results", r.Key)
 		m[r.Key] = r.Count
 	}
 	return m
@@ -91,11 +86,11 @@ func assertRowsContain(t *testing.T, rows []AggregateRow, want []aggExpectation)
 	t.Helper()
 	m := aggRowMap(t, rows)
 	for _, w := range want {
-		if got, ok := m[w.Key]; !ok {
-			t.Errorf("key %q not found in results", w.Key)
-		} else if got != w.Count {
-			t.Errorf("key %q: expected count %d, got %d", w.Key, w.Count, got)
+		got, ok := m[w.Key]
+		if !assert.True(t, ok, "key %q not found in results", w.Key) {
+			continue
 		}
+		assert.Equal(t, w.Count, got, "key %q count", w.Key)
 	}
 }
 
@@ -103,11 +98,11 @@ func assertRowsContain(t *testing.T, rows []AggregateRow, want []aggExpectation)
 func assertRow(t *testing.T, rows []AggregateRow, key string, count int64) {
 	t.Helper()
 	m := aggRowMap(t, rows)
-	if got, ok := m[key]; !ok {
-		t.Errorf("key %q not found in results", key)
-	} else if got != count {
-		t.Errorf("key %q: expected count %d, got %d", key, count, got)
+	got, ok := m[key]
+	if !assert.True(t, ok, "key %q not found in results", key) {
+		return
 	}
+	assert.Equal(t, count, got, "key %q count", key)
 }
 
 // assertAggRows verifies that aggregate rows contain the expected key/count pairs
@@ -116,19 +111,13 @@ func assertRow(t *testing.T, rows []AggregateRow, key string, count int64) {
 func assertAggRows(t *testing.T, rows []AggregateRow, want []aggExpectation) {
 	t.Helper()
 	aggRowMap(t, rows) // checks for duplicates
-	if len(rows) != len(want) {
-		t.Errorf("expected %d aggregate rows, got %d", len(want), len(rows))
-	}
+	assert.Len(t, rows, len(want), "aggregate rows length")
 	for i := range want {
 		if i >= len(rows) {
 			break
 		}
-		if rows[i].Key != want[i].Key {
-			t.Errorf("row[%d]: expected key %q, got %q", i, want[i].Key, rows[i].Key)
-		}
-		if rows[i].Count != want[i].Count {
-			t.Errorf("row[%d] (key %q): expected count %d, got %d", i, rows[i].Key, want[i].Count, rows[i].Count)
-		}
+		assert.Equal(t, want[i].Key, rows[i].Key, "row[%d] key", i)
+		assert.Equal(t, want[i].Count, rows[i].Count, "row[%d] (key %q) count", i, rows[i].Key)
 	}
 }
 
@@ -136,9 +125,7 @@ func assertAggRows(t *testing.T, rows []AggregateRow, want []aggExpectation) {
 func assertSearchCount(t *testing.T, env *testEnv, q *search.Query, want int) []MessageSummary {
 	t.Helper()
 	results := env.MustSearch(q, 100, 0)
-	if len(results) != want {
-		t.Errorf("Search(%+v): got %d results, want %d", q, len(results), want)
-	}
+	assert.Len(t, results, want, "Search(%+v)", q)
 	return results
 }
 
@@ -146,9 +133,7 @@ func assertSearchCount(t *testing.T, env *testEnv, q *search.Query, want int) []
 func assertAllResults(t *testing.T, results []MessageSummary, desc string, pred func(MessageSummary) bool) {
 	t.Helper()
 	for _, r := range results {
-		if !pred(r) {
-			t.Errorf("result id=%d did not satisfy %s", r.ID, desc)
-		}
+		assert.True(t, pred(r), "result id=%d did not satisfy %s", r.ID, desc)
 	}
 }
 
@@ -160,7 +145,7 @@ func assertAnyResult(t *testing.T, results []MessageSummary, desc string, pred f
 			return
 		}
 	}
-	t.Errorf("no result satisfied %s", desc)
+	assert.Fail(t, "no result satisfied "+desc)
 }
 
 // newTestEnvWithEmptyBuckets creates a test DB with messages that have

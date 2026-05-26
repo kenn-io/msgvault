@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"howett.net/plist"
 )
 
@@ -40,14 +41,10 @@ func TestAppleTimestampToTime(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := appleTimestampToTime(tt.ts)
 			if tt.wantZero {
-				if !got.IsZero() {
-					t.Errorf("expected zero time, got %v", got)
-				}
+				assert.True(t, got.IsZero(), "expected zero time, got %v", got)
 				return
 			}
-			if got.Year() != tt.wantYear {
-				t.Errorf("expected year %d, got %d (time: %v)", tt.wantYear, got.Year(), got)
-			}
+			assert.Equal(t, tt.wantYear, got.Year(), "year (time: %v)", got)
 		})
 	}
 }
@@ -58,17 +55,11 @@ func TestTimeToAppleTimestamp(t *testing.T) {
 
 	// In seconds
 	gotSec := timeToAppleTimestamp(tm, false)
-	wantSec := int64(725760000) // 1704067200 - 978307200
-	if gotSec != wantSec {
-		t.Errorf("seconds: got %d, want %d", gotSec, wantSec)
-	}
+	assert.Equal(t, int64(725760000), gotSec, "seconds")
 
 	// In nanoseconds
 	gotNano := timeToAppleTimestamp(tm, true)
-	wantNano := int64(725760000000000000)
-	if gotNano != wantNano {
-		t.Errorf("nanoseconds: got %d, want %d", gotNano, wantNano)
-	}
+	assert.Equal(t, int64(725760000000000000), gotNano, "nanoseconds")
 }
 
 func TestRoundTripTimestamp(t *testing.T) {
@@ -77,17 +68,13 @@ func TestRoundTripTimestamp(t *testing.T) {
 	// Round trip through nanoseconds
 	appleNano := timeToAppleTimestamp(original, true)
 	recovered := appleTimestampToTime(appleNano)
-	if !recovered.Equal(original) {
-		t.Errorf("nanosecond round trip: got %v, want %v", recovered, original)
-	}
+	assert.True(t, recovered.Equal(original), "nanosecond round trip: got %v, want %v", recovered, original)
 
 	// Round trip through seconds (loses sub-second precision)
 	appleSec := timeToAppleTimestamp(original, false)
 	recoveredSec := appleTimestampToTime(appleSec)
 	expected := time.Date(2024, 6, 15, 12, 30, 45, 0, time.UTC)
-	if !recoveredSec.Equal(expected) {
-		t.Errorf("second round trip: got %v, want %v", recoveredSec, expected)
-	}
+	assert.True(t, recoveredSec.Equal(expected), "second round trip: got %v, want %v", recoveredSec, expected)
 }
 
 func TestResolveHandle(t *testing.T) {
@@ -152,15 +139,9 @@ func TestResolveHandle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotPhone, gotEmail, gotDisplay := resolveHandle(tt.handleID)
-			if gotPhone != tt.wantPhone {
-				t.Errorf("phone: got %q, want %q", gotPhone, tt.wantPhone)
-			}
-			if gotEmail != tt.wantEmail {
-				t.Errorf("email: got %q, want %q", gotEmail, tt.wantEmail)
-			}
-			if gotDisplay != tt.wantDisplayName {
-				t.Errorf("displayName: got %q, want %q", gotDisplay, tt.wantDisplayName)
-			}
+			assert.Equal(t, tt.wantPhone, gotPhone, "phone")
+			assert.Equal(t, tt.wantEmail, gotEmail, "email")
+			assert.Equal(t, tt.wantDisplayName, gotDisplay, "displayName")
 		})
 	}
 }
@@ -288,9 +269,7 @@ func TestExtractAttributedBodyText(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractAttributedBodyText(tt.input)
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -311,9 +290,7 @@ func TestSnippet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := snippet(tt.input, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

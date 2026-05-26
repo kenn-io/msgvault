@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -131,18 +133,12 @@ func TestHealthEndpoint(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("GET /health status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "GET /health status")
 
 	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp["status"] != "ok" {
-		t.Errorf("health status = %q, want 'ok'", resp["status"])
-	}
+	assertpkg.Equal(t, "ok", resp["status"], "health status")
 }
 
 func TestHealthEndpoint_HEAD(t *testing.T) {
@@ -157,10 +153,7 @@ func TestHealthEndpoint_HEAD(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("HEAD /health status = %d, want %d",
-			w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "HEAD /health status")
 }
 
 func TestAuthMiddleware(t *testing.T) {
@@ -199,9 +192,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
-			}
+			assertpkg.Equal(t, tt.wantStatus, w.Code, "status")
 		})
 	}
 }
@@ -222,12 +213,11 @@ func TestAuthMiddlewareNoKeyConfigured(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d when no API key configured", w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "status when no API key configured")
 }
 
 func TestSchedulerStatusEndpoint(t *testing.T) {
+	assert := assertpkg.New(t)
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -249,21 +239,13 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assert.Equal(http.StatusOK, w.Code, "status")
 
 	var resp SchedulerStatusResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if !resp.Running {
-		t.Error("expected scheduler to be running")
-	}
-	if len(resp.Accounts) != 1 {
-		t.Errorf("expected 1 account, got %d", len(resp.Accounts))
-	}
+	assert.True(resp.Running, "expected scheduler to be running")
+	assert.Len(resp.Accounts, 1, "expected 1 account")
 }
 
 func TestSchedulerStatusNotRunning(t *testing.T) {
@@ -281,13 +263,9 @@ func TestSchedulerStatusNotRunning(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	var resp SchedulerStatusResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.Running {
-		t.Error("expected scheduler to NOT be running")
-	}
+	assertpkg.False(t, resp.Running, "expected scheduler to NOT be running")
 }
 
 func TestListAccountsEndpoint(t *testing.T) {
@@ -306,19 +284,13 @@ func TestListAccountsEndpoint(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp map[string][]AccountInfo
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	accounts := resp["accounts"]
-	if len(accounts) != 2 {
-		t.Errorf("expected 2 accounts, got %d", len(accounts))
-	}
+	assertpkg.Len(t, accounts, 2, "expected 2 accounts")
 }
 
 func TestNilStoreReturns503(t *testing.T) {
@@ -341,9 +313,7 @@ func TestNilStoreReturns503(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != http.StatusServiceUnavailable {
-				t.Errorf("%s: status = %d, want %d", path, w.Code, http.StatusServiceUnavailable)
-			}
+			assertpkg.Equal(t, http.StatusServiceUnavailable, w.Code, "%s", path)
 		})
 	}
 }
@@ -369,9 +339,7 @@ func TestNilSchedulerReturns503(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != http.StatusServiceUnavailable {
-				t.Errorf("%s %s: status = %d, want %d", ep.method, ep.path, w.Code, http.StatusServiceUnavailable)
-			}
+			assertpkg.Equal(t, http.StatusServiceUnavailable, w.Code, "%s %s", ep.method, ep.path)
 		})
 	}
 }
@@ -397,8 +365,10 @@ func TestSecurityValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.cfg.ValidateSecure()
-			if (err != nil) != tt.wantError {
-				t.Errorf("ValidateSecure() error = %v, wantError = %v", err, tt.wantError)
+			if tt.wantError {
+				assertpkg.Error(t, err, "ValidateSecure()")
+			} else {
+				assertpkg.NoError(t, err, "ValidateSecure()")
 			}
 		})
 	}
@@ -420,9 +390,8 @@ func TestCORSFromConfig(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
-		t.Errorf("expected CORS header for allowed origin, got %q", w.Header().Get("Access-Control-Allow-Origin"))
-	}
+	assertpkg.Equal(t, "http://localhost:3000", w.Header().Get("Access-Control-Allow-Origin"),
+		"expected CORS header for allowed origin")
 
 	// Request from disallowed origin
 	req2 := httptest.NewRequest("GET", "/health", nil)
@@ -430,9 +399,8 @@ func TestCORSFromConfig(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w2, req2)
 
-	if w2.Header().Get("Access-Control-Allow-Origin") != "" {
-		t.Errorf("expected no CORS header for disallowed origin, got %q", w2.Header().Get("Access-Control-Allow-Origin"))
-	}
+	assertpkg.Empty(t, w2.Header().Get("Access-Control-Allow-Origin"),
+		"expected no CORS header for disallowed origin")
 }
 
 func TestCORSDisabledByDefault(t *testing.T) {
@@ -447,7 +415,6 @@ func TestCORSDisabledByDefault(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "" {
-		t.Errorf("expected no CORS header when no origins configured, got %q", w.Header().Get("Access-Control-Allow-Origin"))
-	}
+	assertpkg.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
+		"expected no CORS header when no origins configured")
 }

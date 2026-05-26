@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestNormalizePhone(t *testing.T) {
@@ -40,13 +43,14 @@ func TestNormalizePhone(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := normalizePhone(tt.raw); got != tt.want {
-			t.Errorf("normalizePhone(%q) = %q, want %q", tt.raw, got, tt.want)
-		}
+		got := normalizePhone(tt.raw)
+		assertpkg.Equal(t, tt.want, got, "normalizePhone(%q)", tt.raw)
 	}
 }
 
 func TestParseFile(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	vcf := `BEGIN:VCARD
 VERSION:2.1
 N:McGregor;Alastair;;;
@@ -78,41 +82,25 @@ END:VCARD
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 4 {
-		t.Fatalf("got %d contacts, want 4", len(contacts))
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 4)
 
-	if contacts[0].FullName != "Alastair McGregor" {
-		t.Errorf("contact 0 name = %q", contacts[0].FullName)
-	}
-	if len(contacts[0].Phones) != 1 || contacts[0].Phones[0] != "+447984959428" {
-		t.Errorf("contact 0 phones = %v", contacts[0].Phones)
-	}
+	assert.Equal("Alastair McGregor", contacts[0].FullName, "contact 0 name")
+	assert.Equal([]string{"+447984959428"}, contacts[0].Phones, "contact 0 phones")
 
-	if contacts[2].FullName != "Claire Mohacek - Amazon Studios" {
-		t.Errorf("contact 2 name = %q", contacts[2].FullName)
-	}
-	if len(contacts[2].Phones) != 1 || contacts[2].Phones[0] != "+07738006043" {
-		t.Errorf("contact 2 phones = %v, want [+07738006043]", contacts[2].Phones)
-	}
+	assert.Equal("Claire Mohacek - Amazon Studios", contacts[2].FullName, "contact 2 name")
+	assert.Equal([]string{"+07738006043"}, contacts[2].Phones, "contact 2 phones")
 
-	if contacts[3].FullName != "Multi Phone Person" {
-		t.Errorf("contact 3 name = %q", contacts[3].FullName)
-	}
-	if len(contacts[3].Phones) != 2 {
-		t.Errorf("contact 3 phone count = %d, want 2", len(contacts[3].Phones))
-	}
+	assert.Equal("Multi Phone Person", contacts[3].FullName, "contact 3 name")
+	assert.Len(contacts[3].Phones, 2, "contact 3 phone count")
 }
 
 func TestParseFile_FoldedAndEncoded(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN:José\r\n" +
@@ -128,31 +116,20 @@ func TestParseFile_FoldedAndEncoded(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "folded.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 2 {
-		t.Fatalf("got %d contacts, want 2", len(contacts))
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 2)
 
-	if contacts[0].FullName != "JoséGarcía" {
-		t.Errorf("folded name = %q", contacts[0].FullName)
-	}
-	if len(contacts[0].Phones) != 1 || contacts[0].Phones[0] != "+34612345678" {
-		t.Errorf("folded phone = %v", contacts[0].Phones)
-	}
+	assert.Equal("JoséGarcía", contacts[0].FullName, "folded name")
+	assert.Equal([]string{"+34612345678"}, contacts[0].Phones, "folded phone")
 
-	if contacts[1].FullName != "René Dupont" {
-		t.Errorf("QP name = %q", contacts[1].FullName)
-	}
+	assert.Equal("René Dupont", contacts[1].FullName, "QP name")
 }
 
 func TestParseFile_QPSoftBreaks(t *testing.T) {
+	require := requirepkg.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN;ENCODING=QUOTED-PRINTABLE:Jo=C3=A3o da =\r\n" +
@@ -162,23 +139,16 @@ func TestParseFile_QPSoftBreaks(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "qp-soft.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 1 {
-		t.Fatalf("got %d contacts, want 1", len(contacts))
-	}
-	if contacts[0].FullName != "João da Silva" {
-		t.Errorf("QP soft break name = %q", contacts[0].FullName)
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 1)
+	assertpkg.Equal(t, "João da Silva", contacts[0].FullName, "QP soft break name")
 }
 
 func TestParseFile_QPSoftBreakWithFoldedContinuation(t *testing.T) {
+	require := requirepkg.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN;ENCODING=QUOTED-PRINTABLE:Jo=C3=A3o da =\r\n" +
@@ -188,23 +158,17 @@ func TestParseFile_QPSoftBreakWithFoldedContinuation(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "qp-folded-soft.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 1 {
-		t.Fatalf("got %d contacts, want 1", len(contacts))
-	}
-	if contacts[0].FullName != "João da Silva" {
-		t.Errorf("QP folded soft break name = %q", contacts[0].FullName)
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 1)
+	assertpkg.Equal(t, "João da Silva", contacts[0].FullName, "QP folded soft break name")
 }
 
 func TestParseFile_Base64PhotoEqualsPaddingDoesNotEatNextLine(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Apple's modern vCard PHOTO blobs are base64 with '=' padding. The QP
 	// soft-break logic must NOT splice such lines into the following
 	// END:VCARD, or the contact gets silently dropped.
@@ -223,29 +187,19 @@ func TestParseFile_Base64PhotoEqualsPaddingDoesNotEatNextLine(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "photo.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 2 {
-		t.Fatalf("got %d contacts, want 2 — base64 '=' padding swallowed END:VCARD", len(contacts))
-	}
-	if contacts[0].FullName != "Bryan Baum" {
-		t.Errorf("contact 0 name = %q, want %q", contacts[0].FullName, "Bryan Baum")
-	}
-	if len(contacts[0].Phones) != 1 || contacts[0].Phones[0] != "+13052068533" {
-		t.Errorf("contact 0 phones = %v, want [+13052068533]", contacts[0].Phones)
-	}
-	if contacts[1].FullName != "Next Person" {
-		t.Errorf("contact 1 name = %q, want %q (next contact got merged into the photo)", contacts[1].FullName, "Next Person")
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 2, "base64 '=' padding swallowed END:VCARD")
+	assert.Equal("Bryan Baum", contacts[0].FullName, "contact 0 name")
+	assert.Equal([]string{"+13052068533"}, contacts[0].Phones, "contact 0 phones")
+	assert.Equal("Next Person", contacts[1].FullName, "contact 1 name (next contact got merged into the photo)")
 }
 
 func TestParseFile_Emails(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:3.0\r\n" +
 		"FN:Alice Example\r\n" +
@@ -261,33 +215,21 @@ func TestParseFile_Emails(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "emails.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 2 {
-		t.Fatalf("got %d contacts, want 2", len(contacts))
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 2)
 
-	if len(contacts[0].Emails) != 2 ||
-		contacts[0].Emails[0] != "alice@example.com" ||
-		contacts[0].Emails[1] != "alice.work@example.com" {
-		t.Errorf("contact 0 emails = %v", contacts[0].Emails)
-	}
+	assert.Equal([]string{"alice@example.com", "alice.work@example.com"}, contacts[0].Emails, "contact 0 emails")
 
-	if len(contacts[1].Emails) != 1 || contacts[1].Emails[0] != "bob@example.com" {
-		t.Errorf("contact 1 emails = %v", contacts[1].Emails)
-	}
-	if len(contacts[1].Phones) != 0 {
-		t.Errorf("contact 1 phones = %v", contacts[1].Phones)
-	}
+	assert.Equal([]string{"bob@example.com"}, contacts[1].Emails, "contact 1 emails")
+	assert.Empty(contacts[1].Phones, "contact 1 phones")
 }
 
 func TestParseFile_GroupedProperties(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:3.0\r\n" +
 		"item1.FN:Grouped Person\r\n" +
@@ -297,26 +239,14 @@ func TestParseFile_GroupedProperties(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "grouped.vcf")
-	if err := os.WriteFile(path, []byte(vcf), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte(vcf), 0644))
 
 	contacts, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile() error: %v", err)
-	}
-	if len(contacts) != 1 {
-		t.Fatalf("got %d contacts, want 1", len(contacts))
-	}
-	if contacts[0].FullName != "Grouped Person" {
-		t.Errorf("grouped name = %q", contacts[0].FullName)
-	}
-	if len(contacts[0].Phones) != 1 || contacts[0].Phones[0] != "+15551234567" {
-		t.Errorf("grouped phones = %v", contacts[0].Phones)
-	}
-	if len(contacts[0].Emails) != 1 || contacts[0].Emails[0] != "grouped@example.com" {
-		t.Errorf("grouped emails = %v", contacts[0].Emails)
-	}
+	require.NoError(err, "ParseFile")
+	require.Len(contacts, 1)
+	assert.Equal("Grouped Person", contacts[0].FullName, "grouped name")
+	assert.Equal([]string{"+15551234567"}, contacts[0].Phones, "grouped phones")
+	assert.Equal([]string{"grouped@example.com"}, contacts[0].Emails, "grouped emails")
 }
 
 func TestDecodeQuotedPrintable(t *testing.T) {
@@ -331,9 +261,8 @@ func TestDecodeQuotedPrintable(t *testing.T) {
 		{"end=", "end="},
 	}
 	for _, tt := range tests {
-		if got := decodeQuotedPrintable(tt.input); got != tt.want {
-			t.Errorf("decodeQuotedPrintable(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		got := decodeQuotedPrintable(tt.input)
+		assertpkg.Equal(t, tt.want, got, "decodeQuotedPrintable(%q)", tt.input)
 	}
 }
 
@@ -350,9 +279,8 @@ func TestExtractValue(t *testing.T) {
 		{"NO_COLON", ""},
 	}
 	for _, tt := range tests {
-		if got := extractValue(tt.line); got != tt.want {
-			t.Errorf("extractValue(%q) = %q, want %q", tt.line, got, tt.want)
-		}
+		got := extractValue(tt.line)
+		assertpkg.Equal(t, tt.want, got, "extractValue(%q)", tt.line)
 	}
 }
 
@@ -369,8 +297,7 @@ func TestNormalizedPropertyKey(t *testing.T) {
 		{"NO_COLON", ""},
 	}
 	for _, tt := range tests {
-		if got := normalizedPropertyKey(tt.line); got != tt.want {
-			t.Errorf("normalizedPropertyKey(%q) = %q, want %q", tt.line, got, tt.want)
-		}
+		got := normalizedPropertyKey(tt.line)
+		assertpkg.Equal(t, tt.want, got, "normalizedPropertyKey(%q)", tt.line)
 	}
 }

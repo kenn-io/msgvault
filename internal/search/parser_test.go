@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
@@ -344,27 +346,22 @@ func TestParse_TopLevelWrapper(t *testing.T) {
 	// Test that Parse() handles relative dates without panicking
 	// and returns a non-nil AfterDate (the exact value depends on current time)
 	q := Parse("newer_than:1d")
-	if q.AfterDate == nil {
-		t.Error("Parse(\"newer_than:1d\") should set AfterDate")
-	}
+	assertpkg.NotNil(t, q.AfterDate, "Parse(\"newer_than:1d\") should set AfterDate")
 
 	// Also verify older_than sets BeforeDate
 	q = Parse("older_than:1w")
-	if q.BeforeDate == nil {
-		t.Error("Parse(\"older_than:1w\") should set BeforeDate")
-	}
+	assertpkg.NotNil(t, q.BeforeDate, "Parse(\"older_than:1w\") should set BeforeDate")
 }
 
 // TestParser_NilNow verifies that a Parser with nil Now function doesn't panic
 // and correctly handles relative date operators by falling back to time.Now().
 func TestParser_NilNow(t *testing.T) {
+	assert := assertpkg.New(t)
 	p := &Parser{Now: nil}
 
 	// Should not panic and should return a valid result
 	q := p.Parse("newer_than:1d")
-	if q.AfterDate == nil {
-		t.Fatal("Parser{Now: nil}.Parse(\"newer_than:1d\") should set AfterDate")
-	}
+	requirepkg.NotNil(t, q.AfterDate, "Parser{Now: nil}.Parse(\"newer_than:1d\") should set AfterDate")
 
 	now := time.Now().UTC()
 	// AfterDate should be within a tight window around now-24h
@@ -372,15 +369,9 @@ func TestParser_NilNow(t *testing.T) {
 	earliestExpected := now.Add(-36 * time.Hour)
 	latestExpected := now.Add(-12 * time.Hour)
 
-	if q.AfterDate.Before(earliestExpected) {
-		t.Errorf("AfterDate %v is too far in the past (expected after %v)", q.AfterDate, earliestExpected)
-	}
-	if q.AfterDate.After(latestExpected) {
-		t.Errorf("AfterDate %v is too recent (expected before %v)", q.AfterDate, latestExpected)
-	}
-	if q.AfterDate.After(now) {
-		t.Errorf("AfterDate %v is in the future", q.AfterDate)
-	}
+	assert.False(q.AfterDate.Before(earliestExpected), "AfterDate %v is too far in the past (expected after %v)", q.AfterDate, earliestExpected)
+	assert.False(q.AfterDate.After(latestExpected), "AfterDate %v is too recent (expected before %v)", q.AfterDate, latestExpected)
+	assert.False(q.AfterDate.After(now), "AfterDate %v is in the future", q.AfterDate)
 }
 
 func TestQuery_IsEmpty(t *testing.T) {
@@ -397,9 +388,7 @@ func TestQuery_IsEmpty(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
 			q := Parse(tt.query)
-			if q.IsEmpty() != tt.isEmpty {
-				t.Errorf("IsEmpty(%q): got %v, want %v", tt.query, q.IsEmpty(), tt.isEmpty)
-			}
+			assertpkg.Equal(t, tt.isEmpty, q.IsEmpty(), "IsEmpty(%q)", tt.query)
 		})
 	}
 
@@ -407,8 +396,6 @@ func TestQuery_IsEmpty(t *testing.T) {
 		q := &Query{}
 		id := int64(42)
 		q.AccountIDs = []int64{id}
-		if q.IsEmpty() {
-			t.Error("IsEmpty() = true for query with AccountIDs set")
-		}
+		assertpkg.False(t, q.IsEmpty(), "IsEmpty() = true for query with AccountIDs set")
 	})
 }

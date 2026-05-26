@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -28,13 +30,9 @@ func TestFTSRankParityFixture(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	src, err := st.GetOrCreateSource("gmail", "fixture@example.com")
-	if err != nil {
-		t.Fatalf("GetOrCreateSource: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(src.ID, "fixture-thread", "Fixture")
-	if err != nil {
-		t.Fatalf("EnsureConversation: %v", err)
-	}
+	require.NoError(t, err, "EnsureConversation")
 
 	mk := func(label, subject, body, fromAddr string) int64 {
 		id, err := st.UpsertMessage(&store.Message{
@@ -46,12 +44,8 @@ func TestFTSRankParityFixture(t *testing.T) {
 			Snippet:         nullString(body),
 			SizeEstimate:    100,
 		})
-		if err != nil {
-			t.Fatalf("UpsertMessage(%q): %v", label, err)
-		}
-		if err := st.UpsertFTS(id, subject, body, fromAddr, "", ""); err != nil {
-			t.Fatalf("UpsertFTS(%q): %v", label, err)
-		}
+		require.NoError(t, err, "UpsertMessage(%q)", label)
+		require.NoError(t, st.UpsertFTS(id, subject, body, fromAddr, "", ""), "UpsertFTS(%q)", label)
 		return id
 	}
 
@@ -104,9 +98,7 @@ func TestFTSRankParityFixture(t *testing.T) {
 	for _, q := range queries {
 		t.Run(q, func(t *testing.T) {
 			results, total, err := st.SearchMessages(q, 0, 20)
-			if err != nil {
-				t.Fatalf("SearchMessages(%q): %v", q, err)
-			}
+			require.NoError(t, err, "SearchMessages(%q)", q)
 			order := make([]string, 0, len(results))
 			for _, r := range results {
 				order = append(order, labelOf[r.ID])
@@ -125,10 +117,9 @@ func TestFTSRankParityFixture(t *testing.T) {
 				if hPos == -1 || lPos == -1 {
 					continue // not both present, skip
 				}
-				if hPos >= lPos {
-					t.Errorf("query %q: row %q (pos %d) should rank above row %q (pos %d) — full order: %v",
-						q, higher, hPos, lower, lPos, order)
-				}
+				assert.Less(t, hPos, lPos,
+					"query %q: row %q (pos %d) should rank above row %q (pos %d) — full order: %v",
+					q, higher, hPos, lower, lPos, order)
 			}
 		})
 	}

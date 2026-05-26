@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -161,9 +163,7 @@ func (b *TestDataBuilder) AddPhoneParticipant(phone, displayName string) int64 {
 // AddLabel adds a label and returns its ID. Name must be non-empty.
 func (b *TestDataBuilder) AddLabel(name string) int64 {
 	b.t.Helper()
-	if name == "" {
-		b.t.Fatalf("AddLabel: name is required")
-	}
+	require.NotEmpty(b.t, name, "AddLabel: name is required")
 	id := b.nextLabelID
 	b.nextLabelID++
 	b.labels = append(b.labels, LabelFixture{ID: id, Name: name})
@@ -189,9 +189,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 
 	srcID := opt.SourceID
 	if srcID == 0 {
-		if len(b.sources) == 0 {
-			b.t.Fatalf("AddMessage: no sources added; call AddSource before AddMessage or set SourceID explicitly")
-		}
+		require.NotEmpty(b.t, b.sources, "AddMessage: no sources added; call AddSource before AddMessage or set SourceID explicitly")
 		srcID = b.sources[0].ID
 	}
 	convID := opt.ConversationID
@@ -284,7 +282,8 @@ func (b *TestDataBuilder) AddAttachment(messageID, size int64, filename string) 
 			return
 		}
 	}
-	b.t.Fatalf("AddAttachment: message ID %d not found; add the message before attaching files", messageID)
+	require.Failf(b.t, "AddAttachment: message not found",
+		"message ID %d not found; add the message before attaching files", messageID)
 }
 
 // SetEmptyAttachments marks the attachments table as empty (schema only).
@@ -463,9 +462,7 @@ func (b *TestDataBuilder) BuildEngine() *DuckDBEngine {
 	analyticsDir, cleanup := b.Build()
 	b.t.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	if err != nil {
-		b.t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(b.t, err, "NewDuckDBEngine")
 	b.t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
@@ -531,7 +528,7 @@ func (b *parquetBuilder) build() (string, func()) {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
-		b.t.Fatalf("open duckdb: %v", err)
+		require.NoError(b.t, err, "open duckdb")
 	}
 	defer func() { _ = db.Close() }()
 
@@ -545,15 +542,13 @@ func (b *parquetBuilder) createTempDirs() string {
 	b.t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "msgvault-test-parquet-*")
-	if err != nil {
-		b.t.Fatalf("create temp dir: %v", err)
-	}
+	require.NoError(b.t, err, "create temp dir")
 
 	for _, tbl := range b.tables {
 		dir := filepath.Join(tmpDir, tbl.subdir)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			_ = os.RemoveAll(tmpDir)
-			b.t.Fatalf("create dir %s: %v", dir, err)
+			require.NoError(b.t, err, "create dir %s", dir)
 		}
 	}
 
@@ -589,9 +584,8 @@ func writeTableParquet(t testing.TB, db *sql.DB, path, columns, values string, e
 			) TO '%s' (FORMAT PARQUET)
 		`, values, columns, whereClause, path)
 
-	if _, err := db.Exec(query); err != nil {
-		t.Fatalf("create parquet %s: %v", path, err)
-	}
+	_, err := db.Exec(query)
+	require.NoError(t, err, "create parquet %s", path)
 }
 
 // ---------------------------------------------------------------------------
@@ -605,9 +599,7 @@ func createEngineFromBuilder(t testing.TB, pb *parquetBuilder) *DuckDBEngine {
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(t, err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
@@ -618,22 +610,20 @@ func assertAggregateCounts(t testing.TB, got []AggregateRow, want map[string]int
 	t.Helper()
 	gotMap := make(map[string]int64, len(got))
 	for _, r := range got {
-		if _, seen := gotMap[r.Key]; seen {
-			t.Errorf("duplicate key %q in aggregate results", r.Key)
-		}
+		_, seen := gotMap[r.Key]
+		assert.False(t, seen, "duplicate key %q in aggregate results", r.Key)
 		gotMap[r.Key] = r.Count
 	}
 	for key, wantCount := range want {
-		if gotCount, ok := gotMap[key]; !ok {
-			t.Errorf("missing expected key %q", key)
-		} else if gotCount != wantCount {
-			t.Errorf("key %q: got count %d, want %d", key, gotCount, wantCount)
+		gotCount, ok := gotMap[key]
+		if !assert.True(t, ok, "missing expected key %q", key) {
+			continue
 		}
+		assert.Equal(t, wantCount, gotCount, "key %q count", key)
 	}
 	for _, r := range got {
-		if _, ok := want[r.Key]; !ok {
-			t.Errorf("unexpected key %q (count=%d)", r.Key, r.Count)
-		}
+		_, ok := want[r.Key]
+		assert.True(t, ok, "unexpected key %q (count=%d)", r.Key, r.Count)
 	}
 }
 
@@ -641,10 +631,9 @@ func assertAggregateCounts(t testing.TB, got []AggregateRow, want map[string]int
 func assertDescendingOrder(t testing.TB, got []AggregateRow) {
 	t.Helper()
 	for i := 1; i < len(got); i++ {
-		if got[i].Count > got[i-1].Count {
-			t.Errorf("results not in descending order: %q (count=%d) after %q (count=%d)",
-				got[i].Key, got[i].Count, got[i-1].Key, got[i-1].Count)
-		}
+		assert.LessOrEqual(t, got[i].Count, got[i-1].Count,
+			"results not in descending order: %q (count=%d) after %q (count=%d)",
+			got[i].Key, got[i].Count, got[i-1].Key, got[i-1].Count)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	_ "github.com/marcboeker/go-duckdb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -21,14 +23,12 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "msgvault-query-test-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
+	require.NoError(t, err, "create temp dir")
 
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
-		t.Fatalf("open duckdb: %v", err)
+		require.NoError(t, err, "open duckdb")
 	}
 	defer func() { _ = db.Close() }()
 
@@ -46,7 +46,7 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(tmpDir, d), 0755); err != nil {
 			_ = os.RemoveAll(tmpDir)
-			t.Fatalf("mkdir %s: %v", d, err)
+			require.NoError(t, err, "mkdir %s", d)
 		}
 	}
 
@@ -60,7 +60,7 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 		)
 		if _, err := db.Exec(q); err != nil {
 			_ = os.RemoveAll(tmpDir)
-			t.Fatalf("write %s: %v", path, err)
+			require.NoError(t, err, "write %s", path)
 		}
 	}
 
@@ -136,17 +136,11 @@ func TestQueryCommand_JSON(t *testing.T) {
 		"json",
 		&buf,
 	)
-	if err != nil {
-		t.Fatalf("executeQuery: %v", err)
-	}
+	require.NoError(t, err, "executeQuery")
 
 	var result query.QueryResult
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if result.RowCount != 1 {
-		t.Errorf("row_count = %d, want 1", result.RowCount)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &result), "unmarshal")
+	assert.Equal(t, 1, result.RowCount, "row_count")
 }
 
 func TestQueryCommand_CSV(t *testing.T) {
@@ -160,17 +154,11 @@ func TestQueryCommand_CSV(t *testing.T) {
 		"csv",
 		&buf,
 	)
-	if err != nil {
-		t.Fatalf("executeQuery: %v", err)
-	}
+	require.NoError(t, err, "executeQuery")
 
 	output := buf.String()
-	if !strings.Contains(output, "subject") {
-		t.Errorf("CSV missing header 'subject': %s", output)
-	}
-	if !strings.Contains(output, "Hello") {
-		t.Errorf("CSV missing data 'Hello': %s", output)
-	}
+	assert.Contains(t, output, "subject", "CSV missing header 'subject'")
+	assert.Contains(t, output, "Hello", "CSV missing data 'Hello'")
 }
 
 func TestQueryCommand_MissingCache(t *testing.T) {
@@ -183,7 +171,5 @@ func TestQueryCommand_MissingCache(t *testing.T) {
 		"json",
 		&buf,
 	)
-	if err == nil {
-		t.Fatal("expected error for missing cache, got nil")
-	}
+	require.Error(t, err, "expected error for missing cache")
 }

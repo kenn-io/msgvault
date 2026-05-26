@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func boolPtr(v bool) *bool { return &v }
 func intPtr(v int) *int    { return &v }
 
 func TestConfig_DefaultsAndParse(t *testing.T) {
+	assert := assertpkg.New(t)
 	input := `
 enabled = true
 backend = "sqlite-vec"
@@ -43,24 +46,13 @@ cron = "*/5 * * * *"
 run_after_sync = true
 `
 	var c Config
-	if _, err := toml.Decode(input, &c); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !c.Enabled {
-		t.Fatal("Enabled should be true")
-	}
-	if c.Backend != "sqlite-vec" {
-		t.Errorf("Backend=%q, want sqlite-vec", c.Backend)
-	}
-	if c.Embeddings.Dimension != 768 {
-		t.Errorf("Dimension=%d, want 768", c.Embeddings.Dimension)
-	}
-	if c.Embeddings.Timeout != 15*time.Second {
-		t.Errorf("Timeout=%v, want 15s", c.Embeddings.Timeout)
-	}
-	if c.Search.RRFK != 60 {
-		t.Errorf("RRFK=%d, want 60", c.Search.RRFK)
-	}
+	_, err := toml.Decode(input, &c)
+	requirepkg.NoError(t, err, "decode")
+	assert.True(c.Enabled, "Enabled should be true")
+	assert.Equal("sqlite-vec", c.Backend)
+	assert.Equal(768, c.Embeddings.Dimension)
+	assert.Equal(15*time.Second, c.Embeddings.Timeout)
+	assert.Equal(60, c.Search.RRFK)
 }
 
 func TestConfig_Validate(t *testing.T) {
@@ -89,17 +81,11 @@ func TestConfig_Validate(t *testing.T) {
 			tt.mutate(&c)
 			err := c.Validate()
 			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				requirepkg.NoError(t, err)
 				return
 			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q missing %q", err.Error(), tt.wantErr)
-			}
+			requirepkg.Error(t, err, "expected error containing %q", tt.wantErr)
+			assertpkg.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
 }
@@ -182,15 +168,10 @@ strip_signatures = false
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var p PreprocessConfig
-			if _, err := toml.Decode(tt.toml, &p); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if got := p.StripQuotesEnabled(); got != tt.wantStripQuotes {
-				t.Errorf("StripQuotesEnabled() = %v, want %v", got, tt.wantStripQuotes)
-			}
-			if got := p.StripSignaturesEnabled(); got != tt.wantStripSig {
-				t.Errorf("StripSignaturesEnabled() = %v, want %v", got, tt.wantStripSig)
-			}
+			_, err := toml.Decode(tt.toml, &p)
+			requirepkg.NoError(t, err, "decode")
+			assertpkg.Equal(t, tt.wantStripQuotes, p.StripQuotesEnabled())
+			assertpkg.Equal(t, tt.wantStripSig, p.StripSignaturesEnabled())
 		})
 	}
 }
@@ -201,25 +182,18 @@ strip_signatures = false
 // omitted, and an explicit false in TOML is preserved verbatim.
 func TestPreprocessConfig_NewToggleDefaults(t *testing.T) {
 	t.Run("all_omitted_default_true", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		var p PreprocessConfig
-		if _, err := toml.Decode(``, &p); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if !p.StripHTMLEnabled() {
-			t.Error("StripHTMLEnabled() = false, want true")
-		}
-		if !p.StripBase64Enabled() {
-			t.Error("StripBase64Enabled() = false, want true")
-		}
-		if !p.StripURLTrackingEnabled() {
-			t.Error("StripURLTrackingEnabled() = false, want true")
-		}
-		if !p.CollapseWhitespaceEnabled() {
-			t.Error("CollapseWhitespaceEnabled() = false, want true")
-		}
+		_, err := toml.Decode(``, &p)
+		requirepkg.NoError(t, err, "decode")
+		assert.True(p.StripHTMLEnabled())
+		assert.True(p.StripBase64Enabled())
+		assert.True(p.StripURLTrackingEnabled())
+		assert.True(p.CollapseWhitespaceEnabled())
 	})
 
 	t.Run("all_explicit_false", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		var p PreprocessConfig
 		raw := `
 strip_html = false
@@ -227,34 +201,23 @@ strip_base64 = false
 strip_url_tracking = false
 collapse_whitespace = false
 `
-		if _, err := toml.Decode(raw, &p); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if p.StripHTMLEnabled() {
-			t.Error("StripHTMLEnabled() = true, want false")
-		}
-		if p.StripBase64Enabled() {
-			t.Error("StripBase64Enabled() = true, want false")
-		}
-		if p.StripURLTrackingEnabled() {
-			t.Error("StripURLTrackingEnabled() = true, want false")
-		}
-		if p.CollapseWhitespaceEnabled() {
-			t.Error("CollapseWhitespaceEnabled() = true, want false")
-		}
+		_, err := toml.Decode(raw, &p)
+		requirepkg.NoError(t, err, "decode")
+		assert.False(p.StripHTMLEnabled())
+		assert.False(p.StripBase64Enabled())
+		assert.False(p.StripURLTrackingEnabled())
+		assert.False(p.CollapseWhitespaceEnabled())
 	})
 
 	t.Run("one_false_others_default_true", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		var p PreprocessConfig
-		if _, err := toml.Decode(`strip_base64 = false`, &p); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if p.StripBase64Enabled() {
-			t.Error("StripBase64Enabled() should be false (explicit)")
-		}
-		if !p.StripHTMLEnabled() || !p.StripURLTrackingEnabled() || !p.CollapseWhitespaceEnabled() {
-			t.Error("omitted toggles should still default to true")
-		}
+		_, err := toml.Decode(`strip_base64 = false`, &p)
+		requirepkg.NoError(t, err, "decode")
+		assert.False(p.StripBase64Enabled(), "StripBase64Enabled should be false (explicit)")
+		assert.True(p.StripHTMLEnabled(), "omitted toggles should still default to true")
+		assert.True(p.StripURLTrackingEnabled(), "omitted toggles should still default to true")
+		assert.True(p.CollapseWhitespaceEnabled(), "omitted toggles should still default to true")
 	})
 }
 
@@ -263,6 +226,7 @@ collapse_whitespace = false
 // explicit 0) max_retries / timeout in TOML doesn't silently disable the
 // underlying behavior.
 func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
+	assert := assertpkg.New(t)
 	c := Config{
 		Backend:    "", // defaults to sqlite-vec
 		Embeddings: EmbeddingsConfig{},
@@ -274,40 +238,20 @@ func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
 	}
 	c.ApplyDefaults()
 
-	if c.Backend != "sqlite-vec" {
-		t.Errorf("Backend = %q, want sqlite-vec", c.Backend)
-	}
-	if c.Embeddings.BatchSize != 32 {
-		t.Errorf("BatchSize = %d, want 32", c.Embeddings.BatchSize)
-	}
-	if c.Embeddings.Timeout != 30*time.Second {
-		t.Errorf("Timeout = %v, want 30s", c.Embeddings.Timeout)
-	}
-	if c.Embeddings.MaxRetries != 3 {
-		t.Errorf("MaxRetries = %d, want 3", c.Embeddings.MaxRetries)
-	}
-	if c.Embeddings.MaxInputChars != 32768 {
-		t.Errorf("MaxInputChars = %d, want 32768", c.Embeddings.MaxInputChars)
-	}
-	if c.Search.RRFK != 60 {
-		t.Errorf("Search.RRFK = %d, want 60", c.Search.RRFK)
-	}
-	if c.Search.KPerSignal != 100 {
-		t.Errorf("Search.KPerSignal = %d, want 100", c.Search.KPerSignal)
-	}
-	if c.Search.SubjectBoost != 2.0 {
-		t.Errorf("Search.SubjectBoost = %v, want 2.0", c.Search.SubjectBoost)
-	}
-	if c.Search.MaxPageSizeHybrid == nil || *c.Search.MaxPageSizeHybrid != 50 {
-		t.Errorf("Search.MaxPageSizeHybrid = %v, want pointer to 50", c.Search.MaxPageSizeHybrid)
+	assert.Equal("sqlite-vec", c.Backend)
+	assert.Equal(32, c.Embeddings.BatchSize)
+	assert.Equal(30*time.Second, c.Embeddings.Timeout)
+	assert.Equal(3, c.Embeddings.MaxRetries)
+	assert.Equal(32768, c.Embeddings.MaxInputChars)
+	assert.Equal(60, c.Search.RRFK)
+	assert.Equal(100, c.Search.KPerSignal)
+	assert.Equal(2.0, c.Search.SubjectBoost)
+	if assert.NotNil(c.Search.MaxPageSizeHybrid, "Search.MaxPageSizeHybrid should be set") {
+		assert.Equal(50, *c.Search.MaxPageSizeHybrid)
 	}
 	// Preprocess pointer must not be clobbered.
-	if c.Preprocess.StripQuotesEnabled() != false {
-		t.Errorf("StripQuotesEnabled() = %v, want false (user explicitly set)", c.Preprocess.StripQuotesEnabled())
-	}
-	if c.Preprocess.StripSignaturesEnabled() != true {
-		t.Errorf("StripSignaturesEnabled() = %v, want true (unset → default)", c.Preprocess.StripSignaturesEnabled())
-	}
+	assert.False(c.Preprocess.StripQuotesEnabled(), "user explicitly set false")
+	assert.True(c.Preprocess.StripSignaturesEnabled(), "unset → default")
 }
 
 // TestApplyDefaults_PreservesExplicitMaxPageSizeHybridZero guards the
@@ -322,18 +266,14 @@ func TestApplyDefaults_PreservesExplicitMaxPageSizeHybridZero(t *testing.T) {
 	}
 	c.ApplyDefaults()
 	c.ApplyDefaults() // idempotent: second call must not clobber
-	if got := c.Search.MaxPageSizeHybridClamp(); got != 0 {
-		t.Errorf("MaxPageSizeHybridClamp() = %d, want 0 (explicit user disable)", got)
-	}
+	assertpkg.Equal(t, 0, c.Search.MaxPageSizeHybridClamp(), "explicit user disable")
 }
 
 func TestEmbeddingsConfig_ETAWindowDefault(t *testing.T) {
 	var c Config
 	c.Embeddings.Endpoint = "http://localhost:1234/v1"
 	c.ApplyDefaults()
-	if c.Embeddings.ETAWindow != 10 {
-		t.Fatalf("ETAWindow default: got %d, want 10", c.Embeddings.ETAWindow)
-	}
+	requirepkg.Equal(t, 10, c.Embeddings.ETAWindow, "ETAWindow default")
 }
 
 func TestEmbeddingsConfig_ETAWindowExplicit(t *testing.T) {
@@ -341,9 +281,7 @@ func TestEmbeddingsConfig_ETAWindowExplicit(t *testing.T) {
 	c.Embeddings.Endpoint = "http://localhost:1234/v1"
 	c.Embeddings.ETAWindow = 25
 	c.ApplyDefaults()
-	if c.Embeddings.ETAWindow != 25 {
-		t.Fatalf("ETAWindow explicit: got %d, want 25", c.Embeddings.ETAWindow)
-	}
+	requirepkg.Equal(t, 25, c.Embeddings.ETAWindow, "ETAWindow explicit")
 }
 
 // TestSearchConfig_PointerSemantics_FromTOML rounds out the
@@ -363,13 +301,10 @@ func TestSearchConfig_PointerSemantics_FromTOML(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var c Config
-			if _, err := toml.Decode(tc.tomlInput, &c); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
+			_, err := toml.Decode(tc.tomlInput, &c)
+			requirepkg.NoError(t, err, "decode")
 			c.ApplyDefaults()
-			if got := c.Search.MaxPageSizeHybridClamp(); got != tc.want {
-				t.Errorf("MaxPageSizeHybridClamp() = %d, want %d", got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, c.Search.MaxPageSizeHybridClamp())
 		})
 	}
 }
@@ -379,9 +314,7 @@ func TestSearchConfig_PointerSemantics_FromTOML(t *testing.T) {
 // and DB rows is stable for operators.
 func TestPreprocessConfig_FingerprintFormat(t *testing.T) {
 	allOn := PreprocessConfig{}
-	if got := allOn.Fingerprint(); got != "p1-111111" {
-		t.Errorf("default Fingerprint() = %q, want p1-111111", got)
-	}
+	assertpkg.Equal(t, "p1-111111", allOn.Fingerprint(), "default Fingerprint()")
 
 	f := false
 	allOff := PreprocessConfig{
@@ -392,9 +325,7 @@ func TestPreprocessConfig_FingerprintFormat(t *testing.T) {
 		StripURLTracking:   &f,
 		CollapseWhitespace: &f,
 	}
-	if got := allOff.Fingerprint(); got != "p1-000000" {
-		t.Errorf("all-off Fingerprint() = %q, want p1-000000", got)
-	}
+	assertpkg.Equal(t, "p1-000000", allOff.Fingerprint(), "all-off Fingerprint()")
 }
 
 // TestPreprocessConfig_FingerprintChangesPerToggle ensures every toggle
@@ -420,12 +351,10 @@ func TestPreprocessConfig_FingerprintChangesPerToggle(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.cfg.Fingerprint()
-			if got == baseline {
-				t.Errorf("Fingerprint() with %s=false = %q, want different from baseline %q",
-					tc.name, got, baseline)
-			}
+			assertpkg.NotEqual(t, baseline, got, "Fingerprint() with %s=false should differ from baseline", tc.name)
 			if other, dup := seen[got]; dup {
-				t.Errorf("Fingerprint() with %s=false = %q, collides with %s",
+				assertpkg.Failf(t, "Fingerprint collision",
+					"Fingerprint() with %s=false = %q, collides with %s",
 					tc.name, got, other)
 			}
 			seen[got] = tc.name
@@ -446,16 +375,12 @@ func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 	}
 	got := base.GenerationFingerprint()
 	want := fmt.Sprintf("nomic-embed:768:p1-111111:c6000:e%d", embedPolicyVersion)
-	if got != want {
-		t.Errorf("GenerationFingerprint() = %q, want %q", got, want)
-	}
+	assertpkg.Equal(t, want, got)
 
 	// Flipping the model invalidates.
 	modelChanged := base
 	modelChanged.Embeddings.Model = "snowflake-arctic"
-	if modelChanged.GenerationFingerprint() == got {
-		t.Error("GenerationFingerprint() did not change when Model changed")
-	}
+	assertpkg.NotEqual(t, got, modelChanged.GenerationFingerprint(), "GenerationFingerprint should change when Model changes")
 
 	// Flipping a preprocess toggle invalidates too — this is the gap
 	// the reviewer flagged in round one. Without folding Preprocess
@@ -464,9 +389,7 @@ func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 	f := false
 	preprocessChanged := base
 	preprocessChanged.Preprocess.StripHTML = &f
-	if preprocessChanged.GenerationFingerprint() == got {
-		t.Error("GenerationFingerprint() did not change when strip_html flipped to false")
-	}
+	assertpkg.NotEqual(t, got, preprocessChanged.GenerationFingerprint(), "GenerationFingerprint should change when strip_html flips to false")
 }
 
 // TestConfig_GenerationFingerprint_IncludesMaxInputChars pins the gap
@@ -484,10 +407,8 @@ func TestConfig_GenerationFingerprint_IncludesMaxInputChars(t *testing.T) {
 
 	bumped := base
 	bumped.Embeddings.MaxInputChars = 12000
-	if bumped.GenerationFingerprint() == baseline {
-		t.Errorf("GenerationFingerprint() did not change when MaxInputChars went 6000→12000 (still %q)",
-			baseline)
-	}
+	assertpkg.NotEqual(t, baseline, bumped.GenerationFingerprint(),
+		"GenerationFingerprint should change when MaxInputChars goes 6000→12000")
 
 	// The zero-cap case (Preprocess treats <=0 as "no truncation")
 	// must also be distinguishable from any positive cap, otherwise
@@ -495,10 +416,8 @@ func TestConfig_GenerationFingerprint_IncludesMaxInputChars(t *testing.T) {
 	// always been truncating.
 	zeroed := base
 	zeroed.Embeddings.MaxInputChars = 0
-	if zeroed.GenerationFingerprint() == baseline {
-		t.Errorf("GenerationFingerprint() did not change when MaxInputChars went 6000→0 (still %q)",
-			baseline)
-	}
+	assertpkg.NotEqual(t, baseline, zeroed.GenerationFingerprint(),
+		"GenerationFingerprint should change when MaxInputChars goes 6000→0")
 }
 
 // TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion pins the
@@ -514,7 +433,5 @@ func TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion(t *testing.T) {
 	}
 	got := base.GenerationFingerprint()
 	suffix := fmt.Sprintf(":e%d", embedPolicyVersion)
-	if !strings.HasSuffix(got, suffix) {
-		t.Errorf("GenerationFingerprint() = %q, want suffix %q", got, suffix)
-	}
+	assertpkg.True(t, strings.HasSuffix(got, suffix), "GenerationFingerprint() = %q, want suffix %q", got, suffix)
 }

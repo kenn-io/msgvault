@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -58,21 +60,15 @@ func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]a
 	req.Params.Name = name
 	req.Params.Arguments = args
 	result, err := fn(context.Background(), req)
-	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
+	requirepkg.NoError(t, err, "handler returned error")
 	return result
 }
 
 func resultText(t *testing.T, r *mcp.CallToolResult) string {
 	t.Helper()
-	if len(r.Content) == 0 {
-		t.Fatal("empty content")
-	}
+	requirepkg.NotEmpty(t, r.Content, "empty content")
 	tc, ok := r.Content[0].(mcp.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", r.Content[0])
-	}
+	requirepkg.True(t, ok, "expected TextContent, got %T", r.Content[0])
 	return tc.Text
 }
 
@@ -80,13 +76,9 @@ func resultText(t *testing.T, r *mcp.CallToolResult) string {
 func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]any) T {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	if r.IsError {
-		t.Fatalf("unexpected error: %s", resultText(t, r))
-	}
+	requirepkg.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
 	var out T
-	if err := json.Unmarshal([]byte(resultText(t, r)), &out); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
+	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
 	return out
 }
 
@@ -94,9 +86,7 @@ func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]a
 func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	if !r.IsError {
-		t.Fatal("expected error result")
-	}
+	requirepkg.True(t, r.IsError, "expected error result")
 	return r
 }
 
@@ -110,12 +100,9 @@ func TestSearchMessages(t *testing.T) {
 
 	t.Run("valid query", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
-		if len(msgs) != 1 || msgs[0].Subject != "Hello" {
-			t.Fatalf("unexpected result: %v", msgs)
-		}
-		if msgs[0].SourceConversationID != "thread-abc" {
-			t.Fatalf("expected SourceConversationID 'thread-abc', got %q", msgs[0].SourceConversationID)
-		}
+		requirepkg.Len(t, msgs, 1, "msgs")
+		assertpkg.Equal(t, "Hello", msgs[0].Subject, "subject")
+		assertpkg.Equal(t, "thread-abc", msgs[0].SourceConversationID, "SourceConversationID")
 	})
 
 	t.Run("missing query", func(t *testing.T) {
@@ -133,9 +120,8 @@ func TestSearchFallbackToFTS(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{"query": "important meeting notes"})
-	if len(msgs) != 1 || msgs[0].ID != 2 {
-		t.Fatalf("expected FTS fallback result, got: %v", msgs)
-	}
+	requirepkg.Len(t, msgs, 1, "FTS fallback msgs")
+	assertpkg.Equal(t, int64(2), msgs[0].ID, "FTS fallback ID")
 }
 
 func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
@@ -148,9 +134,7 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 		"mode":  "hybrid",
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "vector_not_enabled") {
-		t.Fatalf("expected 'vector_not_enabled' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
 // newHybridHandlersForErrorTest wires a real hybrid.Engine around the
@@ -191,9 +175,7 @@ func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
 		"mode":  "hybrid",
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "index_building") {
-		t.Fatalf("expected 'index_building' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "index_building", "expected 'index_building' error, got: %s")
 }
 
 // TestSearchMessages_HybridErrNotEnabled regression-guards the MCP
@@ -212,9 +194,7 @@ func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
 		"mode":  "hybrid",
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "vector_not_enabled") {
-		t.Fatalf("expected 'vector_not_enabled' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
 // realEmbedder returns a deterministic vector. Used for end-to-end
@@ -264,9 +244,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 		"mode":  "vector",
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "missing_free_text") {
-		t.Fatalf("expected 'missing_free_text' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "missing_free_text", "expected 'missing_free_text' error, got: %s")
 }
 
 // TestSearchMessages_HybridPoolSaturatedAlwaysEmitted regression-guards
@@ -275,6 +253,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 // would silently drop the field when false; clients that key off
 // "saturated vs not" would break.
 func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
+	require := requirepkg.New(t)
 	backend := &fakeBackend{
 		active: vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -296,20 +275,12 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		"query": "hello world",
 		"mode":  "vector",
 	})
-	if r.IsError {
-		t.Fatalf("unexpected error: %s", resultText(t, r))
-	}
+	require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(resultText(t, r)), &raw); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	require.NoError(json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal")
 	val, exists := raw["pool_saturated"]
-	if !exists {
-		t.Fatalf("pool_saturated key missing from successful response (raw=%s)", resultText(t, r))
-	}
-	if string(val) != "false" {
-		t.Errorf("pool_saturated = %s, want false", string(val))
-	}
+	require.True(exists, "pool_saturated key missing from successful response (raw=%s)", resultText(t, r))
+	assertpkg.Equal(t, "false", string(val), "pool_saturated")
 }
 
 func TestSearchMessages_HybridModePaginationUnsupported(t *testing.T) {
@@ -324,9 +295,7 @@ func TestSearchMessages_HybridModePaginationUnsupported(t *testing.T) {
 		"offset": float64(1),
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "pagination_unsupported") {
-		t.Fatalf("expected 'pagination_unsupported' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "pagination_unsupported", "expected 'pagination_unsupported' error, got: %s")
 }
 
 func TestSearchMessages_UnknownMode(t *testing.T) {
@@ -337,9 +306,7 @@ func TestSearchMessages_UnknownMode(t *testing.T) {
 		"mode":  "bogus",
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "invalid mode") {
-		t.Fatalf("expected 'invalid mode' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
 }
 
 func TestGetMessage(t *testing.T) {
@@ -352,12 +319,8 @@ func TestGetMessage(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		msg := runTool[query.MessageDetail](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
-		if msg.Subject != "Test Message" {
-			t.Fatalf("unexpected subject: %s", msg.Subject)
-		}
-		if msg.SourceConversationID != "thread-xyz" {
-			t.Fatalf("expected SourceConversationID 'thread-xyz', got %q", msg.SourceConversationID)
-		}
+		assertpkg.Equal(t, "Test Message", msg.Subject, "subject")
+		assertpkg.Equal(t, "thread-xyz", msg.SourceConversationID, "SourceConversationID")
 	})
 
 	errorCases := []struct {
@@ -378,6 +341,7 @@ func TestGetMessage(t *testing.T) {
 }
 
 func TestGetStats_VectorDisabled(t *testing.T) {
+	assert := assertpkg.New(t)
 	eng := &querytest.MockEngine{
 		Stats: &query.TotalStats{
 			MessageCount: 1000,
@@ -394,31 +358,22 @@ func TestGetStats_VectorDisabled(t *testing.T) {
 
 	resp := runTool[statsResponse](t, "get_stats", h.getStats, map[string]any{})
 
-	if resp.Stats.MessageCount != 1000 {
-		t.Fatalf("unexpected message count: %d", resp.Stats.MessageCount)
-	}
-	if len(resp.Accounts) != 2 {
-		t.Fatalf("unexpected account count: %d", len(resp.Accounts))
-	}
-	if resp.VectorSearch != nil {
-		t.Fatalf("expected VectorSearch to be nil when backend is disabled, got %+v",
-			resp.VectorSearch)
-	}
+	assert.Equal(int64(1000), resp.Stats.MessageCount, "message count")
+	assert.Len(resp.Accounts, 2, "accounts")
+	assert.Nil(resp.VectorSearch, "expected VectorSearch to be nil when backend is disabled")
 
 	// Also confirm the JSON payload omits the key entirely, so clients
 	// that type-check the wire format see a clean absence rather than
 	// a null value.
 	r := callToolDirect(t, "get_stats", h.getStats, map[string]any{})
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(resultText(t, r)), &raw); err != nil {
-		t.Fatalf("unmarshal raw: %v", err)
-	}
-	if _, ok := raw["vector_search"]; ok {
-		t.Errorf("expected 'vector_search' to be absent from JSON when backend is nil")
-	}
+	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal raw")
+	assert.NotContains(raw, "vector_search", "expected 'vector_search' to be absent from JSON when backend is nil")
 }
 
 func TestGetStats_VectorEnabled(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	eng := &querytest.MockEngine{
 		Stats: &query.TotalStats{
 			MessageCount: 100,
@@ -447,33 +402,15 @@ func TestGetStats_VectorEnabled(t *testing.T) {
 
 	resp := runTool[statsResponse](t, "get_stats", h.getStats, map[string]any{})
 
-	if resp.VectorSearch == nil {
-		t.Fatal("expected vector_search sub-object, got nil")
-	}
-	if !resp.VectorSearch.Enabled {
-		t.Error("vector_search.enabled = false, want true")
-	}
-	if resp.VectorSearch.ActiveGeneration == nil {
-		t.Fatal("expected vector_search.active_generation to be populated")
-	}
+	require.NotNil(resp.VectorSearch, "expected vector_search sub-object")
+	assert.True(resp.VectorSearch.Enabled, "vector_search.enabled")
+	require.NotNil(resp.VectorSearch.ActiveGeneration, "expected vector_search.active_generation to be populated")
 	ag := resp.VectorSearch.ActiveGeneration
-	if ag.ID != 5 {
-		t.Errorf("active_generation.id = %d, want 5", ag.ID)
-	}
-	if ag.Model != "nomic-embed" {
-		t.Errorf("active_generation.model = %q, want 'nomic-embed'", ag.Model)
-	}
-	if ag.MessageCount != 100 {
-		t.Errorf("active_generation.message_count = %d, want 100", ag.MessageCount)
-	}
-	if resp.VectorSearch.PendingEmbeddingsTotal != 3 {
-		t.Errorf("pending_embeddings_total = %d, want 3",
-			resp.VectorSearch.PendingEmbeddingsTotal)
-	}
-	if resp.VectorSearch.BuildingGeneration != nil {
-		t.Errorf("building_generation = %+v, want nil",
-			resp.VectorSearch.BuildingGeneration)
-	}
+	assert.Equal(vector.GenerationID(5), ag.ID, "active_generation.id")
+	assert.Equal("nomic-embed", ag.Model, "active_generation.model")
+	assert.Equal(int64(100), ag.MessageCount, "active_generation.message_count")
+	assert.Equal(int64(3), resp.VectorSearch.PendingEmbeddingsTotal, "pending_embeddings_total")
+	assert.Nil(resp.VectorSearch.BuildingGeneration, "building_generation")
 }
 
 func TestAggregate(t *testing.T) {
@@ -488,9 +425,7 @@ func TestAggregate(t *testing.T) {
 	for _, groupBy := range []string{"sender", "recipient", "domain", "label", "time"} {
 		t.Run(groupBy, func(t *testing.T) {
 			rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
-			if len(rows) != 2 {
-				t.Fatalf("expected 2 rows, got %d", len(rows))
-			}
+			assertpkg.Len(t, rows, 2, "rows")
 		})
 	}
 
@@ -522,12 +457,8 @@ func TestListMessages(t *testing.T) {
 			"after": "2024-01-01",
 			"limit": float64(10),
 		})
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(msgs))
-		}
-		if msgs[0].SourceConversationID != "thread-list" {
-			t.Fatalf("expected SourceConversationID 'thread-list', got %q", msgs[0].SourceConversationID)
-		}
+		requirepkg.Len(t, msgs, 1, "msgs")
+		assertpkg.Equal(t, "thread-list", msgs[0].SourceConversationID, "SourceConversationID")
 	})
 
 	errorCases := []struct {
@@ -565,12 +496,8 @@ func TestAggregateInvalidDates(t *testing.T) {
 func createAttachmentFixture(t *testing.T, dir string, hash string, content []byte) {
 	t.Helper()
 	hashDir := filepath.Join(dir, hash[:2])
-	if err := os.MkdirAll(hashDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(hashDir, hash), content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(hashDir, 0o755), "MkdirAll")
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(hashDir, hash), content, 0o644), "WriteFile")
 }
 
 func TestGetAttachment(t *testing.T) {
@@ -588,57 +515,37 @@ func TestGetAttachment(t *testing.T) {
 	h := &handlers{engine: eng, attachmentsDir: tmpDir}
 
 	t.Run("valid", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		r := callToolDirect(t, "get_attachment", h.getAttachment, map[string]any{"attachment_id": float64(10)})
-		if r.IsError {
-			t.Fatalf("unexpected error: %s", resultText(t, r))
-		}
+		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 
 		// Should have 2 content blocks: text metadata + embedded resource.
-		if len(r.Content) != 2 {
-			t.Fatalf("expected 2 content blocks, got %d", len(r.Content))
-		}
+		require.Len(r.Content, 2, "content blocks")
 
 		// First block: text with metadata JSON.
 		tc, ok := r.Content[0].(mcp.TextContent)
-		if !ok {
-			t.Fatalf("expected TextContent, got %T", r.Content[0])
-		}
+		require.True(ok, "expected TextContent, got %T", r.Content[0])
 		var meta attachmentMeta
-		if err := json.Unmarshal([]byte(tc.Text), &meta); err != nil {
-			t.Fatalf("unmarshal metadata: %v", err)
-		}
-		if meta.Filename != "report.pdf" {
-			t.Fatalf("unexpected filename: %s", meta.Filename)
-		}
-		if meta.MimeType != "application/pdf" {
-			t.Fatalf("unexpected mime_type: %s", meta.MimeType)
-		}
-		if meta.Size != int64(len(content)) {
-			t.Fatalf("unexpected size: %d", meta.Size)
-		}
+		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "unmarshal metadata")
+		assert.Equal("report.pdf", meta.Filename, "filename")
+		assert.Equal("application/pdf", meta.MimeType, "mime_type")
+		assert.Equal(int64(len(content)), meta.Size, "size")
 
 		// Second block: embedded resource with blob.
 		er, ok := r.Content[1].(mcp.EmbeddedResource)
-		if !ok {
-			t.Fatalf("expected EmbeddedResource, got %T", r.Content[1])
-		}
+		require.True(ok, "expected EmbeddedResource, got %T", r.Content[1])
 		blob, ok := er.Resource.(mcp.BlobResourceContents)
-		if !ok {
-			t.Fatalf("expected BlobResourceContents, got %T", er.Resource)
-		}
-		if blob.MIMEType != "application/pdf" {
-			t.Fatalf("unexpected blob MIME type: %s", blob.MIMEType)
-		}
+		require.True(ok, "expected BlobResourceContents, got %T", er.Resource)
+		assert.Equal("application/pdf", blob.MIMEType, "blob MIME type")
 		decoded, err := base64.StdEncoding.DecodeString(blob.Blob)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(decoded) != string(content) {
-			t.Fatalf("content mismatch: got %q", string(decoded))
-		}
+		require.NoError(err, "base64 decode")
+		assert.Equal(string(content), string(decoded), "content")
 	})
 
 	t.Run("empty mime type defaults to octet-stream", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		noMimeHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		noMimeContent := []byte("binary data")
 		createAttachmentFixture(t, tmpDir, noMimeHash, noMimeContent)
@@ -652,27 +559,21 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(50)})
-		if r.IsError {
-			t.Fatalf("unexpected error: %s", resultText(t, r))
-		}
+		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 
 		var meta attachmentMeta
 		tc := r.Content[0].(mcp.TextContent)
-		if err := json.Unmarshal([]byte(tc.Text), &meta); err != nil {
-			t.Fatalf("unmarshal metadata: %v", err)
-		}
-		if meta.MimeType != "application/octet-stream" {
-			t.Fatalf("expected default mime_type, got %s", meta.MimeType)
-		}
+		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "unmarshal metadata")
+		assert.Equal("application/octet-stream", meta.MimeType, "default mime_type")
 
 		er := r.Content[1].(mcp.EmbeddedResource)
 		blob := er.Resource.(mcp.BlobResourceContents)
-		if blob.MIMEType != "application/octet-stream" {
-			t.Fatalf("expected default blob MIME type, got %s", blob.MIMEType)
-		}
+		assert.Equal("application/octet-stream", blob.MIMEType, "default blob MIME type")
 	})
 
 	t.Run("filename with spaces and unicode", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
 		unicodeHash := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 		unicodeContent := []byte("unicode file")
 		createAttachmentFixture(t, tmpDir, unicodeHash, unicodeContent)
@@ -686,27 +587,19 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(51)})
-		if r.IsError {
-			t.Fatalf("unexpected error: %s", resultText(t, r))
-		}
+		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 
 		// Metadata JSON must be valid and preserve the filename exactly.
 		var meta attachmentMeta
 		tc := r.Content[0].(mcp.TextContent)
-		if err := json.Unmarshal([]byte(tc.Text), &meta); err != nil {
-			t.Fatalf("metadata is not valid JSON: %v\nraw: %s", err, tc.Text)
-		}
-		if meta.Filename != "report 2024✓.pdf" {
-			t.Fatalf("unexpected filename: %s", meta.Filename)
-		}
+		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "metadata is not valid JSON")
+		assert.Equal("report 2024✓.pdf", meta.Filename, "filename")
 
 		// URI must percent-encode spaces and non-ASCII characters.
 		er := r.Content[1].(mcp.EmbeddedResource)
 		blob := er.Resource.(mcp.BlobResourceContents)
 		const wantURI = "attachment:///51/report%202024%E2%9C%93.pdf"
-		if blob.URI != wantURI {
-			t.Fatalf("unexpected URI:\n got: %s\nwant: %s", blob.URI, wantURI)
-		}
+		assert.Equal(wantURI, blob.URI, "URI")
 	})
 
 	// Error cases using the shared engine/handler.
@@ -767,9 +660,7 @@ func TestGetAttachment(t *testing.T) {
 			}
 			r := runToolExpectError(t, "get_attachment", h2.getAttachment, tt.args)
 			if tt.errContains != "" {
-				if txt := resultText(t, r); !strings.Contains(txt, tt.errContains) {
-					t.Fatalf("expected error containing %q, got: %s", tt.errContains, txt)
-				}
+				assertpkg.Contains(t, resultText(t, r), tt.errContains, "error message")
 			}
 		})
 	}
@@ -778,9 +669,7 @@ func TestGetAttachment(t *testing.T) {
 		bigHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		createAttachmentFixture(t, tmpDir, bigHash, nil)
 		bigPath := filepath.Join(tmpDir, bigHash[:2], bigHash)
-		if err := os.Truncate(bigPath, maxAttachmentSize+1); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
 
 		h2 := &handlers{
 			engine: &querytest.MockEngine{
@@ -791,9 +680,7 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := runToolExpectError(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(40)})
-		if txt := resultText(t, r); !strings.Contains(txt, "too large") {
-			t.Fatalf("expected 'too large' error, got: %s", txt)
-		}
+		assertpkg.Contains(t, resultText(t, r), "too large", "error message")
 	})
 }
 
@@ -817,63 +704,44 @@ func TestExportAttachment(t *testing.T) {
 	h := &handlers{engine: eng, attachmentsDir: srcDir}
 
 	t.Run("export to custom destination", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		destDir := t.TempDir()
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
-		if resp.Filename != "report.pdf" {
-			t.Fatalf("unexpected filename: %s", resp.Filename)
-		}
-		if resp.Size != int64(len(content)) {
-			t.Fatalf("unexpected size: %d", resp.Size)
-		}
+		assert.Equal("report.pdf", resp.Filename, "filename")
+		assert.Equal(int64(len(content)), resp.Size, "size")
 		wantPath := filepath.Join(destDir, "report.pdf")
-		if resp.Path != wantPath {
-			t.Fatalf("unexpected path: %s (want %s)", resp.Path, wantPath)
-		}
+		assert.Equal(wantPath, resp.Path, "path")
 		got, err := os.ReadFile(wantPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(content) {
-			t.Fatalf("content mismatch")
-		}
+		requirepkg.NoError(t, err, "ReadFile")
+		assert.Equal(string(content), string(got), "content")
 	})
 
 	t.Run("filename collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create existing file to force collision.
-		if err := os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
-		if resp.Filename != "report_1.pdf" {
-			t.Fatalf("expected report_1.pdf, got %s", resp.Filename)
-		}
+		assertpkg.Equal(t, "report_1.pdf", resp.Filename, "filename")
 		// Original file should be untouched.
 		old, _ := os.ReadFile(filepath.Join(destDir, "report.pdf"))
-		if string(old) != "old" {
-			t.Fatal("original file was overwritten")
-		}
+		assertpkg.Equal(t, "old", string(old), "original file should not be overwritten")
 	})
 
 	t.Run("directory collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create a directory with the same name as the attachment.
-		if err := os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
-		if resp.Filename != "report_1.pdf" {
-			t.Fatalf("expected report_1.pdf, got %s", resp.Filename)
-		}
+		assertpkg.Equal(t, "report_1.pdf", resp.Filename, "filename")
 	})
 
 	t.Run("default destination is ~/Downloads", func(t *testing.T) {
@@ -881,16 +749,12 @@ func TestExportAttachment(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
 		downloads := filepath.Join(home, "Downloads")
-		if err := os.Mkdir(downloads, 0755); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
 
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 		})
-		if !strings.HasPrefix(resp.Path, downloads) {
-			t.Fatalf("expected path under ~/Downloads, got %s", resp.Path)
-		}
+		assertpkg.True(t, strings.HasPrefix(resp.Path, downloads), "expected path under ~/Downloads, got %s", resp.Path)
 	})
 
 	t.Run("invalid destination", func(t *testing.T) {
@@ -929,9 +793,7 @@ func TestSanitizeFilename(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
 			got := export.SanitizeFilename(tc.input)
-			if got != tc.want {
-				t.Fatalf("SanitizeFilename(%q) = %q, want %q", tc.input, got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, got, "SanitizeFilename(%q)", tc.input)
 		})
 	}
 }
@@ -967,9 +829,7 @@ func TestExportAttachment_EdgeFilenames(t *testing.T) {
 				"attachment_id": float64(1),
 				"destination":   destDir,
 			})
-			if resp.Filename != tc.wantFilename {
-				t.Fatalf("expected filename %q, got %q", tc.wantFilename, resp.Filename)
-			}
+			assertpkg.Equal(t, tc.wantFilename, resp.Filename, "filename")
 		})
 	}
 }
@@ -1002,9 +862,7 @@ func TestGetAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		"attachment_id": float64(99),
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "too large") {
-		t.Fatalf("expected 'too large' rejection from metadata check, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
 }
 
 func TestExportAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
@@ -1028,9 +886,7 @@ func TestExportAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		"destination":   t.TempDir(),
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "too large") {
-		t.Fatalf("expected 'too large' rejection from metadata check, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
 }
 
 func TestLimitArgClamping(t *testing.T) {
@@ -1051,9 +907,7 @@ func TestLimitArgClamping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := limitArg(map[string]any{"x": tt.val}, "x", 20)
-			if got != tt.want {
-				t.Fatalf("limitArg(%v) = %d, want %d", tt.val, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "limitArg(%v)", tt.val)
 		})
 	}
 }
@@ -1081,9 +935,7 @@ func TestAccountFilter(t *testing.T) {
 			"query":   "test",
 			"account": "alice@gmail.com",
 		})
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(msgs))
-		}
+		assertpkg.Len(t, msgs, 1, "msgs")
 	})
 
 	t.Run("search with invalid account", func(t *testing.T) {
@@ -1092,18 +944,14 @@ func TestAccountFilter(t *testing.T) {
 			"account": "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "account not found") {
-			t.Fatalf("expected 'account not found' error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("list with valid account", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "list_messages", h.listMessages, map[string]any{
 			"account": "bob@gmail.com",
 		})
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(msgs))
-		}
+		assertpkg.Len(t, msgs, 1, "msgs")
 	})
 
 	t.Run("list with invalid account", func(t *testing.T) {
@@ -1111,9 +959,7 @@ func TestAccountFilter(t *testing.T) {
 			"account": "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "account not found") {
-			t.Fatalf("expected 'account not found' error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("aggregate with valid account", func(t *testing.T) {
@@ -1121,9 +967,7 @@ func TestAccountFilter(t *testing.T) {
 			"group_by": "sender",
 			"account":  "alice@gmail.com",
 		})
-		if len(rows) != 1 {
-			t.Fatalf("expected 1 row, got %d", len(rows))
-		}
+		assertpkg.Len(t, rows, 1, "rows")
 	})
 
 	t.Run("aggregate with invalid account", func(t *testing.T) {
@@ -1132,9 +976,7 @@ func TestAccountFilter(t *testing.T) {
 			"account":  "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "account not found") {
-			t.Fatalf("expected 'account not found' error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("empty account means no filter", func(t *testing.T) {
@@ -1143,9 +985,7 @@ func TestAccountFilter(t *testing.T) {
 			"query":   "test",
 			"account": "",
 		})
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(msgs))
-		}
+		assertpkg.Len(t, msgs, 1, "msgs")
 	})
 }
 
@@ -1185,15 +1025,9 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"query": "from:news"},
 		)
-		if resp.MessageCount != 2 {
-			t.Fatalf("expected 2 messages, got %d", resp.MessageCount)
-		}
-		if resp.Status != "pending" {
-			t.Fatalf("expected pending status, got %s", resp.Status)
-		}
-		if resp.BatchID == "" {
-			t.Fatal("expected non-empty batch_id")
-		}
+		assertpkg.Equal(t, 2, resp.MessageCount, "MessageCount")
+		assertpkg.Equal(t, "pending", resp.Status, "Status")
+		assertpkg.NotEmpty(t, resp.BatchID, "BatchID")
 	})
 
 	t.Run("structured filter staging", func(t *testing.T) {
@@ -1204,9 +1038,7 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"from": "news@example.com"},
 		)
-		if resp.MessageCount != 2 {
-			t.Fatalf("expected 2 messages, got %d", resp.MessageCount)
-		}
+		assertpkg.Equal(t, 2, resp.MessageCount, "MessageCount")
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {
@@ -1218,9 +1050,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"query": "   "},
 		)
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "must provide") {
-			t.Fatalf("expected validation error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "must provide", "expected validation error, got: %s")
 	})
 
 	t.Run("query and filters rejected", func(t *testing.T) {
@@ -1235,9 +1065,7 @@ func TestStageDeletion(t *testing.T) {
 			},
 		)
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "not both") {
-			t.Fatalf("expected mutual exclusion error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "not both", "expected mutual exclusion error, got: %s")
 	})
 
 	t.Run("no filters rejected", func(t *testing.T) {
@@ -1249,9 +1077,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{},
 		)
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "must provide") {
-			t.Fatalf("expected validation error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "must provide", "expected validation error, got: %s")
 	})
 
 	t.Run("no matches returns error", func(t *testing.T) {
@@ -1267,9 +1093,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"from": "nobody@example.com"},
 		)
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "no messages match") {
-			t.Fatalf("expected no-match error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "no messages match", "expected no-match error, got: %s")
 	})
 
 	t.Run("account filter propagated", func(t *testing.T) {
@@ -1293,12 +1117,8 @@ func TestStageDeletion(t *testing.T) {
 				"from":    "news@example.com",
 			},
 		)
-		if capturedFilter.SourceID == nil {
-			t.Fatal("expected SourceID to be set")
-		}
-		if *capturedFilter.SourceID != 1 {
-			t.Fatalf("expected SourceID 1, got %d", *capturedFilter.SourceID)
-		}
+		requirepkg.NotNil(t, capturedFilter.SourceID, "expected SourceID to be set")
+		assertpkg.Equal(t, int64(1), *capturedFilter.SourceID, "SourceID")
 	})
 
 	t.Run("invalid account rejected", func(t *testing.T) {
@@ -1313,9 +1133,7 @@ func TestStageDeletion(t *testing.T) {
 			},
 		)
 		txt := resultText(t, r)
-		if !strings.Contains(txt, "account not found") {
-			t.Fatalf("expected account error, got: %s", txt)
-		}
+		assertpkg.Contains(t, txt, "account not found", "expected account error, got: %s")
 	})
 
 	t.Run("structured filter limit enforced", func(t *testing.T) {
@@ -1333,10 +1151,7 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"domain": "example.com"},
 		)
-		if capturedFilter.Pagination.Limit != maxStageDeletionResults {
-			t.Fatalf("expected limit %d, got %d",
-				maxStageDeletionResults, capturedFilter.Pagination.Limit)
-		}
+		assertpkg.Equal(t, maxStageDeletionResults, capturedFilter.Pagination.Limit, "limit")
 	})
 }
 
@@ -1422,9 +1237,7 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 		"message_id": float64(1),
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "vector_not_enabled") {
-		t.Fatalf("expected 'vector_not_enabled' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
 // TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable guards the
@@ -1432,27 +1245,17 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 // the search_messages tool omits the "mode" and "explain" parameters so
 // clients don't build vector requests that will fail at runtime.
 func TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T) {
+	assert := assertpkg.New(t)
 	disabled := searchMessagesTool(false)
-	if _, ok := disabled.InputSchema.Properties["mode"]; ok {
-		t.Errorf("vectorAvailable=false: tool advertises 'mode' but vector modes are unsupported")
-	}
-	if _, ok := disabled.InputSchema.Properties["explain"]; ok {
-		t.Errorf("vectorAvailable=false: tool advertises 'explain' but vector modes are unsupported")
-	}
-	if strings.Contains(disabled.Description, "mode=vector") || strings.Contains(disabled.Description, "mode=hybrid") {
-		t.Errorf("vectorAvailable=false: tool description mentions vector modes: %q", disabled.Description)
-	}
+	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: tool advertises 'mode' but vector modes are unsupported")
+	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: tool advertises 'explain' but vector modes are unsupported")
+	assert.False(strings.Contains(disabled.Description, "mode=vector") || strings.Contains(disabled.Description, "mode=hybrid"),
+		"vectorAvailable=false: tool description mentions vector modes: %q", disabled.Description)
 
 	enabled := searchMessagesTool(true)
-	if _, ok := enabled.InputSchema.Properties["mode"]; !ok {
-		t.Errorf("vectorAvailable=true: tool is missing 'mode' parameter")
-	}
-	if _, ok := enabled.InputSchema.Properties["explain"]; !ok {
-		t.Errorf("vectorAvailable=true: tool is missing 'explain' parameter")
-	}
-	if !strings.Contains(enabled.Description, "free-text") {
-		t.Errorf("vectorAvailable=true: tool description should call out the free-text requirement, got: %q", enabled.Description)
-	}
+	assert.Contains(enabled.InputSchema.Properties, "mode", "vectorAvailable=true: tool is missing 'mode' parameter")
+	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: tool is missing 'explain' parameter")
+	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: tool description should call out the free-text requirement, got: %q", enabled.Description)
 }
 
 func TestFindSimilarMessages_MissingID(t *testing.T) {
@@ -1463,12 +1266,11 @@ func TestFindSimilarMessages_MissingID(t *testing.T) {
 
 	r := runToolExpectError(t, "find_similar_messages", h.findSimilarMessages, map[string]any{})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "message_id") {
-		t.Fatalf("expected error mentioning 'message_id', got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "message_id", "expected error mentioning 'message_id', got: %s")
 }
 
 func TestFindSimilarMessages_HappyPath(t *testing.T) {
+	assert := assertpkg.New(t)
 	seed := make([]float32, 4)
 	for i := range seed {
 		seed[i] = float32(i)
@@ -1503,29 +1305,16 @@ func TestFindSimilarMessages_HappyPath(t *testing.T) {
 		"limit":      float64(20),
 	})
 
-	if resp.SeedMessageID != 100 {
-		t.Fatalf("seed_message_id = %d, want 100", resp.SeedMessageID)
-	}
-	if resp.Returned != 2 {
-		t.Fatalf("returned = %d, want 2", resp.Returned)
-	}
-	if resp.Generation.ID != 7 {
-		t.Fatalf("generation.id = %d, want 7", resp.Generation.ID)
-	}
-	if resp.Generation.Fingerprint != "nomic-embed:4" {
-		t.Fatalf("generation.fingerprint = %s, want nomic-embed:4", resp.Generation.Fingerprint)
-	}
-	if len(resp.Messages) != 2 {
-		t.Fatalf("messages len = %d, want 2", len(resp.Messages))
-	}
+	assert.Equal(int64(100), resp.SeedMessageID, "seed_message_id")
+	assert.Equal(2, resp.Returned, "returned")
+	assert.Equal(int64(7), resp.Generation.ID, "generation.id")
+	assert.Equal("nomic-embed:4", resp.Generation.Fingerprint, "generation.fingerprint")
+	requirepkg.Len(t, resp.Messages, 2, "messages")
 	for _, m := range resp.Messages {
-		if m.ID == 100 {
-			t.Fatalf("seed message 100 must not appear in results")
-		}
+		assert.NotEqual(int64(100), m.ID, "seed message 100 must not appear in results")
 	}
-	if resp.Messages[0].ID != 200 || resp.Messages[1].ID != 300 {
-		t.Fatalf("unexpected order: %v", resp.Messages)
-	}
+	assert.Equal(int64(200), resp.Messages[0].ID, "Messages[0].ID")
+	assert.Equal(int64(300), resp.Messages[1].ID, "Messages[1].ID")
 }
 
 func TestFindSimilarMessages_NoActiveGeneration(t *testing.T) {
@@ -1538,9 +1327,7 @@ func TestFindSimilarMessages_NoActiveGeneration(t *testing.T) {
 		"message_id": float64(1),
 	})
 	txt := resultText(t, r)
-	if !strings.Contains(txt, "no_active_generation") {
-		t.Fatalf("expected 'no_active_generation' error, got: %s", txt)
-	}
+	assertpkg.Contains(t, txt, "no_active_generation", "expected 'no_active_generation' error, got: %s")
 }
 
 func TestSearchByDomains(t *testing.T) {
@@ -1555,17 +1342,13 @@ func TestSearchByDomains(t *testing.T) {
 	t.Run("valid domains", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com,example.com"})
-		if len(msgs) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(msgs))
-		}
+		assertpkg.Len(t, msgs, 2, "msgs")
 	})
 
 	t.Run("domains with whitespace", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": " acme.com , example.com "})
-		if len(msgs) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(msgs))
-		}
+		assertpkg.Len(t, msgs, 2, "msgs")
 	})
 
 	t.Run("missing domains", func(t *testing.T) {
@@ -1583,6 +1366,7 @@ func TestSearchByDomains(t *testing.T) {
 	})
 
 	t.Run("arguments forwarded correctly", func(t *testing.T) {
+		assert := assertpkg.New(t)
 		var capturedDomains []string
 		var capturedLimit, capturedOffset int
 		eng := &querytest.MockEngine{
@@ -1590,12 +1374,8 @@ func TestSearchByDomains(t *testing.T) {
 				capturedDomains = domains
 				capturedLimit = limit
 				capturedOffset = offset
-				if after == nil {
-					t.Fatal("expected after to be set")
-				}
-				if before == nil {
-					t.Fatal("expected before to be set")
-				}
+				assert.NotNil(after, "expected after to be set")
+				assert.NotNil(before, "expected before to be set")
 				return []query.MessageSummary{
 					testutil.NewMessageSummary(1).WithSubject("Match").Build(),
 				}, nil
@@ -1611,18 +1391,10 @@ func TestSearchByDomains(t *testing.T) {
 				"after":   "2024-01-01",
 				"before":  "2024-12-31",
 			})
-		if len(msgs) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(msgs))
-		}
-		if len(capturedDomains) != 2 || capturedDomains[0] != "acme.com" || capturedDomains[1] != "globex.com" {
-			t.Fatalf("unexpected domains: %v", capturedDomains)
-		}
-		if capturedLimit != 50 {
-			t.Fatalf("expected limit 50, got %d", capturedLimit)
-		}
-		if capturedOffset != 10 {
-			t.Fatalf("expected offset 10, got %d", capturedOffset)
-		}
+		assert.Len(msgs, 1, "msgs")
+		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
+		assert.Equal(50, capturedLimit, "limit")
+		assert.Equal(10, capturedOffset, "offset")
 	})
 
 	t.Run("default limit and offset", func(t *testing.T) {
@@ -1638,12 +1410,8 @@ func TestSearchByDomains(t *testing.T) {
 
 		runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
-		if capturedLimit != 100 {
-			t.Fatalf("expected default limit 100, got %d", capturedLimit)
-		}
-		if capturedOffset != 0 {
-			t.Fatalf("expected default offset 0, got %d", capturedOffset)
-		}
+		assertpkg.Equal(t, 100, capturedLimit, "default limit")
+		assertpkg.Equal(t, 0, capturedOffset, "default offset")
 	})
 }
 
@@ -1672,10 +1440,8 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context.Canceled, got %v", err)
-		}
+		requirepkg.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
 	case <-time.After(15 * time.Second):
-		t.Fatal("ServeHTTPWithOptions did not return after context cancellation")
+		requirepkg.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
 	}
 }

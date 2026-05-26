@@ -5,6 +5,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // statsFakeBackend implements Backend for CollectStats tests. It is
@@ -82,15 +85,13 @@ var _ Backend = (*statsFakeBackend)(nil)
 
 func TestCollectStats_NilBackend(t *testing.T) {
 	sv, err := CollectStats(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("CollectStats(nil) err = %v, want nil", err)
-	}
-	if sv != nil {
-		t.Errorf("CollectStats(nil) = %+v, want nil", sv)
-	}
+	requirepkg.NoError(t, err, "CollectStats(nil)")
+	assertpkg.Nil(t, sv, "CollectStats(nil) should return nil")
 }
 
 func TestCollectStats_ActiveOnly(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	activatedAt := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		active: &Generation{
@@ -107,50 +108,25 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 	}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err != nil {
-		t.Fatalf("CollectStats err = %v", err)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats returned nil StatsView")
-	}
-	if !sv.Enabled {
-		t.Error("Enabled = false, want true")
-	}
-	if sv.ActiveGeneration == nil {
-		t.Fatal("ActiveGeneration is nil, want populated")
-	}
+	require.NoError(err, "CollectStats")
+	require.NotNil(sv, "CollectStats returned nil StatsView")
+	assert.True(sv.Enabled)
+	require.NotNil(sv.ActiveGeneration, "ActiveGeneration is nil")
 	ag := sv.ActiveGeneration
-	if ag.ID != 5 {
-		t.Errorf("ActiveGeneration.ID = %d, want 5", ag.ID)
-	}
-	if ag.Model != "nomic-embed" {
-		t.Errorf("ActiveGeneration.Model = %q, want 'nomic-embed'", ag.Model)
-	}
-	if ag.Dimension != 768 {
-		t.Errorf("ActiveGeneration.Dimension = %d, want 768", ag.Dimension)
-	}
-	if ag.Fingerprint != "nomic-embed:768" {
-		t.Errorf("ActiveGeneration.Fingerprint = %q, want 'nomic-embed:768'", ag.Fingerprint)
-	}
-	if ag.State != "active" {
-		t.Errorf("ActiveGeneration.State = %q, want 'active'", ag.State)
-	}
-	if ag.MessageCount != 100 {
-		t.Errorf("ActiveGeneration.MessageCount = %d, want 100", ag.MessageCount)
-	}
-	if ag.ActivatedAt != activatedAt.Format(time.RFC3339) {
-		t.Errorf("ActiveGeneration.ActivatedAt = %q, want %q",
-			ag.ActivatedAt, activatedAt.Format(time.RFC3339))
-	}
-	if sv.BuildingGeneration != nil {
-		t.Errorf("BuildingGeneration = %+v, want nil", sv.BuildingGeneration)
-	}
-	if sv.PendingEmbeddingsTotal != 7 {
-		t.Errorf("PendingEmbeddingsTotal = %d, want 7", sv.PendingEmbeddingsTotal)
-	}
+	assert.Equal(GenerationID(5), ag.ID)
+	assert.Equal("nomic-embed", ag.Model)
+	assert.Equal(768, ag.Dimension)
+	assert.Equal("nomic-embed:768", ag.Fingerprint)
+	assert.Equal("active", ag.State)
+	assert.Equal(int64(100), ag.MessageCount)
+	assert.Equal(activatedAt.Format(time.RFC3339), ag.ActivatedAt)
+	assert.Nil(sv.BuildingGeneration)
+	assert.Equal(int64(7), sv.PendingEmbeddingsTotal)
 }
 
 func TestCollectStats_BuildingOnly(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	startedAt := time.Date(2025, 4, 15, 9, 30, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		// No active generation — first build scenario.
@@ -166,47 +142,24 @@ func TestCollectStats_BuildingOnly(t *testing.T) {
 	}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err != nil {
-		t.Fatalf("CollectStats err = %v", err)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats returned nil StatsView")
-	}
-	if !sv.Enabled {
-		t.Error("Enabled = false, want true")
-	}
-	if sv.ActiveGeneration != nil {
-		t.Errorf("ActiveGeneration = %+v, want nil", sv.ActiveGeneration)
-	}
-	if sv.BuildingGeneration == nil {
-		t.Fatal("BuildingGeneration is nil, want populated")
-	}
+	require.NoError(err, "CollectStats")
+	require.NotNil(sv, "CollectStats returned nil StatsView")
+	assert.True(sv.Enabled)
+	assert.Nil(sv.ActiveGeneration)
+	require.NotNil(sv.BuildingGeneration, "BuildingGeneration is nil")
 	bg := sv.BuildingGeneration
-	if bg.ID != 9 {
-		t.Errorf("BuildingGeneration.ID = %d, want 9", bg.ID)
-	}
-	if bg.Model != "nomic-embed" {
-		t.Errorf("BuildingGeneration.Model = %q, want 'nomic-embed'", bg.Model)
-	}
-	if bg.Dimension != 768 {
-		t.Errorf("BuildingGeneration.Dimension = %d, want 768", bg.Dimension)
-	}
-	if bg.StartedAt != startedAt.Format(time.RFC3339) {
-		t.Errorf("BuildingGeneration.StartedAt = %q, want %q",
-			bg.StartedAt, startedAt.Format(time.RFC3339))
-	}
-	if bg.Progress.Done != 40 {
-		t.Errorf("Progress.Done = %d, want 40", bg.Progress.Done)
-	}
-	if bg.Progress.Total != 100 {
-		t.Errorf("Progress.Total = %d, want 100", bg.Progress.Total)
-	}
-	if sv.PendingEmbeddingsTotal != 60 {
-		t.Errorf("PendingEmbeddingsTotal = %d, want 60", sv.PendingEmbeddingsTotal)
-	}
+	assert.Equal(GenerationID(9), bg.ID)
+	assert.Equal("nomic-embed", bg.Model)
+	assert.Equal(768, bg.Dimension)
+	assert.Equal(startedAt.Format(time.RFC3339), bg.StartedAt)
+	assert.Equal(int64(40), bg.Progress.Done)
+	assert.Equal(int64(100), bg.Progress.Total)
+	assert.Equal(int64(60), sv.PendingEmbeddingsTotal)
 }
 
 func TestCollectStats_BothGenerations(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	activatedAt := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	startedAt := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
@@ -231,25 +184,21 @@ func TestCollectStats_BothGenerations(t *testing.T) {
 	}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err != nil {
-		t.Fatalf("CollectStats err = %v", err)
+	require.NoError(err, "CollectStats")
+	require.NotNil(sv, "CollectStats returned nil StatsView")
+	if assert.NotNil(sv.ActiveGeneration) {
+		assert.Equal(GenerationID(1), sv.ActiveGeneration.ID)
 	}
-	if sv == nil {
-		t.Fatal("CollectStats returned nil StatsView")
-	}
-	if sv.ActiveGeneration == nil || sv.ActiveGeneration.ID != 1 {
-		t.Errorf("ActiveGeneration = %+v, want ID=1", sv.ActiveGeneration)
-	}
-	if sv.BuildingGeneration == nil || sv.BuildingGeneration.ID != 2 {
-		t.Errorf("BuildingGeneration = %+v, want ID=2", sv.BuildingGeneration)
+	if assert.NotNil(sv.BuildingGeneration) {
+		assert.Equal(GenerationID(2), sv.BuildingGeneration.ID)
 	}
 	// Sum of both pending counts: 3 + 450.
-	if sv.PendingEmbeddingsTotal != 453 {
-		t.Errorf("PendingEmbeddingsTotal = %d, want 453", sv.PendingEmbeddingsTotal)
-	}
+	assert.Equal(int64(453), sv.PendingEmbeddingsTotal)
 }
 
 func TestCollectStats_ActiveError(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// A non-sentinel error from ActiveGeneration is joined into the
 	// returned error, but the envelope (Enabled=true) is still returned
 	// so callers can log the failure and still render whatever partial
@@ -258,48 +207,32 @@ func TestCollectStats_ActiveError(t *testing.T) {
 	b := &statsFakeBackend{activeErr: wantErr}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err == nil {
-		t.Fatalf("CollectStats err = nil, want wrapping %v", wantErr)
-	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("CollectStats err = %v, want to wrap %v", err, wantErr)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats sv = nil, want non-nil envelope even on partial failure")
-	}
-	if !sv.Enabled {
-		t.Error("Enabled = false, want true (backend is non-nil)")
-	}
-	if sv.ActiveGeneration != nil {
-		t.Errorf("ActiveGeneration = %+v, want nil (lookup failed)", sv.ActiveGeneration)
-	}
+	require.Error(err, "CollectStats err should wrap want")
+	assert.ErrorIs(err, wantErr)
+	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
+	assert.True(sv.Enabled, "backend is non-nil")
+	assert.Nil(sv.ActiveGeneration, "lookup failed")
 }
 
 func TestCollectStats_BuildingError(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// A non-sentinel error from BuildingGeneration is joined into the
 	// returned error, symmetric with the ActiveGeneration error path.
 	wantErr := errors.New("db connection refused")
 	b := &statsFakeBackend{buildErr: wantErr}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err == nil {
-		t.Fatalf("CollectStats err = nil, want wrapping %v", wantErr)
-	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("CollectStats err = %v, want to wrap %v", err, wantErr)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats sv = nil, want non-nil envelope even on partial failure")
-	}
-	if !sv.Enabled {
-		t.Error("Enabled = false, want true (backend is non-nil)")
-	}
-	if sv.BuildingGeneration != nil {
-		t.Errorf("BuildingGeneration = %+v, want nil (lookup failed)", sv.BuildingGeneration)
-	}
+	require.Error(err, "CollectStats err should wrap want")
+	assert.ErrorIs(err, wantErr)
+	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
+	assert.True(sv.Enabled, "backend is non-nil")
+	assert.Nil(sv.BuildingGeneration, "lookup failed")
 }
 
 func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// BuildingGeneration loads fine, but its Stats call fails. The
 	// envelope is still returned with BuildingGeneration=nil, and the
 	// stats failure is joined into the returned error so callers can log
@@ -315,24 +248,16 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 	}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err == nil {
-		t.Fatalf("CollectStats err = nil, want wrapping %v", wantErr)
-	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("CollectStats err = %v, want to wrap %v", err, wantErr)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats sv = nil, want non-nil envelope")
-	}
-	if sv.BuildingGeneration != nil {
-		t.Errorf("BuildingGeneration = %+v, want nil (Stats failed)", sv.BuildingGeneration)
-	}
-	if sv.PendingEmbeddingsTotal != 0 {
-		t.Errorf("PendingEmbeddingsTotal = %d, want 0", sv.PendingEmbeddingsTotal)
-	}
+	require.Error(err, "CollectStats err should wrap want")
+	assert.ErrorIs(err, wantErr)
+	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
+	assert.Nil(sv.BuildingGeneration, "Stats failed")
+	assert.Equal(int64(0), sv.PendingEmbeddingsTotal)
 }
 
 func TestCollectStats_StatsError_Tolerated(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Active generation loads fine, but Stats(active.ID) fails. The
 	// helper returns a StatsView with ActiveGeneration=nil and a joined
 	// error so callers can log the failure without losing the envelope.
@@ -349,23 +274,10 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 	}
 
 	sv, err := CollectStats(context.Background(), b)
-	if err == nil {
-		t.Fatalf("CollectStats err = nil, want wrapping %v", wantErr)
-	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("CollectStats err = %v, want to wrap %v", err, wantErr)
-	}
-	if sv == nil {
-		t.Fatal("CollectStats sv = nil, want non-nil envelope")
-	}
-	if !sv.Enabled {
-		t.Error("Enabled = false, want true (backend is non-nil)")
-	}
-	if sv.ActiveGeneration != nil {
-		t.Errorf("ActiveGeneration = %+v, want nil (Stats failed)", sv.ActiveGeneration)
-	}
-	if sv.PendingEmbeddingsTotal != 0 {
-		t.Errorf("PendingEmbeddingsTotal = %d, want 0 (no successful stats)",
-			sv.PendingEmbeddingsTotal)
-	}
+	require.Error(err, "CollectStats err should wrap want")
+	assert.ErrorIs(err, wantErr)
+	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
+	assert.True(sv.Enabled, "backend is non-nil")
+	assert.Nil(sv.ActiveGeneration, "Stats failed")
+	assert.Equal(int64(0), sv.PendingEmbeddingsTotal, "no successful stats")
 }
