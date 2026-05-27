@@ -153,19 +153,19 @@ func makeAttributedBodyBlob(text string) []byte {
 		Archiver string               `plist:"$archiver"`
 		Version  uint64               `plist:"$version"`
 		Top      map[string]plist.UID `plist:"$top"`
-		Objects  []interface{}        `plist:"$objects"`
+		Objects  []any                `plist:"$objects"`
 	}{
 		Archiver: "NSKeyedArchiver",
 		Version:  100000,
 		Top:      map[string]plist.UID{"root": 1},
-		Objects: []interface{}{
+		Objects: []any{
 			"$null",
-			map[string]interface{}{
+			map[string]any{
 				"$class":    plist.UID(3),
 				"NS.string": plist.UID(2),
 			},
 			text,
-			map[string]interface{}{
+			map[string]any{
 				"$classname": "NSAttributedString",
 				"$classes":   []string{"NSAttributedString", "NSObject"},
 			},

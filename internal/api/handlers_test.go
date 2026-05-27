@@ -123,15 +123,15 @@ func TestHandleListMessages(t *testing.T) {
 
 	assert.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages, ok := resp["messages"].([]interface{})
+	messages, ok := resp["messages"].([]any)
 	require.True(ok, "expected messages array in response")
 	assert.NotEmpty(messages, "expected at least 1 message")
 
 	// Check first message structure
-	msg := messages[0].(map[string]interface{})
+	msg := messages[0].(map[string]any)
 	assert.Equal("Test Subject", msg["subject"], "subject")
 
 	// Verify RFC3339 time format
@@ -151,7 +151,7 @@ func TestHandleListMessagesPagination(t *testing.T) {
 
 	assert.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(float64(1), resp["page"], "page")
@@ -224,7 +224,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 
 	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	assert.Equal("plain fallback", resp["body"], "body")
 	assert.Equal("<p>Hello</p>", resp["body_html"], "body_html")
@@ -258,7 +258,7 @@ func TestHandleGetMessage_EngineDeletedAt(t *testing.T) {
 
 	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	want := deletedAt.Format(time.RFC3339)
 	assertpkg.Equal(t, want, resp["deleted_at"], "deleted_at")
@@ -392,18 +392,18 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	// Verify nil slices become empty arrays, not null
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages := resp["messages"].([]interface{})
-	msg := messages[0].(map[string]interface{})
+	messages := resp["messages"].([]any)
+	msg := messages[0].(map[string]any)
 
 	// "to" should be an empty array, not null
-	to, ok := msg["to"].([]interface{})
+	to, ok := msg["to"].([]any)
 	require.True(ok, "expected 'to' to be an array, got %T", msg["to"])
 	assert.Empty(to, "expected empty 'to' array")
 
-	labels, ok := msg["labels"].([]interface{})
+	labels, ok := msg["labels"].([]any)
 	require.True(ok, "expected 'labels' to be an array, got %T", msg["labels"])
 	assert.Empty(labels, "expected empty 'labels' array")
 }
@@ -421,12 +421,12 @@ func TestMessageSummaryCcBccInResponse(t *testing.T) {
 
 	require.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	msg := resp["messages"].([]interface{})[0].(map[string]interface{})
+	msg := resp["messages"].([]any)[0].(map[string]any)
 
-	ccRaw, ok := msg["cc"].([]interface{})
+	ccRaw, ok := msg["cc"].([]any)
 	require.True(ok, "expected 'cc' array, got %T", msg["cc"])
 	var gotCc []string
 	for _, v := range ccRaw {
@@ -436,7 +436,7 @@ func TestMessageSummaryCcBccInResponse(t *testing.T) {
 	wantCc := []string{"cc1@example.com", "cc2@example.com"}
 	assert.Equal(wantCc, gotCc, "cc")
 
-	bcc, ok := msg["bcc"].([]interface{})
+	bcc, ok := msg["bcc"].([]any)
 	require.True(ok, "expected 'bcc' array, got %T", msg["bcc"])
 	require.Len(bcc, 1, "bcc")
 	assert.Equal("bcc@example.com", bcc[0], "bcc[0]")
@@ -993,10 +993,10 @@ func TestHandleFilteredMessages(t *testing.T) {
 
 	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages, ok := resp["messages"].([]interface{})
+	messages, ok := resp["messages"].([]any)
 	require.True(ok, "expected messages array in response")
 	assert.Len(messages, 1, "messages count")
 	require.Equal("sms", gotFilter.MessageType, "message_type filter")
@@ -1249,7 +1249,7 @@ func TestHandleDeepSearch(t *testing.T) {
 
 	assertpkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assertpkg.Equal(t, "agenda", resp["query"], "query")
@@ -1576,8 +1576,8 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 	// Decode into a raw map so we can verify field names (snake-case
 	// keys) and that no unexpected wrapper is present.
 	var resp struct {
-		Mode    string                   `json:"mode"`
-		Results []map[string]interface{} `json:"results"`
+		Mode    string           `json:"mode"`
+		Results []map[string]any `json:"results"`
 	}
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal("vector", resp.Mode, "mode")
@@ -1694,7 +1694,7 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 
 // mapKeys returns the keys of a map[string]interface{} for use in
 // assertion error messages.
-func mapKeys(m map[string]interface{}) []string {
+func mapKeys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -1868,16 +1868,16 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 
 	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	vs, ok := resp["vector_search"].(map[string]interface{})
+	vs, ok := resp["vector_search"].(map[string]any)
 	require.True(ok, "expected 'vector_search' object, got %T: %v", resp["vector_search"], resp["vector_search"])
 
 	assert.Equal(true, vs["enabled"], "enabled")
 	assert.Equal(float64(7), vs["pending_embeddings_total"], "pending_embeddings_total")
 
-	active, ok := vs["active_generation"].(map[string]interface{})
+	active, ok := vs["active_generation"].(map[string]any)
 	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
 
 	assert.Equal(float64(100), active["message_count"], "message_count")
@@ -2118,7 +2118,7 @@ func TestHandleGetMessage_EngineUnsupportedFallsBackToStore(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
-	var resp map[string]interface{}
+	var resp map[string]any
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assertpkg.Equal(t, "Test Subject", resp["subject"], "subject (store path response)")
 }

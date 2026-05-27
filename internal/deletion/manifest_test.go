@@ -330,7 +330,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 			name: "many top senders truncated to 10",
 			setupManifest: func(t *testing.T) *Manifest {
 				topSenders := make([]SenderCount, 15)
-				for i := 0; i < 15; i++ {
+				for i := range 15 {
 					topSenders[i] = SenderCount{
 						Sender: "sender" + string(rune('a'+i)) + "@example.com",
 						Count:  100 - i,

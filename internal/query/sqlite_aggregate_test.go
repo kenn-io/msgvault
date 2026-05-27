@@ -70,7 +70,7 @@ func TestAggregations(t *testing.T) {
 func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 	env := newTestEnv(t)
 
-	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("noname@test.com"), DisplayName: nil, Domain: "test.com"})
+	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("noname@test.com"), DisplayName: nil, Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Test", SentAt: "2024-05-01 10:00:00", FromID: noNameID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
@@ -89,8 +89,8 @@ func TestAggregateBySenderName_FallbackToPhone(t *testing.T) {
 	env := newTestEnv(t)
 
 	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
-		Phone:       dbtest.StrPtr("+15551234567"),
-		DisplayName: dbtest.StrPtr(""),
+		Phone:       new("+15551234567"),
+		DisplayName: new(""),
 	})
 	env.AddMessage(dbtest.MessageOpts{Subject: "SMS", SentAt: "2024-05-01 10:00:00", FromID: phoneOnlyID})
 
@@ -109,8 +109,8 @@ func TestAggregateByRecipientName_FallbackToPhone(t *testing.T) {
 	env := newTestEnv(t)
 
 	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
-		Phone:       dbtest.StrPtr("+15557654321"),
-		DisplayName: dbtest.StrPtr(""),
+		Phone:       new("+15557654321"),
+		DisplayName: new(""),
 	})
 	senderID := env.MustLookupParticipant("alice@example.com")
 	env.AddMessage(dbtest.MessageOpts{
@@ -131,8 +131,8 @@ func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
-	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("empty@test.com"), DisplayName: dbtest.StrPtr(""), Domain: "test.com"})
-	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("spaces@test.com"), DisplayName: dbtest.StrPtr("   "), Domain: "test.com"})
+	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("empty@test.com"), DisplayName: new(""), Domain: "test.com"})
+	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("spaces@test.com"), DisplayName: new("   "), Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Empty Name", SentAt: "2024-05-01 10:00:00", FromID: emptyID})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Name", SentAt: "2024-05-02 10:00:00", FromID: spacesID})
 
@@ -413,7 +413,7 @@ func TestAggregateByRecipientName_FallbackToEmail(t *testing.T) {
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
 	aliceID := env.MustLookupParticipant("alice@example.com")
 
-	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("noname@test.com"), DisplayName: nil, Domain: "test.com"})
+	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("noname@test.com"), DisplayName: nil, Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Recipient", SentAt: "2024-05-01 10:00:00", FromID: aliceID, ToIDs: []int64{noNameID}})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
@@ -428,8 +428,8 @@ func TestAggregateByRecipientName_EmptyStringFallback(t *testing.T) {
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
 	aliceID := env.MustLookupParticipant("alice@example.com")
 
-	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("empty@test.com"), DisplayName: dbtest.StrPtr(""), Domain: "test.com"})
-	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("spaces@test.com"), DisplayName: dbtest.StrPtr("   "), Domain: "test.com"})
+	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("empty@test.com"), DisplayName: new(""), Domain: "test.com"})
+	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("spaces@test.com"), DisplayName: new("   "), Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Empty Rcpt Name", SentAt: "2024-05-01 10:00:00", FromID: aliceID, ToIDs: []int64{emptyID}})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Rcpt Name", SentAt: "2024-05-02 10:00:00", FromID: aliceID, CcIDs: []int64{spacesID}})
 
@@ -478,8 +478,8 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	// implicit coupling to helper defaults or auto-increment assumptions.
 	sourceID := tdb.AddSource(dbtest.SourceOpts{Identifier: "test@gmail.com", DisplayName: "Test Account"})
 	convID := tdb.AddConversation(dbtest.ConversationOpts{SourceID: sourceID, Title: "Test Thread"})
-	aliceID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("alice@example.com"), DisplayName: dbtest.StrPtr("Alice"), Domain: "example.com"})
-	bobID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("bob@example.com"), DisplayName: dbtest.StrPtr("Bob"), Domain: "example.com"})
+	aliceID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: new("alice@example.com"), DisplayName: new("Alice"), Domain: "example.com"})
+	bobID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: new("bob@example.com"), DisplayName: new("Bob"), Domain: "example.com"})
 
 	// Create labels with names that would sort differently than insertion order
 	// "Zebra" inserted first, "Apple" inserted second - both will have count=1

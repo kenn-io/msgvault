@@ -612,7 +612,7 @@ func TestViewDuringSpinnerAnimation(t *testing.T) {
 	model = resizeModel(t, model, terminalWidth, terminalHeight)
 
 	// Simulate multiple spinner frames
-	for frame := 0; frame < 10; frame++ {
+	for frame := range 10 {
 		model.spinnerFrame = frame
 
 		view := model.View()

@@ -112,7 +112,7 @@ func TestRateLimiterCloseConcurrent(t *testing.T) {
 	const n = 50
 	start := make(chan struct{})
 	done := make(chan struct{}, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			<-start
 			rl.Close()
@@ -120,7 +120,7 @@ func TestRateLimiterCloseConcurrent(t *testing.T) {
 		}()
 	}
 	close(start) // release all at once
-	for i := 0; i < n; i++ {
+	for range n {
 		<-done
 	}
 	// If we get here without a panic, the test passes.

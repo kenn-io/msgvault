@@ -1040,7 +1040,7 @@ func TestDuckDBEngine_ThreadCount(t *testing.T) {
 	assert.Equal(expected, threads, "expected threads to match GOMAXPROCS")
 
 	// Verify the setting persists across multiple queries (single connection pool)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var check int
 		err = engine.db.QueryRow("SELECT current_setting('threads')::INT").Scan(&check)
 		require.NoError(err, "query threads setting (iteration %d)", i)
@@ -2772,65 +2772,65 @@ func TestSearchCacheKeyFor(t *testing.T) {
 	tests := []struct {
 		name      string
 		conds1    []string
-		args1     []interface{}
+		args1     []any
 		conds2    []string
-		args2     []interface{}
+		args2     []any
 		wantEqual bool
 	}{
 		{
 			name:      "identical inputs produce same key",
 			conds1:    []string{"a = ?", "b = ?"},
-			args1:     []interface{}{"foo", 42},
+			args1:     []any{"foo", 42},
 			conds2:    []string{"a = ?", "b = ?"},
-			args2:     []interface{}{"foo", 42},
+			args2:     []any{"foo", 42},
 			wantEqual: true,
 		},
 		{
 			name:      "different conditions produce different keys",
 			conds1:    []string{"a = ?"},
-			args1:     []interface{}{"foo"},
+			args1:     []any{"foo"},
 			conds2:    []string{"b = ?"},
-			args2:     []interface{}{"foo"},
+			args2:     []any{"foo"},
 			wantEqual: false,
 		},
 		{
 			name:      "args with commas are not ambiguous",
 			conds1:    []string{"x = ?"},
-			args1:     []interface{}{"foo,bar"},
+			args1:     []any{"foo,bar"},
 			conds2:    []string{"x = ?"},
-			args2:     []interface{}{"foo", "bar"},
+			args2:     []any{"foo", "bar"},
 			wantEqual: false,
 		},
 		{
 			name:      "args with pipes are not ambiguous",
 			conds1:    []string{"a|b"},
-			args1:     []interface{}{"x"},
+			args1:     []any{"x"},
 			conds2:    []string{"a", "b"},
-			args2:     []interface{}{"x"},
+			args2:     []any{"x"},
 			wantEqual: false,
 		},
 		{
 			name:      "different arg types produce different keys",
 			conds1:    []string{"x = ?"},
-			args1:     []interface{}{"42"},
+			args1:     []any{"42"},
 			conds2:    []string{"x = ?"},
-			args2:     []interface{}{42},
+			args2:     []any{42},
 			wantEqual: false,
 		},
 		{
 			name:      "empty inputs produce same key",
 			conds1:    []string{},
-			args1:     []interface{}{},
+			args1:     []any{},
 			conds2:    []string{},
-			args2:     []interface{}{},
+			args2:     []any{},
 			wantEqual: true,
 		},
 		{
 			name:      "condition containing JSON special chars",
 			conds1:    []string{`msg.subject ILIKE ? ESCAPE '\'`},
-			args1:     []interface{}{`%"quoted"%`},
+			args1:     []any{`%"quoted"%`},
 			conds2:    []string{`msg.subject ILIKE ? ESCAPE '\'`},
-			args2:     []interface{}{`%"quoted"%`},
+			args2:     []any{`%"quoted"%`},
 			wantEqual: true,
 		},
 	}

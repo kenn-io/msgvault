@@ -14,11 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// StrPtr returns a pointer to a string (useful for optional fields in test opts).
-//
-//go:fix inline
-func StrPtr(s string) *string { return new(s) }
-
 // TestDB wraps a *sql.DB with auto-increment counters and builder helpers
 // for seeding test data.
 type TestDB struct {
@@ -245,7 +240,7 @@ func (tdb *TestDB) AddMessageLabel(messageID, labelID int64) {
 
 // ParticipantOpts configures a participant to insert.
 type ParticipantOpts struct {
-	Email       *string // nil = NULL; use StrPtr("x") for a value
+	Email       *string // nil = NULL; use new("x") for a value
 	DisplayName *string // nil = NULL
 	Phone       *string // nil = NULL; E.164 format when set
 	Domain      string

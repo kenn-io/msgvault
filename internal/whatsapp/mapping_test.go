@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	assertpkg "github.com/stretchr/testify/assert"
@@ -169,16 +170,16 @@ func TestMapMessage(t *testing.T) {
 
 func TestMapMessageSnippetTruncation(t *testing.T) {
 	// Create a message with text longer than 100 characters.
-	longText := ""
-	for i := 0; i < 150; i++ {
-		longText += "x"
+	var longText strings.Builder
+	for range 150 {
+		longText.WriteString("x")
 	}
 
 	msg := waMessage{
 		KeyID:       "LONG1",
 		Timestamp:   1700000000000,
 		MessageType: 0,
-		TextData:    sql.NullString{String: longText, Valid: true},
+		TextData:    sql.NullString{String: longText.String(), Valid: true},
 	}
 
 	result := mapMessage(msg, 1, 1, sql.NullInt64{})

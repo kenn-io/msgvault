@@ -125,7 +125,7 @@ func TestStageForDeletion_MultipleAggregates_DeterministicFilter(t *testing.T) {
 
 	agg := testutil.MakeSet("charlie@example.com", "alice@example.com", "bob@example.com")
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		manifest := env.StageForDeletion(stageArgs{aggregates: agg, view: query.ViewSenders})
 		assertpkg.Equal(t, []string{"alice@example.com", "bob@example.com", "charlie@example.com"}, manifest.Filters.Senders)
 	}

@@ -52,9 +52,6 @@ type testAccount struct {
 	parentAccount *int
 }
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
-
 func mustMkdirAll(t *testing.T, path string) {
 	t.Helper()
 	requirepkg.NoError(t, os.MkdirAll(path, 0o755), "mkdir %q", path)
@@ -71,14 +68,14 @@ func TestResolveAccounts(t *testing.T) {
 	// - PK 7: iCloud parent (has email, description "iCloud")
 	// - PK 8: IMAP child of iCloud with empty-string fields (not NULL)
 	accounts := []testAccount{
-		{pk: 1, identifier: "google-parent-id", username: strPtr("user@gmail.com"), description: strPtr("Google"), parentAccount: nil},
-		{pk: 2, identifier: "13C9A646-1234-5678-9ABC-E07FFBDDEED3", username: nil, description: nil, parentAccount: intPtr(1)},
-		{pk: 3, identifier: "yahoo-parent-id", username: strPtr("user@yahoo.com"), description: strPtr("Yahoo!"), parentAccount: nil},
-		{pk: 4, identifier: "AABBCCDD-1111-2222-3333-445566778899", username: nil, description: nil, parentAccount: intPtr(3)},
-		{pk: 5, identifier: "EXCHANGE1-AAAA-BBBB-CCCC-DDDDEEEEEEEE", username: strPtr("user@exchange.com"), description: strPtr("Exchange"), parentAccount: nil},
-		{pk: 6, identifier: "LOCALONLY-0000-0000-0000-000000000000", username: nil, description: strPtr("On My Mac"), parentAccount: nil},
-		{pk: 7, identifier: "icloud-parent-id", username: strPtr("user@icloud.com"), description: strPtr("iCloud"), parentAccount: nil},
-		{pk: 8, identifier: "ICLOUDCH-1111-2222-3333-444455556666", username: strPtr(""), description: strPtr(""), parentAccount: intPtr(7)},
+		{pk: 1, identifier: "google-parent-id", username: new("user@gmail.com"), description: new("Google"), parentAccount: nil},
+		{pk: 2, identifier: "13C9A646-1234-5678-9ABC-E07FFBDDEED3", username: nil, description: nil, parentAccount: new(1)},
+		{pk: 3, identifier: "yahoo-parent-id", username: new("user@yahoo.com"), description: new("Yahoo!"), parentAccount: nil},
+		{pk: 4, identifier: "AABBCCDD-1111-2222-3333-445566778899", username: nil, description: nil, parentAccount: new(3)},
+		{pk: 5, identifier: "EXCHANGE1-AAAA-BBBB-CCCC-DDDDEEEEEEEE", username: new("user@exchange.com"), description: new("Exchange"), parentAccount: nil},
+		{pk: 6, identifier: "LOCALONLY-0000-0000-0000-000000000000", username: nil, description: new("On My Mac"), parentAccount: nil},
+		{pk: 7, identifier: "icloud-parent-id", username: new("user@icloud.com"), description: new("iCloud"), parentAccount: nil},
+		{pk: 8, identifier: "ICLOUDCH-1111-2222-3333-444455556666", username: new(""), description: new(""), parentAccount: new(7)},
 	}
 
 	dbPath := createTestAccountsDB(t, accounts)
@@ -247,10 +244,10 @@ func TestDiscoverV10Accounts(t *testing.T) {
 
 	// Create accounts DB with these GUIDs.
 	accounts := []testAccount{
-		{pk: 1, identifier: "google-parent", username: strPtr("user@gmail.com"), description: strPtr("Google"), parentAccount: nil},
-		{pk: 2, identifier: guid1, username: nil, description: nil, parentAccount: intPtr(1)},
-		{pk: 3, identifier: "yahoo-parent", username: strPtr("user@yahoo.com"), description: strPtr("Yahoo!"), parentAccount: nil},
-		{pk: 4, identifier: guid2, username: nil, description: nil, parentAccount: intPtr(3)},
+		{pk: 1, identifier: "google-parent", username: new("user@gmail.com"), description: new("Google"), parentAccount: nil},
+		{pk: 2, identifier: guid1, username: nil, description: nil, parentAccount: new(1)},
+		{pk: 3, identifier: "yahoo-parent", username: new("user@yahoo.com"), description: new("Yahoo!"), parentAccount: nil},
+		{pk: 4, identifier: guid2, username: nil, description: nil, parentAccount: new(3)},
 	}
 	dbPath := createTestAccountsDB(t, accounts)
 

@@ -921,7 +921,7 @@ func TestStore_CountMessagesWithRaw(t *testing.T) {
 	assert.Equal(int64(0), count, "count")
 
 	// Add messages, some with raw data
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		msgID := f.CreateMessage(fmt.Sprintf("raw-count-msg-%d", i))
 
 		// Only store raw for first 2 messages
@@ -1004,7 +1004,7 @@ func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
 	const numRecipients = 300
 	participantIDs := make([]int64, numRecipients)
 	displayNames := make([]string, numRecipients)
-	for i := 0; i < numRecipients; i++ {
+	for i := range numRecipients {
 		email := fmt.Sprintf("user%d@example.com", i)
 		pid := f.EnsureParticipant(email, fmt.Sprintf("User %d", i), "example.com")
 		participantIDs[i] = pid
@@ -1207,7 +1207,7 @@ func TestStore_ReplaceMessageLabels_LargeBatch(t *testing.T) {
 	// Create 600 labels (exceeds SQLite limit of ~499 rows with 2 params each)
 	const numLabels = 600
 	labelIDs := make([]int64, numLabels)
-	for i := 0; i < numLabels; i++ {
+	for i := range numLabels {
 		sourceLabelID := fmt.Sprintf("Label_%d", i)
 		lid, err := f.Store.EnsureLabel(f.Source.ID, sourceLabelID, fmt.Sprintf("Label %d", i), "user")
 		requirepkg.NoError(t, err, "EnsureLabel")
@@ -1528,7 +1528,7 @@ func makeSecondSource(t *testing.T, f *storetest.Fixture, identifier string) (*s
 func createMessagesForSource(t *testing.T, st *store.Store, srcID, convID int64, prefix string, count int) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		id, err := st.UpsertMessage(&store.Message{
 			ConversationID:  convID,
 			SourceID:        srcID,

@@ -289,7 +289,7 @@ func TestExport_AccountPostSuccess(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/token/"):
 			w.WriteHeader(http.StatusCreated)
 		case r.URL.Path == "/api/v1/accounts":
-			var body map[string]interface{}
+			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if email, ok := body["email"].(string); ok {
 				accountEmail = email

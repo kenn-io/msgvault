@@ -59,7 +59,7 @@ func TestSearch_Filters(t *testing.T) {
 		},
 		{
 			name:      "HasAttachment",
-			query:     &search.Query{HasAttachment: ptr.Bool(true)},
+			query:     &search.Query{HasAttachment: new(true)},
 			wantCount: 2,
 			validator: func(m MessageSummary) bool { return m.HasAttachments },
 			validDesc: "HasAttachments=true",
@@ -71,7 +71,7 @@ func TestSearch_Filters(t *testing.T) {
 		},
 		{
 			name:      "SizeFilter",
-			query:     &search.Query{LargerThan: ptr.Int64(largerThan)},
+			query:     &search.Query{LargerThan: new(largerThan)},
 			wantCount: 1,
 			validator: func(m MessageSummary) bool { return m.SizeEstimate > largerThan },
 			validDesc: "SizeEstimate>2500",
@@ -269,7 +269,6 @@ func TestSearchFastCountMatchesSearch(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			results, err := env.Engine.Search(env.Ctx, tc.query, 1000, 0)
 			requirepkg.NoError(t, err, "Search")
@@ -338,7 +337,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			name:     "Attachments",
 			initial:  &search.Query{},
 			filter:   MessageFilter{WithAttachmentsOnly: true},
-			expected: &search.Query{HasAttachment: ptr.Bool(true)},
+			expected: &search.Query{HasAttachment: new(true)},
 		},
 		{
 			name:     "Domain",
@@ -365,7 +364,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 				FromAddrs:     []string{"alice@example.com", "bob@example.com", "@domain.com"},
 				ToAddrs:       []string{"carol@example.com"},
 				Labels:        []string{"starred"},
-				HasAttachment: ptr.Bool(true),
+				HasAttachment: new(true),
 				AccountIDs:    []int64{sourceID1},
 			},
 		},

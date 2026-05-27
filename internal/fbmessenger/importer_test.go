@@ -597,7 +597,7 @@ func writeLargeFixture(t *testing.T) string {
 		Participants: []rawPart{{Name: "Test User"}, {Name: "Big Friend"}},
 		Title:        "Big Friend",
 	}
-	for i := 0; i < largeFixtureSize; i++ {
+	for i := range largeFixtureSize {
 		sender := "Test User"
 		if i%2 == 1 {
 			sender = "Big Friend"
@@ -621,7 +621,7 @@ func writeLargeFixture(t *testing.T) string {
 func writeMultiThreadFixture(t *testing.T, n int) string {
 	t.Helper()
 	tmp := t.TempDir()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		name := fmt.Sprintf("thread_%02d_OK", i)
 		threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", name)
 		requirepkg.NoError(t, os.MkdirAll(threadPath, 0755))

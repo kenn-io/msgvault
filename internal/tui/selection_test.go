@@ -331,7 +331,7 @@ func TestToggleAggregateSelection(t *testing.T) {
 
 func TestSelectVisibleAggregates(t *testing.T) {
 	rows := make([]query.AggregateRow, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		rows = append(rows, query.AggregateRow{Key: fmt.Sprintf("user%d", i)})
 	}
 	m := NewBuilder().WithRows(rows...).Build()

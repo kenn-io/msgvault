@@ -574,12 +574,10 @@ func TestTokenSource_ConcurrentAccess(t *testing.T) {
 	requirepkg.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_, _ = fn(t.Context())
-		}()
+		})
 	}
 	wg.Wait()
 }

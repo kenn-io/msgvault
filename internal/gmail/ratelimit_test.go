@@ -314,14 +314,12 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	errors := make(chan error, 100)
 
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 20 {
+		wg.Go(func() {
 			if err := rl.Acquire(ctx, OpProfile); err != nil {
 				errors <- err
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

@@ -81,10 +81,7 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 		maxCommentLen        = 1<<16 - 1
 		eocdSig       uint32 = 0x06054b50
 	)
-	start := len(b) - (eocdLen + maxCommentLen)
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(b)-(eocdLen+maxCommentLen), 0)
 	eocd := -1
 	for i := len(b) - eocdLen; i >= start; i-- {
 		if binary.LittleEndian.Uint32(b[i:]) == eocdSig {
@@ -115,7 +112,7 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 
 		name := cd[off+46 : off+46+nameLen]
 		if bytes.Equal(name, []byte(entryName)) {
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				cd[off+24+i] = 0
 			}
 			found = true

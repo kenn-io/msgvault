@@ -89,10 +89,7 @@ func TestResizeRecalculatesDetailLineCount(t *testing.T) {
 	// Scroll should be clamped if it exceeds new bounds
 	m.detailScroll = 1000
 	m.clampDetailScroll()
-	maxScroll := m.detailLineCount - m.pageSize
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(m.detailLineCount-m.pageSize, 0)
 	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "expected detailScroll clamped")
 }
 
@@ -156,10 +153,7 @@ func TestScrollClampingAfterResize(t *testing.T) {
 	m, _ := sendKey(t, model, keyDown())
 
 	// detailScroll should be clamped to max (50 - 27 = 23 for detailPageSize)
-	maxScroll := model.detailLineCount - m.detailPageSize()
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(model.detailLineCount-m.detailPageSize(), 0)
 	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "detailScroll exceeds maxScroll after resize")
 }
 

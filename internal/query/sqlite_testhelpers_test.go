@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -140,10 +141,8 @@ func assertAllResults(t *testing.T, results []MessageSummary, desc string, pred 
 // assertAnyResult verifies that at least one result satisfies the given predicate.
 func assertAnyResult(t *testing.T, results []MessageSummary, desc string, pred func(MessageSummary) bool) {
 	t.Helper()
-	for _, r := range results {
-		if pred(r) {
-			return
-		}
+	if slices.ContainsFunc(results, pred) {
+		return
 	}
 	assert.Fail(t, "no result satisfied "+desc)
 }
@@ -161,8 +160,8 @@ func newTestEnvWithEmptyBuckets(t *testing.T) *testEnv {
 
 	// Participant with empty domain
 	emptyDomainID := env.AddParticipant(dbtest.ParticipantOpts{
-		Email:       dbtest.StrPtr("nodomain@"),
-		DisplayName: dbtest.StrPtr("No Domain User"),
+		Email:       new("nodomain@"),
+		DisplayName: new("No Domain User"),
 		Domain:      "",
 	})
 

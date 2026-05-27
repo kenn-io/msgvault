@@ -299,7 +299,7 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Try to trigger multiple times concurrently
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_ = s.TriggerSync("test@gmail.com")
 	}
 

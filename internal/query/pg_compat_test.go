@@ -47,7 +47,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	require.NoError(err, "EnsureLabel")
 
 	base := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		mid, err := st.UpsertMessage(&store.Message{
 			ConversationID:  convID,
 			SourceID:        src.ID,

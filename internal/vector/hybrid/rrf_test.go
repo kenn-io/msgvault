@@ -114,7 +114,7 @@ func TestFuse_TiedRRFScoresStableByMessageID(t *testing.T) {
 	// rank 1 have identical RRF scores (1/61 + 1/62).
 	bm25 := []vector.Hit{{MessageID: 7, Rank: 1}, {MessageID: 3, Rank: 2}}
 	vec := []vector.Hit{{MessageID: 3, Rank: 1}, {MessageID: 7, Rank: 2}}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		out := Fuse(bm25, vec, 60, 1.0, nil, nil)
 		require.Lenf(out, 2, "iter %d", i)
 		require.Equalf(out[0].RRFScore, out[1].RRFScore, "iter %d: scores differ, not a tie scenario: %+v", i, out)

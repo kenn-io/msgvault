@@ -131,9 +131,6 @@ type WantSummary struct {
 	Found   *int64
 }
 
-// intPtr returns a pointer to an int64 value for use in WantSummary.
-func intPtr(v int64) *int64 { return &v }
-
 // assertSummary checks SyncSummary fields against expected values.
 // Only non-nil fields in want are checked.
 func assertSummary(t *testing.T, s *gmail.SyncSummary, want WantSummary) {

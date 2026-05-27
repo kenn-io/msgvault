@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	ids := make([]int64, N)
 	errs := make([]error, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -209,7 +210,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	ids := make([]int64, N)
 	errs := make([]error, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -250,7 +251,7 @@ func TestAddAccountIdentity_Concurrent(t *testing.T) {
 	signals := []string{"manual", "account-identifier", "header"}
 	var wg sync.WaitGroup
 	errs := make([]error, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -275,12 +276,7 @@ func TestAddAccountIdentity_Concurrent(t *testing.T) {
 }
 
 func containsSignal(set, signal string) bool {
-	for _, s := range splitComma(set) {
-		if s == signal {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(splitComma(set), signal)
 }
 
 func splitComma(s string) []string {
@@ -308,7 +304,7 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 	const N = 20
 	var wg sync.WaitGroup
 	errs := make([]error, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

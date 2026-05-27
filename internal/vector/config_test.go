@@ -11,9 +11,6 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 )
 
-func boolPtr(v bool) *bool { return &v }
-func intPtr(v int) *int    { return &v }
-
 func TestConfig_DefaultsAndParse(t *testing.T) {
 	assert := assertpkg.New(t)
 	input := `
@@ -108,7 +105,7 @@ func validConfig() Config {
 			RRFK:              60,
 			KPerSignal:        100,
 			SubjectBoost:      2.0,
-			MaxPageSizeHybrid: intPtr(50),
+			MaxPageSizeHybrid: new(50),
 		},
 	}
 }
@@ -233,7 +230,7 @@ func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
 		// Preprocess intentionally left with nil pointers to confirm
 		// ApplyDefaults doesn't clobber them.
 		Preprocess: PreprocessConfig{
-			StripQuotes: boolPtr(false), // explicit user intent
+			StripQuotes: new(false), // explicit user intent
 		},
 	}
 	c.ApplyDefaults()
@@ -262,7 +259,7 @@ func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
 // clobber the explicit zero either.
 func TestApplyDefaults_PreservesExplicitMaxPageSizeHybridZero(t *testing.T) {
 	c := Config{
-		Search: SearchConfig{MaxPageSizeHybrid: intPtr(0)},
+		Search: SearchConfig{MaxPageSizeHybrid: new(0)},
 	}
 	c.ApplyDefaults()
 	c.ApplyDefaults() // idempotent: second call must not clobber

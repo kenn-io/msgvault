@@ -103,7 +103,7 @@ func TestChunkText(t *testing.T) {
 		assert := assertpkg.New(t)
 		// Mixed-script input with multi-byte runes scattered through.
 		var b strings.Builder
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			b.WriteString("Hello world. ")
 			b.WriteString("こんにちは世界。")
 		}
@@ -169,7 +169,7 @@ func TestChunkText(t *testing.T) {
 		// findSoftBreak returns a sentence boundary near windowEnd
 		// and Trunc stays false on every chunk. With maxSpans=2 we
 		// emit 2 chunks and drop the rest — tailDropped must be true.
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			b.WriteString(strings.Repeat("a", 85))
 			b.WriteString(". ")
 		}

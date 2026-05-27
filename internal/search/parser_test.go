@@ -173,7 +173,7 @@ func TestParse(t *testing.T) {
 				{
 					name:  "has attachment",
 					query: "has:attachment",
-					want:  Query{HasAttachment: ptr.Bool(true)},
+					want:  Query{HasAttachment: new(true)},
 				},
 			},
 		},
@@ -184,8 +184,8 @@ func TestParse(t *testing.T) {
 					name:  "after and before dates",
 					query: "after:2024-01-15 before:2024-06-30",
 					want: Query{
-						AfterDate:  ptr.Time(ptr.Date(2024, 1, 15)),
-						BeforeDate: ptr.Time(ptr.Date(2024, 6, 30)),
+						AfterDate:  new(ptr.Date(2024, 1, 15)),
+						BeforeDate: new(ptr.Date(2024, 6, 30)),
 					},
 				},
 			},
@@ -196,17 +196,17 @@ func TestParse(t *testing.T) {
 				{
 					name:  "larger than 5M",
 					query: "larger:5M",
-					want:  Query{LargerThan: ptr.Int64(5 * 1024 * 1024)},
+					want:  Query{LargerThan: new(int64(5 * 1024 * 1024))},
 				},
 				{
 					name:  "smaller than 100K",
 					query: "smaller:100K",
-					want:  Query{SmallerThan: ptr.Int64(100 * 1024)},
+					want:  Query{SmallerThan: new(int64(100 * 1024))},
 				},
 				{
 					name:  "larger than 1G",
 					query: "larger:1G",
-					want:  Query{LargerThan: ptr.Int64(1024 * 1024 * 1024)},
+					want:  Query{LargerThan: new(int64(1024 * 1024 * 1024))},
 				},
 			},
 		},
@@ -281,8 +281,8 @@ func TestParse(t *testing.T) {
 						ToAddrs:       []string{"bob@example.com"},
 						SubjectTerms:  []string{"meeting"},
 						TextTerms:     []string{"project report"},
-						HasAttachment: ptr.Bool(true),
-						AfterDate:     ptr.Time(ptr.Date(2024, 1, 1)),
+						HasAttachment: new(true),
+						AfterDate:     new(ptr.Date(2024, 1, 1)),
 					},
 				},
 			},
@@ -313,22 +313,22 @@ func TestParse_RelativeDates(t *testing.T) {
 		{
 			name:  "newer_than days",
 			query: "newer_than:7d",
-			want:  Query{AfterDate: ptr.Time(ptr.Date(2025, 6, 8))},
+			want:  Query{AfterDate: new(ptr.Date(2025, 6, 8))},
 		},
 		{
 			name:  "older_than weeks",
 			query: "older_than:2w",
-			want:  Query{BeforeDate: ptr.Time(ptr.Date(2025, 6, 1))},
+			want:  Query{BeforeDate: new(ptr.Date(2025, 6, 1))},
 		},
 		{
 			name:  "newer_than months",
 			query: "newer_than:1m",
-			want:  Query{AfterDate: ptr.Time(ptr.Date(2025, 5, 15))},
+			want:  Query{AfterDate: new(ptr.Date(2025, 5, 15))},
 		},
 		{
 			name:  "older_than years",
 			query: "older_than:1y",
-			want:  Query{BeforeDate: ptr.Time(ptr.Date(2024, 6, 15))},
+			want:  Query{BeforeDate: new(ptr.Date(2024, 6, 15))},
 		},
 	}
 

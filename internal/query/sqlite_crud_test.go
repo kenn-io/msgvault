@@ -717,9 +717,8 @@ func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
 func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 	env := newTestEnv(t)
 
-	sp := dbtest.StrPtr
-	aliceID := env.AddParticipant(dbtest.ParticipantOpts{Email: sp("alice-bcc@example.com"), DisplayName: sp("Alice Sender"), Domain: "example.com"})
-	secretID := env.AddParticipant(dbtest.ParticipantOpts{Email: sp("secret@example.com"), DisplayName: sp("Secret Bob"), Domain: "example.com"})
+	aliceID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alice-bcc@example.com"), DisplayName: new("Alice Sender"), Domain: "example.com"})
+	secretID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("secret@example.com"), DisplayName: new("Secret Bob"), Domain: "example.com"})
 	bobID := env.MustLookupParticipant("bob@company.org")
 
 	env.AddMessage(dbtest.MessageOpts{

@@ -3,7 +3,7 @@ package hybrid
 import (
 	"context"
 	"database/sql"
-	"sort"
+	"slices"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -50,7 +50,7 @@ CREATE TABLE labels (
 
 func sortedIDs(ids []int64) []int64 {
 	out := append([]int64(nil), ids...)
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -330,7 +330,6 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 		{"no match", `label:nowhere`, 1, 1},      // sentinel (no real matches)
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			q := search.Parse(c.query)
 			f, err := BuildFilter(ctx, db, q)

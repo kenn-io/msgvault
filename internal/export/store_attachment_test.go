@@ -107,7 +107,7 @@ func TestStoreAttachmentFile_ConcurrentWriters_SameHash_NoError(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			<-start
@@ -130,12 +130,12 @@ func TestStoreAttachmentFile_ConcurrentWriters_SameHash_NoError(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
+	for range n {
 		require.NoError(<-errCh, "store")
 	}
 
 	wantStoragePath := path.Join(hash[:2], hash)
-	for i := 0; i < n; i++ {
+	for range n {
 		require.Equal(wantStoragePath, <-pathCh, "storage path mismatch")
 	}
 

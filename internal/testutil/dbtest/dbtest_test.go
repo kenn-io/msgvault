@@ -18,11 +18,11 @@ type fakeT struct {
 	fatalMsg string
 }
 
-func (f *fakeT) Errorf(format string, args ...interface{}) {
+func (f *fakeT) Errorf(format string, args ...any) {
 	f.fatalMsg = fmt.Sprintf(format, args...)
 }
 
-func (f *fakeT) Fatalf(format string, args ...interface{}) {
+func (f *fakeT) Fatalf(format string, args ...any) {
 	f.fatalMsg = fmt.Sprintf(format, args...)
 	panic("fatalf") // stop execution in the caller
 }
