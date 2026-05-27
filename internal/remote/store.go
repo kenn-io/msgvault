@@ -76,16 +76,18 @@ func (s *Store) Close() error {
 	return nil
 }
 
-// doRequest performs an authenticated HTTP request.
-func (s *Store) doRequest(method, path string, body io.Reader) (*http.Response, error) {
-	return s.doRequestWithContext(context.Background(), method, path, body)
+// doRequest performs an authenticated HTTP GET request against the background
+// context. The remote API is read-only, so every request is a body-less GET.
+func (s *Store) doRequest(path string) (*http.Response, error) {
+	return s.doRequestWithContext(context.Background(), path)
 }
 
-// doRequestWithContext performs an authenticated HTTP request with context support.
-func (s *Store) doRequestWithContext(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+// doRequestWithContext performs an authenticated, body-less HTTP GET request
+// with context support.
+func (s *Store) doRequestWithContext(ctx context.Context, path string) (*http.Response, error) {
 	reqURL := s.baseURL + path
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -136,7 +138,7 @@ type statsResponse struct {
 
 // GetStats fetches stats from the remote server.
 func (s *Store) GetStats() (*store.Stats, error) {
-	resp, err := s.doRequest("GET", "/api/v1/stats", nil)
+	resp, err := s.doRequest("/api/v1/stats")
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +248,7 @@ func (s *Store) ListMessages(offset, limit int) ([]store.APIMessage, int64, erro
 	page := (offset / limit) + 1
 
 	path := fmt.Sprintf("/api/v1/messages?page=%d&page_size=%d", page, limit)
-	resp, err := s.doRequest("GET", path, nil)
+	resp, err := s.doRequest(path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -272,7 +274,7 @@ func (s *Store) ListMessages(offset, limit int) ([]store.APIMessage, int64, erro
 // GetMessage fetches a single message by ID.
 func (s *Store) GetMessage(id int64) (*store.APIMessage, error) {
 	path := "/api/v1/messages/" + strconv.FormatInt(id, 10)
-	resp, err := s.doRequest("GET", path, nil)
+	resp, err := s.doRequest(path)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +329,7 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]store.APIMess
 	path := fmt.Sprintf("/api/v1/search?q=%s&page=%d&page_size=%d",
 		url.QueryEscape(query), page, limit)
 
-	resp, err := s.doRequest("GET", path, nil)
+	resp, err := s.doRequest(path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -368,7 +370,7 @@ type accountsResponse struct {
 
 // ListAccounts fetches configured accounts from the remote server.
 func (s *Store) ListAccounts() ([]AccountInfo, error) {
-	resp, err := s.doRequest("GET", "/api/v1/accounts", nil)
+	resp, err := s.doRequest("/api/v1/accounts")
 	if err != nil {
 		return nil, err
 	}

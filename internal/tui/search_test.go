@@ -470,7 +470,7 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 			requestID: 5,
 			append:    true,
 		}
-		m, _ := sendMsg(t, model, loadMsg)
+		m := sendMsg(t, model, loadMsg)
 
 		assert.Len(m.messages, messageListPageSize+100, "after append")
 		assert.Equal(400, m.cursor, "expected cursor preserved")
@@ -494,7 +494,7 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 			requestID: 5,
 			append:    true,
 		}
-		m, _ := sendMsg(t, model, loadMsg)
+		m := sendMsg(t, model, loadMsg)
 
 		assertpkg.True(t, m.msgListComplete, "after empty append")
 		assertpkg.Len(t, m.messages, messageListPageSize, "expected messages unchanged")
@@ -521,7 +521,7 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 			requestID: 5,
 			append:    false,
 		}
-		m, _ := sendMsg(t, model, loadMsg)
+		m := sendMsg(t, model, loadMsg)
 
 		assertpkg.False(t, m.msgListComplete, "after fresh load")
 	})
@@ -759,7 +759,7 @@ func TestAggregateSearchFilterSetsContextStats(t *testing.T) {
 	assert := assertpkg.New(t)
 	model := newTestModelAtLevel(levelAggregates).
 		withSearchQuery("test query").
-		withAggregateRequestID(1)
+		withAggregateRequestID()
 
 	msg := dataLoadedMsg{
 		rows:      testAggregateRows,
@@ -783,7 +783,7 @@ func TestAggregateSearchFilterSetsContextStats(t *testing.T) {
 func TestAggregateSearchFilterUsesFilteredStats(t *testing.T) {
 	model := newTestModelAtLevel(levelAggregates).
 		withSearchQuery("test query").
-		withAggregateRequestID(1)
+		withAggregateRequestID()
 
 	// Simulate recipient view: rows sum to 175 (inflated) but actual distinct is 100
 	filteredStats := &query.TotalStats{MessageCount: 100, TotalSize: 5000, AttachmentCount: 10}
@@ -810,7 +810,7 @@ func TestAggregateSearchFilterUsesFilteredStats(t *testing.T) {
 // when no search filter is active at aggregate level.
 func TestAggregateNoSearchFilterClearsContextStats(t *testing.T) {
 	model := newTestModelAtLevel(levelAggregates).
-		withAggregateRequestID(1).
+		withAggregateRequestID().
 		withContextStats(&query.TotalStats{MessageCount: 500}) // Stale stats
 
 	msg := dataLoadedMsg{
@@ -829,7 +829,7 @@ func TestAggregateNoSearchFilterClearsContextStats(t *testing.T) {
 func TestSubAggregateSearchFilterSetsContextStats(t *testing.T) {
 	model := newTestModelAtLevel(levelDrillDown).
 		withSearchQuery("important").
-		withAggregateRequestID(1)
+		withAggregateRequestID()
 
 	rows := []query.AggregateRow{
 		{Key: "work", Count: 30, TotalSize: 3000, AttachmentCount: 10},
@@ -1356,7 +1356,7 @@ func TestStaleLoadMessagesDoesNotOverwriteSearch(t *testing.T) {
 		messages:  allMessages,
 		requestID: staleLoadRequestID,
 	}
-	model, _ = sendMsg(t, model, staleMsg)
+	model = sendMsg(t, model, staleMsg)
 
 	// The stale response must be ignored — search results should remain.
 	requirepkg.Len(t, model.messages, 2, "stale loadMessages overwrote search results")
@@ -1383,7 +1383,7 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 		debounceID: model.inlineSearchDebounce,
 	}
 	model.inlineSearchActive = true
-	model, _ = sendMsg(t, model, debounceMsg)
+	model = sendMsg(t, model, debounceMsg)
 
 	// Messages should be nil immediately — not showing stale results while
 	// waiting for the async search to complete.

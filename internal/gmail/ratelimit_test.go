@@ -130,11 +130,12 @@ func (f *rlFixture) drain() {
 	f.rl.tokens = 0
 }
 
-// state returns a snapshot of the limiter's internal fields under the mutex.
-func (f *rlFixture) state() (tokens, refillRate float64, throttledUntil time.Time) {
+// state returns a snapshot of the limiter's refill rate and throttle deadline
+// under the mutex.
+func (f *rlFixture) state() (refillRate float64, throttledUntil time.Time) {
 	f.rl.mu.Lock()
 	defer f.rl.mu.Unlock()
-	return f.rl.tokens, f.rl.refillRate, f.rl.throttledUntil
+	return f.rl.refillRate, f.rl.throttledUntil
 }
 
 // assertAvailable checks the current available tokens.
@@ -362,12 +363,12 @@ func TestRateLimiter_Throttle(t *testing.T) {
 
 		f.rl.Throttle(10 * time.Millisecond)
 
-		_, rate, _ := f.state()
+		rate, _ := f.state()
 		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
 
 		f.rl.RecoverRate()
 
-		_, rate, _ = f.state()
+		rate, _ = f.state()
 		assert.Equal(t, DefaultRefillRate, rate, "refillRate after RecoverRate")
 	})
 
@@ -375,10 +376,10 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f := newRLFixture()
 
 		f.rl.Throttle(200 * time.Millisecond)
-		_, _, first := f.state()
+		_, first := f.state()
 
 		f.rl.Throttle(50 * time.Millisecond)
-		_, _, second := f.state()
+		_, second := f.state()
 
 		assert.False(t, second.Before(first), "Throttle shortened existing backoff: first=%v, second=%v", first, second)
 	})
@@ -387,11 +388,11 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f := newRLFixture()
 
 		f.rl.Throttle(50 * time.Millisecond)
-		_, _, first := f.state()
+		_, first := f.state()
 
 		f.clk.Advance(30 * time.Millisecond)
 		f.rl.Throttle(50 * time.Millisecond)
-		_, _, second := f.state()
+		_, second := f.state()
 
 		assert.True(t, second.After(first), "Throttle did not extend backoff: first=%v, second=%v", first, second)
 	})
@@ -401,13 +402,13 @@ func TestRateLimiter_Throttle(t *testing.T) {
 
 		f.rl.Throttle(50 * time.Millisecond)
 
-		_, rate, _ := f.state()
+		rate, _ := f.state()
 		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
 
 		f.clk.Advance(100 * time.Millisecond)
 		f.rl.Available() // triggers refill and auto-recovery
 
-		_, rate, _ = f.state()
+		rate, _ = f.state()
 		assert.Equal(t, DefaultRefillRate, rate, "refillRate after throttle expiry")
 	})
 }

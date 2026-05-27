@@ -203,6 +203,10 @@ func writeCSV(
 	return cw.Error()
 }
 
+// nil error return mirrors writeJSON/writeCSV so the format switch can
+// `return writeTable(...)` uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning writeJSON/writeCSV siblings
 func writeTable(
 	w io.Writer, cols []string, rows [][]any,
 ) error {

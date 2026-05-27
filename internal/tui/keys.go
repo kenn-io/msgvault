@@ -1295,7 +1295,8 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		// Empty search clears filter - restore from snapshot if available
 		m.clearSearchState()
 		if m.level == levelMessageList && m.preSearchMessages != nil {
-			return m, m.restorePreSearchSnapshot()
+			m.restorePreSearchSnapshot()
+			return m, nil
 		}
 		return m.reloadCurrentView()
 	}
@@ -1323,7 +1324,8 @@ func (m Model) cancelInlineSearch() (tea.Model, tea.Cmd) {
 	m.clearSearchState()
 
 	if m.level == levelMessageList && m.preSearchMessages != nil {
-		return m, m.restorePreSearchSnapshot()
+		m.restorePreSearchSnapshot()
+		return m, nil
 	}
 	return m.reloadCurrentView()
 }
@@ -1336,7 +1338,8 @@ func (m Model) clearMessageListSearch() (tea.Model, tea.Cmd) {
 	m.searchRequestID++
 
 	if m.preSearchMessages != nil {
-		return m, m.restorePreSearchSnapshot()
+		m.restorePreSearchSnapshot()
+		return m, nil
 	}
 	m.contextStats = nil
 	m.loadRequestID++
@@ -1344,8 +1347,9 @@ func (m Model) clearMessageListSearch() (tea.Model, tea.Cmd) {
 }
 
 // restorePreSearchSnapshot restores the cached message list state from before
-// the search began, avoiding a re-query. Returns nil cmd since no async work needed.
-func (m *Model) restorePreSearchSnapshot() tea.Cmd {
+// the search began, avoiding a re-query. No async work is needed, so callers
+// pair it with a nil command.
+func (m *Model) restorePreSearchSnapshot() {
 	m.messages = m.preSearchMessages
 	m.cursor = m.preSearchCursor
 	m.scrollOffset = m.preSearchScrollOffset
@@ -1358,7 +1362,6 @@ func (m *Model) restorePreSearchSnapshot() tea.Cmd {
 	// Clear the snapshot
 	m.preSearchMessages = nil
 	m.preSearchContextStats = nil
-	return nil
 }
 
 func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {

@@ -223,7 +223,7 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 			}
 
 			threadID := threadIDs[newIDs[i]]
-			insertedID, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
+			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
 				if errors.Is(err, errDuplicateRFC822) {
 					result.skipped++
@@ -689,7 +689,7 @@ var errDuplicateRFC822 = errors.New("duplicate RFC822 Message-ID")
 // ingestMessage parses and stores a single message, returning the
 // internal message ID on success. Returns (0, errDuplicateRFC822) for
 // IMAP deduplication skips.
-func (s *Syncer) ingestMessage(ctx context.Context, sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (int64, error) {
+func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (int64, error) {
 	data, err := s.parseToModel(sourceID, raw, threadID)
 	if err != nil {
 		return 0, err

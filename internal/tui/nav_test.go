@@ -25,7 +25,7 @@ func TestStaleAsyncResponsesIgnored(t *testing.T) {
 		requestID: 3, // Old request ID
 	}
 
-	m, _ := sendMsg(t, model, staleMsg)
+	m := sendMsg(t, model, staleMsg)
 
 	// Stale response should be ignored - messages should be unchanged (empty)
 	assert.Empty(t, m.messages, "stale response should be ignored")
@@ -36,7 +36,7 @@ func TestStaleAsyncResponsesIgnored(t *testing.T) {
 		requestID: 5, // Current request ID
 	}
 
-	m, _ = sendMsg(t, m, validMsg)
+	m = sendMsg(t, m, validMsg)
 
 	// Valid response should be processed
 	require.Len(t, m.messages, 1, "valid response should be processed")
@@ -57,7 +57,7 @@ func TestStaleDetailResponsesIgnored(t *testing.T) {
 		requestID: 8, // Old request ID
 	}
 
-	m, _ := sendMsg(t, model, staleMsg)
+	m := sendMsg(t, model, staleMsg)
 
 	// Stale response should be ignored
 	assert.Nil(t, m.messageDetail, "stale detail response should be ignored")
@@ -68,7 +68,7 @@ func TestStaleDetailResponsesIgnored(t *testing.T) {
 		requestID: 10, // Current request ID
 	}
 
-	m, _ = sendMsg(t, m, validMsg)
+	m = sendMsg(t, m, validMsg)
 
 	// Valid response should be processed
 	require.NotNil(t, m.messageDetail, "valid detail response should be processed")

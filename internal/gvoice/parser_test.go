@@ -300,27 +300,27 @@ func TestFormatDuration(t *testing.T) {
 
 func TestComputeThreadID(t *testing.T) {
 	// 1:1 text uses other party's phone
-	tid := computeThreadID("+15553334444", fileTypeText, "+12023065386", nil)
+	tid := computeThreadID(fileTypeText, "+12023065386", nil)
 	assertpkg.Equal(t, "+12023065386", tid, "1:1 threadID")
 
 	// Group uses sorted participants
-	tid = computeThreadID("+15553334444", fileTypeGroup, "", []string{"+12023065386", "+12022712272"})
+	tid = computeThreadID(fileTypeGroup, "", []string{"+12023065386", "+12022712272"})
 	assertpkg.Equal(t, "group:+12022712272,+12023065386", tid, "group threadID")
 
 	// Call uses calls: prefix
-	tid = computeThreadID("+15553334444", fileTypeReceived, "+12023065386", nil)
+	tid = computeThreadID(fileTypeReceived, "+12023065386", nil)
 	assertpkg.Equal(t, "calls:+12023065386", tid, "call threadID")
 }
 
 func TestSnippet(t *testing.T) {
 	long := strings.Repeat("a", 200)
-	s := snippet(long, 100)
+	s := snippet(long)
 	assertpkg.Len(t, s, 100)
 
-	s = snippet("short", 100)
+	s = snippet("short")
 	assertpkg.Equal(t, "short", s)
 
 	// Whitespace normalization
-	s = snippet("  hello   world  ", 100)
+	s = snippet("  hello   world  ")
 	assertpkg.Equal(t, "hello world", s)
 }

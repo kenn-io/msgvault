@@ -340,6 +340,10 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	return outputSearchResultsTable(results)
 }
 
+// nil error return mirrors outputSearchResultsJSON so callers can return
+// either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputSearchResultsJSON sibling
 func outputSearchResultsTable(results []query.MessageSummary) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
@@ -367,6 +371,10 @@ func summaryFromDisplay(msg query.MessageSummary) string {
 	return ""
 }
 
+// nil error return mirrors outputRemoteSearchResultsJSON so callers can
+// return either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputRemoteSearchResultsJSON sibling
 func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")

@@ -165,7 +165,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 						continue
 					}
 					threadID := newMsgThreads[newMsgIDs[i]]
-					insertedID, err := s.ingestMessage(ctx, source.ID, raw, threadID, labelMap)
+					insertedID, err := s.ingestMessage(source.ID, raw, threadID, labelMap)
 					if err != nil {
 						s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 						checkpoint.ErrorsCount++
@@ -281,7 +281,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, sourceID int64, messageI
 			if err != nil {
 				return false, err
 			}
-			insertedID, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
+			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
 				return false, err
 			}

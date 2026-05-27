@@ -18,15 +18,15 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 )
 
-// captureSlog installs a JSON handler over buf as the default
-// slog logger for the duration of a test. Returns a cleanup
-// closure that restores the previous default.
-func captureSlog(t *testing.T, level slog.Level) *bytes.Buffer {
+// captureSlog installs a JSON handler over buf as the default slog logger at
+// debug level for the duration of a test. Returns a cleanup closure that
+// restores the previous default.
+func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(
-		&buf, &slog.HandlerOptions{Level: level},
+		&buf, &slog.HandlerOptions{Level: slog.LevelDebug},
 	)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return &buf
@@ -51,7 +51,7 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	res, err := db.Exec(
@@ -62,7 +62,7 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	assert.Equal(int64(1), n, "rows_affected")
 
 	// Find the sql line in the captured output.
-	rec := findLogLine(t, buf, "sql")
+	rec := findLogLine(t, buf)
 	assert.Equal("exec", rec["kind"], "kind")
 	assert.Contains(rec["stmt"].(string), "INSERT INTO t", "stmt")
 	assert.Equal(float64(1), rec["rows_affected"].(float64), "rows_affected")
@@ -75,7 +75,7 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"exec", "INSERT INTO t VALUES (?)", []any{"v"},
 		nil, 100*time.Millisecond,
@@ -91,7 +91,7 @@ func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	_, err := db.ExecContext(
@@ -113,7 +113,7 @@ func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	_, err := db.Exec(
@@ -145,7 +145,7 @@ func TestLoggedRows_LogsAtClose(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
@@ -166,7 +166,7 @@ func TestLoggedRows_LogsAtClose(t *testing.T) {
 	require.NoError(rows.Err(), "rows.Err")
 	require.NoError(rows.Close(), "close")
 
-	rec := findLogLine(t, buf, "sql")
+	rec := findLogLine(t, buf)
 	assertpkg.Equal(t, "query", rec["kind"], "kind")
 }
 
@@ -177,7 +177,7 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	rows, err := db.Query("SELECT 1")
 	requirepkg.NoError(t, err, "query")
@@ -204,7 +204,7 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 // is returned.
 func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	_, err := db.Query("SELECT * FROM no_such_table")
@@ -226,7 +226,7 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
@@ -242,7 +242,7 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	}
 	// The log line must be emitted by the time Next returns
 	// false, before any deferred Close fires.
-	rec := findLogLine(t, buf, "sql")
+	rec := findLogLine(t, buf)
 	assert.Equal("query", rec["kind"], "kind")
 	durAtEndOfScan := rec["duration_ms"].(float64)
 
@@ -278,7 +278,7 @@ func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
@@ -295,7 +295,7 @@ func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
 	require.Nil(findLogLineByMsg(t, buf, "sql"),
 		"log line emitted before Close on early-exit path")
 	require.NoError(rows.Close(), "close")
-	rec := findLogLine(t, buf, "sql")
+	rec := findLogLine(t, buf)
 	assertpkg.Equal(t, "query", rec["kind"], "kind")
 }
 
@@ -307,7 +307,7 @@ func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
 func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
 	require := requirepkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
@@ -342,7 +342,7 @@ func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"query", "SELECT * FROM t WHERE id = ? AND src = ?",
 		[]any{int64(42), "gmail"},
@@ -371,14 +371,14 @@ func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"query", "SELECT * FROM t WHERE id = ?",
 		[]any{int64(42)},
 		nil, 1*time.Millisecond,
 	)
 
-	rec := findLogLine(t, buf, "sql")
+	rec := findLogLine(t, buf)
 	_, present := rec["args"]
 	assertpkg.False(t, present, "args should not be present on info/full-trace lines: %v", rec)
 	_, present = rec["args_shape"]
@@ -473,11 +473,12 @@ func TestNormalizeStmt_UTF8Safe(t *testing.T) {
 
 // ---- test helpers ----
 
-// findLogLine returns the first record whose msg matches exactly.
+// findLogLine returns the first record whose msg is exactly "sql".
 func findLogLine(
-	t *testing.T, buf *bytes.Buffer, msg string,
+	t *testing.T, buf *bytes.Buffer,
 ) map[string]any {
 	t.Helper()
+	const msg = "sql"
 	for _, rec := range decodeAll(t, buf) {
 		if rec["msg"] == msg {
 			return rec

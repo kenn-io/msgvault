@@ -78,7 +78,7 @@ func TestResizeRecalculatesDetailLineCount(t *testing.T) {
 	initialLineCount := model.detailLineCount
 
 	// Simulate window resize to narrower width (should wrap more)
-	m, _ := sendMsg(t, model, tea.WindowSizeMsg{Width: 40, Height: 20})
+	m := sendMsg(t, model, tea.WindowSizeMsg{Width: 40, Height: 20})
 
 	// Line count should be recalculated (narrower width = more wrapping = more lines)
 	if m.detailLineCount == initialLineCount && m.width != 80 {

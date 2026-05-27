@@ -22,9 +22,9 @@ func TestJSONHTMLConvergence_Simple(t *testing.T) {
 	assert := assertpkg.New(t)
 	jsonRoot := "testdata/json_simple"
 	htmlRoot := "testdata/html_simple"
-	jsonTh, err := ParseJSONThread(jsonRoot, threadDir(t, jsonRoot, "inbox", "alice_ABC123"))
+	jsonTh, err := ParseJSONThread(jsonRoot, threadDir(t, jsonRoot, "alice_ABC123"))
 	require.NoError(err, "json")
-	htmlTh, err := ParseHTMLThread(htmlRoot, threadDir(t, htmlRoot, "inbox", "alice_ABC123"))
+	htmlTh, err := ParseHTMLThread(htmlRoot, threadDir(t, htmlRoot, "alice_ABC123"))
 	require.NoError(err, "html")
 	require.Equal(len(htmlTh.Messages), len(jsonTh.Messages), "message count")
 	// Participants equal by slug.

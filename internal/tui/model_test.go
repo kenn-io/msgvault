@@ -78,7 +78,7 @@ func TestModel_Update_DataLoaded_TransitionsFromLoading(t *testing.T) {
 
 func TestModel_Update_DataLoaded_ResetsCursor(t *testing.T) {
 	model := NewBuilder().
-		WithRows(makeRows(10)...).
+		WithRows(makeRows()...).
 		WithLoading(true).
 		Build()
 	model.cursor = 5
@@ -95,14 +95,14 @@ func TestModel_Update_DataLoaded_ResetsCursor(t *testing.T) {
 
 func TestModel_Update_DataLoaded_PreservesPositionWhenRestoring(t *testing.T) {
 	model := NewBuilder().
-		WithRows(makeRows(10)...).
+		WithRows(makeRows()...).
 		WithLoading(true).
 		Build()
 	model.cursor = 5
 	model.scrollOffset = 3
 	model.restorePosition = true
 
-	newRows := makeRows(10)
+	newRows := makeRows()
 	msg := dataLoadedMsg{rows: newRows, requestID: model.aggregateRequestID}
 	updatedModel, _ := model.Update(msg)
 	m := updatedModel.(Model)

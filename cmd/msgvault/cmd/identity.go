@@ -163,6 +163,10 @@ func splitSignalSet(s string) []string {
 	return out
 }
 
+// nil error return mirrors writeIdentityJSON so callers can return either
+// uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning writeIdentityJSON sibling
 func writeIdentityTable(w io.Writer, rows []identityRow) error {
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintln(w, "No accounts in scope.")

@@ -477,8 +477,8 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 	lines2 := strings.Split(view2, "\n")
 	actualLines2 := countViewLines(view2)
 	t.Logf("Stage 2 (after resize, loading=true, no data): lines=%d, pageSize=%d", actualLines2, model.pageSize)
-	t.Logf("  First line: %q", truncateTestString(lines2[0], 60))
-	t.Logf("  Last line: %q", truncateTestString(lines2[actualLines2-1], 60))
+	t.Logf("  First line: %q", truncateTestString(lines2[0]))
+	t.Logf("  Last line: %q", truncateTestString(lines2[actualLines2-1]))
 
 	assert.Equal(terminalHeight, actualLines2, "Stage 2: loading, no data")
 
@@ -502,7 +502,7 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 	lines4 := strings.Split(view4, "\n")
 	actualLines4 := countViewLines(view4)
 	t.Logf("Stage 4 (data loaded): lines=%d", actualLines4)
-	t.Logf("  First line: %q", truncateTestString(lines4[0], 60))
+	t.Logf("  First line: %q", truncateTestString(lines4[0]))
 
 	assert.Equal(terminalHeight, actualLines4, "Stage 4: data loaded")
 
@@ -512,8 +512,9 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 	}
 }
 
-// truncateTestString truncates a string for test output display.
-func truncateTestString(s string, max int) string {
+// truncateTestString truncates a string to 60 characters for test output display.
+func truncateTestString(s string) string {
+	const max = 60
 	if len(s) <= max {
 		return s
 	}
@@ -550,7 +551,7 @@ func TestViewFitsTerminalHeightWithBadData(t *testing.T) {
 		// Log the problematic lines for debugging
 		for i, line := range lines {
 			if i >= terminalHeight {
-				t.Logf("  Extra line %d: %q", i, truncateTestString(line, 60))
+				t.Logf("  Extra line %d: %q", i, truncateTestString(line))
 			}
 		}
 	}
@@ -657,7 +658,7 @@ func TestHeaderLineFitsWidth(t *testing.T) {
 	// Check that no line exceeds terminal width
 	for i, line := range lines[:min(5, len(lines))] {
 		lineWidth := lipgloss.Width(line)
-		assertpkg.LessOrEqual(t, lineWidth, terminalWidth, "Line %d: %q", i, truncateTestString(line, 60))
+		assertpkg.LessOrEqual(t, lineWidth, terminalWidth, "Line %d: %q", i, truncateTestString(line))
 	}
 }
 

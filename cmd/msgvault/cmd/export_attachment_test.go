@@ -53,7 +53,7 @@ func TestExportAttachment_BinaryToFile(t *testing.T) {
 	exportAttachmentBase64 = false
 	defer func() { exportAttachmentOutput = "" }()
 
-	require.NoError(exportAttachmentBinary(storagePath, contentHash), "exportAttachmentBinary")
+	require.NoError(exportAttachmentBinary(storagePath), "exportAttachmentBinary")
 
 	got, err := os.ReadFile(outFile)
 	require.NoError(err, "read output")

@@ -120,6 +120,10 @@ func showLocalMessage(cmd *cobra.Command, idStr string) error {
 	return outputMessageText(msg)
 }
 
+// nil error return mirrors outputMessageJSON so callers can return either
+// uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning outputMessageJSON sibling
 func outputMessageText(msg *query.MessageDetail) error {
 	// Header section
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
@@ -255,6 +259,10 @@ func formatAddresses(addrs []query.Address) string {
 }
 
 // outputRemoteMessageText displays a message from the remote API.
+// nil error return mirrors outputRemoteMessageJSON so callers can return
+// either uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning outputRemoteMessageJSON sibling
 func outputRemoteMessageText(msg *store.APIMessage) error {
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 	fmt.Printf("Message ID: %d\n", msg.ID)
