@@ -123,7 +123,7 @@ func TestAddAccountIdentity_EmptySignalOnMissingRow(t *testing.T) {
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(rows, 1)
-	require.Equal("", rows[0].SourceSignal, "want one row with empty signal")
+	require.Empty(rows[0].SourceSignal, "want one row with empty signal")
 	assertpkg.False(t, rows[0].ConfirmedAt.IsZero(), "confirmed_at should be set even with empty signal")
 }
 

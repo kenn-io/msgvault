@@ -208,7 +208,7 @@ func TestCollectStats_ActiveError(t *testing.T) {
 
 	sv, err := CollectStats(context.Background(), b)
 	require.Error(err, "CollectStats err should wrap want")
-	assert.ErrorIs(err, wantErr)
+	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
 	assert.True(sv.Enabled, "backend is non-nil")
 	assert.Nil(sv.ActiveGeneration, "lookup failed")
@@ -224,7 +224,7 @@ func TestCollectStats_BuildingError(t *testing.T) {
 
 	sv, err := CollectStats(context.Background(), b)
 	require.Error(err, "CollectStats err should wrap want")
-	assert.ErrorIs(err, wantErr)
+	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
 	assert.True(sv.Enabled, "backend is non-nil")
 	assert.Nil(sv.BuildingGeneration, "lookup failed")
@@ -249,7 +249,7 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 
 	sv, err := CollectStats(context.Background(), b)
 	require.Error(err, "CollectStats err should wrap want")
-	assert.ErrorIs(err, wantErr)
+	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.Nil(sv.BuildingGeneration, "Stats failed")
 	assert.Equal(int64(0), sv.PendingEmbeddingsTotal)
@@ -275,7 +275,7 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 
 	sv, err := CollectStats(context.Background(), b)
 	require.Error(err, "CollectStats err should wrap want")
-	assert.ErrorIs(err, wantErr)
+	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.True(sv.Enabled, "backend is non-nil")
 	assert.Nil(sv.ActiveGeneration, "Stats failed")

@@ -183,7 +183,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		assert.NoError(err, "goroutine %d: EnsureParticipant", i)
+		requirepkg.NoError(t, err, "goroutine %d: EnsureParticipant", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
@@ -222,7 +222,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		assert.NoError(err, "goroutine %d: EnsureParticipantByPhone", i)
+		requirepkg.NoError(t, err, "goroutine %d: EnsureParticipantByPhone", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
@@ -262,7 +262,7 @@ func TestAddAccountIdentity_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		assert.NoError(err, "goroutine %d: AddAccountIdentity", i)
+		require.NoError(err, "goroutine %d: AddAccountIdentity", i)
 	}
 
 	identities, err := st.ListAccountIdentities(src.ID)
@@ -317,7 +317,7 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		assertpkg.NoError(t, err, "goroutine %d: UpsertAttachment", i)
+		requirepkg.NoError(t, err, "goroutine %d: UpsertAttachment", i)
 	}
 
 	var count int

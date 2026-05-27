@@ -254,7 +254,7 @@ func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
 // While we cannot instrument a counter without modifying production code,
 // the combination of these checks provides confidence that reuse works:
 // - If Search created per-call engines, ftsChecked on sharedEngine would stay false
-// - The pointer check ensures engine.sqliteEngine wasn't swapped
+// - The pointer check ensures engine.sqliteEngine wasn't swapped.
 func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -323,11 +323,11 @@ func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
 
 	// GetMessage should return error (no SQLite path configured)
 	_, err = engine.GetMessage(ctx, 1)
-	assert.Error(err, "expected error from GetMessage without SQLite")
+	requirepkg.Error(t, err, "expected error from GetMessage without SQLite")
 
 	// GetMessageBySourceID should return error
 	_, err = engine.GetMessageBySourceID(ctx, "msg1")
-	assert.Error(err, "expected error from GetMessageBySourceID without SQLite")
+	requirepkg.Error(t, err, "expected error from GetMessageBySourceID without SQLite")
 
 	// Search should return error
 	q := &search.Query{TextTerms: []string{"test"}}
@@ -609,7 +609,7 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	}
 
 	for _, r := range results {
-		assert.NotEqual("", r.Key, "unexpected empty key")
+		assert.NotEmpty(r.Key, "unexpected empty key")
 		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	requireAggregateRow(t, results, "empty@test.com")
@@ -2050,7 +2050,7 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 	}
 
 	for _, r := range results {
-		assert.NotEqual("", r.Key, "unexpected empty key")
+		assert.NotEmpty(r.Key, "unexpected empty key")
 		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	requireAggregateRow(t, results, "empty@test.com")
@@ -2530,7 +2530,7 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 		}
 
 		for _, r := range rows {
-			assertpkg.NotEqual(t, "", r.Key, "empty domain should be excluded from ViewDomains aggregate")
+			assertpkg.NotEmpty(t, r.Key, "empty domain should be excluded from ViewDomains aggregate")
 		}
 	})
 
@@ -2541,7 +2541,7 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 		requirepkg.NoError(t, err, "SubAggregate(ViewDomains)")
 
 		for _, r := range rows {
-			assertpkg.NotEqual(t, "", r.Key, "empty domain should be excluded from ViewDomains SubAggregate")
+			assertpkg.NotEmpty(t, r.Key, "empty domain should be excluded from ViewDomains SubAggregate")
 		}
 	})
 }
@@ -2863,7 +2863,7 @@ func TestSearchFastWithStats_CacheHitSkipsRescan(t *testing.T) {
 	// First call — cache miss, materializes temp table.
 	result1, err := engine.SearchFastWithStats(ctx, q, "Hello", filter, ViewSenders, 2, 0)
 	require.NoError(err, "first SearchFastWithStats")
-	require.Greater(result1.TotalCount, int64(0), "expected positive total count")
+	require.Positive(result1.TotalCount, "expected positive total count")
 	require.NotNil(result1.Stats, "expected stats on first call")
 
 	// Remember temp table seq before second call.

@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -64,9 +63,9 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	// Find the sql line in the captured output.
 	rec := findLogLine(t, buf)
 	assert.Equal("exec", rec["kind"], "kind")
-	assert.Contains(rec["stmt"].(string), "INSERT INTO t", "stmt")
-	assert.Equal(float64(1), rec["rows_affected"].(float64), "rows_affected")
-	assert.Equal(float64(1), rec["nargs"].(float64), "nargs")
+	assert.Contains(rec["stmt"], "INSERT INTO t", "stmt")
+	assert.InDelta(float64(1), rec["rows_affected"], 1e-9, "rows_affected")
+	assert.InDelta(float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
 func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
@@ -84,7 +83,7 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 	rec := findLogLineByMsg(t, buf, "sql slow")
 	requirepkg.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
 	assertpkg.Equal(t, "WARN", rec["level"], "level")
-	assertpkg.Equal(t, float64(100), rec["duration_ms"].(float64), "duration_ms")
+	assertpkg.InDelta(t, float64(100), rec["duration_ms"], 1e-9, "duration_ms")
 }
 
 func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
@@ -98,7 +97,6 @@ func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
 		context.Background(), "INSERT INTO no_such_table VALUES (1)",
 	)
 	require.Error(err, "expected exec error")
-	assert.True(errors.Is(err, err), "bad error shape")
 
 	rec := findLogLineByMsg(t, buf, "sql error")
 	require.NotNil(rec, "no sql error line; buf=%s", buf.String())
@@ -244,7 +242,8 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	// false, before any deferred Close fires.
 	rec := findLogLine(t, buf)
 	assert.Equal("query", rec["kind"], "kind")
-	durAtEndOfScan := rec["duration_ms"].(float64)
+	durAtEndOfScan, ok := rec["duration_ms"].(float64)
+	require.True(ok, "duration_ms is float64")
 
 	// Simulate caller doing unrelated work between end-of-scan
 	// and the deferred Close. The log line must not be re-emitted
@@ -257,14 +256,16 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 	for _, r := range decodeAll(t, buf) {
 		if r["msg"] == "sql" && r["kind"] == "query" {
 			count++
-			lastDuration = r["duration_ms"].(float64)
+			dur, ok := r["duration_ms"].(float64)
+			require.True(ok, "duration_ms is float64")
+			lastDuration = dur
 		}
 	}
 	assert.Equal(1, count, "query log lines")
 	// Duration recorded at end-of-scan must not include the 50ms
 	// of post-iteration work — give a generous ceiling so a slow
 	// CI host doesn't flake.
-	assert.Equal(durAtEndOfScan, lastDuration, "duration_ms changed after Close")
+	assert.InDelta(durAtEndOfScan, lastDuration, 0, "duration_ms changed after Close")
 	assert.Less(lastDuration, float64(40),
 		"duration_ms %v includes post-iteration sleep; finalizer should run at end-of-Next", lastDuration)
 }
@@ -383,7 +384,7 @@ func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
 	assertpkg.False(t, present, "args should not be present on info/full-trace lines: %v", rec)
 	_, present = rec["args_shape"]
 	assertpkg.False(t, present, "args_shape should not be present on info/full-trace lines: %v", rec)
-	assertpkg.Equal(t, float64(1), rec["nargs"].(float64), "nargs")
+	assertpkg.InDelta(t, float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
 // TestFormatArgsShape_RedactsValues ensures the shape formatter

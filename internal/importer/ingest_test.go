@@ -106,6 +106,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 		assert.True(utf8.ValidString(domain),
 			"invalid UTF-8 in domain: %q", domain)
 	}
+	require.NoError(rows.Err(), "participants rows")
 
 	// Verify conversation source_conversation_id is valid UTF-8
 	rows2, err := db.Query(
@@ -120,6 +121,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 		assert.True(utf8.ValidString(srcID),
 			"invalid UTF-8 in source_conversation_id: %q", srcID)
 	}
+	require.NoError(rows2.Err(), "conversations rows")
 }
 
 func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
@@ -176,7 +178,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 			"source-msg-linkage", rtype,
 		).Scan(&count)
 		require.NoError(err, "query recipients (%s)", rtype)
-		assert.Greater(count, 0, "expected at least 1 %s recipient", rtype)
+		assert.Positive(count, "expected at least 1 %s recipient", rtype)
 	}
 
 	// Verify display names are valid UTF-8 (sanitized).
@@ -192,4 +194,5 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		assert.True(utf8.ValidString(name),
 			"invalid UTF-8 in display_name: %q", name)
 	}
+	require.NoError(rows.Err(), "display_name rows")
 }

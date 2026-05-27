@@ -451,7 +451,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	output := getOutput()
 
 	require.Error(err, "expected error for malformed date")
-	assert.ErrorContains(err, "--after")
+	require.ErrorContains(err, "--after")
 	// No source should have been attempted — the date error
 	// must fire before source discovery, not after Gmail syncs.
 	assert.NotContains(output, "Starting full sync", "no sync should start when date flag is invalid")
@@ -521,7 +521,7 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 
 			err := root.Execute()
 			requirepkg.Error(t, err, "expected error for malformed date")
-			assertpkg.ErrorContains(t, err, tc.errStr, "error should mention %q", tc.errStr)
+			requirepkg.ErrorContains(t, err, tc.errStr, "error should mention %q", tc.errStr)
 			assertpkg.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
 		})
 	}

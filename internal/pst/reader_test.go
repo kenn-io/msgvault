@@ -105,7 +105,7 @@ func TestExtractMessages_SupportPST(t *testing.T) {
 	err = f.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
 		iter, err := folder.GetMessageIterator()
 		if err != nil {
-			return nil // ErrMessagesNotFound or empty folder
+			return nil //nolint:nilerr // ErrMessagesNotFound or empty folder is expected; skip the folder
 		}
 		for iter.Next() {
 			msg := iter.Value()
@@ -148,7 +148,7 @@ func TestExtractMessages_NonEmailsSkipped(t *testing.T) {
 	_ = f.WalkFolders(func(_ pstreader.FolderEntry, folder *pstlib.Folder) error {
 		iter, err := folder.GetMessageIterator()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // empty folder / no message iterator is expected; skip it
 		}
 		for iter.Next() {
 			total++
@@ -174,7 +174,7 @@ func TestReadAttachments_SupportPST(t *testing.T) {
 	_ = f.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
 		iter, err := folder.GetMessageIterator()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // empty folder / no message iterator is expected; skip it
 		}
 		for iter.Next() {
 			msg := iter.Value()
@@ -184,9 +184,7 @@ func TestReadAttachments_SupportPST(t *testing.T) {
 			}
 			found = true
 			atts, err := pstreader.ReadAttachments(msg, 0)
-			if !assertpkg.NoError(t, err, "ReadAttachments") {
-				return nil
-			}
+			requirepkg.NoError(t, err, "ReadAttachments")
 			if !assertpkg.Len(t, atts, 2) {
 				return nil
 			}
@@ -216,7 +214,7 @@ func TestBuildRFC5322_RoundTrip(t *testing.T) {
 		}
 		iter, err := folder.GetMessageIterator()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // empty folder / no message iterator is expected; skip it
 		}
 		for iter.Next() {
 			msg := iter.Value()
@@ -254,7 +252,7 @@ func TestBuildRFC5322_WithAttachments_RoundTrip(t *testing.T) {
 	_ = f.WalkFolders(func(entry pstreader.FolderEntry, folder *pstlib.Folder) error {
 		iter, err := folder.GetMessageIterator()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // empty folder / no message iterator is expected; skip it
 		}
 		for iter.Next() {
 			msg := iter.Value()

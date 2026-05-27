@@ -150,7 +150,7 @@ func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.SenderGroups, 1, "want one group with sentinel; got %v", f.SenderGroups)
 	require.Len(f.SenderGroups[0], 1)
-	assertpkg.Less(t, f.SenderGroups[0][0], int64(0), "want negative sentinel id")
+	assertpkg.Negative(t, f.SenderGroups[0][0], "want negative sentinel id")
 }
 
 // TestBuildFilter_NonexistentLabelReturnsSentinel: same as above but
@@ -166,7 +166,7 @@ func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.LabelGroups, 1, "want one group with sentinel; got %v", f.LabelGroups)
 	require.Len(f.LabelGroups[0], 1)
-	assertpkg.Less(t, f.LabelGroups[0][0], int64(0), "want negative sentinel id")
+	assertpkg.Negative(t, f.LabelGroups[0][0], "want negative sentinel id")
 }
 
 // TestBuildFilter_RepeatedSenderTokens_PerTokenGroups asserts that
@@ -207,7 +207,7 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 		require.Len(f.SenderGroups[0], 1)
 		assert.GreaterOrEqualf(f.SenderGroups[0][0], int64(0), "alice resolved")
 		require.Len(f.SenderGroups[1], 1)
-		assert.Lessf(f.SenderGroups[1][0], int64(0), "want sentinel (nobody resolves empty)")
+		assert.Negativef(f.SenderGroups[1][0], "want sentinel (nobody resolves empty)")
 	})
 
 	t.Run("substring tokens collect all matching participants per group", func(t *testing.T) {
@@ -270,7 +270,7 @@ func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testi
 	require.Len(f.ToGroups[0], 1)
 	assert.GreaterOrEqualf(f.ToGroups[0][0], int64(0), "alice resolved")
 	require.Len(f.ToGroups[1], 1)
-	assert.Lessf(f.ToGroups[1][0], int64(0), "want sentinel (nobody resolves empty)")
+	assert.Negativef(f.ToGroups[1][0], "want sentinel (nobody resolves empty)")
 }
 
 // TestBuildFilter_RepeatedLabelTokens_PerTokenGroups is the label-side
@@ -304,7 +304,7 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 		require.Len(f.LabelGroups[0], 1)
 		assert.GreaterOrEqualf(f.LabelGroups[0][0], int64(0), "Work resolved")
 		require.Len(f.LabelGroups[1], 1)
-		assert.Lessf(f.LabelGroups[1][0], int64(0), "want sentinel")
+		assert.Negativef(f.LabelGroups[1][0], "want sentinel")
 	})
 }
 

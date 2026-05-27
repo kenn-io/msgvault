@@ -27,9 +27,7 @@ type TestEnv struct {
 func newTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-*")
-	require.NoError(t, err, "create temp dir")
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	st, err := store.Open(dbPath)

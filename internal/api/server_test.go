@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// testLogger returns a logger for tests that discards output
+// testLogger returns a logger for tests that discards output.
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -129,7 +129,7 @@ func TestHealthEndpoint(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -149,7 +149,7 @@ func TestHealthEndpoint_HEAD(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("HEAD", "/health", nil)
+	req := httptest.NewRequest(http.MethodHead, "/health", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -181,10 +181,10 @@ func TestAuthMiddleware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 			if tt.authHeader != "" {
 				if tt.name == "x-api-key header" {
-					req.Header.Set("X-API-Key", tt.authHeader)
+					req.Header.Set("X-Api-Key", tt.authHeader)
 				} else {
 					req.Header.Set("Authorization", tt.authHeader)
 				}
@@ -209,7 +209,7 @@ func TestAuthMiddlewareNoKeyConfigured(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	// Should allow access without auth when no key is configured
-	req := httptest.NewRequest("GET", "/api/v1/accounts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -235,7 +235,7 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/api/v1/scheduler/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/status", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -258,7 +258,7 @@ func TestSchedulerStatusNotRunning(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/api/v1/scheduler/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/status", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -280,7 +280,7 @@ func TestListAccountsEndpoint(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/api/v1/accounts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -310,7 +310,7 @@ func TestNilStoreReturns503(t *testing.T) {
 
 	for _, path := range endpoints {
 		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest("GET", path, nil)
+			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
@@ -386,7 +386,7 @@ func TestCORSFromConfig(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	// Request from allowed origin
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -395,7 +395,7 @@ func TestCORSFromConfig(t *testing.T) {
 		"expected CORS header for allowed origin")
 
 	// Request from disallowed origin
-	req2 := httptest.NewRequest("GET", "/health", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req2.Header.Set("Origin", "http://evil.com")
 	w2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w2, req2)
@@ -411,7 +411,7 @@ func TestCORSDisabledByDefault(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)

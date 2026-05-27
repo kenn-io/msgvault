@@ -142,7 +142,7 @@ func TestExport_UploadSuccess(t *testing.T) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/auth/token/"):
 			gotPath = r.URL.Path
-			gotAPIKey = r.Header.Get("X-API-Key")
+			gotAPIKey = r.Header.Get("X-Api-Key")
 			gotBody, _ = io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
 		case r.URL.Path == "/api/v1/accounts":
@@ -168,7 +168,7 @@ func TestExport_UploadSuccess(t *testing.T) {
 	assert.Equal("my-key", gotAPIKey, "X-API-Key")
 
 	// Verify token body
-	assert.Equal(`{"token":"secret"}`, string(gotBody), "body")
+	assert.JSONEq(`{"token":"secret"}`, string(gotBody), "body")
 
 	// Verify result
 	assert.Equal(srv.URL, result.remoteURL, "result.remoteURL")
@@ -188,7 +188,7 @@ func TestExport_UploadFailure(t *testing.T) {
 	e := newTestExporter(srv, tokensDir)
 	_, err := e.export("user@gmail.com", srv.URL, "key", false)
 	requirepkg.Error(t, err, "export should fail on 500")
-	assertpkg.ErrorContains(t, err, "500")
+	requirepkg.ErrorContains(t, err, "500")
 	assertpkg.ErrorContains(t, err, "server error")
 }
 

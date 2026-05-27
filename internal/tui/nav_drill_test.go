@@ -2,7 +2,7 @@ package tui
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	assertpkg "github.com/stretchr/testify/assert"
@@ -31,7 +31,7 @@ func TestSubGroupingNavigation(t *testing.T) {
 
 	// Press Enter to drill into first sender - should go to message list (not sub-aggregate)
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
 	assert.True(m.hasDrillFilter(), "expected drillFilter to be set")
@@ -45,7 +45,7 @@ func TestSubGroupingNavigation(t *testing.T) {
 	// Test Tab from message list goes to sub-aggregate view
 	m.messages = msgs // Simulate messages loaded
 	newModel, cmd = m.handleMessageListKeys(keyTab())
-	m = newModel.(Model)
+	m = asModel(t, newModel)
 
 	assertLevel(t, m, levelDrillDown)
 	// Default sub-group after drilling from Senders should be Recipients (skips redundant SenderNames)
@@ -55,7 +55,7 @@ func TestSubGroupingNavigation(t *testing.T) {
 	// Test Tab in sub-aggregate cycles views (skipping drill view type)
 	m.rows = rows // Simulate data loaded
 	newModel, cmd = m.handleAggregateKeys(keyTab())
-	m = newModel.(Model)
+	m = asModel(t, newModel)
 
 	// From ViewRecipients, Tab cycles to ViewRecipientNames
 	assert.Equal(query.ViewRecipientNames, m.viewType, "after Tab")
@@ -92,7 +92,7 @@ func TestSubAggregateDrillDown(t *testing.T) {
 
 	// Press Enter on recipient - should go to message list with combined filter
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
 	// Drill filter should now include both sender and recipient
@@ -148,7 +148,7 @@ func TestStatsUpdateOnDrillDown(t *testing.T) {
 
 	// Press Enter to drill down into alice's messages
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Verify we transitioned to message list
 	assertLevel(t, m, levelMessageList)
@@ -188,7 +188,7 @@ func TestContextStatsSetOnDrillDown(t *testing.T) {
 
 	// Press Enter to drill down into alice's messages
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Verify contextStats is set from selected row
 	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
@@ -211,7 +211,7 @@ func TestContextStatsClearedOnGoBack(t *testing.T) {
 
 	// Go back
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	// contextStats should be cleared
 	assertpkg.Nil(t, m2.contextStats, "expected contextStats=nil after going back to aggregates")
@@ -263,7 +263,7 @@ func TestContextStatsRestoredOnGoBackToSubAggregate(t *testing.T) {
 
 	// Step 4: Go back to sub-aggregate (contextStats should be restored to alice's stats)
 	newModel4, _ := m3.goBack()
-	m4 := newModel4.(Model)
+	m4 := asModel(t, newModel4)
 	assertLevel(t, m4, levelDrillDown)
 	// contextStats should be restored from breadcrumb
 	if assert.NotNil(m4.contextStats, "expected contextStats to be restored after goBack") {
@@ -295,7 +295,7 @@ func TestViewTypeRestoredAfterEscFromSubAggregate(t *testing.T) {
 
 	// Press Esc to go back to message list
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelMessageList)
 	// viewType should be restored to ViewSenders
@@ -323,7 +323,7 @@ func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
 
 	// Go back to aggregates - with caching, this restores instantly without reload
 	newModel2, cmd := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	// With caching, no reload command is returned
 	assert.Nil(cmd, "expected nil command when restoring from cache")
@@ -342,7 +342,7 @@ func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
 // TestGoBackClearsError verifies that goBack clears any stale error.
 func TestGoBackClearsError(t *testing.T) {
 	model := NewBuilder().WithLevel(levelMessageList).Build()
-	model.err = fmt.Errorf("some previous error")
+	model.err = errors.New("some previous error")
 	model.breadcrumbs = []navigationSnapshot{{state: viewState{
 		level:    levelAggregates,
 		viewType: query.ViewSenders,
@@ -350,7 +350,7 @@ func TestGoBackClearsError(t *testing.T) {
 
 	// Go back
 	newModel, _ := model.goBack()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Error should be cleared
 	assertpkg.NoError(t, m.err, "expected err=nil after goBack")
@@ -387,7 +387,7 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 
 	// Press Esc to go back to message list
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelMessageList)
 
@@ -499,7 +499,7 @@ func TestSubAggregateAKeyJumpsToMessages(t *testing.T) {
 
 	// Press 'a' to jump to all messages (with drill filter)
 	newModel, cmd := model.handleAggregateKeys(key('a'))
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Should navigate to message list
 	assertLevel(t, m, levelMessageList)

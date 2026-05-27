@@ -61,6 +61,7 @@ func TestImportDYI_JSONSimple(t *testing.T) {
 		_ = rows.Scan(&s)
 		types = append(types, s)
 	}
+	requirepkg.NoError(t, rows.Err(), "message_type rows")
 	assert.Equal([]string{"fbmessenger"}, types)
 }
 
@@ -144,6 +145,7 @@ func TestImportDYI_MultifileNumericSort(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
+	require.NoError(rows.Err(), "message rows")
 	require.Len(ids, 4)
 	// All source_message_id values must be prefixed dave_MULTI__ and
 	// have monotonic index suffixes.
@@ -330,7 +332,7 @@ func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
 	// secret bytes, so even a future copy regression would be caught.
 	_ = filepath.Walk(attachmentsDir, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
-			return nil
+			return nil //nolint:nilerr // skip unreadable entries and dirs; the walk is best-effort
 		}
 		data, _ := os.ReadFile(p)
 		assert.NotContains(string(data), "hunter2", "symlink target leaked into attachments store at %s", p)
@@ -404,9 +406,7 @@ func TestImportDYI_NonTextMessageBodies(t *testing.T) {
 			SELECT b.body_text FROM message_bodies b
 			JOIN messages m ON m.id = b.message_id
 			WHERE m.source_message_id = ?`), id).Scan(&body)
-		if !assertpkg.NoError(t, err, "%s", id) {
-			continue
-		}
+		requirepkg.NoError(t, err, "%s", id)
 		assertpkg.Equal(t, wantBody, body, "%s body", id)
 	}
 }
@@ -884,7 +884,8 @@ func TestImportDYI_ReimportPicksUpNewMessages(t *testing.T) {
 	require.NoError(err)
 	var thread map[string]any
 	require.NoError(json.Unmarshal(raw, &thread))
-	msgs := thread["messages"].([]any)
+	msgs, ok := thread["messages"].([]any)
+	require.True(ok, "messages is []any")
 	newMsg := map[string]any{
 		"sender_name":  "Alice Example",
 		"timestamp_ms": float64(1600000200000),
@@ -1186,7 +1187,9 @@ func TestImportDYI_ReimportRepairsConversationParticipant(t *testing.T) {
 	// Re-import with sender_name stripped so the current run can't
 	// synthesize the orphan — rehydration is the only path that can
 	// recover the participant link.
-	fixture["messages"].([]map[string]any)[0]["sender_name"] = ""
+	fixtureMsgs, ok := fixture["messages"].([]map[string]any)
+	require.True(ok, "messages is []map[string]any")
+	fixtureMsgs[0]["sender_name"] = ""
 	data, err = json.Marshal(fixture)
 	require.NoError(err)
 	writeFixture()

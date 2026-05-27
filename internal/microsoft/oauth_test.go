@@ -162,9 +162,11 @@ func TestSanitizeEmail_NoPathTraversal(t *testing.T) {
 
 // makeIDToken builds a minimal unsigned JWT with the given claims.
 // Used in tests with verifyIDTokenFn to bypass OIDC signature validation.
-func makeIDToken(claims map[string]any) string {
+func makeIDToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	payload, _ := json.Marshal(claims)
+	payload, err := json.Marshal(claims)
+	requirepkg.NoError(t, err, "marshal claims")
 	body := base64.RawURLEncoding.EncodeToString(payload)
 	return header + "." + body + ".fake-sig"
 }
@@ -200,7 +202,7 @@ func splitJWT(s string) []string {
 	var parts []string
 	for {
 		idx := -1
-		for i := 0; i < len(s); i++ {
+		for i := range len(s) {
 			if s[i] == '.' {
 				idx = i
 				break
@@ -217,7 +219,7 @@ func splitJWT(s string) []string {
 }
 
 func TestPeekTIDFromJWT(t *testing.T) {
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"email":              "user@example.com",
 		"preferred_username": "user@tenant.onmicrosoft.com",
 		"tid":                "some-tenant-id",
@@ -240,7 +242,7 @@ func TestResolveTokenEmail_Match(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"email": "user@example.com", "tid": "org-tid"})
+	idToken := makeIDToken(t, map[string]any{"email": "user@example.com", "tid": "org-tid"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
@@ -257,13 +259,14 @@ func TestResolveTokenEmail_Mismatch(t *testing.T) {
 		tokensDir:       t.TempDir(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"email": "other@example.com"})
+	idToken := makeIDToken(t, map[string]any{"email": "other@example.com"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
 	_, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "test-nonce")
 	requirepkg.Error(t, err, "expected error for mismatch")
-	_, ok := err.(*TokenMismatchError)
+	tokenMismatchError := &TokenMismatchError{}
+	ok := errors.As(err, &tokenMismatchError)
 	assertpkg.True(t, ok, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
@@ -276,7 +279,7 @@ func TestResolveTokenEmail_FallbackToUPN(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"preferred_username": "user@example.com"})
+	idToken := makeIDToken(t, map[string]any{"preferred_username": "user@example.com"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
@@ -296,7 +299,7 @@ func TestResolveTokenEmail_UPNDiffersFromExpected(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"preferred_username": "john.doe@company.onmicrosoft.com",
 		"tid":                "org-tenant-id",
 	})
@@ -318,7 +321,7 @@ func TestResolveTokenEmail_EmailClaimMismatchStillErrors(t *testing.T) {
 		tokensDir:       t.TempDir(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"email":              "wrong@other.com",
 		"preferred_username": "john@company.com",
 	})
@@ -327,7 +330,8 @@ func TestResolveTokenEmail_EmailClaimMismatchStillErrors(t *testing.T) {
 
 	_, _, err := m.resolveTokenEmail(t.Context(), "john@company.com", token, "test-nonce")
 	requirepkg.Error(t, err, "expected TokenMismatchError when email claim is wrong")
-	_, ok := err.(*TokenMismatchError)
+	tokenMismatchError := &TokenMismatchError{}
+	ok := errors.As(err, &tokenMismatchError)
 	assertpkg.True(t, ok, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
@@ -350,7 +354,7 @@ func TestAuthorize_ScopeCorrection(t *testing.T) {
 
 	m.browserFlowFn = func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
 		callCount++
-		idToken := makeIDToken(map[string]any{
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@custom-domain.com",
 			"tid":   consumerTID,
 		})
@@ -402,7 +406,7 @@ func TestAuthorize_NoScopeCorrection(t *testing.T) {
 		callCount++
 		// Should already have personal scope.
 		assert.Equal(ScopeIMAPPersonal, scopes[0], "initial scope")
-		idToken := makeIDToken(map[string]any{
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@outlook.com",
 			"tid":   consumerTID,
 		})
@@ -436,7 +440,7 @@ func TestAuthorize_PersistsTenantID(t *testing.T) {
 	}
 
 	m.browserFlowFn = func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
-		idToken := makeIDToken(map[string]any{
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@company.com",
 			"tid":   "org-tenant-123",
 		})
@@ -706,7 +710,7 @@ func TestAuthorize_ScopeCorrectionMismatchOnReauth(t *testing.T) {
 		} else {
 			claimsEmail = "someone-else@other.com" // second flow authenticates wrong account
 		}
-		idToken := makeIDToken(map[string]any{"email": claimsEmail, "tid": MicrosoftConsumerTenantID})
+		idToken := makeIDToken(t, map[string]any{"email": claimsEmail, "tid": MicrosoftConsumerTenantID})
 		tok := (&oauth2.Token{AccessToken: "tok", TokenType: "Bearer"}).
 			WithExtra(map[string]any{"id_token": idToken})
 		return tok, "nonce", nil
@@ -714,7 +718,7 @@ func TestAuthorize_ScopeCorrectionMismatchOnReauth(t *testing.T) {
 	err := m.Authorize(t.Context(), "user@custom-domain.com")
 	requirepkg.Error(t, err, "expected error when re-auth produces wrong email")
 	var mismatch *TokenMismatchError
-	assertpkg.True(t, errors.As(err, &mismatch), "expected *TokenMismatchError, got %T: %v", err, err)
+	assertpkg.ErrorAs(t, err, &mismatch, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
 // --- resolveTokenEmail edge cases ---
@@ -740,7 +744,7 @@ func TestResolveTokenEmail_NeitherEmailNorUPN(t *testing.T) {
 		verifyIDTokenFn: testVerifyFn,
 	}
 	// ID token has only tid — no email or preferred_username.
-	idToken := makeIDToken(map[string]any{"tid": "some-tenant"})
+	idToken := makeIDToken(t, map[string]any{"tid": "some-tenant"})
 	token := (&oauth2.Token{AccessToken: "test", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 	_, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "nonce")
@@ -906,7 +910,7 @@ func TestPeekTIDFromJWT_InvalidBase64Payload(t *testing.T) {
 
 func TestPeekTIDFromJWT_MissingTIDClaim(t *testing.T) {
 	// Valid JWT but payload has no "tid" field.
-	idToken := makeIDToken(map[string]any{"email": "user@example.com"})
+	idToken := makeIDToken(t, map[string]any{"email": "user@example.com"})
 	_, err := peekTIDFromJWT(idToken)
 	requirepkg.Error(t, err, "expected error for JWT without tid claim")
 	assertpkg.ErrorContains(t, err, "no tid claim")

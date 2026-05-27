@@ -14,6 +14,7 @@ import (
 // testEnv encapsulates the DB, Engine, and Context setup for tests.
 type testEnv struct {
 	*dbtest.TestDB
+
 	Engine *SQLiteEngine
 	Ctx    context.Context
 }

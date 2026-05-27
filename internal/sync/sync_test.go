@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -242,7 +243,7 @@ func TestFullSyncEmptyInbox(t *testing.T) {
 
 func TestFullSyncProfileError(t *testing.T) {
 	env := newTestEnv(t)
-	env.Mock.ProfileError = fmt.Errorf("auth failed")
+	env.Mock.ProfileError = errors.New("auth failed")
 
 	_, err := env.Syncer.Full(env.Context, testEmail)
 	assertpkg.Error(t, err, "expected error when profile fails")
@@ -400,7 +401,7 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 func TestIncrementalSyncProfileError(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12345")
-	env.Mock.ProfileError = fmt.Errorf("auth failed")
+	env.Mock.ProfileError = errors.New("auth failed")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
 	assertpkg.Error(t, err, "expected error when profile fails")
@@ -576,6 +577,7 @@ func TestFullSync_MessageVariations(t *testing.T) {
 			name: "DuplicateRecipients",
 			mime: testMIMEDuplicateRecipients,
 			check: func(t *testing.T, env *TestEnv) {
+				t.Helper()
 				assertRecipientCount(t, env.Store, "msg", "to", 2)
 				assertRecipientCount(t, env.Store, "msg", "cc", 1)
 				assertRecipientCount(t, env.Store, "msg", "bcc", 1)
@@ -819,7 +821,7 @@ func TestIncrementalSyncLabelsError(t *testing.T) {
 
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12350
-	env.Mock.LabelsError = fmt.Errorf("labels API error")
+	env.Mock.LabelsError = errors.New("labels API error")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
 	assertpkg.Error(t, err, "expected error when labels sync fails")

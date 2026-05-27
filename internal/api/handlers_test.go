@@ -85,7 +85,7 @@ func TestHandleStats(t *testing.T) {
 	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -116,7 +116,7 @@ func TestHandleListMessages(t *testing.T) {
 	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -131,11 +131,13 @@ func TestHandleListMessages(t *testing.T) {
 	assert.NotEmpty(messages, "expected at least 1 message")
 
 	// Check first message structure
-	msg := messages[0].(map[string]any)
+	msg, ok := messages[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
 	assert.Equal("Test Subject", msg["subject"], "subject")
 
 	// Verify RFC3339 time format
-	sentAt := msg["sent_at"].(string)
+	sentAt, ok := msg["sent_at"].(string)
+	require.True(ok, "sent_at is string")
 	_, err := time.Parse(time.RFC3339, sentAt)
 	assert.NoError(err, "sent_at %q is not RFC3339", sentAt)
 }
@@ -144,7 +146,7 @@ func TestHandleListMessagesPagination(t *testing.T) {
 	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages?page=1&page_size=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?page=1&page_size=10", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -154,15 +156,15 @@ func TestHandleListMessagesPagination(t *testing.T) {
 	var resp map[string]any
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	assert.Equal(float64(1), resp["page"], "page")
-	assert.Equal(float64(10), resp["page_size"], "page_size")
+	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
+	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
 }
 
 func TestHandleGetMessage(t *testing.T) {
 	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -180,7 +182,7 @@ func TestHandleGetMessage(t *testing.T) {
 func TestHandleGetMessageNotFound(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/99999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/99999", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -191,7 +193,7 @@ func TestHandleGetMessageNotFound(t *testing.T) {
 func TestHandleGetMessageInvalidID(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -218,7 +220,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -252,7 +254,7 @@ func TestHandleGetMessage_EngineDeletedAt(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -267,7 +269,7 @@ func TestHandleGetMessage_EngineDeletedAt(t *testing.T) {
 func TestHandleSearchMissingQuery(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -278,7 +280,7 @@ func TestHandleSearchMissingQuery(t *testing.T) {
 func TestHandleSearch(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=Test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=Test", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -304,7 +306,7 @@ func TestHandleTriggerSync(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/test@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/test@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -320,7 +322,7 @@ func TestHandleTriggerSyncNotFound(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/unknown@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/unknown@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -341,7 +343,7 @@ func TestHandleTriggerSyncConflict(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/test@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/test@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -353,7 +355,7 @@ func TestErrorResponseShape(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
 	// Test with invalid ID to get a 400 error
-	req := httptest.NewRequest("GET", "/api/v1/messages/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -386,7 +388,7 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, store, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -395,8 +397,10 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages := resp["messages"].([]any)
-	msg := messages[0].(map[string]any)
+	messages, ok := resp["messages"].([]any)
+	require.True(ok, "messages is []any")
+	msg, ok := messages[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
 
 	// "to" should be an empty array, not null
 	to, ok := msg["to"].([]any)
@@ -415,7 +419,7 @@ func TestMessageSummaryCcBccInResponse(t *testing.T) {
 	ms.messages[0].Cc = []string{"cc1@example.com", "cc2@example.com"}
 	ms.messages[0].Bcc = []string{"bcc@example.com"}
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -424,13 +428,18 @@ func TestMessageSummaryCcBccInResponse(t *testing.T) {
 	var resp map[string]any
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	msg := resp["messages"].([]any)[0].(map[string]any)
+	msgs, ok := resp["messages"].([]any)
+	require.True(ok, "messages is []any")
+	msg, ok := msgs[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
 
 	ccRaw, ok := msg["cc"].([]any)
 	require.True(ok, "expected 'cc' array, got %T", msg["cc"])
 	var gotCc []string
 	for _, v := range ccRaw {
-		gotCc = append(gotCc, v.(string))
+		s, ok := v.(string)
+		require.True(ok, "cc element is string, got %T", v)
+		gotCc = append(gotCc, s)
 	}
 	slices.Sort(gotCc)
 	wantCc := []string{"cc1@example.com", "cc2@example.com"}
@@ -447,7 +456,7 @@ func TestMessageSummaryCcBccOmittedWhenEmpty(t *testing.T) {
 	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -472,7 +481,7 @@ func TestGetMessageCcBccInResponse(t *testing.T) {
 	ms.messages[0].Cc = []string{"cc@example.com"}
 	ms.messages[0].Bcc = []string{"bcc@example.com"}
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -489,9 +498,7 @@ func TestGetMessageCcBccInResponse(t *testing.T) {
 
 func TestHandleUploadToken(t *testing.T) {
 	// Create temp directory for tokens
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	requirepkg.NoError(t, err, "failed to create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -507,7 +514,7 @@ func TestHandleUploadToken(t *testing.T) {
 		"expiry": "2024-12-31T23:59:59Z"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -523,9 +530,7 @@ func TestHandleUploadToken(t *testing.T) {
 
 func TestHandleUploadToken_PreservesClientID(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	require.NoError(err, "failed to create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -541,7 +546,7 @@ func TestHandleUploadToken_PreservesClientID(t *testing.T) {
 		"client_id": "myapp.apps.googleusercontent.com"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -564,9 +569,7 @@ func TestHandleUploadToken_PreservesClientID(t *testing.T) {
 func TestHandleUploadTokenInvalidJSON(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	require.NoError(err, "failed to create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -575,7 +578,7 @@ func TestHandleUploadTokenInvalidJSON(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader("not valid json"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader("not valid json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -591,9 +594,7 @@ func TestHandleUploadTokenInvalidJSON(t *testing.T) {
 func TestHandleUploadTokenMissingRefreshToken(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	require.NoError(err, "failed to create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -608,7 +609,7 @@ func TestHandleUploadTokenMissingRefreshToken(t *testing.T) {
 		"token_type": "Bearer"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -641,7 +642,7 @@ func TestHandleUploadTokenInvalidEmail(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/v1/auth/token/"+tc.email, strings.NewReader(tokenJSON))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/"+tc.email, strings.NewReader(tokenJSON))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -660,7 +661,7 @@ func TestHandleUploadTokenMissingEmail(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	// Request without email in path - should 404 since route doesn't match
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/", strings.NewReader("{}"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/", strings.NewReader("{}"))
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -672,9 +673,7 @@ func TestHandleUploadTokenMissingEmail(t *testing.T) {
 func TestHandleAddAccount(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-config-*")
-	require.NoError(err, "failed to create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server:  config.ServerConfig{APIPort: 8080},
@@ -684,7 +683,7 @@ func TestHandleAddAccount(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "new@gmail.com", "schedule": "0 3 * * *"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -712,7 +711,7 @@ func TestHandleAddAccountDuplicate(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "existing@gmail.com"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -733,7 +732,7 @@ func TestHandleAddAccountInvalidCron(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "new@gmail.com", "schedule": "not a cron"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -765,7 +764,7 @@ func TestHandleAddAccountInvalidEmail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(tt.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -788,7 +787,7 @@ func TestHandleAddAccountSaveFailure(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "fail@gmail.com", "schedule": "0 2 * * *"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -892,7 +891,7 @@ func TestHandleAggregates(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=senders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -921,7 +920,7 @@ func TestHandleAggregatesNoEngine(t *testing.T) {
 		Logger:    testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=senders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -933,7 +932,7 @@ func TestHandleAggregatesInvalidViewType(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -951,7 +950,7 @@ func TestHandleSubAggregates(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates/sub?view_type=labels&sender=alice@example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates/sub?view_type=labels&sender=alice@example.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -986,7 +985,7 @@ func TestHandleFilteredMessages(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?sender=alice@example.com&message_type=sms&limit=100", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?sender=alice@example.com&message_type=sms&limit=100", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1021,7 +1020,7 @@ func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?limit=100", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?limit=100", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1059,7 +1058,7 @@ func TestHandleFilteredMessagesFormatsPhoneBackedSMSParticipants(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?message_type=sms&limit=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?message_type=sms&limit=1", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1096,7 +1095,7 @@ func TestHandleFilteredMessagesFallsBackToContactNameWhenAddressMissing(t *testi
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?message_type=sms&limit=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?message_type=sms&limit=1", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1127,7 +1126,7 @@ func TestHandleTotalStats(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/stats/total", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats/total", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1159,7 +1158,7 @@ func TestHandleFastSearch(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast?q=invoice", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=invoice", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1177,7 +1176,7 @@ func TestHandleFastSearchMissingQuery(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1189,7 +1188,7 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast?q=test&view_type=invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=test&view_type=invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1216,7 +1215,7 @@ func TestSearchRejectsMessageTypeFilter(t *testing.T) {
 			engine := &querytest.MockEngine{}
 			srv := newTestServerWithEngine(t, engine)
 
-			req := httptest.NewRequest("GET", path, nil)
+			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(w, req)
@@ -1242,7 +1241,7 @@ func TestHandleDeepSearch(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/deep?q=agenda", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=agenda", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1259,7 +1258,7 @@ func TestHandleDeepSearchMissingQuery(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/deep", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1270,6 +1269,7 @@ func TestHandleDeepSearchMissingQuery(t *testing.T) {
 // mockSQLQueryEngine wraps MockEngine and adds SQLQuerier support.
 type mockSQLQueryEngine struct {
 	querytest.MockEngine
+
 	queryResult *query.QueryResult
 	queryErr    error
 }
@@ -1299,7 +1299,7 @@ func TestHandleQuery(t *testing.T) {
 	})
 
 	body := `{"sql": "SELECT from_email FROM v_senders LIMIT 1"}`
-	req := httptest.NewRequest("POST", "/api/v1/query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -1321,7 +1321,7 @@ func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
 	// mode=fts (or unset) should still return the legacy SearchResult shape.
-	req := httptest.NewRequest("GET", "/api/v1/search?q=Test&mode=fts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=Test&mode=fts", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1340,7 +1340,7 @@ func TestHandleSearch_HybridModeNotConfigured(t *testing.T) {
 	// the server must return 503 for any vector/hybrid query.
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1385,7 +1385,7 @@ func TestHandleSearch_HybridErrIndexBuilding(t *testing.T) {
 	backend := &fakeVectorBackend{building: building}
 	srv := newHybridServerForErrorTest(t, backend)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=anything&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=anything&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1403,7 +1403,7 @@ func TestHandleSearch_HybridErrNotEnabled(t *testing.T) {
 	backend := &fakeVectorBackend{} // no active, no building
 	srv := newHybridServerForErrorTest(t, backend)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=anything&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=anything&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1476,7 +1476,7 @@ func TestHandleSearch_HybridEmbeddingTimeoutFiresChi(t *testing.T) {
 		RequestTimeout: 100 * time.Millisecond,
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=meeting&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1513,7 +1513,7 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET",
+	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/search?q=from:alice@example.com&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -1568,7 +1568,7 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=quarterly&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=quarterly&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1639,7 +1639,7 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1680,7 +1680,7 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=hello&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1706,7 +1706,7 @@ func mapKeys(m map[string]any) []string {
 func TestHandleSearch_HybridModePaginationUnsupported(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=vector&page=2", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=vector&page=2", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1721,7 +1721,7 @@ func TestHandleSearch_HybridModePaginationUnsupported(t *testing.T) {
 func TestHandleSearch_UnknownMode(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=bogus", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=bogus", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1746,7 +1746,7 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 	})
 
 	body := `{"sql": "SELECT 1"}`
-	req := httptest.NewRequest("POST", "/api/v1/query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -1814,7 +1814,7 @@ func TestHandleStats_VectorDisabled(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 	// newTestServerWithMockStore uses NewServer (no Backend), so backend == nil.
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1861,7 +1861,7 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 		Logger:    testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
@@ -1875,15 +1875,15 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 	require.True(ok, "expected 'vector_search' object, got %T: %v", resp["vector_search"], resp["vector_search"])
 
 	assert.Equal(true, vs["enabled"], "enabled")
-	assert.Equal(float64(7), vs["pending_embeddings_total"], "pending_embeddings_total")
+	assert.InDelta(float64(7), vs["pending_embeddings_total"], 1e-9, "pending_embeddings_total")
 
 	active, ok := vs["active_generation"].(map[string]any)
 	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
 
-	assert.Equal(float64(100), active["message_count"], "message_count")
+	assert.InDelta(float64(100), active["message_count"], 1e-9, "message_count")
 	assert.Equal("nomic-embed", active["model"], "model")
-	assert.Equal(float64(5), active["id"], "id")
-	assert.Equal(float64(768), active["dimension"], "dimension")
+	assert.InDelta(float64(5), active["id"], 1e-9, "id")
+	assert.InDelta(float64(768), active["dimension"], 1e-9, "dimension")
 	assert.Equal("nomic-embed:768", active["fingerprint"], "fingerprint")
 	assert.Equal("active", active["state"], "state")
 
@@ -1937,7 +1937,7 @@ func TestHandleMessageInline_ImagePNG(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1962,7 +1962,7 @@ func TestHandleMessageInline_NonInlineSkipped(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1977,7 +1977,7 @@ func TestHandleMessageInline_RejectsXHTML(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "evil@nasty"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "evil@nasty"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -1992,7 +1992,7 @@ func TestHandleMessageInline_RejectsSVG(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "vuln@svg"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "vuln@svg"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2007,7 +2007,7 @@ func TestHandleMessageInline_CIDNotFound(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "nonexistent@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "nonexistent@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2017,7 +2017,7 @@ func TestHandleMessageInline_CIDNotFound(t *testing.T) {
 func TestHandleMessageInline_NoEngine(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "any@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "any@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2030,7 +2030,7 @@ func TestHandleMessageInline_MessageNotFound(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(999, "any@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(999, "any@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2049,7 +2049,7 @@ func TestHandleMessageInline_CIDWithSlash(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, cid), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, cid), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2065,7 +2065,7 @@ func TestHandleMessageInline_MissingCID(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1/inline", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1/inline", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
@@ -2092,7 +2092,7 @@ func TestHandleMessageInline_UnsupportedEngine(t *testing.T) {
 			}
 			srv := newTestServerWithEngine(t, engine)
 
-			req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+			req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
@@ -2113,7 +2113,7 @@ func TestHandleGetMessage_EngineUnsupportedFallsBackToStore(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 

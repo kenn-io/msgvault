@@ -242,7 +242,7 @@ func TestApplyDefaults_OverridesZeroValues(t *testing.T) {
 	assert.Equal(32768, c.Embeddings.MaxInputChars)
 	assert.Equal(60, c.Search.RRFK)
 	assert.Equal(100, c.Search.KPerSignal)
-	assert.Equal(2.0, c.Search.SubjectBoost)
+	assert.InDelta(2.0, c.Search.SubjectBoost, 1e-9)
 	if assert.NotNil(c.Search.MaxPageSizeHybrid, "Search.MaxPageSizeHybrid should be set") {
 		assert.Equal(50, *c.Search.MaxPageSizeHybrid)
 	}

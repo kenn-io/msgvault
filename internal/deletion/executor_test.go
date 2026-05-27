@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-// trackingProgress records progress events for testing
+// trackingProgress records progress events for testing.
 type trackingProgress struct {
 	mu             sync.Mutex
 	startTotal     int
@@ -162,7 +162,7 @@ func (c *TestContext) AssertManifestExecution(id string, wantSucc, wantFail int,
 	assertpkg.Equal(c.t, wantSucc, m.Execution.Succeeded, "Persisted Succeeded")
 	assertpkg.Equal(c.t, wantFail, m.Execution.Failed, "Persisted Failed")
 	if len(m.Execution.FailedIDs) != len(wantFailedIDs) {
-		assertpkg.Equal(c.t, len(wantFailedIDs), len(m.Execution.FailedIDs), "FailedIDs count")
+		assertpkg.Len(c.t, m.Execution.FailedIDs, len(wantFailedIDs), "FailedIDs count")
 	} else {
 		for i, id := range wantFailedIDs {
 			assertpkg.Equal(c.t, id, m.Execution.FailedIDs[i], "FailedIDs[%d]", i)
@@ -242,14 +242,14 @@ func trashOpts(batchSize int) *ExecuteOptions {
 
 // SimulateScopeError injects an insufficient scope error for a specific message ID.
 func (c *TestContext) SimulateScopeError(msgID string) {
-	scopeErr := fmt.Errorf("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+	scopeErr := errors.New("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
 	c.MockAPI.TrashErrors[msgID] = scopeErr
 	c.MockAPI.DeleteErrors[msgID] = scopeErr
 }
 
 // SimulateBatchScopeError sets the batch delete operation to fail with a scope error.
 func (c *TestContext) SimulateBatchScopeError() {
-	c.MockAPI.BatchDeleteError = fmt.Errorf("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+	c.MockAPI.BatchDeleteError = errors.New("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
 }
 
 // AssertInProgressCount verifies the number of in-progress manifests.
@@ -338,6 +338,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			ids:      msgIDs(3),
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertTrashCalls(3)
 				ctx.AssertCompleted()
 				ctx.AssertCompletedCount(1)
@@ -349,6 +350,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			opts:     deleteOpts(100),
 			wantSucc: 2, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertDeleteCalls(2)
 				ctx.AssertTrashCalls(0)
 			},
@@ -359,6 +361,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateTrashError("msg1") },
 			wantSucc: 2, wantFail: 1,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertCompletedCount(1)
 				ctx.AssertManifestExecution(m.ID, 2, 1, "msg1")
 			},
@@ -372,6 +375,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			},
 			wantSucc: 0, wantFail: 2,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertFailedCount(1)
 			},
 		},
@@ -381,6 +385,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			opts:     trashOpts(2),
 			wantSucc: 5, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertTrashCalls(5)
 			},
 		},
@@ -390,6 +395,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateNotFound("msg1") },
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertCompletedCount(1)
 				ctx.AssertManifestExecution(m.ID, 3, 0)
 			},
@@ -417,6 +423,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 1)
@@ -467,7 +474,7 @@ func TestExecutor_Execute_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := ctx.Exec.Execute(execCtx, manifest.ID, nil)
-	assertpkg.ErrorIs(t, err, context.Canceled, "Execute() error")
+	requirepkg.ErrorIs(t, err, context.Canceled, "Execute() error")
 
 	ctx.AssertNotCompleted()
 
@@ -535,6 +542,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			ids:      msgIDs(3),
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
 				assertpkg.Len(t, ctx.GetBatchDeleteCall(0), 3, "BatchDeleteCalls[0] length")
 				ctx.AssertCompleted()
@@ -546,6 +554,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			ids:      msgIDs(1500),
 			wantSucc: 1500, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(2)
 				assertpkg.Len(t, ctx.GetBatchDeleteCall(0), 1000, "BatchDeleteCalls[0] length")
 				assertpkg.Len(t, ctx.GetBatchDeleteCall(1), 500, "BatchDeleteCalls[1] length")
@@ -557,6 +566,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateBatchDeleteError() },
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
 				ctx.AssertDeleteCalls(3)
 			},
@@ -583,6 +593,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			},
 			wantSucc: 3, wantFail: 1,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
 				ctx.AssertDeleteCalls(4)
 			},
@@ -597,6 +608,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			},
 			wantSucc: 0, wantFail: 2,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				// Batch mode always marks as Completed even when all fail
 				ctx.AssertCompletedCount(1)
 				ctx.AssertFailedCount(0)
@@ -609,6 +621,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 0)
@@ -624,6 +637,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 2)
@@ -680,7 +694,7 @@ func TestExecutor_ExecuteBatch_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := ctx.Exec.ExecuteBatch(execCtx, manifest.ID)
-	assertpkg.ErrorIs(t, err, context.Canceled, "ExecuteBatch() error")
+	requirepkg.ErrorIs(t, err, context.Canceled, "ExecuteBatch() error")
 
 	ctx.AssertNotCompleted()
 }

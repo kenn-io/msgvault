@@ -67,8 +67,8 @@ func TestClient_Embed_Success(t *testing.T) {
 	for i, v := range vecs {
 		assert.Len(v, 3, "vecs[%d]", i)
 	}
-	assert.Equal(float32(0.1), vecs[0][0])
-	assert.Equal(float32(0.6), vecs[1][2])
+	assert.InDelta(float32(0.1), vecs[0][0], 1e-6)
+	assert.InDelta(float32(0.6), vecs[1][2], 1e-6)
 }
 
 func TestClient_Embed_DimensionMismatch(t *testing.T) {
@@ -120,7 +120,7 @@ func TestClient_Embed_Does_Not_Retry_4xx(t *testing.T) {
 	_, err := c.Embed(context.Background(), []string{"a"})
 	requirepkg.Error(t, err, "expected error for 4xx")
 	assert.Equal(int32(1), attempts.Load(), "no retry on 4xx")
-	assert.ErrorContains(err, "400")
+	requirepkg.ErrorContains(t, err, "400")
 	assert.ErrorContains(err, "No models loaded")
 }
 
@@ -434,7 +434,7 @@ func TestClient_Embed_InvalidIndex(t *testing.T) {
 			Model: "m",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		requirepkg.NoError(t, json.NewEncoder(w).Encode(payload), "encode")
+		assertpkg.NoError(t, json.NewEncoder(w).Encode(payload), "encode")
 	}))
 	defer srv.Close()
 

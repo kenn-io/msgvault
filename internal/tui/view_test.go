@@ -9,7 +9,7 @@ import (
 // assertHighlight checks that applyHighlight produces the expected plain text
 // (after stripping ANSI) and validates ANSI behavior based on wantANSI:
 // - wantANSI=true: output must contain ANSI escapes and differ from input
-// - wantANSI=false: output must be unchanged from input
+// - wantANSI=false: output must be unchanged from input.
 func assertHighlight(t *testing.T, text string, terms []string, wantANSI bool) {
 	t.Helper()
 	result := applyHighlight(text, terms)

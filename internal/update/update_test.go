@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 	})
 
 	err := extractTarGz(archivePath, extractDir)
-	assertpkg.Error(t, err, "extractTarGz should fail with path traversal attempt")
+	requirepkg.Error(t, err, "extractTarGz should fail with path traversal attempt")
 
 	testutil.MustNotExist(t, outsideFile)
 }
@@ -127,7 +128,7 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	})
 
 	err := extractZip(archivePath, extractDir)
-	assertpkg.Error(t, err, "extractZip should fail with path traversal attempt")
+	requirepkg.Error(t, err, "extractZip should fail with path traversal attempt")
 
 	testutil.MustNotExist(t, outsideFile)
 }
@@ -143,7 +144,7 @@ func TestExtractChecksum(t *testing.T) {
 	}{
 		{
 			name:      "standard sha256sum format",
-			body:      fmt.Sprintf("%s  msgvault_darwin_arm64.tar.gz", testHash64),
+			body:      testHash64 + "  msgvault_darwin_arm64.tar.gz",
 			assetName: "msgvault_darwin_arm64.tar.gz",
 			want:      testHash64,
 		},
@@ -161,7 +162,7 @@ func TestExtractChecksum(t *testing.T) {
 		},
 		{
 			name:      "no match",
-			body:      fmt.Sprintf("%s  msgvault_linux_amd64.tar.gz", testHash64),
+			body:      testHash64 + "  msgvault_linux_amd64.tar.gz",
 			assetName: "msgvault_darwin_arm64.tar.gz",
 			want:      "",
 		},
@@ -173,7 +174,7 @@ func TestExtractChecksum(t *testing.T) {
 		},
 		{
 			name:      "substring filename should not match",
-			body:      fmt.Sprintf("%s  msgvault_darwin_arm64.tar.gz.sig", testHash64),
+			body:      testHash64 + "  msgvault_darwin_arm64.tar.gz.sig",
 			assetName: "msgvault_darwin_arm64.tar.gz",
 			want:      "",
 		},
@@ -185,13 +186,13 @@ func TestExtractChecksum(t *testing.T) {
 		},
 		{
 			name:      "binary mode star prefix",
-			body:      fmt.Sprintf("%s *msgvault_darwin_arm64.tar.gz", testHash64),
+			body:      testHash64 + " *msgvault_darwin_arm64.tar.gz",
 			assetName: "msgvault_darwin_arm64.tar.gz",
 			want:      testHash64,
 		},
 		{
 			name:      "trailing comment ignored",
-			body:      fmt.Sprintf("%s  msgvault_darwin_arm64.tar.gz  # some comment", testHash64),
+			body:      testHash64 + "  msgvault_darwin_arm64.tar.gz  # some comment",
 			assetName: "msgvault_darwin_arm64.tar.gz",
 			want:      testHash64,
 		},
@@ -435,7 +436,7 @@ func TestFetchContentLength(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(
 				func(w http.ResponseWriter, _ *http.Request) {
 					if tt.bodySize > 0 {
-						w.Header().Set("Content-Length", fmt.Sprintf("%d", tt.bodySize))
+						w.Header().Set("Content-Length", strconv.Itoa(tt.bodySize))
 					}
 					w.WriteHeader(tt.status)
 				},
@@ -578,7 +579,7 @@ func TestCheckCacheNoFile(t *testing.T) {
 	// No cache file exists
 	info, done := checkCache("v1.0.0", "1.0.0", false)
 
-	assertpkg.Equal(t, false, done)
+	assertpkg.False(t, done)
 	assertpkg.Nilf(t, info, "expected UpdateInfo to be nil, got %+v", info)
 }
 

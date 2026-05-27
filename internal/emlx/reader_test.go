@@ -67,7 +67,7 @@ func TestParse_NonNumericByteCount(t *testing.T) {
 func TestParse_ZeroByteCount(t *testing.T) {
 	plist := `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict></dict></plist>`
-	data := fmt.Sprintf("0\n%s", plist)
+	data := "0\n" + plist
 
 	msg, err := Parse([]byte(data))
 	requirepkg.NoError(t, err, "Parse")

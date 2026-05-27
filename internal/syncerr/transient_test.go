@@ -36,12 +36,12 @@ func TestIsTransientNetwork(t *testing.T) {
 		// substring fallback must catch it.
 		{
 			"oauth2-style %v-wrapped dial error",
-			fmt.Errorf(`refresh token: Post "https://oauth2.googleapis.com/token": dial tcp: lookup oauth2.googleapis.com: i/o timeout`),
+			errors.New(`refresh token: Post "https://oauth2.googleapis.com/token": dial tcp: lookup oauth2.googleapis.com: i/o timeout`),
 			true,
 		},
 		{
 			"no such host substring",
-			fmt.Errorf(`refresh token: Post "...": dial tcp: lookup oauth2.googleapis.com: no such host`),
+			errors.New(`refresh token: Post "...": dial tcp: lookup oauth2.googleapis.com: no such host`),
 			true,
 		},
 		{

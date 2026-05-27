@@ -3,7 +3,6 @@ package vector
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,7 +100,7 @@ func TestResolveActiveForFingerprint_NothingReturnsNotEnabled(t *testing.T) {
 }
 
 func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
-	wantErr := fmt.Errorf("db down")
+	wantErr := errors.New("db down")
 	b := &fakeBackend{activeErr: wantErr}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
 	require.Error(t, err, "expected error wrapping db down")
@@ -109,7 +108,7 @@ func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
 }
 
 func TestResolveActiveForFingerprint_BuildingBackendError(t *testing.T) {
-	wantErr := fmt.Errorf("building failed")
+	wantErr := errors.New("building failed")
 	b := &fakeBackend{buildErr: wantErr}
 	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
 	require.Error(t, err, "expected error wrapping building failed")

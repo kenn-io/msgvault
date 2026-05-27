@@ -139,15 +139,19 @@ func TestStageForDeletion_ViewTypes(t *testing.T) {
 		check    func(t *testing.T, f deletion.Filters)
 	}{
 		{"senders", query.ViewSenders, "a@b.com", func(t *testing.T, f deletion.Filters) {
+			t.Helper()
 			assertpkg.Equal(t, []string{"a@b.com"}, f.Senders)
 		}},
 		{"recipients", query.ViewRecipients, "c@d.com", func(t *testing.T, f deletion.Filters) {
+			t.Helper()
 			assertpkg.Equal(t, []string{"c@d.com"}, f.Recipients)
 		}},
 		{"domains", query.ViewDomains, "example.com", func(t *testing.T, f deletion.Filters) {
+			t.Helper()
 			assertpkg.Equal(t, []string{"example.com"}, f.SenderDomains)
 		}},
 		{"labels", query.ViewLabels, "INBOX", func(t *testing.T, f deletion.Filters) {
+			t.Helper()
 			assertpkg.Equal(t, []string{"INBOX"}, f.Labels)
 		}},
 	}
@@ -337,7 +341,7 @@ func TestExportAttachments_PartialSuccess(t *testing.T) {
 	require.True(ok, "expected ExportResultMsg, got %T", msg)
 
 	// Partial success should NOT set Err
-	assert.NoError(result.Err, "expected Err to be nil for partial success")
+	require.NoError(result.Err, "expected Err to be nil for partial success")
 
 	// Result should contain both success info and error details
 	assert.NotEmpty(result.Result)
@@ -376,6 +380,6 @@ func TestExportAttachments_FullSuccess(t *testing.T) {
 	result, ok := msg.(ExportResultMsg)
 	require.True(ok, "expected ExportResultMsg, got %T", msg)
 
-	assert.NoError(result.Err, "expected Err to be nil for full success")
+	require.NoError(result.Err, "expected Err to be nil for full success")
 	assert.NotEmpty(result.Result)
 }

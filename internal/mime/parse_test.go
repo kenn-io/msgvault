@@ -375,7 +375,7 @@ func TestParse_Latin1Charset(t *testing.T) {
 }
 
 // TestParse_RFC2822GroupAddress verifies RFC 2822 group address syntax is handled.
-// Group syntax: "group-name: addr1, addr2, ...;"
+// Group syntax: "group-name: addr1, addr2, ...;".
 func TestParse_RFC2822GroupAddress(t *testing.T) {
 	// Message with undisclosed-recipients group (common in BCC scenarios)
 	msg := parseEmail(t, emailOptions{

@@ -146,7 +146,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 
 	// File should remain because an active sync on another source blocks deletion.
 	_, err = os.Stat(filePath)
-	assert.NoError(err, "attachment file should be preserved while another sync is active")
+	require.NoError(err, "attachment file should be preserved while another sync is active")
 
 	// DB cleanup still runs — account is gone.
 	s2, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
@@ -350,7 +350,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	err = root.Execute()
 	require.Error(err, "expected error for ambiguous identifier")
-	assert.ErrorContains(err, "multiple accounts")
+	require.ErrorContains(err, "multiple accounts")
 
 	// With --type should succeed
 	root2 := newTestRootCmd()

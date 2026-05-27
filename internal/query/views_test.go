@@ -82,7 +82,7 @@ func TestRegisterViews_BaseViews(t *testing.T) {
 			context.Background(),
 			"SELECT COUNT(*) FROM "+table,
 		).Scan(&count)
-		assert.NoError(err, "query %s", table)
+		require.NoError(err, "query %s", table)
 	}
 
 	var id int64

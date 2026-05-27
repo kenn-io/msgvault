@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -645,7 +646,7 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 		calls++
 		switch calls {
 		case 2:
-			return fmt.Errorf("boom")
+			return errors.New("boom")
 		}
 		if err := ingestRawEmail(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, msg, log); err != nil {
 			return err
@@ -734,7 +735,7 @@ func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
 		NoResume:   false,
 	})
 	require.Error(err)
-	assertpkg.ErrorContains(t, err, "beyond end of file")
+	requirepkg.ErrorContains(t, err, "beyond end of file")
 
 	var status string
 	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, syncID).Scan(&status), "select sync")
@@ -787,7 +788,7 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 
 	// Inject ingest failure to cause HardErrors on file1.
 	failIngest := func(_ context.Context, _ *store.Store, _ int64, _ string, _ string, _ []int64, _ string, _ string, _ *mbox.Message, _ *slog.Logger) error {
-		return fmt.Errorf("injected failure")
+		return errors.New("injected failure")
 	}
 
 	sum1, err := ImportMbox(context.Background(), st, path1, MboxImportOptions{
@@ -889,7 +890,10 @@ func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
 	log := slog.New(&cancelOnLogMessageHandler{
 		msg:    "mbox read error",
 		cancel: cancel,
-		next:   slog.NewTextHandler(io.Discard, nil),
+		// slog.DiscardHandler.Enabled() always returns false, which would
+		// stop the wrapping handler's Handle (and thus cancel) from ever
+		// firing. A real handler keeps Enabled() true so the cancel triggers.
+		next: slog.NewTextHandler(io.Discard, nil), //nolint:sloglint // need an Enabled() handler so the cancel fires
 	})
 
 	_, err = ImportMbox(ctx, st, mboxPath, MboxImportOptions{

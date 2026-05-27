@@ -30,7 +30,7 @@ func TestIsEncodingError(t *testing.T) {
 
 func TestHintRepairEncoding(t *testing.T) {
 	t.Run("nil error", func(t *testing.T) {
-		assert.Nil(t, HintRepairEncoding(nil))
+		assert.NoError(t, HintRepairEncoding(nil))
 	})
 
 	t.Run("unrelated error passes through", func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestHintRepairEncoding(t *testing.T) {
 	t.Run("encoding error gets hint", func(t *testing.T) {
 		orig := errors.New("Invalid string encoding found in Parquet file")
 		got := HintRepairEncoding(orig)
-		require.NotNil(t, got, "HintRepairEncoding returned nil")
+		require.Error(t, got, "HintRepairEncoding returned nil")
 		assert.Contains(t, got.Error(), "repair-encoding")
 		// Original error should be preserved in the chain
 		assert.ErrorIs(t, got, orig, "wrapped error should preserve original via errors.Is")

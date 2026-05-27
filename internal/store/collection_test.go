@@ -149,9 +149,9 @@ func TestCollection_DefaultAllIsImmutable(t *testing.T) {
 
 	requirepkg.NoError(t, st.EnsureDefaultCollection(), "EnsureDefaultCollection")
 
-	assert.ErrorIs(st.AddSourcesToCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
+	requirepkg.ErrorIs(t, st.AddSourcesToCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
 		"AddSourcesToCollection(All)")
-	assert.ErrorIs(st.RemoveSourcesFromCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
+	requirepkg.ErrorIs(t, st.RemoveSourcesFromCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
 		"RemoveSourcesFromCollection(All)")
 	assert.ErrorIs(st.DeleteCollection("All"), store.ErrCollectionImmutable,
 		"DeleteCollection(All)")

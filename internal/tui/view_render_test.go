@@ -156,7 +156,7 @@ func TestHelpModalOpensWithQuestionMark(t *testing.T) {
 
 	// Press '?'
 	newModel, _ := model.Update(key('?'))
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.Equal(t, modalHelp, m.modal, "after '?'")
 }
@@ -167,7 +167,7 @@ func TestHelpModalClosesOnAnyKey(t *testing.T) {
 
 	// Press any key (e.g., Enter)
 	newModel, _ := model.Update(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.Equal(t, modalNone, m.modal, "after pressing key in help")
 }
@@ -179,13 +179,13 @@ func TestVKeyReversesSortOrder(t *testing.T) {
 
 	// Press 'v'
 	newModel, _ := model.Update(key('v'))
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.Equal(t, query.SortAsc, m.sortDirection, "after 'v'")
 
 	// Press 'v' again
 	newModel2, _ := m.Update(key('v'))
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertpkg.Equal(t, query.SortDesc, m2.sortDirection, "after second 'v'")
 }
@@ -514,11 +514,11 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 
 // truncateTestString truncates a string to 60 characters for test output display.
 func truncateTestString(s string) string {
-	const max = 60
-	if len(s) <= max {
+	const maxLen = 60
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max] + "..."
+	return s[:maxLen] + "..."
 }
 
 // TestViewFitsTerminalHeightWithBadData verifies View() handles data with

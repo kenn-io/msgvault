@@ -373,7 +373,7 @@ func TestDiscoverMailboxes_V10Partitioned(t *testing.T) {
 	for _, path := range mb.Files {
 		assert.True(filepath.IsAbs(path), "expected absolute path, got %q", path)
 		_, err := os.Stat(path)
-		assert.NoError(err, "stat %q", path)
+		require.NoError(err, "stat %q", path)
 	}
 
 	// Verify expected basenames are present.

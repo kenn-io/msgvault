@@ -141,13 +141,13 @@ func (f *rlFixture) state() (refillRate float64, throttledUntil time.Time) {
 // assertAvailable checks the current available tokens.
 func (f *rlFixture) assertAvailable(t *testing.T, expected float64) {
 	t.Helper()
-	assert.Equal(t, expected, f.rl.Available(), "Available()")
+	assert.InDelta(t, expected, f.rl.Available(), 1e-9, "Available()")
 }
 
 // acquireAsync runs Acquire in a background goroutine and returns a channel
 // that receives the result. It waits for the goroutine to either register a
 // timer on the mock clock or complete immediately.
-func (f *rlFixture) acquireAsync(t *testing.T, ctx context.Context, op Operation) <-chan error {
+func (f *rlFixture) acquireAsync(ctx context.Context, t *testing.T, op Operation) <-chan error {
 	t.Helper()
 	f.clk.ensureNotifyChannel()
 	timersBefore := f.clk.TimerCount()
@@ -200,18 +200,18 @@ func TestOperationCost(t *testing.T) {
 func TestNewRateLimiter(t *testing.T) {
 	rl := NewRateLimiter(5.0)
 
-	assert.Equal(t, float64(DefaultCapacity), rl.capacity, "capacity")
-	assert.Equal(t, float64(DefaultCapacity), rl.tokens, "initial tokens")
-	assert.Equal(t, DefaultRefillRate, rl.refillRate, "refillRate")
+	assert.InDelta(t, float64(DefaultCapacity), rl.capacity, 1e-9, "capacity")
+	assert.InDelta(t, float64(DefaultCapacity), rl.tokens, 1e-9, "initial tokens")
+	assert.InDelta(t, DefaultRefillRate, rl.refillRate, 1e-9, "refillRate")
 }
 
 func TestNewRateLimiter_ScaledQPS(t *testing.T) {
 	rl := NewRateLimiter(2.5)
 	expectedRate := DefaultRefillRate * 0.5
-	assert.Equal(t, expectedRate, rl.refillRate, "refillRate at 2.5 QPS")
+	assert.InDelta(t, expectedRate, rl.refillRate, 1e-9, "refillRate at 2.5 QPS")
 
 	rl = NewRateLimiter(10.0)
-	assert.Equal(t, DefaultRefillRate, rl.refillRate, "refillRate at 10 QPS (capped)")
+	assert.InDelta(t, DefaultRefillRate, rl.refillRate, 1e-9, "refillRate at 10 QPS (capped)")
 }
 
 func TestNewRateLimiter_NilClockPanics(t *testing.T) {
@@ -236,7 +236,7 @@ func TestRateLimiter_Acquire_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := f.rl.Acquire(ctx, OpProfile)
-	assert.NoError(t, err, "Acquire()")
+	require.NoError(t, err, "Acquire()")
 }
 
 func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
@@ -270,14 +270,14 @@ func TestRateLimiter_Acquire_ContextTimeout(t *testing.T) {
 	}()
 	waitForTimers(t, f.clk, 1)
 
-	done := f.acquireAsync(t, ctx, OpMessagesBatchDelete)
+	done := f.acquireAsync(ctx, t, OpMessagesBatchDelete)
 
 	// Advance mock clock past the cancel point
 	f.clk.Advance(100 * time.Millisecond)
 
 	select {
 	case err := <-done:
-		assert.ErrorIs(t, err, context.Canceled, "Acquire()")
+		require.ErrorIs(t, err, context.Canceled, "Acquire()")
 	case <-time.After(2 * time.Second):
 		require.Fail(t, "Acquire() did not return after context cancelled")
 	}
@@ -364,12 +364,12 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(10 * time.Millisecond)
 
 		rate, _ := f.state()
-		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
+		assert.InDelta(t, DefaultRefillRate*0.5, rate, 1e-9, "refillRate after Throttle")
 
 		f.rl.RecoverRate()
 
 		rate, _ = f.state()
-		assert.Equal(t, DefaultRefillRate, rate, "refillRate after RecoverRate")
+		assert.InDelta(t, DefaultRefillRate, rate, 1e-9, "refillRate after RecoverRate")
 	})
 
 	t.Run("DoesNotShortenBackoff", func(t *testing.T) {
@@ -403,13 +403,13 @@ func TestRateLimiter_Throttle(t *testing.T) {
 		f.rl.Throttle(50 * time.Millisecond)
 
 		rate, _ := f.state()
-		assert.Equal(t, DefaultRefillRate*0.5, rate, "refillRate after Throttle")
+		assert.InDelta(t, DefaultRefillRate*0.5, rate, 1e-9, "refillRate after Throttle")
 
 		f.clk.Advance(100 * time.Millisecond)
 		f.rl.Available() // triggers refill and auto-recovery
 
 		rate, _ = f.state()
-		assert.Equal(t, DefaultRefillRate, rate, "refillRate after throttle expiry")
+		assert.InDelta(t, DefaultRefillRate, rate, 1e-9, "refillRate after throttle expiry")
 	})
 }
 
@@ -418,14 +418,14 @@ func TestRateLimiter_Acquire_WaitsForThrottle(t *testing.T) {
 
 	f.rl.Throttle(100 * time.Millisecond)
 
-	done := f.acquireAsync(t, context.Background(), OpProfile)
+	done := f.acquireAsync(context.Background(), t, OpProfile)
 
 	// Advance past throttle — Acquire should complete
 	f.clk.Advance(150 * time.Millisecond)
 
 	select {
 	case err := <-done:
-		assert.NoError(t, err, "Acquire()")
+		require.NoError(t, err, "Acquire()")
 	case <-time.After(1 * time.Second):
 		require.Fail(t, "Acquire() did not complete after advancing clock past throttle")
 	}

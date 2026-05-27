@@ -154,12 +154,13 @@ func TestAddAccount_RebindWithExistingToken(t *testing.T) {
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 	// client_id must match the fake client secrets so
 	// TokenMatchesClient returns true (headless rebind scenario).
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	tokenPath := filepath.Join(tokensDir, "user@acme.com.json")
 	require.NoError(os.WriteFile(tokenPath, tokenData, 0600), "write token")
 
@@ -239,12 +240,13 @@ func TestAddAccount_NewRegistrationRejectsMismatchedToken(t *testing.T) {
 	// Write a token with a DIFFERENT client_id than the fake secrets
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "wrong-client.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(
 		filepath.Join(tokensDir, "new@acme.com.json"),
 		tokenData, 0600,
@@ -297,7 +299,7 @@ func TestAddAccount_NewRegistrationRejectsMismatchedToken(t *testing.T) {
 	})
 
 	// Should fail: token exists but from wrong client, auth cancelled
-	err := root.ExecuteContext(ctx)
+	err = root.ExecuteContext(ctx)
 	require.Error(err, "mismatched token should not be silently accepted")
 }
 
@@ -310,12 +312,13 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 	// Token with a client_id that does NOT match the default secrets
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "wrong-client.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(
 		filepath.Join(tokensDir, "user@example.com.json"),
 		tokenData, 0600,
@@ -362,7 +365,7 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 		"add-account", "user@example.com", "--oauth-app", "",
 	})
 
-	err := root.ExecuteContext(ctx)
+	err = root.ExecuteContext(ctx)
 	require.Error(err, "mismatched token should be rejected with explicit --oauth-app \"\"")
 }
 
@@ -375,12 +378,13 @@ func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 	// Token with client_id matching the fake secrets
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(
 		filepath.Join(tokensDir, "user@example.com.json"),
 		tokenData, 0600,
@@ -430,7 +434,7 @@ func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
 	})
 
 	// Should succeed: token's client_id matches, no auth needed
-	err := root.ExecuteContext(ctx)
+	err = root.ExecuteContext(ctx)
 	require.NoError(err)
 }
 
@@ -596,12 +600,13 @@ func TestAddAccount_AutoDefaultIdentityFires(t *testing.T) {
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
 
 	secretsPath := filepath.Join(tmpDir, "secret.json")
@@ -666,12 +671,13 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
 
 	secretsPath := filepath.Join(tmpDir, "secret.json")
@@ -740,12 +746,13 @@ func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
 
 	secretsPath := filepath.Join(tmpDir, "secret.json")
@@ -842,12 +849,13 @@ func TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity(t *testing.T) 
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
 	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	tokenData, _ := json.Marshal(map[string]string{
+	tokenData, err := json.Marshal(map[string]string{
 		"access_token":  "fake-access",
 		"refresh_token": "fake-refresh",
 		"token_type":    "Bearer",
 		"client_id":     "test.apps.googleusercontent.com",
 	})
+	require.NoError(err, "marshal token")
 	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
 
 	secretsPath := filepath.Join(tmpDir, "secret.json")

@@ -134,6 +134,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "single file exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("hello world"))
 				return []query.AttachmentInfo{{Filename: "greeting.txt", ContentHash: hash}}
 			},
@@ -143,6 +144,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "multiple files exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("file one"))
 				h2 := createAttachmentFile(t, attachDir, []byte("file two"))
 				return []query.AttachmentInfo{
@@ -173,6 +175,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "mix of valid and invalid",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("good"))
 				return []query.AttachmentInfo{
 					{Filename: "bad.txt", ContentHash: ""},
@@ -186,6 +189,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "duplicate filenames get deduped within batch",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("content A"))
 				h2 := createAttachmentFile(t, attachDir, []byte("content B"))
 				return []query.AttachmentInfo{
@@ -199,6 +203,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "empty filename falls back to content hash",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("no name"))
 				return []query.AttachmentInfo{{Filename: "", ContentHash: hash}}
 			},
@@ -237,9 +242,7 @@ func TestAttachmentsToDir(t *testing.T) {
 			// Verify all exported files exist on disk and have correct content size
 			for _, f := range result.Files {
 				info, err := os.Stat(f.Path)
-				if !assert.NoError(err, "exported file %s does not exist", f.Path) {
-					continue
-				}
+				require.NoError(err, "exported file %s does not exist", f.Path)
 				assert.Equal(f.Size, info.Size(), "file %s size", f.Path)
 			}
 		})
@@ -411,6 +414,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "valid file is exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("hello world"))
 				return []query.AttachmentInfo{{Filename: "greeting.txt", ContentHash: hash}}
 			},
@@ -421,6 +425,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "multiple valid files exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("file one"))
 				h2 := createAttachmentFile(t, attachDir, []byte("file two"))
 				return []query.AttachmentInfo{
@@ -470,6 +475,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "mix of valid and invalid attachments",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("good content"))
 				return []query.AttachmentInfo{
 					{Filename: "bad.txt", ContentHash: ""},

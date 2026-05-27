@@ -47,7 +47,7 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 
 func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
 	// Create a typed nil *sqlite3.Error (interface value non-nil, underlying pointer nil)
-	var sqliteErr *sqlite3.Error = nil
+	var sqliteErr *sqlite3.Error
 
 	// Wrap in an interface to create a typed nil scenario
 	// errors.As can succeed with typed nil in certain edge cases
@@ -87,7 +87,7 @@ func TestSQLiteDialect_IsBusyError(t *testing.T) {
 }
 
 // typedNilError is a helper type that implements error and allows
-// errors.As to extract a typed nil *sqlite3.Error
+// errors.As to extract a typed nil *sqlite3.Error.
 type typedNilError struct {
 	err *sqlite3.Error
 }

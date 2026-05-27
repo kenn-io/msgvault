@@ -94,7 +94,7 @@ func newTestStore(srv *httptest.Server, apiKey string) *Store {
 
 func TestDoRequest_SetsAuthHeader(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "secret-key", r.Header.Get("X-API-Key"), "X-API-Key")
+		assertpkg.Equal(t, "secret-key", r.Header.Get("X-Api-Key"), "X-API-Key")
 		assertpkg.Equal(t, "application/json", r.Header.Get("Accept"), "Accept")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -108,7 +108,7 @@ func TestDoRequest_SetsAuthHeader(t *testing.T) {
 
 func TestDoRequest_OmitsAuthHeaderWhenEmpty(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Empty(t, r.Header.Get("X-API-Key"), "X-API-Key should be empty")
+		assertpkg.Empty(t, r.Header.Get("X-Api-Key"), "X-API-Key should be empty")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -122,7 +122,7 @@ func TestDoRequest_OmitsAuthHeaderWhenEmpty(t *testing.T) {
 func TestHandleErrorResponse_JSONBody(t *testing.T) {
 	body := `{"error":"not_found","message":"Message 42 not found"}`
 	resp := &http.Response{
-		StatusCode: 404,
+		StatusCode: http.StatusNotFound,
 		Body:       http.NoBody,
 	}
 	// Use a real body
@@ -130,19 +130,19 @@ func TestHandleErrorResponse_JSONBody(t *testing.T) {
 
 	err := handleErrorResponse(resp)
 	requirepkg.Error(t, err, "handleErrorResponse should return error")
-	assertpkg.ErrorContains(t, err, "404", "error should contain status code")
+	requirepkg.ErrorContains(t, err, "404", "error should contain status code")
 	assertpkg.ErrorContains(t, err, "Message 42 not found", "error should contain API message")
 }
 
 func TestHandleErrorResponse_PlainTextBody(t *testing.T) {
 	resp := &http.Response{
-		StatusCode: 500,
+		StatusCode: http.StatusInternalServerError,
 		Body:       readCloser("internal server error"),
 	}
 
 	err := handleErrorResponse(resp)
 	requirepkg.Error(t, err, "handleErrorResponse should return error")
-	assertpkg.ErrorContains(t, err, "500", "error should contain status code")
+	requirepkg.ErrorContains(t, err, "500", "error should contain status code")
 	assertpkg.ErrorContains(t, err, "internal server error", "error should contain body text")
 }
 

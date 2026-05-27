@@ -178,7 +178,7 @@ func TestStageForDeletion(t *testing.T) {
 			model = selectRow(t, model)
 
 			newModel, _ := model.stageForDeletion()
-			model = newModel.(Model)
+			model = asModel(t, newModel)
 
 			assertPendingManifest(t, model, tc.expectedAccount)
 			assertModal(t, model, modalDeleteConfirm)

@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"fmt"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -57,7 +57,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 
-	ids, err := resolveAccountList(nil, st, fmt.Sprintf("%d", src.ID))
+	ids, err := resolveAccountList(nil, st, strconv.FormatInt(src.ID, 10))
 	require.NoError(err, "resolveAccountList(existing id)")
 	require.Equal([]int64{src.ID}, ids, "resolveAccountList(existing id)")
 
@@ -93,7 +93,7 @@ func TestResolveAccountListNumericFallthroughResolvesIdentifier(t *testing.T) {
 	phoneIdentifier := "987654321098"
 	src, err := st.GetOrCreateSource("whatsapp", phoneIdentifier)
 	require.NoError(err, "create source")
-	require.NotEqual(phoneIdentifier, fmt.Sprintf("%d", src.ID),
+	require.NotEqual(phoneIdentifier, strconv.FormatInt(src.ID, 10),
 		"test assumption broken: source id %d collides with identifier", src.ID)
 
 	ids, err := resolveAccountList(nil, st, phoneIdentifier)

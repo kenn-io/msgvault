@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -494,13 +495,12 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 		},
 	)
 	require.Error(err, "expected error for mailbox path mismatch")
-	assert.ErrorContains(err, "--no-resume")
+	require.ErrorContains(err, "--no-resume")
 	assert.ErrorContains(err, "changed")
 }
 
 func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -521,11 +521,12 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-emlx")
 	require.NoError(err, "start sync")
-	cpJSON, _ := json.Marshal(emlxCheckpoint{
+	cpJSON, err := json.Marshal(emlxCheckpoint{
 		RootDir:      absRoot,
 		MailboxIndex: -1,
 		LastFile:     "",
 	})
+	require.NoError(err, "marshal checkpoint")
 	require.NoError(st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken: string(cpJSON),
 	}), "save checkpoint")
@@ -537,8 +538,8 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 		},
 	)
 	require.Error(err, "expected error for negative index")
-	assert.ErrorContains(err, "out of range")
-	assert.ErrorContains(err, "--no-resume")
+	require.ErrorContains(err, "out of range")
+	require.ErrorContains(err, "--no-resume")
 }
 
 func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
@@ -615,7 +616,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	) error {
 		calls++
 		if calls == 2 {
-			return fmt.Errorf("injected failure")
+			return errors.New("injected failure")
 		}
 		return IngestRawMessage(
 			ctx, s, sourceID, identifier, attachmentsDir,

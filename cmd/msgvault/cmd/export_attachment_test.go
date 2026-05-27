@@ -15,34 +15,26 @@ import (
 
 // setupTestAttachment creates a temp dir with an attachment file stored using
 // the content-addressed layout (hash[:2]/hash). Returns the attachments dir,
-// the content hash, the file data, and a cleanup function.
-func setupTestAttachment(t *testing.T) (string, string, []byte, func()) {
+// the content hash, and the file data.
+func setupTestAttachment(t *testing.T) (string, string, []byte) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-export-att-*")
-	requirepkg.NoError(t, err, "create temp dir")
+	tmpDir := t.TempDir()
 
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("test attachment content")
 
 	subDir := filepath.Join(tmpDir, contentHash[:2])
-	if err := os.MkdirAll(subDir, 0755); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "create subdir")
-	}
-	if err := os.WriteFile(filepath.Join(subDir, contentHash), data, 0600); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "write test file")
-	}
+	requirepkg.NoError(t, os.MkdirAll(subDir, 0755), "create subdir")
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(subDir, contentHash), data, 0600), "write test file")
 
-	return tmpDir, contentHash, data, func() { _ = os.RemoveAll(tmpDir) }
+	return tmpDir, contentHash, data
 }
 
 func TestExportAttachment_BinaryToFile(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	attDir, contentHash, wantData, cleanup := setupTestAttachment(t)
-	defer cleanup()
+	attDir, contentHash, wantData := setupTestAttachment(t)
 
 	outFile := filepath.Join(attDir, "output.bin")
 	storagePath := filepath.Join(attDir, contentHash[:2], contentHash)
@@ -69,8 +61,7 @@ func TestExportAttachment_BinaryToFile(t *testing.T) {
 func TestExportAttachment_JSONOutput(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	attDir, contentHash, wantData, cleanup := setupTestAttachment(t)
-	defer cleanup()
+	attDir, contentHash, wantData := setupTestAttachment(t)
 
 	storagePath := filepath.Join(attDir, contentHash[:2], contentHash)
 
@@ -89,16 +80,19 @@ func TestExportAttachment_JSONOutput(t *testing.T) {
 	require.NoError(json.NewDecoder(r).Decode(&result), "decode JSON")
 
 	assert.Equal(contentHash, result["content_hash"], "content_hash")
-	assert.Equal(len(wantData), int(result["size"].(float64)), "size")
+	sizeVal, ok := result["size"].(float64)
+	require.True(ok, "size is float64")
+	assert.Equal(len(wantData), int(sizeVal), "size")
 
-	decoded, err := base64.StdEncoding.DecodeString(result["data_base64"].(string))
+	dataB64, ok := result["data_base64"].(string)
+	require.True(ok, "data_base64 is string")
+	decoded, err := base64.StdEncoding.DecodeString(dataB64)
 	require.NoError(err, "decode base64")
 	assert.Equal(string(wantData), string(decoded), "decoded data")
 }
 
 func TestExportAttachment_Base64Output(t *testing.T) {
-	attDir, contentHash, wantData, cleanup := setupTestAttachment(t)
-	defer cleanup()
+	attDir, contentHash, wantData := setupTestAttachment(t)
 
 	storagePath := filepath.Join(attDir, contentHash[:2], contentHash)
 
@@ -122,14 +116,12 @@ func TestExportAttachment_Base64Output(t *testing.T) {
 }
 
 func TestExportAttachment_MissingFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-export-att-missing-*")
-	requirepkg.NoError(t, err, "create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	storagePath := filepath.Join(tmpDir, hash[:2], hash)
 
-	_, err = openAttachmentFile(storagePath)
+	_, err := openAttachmentFile(storagePath)
 	requirepkg.Error(t, err, "expected error for missing file")
 	assertpkg.ErrorContains(t, err, "attachment not found")
 }

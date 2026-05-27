@@ -562,12 +562,15 @@ func TestGetAttachment(t *testing.T) {
 		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 
 		var meta attachmentMeta
-		tc := r.Content[0].(mcp.TextContent)
+		tc, ok := r.Content[0].(mcp.TextContent)
+		require.True(ok, "Content[0] is TextContent, got %T", r.Content[0])
 		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "unmarshal metadata")
 		assert.Equal("application/octet-stream", meta.MimeType, "default mime_type")
 
-		er := r.Content[1].(mcp.EmbeddedResource)
-		blob := er.Resource.(mcp.BlobResourceContents)
+		er, ok := r.Content[1].(mcp.EmbeddedResource)
+		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
+		blob, ok := er.Resource.(mcp.BlobResourceContents)
+		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
 		assert.Equal("application/octet-stream", blob.MIMEType, "default blob MIME type")
 	})
 
@@ -591,13 +594,16 @@ func TestGetAttachment(t *testing.T) {
 
 		// Metadata JSON must be valid and preserve the filename exactly.
 		var meta attachmentMeta
-		tc := r.Content[0].(mcp.TextContent)
+		tc, ok := r.Content[0].(mcp.TextContent)
+		require.True(ok, "Content[0] is TextContent, got %T", r.Content[0])
 		require.NoError(json.Unmarshal([]byte(tc.Text), &meta), "metadata is not valid JSON")
 		assert.Equal("report 2024✓.pdf", meta.Filename, "filename")
 
 		// URI must percent-encode spaces and non-ASCII characters.
-		er := r.Content[1].(mcp.EmbeddedResource)
-		blob := er.Resource.(mcp.BlobResourceContents)
+		er, ok := r.Content[1].(mcp.EmbeddedResource)
+		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
+		blob, ok := er.Resource.(mcp.BlobResourceContents)
+		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
 		const wantURI = "attachment:///51/report%202024%E2%9C%93.pdf"
 		assert.Equal(wantURI, blob.URI, "URI")
 	})

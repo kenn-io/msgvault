@@ -77,7 +77,7 @@ func TestCORSPreflightHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/stats", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 
@@ -135,7 +135,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}))
 
 	// First request should succeed
-	req1 := httptest.NewRequest("GET", "/test", nil)
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req1.RemoteAddr = "127.0.0.1:1234"
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, req1)
@@ -143,7 +143,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	assertpkg.Equal(t, http.StatusOK, w1.Code, "first request status")
 
 	// Second immediate request should be rate limited
-	req2 := httptest.NewRequest("GET", "/test", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req2.RemoteAddr = "127.0.0.1:1234"
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)

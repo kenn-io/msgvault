@@ -73,7 +73,7 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 			)
 			if tt.wantErr != "" {
 				require.Error(err, "expected error")
-				assert.ErrorContains(err, tt.wantErr)
+				require.ErrorContains(err, tt.wantErr)
 				var mismatch *TokenMismatchError
 				assert.Equal(tt.wantMis, errors.As(err, &mismatch), "TokenMismatchError presence")
 				return

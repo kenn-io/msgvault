@@ -54,7 +54,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "messages-copy.xml"), `<smses count="1">
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
 </smses>`)
-	summary, err = imp.ImportPath(dir)
+	_, err = imp.ImportPath(dir)
 	require.NoError(err, "ImportPath second")
 	assertMessageCount(t, f.Store, 3)
 	assertRawFormats(t, f.Store, RawFormat, 3)
@@ -123,6 +123,7 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 		require.NoError(rows.Scan(&srcID, &fromMe), "scan")
 		got[srcID] = fromMe
 	}
+	require.NoError(rows.Err(), "messages rows")
 	require.Len(got, 2, "got %#v", got)
 	for srcID, fromMe := range got {
 		assertpkg.True(t, fromMe, "%s is_from_me = false, want true (draft)", srcID)

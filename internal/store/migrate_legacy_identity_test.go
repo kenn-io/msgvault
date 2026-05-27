@@ -46,7 +46,7 @@ func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
 
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "account-identifier"), "AddAccountIdentity")
 
-	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"alice@example.com"})
+	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"alice@example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
 	require.NoError(err, "MigrateLegacyIdentityConfig")
 	require.True(applied, "applied should be true on first run")
 
@@ -64,7 +64,7 @@ func TestMigrateLegacyIdentityConfig_SecondCallNoOp(t *testing.T) {
 
 	addresses := []string{"alice@example.com"}
 
-	_, _, _, _, err := st.MigrateLegacyIdentityConfig(addresses)
+	_, _, _, _, err := st.MigrateLegacyIdentityConfig(addresses) //nolint:dogsled // 5-return migration; test needs only err
 	require.NoError(err, "first migration")
 
 	applied, _, sources, addrs, err := st.MigrateLegacyIdentityConfig(addresses)
@@ -125,7 +125,7 @@ func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 
-	_, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"  ME@Example.COM  "})
+	_, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"  ME@Example.COM  "}) //nolint:dogsled // 5-return migration; test needs only err
 	require.NoError(err, "MigrateLegacyIdentityConfig")
 
 	ids, err := st.ListAccountIdentities(f.Source.ID)
@@ -139,7 +139,7 @@ func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 
-	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"Alice@Example.com"})
+	applied, _, _, _, err := st.MigrateLegacyIdentityConfig([]string{"Alice@Example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
 	require.NoError(err, "MigrateLegacyIdentityConfig")
 	require.True(applied, "expected applied=true on first run")
 

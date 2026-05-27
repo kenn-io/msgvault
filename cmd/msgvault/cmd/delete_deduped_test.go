@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -19,7 +19,7 @@ func TestDeleteDeduped_NeitherFlag(t *testing.T) {
 		Use: "delete-deduped",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(batch) == 0 && !allHidden {
-				return fmt.Errorf("must specify --batch or --all-hidden")
+				return errors.New("must specify --batch or --all-hidden")
 			}
 			return nil
 		},

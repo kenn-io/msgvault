@@ -170,7 +170,7 @@ func TestScanSource_NullRequiredTimestamp(t *testing.T) {
 	require.Error(err, "expected error for NULL required timestamp")
 
 	// Error should mention the field name and that it's NULL
-	assert.ErrorContains(err, "created_at", "error should mention field")
+	require.ErrorContains(err, "created_at", "error should mention field")
 	assert.ErrorContains(err, "NULL", "error should mention NULL status")
 }
 

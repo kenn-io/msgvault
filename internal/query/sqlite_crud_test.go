@@ -616,6 +616,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
+				t.Helper()
 				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
@@ -624,6 +625,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenders)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
+				t.Helper()
 				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
@@ -647,6 +649,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewLabels), Sender: "alice@example.com"},
 			wantCount: 2,
 			validate: func(t *testing.T, msgs []MessageSummary) {
+				t.Helper()
 				subjects := make(map[string]bool)
 				for _, m := range msgs {
 					subjects[m.Subject] = true
@@ -659,6 +662,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			name:   "Empty recipient name includes no-recipients message",
 			filter: MessageFilter{EmptyValueTargets: emptyTargets(ViewRecipientNames)},
 			validate: func(t *testing.T, msgs []MessageSummary) {
+				t.Helper()
 				requirepkg.NotEmpty(t, msgs, "expected at least 1 message with empty recipient name")
 				found := false
 				for _, m := range msgs {
@@ -674,6 +678,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter:    MessageFilter{EmptyValueTargets: emptyTargets(ViewSenders)},
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
+				t.Helper()
 				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},

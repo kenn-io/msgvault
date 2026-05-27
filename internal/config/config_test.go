@@ -513,7 +513,7 @@ func TestMkTempDir(t *testing.T) {
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		_, err = os.Stat(dir)
-		assertpkg.NoError(t, err, "temp dir does not exist")
+		requirepkg.NoError(t, err, "temp dir does not exist")
 		assertTempDirSecured(t, dir)
 	})
 
@@ -534,7 +534,7 @@ func TestMkTempDir(t *testing.T) {
 
 		// Should have used system temp, not errored
 		_, err = os.Stat(dir)
-		assertpkg.NoError(t, err, "temp dir does not exist")
+		requirepkg.NoError(t, err, "temp dir does not exist")
 	})
 
 	t.Run("falls back to system temp when preferred dir is inaccessible", func(t *testing.T) {
@@ -557,8 +557,10 @@ func TestMkTempDir(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chmod(restrictedTmp, 0o700) })
 
 		// Probe whether the restriction actually works (root and some ACL
-		// configurations can still write to 0500 directories).
-		probe, probeErr := os.MkdirTemp(restrictedTmp, "probe-*")
+		// configurations can still write to 0500 directories). t.TempDir()
+		// cannot target a specific parent and fails the test on error, which
+		// is exactly the condition this probe needs to observe.
+		probe, probeErr := os.MkdirTemp(restrictedTmp, "probe-*") //nolint:usetesting // intentional: probing a restricted parent dir
 		if probeErr == nil {
 			_ = os.Remove(probe)
 			t.Skip("chmod 0500 did not restrict writes (running as root or permissive ACLs)")
@@ -1307,7 +1309,7 @@ client_secrets = "/path/to/acme.json"
 
 	// ClientSecretsFor("") should fail
 	_, err = cfg.OAuth.ClientSecretsFor("")
-	assert.Error(err, "ClientSecretsFor(\"\") should error with no default")
+	require.Error(err, "ClientSecretsFor(\"\") should error with no default")
 
 	// ClientSecretsFor("acme") should work
 	path, err := cfg.OAuth.ClientSecretsFor("acme")

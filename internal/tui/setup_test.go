@@ -78,7 +78,7 @@ func newMockEngine(cfg MockConfig) *querytest.MockEngine {
 // Test Fixtures
 // =============================================================================
 
-// TestModelBuilder helps construct Model instances for testing
+// TestModelBuilder helps construct Model instances for testing.
 type TestModelBuilder struct {
 	rows               []query.AggregateRow
 	messages           []query.MessageSummary
@@ -338,17 +338,27 @@ func (b *TestModelBuilder) configureState(m *Model) {
 func sendKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newM, cmd := m.Update(k)
-	return newM.(Model), cmd
+	return asModel(t, newM), cmd
 }
 
 // sendMsg sends any tea.Msg through Update and returns the concrete Model.
 func sendMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	newM, _ := m.Update(msg)
-	return newM.(Model)
+	return asModel(t, newM)
 }
 
-// assertModal checks that the model is in the expected modal state
+// asModel asserts that a tea.Model is the concrete Model type, failing the
+// test otherwise. Centralizes the checked type assertion used across the TUI
+// tests where Update/handle* return the tea.Model interface.
+func asModel(t *testing.T, m tea.Model) Model {
+	t.Helper()
+	model, ok := m.(Model)
+	require.True(t, ok, "expected Model, got %T", m)
+	return model
+}
+
+// assertModal checks that the model is in the expected modal state.
 func assertModal(t *testing.T, m Model, expected modalType) {
 	t.Helper()
 	assert.Equal(t, expected, m.modal)
@@ -404,15 +414,15 @@ func assertBreadcrumbCount(t *testing.T, m Model, expected int) {
 	assert.Len(t, m.breadcrumbs, expected)
 }
 
-// assertLevel checks that the model is at the expected view level
+// assertLevel checks that the model is at the expected view level.
 func assertLevel(t *testing.T, m Model, expected viewLevel) {
 	t.Helper()
 	assert.Equal(t, expected, m.level, "level")
 }
 
-// Common test data
+// Common test data.
 var (
-	// testAggregateRows provides a standard set of aggregate rows for testing
+	// testAggregateRows provides a standard set of aggregate rows for testing.
 	testAggregateRows = []query.AggregateRow{
 		{Key: "alice@example.com", Count: 100, TotalSize: 1000, AttachmentCount: 5},
 		{Key: "bob@example.com", Count: 50, TotalSize: 500, AttachmentCount: 2},
@@ -495,47 +505,47 @@ func sumAggregateStats(rows []query.AggregateRow) (count, size, attachments int6
 // Key Event Helpers - reduce verbosity of tea.KeyMsg construction
 // -----------------------------------------------------------------------------
 
-// key returns a KeyMsg for a single rune (e.g., key('x'), key(' '))
+// key returns a KeyMsg for a single rune (e.g., key('x'), key(' ')).
 func key(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
-// keyEnter returns a KeyMsg for the Enter key
+// keyEnter returns a KeyMsg for the Enter key.
 func keyEnter() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyEnter}
 }
 
-// keyEsc returns a KeyMsg for the Escape key
+// keyEsc returns a KeyMsg for the Escape key.
 func keyEsc() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyEscape}
 }
 
-// keyTab returns a KeyMsg for the Tab key
+// keyTab returns a KeyMsg for the Tab key.
 func keyTab() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyTab}
 }
 
-// keyDown returns a KeyMsg for the Down arrow key
+// keyDown returns a KeyMsg for the Down arrow key.
 func keyDown() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyDown}
 }
 
-// keyShiftTab returns a KeyMsg for Shift+Tab
+// keyShiftTab returns a KeyMsg for Shift+Tab.
 func keyShiftTab() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyShiftTab}
 }
 
-// keyLeft returns a KeyMsg for the Left arrow key
+// keyLeft returns a KeyMsg for the Left arrow key.
 func keyLeft() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyLeft}
 }
 
-// keyRight returns a KeyMsg for the Right arrow key
+// keyRight returns a KeyMsg for the Right arrow key.
 func keyRight() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRight}
 }
 
-// keyHome returns a KeyMsg for the Home key
+// keyHome returns a KeyMsg for the Home key.
 func keyHome() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyHome}
 }
@@ -615,42 +625,42 @@ func assertPendingManifest(t *testing.T, m Model, wantAccount string) {
 func applyAggregateKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleAggregateKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applyAggregateKeyWithCmd sends a key through handleAggregateKeys and returns Model and Cmd.
 func applyAggregateKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleAggregateKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyMessageListKey sends a key through handleMessageListKeys and returns the concrete Model.
 func applyMessageListKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageListKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applyMessageListKeyWithCmd sends a key through handleMessageListKeys and returns Model and Cmd.
 func applyMessageListKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleMessageListKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyModalKey sends a key through handleModalKeys and returns the concrete Model and Cmd.
 func applyModalKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleModalKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyDetailKey sends a key through handleMessageDetailKeys and returns the concrete Model.
 func applyDetailKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageDetailKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // -----------------------------------------------------------------------------
@@ -678,7 +688,7 @@ func assertViewFitsHeight(t *testing.T, view string, height int) {
 func resizeModel(t *testing.T, m Model, w, h int) Model {
 	t.Helper()
 	newModel, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // assertState checks level, viewType, and cursor in one call.
@@ -716,7 +726,7 @@ func applySearchResults(t *testing.T, m Model, reqID uint64, msgs []query.Messag
 		totalCount: total,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applySearchResultsWithStats simulates search results that include aggregate stats.
@@ -729,7 +739,7 @@ func applySearchResultsWithStats(t *testing.T, m Model, reqID uint64, msgs []que
 		stats:      stats,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applySearchResultsAppend simulates appended (paginated) search results.
@@ -742,7 +752,7 @@ func applySearchResultsAppend(t *testing.T, m Model, reqID uint64, msgs []query.
 		append:     true,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // assertContextStats checks contextStats fields. Use -1 for size or attachments to skip that check.
@@ -797,7 +807,7 @@ func assertInlineSearchActive(t *testing.T, m Model, expected bool) {
 func applyInlineSearchKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleInlineSearchKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // =============================================================================

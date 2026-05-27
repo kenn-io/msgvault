@@ -146,7 +146,7 @@ func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	}
 
 	for _, r := range rows {
-		assert.NotEqual("", r.Key, "unexpected empty key")
+		assert.NotEmpty(r.Key, "unexpected empty key")
 		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	assertRowsContain(t, rows, []aggExpectation{

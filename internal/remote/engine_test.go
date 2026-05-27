@@ -17,7 +17,7 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	require := requirepkg.New(t)
 	deletedAt := "2026-03-18T15:00:00Z"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal("/api/v1/messages/filter", r.URL.Path, "path")
+		assertpkg.Equal(t, "/api/v1/messages/filter", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"count":    1,

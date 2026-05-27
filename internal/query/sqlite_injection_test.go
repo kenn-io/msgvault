@@ -90,7 +90,7 @@ func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
 			filter := MessageFilter{Sender: payload}
 			// Should not panic or cause SQL error - just return empty results
 			msgs, err := env.Engine.ListMessages(env.Ctx, filter)
-			assertpkg.NoError(t, err, "unexpected error with payload %q", payload)
+			requirepkg.NoError(t, err, "unexpected error with payload %q", payload)
 			// Should return 0 results (no match), not all messages
 			assertpkg.Empty(t, msgs, "expected 0 results for SQL injection payload")
 		})
@@ -98,7 +98,7 @@ func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
 		t.Run("Label_"+payload[:min(20, len(payload))], func(t *testing.T) {
 			filter := MessageFilter{Label: payload}
 			msgs, err := env.Engine.ListMessages(env.Ctx, filter)
-			assertpkg.NoError(t, err, "unexpected error with payload %q", payload)
+			requirepkg.NoError(t, err, "unexpected error with payload %q", payload)
 			assertpkg.Empty(t, msgs, "expected 0 results for SQL injection payload")
 		})
 	}

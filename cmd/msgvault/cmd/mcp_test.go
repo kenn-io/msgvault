@@ -24,9 +24,7 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		cases := []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"}
 		for _, c := range cases {
 			got, err := normalizeMCPHTTPAddr(c, false)
-			if !assert.NoError(t, err, "%s", c) {
-				continue
-			}
+			require.NoError(t, err, "%s", c)
 			assert.Equal(t, c, got, "%s: should be unchanged", c)
 		}
 	})
@@ -43,9 +41,7 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		}
 		for _, c := range cases {
 			_, err := normalizeMCPHTTPAddr(c, false)
-			if !assert.Error(t, err, "%s: expected refusal", c) {
-				continue
-			}
+			require.Error(t, err, "%s: expected refusal", c)
 			assert.ErrorContains(t, err, "--http-allow-insecure", "%s: expected hint", c)
 		}
 	})

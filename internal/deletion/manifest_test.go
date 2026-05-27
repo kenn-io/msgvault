@@ -193,6 +193,7 @@ func TestGenerateID(t *testing.T) {
 			name: "basic ID generation",
 			desc: "test batch",
 			validate: func(t *testing.T, id string) {
+				t.Helper()
 				assertpkg.NotEmpty(t, id, "generateID returned empty string")
 				parts := strings.SplitN(id, "-", 3)
 				assertpkg.GreaterOrEqual(t, len(parts), 2, "expected timestamp-description format, got %q", id)
@@ -202,6 +203,7 @@ func TestGenerateID(t *testing.T) {
 			name: "long description truncated",
 			desc: "this is a very long description that exceeds twenty characters",
 			validate: func(t *testing.T, id string) {
+				t.Helper()
 				assertpkg.LessOrEqual(t, len(id), 40, "ID too long: %d chars (%q)", len(id), id)
 			},
 		},
@@ -209,6 +211,7 @@ func TestGenerateID(t *testing.T) {
 			name: "empty description uses batch",
 			desc: "",
 			validate: func(t *testing.T, id string) {
+				t.Helper()
 				assertpkg.True(t, strings.HasSuffix(id, "-batch"), "expected -batch suffix, got %q", id)
 			},
 		},
@@ -293,6 +296,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "basic summary",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "format test", "id1", "id2", "id3").
 					WithSummary(3, 5*1024*1024, [2]string{"2024-01-01", "2024-01-31"}, []SenderCount{
 						{Sender: "alice@example.com", Count: 2},
@@ -304,6 +308,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "with execution",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				now := time.Now()
 				return BuildManifest(t, "exec test", "id1").
 					WithExecution(MethodTrash, 10, 2, &now).Build()
@@ -313,6 +318,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "empty date range",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "empty date test", "id1").
 					WithSummary(1, 1024, [2]string{"", ""}, nil).Build()
 			},
@@ -321,6 +327,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "nil summary",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "no summary test").WithoutSummary().Build()
 			},
 			wantContains:    []string{"Messages: 2"},
@@ -329,6 +336,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "many top senders truncated to 10",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				topSenders := make([]SenderCount, 15)
 				for i := range 15 {
 					topSenders[i] = SenderCount{
@@ -345,6 +353,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "execution without completed time",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "no completed test", "id1").
 					WithExecution(MethodDelete, 5, 0, nil).Build()
 			},
@@ -588,16 +597,16 @@ func TestManager_ListManifests_SkipsInvalidFiles(t *testing.T) {
 func TestStatus_Values(t *testing.T) {
 	assert := assertpkg.New(t)
 	// Verify status constants
-	assert.Equal(Status("pending"), StatusPending)
-	assert.Equal(Status("in_progress"), StatusInProgress)
-	assert.Equal(Status("completed"), StatusCompleted)
-	assert.Equal(Status("failed"), StatusFailed)
-	assert.Equal(Status("cancelled"), StatusCancelled)
+	assert.Equal(StatusPending, Status("pending"))
+	assert.Equal(StatusInProgress, Status("in_progress"))
+	assert.Equal(StatusCompleted, Status("completed"))
+	assert.Equal(StatusFailed, Status("failed"))
+	assert.Equal(StatusCancelled, Status("cancelled"))
 }
 
 func TestMethod_Values(t *testing.T) {
-	assertpkg.Equal(t, Method("trash"), MethodTrash)
-	assertpkg.Equal(t, Method("delete"), MethodDelete)
+	assertpkg.Equal(t, MethodTrash, Method("trash"))
+	assertpkg.Equal(t, MethodDelete, Method("delete"))
 }
 
 // TestStatusDirMap verifies that statusDirMap contains all persisted statuses

@@ -71,7 +71,7 @@ func TestDeletionMockAPI_Reset(t *testing.T) {
 
 	assert.Empty(mockAPI.TrashErrors, "TrashErrors not cleared")
 	assert.Empty(mockAPI.DeleteErrors, "DeleteErrors not cleared")
-	assert.Nil(mockAPI.BatchDeleteError, "BatchDeleteError not cleared")
+	require.NoError(mockAPI.BatchDeleteError, "BatchDeleteError not cleared")
 	assert.Empty(mockAPI.TransientTrashFailures, "TransientTrashFailures not cleared")
 	assert.Empty(mockAPI.TransientDeleteFailures, "TransientDeleteFailures not cleared")
 	assert.Equal(0, mockAPI.RateLimitAfterCalls, "RateLimitAfterCalls not cleared")
@@ -227,8 +227,8 @@ func TestDeletionMockAPI_TransientFailures(t *testing.T) {
 			mockAPI, ctx := setupDeletionMockTest(t)
 			mockAPI.SetTransientFailure("msg1", tt.failCount, tt.isTrash)
 
-			for i := 0; i < tt.failCount; i++ {
-				assertpkg.Error(t, tt.callMethod(ctx, mockAPI), "call %d should fail", i+1)
+			for i := range tt.failCount {
+				requirepkg.Error(t, tt.callMethod(ctx, mockAPI), "call %d should fail", i+1)
 			}
 
 			assertpkg.NoError(t, tt.callMethod(ctx, mockAPI), "call after failures should succeed")

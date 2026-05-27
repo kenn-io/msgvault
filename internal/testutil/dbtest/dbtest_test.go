@@ -15,6 +15,7 @@ const schemaPath = "../../store/schema.sql"
 // usage and testify require.* helpers (which call Errorf + FailNow).
 type fakeT struct {
 	testing.TB
+
 	fatalMsg string
 }
 

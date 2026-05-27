@@ -17,19 +17,14 @@ import (
 )
 
 // setupQueryTestParquet creates a minimal set of Parquet files in a
-// temp directory for testing executeQuery. Returns the analytics dir
-// and a cleanup function.
-func setupQueryTestParquet(t *testing.T) (string, func()) {
+// temp directory for testing executeQuery. Returns the analytics dir.
+func setupQueryTestParquet(t *testing.T) string {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-query-test-*")
-	require.NoError(t, err, "create temp dir")
+	tmpDir := t.TempDir()
 
 	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		_ = os.RemoveAll(tmpDir)
-		require.NoError(t, err, "open duckdb")
-	}
+	require.NoError(t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 
 	// Create subdirectories matching required Parquet layout
@@ -44,10 +39,7 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 		"conversations",
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(filepath.Join(tmpDir, d), 0755); err != nil {
-			_ = os.RemoveAll(tmpDir)
-			require.NoError(t, err, "mkdir %s", d)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, d), 0755), "mkdir %s", d)
 	}
 
 	// Helper to write a Parquet file from a COPY query
@@ -58,10 +50,8 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 			"COPY (%s) TO '%s' (FORMAT PARQUET)",
 			copySQL, escaped,
 		)
-		if _, err := db.Exec(q); err != nil {
-			_ = os.RemoveAll(tmpDir)
-			require.NoError(t, err, "write %s", path)
-		}
+		_, err := db.Exec(q)
+		require.NoError(t, err, "write %s", path)
 	}
 
 	// Messages
@@ -122,12 +112,11 @@ func setupQueryTestParquet(t *testing.T) (string, func()) {
 			(200::BIGINT, 'thread200', '')
 		) AS t(id, source_conversation_id, title)`)
 
-	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }
+	return tmpDir
 }
 
 func TestQueryCommand_JSON(t *testing.T) {
-	analyticsDir, cleanup := setupQueryTestParquet(t)
-	defer cleanup()
+	analyticsDir := setupQueryTestParquet(t)
 
 	var buf bytes.Buffer
 	err := executeQuery(
@@ -144,8 +133,7 @@ func TestQueryCommand_JSON(t *testing.T) {
 }
 
 func TestQueryCommand_CSV(t *testing.T) {
-	analyticsDir, cleanup := setupQueryTestParquet(t)
-	defer cleanup()
+	analyticsDir := setupQueryTestParquet(t)
 
 	var buf bytes.Buffer
 	err := executeQuery(

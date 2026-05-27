@@ -211,7 +211,7 @@ func makeStreamtypedBlob(text string) []byte {
 			tmp >>= 8
 		}
 		buf = append(buf, 0x80|byte(nBytes))
-		for i := 0; i < nBytes; i++ {
+		for i := range nBytes {
 			buf = append(buf, byte(n>>(8*i)))
 		}
 	}

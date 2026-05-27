@@ -74,7 +74,7 @@ func TestResolveAccountFlag_RejectsCollectionName(t *testing.T) {
 
 	_, err := ResolveAccountFlag(f.Store, collectionName)
 	requirepkg.Error(t, err, "expected error for collection name passed as --account")
-	assertpkg.ErrorContains(t, err, "is a collection")
+	requirepkg.ErrorContains(t, err, "is a collection")
 	assertpkg.ErrorContains(t, err, "--collection")
 }
 
@@ -83,7 +83,7 @@ func TestResolveCollectionFlag_RejectsAccountIdentifier(t *testing.T) {
 
 	_, err := ResolveCollectionFlag(f.Store, accountID)
 	requirepkg.Error(t, err, "expected error for account identifier passed as --collection")
-	assertpkg.ErrorContains(t, err, "is an account")
+	requirepkg.ErrorContains(t, err, "is an account")
 	assertpkg.ErrorContains(t, err, "--account")
 }
 

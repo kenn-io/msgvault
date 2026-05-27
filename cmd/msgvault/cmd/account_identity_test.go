@@ -53,10 +53,10 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 
 	savedLogger := logger
 	defer func() { logger = savedLogger }()
-	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger = slog.New(slog.DiscardHandler)
 
 	prevDefault := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	slog.SetDefault(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { slog.SetDefault(prevDefault) })
 
 	// sourceID 99999 does not exist; FK violation returns an error
@@ -80,7 +80,7 @@ func TestConfirmDefaultIdentity_LegacyMigrationOverridesNoDefault(t *testing.T) 
 	require.NoError(err)
 	// Simulate --no-default-identity: do not call confirmDefaultIdentity.
 	// Then run startup migrations with a non-empty legacy address list.
-	applied, _, _, _, err := s.MigrateLegacyIdentityConfig([]string{"alice@example.com"})
+	applied, _, _, _, err := s.MigrateLegacyIdentityConfig([]string{"alice@example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
 	require.NoError(err)
 	require.True(applied, "migration did not apply")
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")

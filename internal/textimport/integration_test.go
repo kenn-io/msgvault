@@ -223,9 +223,7 @@ func TestIntegration(t *testing.T) {
 	}
 	wantConv1LastAt := baseTime.Add(2 * time.Minute)
 	wantConv2LastAt := baseTime.Add(2 * time.Hour)
-	if row, ok := convByID[conv1ID]; !assert.True(ok, "conv1 not found in ListConversations results") {
-		// nothing
-	} else {
+	if row, ok := convByID[conv1ID]; assert.True(ok, "conv1 not found in ListConversations results") {
 		assert.Equal(int64(4), row.MessageCount, "conv1 MessageCount")
 		assert.False(row.LastMessageAt.IsZero(), "conv1 LastMessageAt is zero")
 		if !row.LastMessageAt.IsZero() {
@@ -235,9 +233,7 @@ func TestIntegration(t *testing.T) {
 		// timestamp; the higher-ID message should win.
 		assert.Equal("tiebreaker preview", row.LastPreview, "conv1 LastPreview")
 	}
-	if row, ok := convByID[conv2ID]; !assert.True(ok, "conv2 not found in ListConversations results") {
-		// nothing
-	} else {
+	if row, ok := convByID[conv2ID]; assert.True(ok, "conv2 not found in ListConversations results") {
 		assert.Equal(int64(3), row.MessageCount, "conv2 MessageCount")
 		assert.False(row.LastMessageAt.IsZero(), "conv2 LastMessageAt is zero")
 		if !row.LastMessageAt.IsZero() {

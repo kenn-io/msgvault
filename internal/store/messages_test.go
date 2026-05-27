@@ -166,15 +166,15 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 
 	// Empty inputs are no-ops.
 	updated, err = st.UpdateParticipantDisplayNameByEmail("", "X")
-	assert.NoError(err, "empty email err")
+	require.NoError(err, "empty email err")
 	assert.False(updated, "empty email updated")
 	updated, err = st.UpdateParticipantDisplayNameByEmail("x@y.com", "")
-	assert.NoError(err, "empty name err")
+	require.NoError(err, "empty name err")
 	assert.False(updated, "empty name updated")
 
 	// Unknown email is a no-op (does not create rows).
 	updated, err = st.UpdateParticipantDisplayNameByEmail("nobody@example.com", "Nobody")
-	assert.NoError(err, "unknown email err")
+	require.NoError(err, "unknown email err")
 	assert.False(updated, "unknown email updated")
 }
 
@@ -216,10 +216,10 @@ func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
 
 	// Empty inputs are no-ops.
 	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("", "X")
-	assert.NoError(err, "empty phone err")
+	require.NoError(err, "empty phone err")
 	assert.False(updated, "empty phone updated")
 	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15551111111", "")
-	assert.NoError(err, "empty name err")
+	require.NoError(err, "empty name err")
 	assert.False(updated, "empty name updated")
 }
 
@@ -318,7 +318,7 @@ func TestRetitleImessageChats(t *testing.T) {
 
 	// Idempotent: running again is a no-op.
 	n2, err := st.RetitleImessageChats()
-	assert.NoError(err, "idempotent rerun err")
+	require.NoError(err, "idempotent rerun err")
 	assert.Equal(int64(0), n2, "idempotent rerun rows")
 }
 

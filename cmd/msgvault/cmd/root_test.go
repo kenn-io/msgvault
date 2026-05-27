@@ -157,7 +157,7 @@ func TestExecuteContext_CancellationPropagates(t *testing.T) {
 	// Wait for execution to complete
 	select {
 	case err := <-done:
-		assert.ErrorIs(err, context.Canceled, "expected context.Canceled error")
+		require.ErrorIs(err, context.Canceled, "expected context.Canceled error")
 	case <-time.After(2 * time.Second):
 		require.Fail("ExecuteContext did not return after context cancellation")
 	}
@@ -519,7 +519,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			if tt.wantErr {
 				require.Error(err)
 				if tt.errContains != "" {
-					assert.ErrorContains(err, tt.errContains)
+					require.ErrorContains(err, tt.errContains)
 				}
 				assert.Nil(ts, "expected nil token source on error")
 			} else {
@@ -556,7 +556,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		}
 		// Confirm the underlying TokenMismatchError is preserved.
 		var mismatchErr *oauth.TokenMismatchError
-		assertpkg.True(t, errors.As(err, &mismatchErr),
+		assertpkg.ErrorAs(t, err, &mismatchErr,
 			"expected error to wrap *oauth.TokenMismatchError, got %T: %v", err, err)
 	})
 

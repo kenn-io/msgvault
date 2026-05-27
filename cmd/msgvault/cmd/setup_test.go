@@ -66,9 +66,9 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 
 	// config.toml and docker-compose.yml should exist
 	_, err = os.Stat(filepath.Join(bundleDir, "config.toml"))
-	assert.NoError(err, "config.toml should exist")
+	requirepkg.NoError(t, err, "config.toml should exist")
 	_, err = os.Stat(filepath.Join(bundleDir, "docker-compose.yml"))
-	assert.NoError(err, "docker-compose.yml should exist")
+	requirepkg.NoError(t, err, "docker-compose.yml should exist")
 
 	// client_secret.json should NOT exist (no source path given)
 	_, err = os.Stat(filepath.Join(bundleDir, "client_secret.json"))
@@ -90,7 +90,7 @@ func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 	copied := filepath.Join(bundleDir, "client_secret.json")
 	data, err := os.ReadFile(copied)
 	require.NoError(err, "client_secret.json should exist")
-	assert.Equal(`{"installed":{}}`, string(data), "copied content")
+	assert.JSONEq(`{"installed":{}}`, string(data), "copied content")
 
 	// config.toml should reference /data/client_secret.json
 	cfgData, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))

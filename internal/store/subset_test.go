@@ -180,6 +180,7 @@ func TestCopySubset_Basic(t *testing.T) {
 	fkRows, err := db.Query("PRAGMA foreign_key_check")
 	require.NoError(err)
 	hasViolation := fkRows.Next()
+	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	_ = fkRows.Close()
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
@@ -245,6 +246,7 @@ func TestCopySubset_ConversationCounts(t *testing.T) {
 		assertpkg.Equal(t, actual, denormalized,
 			"conversation %d: denormalized count=%d, actual=%d", id, denormalized, actual)
 	}
+	require.NoError(rows.Err(), "conversation rows")
 }
 
 func TestCopySubset_DestinationEmptyDir(t *testing.T) {
@@ -388,6 +390,7 @@ func TestCopySubset_TimestampFallback(t *testing.T) {
 		require.NoError(rows.Scan(&s))
 		subjects = append(subjects, s)
 	}
+	require.NoError(rows.Err(), "subject rows")
 	_ = rows.Close()
 
 	for _, s := range subjects {
@@ -471,6 +474,7 @@ func TestCopySubset_TieBreaker(t *testing.T) {
 		require.NoError(rows.Scan(&id))
 		ids = append(ids, id)
 	}
+	require.NoError(rows.Err(), "id rows")
 	_ = rows.Close()
 
 	assert.Equal([]int64{3, 4}, ids, "selected IDs")
@@ -558,6 +562,7 @@ func TestCopySubset_ReplyToOrphanNulled(t *testing.T) {
 	fkRows, err := dstDB.Query("PRAGMA foreign_key_check")
 	require.NoError(err)
 	hasViolation := fkRows.Next()
+	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	_ = fkRows.Close()
 	assert.False(hasViolation, "FK violations with orphaned reply_to_message_id")
 }
@@ -652,6 +657,7 @@ func TestCopySubset_ReactionParticipants(t *testing.T) {
 	fkRows, err := dstDB.Query("PRAGMA foreign_key_check")
 	require.NoError(err)
 	hasViolation := fkRows.Next()
+	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	_ = fkRows.Close()
 	assert.False(hasViolation, "FK violations with reaction participants")
 }
@@ -708,6 +714,7 @@ func TestCopySubset_NullSourceIDLabels(t *testing.T) {
 	fkRows, err := dstDB.Query("PRAGMA foreign_key_check")
 	require.NoError(err)
 	hasViolation := fkRows.Next()
+	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	_ = fkRows.Close()
 	assert.False(hasViolation, "FK violations with null-source-id labels")
 }
@@ -746,7 +753,7 @@ func TestCopySubset_MissingSourceDB(t *testing.T) {
 
 	_, err := CopySubset(fakeSrc, dstDir, 5)
 	requirepkg.Error(t, err, "expected error for missing source DB")
-	assert.ErrorContains(err, "source database not found")
+	requirepkg.ErrorContains(t, err, "source database not found")
 
 	// ATTACH on a missing path would create a file; verify it wasn't
 	_, statErr := os.Stat(fakeSrc)
@@ -889,6 +896,7 @@ func TestCopySubset_MultiSourceScoping(t *testing.T) {
 	fkRows, err := dstDB.Query("PRAGMA foreign_key_check")
 	require.NoError(err)
 	hasViolation := fkRows.Next()
+	require.NoError(fkRows.Err(), "foreign_key_check rows")
 	_ = fkRows.Close()
 	assert.False(hasViolation, "foreign key violations in multi-source subset")
 }

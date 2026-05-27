@@ -267,14 +267,14 @@ func TestTriggerSync(t *testing.T) {
 
 	// Trigger manually
 	err := s.TriggerSync("test@gmail.com")
-	assert.NoError(err, "TriggerSync()")
+	requirepkg.NoError(t, err, "TriggerSync()")
 
 	// Wait for sync to start
 	time.Sleep(10 * time.Millisecond)
 
 	// Second trigger should fail (already running)
 	err = s.TriggerSync("test@gmail.com")
-	assert.Error(err, "TriggerSync() while running")
+	requirepkg.Error(t, err, "TriggerSync() while running")
 
 	// Wait for completion
 	time.Sleep(100 * time.Millisecond)

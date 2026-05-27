@@ -1536,7 +1536,7 @@ func createMessagesForSource(t *testing.T, st *store.Store, srcID, convID int64,
 			MessageType:     "email",
 			SizeEstimate:    1000,
 		})
-		requirepkg.NoError(t, err, fmt.Sprintf("UpsertMessage %s-%d", prefix, i))
+		requirepkg.NoError(t, err, "UpsertMessage %s-%d", prefix, i)
 		ids = append(ids, id)
 	}
 	return ids

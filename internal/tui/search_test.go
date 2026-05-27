@@ -179,7 +179,7 @@ func TestSearchBackClears(t *testing.T) {
 
 	// Go back
 	newModel, _ := model.goBack()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertSearchQuery(t, m, "")
 	assertpkg.Empty(t, m.searchFilter.Sender, "expected empty searchFilter after goBack")
@@ -767,7 +767,7 @@ func TestAggregateSearchFilterSetsContextStats(t *testing.T) {
 	}
 
 	newModel, _ := model.Update(msg)
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set when search filter is active")
 
@@ -798,7 +798,7 @@ func TestAggregateSearchFilterUsesFilteredStats(t *testing.T) {
 	}
 
 	newModel, _ := model.Update(msg)
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set")
 	// Should use filteredStats (100), not sum of row counts (175)
@@ -819,7 +819,7 @@ func TestAggregateNoSearchFilterClearsContextStats(t *testing.T) {
 	}
 
 	newModel, _ := model.Update(msg)
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.Nil(t, m.contextStats, "expected contextStats to be nil when no search filter at aggregate level")
 }
@@ -842,7 +842,7 @@ func TestSubAggregateSearchFilterSetsContextStats(t *testing.T) {
 	}
 
 	newModel, _ := model.Update(msg)
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set at sub-aggregate with search filter")
 

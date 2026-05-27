@@ -196,7 +196,7 @@ func TestEnsureParticipantsPhoneUniqueIndex_LegacyNonUnique(t *testing.T) {
 	applied, err := st.IsMigrationApplied(migrationPhoneUniqueIndex)
 	require.NoError(err, "IsMigrationApplied")
 	assert.True(applied, "migration sentinel not set after successful run")
-	assert.NoError(st.ensureParticipantsPhoneUniqueIndex(),
+	require.NoError(st.ensureParticipantsPhoneUniqueIndex(),
 		"re-run of ensureParticipantsPhoneUniqueIndex must be a no-op")
 
 	// 8) Public API: EnsureParticipantByPhone with the duplicated

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -611,14 +610,14 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 	require.Error(err, "expected error for mismatched email")
 
 	var mismatch *TokenMismatchError
-	require.True(errors.As(err, &mismatch),
+	require.ErrorAs(err, &mismatch,
 		"expected TokenMismatchError, got %T: %v", err, err)
 	assert.Equal("expected@gmail.com", mismatch.Expected, "Expected")
 	assert.Equal("wrong@gmail.com", mismatch.Actual, "Actual")
 
 	// No token should have been saved under either address.
 	_, loadErr := mgr.loadToken("expected@gmail.com")
-	assert.Error(loadErr, "token should NOT be saved under expected address")
+	require.Error(loadErr, "token should NOT be saved under expected address")
 	_, loadErr = mgr.loadToken("wrong@gmail.com")
 	assert.Error(loadErr, "token should NOT be saved under profile address")
 }
@@ -654,13 +653,13 @@ func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
 	require.Error(err, "expected error for Workspace alias mismatch")
 
 	var mismatch *TokenMismatchError
-	require.True(errors.As(err, &mismatch),
+	require.ErrorAs(err, &mismatch,
 		"expected TokenMismatchError, got %T: %v", err, err)
 	assert.Equal("primary@company.com", mismatch.Actual, "Actual")
 
 	// No token should exist under either address.
 	_, loadErr := mgr.loadToken("alias@company.com")
-	assert.Error(loadErr, "token should NOT be saved under alias address")
+	require.Error(loadErr, "token should NOT be saved under alias address")
 	_, loadErr = mgr.loadToken("primary@company.com")
 	assert.Error(loadErr, "token should NOT be saved under primary address")
 }

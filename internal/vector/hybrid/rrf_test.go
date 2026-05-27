@@ -117,7 +117,7 @@ func TestFuse_TiedRRFScoresStableByMessageID(t *testing.T) {
 	for i := range 20 {
 		out := Fuse(bm25, vec, 60, 1.0, nil, nil)
 		require.Lenf(out, 2, "iter %d", i)
-		require.Equalf(out[0].RRFScore, out[1].RRFScore, "iter %d: scores differ, not a tie scenario: %+v", i, out)
+		require.InDeltaf(out[0].RRFScore, out[1].RRFScore, 0, "iter %d: scores differ, not a tie scenario: %+v", i, out)
 		assert.Equalf(int64(3), out[0].MessageID, "iter %d: want 3 first (ascending MessageID on tie)", i)
 		assert.Equalf(int64(7), out[1].MessageID, "iter %d: want 7 second", i)
 	}
@@ -127,6 +127,6 @@ func TestFuse_ScorePreservedFromInputs(t *testing.T) {
 	bm25 := []vector.Hit{{MessageID: 1, Rank: 1, Score: 5.5}}
 	vec := []vector.Hit{{MessageID: 1, Rank: 1, Score: 0.9}}
 	out := Fuse(bm25, vec, 60, 1.0, nil, nil)
-	assertpkg.Equal(t, 5.5, out[0].BM25Score)
+	assertpkg.InDelta(t, 5.5, out[0].BM25Score, 1e-6)
 	assertpkg.InDelta(t, 0.9, out[0].VectorScore, 1e-6)
 }

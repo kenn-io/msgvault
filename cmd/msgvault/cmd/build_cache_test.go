@@ -17,18 +17,14 @@ import (
 )
 
 // setupTestSQLite creates a test SQLite database with realistic email data.
-func setupTestSQLite(t *testing.T) (string, func()) {
+func setupTestSQLite(t *testing.T) string {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-build-cache-test-*")
-	requirepkg.NoError(t, err, "create temp dir")
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "open sqlite")
-	}
+	requirepkg.NoError(t, err, "open sqlite")
 	defer func() { _ = db.Close() }()
 
 	// Create schema
@@ -184,24 +180,17 @@ func setupTestSQLite(t *testing.T) (string, func()) {
 			(104, 1, 'thread104', 'Final Thread');
 	`
 
-	if _, err := db.Exec(testData); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "insert test data")
-	}
+	_, err = db.Exec(testData)
+	requirepkg.NoError(t, err, "insert test data")
 
-	cleanup := func() {
-		_ = os.RemoveAll(tmpDir)
-	}
-
-	return tmpDir, cleanup
+	return tmpDir
 }
 
 // TestBuildCache_BasicExport tests that buildCache creates all expected Parquet files.
 func TestBuildCache_BasicExport(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -247,8 +236,7 @@ func TestBuildCache_BasicExport(t *testing.T) {
 func TestBuildCache_DataIntegrity(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -312,8 +300,7 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 func TestBuildCache_IncrementalExport(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -401,8 +388,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 
 // TestBuildCache_SkipsWhenNoNewMessages tests that export is skipped when no new messages.
 func TestBuildCache_SkipsWhenNoNewMessages(t *testing.T) {
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -425,8 +411,7 @@ func TestBuildCache_SkipsWhenNoNewMessages(t *testing.T) {
 func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -479,8 +464,7 @@ func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -554,8 +538,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -611,8 +594,7 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 // to return false and skip the rebuild.
 func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -652,8 +634,7 @@ func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 func TestBuildCache_FullRebuild(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -684,8 +665,7 @@ func TestBuildCache_FullRebuild(t *testing.T) {
 func TestBuildCache_DeletedMessagesIncluded(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -718,8 +698,7 @@ func TestBuildCache_DeletedMessagesIncluded(t *testing.T) {
 // TestBuildCache_MessagesWithoutSentAt tests that messages without sent_at are excluded.
 func TestBuildCache_MessagesWithoutSentAt(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -745,8 +724,7 @@ func TestBuildCache_MessagesWithoutSentAt(t *testing.T) {
 func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -790,6 +768,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 		_ = rows.Scan(&email, &count)
 		senderCounts[email] = count
 	}
+	require.NoError(rows.Err(), "sender rows")
 	_ = rows.Close()
 
 	assert.Equal(int64(3), senderCounts["alice@example.com"], "alice sent count")
@@ -814,6 +793,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 		_ = rows.Scan(&name, &count)
 		labelCounts[name] = count
 	}
+	require.NoError(rows.Err(), "label rows")
 	_ = rows.Close()
 
 	assert.Equal(int64(5), labelCounts["INBOX"], "INBOX count")
@@ -841,8 +821,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 // TestBuildCache_YearPartitioning tests that messages are partitioned by year.
 func TestBuildCache_YearPartitioning(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -874,8 +853,7 @@ func TestBuildCache_YearPartitioning(t *testing.T) {
 func TestBuildCache_UTF8Handling(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -910,9 +888,7 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 
 // TestBuildCache_EmptyDatabase tests handling of empty database.
 func TestBuildCache_EmptyDatabase(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-empty-db-*")
-	requirepkg.NoError(t, err, "create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -944,8 +920,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 func TestCSVFallbackPath(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	csvDir := filepath.Join(tmpDir, "csv")
@@ -1080,11 +1055,7 @@ func TestCSVFallbackPath(t *testing.T) {
 // BenchmarkBuildCache benchmarks the export performance.
 func BenchmarkBuildCache(b *testing.B) {
 	// Create a larger test dataset
-	tmpDir, err := os.MkdirTemp("", "msgvault-bench-*")
-	if err != nil {
-		b.Fatalf("create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := b.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "bench.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1138,7 +1109,7 @@ func BenchmarkBuildCache(b *testing.B) {
 	_ = db.Close()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		// Clear analytics dir between runs
 		_ = os.RemoveAll(analyticsDir)
 		if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
@@ -1150,18 +1121,14 @@ func BenchmarkBuildCache(b *testing.B) {
 // setupTestSQLiteEmpty creates a test SQLite database with schema and metadata
 // (sources, labels, participants) but zero messages. This simulates a freshly
 // initialized account that has been synced but has no exportable messages.
-func setupTestSQLiteEmpty(t *testing.T) (string, func()) {
+func setupTestSQLiteEmpty(t *testing.T) string {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-build-cache-empty-*")
-	requirepkg.NoError(t, err, "create temp dir")
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "open sqlite")
-	}
+	requirepkg.NoError(t, err, "open sqlite")
 	defer func() { _ = db.Close() }()
 
 	schema := `
@@ -1231,10 +1198,8 @@ func setupTestSQLiteEmpty(t *testing.T) (string, func()) {
 			conversation_type TEXT NOT NULL DEFAULT 'email'
 		);
 	`
-	if _, err := db.Exec(schema); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "create schema")
-	}
+	_, err = db.Exec(schema)
+	requirepkg.NoError(t, err, "create schema")
 
 	// Insert metadata but NO messages
 	metadata := `
@@ -1242,12 +1207,10 @@ func setupTestSQLiteEmpty(t *testing.T) (string, func()) {
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES (1, 'alice@example.com', 'example.com', 'Alice');
 		INSERT INTO labels (id, source_id, name) VALUES (1, 1, 'INBOX');
 	`
-	if _, err := db.Exec(metadata); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		requirepkg.NoError(t, err, "insert metadata")
-	}
+	_, err = db.Exec(metadata)
+	requirepkg.NoError(t, err, "insert metadata")
 
-	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }
+	return tmpDir
 }
 
 // TestBuildCache_ZeroMessagesNoRepeatedRebuilds verifies that when the DB has
@@ -1258,8 +1221,7 @@ func setupTestSQLiteEmpty(t *testing.T) (string, func()) {
 func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	tmpDir, cleanup := setupTestSQLiteEmpty(t)
-	defer cleanup()
+	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1323,6 +1285,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "ZeroMessages_ZeroState_NoRebuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// DB has 0 messages, state says 0 — no rebuild needed
 				writeSyncState(t, analyticsDir, 0)
 			},
@@ -1331,6 +1294,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "NoStateFile_NoParquet_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// No _last_sync.json, no parquet files — fresh install
 			},
 			wantBuild:  true,
@@ -1339,6 +1303,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "NoStateFile_HasParquet_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// Parquet exists but no state file — corrupt/legacy state
 				createFakeParquet(t, analyticsDir)
 			},
@@ -1348,6 +1313,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "NewMessages_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// DB has messages beyond what state recorded
 				db, err := sql.Open("sqlite3", dbPath)
 				requirepkg.NoError(t, err, "open db")
@@ -1363,6 +1329,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "UpToDate_NoRebuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// DB maxID matches state — cache is current
 				db, err := sql.Open("sqlite3", dbPath)
 				requirepkg.NoError(t, err, "open db")
@@ -1377,6 +1344,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "HasState_EmptyParquetDir_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// State file exists, DB has messages, but parquet dir is empty
 				db, err := sql.Open("sqlite3", dbPath)
 				requirepkg.NoError(t, err, "open db")
@@ -1392,6 +1360,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "DeletedMessages_Excluded",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// All messages are soft-deleted — maxID should be 0
 				db, err := sql.Open("sqlite3", dbPath)
 				requirepkg.NoError(t, err, "open db")
@@ -1405,6 +1374,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "InvalidSyncState_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// Malformed JSON in _last_sync.json
 				requirepkg.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll")
 				requirepkg.NoError(t, os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), []byte("{corrupt"), 0644), "write state")
@@ -1416,6 +1386,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "DBOpenFailure_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// Replace DB file with a directory so store.Open fails
 				_ = os.Remove(dbPath)
 				requirepkg.NoError(t, os.MkdirAll(dbPath, 0755), "MkdirAll")
@@ -1428,6 +1399,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 		{
 			name: "MissingRequiredParquetTables_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
 				// Only messages parquet exists, missing other required tables
 				db, err := sql.Open("sqlite3", dbPath)
 				requirepkg.NoError(t, err, "open db")
@@ -1447,8 +1419,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir, cleanup := setupTestSQLiteEmpty(t)
-			defer cleanup()
+			tmpDir := setupTestSQLiteEmpty(t)
 
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1466,8 +1437,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 
 func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLiteEmpty(t)
-	defer cleanup()
+	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1516,8 +1486,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 
 func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLiteEmpty(t)
-	defer cleanup()
+	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1578,8 +1547,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 // full rebuild.
 func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLiteEmpty(t)
-	defer cleanup()
+	tmpDir := setupTestSQLiteEmpty(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1617,8 +1585,7 @@ func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
 
 func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	require := requirepkg.New(t)
-	tmpDir, cleanup := setupTestSQLite(t)
-	defer cleanup()
+	tmpDir := setupTestSQLite(t)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1670,15 +1637,13 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 // guard, a failed export could write the current max message ID to the state
 // file, causing future incremental builds to skip the rebuild permanently.
 func TestBuildCache_ErrorDoesNotWriteStateFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-*")
-	requirepkg.NoError(t, err, "create temp dir")
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 
 	// Use a nonexistent DB path to force an error during cache build.
-	_, err = buildCache(filepath.Join(tmpDir, "nonexistent.db"), analyticsDir, false)
+	_, err := buildCache(filepath.Join(tmpDir, "nonexistent.db"), analyticsDir, false)
 	requirepkg.Error(t, err, "expected error from nonexistent DB")
 
 	// Verify state file was NOT written.
@@ -1688,11 +1653,7 @@ func TestBuildCache_ErrorDoesNotWriteStateFile(t *testing.T) {
 
 // BenchmarkBuildCacheIncremental benchmarks incremental export performance.
 func BenchmarkBuildCacheIncremental(b *testing.B) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-bench-incr-*")
-	if err != nil {
-		b.Fatalf("create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := b.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "bench.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
@@ -1745,11 +1706,14 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 	_ = db.Close()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		// Reset sync state to re-trigger incremental export
 		stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 		state := syncState{LastMessageID: 10000, LastSyncAt: time.Now()}
-		data, _ := json.Marshal(state)
+		data, err := json.Marshal(state)
+		if err != nil {
+			b.Fatalf("marshal sync state: %v", err)
+		}
 		_ = os.WriteFile(stateFile, data, 0644)
 
 		if _, err := buildCache(dbPath, analyticsDir, false); err != nil {

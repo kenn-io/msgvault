@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 
@@ -124,7 +124,7 @@ func TestFillScreenDetailLineCount(t *testing.T) {
 
 	// Test error state
 	model.loading = false
-	model.err = fmt.Errorf("test error")
+	model.err = errors.New("test error")
 	view = model.messageDetailView()
 	lines = strings.Split(view, "\n")
 	assertpkg.Len(t, lines, expectedLines, "error state")
@@ -261,13 +261,13 @@ func TestDetailNavigationEmptyList(t *testing.T) {
 
 	// Press right arrow - should show flash, not panic
 	newModel, _ := model.navigateDetailNext()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
 
 	// Press left arrow - should show flash, not panic
 	newModel, _ = m.navigateDetailPrev()
-	m = newModel.(Model)
+	m = asModel(t, newModel)
 
 	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
 }
@@ -283,7 +283,7 @@ func TestDetailNavigationOutOfBoundsIndex(t *testing.T) {
 	// Press left (navigateDetailPrev) - should clamp index and show flash
 	// Index gets clamped from 5 to 0, then can't go to lower index
 	newModel, _ := model.navigateDetailPrev()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Index should be clamped to 0, then show "At first message"
 	// because we can't go before the only message
@@ -308,7 +308,7 @@ func TestDetailNavigationOutOfBoundsWithMultipleMessages(t *testing.T) {
 	// Press left (navigateDetailPrev) - should clamp to last valid index (2),
 	// then navigate to previous message (index 1), triggering loadMessageDetail
 	newModel, cmd := model.navigateDetailPrev()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Index should be clamped from 10 to 2, then decremented to 1
 	assert.Equal(1, m.detailMessageIndex, "expected detailMessageIndex clamped and navigated")
@@ -348,7 +348,7 @@ func TestDetailNavigationCursorPreservedOnGoBack(t *testing.T) {
 
 	// Go back to message list
 	newModel, _ := model.goBack()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Cursor should be preserved at position 2 (where we navigated to)
 	// not restored to position 0 (where we entered)

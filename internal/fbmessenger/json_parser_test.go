@@ -84,7 +84,7 @@ func TestParseJSONThread_Attachments(t *testing.T) {
 	require.Len(m.Attachments, 1)
 	assert.Equal("photo", m.Attachments[0].Kind)
 	_, err = os.Stat(m.Attachments[0].AbsPath)
-	assert.NoError(err, "attachment file should exist on disk")
+	require.NoError(err, "attachment file should exist on disk")
 	assert.Equal("image/png", m.Attachments[0].MimeType)
 }
 
@@ -102,7 +102,7 @@ func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {
 	require.Len(m.Attachments, 1)
 	assert.Equal("photo", m.Attachments[0].Kind)
 	_, err = os.Stat(m.Attachments[0].AbsPath)
-	assert.NoError(err, "attachment file should exist on disk")
+	require.NoError(err, "attachment file should exist on disk")
 }
 
 func TestParseJSONThread_NonTextBodies(t *testing.T) {

@@ -25,7 +25,7 @@ func TestGKeyCyclesViewType(t *testing.T) {
 
 	// Press 'g' - should cycle to SenderNames (not go to home)
 	newModel, cmd := model.handleAggregateKeys(key('g'))
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Expected: viewType changes to ViewSenderNames
 	assert.Equal(query.ViewSenderNames, m.viewType, "after 'g'")
@@ -142,7 +142,7 @@ func TestTabCyclesViewTypeAtAggregates(t *testing.T) {
 
 	// Press Tab - should cycle to SenderNames
 	newModel, cmd := model.handleAggregateKeys(keyTab())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assert.Equal(query.ViewSenderNames, m.viewType, "after Tab")
 	assert.NotNil(cmd, "expected reload command after Tab")
@@ -620,7 +620,7 @@ func TestSenderNamesDrillDown(t *testing.T) {
 
 	// Press Enter to drill into first sender name
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
 	assert.Equal("Alice Smith", m.drillFilter.SenderName)
@@ -640,7 +640,7 @@ func TestSenderNamesDrillDownEmptyKey(t *testing.T) {
 		WithPageSize(10).WithSize(100, 20).WithViewType(query.ViewSenderNames).Build()
 
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.True(t, m.drillFilter.MatchesEmpty(query.ViewSenderNames), "expected MatchEmptySenderName=true for empty key")
 	assertpkg.Empty(t, m.drillFilter.SenderName)
@@ -700,12 +700,12 @@ func TestSubAggregateFromSenderNames(t *testing.T) {
 
 	// Drill into the name
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Tab to sub-aggregate
 	m.messages = msgs
 	newModel2, _ := m.handleMessageListKeys(keyTab())
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelDrillDown)
 	// Should skip SenderNames (the drill view type) and go to Recipients
@@ -750,7 +750,7 @@ func TestSenderNamesBreadcrumbRoundTrip(t *testing.T) {
 
 	// Press Esc to go back
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assert.Equal("Alice Smith", m2.drillFilter.SenderName, "after goBack")
 	assert.Equal(query.ViewSenderNames, m2.drillViewType)
@@ -772,7 +772,7 @@ func TestRecipientNamesDrillDown(t *testing.T) {
 
 	// Press Enter to drill into first recipient name
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
 	assert.Equal("Bob Jones", m.drillFilter.RecipientName)
@@ -790,7 +790,7 @@ func TestRecipientNamesDrillDownEmptyKey(t *testing.T) {
 		WithPageSize(10).WithSize(100, 20).WithViewType(query.ViewRecipientNames).Build()
 
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertpkg.True(t, m.drillFilter.MatchesEmpty(query.ViewRecipientNames), "expected MatchEmptyRecipientName=true for empty key")
 	assertpkg.Empty(t, m.drillFilter.RecipientName)
@@ -860,12 +860,12 @@ func TestSubAggregateFromRecipientNames(t *testing.T) {
 
 	// Drill into the name
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Tab to sub-aggregate
 	m.messages = msgs
 	newModel2, _ := m.handleMessageListKeys(keyTab())
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelDrillDown)
 	// nextSubGroupView(RecipientNames) = Domains
@@ -906,7 +906,7 @@ func TestRecipientNamesBreadcrumbRoundTrip(t *testing.T) {
 
 	// Press Esc to go back
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelMessageList)
 	assert.Equal("Bob Jones", m2.drillFilter.RecipientName, "preserved after goBack")

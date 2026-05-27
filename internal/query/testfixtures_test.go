@@ -113,10 +113,10 @@ type TestDataBuilder struct {
 }
 
 // NewTestDataBuilder creates a new typed test data builder.
-func NewTestDataBuilder(t testing.TB) *TestDataBuilder {
-	t.Helper()
+func NewTestDataBuilder(tb testing.TB) *TestDataBuilder {
+	tb.Helper()
 	return &TestDataBuilder{
-		t:           t,
+		t:           tb,
 		nextMsgID:   1,
 		nextSrcID:   1,
 		nextPartID:  1,
@@ -384,7 +384,7 @@ func (b *TestDataBuilder) conversationsSQL() string {
 // Build: generate Parquet files
 // ---------------------------------------------------------------------------
 
-// column definitions (coupled to SQL generation methods above)
+// column definitions (coupled to SQL generation methods above).
 const (
 	messagesCols          = "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, message_type, year, month"
 	sourcesCols           = "id, account_email, source_type"
@@ -488,9 +488,9 @@ type parquetBuilder struct {
 }
 
 // newParquetBuilder creates a new builder for Parquet test fixtures.
-func newParquetBuilder(t testing.TB) *parquetBuilder {
-	t.Helper()
-	return &parquetBuilder{t: t}
+func newParquetBuilder(tb testing.TB) *parquetBuilder {
+	tb.Helper()
+	return &parquetBuilder{t: tb}
 }
 
 // addTable adds a table definition to be written as Parquet.
@@ -571,8 +571,8 @@ func escapePath(p string) string {
 }
 
 // writeTableParquet writes a single table's data to a Parquet file using DuckDB.
-func writeTableParquet(t testing.TB, db *sql.DB, path, columns, values string, empty bool) {
-	t.Helper()
+func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, empty bool) {
+	tb.Helper()
 
 	whereClause := ""
 	if empty {
@@ -585,7 +585,7 @@ func writeTableParquet(t testing.TB, db *sql.DB, path, columns, values string, e
 		`, values, columns, whereClause, path)
 
 	_, err := db.Exec(query)
-	require.NoError(t, err, "create parquet %s", path)
+	require.NoError(tb, err, "create parquet %s", path)
 }
 
 // ---------------------------------------------------------------------------
@@ -594,44 +594,44 @@ func writeTableParquet(t testing.TB, db *sql.DB, path, columns, values string, e
 
 // createEngineFromBuilder builds Parquet files from the builder and returns a
 // DuckDBEngine. Cleanup is registered via t.Cleanup.
-func createEngineFromBuilder(t testing.TB, pb *parquetBuilder) *DuckDBEngine {
-	t.Helper()
+func createEngineFromBuilder(tb testing.TB, pb *parquetBuilder) *DuckDBEngine {
+	tb.Helper()
 	analyticsDir, cleanup := pb.build()
-	t.Cleanup(cleanup)
+	tb.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
-	t.Cleanup(func() { _ = engine.Close() })
+	require.NoError(tb, err, "NewDuckDBEngine")
+	tb.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
 
 // assertAggregateCounts verifies that every key in want exists in got with the
 // expected count, and that there are no extra rows.
-func assertAggregateCounts(t testing.TB, got []AggregateRow, want map[string]int64) {
-	t.Helper()
+func assertAggregateCounts(tb testing.TB, got []AggregateRow, want map[string]int64) {
+	tb.Helper()
 	gotMap := make(map[string]int64, len(got))
 	for _, r := range got {
 		_, seen := gotMap[r.Key]
-		assert.False(t, seen, "duplicate key %q in aggregate results", r.Key)
+		assert.False(tb, seen, "duplicate key %q in aggregate results", r.Key)
 		gotMap[r.Key] = r.Count
 	}
 	for key, wantCount := range want {
 		gotCount, ok := gotMap[key]
-		if !assert.True(t, ok, "missing expected key %q", key) {
+		if !assert.True(tb, ok, "missing expected key %q", key) {
 			continue
 		}
-		assert.Equal(t, wantCount, gotCount, "key %q count", key)
+		assert.Equal(tb, wantCount, gotCount, "key %q count", key)
 	}
 	for _, r := range got {
 		_, ok := want[r.Key]
-		assert.True(t, ok, "unexpected key %q (count=%d)", r.Key, r.Count)
+		assert.True(tb, ok, "unexpected key %q (count=%d)", r.Key, r.Count)
 	}
 }
 
 // assertDescendingOrder verifies that aggregate results are sorted by count descending.
-func assertDescendingOrder(t testing.TB, got []AggregateRow) {
-	t.Helper()
+func assertDescendingOrder(tb testing.TB, got []AggregateRow) {
+	tb.Helper()
 	for i := 1; i < len(got); i++ {
-		assert.LessOrEqual(t, got[i].Count, got[i-1].Count,
+		assert.LessOrEqual(tb, got[i].Count, got[i-1].Count,
 			"results not in descending order: %q (count=%d) after %q (count=%d)",
 			got[i].Key, got[i].Count, got[i-1].Key, got[i-1].Count)
 	}

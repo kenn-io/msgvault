@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -62,7 +61,7 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
-	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger = slog.New(slog.DiscardHandler)
 
 	var stdout, stderr bytes.Buffer
 	root := newTestRootCmd()
@@ -169,7 +168,7 @@ func TestIdentityShow_Empty(t *testing.T) {
 }
 
 func TestIdentityShow_UnknownAccount(t *testing.T) {
-	_, root, _, _ := newIdentityCLITest(t)
+	_, root, _, _ := newIdentityCLITest(t) //nolint:dogsled // helper returns 4 values; test needs only root
 	root.SetArgs([]string{"identity", "show", "ghost@example.com"})
 	err := root.Execute()
 	requirepkg.Error(t, err)
@@ -300,7 +299,7 @@ func TestIdentityRemove_MissOnEmptyAccount(t *testing.T) {
 }
 
 func TestIdentityRemove_WhitespaceIdentifier(t *testing.T) {
-	_, root, _, _ := newIdentityCLITest(t)
+	_, root, _, _ := newIdentityCLITest(t) //nolint:dogsled // helper returns 4 values; test needs only root
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "   "})
 	err := root.Execute()

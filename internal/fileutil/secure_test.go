@@ -107,7 +107,7 @@ func TestSecureOpenFile(t *testing.T) {
 
 			f, err := SecureOpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, tt.perm)
 			require.NoError(err, "SecureOpenFile")
-			if _, err := f.Write([]byte("data")); err != nil {
+			if _, err := f.WriteString("data"); err != nil {
 				_ = f.Close()
 				require.NoError(err, "Write")
 			}

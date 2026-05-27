@@ -109,7 +109,7 @@ func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
 
 	// Old file must now live at .1; new file is path itself.
 	_, err = os.Stat(path + ".1")
-	assert.NoError(err, "rotated sibling missing")
+	require.NoError(err, "rotated sibling missing")
 	fi, err := os.Stat(path)
 	require.NoError(err, "current log missing")
 	assert.Less(fi.Size(), int64(200), "new log should start empty or small")

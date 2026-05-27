@@ -40,7 +40,7 @@ func TestImportPst_SupportPST(t *testing.T) {
 	assert.Equal(int64(17), summary.MessagesAdded, "MessagesAdded")
 	assert.Equal(int64(0), summary.MessagesSkipped, "MessagesSkipped on first import")
 	assert.False(summary.HardErrors, "HardErrors")
-	assert.Greater(summary.FoldersImported, 0, "FoldersImported")
+	assert.Positive(summary.FoldersImported, "FoldersImported")
 }
 
 // TestImportPst_SupportPST_Idempotent verifies that re-importing the same PST

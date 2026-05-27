@@ -262,15 +262,11 @@ func TestDiscoverV10Accounts(t *testing.T) {
 		byGUID[a.GUID] = a
 	}
 
-	if info, ok := byGUID[guid1]; !assert.True(ok, "GUID %s not found", guid1) {
-		// nothing
-	} else {
+	if info, ok := byGUID[guid1]; assert.True(ok, "GUID %s not found", guid1) {
 		assert.Equal("user@gmail.com", info.Email, "GUID %s email", guid1)
 	}
 
-	if info, ok := byGUID[guid2]; !assert.True(ok, "GUID %s not found", guid2) {
-		// nothing
-	} else {
+	if info, ok := byGUID[guid2]; assert.True(ok, "GUID %s not found", guid2) {
 		assert.Equal("user@yahoo.com", info.Email, "GUID %s email", guid2)
 	}
 }

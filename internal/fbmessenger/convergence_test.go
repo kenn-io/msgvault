@@ -26,7 +26,7 @@ func TestJSONHTMLConvergence_Simple(t *testing.T) {
 	require.NoError(err, "json")
 	htmlTh, err := ParseHTMLThread(htmlRoot, threadDir(t, htmlRoot, "alice_ABC123"))
 	require.NoError(err, "html")
-	require.Equal(len(htmlTh.Messages), len(jsonTh.Messages), "message count")
+	require.Len(jsonTh.Messages, len(htmlTh.Messages), "message count")
 	// Participants equal by slug.
 	var jSlugs, hSlugs []string
 	for _, p := range jsonTh.Participants {

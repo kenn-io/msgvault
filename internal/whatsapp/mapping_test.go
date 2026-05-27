@@ -184,7 +184,7 @@ func TestMapMessageSnippetTruncation(t *testing.T) {
 
 	result := mapMessage(msg, 1, 1, sql.NullInt64{})
 	requirepkg.True(t, result.Snippet.Valid, "Snippet should be valid")
-	assertpkg.Equal(t, 100, len([]rune(result.Snippet.String)), "Snippet rune count")
+	assertpkg.Len(t, []rune(result.Snippet.String), 100, "Snippet rune count")
 }
 
 func TestMapGroupRole(t *testing.T) {
