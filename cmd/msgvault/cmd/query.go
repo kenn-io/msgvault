@@ -126,7 +126,7 @@ func executeQuery(
 	}
 
 	switch format {
-	case "json":
+	case outputFormatJSON:
 		return writeJSON(w, cols, allRows)
 	case "csv":
 		return writeCSV(w, cols, allRows)
@@ -203,6 +203,10 @@ func writeCSV(
 	return cw.Error()
 }
 
+// nil error return mirrors writeJSON/writeCSV so the format switch can
+// `return writeTable(...)` uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning writeJSON/writeCSV siblings
 func writeTable(
 	w io.Writer, cols []string, rows [][]any,
 ) error {
@@ -265,7 +269,7 @@ func writeTable(
 func init() {
 	rootCmd.AddCommand(queryCmd)
 	queryCmd.Flags().StringVar(
-		&queryFormat, "format", "json",
+		&queryFormat, "format", outputFormatJSON,
 		"Output format: json, csv, or table",
 	)
 }

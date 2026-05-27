@@ -340,6 +340,10 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	return outputSearchResultsTable(results)
 }
 
+// nil error return mirrors outputSearchResultsJSON so callers can return
+// either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputSearchResultsJSON sibling
 func outputSearchResultsTable(results []query.MessageSummary) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
@@ -367,6 +371,10 @@ func summaryFromDisplay(msg query.MessageSummary) string {
 	return ""
 }
 
+// nil error return mirrors outputRemoteSearchResultsJSON so callers can
+// return either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputRemoteSearchResultsJSON sibling
 func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
@@ -408,7 +416,7 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"size_estimate":          msg.SizeEstimate,
 			"has_attachments":        msg.HasAttachments,
 			"attachment_count":       msg.AttachmentCount,
-			"labels":                 msg.Labels,
+			tableLabels:              msg.Labels,
 		}
 	}
 
@@ -419,7 +427,7 @@ func init() {
 	rootCmd.AddCommand(searchCmd)
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 50, "Maximum number of results")
 	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Skip first N results")
-	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "Output as JSON")
+	searchCmd.Flags().BoolVar(&searchJSON, outputFormatJSON, false, "Output as JSON")
 	searchCmd.Flags().StringVar(&searchAccount, "account", "", "Limit results to a specific account (email address)")
 	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
 		"Limit results to all member accounts of one collection")

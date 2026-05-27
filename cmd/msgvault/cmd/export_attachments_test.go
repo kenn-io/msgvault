@@ -31,8 +31,8 @@ func TestExportAttachmentsCmd_Registration(t *testing.T) {
 
 // setupExportAttachmentsTest creates a temp directory with a SQLite database
 // containing a message with attachments and corresponding content-addressed
-// files on disk. Returns the data dir and the message ID.
-func setupExportAttachmentsTest(t *testing.T) (dataDir string, msgID int64) {
+// files on disk. Returns the data dir.
+func setupExportAttachmentsTest(t *testing.T) (dataDir string) {
 	t.Helper()
 	dataDir = t.TempDir()
 
@@ -58,7 +58,7 @@ func setupExportAttachmentsTest(t *testing.T) (dataDir string, msgID int64) {
 	createTestAttachment(t, db, attDir, 2, 1, "photo.jpg", []byte("JPEG image data"))
 
 	_ = s.Close()
-	return dataDir, 1
+	return dataDir
 }
 
 // createTestAttachment creates a content-addressed file and inserts the
@@ -85,7 +85,7 @@ func createTestAttachment(t *testing.T, db *sql.DB, attDir string, attID, msgID 
 func TestExportAttachments_FullFlow(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	dataDir, _ := setupExportAttachmentsTest(t)
+	dataDir := setupExportAttachmentsTest(t)
 
 	// Set global cfg to point to our test data
 	oldCfg := cfg
@@ -116,7 +116,7 @@ func TestExportAttachments_FullFlow(t *testing.T) {
 }
 
 func TestExportAttachments_GmailIDFallback(t *testing.T) {
-	dataDir, _ := setupExportAttachmentsTest(t)
+	dataDir := setupExportAttachmentsTest(t)
 
 	oldCfg := cfg
 	cfg = &config.Config{
@@ -139,7 +139,7 @@ func TestExportAttachments_GmailIDFallback(t *testing.T) {
 }
 
 func TestExportAttachments_MessageNotFound(t *testing.T) {
-	dataDir, _ := setupExportAttachmentsTest(t)
+	dataDir := setupExportAttachmentsTest(t)
 
 	oldCfg := cfg
 	cfg = &config.Config{
@@ -156,7 +156,7 @@ func TestExportAttachments_MessageNotFound(t *testing.T) {
 }
 
 func TestExportAttachments_OutputDirValidation(t *testing.T) {
-	dataDir, _ := setupExportAttachmentsTest(t)
+	dataDir := setupExportAttachmentsTest(t)
 
 	oldCfg := cfg
 	cfg = &config.Config{
@@ -177,7 +177,7 @@ func TestExportAttachments_OutputDirValidation(t *testing.T) {
 }
 
 func TestExportAttachments_NotADirectory(t *testing.T) {
-	dataDir, _ := setupExportAttachmentsTest(t)
+	dataDir := setupExportAttachmentsTest(t)
 
 	oldCfg := cfg
 	cfg = &config.Config{

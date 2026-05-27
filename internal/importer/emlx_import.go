@@ -258,9 +258,12 @@ func ImportEmlxDir(
 		log.Warn("failed to save initial checkpoint", "error", err)
 	}
 
-	flushPending := func() (bool, error) {
+	// flushPending writes the buffered batch and returns true when the
+	// context was cancelled mid-flush so the caller can stop. Per-batch
+	// errors are recorded on the summary and logged, never propagated.
+	flushPending := func() bool {
 		if len(pending) == 0 {
-			return false, nil
+			return false
 		}
 
 		ids := make([]string, len(pending))
@@ -293,7 +296,7 @@ func ImportEmlxDir(
 				); err != nil {
 					log.Warn("checkpoint save failed", "error", err)
 				}
-				return true, nil
+				return true
 			}
 
 			cp.MessagesProcessed++
@@ -399,7 +402,7 @@ func ImportEmlxDir(
 		pending = pending[:0]
 		pendingBytes = 0
 		clear(pendingIdx)
-		return false, nil
+		return false
 	}
 
 	for mboxIdx := startMbox; mboxIdx < len(mailboxes); mboxIdx++ {
@@ -504,20 +507,14 @@ func ImportEmlxDir(
 			}
 
 			if len(pending) >= batchSize || pendingBytes >= batchBytes {
-				stop, err := flushPending()
-				if err != nil {
-					return summary, err
-				}
-				if stop {
+				if flushPending() {
 					return summary, nil
 				}
 			}
 		}
 
 		// Flush remaining for this mailbox.
-		if stop, err := flushPending(); err != nil {
-			return summary, err
-		} else if stop {
+		if flushPending() {
 			return summary, nil
 		}
 

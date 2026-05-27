@@ -95,15 +95,15 @@ func assertRowsContain(t *testing.T, rows []AggregateRow, want []aggExpectation)
 	}
 }
 
-// assertRow finds a single key in the aggregate rows and asserts its count.
-func assertRow(t *testing.T, rows []AggregateRow, key string, count int64) {
+// assertRow finds a single key in the aggregate rows and asserts its count is 1.
+func assertRow(t *testing.T, rows []AggregateRow, key string) {
 	t.Helper()
 	m := aggRowMap(t, rows)
 	got, ok := m[key]
 	if !assert.True(t, ok, "key %q not found in results", key) {
 		return
 	}
-	assert.Equal(t, count, got, "key %q count", key)
+	assert.Equal(t, int64(1), got, "key %q count", key)
 }
 
 // assertAggRows verifies that aggregate rows contain the expected key/count pairs

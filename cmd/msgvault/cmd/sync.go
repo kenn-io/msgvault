@@ -103,9 +103,9 @@ Examples:
 			}
 			for _, src := range allMatches {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
-				case "imap":
+				case sourceTypeIMAP:
 					imapTargets = append(imapTargets, src)
 				}
 			}
@@ -127,7 +127,7 @@ Examples:
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					if !cfg.OAuth.HasAnyConfig() {
 						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
 						continue
@@ -150,7 +150,7 @@ Examples:
 						}
 					}
 					gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
-				case "imap":
+				case sourceTypeIMAP:
 					skipMsg, parseErr := imapSkipReason(src)
 					if parseErr != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
@@ -302,7 +302,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 
 	elapsed := time.Since(startTime)
 	logger.Info("incremental sync completed",
-		"email", email,
+		keyEmail, email,
 		"messages_added", summary.MessagesAdded,
 		"elapsed", elapsed,
 	)

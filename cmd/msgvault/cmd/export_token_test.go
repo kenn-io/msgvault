@@ -124,11 +124,11 @@ func newTestExporter(srv *httptest.Server, tokensDir string) *tokenExporter {
 	}
 }
 
-// writeTestToken writes a fake token file and returns the email used.
-func writeTestToken(t *testing.T, tokensDir, email, content string) {
+// writeTestToken writes a fake token file for the test account.
+func writeTestToken(t *testing.T, tokensDir, content string) {
 	t.Helper()
 	requirepkg.NoError(t, os.MkdirAll(tokensDir, 0700), "mkdir tokens")
-	path := filepath.Join(tokensDir, email+".json")
+	path := filepath.Join(tokensDir, "user@gmail.com.json")
 	requirepkg.NoError(t, os.WriteFile(path, []byte(content), 0600), "write token")
 }
 
@@ -154,7 +154,7 @@ func TestExport_UploadSuccess(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{"token":"secret"}`)
+	writeTestToken(t, tokensDir, `{"token":"secret"}`)
 
 	e := newTestExporter(srv, tokensDir)
 	result, err := e.export("user@gmail.com", srv.URL, "my-key", false)
@@ -183,7 +183,7 @@ func TestExport_UploadFailure(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{"token":"secret"}`)
+	writeTestToken(t, tokensDir, `{"token":"secret"}`)
 
 	e := newTestExporter(srv, tokensDir)
 	_, err := e.export("user@gmail.com", srv.URL, "key", false)
@@ -229,7 +229,7 @@ func TestExport_HTTPAllowedWithInsecure(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{"token":"data"}`)
+	writeTestToken(t, tokensDir, `{"token":"data"}`)
 
 	e := &tokenExporter{
 		httpClient: srv.Client(),
@@ -254,7 +254,7 @@ func TestExport_HTTPWarning(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{"token":"data"}`)
+	writeTestToken(t, tokensDir, `{"token":"data"}`)
 
 	var stderr bytes.Buffer
 	e := &tokenExporter{
@@ -300,7 +300,7 @@ func TestExport_AccountPostSuccess(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{}`)
+	writeTestToken(t, tokensDir, `{}`)
 
 	e := newTestExporter(srv, tokensDir)
 	_, err := e.export("user@gmail.com", srv.URL, "key", false)
@@ -322,7 +322,7 @@ func TestExport_AccountPostFailureIsNonFatal(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{}`)
+	writeTestToken(t, tokensDir, `{}`)
 
 	var stderr bytes.Buffer
 	e := &tokenExporter{
@@ -354,7 +354,7 @@ func TestExport_AllowInsecureFromConfig(t *testing.T) {
 	defer srv.Close()
 
 	tokensDir := t.TempDir()
-	writeTestToken(t, tokensDir, "user@gmail.com", `{"token":"data"}`)
+	writeTestToken(t, tokensDir, `{"token":"data"}`)
 
 	e := &tokenExporter{
 		httpClient: srv.Client(),

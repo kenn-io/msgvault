@@ -153,7 +153,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 
 	// Remove credentials for the source type.
 	switch source.SourceType {
-	case "gmail":
+	case sourceTypeGmail:
 		tokenPath := oauth.TokenFilePath(
 			cfg.TokensDir(), source.Identifier,
 		)
@@ -163,7 +163,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 				tokenPath, err,
 			)
 		}
-	case "imap":
+	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {
 			imapCfg, parseErr := imaplib.ConfigFromJSON(source.SyncConfig.String)
 			if parseErr == nil {

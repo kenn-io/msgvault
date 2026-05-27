@@ -376,12 +376,16 @@ func parseCallHTML(r io.Reader) (*callRecord, error) {
 	return record, nil
 }
 
-// snippet returns the first n characters of s, suitable for message preview.
-func snippet(s string, maxLen int) string {
+// snippetMaxLen bounds the message-preview length produced by snippet.
+const snippetMaxLen = 100
+
+// snippet returns the first snippetMaxLen characters of s, suitable for
+// message preview.
+func snippet(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	runes := []rune(s)
-	if len(runes) > maxLen {
-		return string(runes[:maxLen])
+	if len(runes) > snippetMaxLen {
+		return string(runes[:snippetMaxLen])
 	}
 	return s
 }
@@ -396,7 +400,7 @@ func computeMessageID(parts ...string) string {
 // For 1:1 texts, uses the other party's normalized phone.
 // For group texts, uses "group:" + sorted(all participant phones).
 // For calls, uses "calls:" + normalizedPhone.
-func computeThreadID(ownerCell string, ft fileType, contactPhone string, groupParticipants []string) string {
+func computeThreadID(ft fileType, contactPhone string, groupParticipants []string) string {
 	switch ft {
 	case fileTypeGroup:
 		phones := make([]string, len(groupParticipants))

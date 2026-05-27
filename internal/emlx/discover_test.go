@@ -9,6 +9,9 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 )
 
+// testMailboxGUID is the synthetic mailbox GUID used by the V10 fixtures.
+const testMailboxGUID = "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
+
 // mkMailbox creates a mock legacy Apple Mail mailbox structure
 // with a direct Messages/ subdirectory.
 func mkMailbox(t *testing.T, base string, emlxFiles ...string) {
@@ -25,10 +28,10 @@ func mkMailbox(t *testing.T, base string, emlxFiles ...string) {
 // mkV10Mailbox creates a modern V10-style mailbox structure
 // with <GUID>/Data/Messages/ layout.
 func mkV10Mailbox(
-	t *testing.T, base, guid string, emlxFiles ...string,
+	t *testing.T, base string, emlxFiles ...string,
 ) {
 	t.Helper()
-	msgDir := filepath.Join(base, guid, "Data", "Messages")
+	msgDir := filepath.Join(base, testMailboxGUID, "Data", "Messages")
 	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
 	for _, name := range emlxFiles {
 		data := "10\nFrom: x\r\n\r\n"
@@ -218,20 +221,19 @@ func TestDiscoverMailboxes_V10Layout(t *testing.T) {
 	root := t.TempDir()
 	v10 := filepath.Join(root, "V10")
 	acctGUID := "13C9A646-EE0A-4698-B5A2-E07FFBDDEED3"
-	mboxGUID := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	acctDir := filepath.Join(v10, acctGUID)
 
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "INBOX.mbox"),
-		mboxGUID, "1.emlx", "2.emlx", "3.emlx",
+		"1.emlx", "2.emlx", "3.emlx",
 	)
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "Sent Messages.mbox"),
-		mboxGUID, "10.emlx",
+		"10.emlx",
 	)
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "Junk.mbox"),
-		mboxGUID, "27.emlx", "28.emlx",
+		"27.emlx", "28.emlx",
 	)
 
 	mailboxes, err := DiscoverMailboxes(v10)
@@ -272,7 +274,7 @@ func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
-	mkV10Mailbox(t, mboxDir, guid, "1.emlx", "2.emlx")
+	mkV10Mailbox(t, mboxDir, "1.emlx", "2.emlx")
 
 	// Point directly at the .mbox directory.
 	mailboxes, err := DiscoverMailboxes(mboxDir)
@@ -291,9 +293,8 @@ func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
 func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
 	require := requirepkg.New(t)
 	root := t.TempDir()
-	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "Test.mbox")
-	mkV10Mailbox(t, mboxDir, guid,
+	mkV10Mailbox(t, mboxDir,
 		"1.emlx", "2.partial.emlx",
 	)
 
@@ -312,7 +313,7 @@ func TestDiscoverMailboxes_MixedLegacyAndV10(t *testing.T) {
 
 	// Create empty legacy Messages/ alongside populated V10 path.
 	require.NoError(os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
-	mkV10Mailbox(t, mboxDir, guid, "1.emlx", "2.emlx")
+	mkV10Mailbox(t, mboxDir, "1.emlx", "2.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
 	require.NoError(err, "DiscoverMailboxes")

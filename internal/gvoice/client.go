@@ -163,7 +163,7 @@ func (c *Client) Import(
 		switch entry.FileType {
 		case fileTypeText, fileTypeGroup:
 			n, err := c.importTextEntry(
-				ctx, s, sourceID, &entry, ownerID,
+				s, sourceID, &entry, ownerID,
 				labelIDs, phoneCache, convCache, summary,
 			)
 			if err != nil {
@@ -179,7 +179,7 @@ func (c *Client) Import(
 
 		default:
 			if err := c.importCallEntry(
-				ctx, s, sourceID, &entry, ownerID,
+				s, sourceID, &entry, ownerID,
 				labelIDs, phoneCache, convCache, summary,
 			); err != nil {
 				c.logger.Warn(
@@ -219,7 +219,6 @@ func (c *Client) ensureLabels(
 }
 
 func (c *Client) importTextEntry(
-	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
 	entry *indexEntry,
@@ -327,7 +326,7 @@ func (c *Client) importTextEntry(
 		SourceID:        sourceID,
 		SourceMessageID: entry.ID,
 		ConversationID:  convID,
-		Snippet:         nullStr(snippet(msg.Body, 100)),
+		Snippet:         nullStr(snippet(msg.Body)),
 		SentAt:          sentAt,
 		MessageType:     msgType,
 		SenderID:        senderIDNull,
@@ -382,7 +381,6 @@ func (c *Client) importTextEntry(
 }
 
 func (c *Client) importCallEntry(
-	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
 	entry *indexEntry,
@@ -483,7 +481,7 @@ func (c *Client) importCallEntry(
 		SourceID:        sourceID,
 		SourceMessageID: entry.ID,
 		ConversationID:  convID,
-		Snippet:         nullStr(snippet(bodyStr, 100)),
+		Snippet:         nullStr(snippet(bodyStr)),
 		SentAt:          sentAt,
 		MessageType:     msgType,
 		SenderID:        senderIDNull,
@@ -744,7 +742,7 @@ func (c *Client) buildIndex() error {
 			continue
 		}
 
-		name, ft, err := classifyFile(entry.Name())
+		_, ft, err := classifyFile(entry.Name())
 		if err != nil {
 			skipped++
 			continue
@@ -754,7 +752,7 @@ func (c *Client) buildIndex() error {
 
 		switch ft {
 		case fileTypeText, fileTypeGroup:
-			ents, err := c.indexTextFile(filePath, name, ft)
+			ents, err := c.indexTextFile(filePath, ft)
 			if err != nil {
 				c.logger.Warn(
 					"failed to index text file",
@@ -766,7 +764,7 @@ func (c *Client) buildIndex() error {
 			index = append(index, ents...)
 
 		default:
-			ent, err := c.indexCallFile(filePath, name, ft)
+			ent, err := c.indexCallFile(filePath, ft)
 			if err != nil {
 				c.logger.Warn(
 					"failed to index call file",
@@ -809,7 +807,7 @@ func (c *Client) buildIndex() error {
 }
 
 func (c *Client) indexTextFile(
-	filePath, contactName string, ft fileType,
+	filePath string, ft fileType,
 ) ([]indexEntry, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -837,7 +835,7 @@ func (c *Client) indexTextFile(
 		var threadID string
 		if ft == fileTypeGroup {
 			threadID = computeThreadID(
-				c.owner.Cell, fileTypeGroup,
+				fileTypeGroup,
 				"", groupParticipants,
 			)
 		} else {
@@ -851,7 +849,7 @@ func (c *Client) indexTextFile(
 				}
 			}
 			threadID = computeThreadID(
-				c.owner.Cell, fileTypeText,
+				fileTypeText,
 				otherPhone, nil,
 			)
 		}
@@ -872,7 +870,7 @@ func (c *Client) indexTextFile(
 }
 
 func (c *Client) indexCallFile(
-	filePath, contactName string, ft fileType,
+	filePath string, ft fileType,
 ) (*indexEntry, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -894,7 +892,7 @@ func (c *Client) indexCallFile(
 		record.Timestamp.Format(time.RFC3339Nano),
 	)
 	threadID := computeThreadID(
-		c.owner.Cell, ft, record.Phone, nil,
+		ft, record.Phone, nil,
 	)
 	label := labelForFileType(ft)
 

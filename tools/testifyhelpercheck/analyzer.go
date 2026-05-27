@@ -29,7 +29,7 @@ func run(pass *analysis.Pass) (any, error) {
 			if !ok || !isTestFuncDecl(fn, imports.testing) {
 				continue
 			}
-			analyzeBody(pass, fn.Body, fn.Type.Params.List[0].Names[0].Name, imports)
+			analyzeBody(pass, fn.Body, fn.Type.Params.List[0].Names[0].Name)
 		}
 
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -38,7 +38,7 @@ func run(pass *analysis.Pass) (any, error) {
 				return true
 			}
 			paramName := lit.Type.Params.List[0].Names[0].Name
-			analyzeBody(pass, lit.Body, paramName, imports)
+			analyzeBody(pass, lit.Body, paramName)
 			return false
 		})
 	}
@@ -108,7 +108,7 @@ func isTestingT(expr ast.Expr, testingImports map[string]struct{}) bool {
 	return ok
 }
 
-func analyzeBody(pass *analysis.Pass, body *ast.BlockStmt, tName string, imports importSet) {
+func analyzeBody(pass *analysis.Pass, body *ast.BlockStmt, tName string) {
 	if body == nil {
 		return
 	}

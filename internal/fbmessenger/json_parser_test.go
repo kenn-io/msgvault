@@ -9,18 +9,18 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 )
 
-func threadDir(t *testing.T, root, section, name string) string {
+func threadDir(t *testing.T, root, name string) string {
 	t.Helper()
 	abs, err := filepath.Abs(root)
 	requirepkg.NoError(t, err)
-	return filepath.Join(abs, "your_activity_across_facebook", "messages", section, name)
+	return filepath.Join(abs, "your_activity_across_facebook", "messages", "inbox", name)
 }
 
 func TestParseJSONThread_Simple(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	root := "testdata/json_simple"
-	th, err := ParseJSONThread(root, threadDir(t, root, "inbox", "alice_ABC123"))
+	th, err := ParseJSONThread(root, threadDir(t, root, "alice_ABC123"))
 	require.NoError(err, "parse")
 	assert.Equal("direct_chat", th.ConvType)
 	assert.Len(th.Participants, 2)
@@ -43,7 +43,7 @@ func TestParseJSONThread_Simple(t *testing.T) {
 
 func TestParseJSONThread_Group(t *testing.T) {
 	root := "testdata/json_group"
-	th, err := ParseJSONThread(root, threadDir(t, root, "inbox", "crew_GRP123"))
+	th, err := ParseJSONThread(root, threadDir(t, root, "crew_GRP123"))
 	requirepkg.NoError(t, err, "parse")
 	assertpkg.Equal(t, "group_chat", th.ConvType)
 	assertpkg.Len(t, th.Participants, 3)
@@ -51,7 +51,7 @@ func TestParseJSONThread_Group(t *testing.T) {
 
 func TestParseJSONThread_Multifile_NumericSort(t *testing.T) {
 	root := "testdata/json_multifile"
-	th, err := ParseJSONThread(root, threadDir(t, root, "inbox", "dave_MULTI"))
+	th, err := ParseJSONThread(root, threadDir(t, root, "dave_MULTI"))
 	requirepkg.NoError(t, err, "parse")
 	requirepkg.Len(t, th.Messages, 4)
 	// Bodies, in chronological order, must be A,B,C,D.
@@ -68,7 +68,7 @@ func TestParseJSONThread_Multifile_NumericSort(t *testing.T) {
 
 func TestParseJSONThread_Corrupt(t *testing.T) {
 	root := "testdata/corrupt"
-	_, err := ParseJSONThread(root, threadDir(t, root, "inbox", "broken_BAD"))
+	_, err := ParseJSONThread(root, threadDir(t, root, "broken_BAD"))
 	requirepkg.Error(t, err)
 	assertpkg.ErrorIs(t, err, ErrCorruptJSON)
 }
@@ -77,7 +77,7 @@ func TestParseJSONThread_Attachments(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	root := "testdata/json_with_media"
-	th, err := ParseJSONThread(root, threadDir(t, root, "inbox", "bob_XYZ789"))
+	th, err := ParseJSONThread(root, threadDir(t, root, "bob_XYZ789"))
 	require.NoError(err, "parse")
 	require.Len(th.Messages, 1)
 	m := th.Messages[0]
@@ -107,7 +107,7 @@ func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {
 
 func TestParseJSONThread_NonTextBodies(t *testing.T) {
 	root := "testdata/json_nontext"
-	th, err := ParseJSONThread(root, threadDir(t, root, "inbox", "sam_NONTXT"))
+	th, err := ParseJSONThread(root, threadDir(t, root, "sam_NONTXT"))
 	requirepkg.NoError(t, err, "parse")
 	// Ordered chronologically ascending: unsubscribe, share, missed call, call, photo, sticker.
 	wantBodies := []string{

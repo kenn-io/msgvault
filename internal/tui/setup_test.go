@@ -342,10 +342,10 @@ func sendKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 // sendMsg sends any tea.Msg through Update and returns the concrete Model.
-func sendMsg(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
+func sendMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
-	newM, cmd := m.Update(msg)
-	return newM.(Model), cmd
+	newM, _ := m.Update(msg)
+	return newM.(Model)
 }
 
 // assertModal checks that the model is in the expected modal state
@@ -464,8 +464,8 @@ func (m Model) withSearchQuery(q string) Model {
 }
 
 // withRequestID sets the aggregate request ID for testing stale response handling.
-func (m Model) withAggregateRequestID(id uint64) Model {
-	m.aggregateRequestID = id
+func (m Model) withAggregateRequestID() Model {
+	m.aggregateRequestID = 1
 	return m
 }
 
@@ -549,8 +549,9 @@ func makeRow(key string, count int) query.AggregateRow {
 	return query.AggregateRow{Key: key, Count: int64(count)}
 }
 
-// makeRows creates n AggregateRows with sequential keys ("row-0", "row-1", ...).
-func makeRows(n int) []query.AggregateRow {
+// makeRows creates 10 AggregateRows with sequential keys ("row-0", "row-1", ...).
+func makeRows() []query.AggregateRow {
+	const n = 10
 	rows := make([]query.AggregateRow, n)
 	for i := range rows {
 		rows[i] = query.AggregateRow{
@@ -595,10 +596,10 @@ func assertSelectionCount(t *testing.T, m Model, expected int) {
 // Key Application Helpers - remove handleXKeys casting boilerplate
 // -----------------------------------------------------------------------------
 
-// selectRow moves the cursor to the given index and toggles selection with space.
-func selectRow(t *testing.T, m Model, index int) Model {
+// selectRow moves the cursor to the first row and toggles selection with space.
+func selectRow(t *testing.T, m Model) Model {
 	t.Helper()
-	m.cursor = index
+	m.cursor = 0
 	return applyAggregateKey(t, m, key(' '))
 }
 

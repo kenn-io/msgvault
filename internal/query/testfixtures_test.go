@@ -637,7 +637,7 @@ func assertDescendingOrder(t testing.TB, got []AggregateRow) {
 	}
 }
 
-// makeDate creates a time.Time for the given year, month, day in UTC with zero time.
-func makeDate(year, month, day int) time.Time {
-	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+// makeDate creates a time.Time for the given month, day in 2024, UTC, zero time.
+func makeDate(month, day int) time.Time {
+	return time.Date(2024, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 }

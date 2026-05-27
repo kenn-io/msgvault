@@ -162,7 +162,7 @@ Examples:
 		}
 
 		// Create source record
-		source, err := s.GetOrCreateSource("imap", identifier)
+		source, err := s.GetOrCreateSource(sourceTypeIMAP, identifier)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}

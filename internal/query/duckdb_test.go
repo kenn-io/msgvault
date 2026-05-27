@@ -120,11 +120,11 @@ func buildStandardTestData(t *testing.T) *TestDataBuilder {
 
 	// Messages
 	convAB := int64(101) // shared conversation for msg1+msg2
-	msg1 := b.AddMessage(MessageOpt{Subject: "Hello World", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000, ConversationID: convAB})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Re: Hello", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000, HasAttachments: true, ConversationID: convAB})
-	msg3 := b.AddMessage(MessageOpt{Subject: "Follow up", SentAt: makeDate(2024, 2, 1), SizeEstimate: 1500, ConversationID: 102})
-	msg4 := b.AddMessage(MessageOpt{Subject: "Question", SentAt: makeDate(2024, 2, 15), SizeEstimate: 3000, HasAttachments: true, ConversationID: 103})
-	msg5 := b.AddMessage(MessageOpt{Subject: "Final", SentAt: makeDate(2024, 3, 1), SizeEstimate: 500, ConversationID: 104})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Hello World", SentAt: makeDate(1, 15), SizeEstimate: 1000, ConversationID: convAB})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Re: Hello", SentAt: makeDate(1, 16), SizeEstimate: 2000, HasAttachments: true, ConversationID: convAB})
+	msg3 := b.AddMessage(MessageOpt{Subject: "Follow up", SentAt: makeDate(2, 1), SizeEstimate: 1500, ConversationID: 102})
+	msg4 := b.AddMessage(MessageOpt{Subject: "Question", SentAt: makeDate(2, 15), SizeEstimate: 3000, HasAttachments: true, ConversationID: 103})
+	msg5 := b.AddMessage(MessageOpt{Subject: "Final", SentAt: makeDate(3, 1), SizeEstimate: 500, ConversationID: 104})
 
 	// Recipients
 	b.AddFrom(msg1, 1, "Alice")
@@ -590,8 +590,8 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	b.AddSource("test@gmail.com")
 	empty := b.AddParticipant("empty@test.com", "test.com", "")
 	spaces := b.AddParticipant("spaces@test.com", "test.com", "   ")
-	msg1 := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "World", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "World", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 	b.AddFrom(msg1, empty, "Empty")
 	b.AddFrom(msg2, spaces, "Spaces")
 	b.SetEmptyAttachments()
@@ -624,7 +624,7 @@ func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
-	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
 	b.AddFrom(msg, phoneOnly, "")
 	b.SetEmptyAttachments()
 	engine := b.BuildEngine()
@@ -648,9 +648,9 @@ func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
 	b.AddSource("test@gmail.com")
 	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
 	other := b.AddParticipant("alice@test.com", "test.com", "Alice")
-	smsMsg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	smsMsg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
 	b.AddFrom(smsMsg, phoneOnly, "")
-	emailMsg := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	emailMsg := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 	b.AddFrom(emailMsg, other, "Alice")
 	b.SetEmptyAttachments()
 	engine := b.BuildEngine()
@@ -669,8 +669,8 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	alice := b.AddParticipant("alice@test.com", "test.com", "Alice")
-	msg1 := b.AddMessage(MessageOpt{Subject: "Has Sender", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	_ = b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Has Sender", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	_ = b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 	b.AddFrom(msg1, alice, "Alice")
 	b.SetEmptyAttachments()
 	engine := b.BuildEngine()
@@ -697,7 +697,7 @@ func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *t
 	b.AddSource("test@gmail.com")
 	// Phone-only participant with a vCard-backfilled display name.
 	alice := b.AddPhoneParticipant("+15551234567", "Alice Backfilled")
-	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
 	// Empty recipient display_name — what import-imessage writes.
 	b.AddFrom(msg, alice, "")
 	b.SetEmptyAttachments()
@@ -718,7 +718,7 @@ func TestDuckDBEngine_ListMessages_PhoneBackedSMSParticipants(t *testing.T) {
 	b.AddSourceWithType("sms-backup", "synctech-sms")
 	sender := b.AddPhoneParticipant("+15551234567", "SMS Sender")
 	recipient := b.AddPhoneParticipant("+15557654321", "Me")
-	msg := b.AddMessage(MessageOpt{Subject: "", Snippet: "known sms snippet", SentAt: makeDate(2024, 4, 1), SizeEstimate: 17})
+	msg := b.AddMessage(MessageOpt{Subject: "", Snippet: "known sms snippet", SentAt: makeDate(4, 1), SizeEstimate: 17})
 	b.AddFrom(msg, sender, "")
 	b.AddTo(msg, recipient, "")
 	b.SetEmptyAttachments()
@@ -920,8 +920,8 @@ func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// Test data: msg1-3 Jan 2024, msg4 Feb 2024, msg5 Mar 2024
-	feb1 := makeDate(2024, 2, 1)
-	mar1 := makeDate(2024, 3, 1)
+	feb1 := makeDate(2, 1)
+	mar1 := makeDate(3, 1)
 
 	// After Feb 1 (>=): msg3 (Feb 1 09:00), msg4 (Feb 15), msg5 (Mar 1) = 3
 	results, err := engine.ListMessages(ctx, MessageFilter{After: &feb1})
@@ -963,7 +963,7 @@ func TestDuckDBEngine_AggregateBySender_DateFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// After Feb 1 (>=): msg3 from alice, msg4 from bob, msg5 from bob
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
 
@@ -981,7 +981,7 @@ func TestDuckDBEngine_SubAggregate_DateFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	filter := MessageFilter{Sender: "alice@example.com"}
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
@@ -1012,7 +1012,7 @@ func TestDuckDBEngine_AggregateByDomain_DateFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
 
@@ -1262,12 +1262,12 @@ func buildEmptyBucketsTestData(t *testing.T) *TestDataBuilder {
 	nodomain := b.AddParticipant("nodomain", "", "No Domain")
 
 	// Messages
-	msg1 := b.AddMessage(MessageOpt{Subject: "Normal 1", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Normal 2", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000})
-	msg3 := b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(2024, 1, 17), SizeEstimate: 1500})
-	msg4 := b.AddMessage(MessageOpt{Subject: "No Recipients", SentAt: makeDate(2024, 1, 18), SizeEstimate: 3000})
-	msg5 := b.AddMessage(MessageOpt{Subject: "No Labels", SentAt: makeDate(2024, 1, 19), SizeEstimate: 500})
-	msg6 := b.AddMessage(MessageOpt{Subject: "Empty Domain", SentAt: makeDate(2024, 1, 20), SizeEstimate: 600})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Normal 1", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Normal 2", SentAt: makeDate(1, 16), SizeEstimate: 2000})
+	msg3 := b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(1, 17), SizeEstimate: 1500})
+	msg4 := b.AddMessage(MessageOpt{Subject: "No Recipients", SentAt: makeDate(1, 18), SizeEstimate: 3000})
+	msg5 := b.AddMessage(MessageOpt{Subject: "No Labels", SentAt: makeDate(1, 19), SizeEstimate: 500})
+	msg6 := b.AddMessage(MessageOpt{Subject: "Empty Domain", SentAt: makeDate(1, 20), SizeEstimate: 600})
 
 	// Recipients
 	b.AddFrom(msg1, alice, "Alice")
@@ -2504,8 +2504,8 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 	nodom := b.AddParticipant("nodom@", "", "No Domain") // empty domain
 
 	// Messages
-	msg1 := b.AddMessage(MessageOpt{Subject: "From Alice", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "From NoDomain", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "From Alice", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "From NoDomain", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 
 	// Senders
 	b.AddFrom(msg1, alice, "Alice")
@@ -2928,9 +2928,9 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 	b.AddParticipant("bob@company.org", "company.org", "Bob")
 
 	// msg1: deleted, msg2+msg3: not deleted
-	msg1 := b.AddMessage(MessageOpt{Subject: "Deleted msg", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000, DeletedAt: &now})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Active msg", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000})
-	msg3 := b.AddMessage(MessageOpt{Subject: "Another active", SentAt: makeDate(2024, 2, 1), SizeEstimate: 1500})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Deleted msg", SentAt: makeDate(1, 15), SizeEstimate: 1000, DeletedAt: &now})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Active msg", SentAt: makeDate(1, 16), SizeEstimate: 2000})
+	msg3 := b.AddMessage(MessageOpt{Subject: "Another active", SentAt: makeDate(2, 1), SizeEstimate: 1500})
 
 	b.AddFrom(msg1, 1, "Alice")
 	b.AddTo(msg1, 2, "Bob")

@@ -8,13 +8,19 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 )
 
+// Key names matched against tea.KeyMsg.String() in the key-handling switches.
+const (
+	keyNameEnter = "enter"
+	keyNameEsc   = "esc"
+)
+
 // handleInlineSearchKeys handles keys when inline search bar is active.
 func (m Model) handleInlineSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "enter":
+	case keyNameEnter:
 		return m.commitInlineSearch()
 
-	case "esc":
+	case keyNameEsc:
 		return m.cancelInlineSearch()
 
 	case "ctrl+c":
@@ -130,7 +136,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	// Esc: sub-agg tries goBack() first; top-level clears search
-	case "esc":
+	case keyNameEsc:
 		if isSub {
 			if len(m.breadcrumbs) > 0 {
 				return m.goBack()
@@ -219,7 +225,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.stageForDeletion()
 
 	// Drill down - go to message list for selected aggregate
-	case "enter":
+	case keyNameEnter:
 		if len(m.rows) > 0 && m.cursor < len(m.rows) {
 			return m.enterDrillDown(m.rows[m.cursor])
 		}
@@ -352,7 +358,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	// Back - clear inner search first, then navigate back
-	case "esc":
+	case keyNameEsc:
 		// Clear search only if it was initiated at this level (snapshot exists).
 		// Inherited search (from aggregate drill-down) has no snapshot —
 		// goBack restores the parent view with its search intact.
@@ -426,7 +432,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	// Drill down to message detail
-	case "enter":
+	case keyNameEnter:
 		if len(m.messages) > 0 && m.cursor < len(m.messages) {
 			m.transitionBuffer = m.renderView() // Freeze screen until data loads
 
@@ -648,7 +654,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// When detail search input is active, route keys there first
 	if m.detailSearchActive {
 		switch msg.String() {
-		case "enter":
+		case keyNameEnter:
 			m.detailSearchActive = false
 			m.detailSearchQuery = m.detailSearchInput.Value()
 			m.findDetailMatches()
@@ -657,7 +663,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.scrollToDetailMatch()
 			}
 			return m, nil
-		case "esc":
+		case keyNameEsc:
 			m.detailSearchActive = false
 			m.detailSearchInput.SetValue("")
 			return m, nil
@@ -677,7 +683,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	// Back to message list or clear detail search
-	case "esc":
+	case keyNameEsc:
 		if m.detailSearchQuery != "" {
 			m.detailSearchQuery = ""
 			m.detailSearchMatches = nil
@@ -818,7 +824,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	// Back to previous view
-	case "esc":
+	case keyNameEsc:
 		return m.goBack()
 
 	// Navigation
@@ -859,7 +865,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	// View message detail
-	case "enter":
+	case keyNameEnter:
 		if len(m.threadMessages) > 0 && m.threadCursor < len(m.threadMessages) {
 			m.transitionBuffer = m.renderView() // Freeze screen until data loads
 
@@ -914,7 +920,7 @@ func (m Model) handleDeleteConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		return m.confirmDeletion()
-	case "n", "N", "esc":
+	case "n", "N", keyNameEsc:
 		m.modal = modalNone
 		m.pendingManifest = nil
 	}
@@ -930,10 +936,10 @@ func (m Model) handleDeleteResultKeys() (tea.Model, tea.Cmd) {
 
 func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "y", "Y", "enter":
+	case "y", "Y", keyNameEnter:
 		m.quitting = true
 		return m, tea.Quit
-	case "n", "N", "esc", "q":
+	case "n", "N", keyNameEsc, "q":
 		m.modal = modalNone
 	}
 	return m, nil
@@ -950,7 +956,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.modalCursor < maxIdx {
 			m.modalCursor++
 		}
-	case "enter":
+	case keyNameEnter:
 		// Apply selection with bounds check
 		if m.modalCursor == 0 || m.modalCursor > len(m.accounts) {
 			m.accountFilter = nil // All accounts (or fallback if out of bounds)
@@ -966,7 +972,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.aggregateRequestID++
 		return m, tea.Batch(m.loadData(), m.loadStats())
-	case "esc":
+	case keyNameEsc:
 		m.modal = modalNone
 	}
 	return m, nil
@@ -993,7 +999,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 1:
 			m.filters.hideDeletedFromSource = !m.filters.hideDeletedFromSource
 		}
-	case "enter", "esc":
+	case keyNameEnter, keyNameEsc:
 		// Apply filters: close modal and reload data
 		m.modal = modalNone
 		m.loading = true
@@ -1040,9 +1046,9 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		for i := range m.messageDetail.Attachments {
 			m.exportSelection[i] = false
 		}
-	case "enter":
+	case keyNameEnter:
 		return m.exportAttachments()
-	case "esc":
+	case keyNameEsc:
 		m.modal = modalNone
 		m.exportSelection = nil
 	}
@@ -1289,7 +1295,8 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		// Empty search clears filter - restore from snapshot if available
 		m.clearSearchState()
 		if m.level == levelMessageList && m.preSearchMessages != nil {
-			return m, m.restorePreSearchSnapshot()
+			m.restorePreSearchSnapshot()
+			return m, nil
 		}
 		return m.reloadCurrentView()
 	}
@@ -1317,7 +1324,8 @@ func (m Model) cancelInlineSearch() (tea.Model, tea.Cmd) {
 	m.clearSearchState()
 
 	if m.level == levelMessageList && m.preSearchMessages != nil {
-		return m, m.restorePreSearchSnapshot()
+		m.restorePreSearchSnapshot()
+		return m, nil
 	}
 	return m.reloadCurrentView()
 }
@@ -1330,7 +1338,8 @@ func (m Model) clearMessageListSearch() (tea.Model, tea.Cmd) {
 	m.searchRequestID++
 
 	if m.preSearchMessages != nil {
-		return m, m.restorePreSearchSnapshot()
+		m.restorePreSearchSnapshot()
+		return m, nil
 	}
 	m.contextStats = nil
 	m.loadRequestID++
@@ -1338,8 +1347,9 @@ func (m Model) clearMessageListSearch() (tea.Model, tea.Cmd) {
 }
 
 // restorePreSearchSnapshot restores the cached message list state from before
-// the search began, avoiding a re-query. Returns nil cmd since no async work needed.
-func (m *Model) restorePreSearchSnapshot() tea.Cmd {
+// the search began, avoiding a re-query. No async work is needed, so callers
+// pair it with a nil command.
+func (m *Model) restorePreSearchSnapshot() {
 	m.messages = m.preSearchMessages
 	m.cursor = m.preSearchCursor
 	m.scrollOffset = m.preSearchScrollOffset
@@ -1352,7 +1362,6 @@ func (m *Model) restorePreSearchSnapshot() tea.Cmd {
 	// Clear the snapshot
 	m.preSearchMessages = nil
 	m.preSearchContextStats = nil
-	return nil
 }
 
 func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {

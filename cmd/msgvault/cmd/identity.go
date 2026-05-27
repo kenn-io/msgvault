@@ -23,8 +23,11 @@ var (
 	identityAddSignal      string
 )
 
+// identityCmdUse is the usage/name of the identity command.
+const identityCmdUse = "identity"
+
 var identityCmd = &cobra.Command{
-	Use:   "identity",
+	Use:   identityCmdUse,
 	Short: "Manage the confirmed \"me\" identifiers for each account",
 	Long: `Each account has one identity: the set of identifiers (email
 addresses, phone numbers, chat handles, synthetic identifiers) that mean
@@ -160,6 +163,10 @@ func splitSignalSet(s string) []string {
 	return out
 }
 
+// nil error return mirrors writeIdentityJSON so callers can return either
+// uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning writeIdentityJSON sibling
 func writeIdentityTable(w io.Writer, rows []identityRow) error {
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintln(w, "No accounts in scope.")
@@ -410,9 +417,9 @@ func init() {
 		"collection", "", "Restrict to all member accounts of one collection")
 	identityListCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	identityListCmd.Flags().BoolVar(&identityListJSON,
-		"json", false, "Output as JSON")
+		outputFormatJSON, false, "Output as JSON")
 	identityShowCmd.Flags().BoolVar(&identityShowJSON,
-		"json", false, "Output as JSON")
+		outputFormatJSON, false, "Output as JSON")
 	identityAddCmd.Flags().StringVar(&identityAddSignal,
 		"signal", "manual",
 		"Evidence signal name (e.g. manual, account-identifier, phone-e164). "+

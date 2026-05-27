@@ -208,15 +208,15 @@ func TestMapReaction(t *testing.T) {
 	r := waReaction{
 		ReactionValue: sql.NullString{String: "❤️", Valid: true},
 	}
-	typ, val := mapReaction(r)
-	assertpkg.Equal(t, "emoji", typ, "reaction type")
+	val := mapReaction(r)
+	assertpkg.Equal(t, "emoji", reactionTypeEmoji, "reaction type")
 	assertpkg.Equal(t, "❤️", val, "reaction value")
 
 	// Empty reaction.
 	empty := waReaction{
 		ReactionValue: sql.NullString{},
 	}
-	_, val = mapReaction(empty)
+	val = mapReaction(empty)
 	assertpkg.Empty(t, val, "empty reaction value")
 }
 

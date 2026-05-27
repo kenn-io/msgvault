@@ -75,7 +75,7 @@ func TestSelectionClearedOnViewSwitch(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	assertSelectionCount(t, model, 1)
 
 	// Switch view with Tab
@@ -90,7 +90,7 @@ func TestSelectionClearedOnShiftTab(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 
 	// Switch view with Shift+Tab
 	model = applyAggregateKey(t, model, keyShiftTab())
@@ -103,7 +103,7 @@ func TestClearSelection(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	assertSelectionCount(t, model, 1)
 
 	// Clear with 'x'
@@ -118,7 +118,7 @@ func TestStageForDeletionWithAggregateSelection(t *testing.T) {
 		WithGmailIDs("msg1", "msg2").
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	model, _ = sendKey(t, model, key('D'))
 
 	assertModal(t, model, modalDeleteConfirm)
@@ -175,7 +175,7 @@ func TestStageForDeletion(t *testing.T) {
 			}
 
 			model := b.Build()
-			model = selectRow(t, model, 0)
+			model = selectRow(t, model)
 
 			newModel, _ := model.stageForDeletion()
 			model = newModel.(Model)

@@ -406,7 +406,7 @@ func repairDisplayNames(s *store.Store, stats *repairStats) error {
 			updateStmt: "UPDATE message_recipients SET display_name = ? WHERE id = ?",
 		},
 		{
-			name:       "participants",
+			name:       tableParticipants,
 			query:      "SELECT id, display_name FROM participants WHERE display_name IS NOT NULL",
 			updateStmt: "UPDATE participants SET display_name = ? WHERE id = ?",
 		},
@@ -528,42 +528,42 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 		counter    *int
 	}{
 		{
-			name:       "labels",
+			name:       tableLabels,
 			column:     "name",
 			query:      "SELECT id, name FROM labels WHERE name IS NOT NULL",
 			updateStmt: "UPDATE labels SET name = ? WHERE id = ?",
 			counter:    &stats.labels,
 		},
 		{
-			name:       "attachments",
+			name:       tableAttachments,
 			column:     "filename",
 			query:      "SELECT id, filename FROM attachments WHERE filename IS NOT NULL",
 			updateStmt: "UPDATE attachments SET filename = ? WHERE id = ?",
 			counter:    &stats.filenames,
 		},
 		{
-			name:       "conversations",
+			name:       tableConversations,
 			column:     "title",
 			query:      "SELECT id, title FROM conversations WHERE title IS NOT NULL",
 			updateStmt: "UPDATE conversations SET title = ? WHERE id = ?",
 			counter:    &stats.convTitles,
 		},
 		{
-			name:       "conversations",
+			name:       tableConversations,
 			column:     "source_conversation_id",
 			query:      "SELECT id, source_conversation_id FROM conversations WHERE source_conversation_id IS NOT NULL",
 			updateStmt: "UPDATE conversations SET source_conversation_id = ? WHERE id = ?",
 			counter:    &stats.convSourceIDs,
 		},
 		{
-			name:       "participants",
+			name:       tableParticipants,
 			column:     "email_address",
 			query:      "SELECT id, email_address FROM participants WHERE email_address IS NOT NULL",
 			updateStmt: "UPDATE participants SET email_address = ? WHERE id = ?",
 			counter:    &stats.emailAddrs,
 		},
 		{
-			name:       "participants",
+			name:       tableParticipants,
 			column:     "domain",
 			query:      "SELECT id, domain FROM participants WHERE domain IS NOT NULL",
 			updateStmt: "UPDATE participants SET domain = ? WHERE id = ?",

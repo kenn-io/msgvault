@@ -434,7 +434,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 				// Handle reactions.
 				if reactions, ok := reactionMap[waMsg.RowID]; ok {
 					for _, r := range reactions {
-						reactionType, reactionValue := mapReaction(r)
+						reactionValue := mapReaction(r)
 						if reactionValue == "" {
 							continue
 						}
@@ -469,7 +469,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 						}
 
 						createdAt := time.Unix(r.Timestamp/1000, 0)
-						if err := imp.store.UpsertReaction(messageID, reactorID, reactionType, reactionValue, createdAt); err != nil {
+						if err := imp.store.UpsertReaction(messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("upsert reaction: %w", err))
 						} else {

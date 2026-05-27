@@ -219,8 +219,7 @@ func TestParseDate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assertpkg.New(t)
-			got, err := parseDate(tc.input)
-			requirepkg.NoError(t, err, "parseDate(%q)", tc.input)
+			got := parseDate(tc.input)
 			if tc.want.IsZero() {
 				assert.True(got.IsZero(), "parseDate(%q) = %v, want zero time", tc.input, got)
 				return

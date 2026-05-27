@@ -431,7 +431,7 @@ Examples:
 			}
 			var syncable []*store.Source
 			for _, c := range resolved {
-				if c.SourceType == "gmail" || c.SourceType == "imap" {
+				if c.SourceType == sourceTypeGmail || c.SourceType == sourceTypeIMAP {
 					syncable = append(syncable, c)
 				}
 			}
@@ -478,7 +478,7 @@ Examples:
 		}
 		var src *store.Source
 		for _, candidate := range sources {
-			if candidate.SourceType == "gmail" || candidate.SourceType == "imap" {
+			if candidate.SourceType == sourceTypeGmail || candidate.SourceType == sourceTypeIMAP {
 				src = candidate
 				break
 			}
@@ -492,7 +492,7 @@ Examples:
 		// Service-account flows get scopes via the JWT assertion (no stored
 		// token), so the scope-escalation prompt only applies to browser OAuth.
 		var clientSecretsPath string
-		if src.SourceType == "gmail" {
+		if src.SourceType == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return errOAuthNotConfigured()
 			}
@@ -589,7 +589,7 @@ Examples:
 				}
 
 				// Check if this is a scope error - offer to re-authorize (Gmail only)
-				if src.SourceType == "gmail" && isInsufficientScopeError(execErr) {
+				if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
 					if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
 						return fmt.Errorf(
 							"service account lacks required Gmail deletion scope for %s: "+

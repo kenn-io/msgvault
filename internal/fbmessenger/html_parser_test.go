@@ -15,7 +15,7 @@ func TestParseHTMLThread_Simple(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	root := "testdata/html_simple"
-	th, err := ParseHTMLThread(root, threadDir(t, root, "inbox", "alice_ABC123"))
+	th, err := ParseHTMLThread(root, threadDir(t, root, "alice_ABC123"))
 	require.NoError(err, "parse")
 	assert.Len(th.Participants, 2)
 	assert.Equal("direct_chat", th.ConvType)
@@ -37,7 +37,7 @@ func TestParseHTMLThread_Simple(t *testing.T) {
 func TestParseHTMLThread_WithMedia(t *testing.T) {
 	require := requirepkg.New(t)
 	root := "testdata/html_with_media"
-	th, err := ParseHTMLThread(root, threadDir(t, root, "inbox", "bob_XYZ789"))
+	th, err := ParseHTMLThread(root, threadDir(t, root, "bob_XYZ789"))
 	require.NoError(err, "parse")
 	require.Len(th.Messages, 1, "messages: %+v", th.Messages)
 	m := th.Messages[0]
@@ -74,7 +74,7 @@ func TestParseHTMLThread_ImagePositioning(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	root := "testdata/html_multi_media"
-	th, err := ParseHTMLThread(root, threadDir(t, root, "inbox", "carol_IMG456"))
+	th, err := ParseHTMLThread(root, threadDir(t, root, "carol_IMG456"))
 	require.NoError(err, "parse")
 	require.Len(th.Messages, 3)
 	// Message 0: "Hello Carol" — no image, no attachments.

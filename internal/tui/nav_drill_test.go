@@ -307,7 +307,7 @@ func TestViewTypeRestoredAfterEscFromSubAggregate(t *testing.T) {
 // without requiring a reload.
 func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
 	assert := assertpkg.New(t)
-	rows := makeRows(10)
+	rows := makeRows()
 	model := NewBuilder().WithRows(rows...).WithViewType(query.ViewSenders).Build()
 	model.cursor = 5
 	model.scrollOffset = 3

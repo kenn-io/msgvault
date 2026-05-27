@@ -77,6 +77,9 @@ type mboxCheckpoint struct {
 
 const defaultMaxMboxMessageBytes int64 = 128 << 20 // 128 MiB
 
+// sourceTypeMbox is the default sources.source_type for MBOX imports.
+const sourceTypeMbox = "mbox"
+
 // ImportMbox imports a single MBOX file into the msgvault database.
 //
 // This is intended for services like HEY.com that provide an export in MBOX
@@ -84,7 +87,7 @@ const defaultMaxMboxMessageBytes int64 = 128 << 20 // 128 MiB
 // parsed bodies, participants, recipients, and (optionally) attachments.
 func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts MboxImportOptions) (*MboxImportSummary, error) {
 	if opts.SourceType == "" {
-		opts.SourceType = "mbox"
+		opts.SourceType = sourceTypeMbox
 	}
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")
@@ -275,9 +278,12 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 
 	msgSeq := seq
 
-	flushPending := func() (bool, error) {
+	// flushPending writes the buffered batch and returns true when the
+	// context was cancelled mid-flush so the caller can stop. Per-batch
+	// errors are recorded on the summary and logged, never propagated.
+	flushPending := func() bool {
 		if len(pending) == 0 {
-			return false, nil
+			return false
 		}
 
 		ids := make([]string, len(pending))
@@ -310,7 +316,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 					summary.Errors++
 					log.Warn("failed to save checkpoint", "error", err)
 				}
-				return true, nil
+				return true
 			}
 
 			cp.MessagesProcessed++
@@ -413,7 +419,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 		clear(pending)
 		pending = pending[:0]
 		pendingBytes = 0
-		return false, nil
+		return false
 	}
 
 	for {
@@ -464,19 +470,13 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 		pendingBytes += int64(len(msg.Raw))
 
 		if len(pending) >= existsCheckBatchSize || pendingBytes >= existsCheckBatchBytes {
-			stop, err := flushPending()
-			if err != nil {
-				return summary, err
-			}
-			if stop {
+			if flushPending() {
 				return summary, nil
 			}
 		}
 	}
 
-	if stop, err := flushPending(); err != nil {
-		return summary, err
-	} else if stop {
+	if flushPending() {
 		return summary, nil
 	}
 

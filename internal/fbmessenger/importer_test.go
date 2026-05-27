@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func importFixture(t *testing.T, st *store.Store, rootDir string, extra ...func(*ImportOptions)) *ImportSummary {
+func importFixture(t *testing.T, st *store.Store, rootDir string) *ImportSummary {
 	t.Helper()
 	opts := ImportOptions{
 		Me:             "test.user@facebook.messenger",
@@ -25,22 +25,19 @@ func importFixture(t *testing.T, st *store.Store, rootDir string, extra ...func(
 		Format:         "auto",
 		AttachmentsDir: t.TempDir(),
 	}
-	for _, f := range extra {
-		f(&opts)
-	}
 	summary, err := ImportDYI(context.Background(), st, opts)
 	requirepkg.NoError(t, err, "ImportDYI(%s)", rootDir)
 	return summary
 }
 
-func countMessages(t *testing.T, st *store.Store, where string, args ...any) int {
+func countMessages(t *testing.T, st *store.Store, where string) int {
 	t.Helper()
 	var n int
 	q := "SELECT COUNT(*) FROM messages"
 	if where != "" {
 		q += " WHERE " + where
 	}
-	err := st.DB().QueryRow(q, args...).Scan(&n)
+	err := st.DB().QueryRow(q).Scan(&n)
 	requirepkg.NoError(t, err, "count query")
 	return n
 }

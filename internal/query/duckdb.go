@@ -142,19 +142,19 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
 	// Old cache files may lack these columns; we'll supply defaults in parquetCTEs().
 	engine.optionalCols = map[string]map[string]bool{
-		"participants":  engine.probeParquetColumns(engine.parquetPath("participants"), false),
-		"messages":      engine.probeParquetColumns(engine.parquetGlob(), true),
-		"conversations": engine.probeParquetColumns(engine.parquetPath("conversations"), false),
-		"sources":       engine.probeParquetColumns(engine.parquetPath("sources"), false),
+		datasetParticipants:  engine.probeParquetColumns(engine.parquetPath(datasetParticipants), false),
+		datasetMessages:      engine.probeParquetColumns(engine.parquetGlob(), true),
+		datasetConversations: engine.probeParquetColumns(engine.parquetPath(datasetConversations), false),
+		"sources":            engine.probeParquetColumns(engine.parquetPath("sources"), false),
 	}
 	var missing []string
 	for _, col := range []struct{ table, col string }{
-		{"participants", "phone_number"},
-		{"messages", "attachment_count"},
-		{"messages", "sender_id"},
-		{"messages", "message_type"},
-		{"conversations", "title"},
-		{"conversations", "conversation_type"},
+		{datasetParticipants, "phone_number"},
+		{datasetMessages, "attachment_count"},
+		{datasetMessages, "sender_id"},
+		{datasetMessages, "message_type"},
+		{datasetConversations, "title"},
+		{datasetConversations, "conversation_type"},
 		{"sources", "source_type"},
 	} {
 		if !engine.optionalCols[col.table][col.col] {
@@ -232,7 +232,7 @@ func (e *DuckDBEngine) hasSQLite() bool {
 
 // parquetGlob returns the glob pattern for reading message Parquet files.
 func (e *DuckDBEngine) parquetGlob() string {
-	return filepath.Join(e.analyticsDir, "messages", "**", "*.parquet")
+	return filepath.Join(e.analyticsDir, datasetMessages, "**", "*.parquet")
 }
 
 // parquetPath returns the path pattern for a specific Parquet table.
@@ -284,22 +284,22 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
 	}
 	var msgExtra []string
-	if e.hasCol("messages", "attachment_count") {
+	if e.hasCol(datasetMessages, "attachment_count") {
 		msgReplace = append(msgReplace, "COALESCE(TRY_CAST(attachment_count AS INTEGER), 0) AS attachment_count")
 	} else {
 		msgExtra = append(msgExtra, "0 AS attachment_count")
 	}
-	if e.hasCol("messages", "sender_id") {
+	if e.hasCol(datasetMessages, "sender_id") {
 		msgReplace = append(msgReplace, "TRY_CAST(sender_id AS BIGINT) AS sender_id")
 	} else {
 		msgExtra = append(msgExtra, "NULL::BIGINT AS sender_id")
 	}
-	if e.hasCol("messages", "message_type") {
+	if e.hasCol(datasetMessages, "message_type") {
 		msgReplace = append(msgReplace, "COALESCE(CAST(message_type AS VARCHAR), '') AS message_type")
 	} else {
 		msgExtra = append(msgExtra, "'' AS message_type")
 	}
-	if e.hasCol("messages", "deleted_at") {
+	if e.hasCol(datasetMessages, "deleted_at") {
 		msgReplace = append(msgReplace, "TRY_CAST(deleted_at AS TIMESTAMP) AS deleted_at")
 	} else {
 		msgExtra = append(msgExtra, "NULL::TIMESTAMP AS deleted_at")
@@ -318,7 +318,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		"CAST(display_name AS VARCHAR) AS display_name",
 	}
 	var pExtra []string
-	if e.hasCol("participants", "phone_number") {
+	if e.hasCol(datasetParticipants, "phone_number") {
 		pReplace = append(pReplace, "COALESCE(CAST(phone_number AS VARCHAR), '') AS phone_number")
 	} else {
 		pExtra = append(pExtra, "'' AS phone_number")
@@ -327,7 +327,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	if len(pExtra) > 0 {
 		pCTE += ", " + strings.Join(pExtra, ", ")
 	}
-	pCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("participants"))
+	pCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath(datasetParticipants))
 
 	// --- conversations CTE ---
 	convReplace := []string{
@@ -335,12 +335,12 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		"CAST(source_conversation_id AS VARCHAR) AS source_conversation_id",
 	}
 	var convExtra []string
-	if e.hasCol("conversations", "title") {
+	if e.hasCol(datasetConversations, "title") {
 		convReplace = append(convReplace, "COALESCE(CAST(title AS VARCHAR), '') AS title")
 	} else {
 		convExtra = append(convExtra, "'' AS title")
 	}
-	if e.hasCol("conversations", "conversation_type") {
+	if e.hasCol(datasetConversations, "conversation_type") {
 		convReplace = append(convReplace, "COALESCE(CAST(conversation_type AS VARCHAR), 'email') AS conversation_type")
 	} else {
 		convExtra = append(convExtra, "'email' AS conversation_type")
@@ -349,7 +349,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	if len(convExtra) > 0 {
 		convCTE += ", " + strings.Join(convExtra, ", ")
 	}
-	convCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("conversations"))
+	convCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath(datasetConversations))
 
 	// --- sources CTE ---
 	srcReplace := []string{
@@ -1855,8 +1855,8 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 
 // HasParquetData checks if Parquet files exist and are usable.
 func HasParquetData(analyticsDir string) bool {
-	pattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
-	matches, err := filepath.Glob(filepath.Join(analyticsDir, "messages", "*", "*.parquet"))
+	pattern := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")
+	matches, err := filepath.Glob(filepath.Join(analyticsDir, datasetMessages, "*", "*.parquet"))
 	if err != nil {
 		return false
 	}
@@ -1868,14 +1868,14 @@ func HasParquetData(analyticsDir string) bool {
 // contain at least one .parquet file for the cache to be considered complete.
 // Shared between the cache builder, TUI, and MCP startup paths.
 var RequiredParquetDirs = []string{
-	"messages",
+	datasetMessages,
 	"sources",
-	"participants",
+	datasetParticipants,
 	"message_recipients",
 	"labels",
 	"message_labels",
 	"attachments",
-	"conversations",
+	datasetConversations,
 }
 
 // HasCompleteParquetData checks that all required parquet tables exist.
@@ -1890,7 +1890,7 @@ func HasCompleteParquetData(analyticsDir string) bool {
 			continue
 		}
 		// For messages, also check hive-partitioned layout (messages/year=*/*.parquet)
-		if dir == "messages" {
+		if dir == datasetMessages {
 			deepMatches, _ := filepath.Glob(filepath.Join(analyticsDir, dir, "*", "*.parquet"))
 			if len(deepMatches) > 0 {
 				continue

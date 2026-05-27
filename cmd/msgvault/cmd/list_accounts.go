@@ -152,7 +152,7 @@ func outputAccountsJSON(stats []accountStats) error {
 	for i, s := range stats {
 		entry := map[string]any{
 			"id":            s.ID,
-			"email":         s.Email,
+			keyEmail:        s.Email,
 			"type":          s.Type,
 			"display_name":  s.DisplayName,
 			"message_count": s.MessageCount,
@@ -232,5 +232,5 @@ func outputRemoteAccountsJSON(accounts []remote.AccountInfo) error {
 
 func init() {
 	rootCmd.AddCommand(listAccountsCmd)
-	listAccountsCmd.Flags().BoolVar(&listAccountsJSON, "json", false, "Output as JSON")
+	listAccountsCmd.Flags().BoolVar(&listAccountsJSON, outputFormatJSON, false, "Output as JSON")
 }

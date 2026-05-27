@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// formatJSON is the Thread.Format value for JSON-sourced threads.
+const formatJSON = "json"
+
 // ErrCorruptJSON is returned by the JSON parser when a message_*.json file
 // cannot be parsed as valid JSON. Callers should log and skip the thread.
 var ErrCorruptJSON = errors.New("fbmessenger: corrupt json")

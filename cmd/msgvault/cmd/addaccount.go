@@ -18,8 +18,11 @@ var (
 	noDefaultIdentityAddAccount bool
 )
 
+// addAccountUse is the usage string for the add-account command.
+const addAccountUse = "add-account <email>"
+
 var addAccountCmd = &cobra.Command{
-	Use:   "add-account <email>",
+	Use:   addAccountUse,
 	Short: "Add a Gmail account via OAuth",
 	Long: `Add a Gmail account by completing the OAuth2 authorization flow.
 
@@ -135,7 +138,7 @@ Examples:
 			}
 
 			// Register source
-			source, saErr := s.GetOrCreateSource("gmail", email)
+			source, saErr := s.GetOrCreateSource(sourceTypeGmail, email)
 			if saErr != nil {
 				return fmt.Errorf("create source: %w", saErr)
 			}
@@ -202,7 +205,7 @@ Examples:
 		tokenReusable := !forceReauth && oauthMgr.HasToken(email) &&
 			(!needsClientCheck || oauthMgr.TokenMatchesClient(email))
 		if tokenReusable {
-			source, err := s.GetOrCreateSource("gmail", email)
+			source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 			if err != nil {
 				return fmt.Errorf("create source: %w", err)
 			}
@@ -265,7 +268,7 @@ Examples:
 		}
 
 		// Authorization succeeded — now persist the binding and source.
-		source, err := s.GetOrCreateSource("gmail", email)
+		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
@@ -312,7 +315,7 @@ func findGmailSource(
 		return nil, fmt.Errorf("look up sources for %s: %w", email, err)
 	}
 	for _, src := range sources {
-		if src.SourceType == "gmail" {
+		if src.SourceType == sourceTypeGmail {
 			return src, nil
 		}
 	}

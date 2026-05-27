@@ -78,7 +78,7 @@ func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 
 	assertpkg.Len(t, rows, 3, "expected 3 sender names")
 
-	assertRow(t, rows, "noname@test.com", 1)
+	assertRow(t, rows, "noname@test.com")
 }
 
 // TestAggregateBySenderName_FallbackToPhone covers phone-only iMessage/SMS
@@ -97,7 +97,7 @@ func TestAggregateBySenderName_FallbackToPhone(t *testing.T) {
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
 	requirepkg.NoError(t, err, "AggregateBySenderName")
 
-	assertRow(t, rows, "+15551234567", 1)
+	assertRow(t, rows, "+15551234567")
 
 	// Same fallback drives the SenderName filter.
 	listed := env.MustListMessages(MessageFilter{SenderName: "+15551234567"})
@@ -121,7 +121,7 @@ func TestAggregateByRecipientName_FallbackToPhone(t *testing.T) {
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
 	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
-	assertRow(t, rows, "+15557654321", 1)
+	assertRow(t, rows, "+15557654321")
 
 	listed := env.MustListMessages(MessageFilter{RecipientName: "+15557654321"})
 	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback recipient name")
@@ -419,7 +419,7 @@ func TestAggregateByRecipientName_FallbackToEmail(t *testing.T) {
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
 	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
-	assertRow(t, rows, "noname@test.com", 1)
+	assertRow(t, rows, "noname@test.com")
 }
 
 func TestAggregateByRecipientName_EmptyStringFallback(t *testing.T) {

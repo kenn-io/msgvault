@@ -286,7 +286,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
 	// 1. Export messages (partitioned by year)
-	messagesDir := filepath.Join(analyticsDir, "messages")
+	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
 	writeMode := "OVERWRITE_OR_IGNORE"
@@ -294,7 +294,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		writeMode = "APPEND"
 	}
 
-	if err := runExport("messages", fmt.Sprintf(`
+	if err := runExport(tableMessages, fmt.Sprintf(`
 	COPY (
 		SELECT
 			m.id,
@@ -369,13 +369,13 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 4. Export attachments
-	attachmentsDir := filepath.Join(analyticsDir, "attachments")
+	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
 	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
 	attachmentsFilter := ""
 	if !fullRebuild && lastMessageID > 0 {
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
-	if err := runExport("attachments", fmt.Sprintf(`
+	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
 		SELECT
 			message_id,
@@ -391,9 +391,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 5. Export participants
-	participantsDir := filepath.Join(analyticsDir, "participants")
+	participantsDir := filepath.Join(analyticsDir, tableParticipants)
 	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
-	if err := runExport("participants", fmt.Sprintf(`
+	if err := runExport(tableParticipants, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -411,9 +411,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 6. Export labels
-	labelsDir := filepath.Join(analyticsDir, "labels")
+	labelsDir := filepath.Join(analyticsDir, tableLabels)
 	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
-	if err := runExport("labels", fmt.Sprintf(`
+	if err := runExport(tableLabels, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -446,9 +446,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 8. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(analyticsDir, "conversations")
+	conversationsDir := filepath.Join(analyticsDir, tableConversations)
 	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
-	if err := runExport("conversations", fmt.Sprintf(`
+	if err := runExport(tableConversations, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -520,7 +520,7 @@ func missingRequiredParquet(analyticsDir string) bool {
 			return true
 		}
 		// For messages, also check hive-partitioned layout (messages/year=*/*.parquet)
-		if dir == "messages" {
+		if dir == tableMessages {
 			if deep, _ := filepath.Glob(filepath.Join(analyticsDir, dir, "*", "*.parquet")); len(deep) > 0 {
 				return true
 			}
@@ -536,7 +536,7 @@ var cacheStatsCmd = &cobra.Command{
 	Long:    `Display statistics about the analytics cache, including row counts and file sizes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		analyticsDir := cfg.AnalyticsDir()
-		messagesDir := filepath.Join(analyticsDir, "messages")
+		messagesDir := filepath.Join(analyticsDir, tableMessages)
 
 		// Check if directory exists and contains parquet files
 		if _, err := os.Stat(messagesDir); os.IsNotExist(err) {
@@ -614,7 +614,7 @@ var cacheStatsCmd = &cobra.Command{
 		}
 
 		// Get attachment stats separately
-		attachmentsDir := filepath.Join(analyticsDir, "attachments")
+		attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
 		var attachmentSize int64
 		if _, err := os.Stat(attachmentsDir); err == nil {
 			attachSQL := fmt.Sprintf(`
@@ -696,15 +696,15 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
+		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
 			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
-		{"attachments", "SELECT message_id, size, filename FROM attachments", ""},
-		{"participants", "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
-		{"labels", "SELECT id, name FROM labels", ""},
+		{tableAttachments, "SELECT message_id, size, filename FROM attachments", ""},
+		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
+		{tableLabels, "SELECT id, name FROM labels", ""},
 		{"sources", "SELECT id, identifier, source_type FROM sources", ""},
-		{"conversations", "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
+		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
 	}
 
 	for _, t := range tables {

@@ -62,10 +62,10 @@ func (m Model) handleTextListKeys(
 		m.loading = true
 		return m, m.loadTextData()
 
-	case "enter":
+	case keyNameEnter:
 		return m.textDrillDown()
 
-	case "esc", "backspace":
+	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
 	case "s":
@@ -132,7 +132,7 @@ func (m Model) handleTextTimelineKeys(
 		m.searchInput.Focus()
 		return m, nil
 
-	case "esc", "backspace":
+	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
 	case "j", "down":
@@ -191,7 +191,7 @@ func (m Model) handleTextInlineSearchKeys(
 	msg tea.KeyMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "enter":
+	case keyNameEnter:
 		m.exitInlineSearchMode()
 		queryStr := m.searchInput.Value()
 		if queryStr == "" {
@@ -253,7 +253,7 @@ func (m Model) handleTextInlineSearchKeys(
 		m.loading = true
 		return m, m.loadTextSearch(queryStr)
 
-	case "esc":
+	case keyNameEsc:
 		m.exitInlineSearchMode()
 		m.searchInput.SetValue("")
 		return m, nil

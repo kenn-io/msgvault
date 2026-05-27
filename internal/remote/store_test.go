@@ -99,7 +99,7 @@ func TestDoRequest_SetsAuthHeader(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(srv, "secret-key")
-	resp, err := s.doRequest("GET", "/test", nil)
+	resp, err := s.doRequest("/test")
 	requirepkg.NoError(t, err, "doRequest error")
 	_ = resp.Body.Close()
 }
@@ -112,7 +112,7 @@ func TestDoRequest_OmitsAuthHeaderWhenEmpty(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(srv, "")
-	resp, err := s.doRequest("GET", "/test", nil)
+	resp, err := s.doRequest("/test")
 	requirepkg.NoError(t, err, "doRequest error")
 	_ = resp.Body.Close()
 }

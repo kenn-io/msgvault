@@ -112,7 +112,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	// object with `participants` and `messages`. We take participants
 	// from the lowest-numbered file, and concatenate all messages.
 	var thread Thread
-	thread.Format = "json"
+	thread.Format = formatJSON
 	thread.DirName = filepath.Base(threadDir)
 	thread.BadSiblings = badSiblings
 	var rawConcat []rawJSONMessage

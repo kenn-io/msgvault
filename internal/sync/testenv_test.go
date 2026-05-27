@@ -24,10 +24,8 @@ type TestEnv struct {
 	Context context.Context
 }
 
-func newTestEnv(t *testing.T, opt ...*Options) *TestEnv {
+func newTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
-
-	require.LessOrEqual(t, len(opt), 1, "newTestEnv: at most one *Options allowed")
 
 	tmpDir, err := os.MkdirTemp("", "msgvault-test-*")
 	require.NoError(t, err, "create temp dir")
@@ -47,15 +45,10 @@ func newTestEnv(t *testing.T, opt ...*Options) *TestEnv {
 		HistoryID:     1000,
 	}
 
-	var o *Options
-	if len(opt) > 0 {
-		o = opt[0]
-	}
-
 	return &TestEnv{
 		Store:   st,
 		Mock:    mock,
-		Syncer:  New(mock, st, o),
+		Syncer:  New(mock, st, nil),
 		TmpDir:  tmpDir,
 		Context: context.Background(),
 	}

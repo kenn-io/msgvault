@@ -1266,6 +1266,11 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 // Search performs a Gmail-style search query.
 // buildSearchQueryParts builds the WHERE conditions, args, joins, and FTS join
 // for a search query. This is shared between Search and SearchFastCount.
+// joins is a reserved slot in the returned tuple that executeSearchQuery's
+// shared SELECT template interpolates; current filters emit none, but the shape
+// stays uniform with executeSearchQuery's signature.
+//
+//nolint:unparam // joins slot kept for uniformity with executeSearchQuery
 func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, joins []string, ftsJoin string) {
 	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
 	// q.HideDeleted via the helper.
