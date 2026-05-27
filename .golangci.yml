@@ -20,7 +20,6 @@ linters:
     - fatcontext       # auto-fix unsafely turns `outerVar = ctx` into `outerVar := ctx`, shadowing
     - funcorder        # exported-before-unexported ordering
     - containedctx     # TUI models legitimately store context
-    - gocheckcompilerdirectives # doesn't recognize //go:fix inline (real directive used by gopls)
     - godox            # TODO/FIXME comments are valid backlog markers, not lint errors
     - interfacebloat   # Engine/Dialect/Backend are intentional broad abstractions
     - unqueryvet       # `SELECT *` is intentional for full-table copies and VALUES fixtures
@@ -70,13 +69,6 @@ linters:
     - gomodguard_v2    # explicit v2 opt-in
 
   settings:
-    govet:
-      disable:
-        # The inline analyzer pesters every call site of functions tagged
-        # //go:fix inline. The tag is intentional (gopls migration aid),
-        # not a compile-error; let gopls and `go fix` handle it on demand.
-        - inline
-
     errorlint:
       comparison: true
       asserts: true
