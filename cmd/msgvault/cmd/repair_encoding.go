@@ -297,7 +297,7 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 		var compression sql.NullString
 
 		if err := rows.Scan(&id, &subject, &bodyText, &bodyHTML, &snippet, &rawData, &compression); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping message row: scan error: %v\n", err)
+			logger.Warn("skipping message row with scan error", "error", err)
 			stats.skippedRows++
 			continue
 		}
@@ -492,7 +492,7 @@ func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string,
 		var id int64
 		var name string
 		if err := rows.Scan(&id, &name); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping %s row: scan error: %v\n", tableName, err)
+			logger.Warn("skipping row with scan error", "table", tableName, "error", err)
 			stats.skippedRows++
 			continue
 		}
@@ -662,7 +662,7 @@ func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStm
 		var id int64
 		var value string
 		if err := rows.Scan(&id, &value); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping %s.%s row: scan error: %v\n", tableName, column, err)
+			logger.Warn("skipping row with scan error", "table", tableName, "column", column, "error", err)
 			stats.skippedRows++
 			continue
 		}
