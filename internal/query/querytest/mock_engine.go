@@ -112,9 +112,9 @@ func (m *MockEngine) GetMessageBySourceID(ctx context.Context, sourceID string) 
 		if msg, ok := m.MessagesBySourceID[sourceID]; ok {
 			return msg, nil
 		}
-		return nil, nil
+		return nil, nil //nolint:nilnil // mirrors Engine.GetMessageBySourceID (nil, nil) not-found contract
 	}
-	return nil, nil
+	return nil, nil //nolint:nilnil // mirrors Engine.GetMessageBySourceID (nil, nil) not-found contract
 }
 
 func (m *MockEngine) GetAttachment(_ context.Context, id int64) (*query.AttachmentInfo, error) {
@@ -123,7 +123,7 @@ func (m *MockEngine) GetAttachment(_ context.Context, id int64) (*query.Attachme
 			return a, nil
 		}
 	}
-	return nil, nil
+	return nil, nil //nolint:nilnil // mirrors Engine.GetAttachment (nil, nil) not-found contract
 }
 
 func (m *MockEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
@@ -196,7 +196,7 @@ func (m *MockEngine) GetTotalStats(ctx context.Context, opts query.StatsOptions)
 	if m.Stats != nil {
 		return m.Stats, nil
 	}
-	return nil, nil
+	return nil, nil //nolint:nilnil // mock stub: no stats configured, no error
 }
 
 func (m *MockEngine) Close() error { return nil }

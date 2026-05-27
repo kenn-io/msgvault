@@ -151,12 +151,12 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		// then fall back to the latest checkpointed run (which includes
 		// failed/interrupted runs whose checkpoint is still valid).
 		prev, err := st.GetActiveSync(source.ID)
-		if err != nil {
+		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("fbmessenger: check active sync: %w", err)
 		}
 		if prev == nil || !prev.CursorBefore.Valid || prev.CursorBefore.String == "" {
 			prev, err = st.GetLatestCheckpointedSync(source.ID)
-			if err != nil {
+			if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 				return nil, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
 			}
 		}

@@ -278,7 +278,7 @@ func extractBodyFromRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc
 	if compression.Valid && compression.String == "zlib" {
 		r, err := zlib.NewReader(bytes.NewReader(compressed))
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("open zlib reader for raw message: %w", err)
 		}
 		defer func() { _ = r.Close() }()
 		rawData, err = io.ReadAll(r)
@@ -376,7 +376,7 @@ func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 		&deletedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, nil //nolint:nilnil // Engine.GetMessage/GetMessageBySourceID use (nil, nil) for not-found; callers chain fallback lookups on the nil result
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get message: %w", err)

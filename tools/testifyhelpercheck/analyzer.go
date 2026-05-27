@@ -43,7 +43,7 @@ func run(pass *analysis.Pass) (any, error) {
 		})
 	}
 
-	return nil, nil
+	return nil, nil //nolint:nilnil // go/analysis Run returns (nil result, nil error): this analyzer produces no result fact
 }
 
 type importSet struct {

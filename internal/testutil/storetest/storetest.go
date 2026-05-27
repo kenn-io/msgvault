@@ -220,7 +220,7 @@ func (f *Fixture) AssertActiveSync(wantID int64, wantStatus string) {
 func (f *Fixture) AssertNoActiveSync() {
 	f.T.Helper()
 	active, err := f.Store.GetActiveSync(f.Source.ID)
-	require.NoError(f.T, err, "GetActiveSync")
+	require.ErrorIs(f.T, err, store.ErrSyncRunNotFound, "GetActiveSync")
 	assert.Nilf(f.T, active, "expected no active sync, got %+v", active)
 }
 

@@ -121,6 +121,11 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 	return messages, total, nil
 }
 
+// ErrMessageNotFound is returned by GetMessage when no message row
+// matches the given ID. Wrapped via fmt.Errorf("...: %w", ...) so
+// callers can use errors.Is to distinguish absence from real DB errors.
+var ErrMessageNotFound = errors.New("message not found")
+
 // GetMessage returns a single message with full details.
 // Only this method accesses message_bodies (single PK lookup).
 func (s *Store) GetMessage(id int64) (*APIMessage, error) {
@@ -150,7 +155,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	var sentAt, deletedAt nullableTimestamp
 	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, fmt.Errorf("message %d: %w", id, ErrMessageNotFound)
 	}
 	if err != nil {
 		return nil, err
@@ -749,7 +754,7 @@ func (s *Store) batchPopulate(messages []APIMessage, ids []int64) error {
 // batchGetRecipients loads recipients for multiple messages in a single query.
 func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
-		return nil, nil
+		return map[int64][]string{}, nil
 	}
 
 	placeholders := make([]string, len(messageIDs))
@@ -793,7 +798,7 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 // batchGetLabels loads labels for multiple messages in a single query.
 func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
-		return nil, nil
+		return map[int64][]string{}, nil
 	}
 
 	placeholders := make([]string, len(messageIDs))

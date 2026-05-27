@@ -174,7 +174,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 
 	if !opts.NoResume {
 		active, err := st.GetActiveSync(src.ID)
-		if err != nil {
+		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check active sync: %w", err)
 		}
 		if active != nil {

@@ -74,7 +74,7 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 	latestVersion := strings.TrimPrefix(tag, "v")
 
 	if !isDevBuild && !isNewer(latestVersion, cleanVersion) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // (nil, nil) signals "already up to date"; callers treat a nil UpdateInfo as success, not an error
 	}
 
 	ext := ".tar.gz"
@@ -406,7 +406,7 @@ func extractTarGz(archivePath, destDir string) error {
 
 	gzr, err := gzip.NewReader(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("open gzip reader: %w", err)
 	}
 	defer func() { _ = gzr.Close() }()
 
@@ -417,7 +417,7 @@ func extractTarGz(archivePath, destDir string) error {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("read tar header: %w", err)
 		}
 
 		target, err := sanitizeTarPath(absDestDir, header.Name)
@@ -502,7 +502,7 @@ func extractZip(archivePath, destDir string) error {
 
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open zip archive: %w", err)
 	}
 	defer func() { _ = r.Close() }()
 
@@ -525,7 +525,7 @@ func extractZip(archivePath, destDir string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			return err
+			return fmt.Errorf("open zip entry %q: %w", f.Name, err)
 		}
 
 		outFile, err := os.Create(target)

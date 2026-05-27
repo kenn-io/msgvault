@@ -83,7 +83,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	}
 
 	activeSync, err := s.GetActiveSync(source.ID)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return fmt.Errorf("check active sync: %w", err)
 	}
 	if activeSync != nil && !yes {

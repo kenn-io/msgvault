@@ -67,7 +67,7 @@ func TestStore_RemoveSource(t *testing.T) {
 
 	// Verify source is gone
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be nil after removal")
 
 	// Verify messages are gone
@@ -175,7 +175,7 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	assert.False(had, "hadActiveSync")
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be removed")
 }
 
@@ -193,7 +193,7 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 	assert.True(had, "hadActiveSync should be true for sync on removed source")
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should still be removed even when sync was active")
 }
 
@@ -214,7 +214,7 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 
 	// Original source is gone.
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "test source should be removed")
 
 	// Other source (with the active sync) is untouched.

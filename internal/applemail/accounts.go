@@ -51,7 +51,7 @@ func DefaultAccountsDBPath() string {
 // GUID → AccountInfo for each GUID that was found.
 func ResolveAccounts(dbPath string, guids []string) (map[string]AccountInfo, error) {
 	if len(guids) == 0 {
-		return nil, nil
+		return map[string]AccountInfo{}, nil
 	}
 
 	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")

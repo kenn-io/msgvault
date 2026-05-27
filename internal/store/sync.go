@@ -15,6 +15,16 @@ const (
 	SyncStatusFailed    = "failed"
 )
 
+// ErrSyncRunNotFound is returned by the sync-run getters (GetActiveSync,
+// GetLatestCheckpointedSync, GetLastSuccessfulSync) when no matching run
+// exists. Wrapped via fmt.Errorf so callers can use errors.Is to tell
+// absence apart from real DB errors.
+var ErrSyncRunNotFound = errors.New("sync run not found")
+
+// ErrSourceImportItemNotFound is returned by GetSourceImportItem when no
+// import-item row matches. Wrapped via fmt.Errorf for errors.Is checks.
+var ErrSourceImportItemNotFound = errors.New("source import item not found")
+
 // dbTimeLayouts lists formats used by SQLite/go-sqlite3 for timestamp storage.
 // This matches the full set from SQLiteTimestampFormats in mattn/go-sqlite3,
 // plus RFC3339/RFC3339Nano as fallbacks for maximum compatibility.
@@ -290,7 +300,7 @@ func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, fmt.Errorf("active sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err
 }
@@ -314,7 +324,7 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, fmt.Errorf("latest checkpointed sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err
 }
@@ -358,7 +368,7 @@ func (s *Store) GetSourceImportItem(sourceID int64, provider, providerID string)
 		&item.Status, &item.RecordsImported, &item.ErrorMessage,
 	)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("source import item %s/%s for source %d: %w", provider, providerID, sourceID, ErrSourceImportItemNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get source import item: %w", err)
@@ -418,7 +428,7 @@ func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, fmt.Errorf("last successful sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err
 }
@@ -588,7 +598,7 @@ func (s *Store) GetSourceByIdentifier(identifier string) (*Source, error) {
 
 	source, err := scanSource(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, fmt.Errorf("source %q: %w", identifier, ErrSourceNotFound)
 	}
 	if err != nil {
 		return nil, err

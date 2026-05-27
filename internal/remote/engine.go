@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // ErrNotSupported is returned for operations not available in remote mode.
@@ -479,11 +480,11 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 // GetMessage returns a single message by ID.
 func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail, error) {
 	msg, err := e.store.GetMessage(id)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
+	}
 	if err != nil {
 		return nil, err
-	}
-	if msg == nil {
-		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
 	}
 
 	// Convert store.APIMessage to query.MessageDetail

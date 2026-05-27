@@ -16,7 +16,7 @@ import (
 // without -tags sqlite_vec.
 func setupVectorFeatures(_ context.Context, _ *sql.DB, mainPath string) (*vectorFeatures, error) {
 	if !cfg.Vector.Enabled {
-		return nil, nil
+		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	// Mirror the PG refusal in the sqlite_vec build so users get the
 	// same actionable message regardless of how the binary was built.

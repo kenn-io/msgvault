@@ -43,11 +43,11 @@ Examples:
 		}
 
 		source, err := s.GetSourceByIdentifier(email)
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return fmt.Errorf("account not found: %s", email)
+		}
 		if err != nil {
 			return fmt.Errorf("get account: %w", err)
-		}
-		if source == nil {
-			return fmt.Errorf("account not found: %s", email)
 		}
 
 		if err := s.UpdateSourceDisplayName(source.ID, updateDisplayName); err != nil {

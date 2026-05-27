@@ -24,7 +24,7 @@ import (
 // connection.
 func setupVectorFeatures(ctx context.Context, mainDB *sql.DB, mainPath string) (*vectorFeatures, error) {
 	if !cfg.Vector.Enabled {
-		return nil, nil
+		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}
 	// The vector backend uses sqlite-vec extension and `ATTACH DATABASE`
 	// to fuse vectors.db onto the main store — both SQLite-only. Refuse

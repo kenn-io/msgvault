@@ -888,7 +888,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 		WHERE id = ?
 	`, id).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get attachment: %w", err)

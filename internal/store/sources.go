@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// ErrSourceNotFound is returned by GetSourceByID when no source row
-// matches the given ID. Wrapped via fmt.Errorf("...: %w", ...) so
+// ErrSourceNotFound is returned by GetSourceByID and GetSourceByIdentifier
+// when no source row matches. Wrapped via fmt.Errorf("...: %w", ...) so
 // callers can use errors.Is to distinguish absence from real DB
 // errors.
 var ErrSourceNotFound = errors.New("source not found")

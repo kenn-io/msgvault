@@ -154,7 +154,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	defer func() { _ = s2.Close() }()
 	require.NoError(s2.InitSchema(), "reinit schema")
 	src, err := s2.GetSourceByIdentifier("alice@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should have been removed from DB despite skipped file deletion")
 }
 
@@ -311,7 +311,7 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	require.NoError(s.InitSchema(), "reinit schema")
 
 	src, err := s.GetSourceByIdentifier("test@example.com")
-	require.NoError(err, "GetSourceByIdentifier")
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assertpkg.Nil(t, src, "account should be removed after --yes")
 }
 

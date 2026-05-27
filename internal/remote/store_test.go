@@ -9,6 +9,8 @@ import (
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestNew_RejectsHTTPWithoutAllowInsecure(t *testing.T) {
@@ -189,7 +191,7 @@ func TestGetMessage_NotFound(t *testing.T) {
 
 	s := newTestStore(srv, "key")
 	msg, err := s.GetMessage(999)
-	requirepkg.NoError(t, err, "GetMessage error")
+	requirepkg.ErrorIs(t, err, store.ErrMessageNotFound, "GetMessage(999) should report not found")
 	assertpkg.Nil(t, msg, "GetMessage(999) should return nil for not found")
 }
 
@@ -358,17 +360,14 @@ func TestListAccounts_Success(t *testing.T) {
 	assertpkg.Equal(t, "user@gmail.com", accounts[0].Email, "Email")
 }
 
-// readCloser wraps a string in an io.ReadCloser.
+// readCloser wraps a string in an io.ReadCloser. The embedded *strings.Reader
+// promotes Read so io.EOF propagates verbatim to callers.
 func readCloser(s string) *readCloserImpl {
-	return &readCloserImpl{r: strings.NewReader(s)}
+	return &readCloserImpl{Reader: strings.NewReader(s)}
 }
 
 type readCloserImpl struct {
-	r *strings.Reader
-}
-
-func (rc *readCloserImpl) Read(p []byte) (int, error) {
-	return rc.r.Read(p)
+	*strings.Reader
 }
 
 func (rc *readCloserImpl) Close() error {

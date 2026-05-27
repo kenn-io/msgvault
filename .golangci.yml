@@ -54,9 +54,6 @@ linters:
     - wrapcheck        # %w wrapping at every external-package boundary (~29)
     - noctx            # ~130 DB calls (mostly tests + ctx-less constructors)
                        # need *Context variants; a dedicated sweep, not standup
-    - nilnil           # (nil, nil) is the idiomatic not-found / empty-input /
-                       # mock-stub signal across store getters, query mocks, and
-                       # the updater; a sentinel-error sweep is its own pass
     - sqlclosecheck    # batch loops close rows explicitly per-iteration (defer
                        # would leak across chunks); satisfying it cleanly needs
                        # per-query helper extraction — a dedicated refactor
@@ -163,12 +160,6 @@ linters:
       - linters: [staticcheck]
         path: _test\.go
         text: "SA5011"
-
-      # store getters use the idiomatic (nil, nil) signal for not-found rows
-      # (sql.ErrNoRows) and for empty-input batch helpers; callers branch on
-      # the nil result. A sentinel error here would only add caller noise.
-      - linters: [nilnil]
-        path: internal/store/(api|sync)\.go
 
       # Test suites are exempted from the linter sweep in this standup. The
       # codebase just migrated to testify (#345); holding the freshly-rewritten

@@ -281,7 +281,7 @@ func (s *Store) GetMessage(id int64) (*store.APIMessage, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil //nolint:nilnil // store API uses (nil, nil) for not-found; mirrors local Store
+		return nil, fmt.Errorf("message %d: %w", id, store.ErrMessageNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)

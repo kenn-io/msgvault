@@ -14,6 +14,7 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // testLogger returns a logger for tests that discards output
@@ -94,7 +95,7 @@ func (m *mockStore) GetMessage(id int64) (*APIMessage, error) {
 			return &msg, nil
 		}
 	}
-	return nil, nil
+	return nil, store.ErrMessageNotFound
 }
 
 func (m *mockStore) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {

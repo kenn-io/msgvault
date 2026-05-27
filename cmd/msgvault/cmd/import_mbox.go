@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -130,7 +131,7 @@ Examples:
 				return fmt.Errorf("get/create source: %w", err)
 			}
 			active, err := st.GetActiveSync(src.ID)
-			if err != nil {
+			if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 				return fmt.Errorf("check active sync: %w", err)
 			}
 			if active != nil && active.CursorBefore.Valid && active.CursorBefore.String != "" {
@@ -175,7 +176,7 @@ Examples:
 				// sync run. This avoids rescanning already-finished files when a
 				// multi-file import is interrupted between files.
 				last, err := st.GetLastSuccessfulSync(src.ID)
-				if err != nil {
+				if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 					return fmt.Errorf("check last successful sync: %w", err)
 				}
 				if last != nil && last.CursorBefore.Valid && last.CursorBefore.String != "" {

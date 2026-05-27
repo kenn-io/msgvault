@@ -21,6 +21,12 @@ var (
 // addAccountUse is the usage string for the add-account command.
 const addAccountUse = "add-account <email>"
 
+// errGmailSourceNotFound is returned by findGmailSource when no Gmail
+// source is registered for the given identifier. Wrapped via fmt.Errorf
+// so callers can use errors.Is to tell "no such account" apart from real
+// lookup errors.
+var errGmailSourceNotFound = errors.New("gmail source not found")
+
 var addAccountCmd = &cobra.Command{
 	Use:   addAccountUse,
 	Short: "Add a Gmail account via OAuth",
@@ -71,7 +77,7 @@ Examples:
 
 		// Look up existing source to detect binding changes
 		existingSource, err := findGmailSource(s, email)
-		if err != nil {
+		if err != nil && !errors.Is(err, errGmailSourceNotFound) {
 			return fmt.Errorf("look up existing source: %w", err)
 		}
 
@@ -123,7 +129,7 @@ Examples:
 				var mismatch *oauth.TokenMismatchError
 				if errors.As(saErr, &mismatch) {
 					existing, lookupErr := findGmailSource(s, email)
-					if lookupErr != nil {
+					if lookupErr != nil && !errors.Is(lookupErr, errGmailSourceNotFound) {
 						return fmt.Errorf("service account validation failed: %w (also: %w)", saErr, lookupErr)
 					}
 					if existing == nil {
@@ -253,7 +259,7 @@ Examples:
 			var mismatch *oauth.TokenMismatchError
 			if errors.As(err, &mismatch) {
 				existing, lookupErr := findGmailSource(s, email)
-				if lookupErr != nil {
+				if lookupErr != nil && !errors.Is(lookupErr, errGmailSourceNotFound) {
 					return fmt.Errorf("authorization failed: %w (also: %w)", err, lookupErr)
 				}
 				if existing == nil {
@@ -319,7 +325,7 @@ func findGmailSource(
 			return src, nil
 		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("identifier %q: %w", email, errGmailSourceNotFound)
 }
 
 func init() {

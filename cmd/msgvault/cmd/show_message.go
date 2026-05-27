@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -59,11 +60,11 @@ func showRemoteMessage(cmd *cobra.Command, idStr string) error {
 	defer func() { _ = s.Close() }()
 
 	msg, err := s.GetMessage(id)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return fmt.Errorf("message not found: %s", idStr)
+	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
-	}
-	if msg == nil {
-		return fmt.Errorf("message not found: %s", idStr)
 	}
 
 	if showMessageJSON {

@@ -377,13 +377,13 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg, err := s.store.GetMessage(id)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Message not found")
+		return
+	}
 	if err != nil {
 		s.logger.Error("failed to get message", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve message")
-		return
-	}
-	if msg == nil {
-		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
 

@@ -99,7 +99,7 @@ Examples:
 		// Look up source to get OAuth app binding
 		appName := ""
 		src, srcErr := findGmailSource(s, email)
-		if srcErr != nil {
+		if srcErr != nil && !errors.Is(srcErr, errGmailSourceNotFound) {
 			return fmt.Errorf("look up source for %s: %w", email, srcErr)
 		}
 		if src != nil {
@@ -171,7 +171,7 @@ Examples:
 		// specifically since the same identifier may exist for
 		// other source types (mbox, imap).
 		source, err := findGmailSource(s, email)
-		if err != nil {
+		if err != nil && !errors.Is(err, errGmailSourceNotFound) {
 			return fmt.Errorf("get source: %w", err)
 		}
 		if source == nil {

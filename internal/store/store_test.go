@@ -804,7 +804,7 @@ func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
 
 	// No successful sync yet
 	lastSync, err := f.Store.GetLastSuccessfulSync(f.Source.ID)
-	requirepkg.NoError(t, err, "GetLastSuccessfulSync()")
+	requirepkg.ErrorIs(t, err, store.ErrSyncRunNotFound, "GetLastSuccessfulSync()")
 	assertpkg.Nil(t, lastSync, "expected nil last sync")
 }
 
@@ -812,7 +812,7 @@ func TestStore_GetSourceByIdentifier_NotFound(t *testing.T) {
 	f := storetest.New(t)
 
 	source, err := f.Store.GetSourceByIdentifier("nonexistent@example.com")
-	requirepkg.NoError(t, err, "GetSourceByIdentifier()")
+	requirepkg.ErrorIs(t, err, store.ErrSourceNotFound, "GetSourceByIdentifier()")
 	assertpkg.Nil(t, source, "expected nil source")
 }
 

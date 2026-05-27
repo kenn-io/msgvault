@@ -120,7 +120,7 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 
 	if !s.opts.NoResume {
 		activeSync, err := s.store.GetActiveSync(sourceID)
-		if err != nil {
+		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check active sync: %w", err)
 		}
 		if activeSync != nil {
