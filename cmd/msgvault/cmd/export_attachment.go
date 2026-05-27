@@ -180,6 +180,6 @@ func readAttachmentFile(storagePath, contentHash string) ([]byte, error) {
 func init() {
 	rootCmd.AddCommand(exportAttachmentCmd)
 	exportAttachmentCmd.Flags().StringVarP(&exportAttachmentOutput, "output", "o", "", "Output file path (default: stdout, use - for stdout)")
-	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentJSON, outputFormatJSON, false, "Output as JSON with base64-encoded data")
+	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentJSON, flagJSON, false, "Output as JSON with base64-encoded data")
 	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentBase64, "base64", false, "Output raw base64 to stdout")
 }

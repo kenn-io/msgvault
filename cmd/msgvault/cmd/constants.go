@@ -8,9 +8,11 @@ const (
 	sourceTypeMbox  = "mbox"
 )
 
-// Analytics dataset / SQLite table names. These double as the Parquet
-// subdirectory under analytics/ and the source table in build-cache and
-// repair-encoding queries, and as stats/JSON field keys for the same entities.
+// Analytics dataset / SQLite table names: the Parquet subdirectory under
+// analytics/, the source table in build-cache and repair-encoding queries,
+// and the entity label in stats output. JSON response fields and CLI flag
+// names that happen to share these strings use their own literals/constants,
+// so renaming a storage entity cannot silently change an external contract.
 const (
 	tableMessages      = "messages"
 	tableLabels        = "labels"
@@ -19,8 +21,12 @@ const (
 	tableConversations = "conversations"
 )
 
-// outputFormatJSON is the JSON output mode: both the --json flag name and the
-// "json" value accepted by --format.
+// flagJSON is the name of the boolean --json output flag. It is kept distinct
+// from outputFormatJSON (the value accepted by --format) so the flag name and
+// the format value can change independently.
+const flagJSON = "json"
+
+// outputFormatJSON is the "json" value accepted by the --format flag.
 const outputFormatJSON = "json"
 
 // keyEmail is the map/log field key carrying an account or address email.

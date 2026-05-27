@@ -46,7 +46,7 @@ type ImportOptions struct {
 	Me string
 	// RootDir is the DYI export root directory.
 	RootDir string
-	// Format overrides auto-detection. One of "auto", formatJSON, "html",
+	// Format overrides auto-detection. One of "auto", "json", "html",
 	// "both". Empty is treated as "auto".
 	Format string
 	// AttachmentsDir is the content-addressed attachment storage root.

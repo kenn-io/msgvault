@@ -416,7 +416,7 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"size_estimate":          msg.SizeEstimate,
 			"has_attachments":        msg.HasAttachments,
 			"attachment_count":       msg.AttachmentCount,
-			tableLabels:              msg.Labels,
+			"labels":                 msg.Labels,
 		}
 	}
 
@@ -427,7 +427,7 @@ func init() {
 	rootCmd.AddCommand(searchCmd)
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 50, "Maximum number of results")
 	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Skip first N results")
-	searchCmd.Flags().BoolVar(&searchJSON, outputFormatJSON, false, "Output as JSON")
+	searchCmd.Flags().BoolVar(&searchJSON, flagJSON, false, "Output as JSON")
 	searchCmd.Flags().StringVar(&searchAccount, "account", "", "Limit results to a specific account (email address)")
 	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
 		"Limit results to all member accounts of one collection")

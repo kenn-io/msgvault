@@ -232,8 +232,8 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		"to":                     toAddrs,
 		"cc":                     ccAddrs,
 		"bcc":                    bccAddrs,
-		tableLabels:              msg.Labels,
-		tableAttachments:         attachments,
+		"labels":                 msg.Labels,
+		"attachments":            attachments,
 		"body_text":              msg.BodyText,
 		"body_html":              msg.BodyHTML,
 	}
@@ -338,8 +338,8 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 		"sent_at":         msg.SentAt.Format(time.RFC3339),
 		"size_estimate":   msg.SizeEstimate,
 		"has_attachments": msg.HasAttachments,
-		tableLabels:       msg.Labels,
-		tableAttachments:  attachments,
+		"labels":          msg.Labels,
+		"attachments":     attachments,
 		"body":            msg.Body,
 	}
 
@@ -350,5 +350,5 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 
 func init() {
 	rootCmd.AddCommand(showMessageCmd)
-	showMessageCmd.Flags().BoolVar(&showMessageJSON, outputFormatJSON, false, "Output as JSON")
+	showMessageCmd.Flags().BoolVar(&showMessageJSON, flagJSON, false, "Output as JSON")
 }

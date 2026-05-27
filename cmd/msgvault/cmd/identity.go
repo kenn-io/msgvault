@@ -417,9 +417,9 @@ func init() {
 		"collection", "", "Restrict to all member accounts of one collection")
 	identityListCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	identityListCmd.Flags().BoolVar(&identityListJSON,
-		outputFormatJSON, false, "Output as JSON")
+		flagJSON, false, "Output as JSON")
 	identityShowCmd.Flags().BoolVar(&identityShowJSON,
-		outputFormatJSON, false, "Output as JSON")
+		flagJSON, false, "Output as JSON")
 	identityAddCmd.Flags().StringVar(&identityAddSignal,
 		"signal", "manual",
 		"Evidence signal name (e.g. manual, account-identifier, phone-e164). "+

@@ -44,7 +44,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 	cmd.Flags().BoolVar(&opts.IncludeSMS, "sms", true, "Import SMS records")
 	cmd.Flags().BoolVar(&opts.IncludeMMS, "mms", true, "Import MMS records")
 	cmd.Flags().BoolVar(&opts.IncludeCalls, "calls", true, "Import call log records")
-	cmd.Flags().BoolVar(&opts.IncludeAttachments, tableAttachments, true, "Import MMS attachments")
+	cmd.Flags().BoolVar(&opts.IncludeAttachments, "attachments", true, "Import MMS attachments")
 	return cmd
 }
 
