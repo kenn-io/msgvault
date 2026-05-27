@@ -2,6 +2,7 @@ package synctechsms
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +38,7 @@ func NewGoogleDriveClient(service *drive.Service) *GoogleDriveClient {
 
 func (c *GoogleDriveClient) ListBackupFiles(ctx context.Context, folderID string) ([]DriveFile, error) {
 	if !validDriveFolderID(folderID) {
-		return nil, fmt.Errorf("invalid Drive folder ID")
+		return nil, errors.New("invalid Drive folder ID")
 	}
 	q := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
 	var out []DriveFile

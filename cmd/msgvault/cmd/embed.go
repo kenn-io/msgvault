@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/spf13/cobra"
 )
@@ -24,10 +24,10 @@ Requires [vector] to be enabled in config.toml and [vector.embeddings]
 to point at a running OpenAI-compatible endpoint.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !cfg.Vector.Enabled {
-			return fmt.Errorf("vector search not enabled; add [vector] enabled=true to config.toml first")
+			return errors.New("vector search not enabled; add [vector] enabled=true to config.toml first")
 		}
 		if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
-			return fmt.Errorf("[vector.embeddings] endpoint and model are required")
+			return errors.New("[vector.embeddings] endpoint and model are required")
 		}
 		return runEmbed(cmd.Context())
 	},

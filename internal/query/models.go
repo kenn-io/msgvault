@@ -4,7 +4,10 @@
 // SQLite (for flexibility) and Parquet (for performance) data sources.
 package query
 
-import "time"
+import (
+	"maps"
+	"time"
+)
 
 // AggregateRow represents a single row in an aggregate view.
 // Used for Senders, Recipients, Domains, Labels, and Time views.
@@ -284,9 +287,7 @@ func (f MessageFilter) Clone() MessageFilter {
 	clone := f
 	if f.EmptyValueTargets != nil {
 		clone.EmptyValueTargets = make(map[ViewType]bool, len(f.EmptyValueTargets))
-		for k, v := range f.EmptyValueTargets {
-			clone.EmptyValueTargets[k] = v
-		}
+		maps.Copy(clone.EmptyValueTargets, f.EmptyValueTargets)
 	}
 	if f.SourceIDs != nil {
 		clone.SourceIDs = append([]int64(nil), f.SourceIDs...)

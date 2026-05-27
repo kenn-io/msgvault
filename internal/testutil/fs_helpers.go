@@ -58,7 +58,7 @@ func WriteFile(t *testing.T, dir, name string, content []byte) string {
 
 	path := filepath.Join(dir, filepath.Clean(name))
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755), "create dir")
-	require.NoError(t, os.WriteFile(path, content, 0644), "write file")
+	require.NoError(t, os.WriteFile(path, content, 0644), "write file") //nolint:gosec // shared test-fixture writer; 0644 fixtures are not a real-world threat
 	return path
 }
 

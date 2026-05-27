@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -432,13 +433,13 @@ func escapeILIKE(s string) string {
 // keyColumns are SQL expressions for the grouping dimension that text terms
 // should filter on (e.g. "p.email_address", "p.display_name"). When nil,
 // text terms search subject + sender (the default for Senders/Time views).
-func (e *DuckDBEngine) buildAggregateSearchConditions(searchQuery string, keyColumns ...string) ([]string, []interface{}) {
+func (e *DuckDBEngine) buildAggregateSearchConditions(searchQuery string, keyColumns ...string) ([]string, []any) {
 	if searchQuery == "" {
 		return nil, nil
 	}
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	q := search.Parse(searchQuery)
 
@@ -481,9 +482,9 @@ func (e *DuckDBEngine) buildAggregateSearchConditions(searchQuery string, keyCol
 // callers that handle text terms themselves (e.g. buildStatsSearchConditions)
 // can append non-text filters without having to compute how many args
 // the text-term portion produced.
-func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns ...string) ([]string, []interface{}) {
+func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns ...string) ([]string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	// from: filter - match sender email
 	for _, from := range q.FromAddrs {
@@ -585,7 +586,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 // For 1:N views (Recipients, RecipientNames, Labels), text terms filter via
 // EXISTS subqueries on the grouping dimension so stats match visible rows.
 // For 1:1 views, falls back to the default subject+sender search.
-func (e *DuckDBEngine) buildStatsSearchConditions(searchQuery string, groupBy ViewType) ([]string, []interface{}) {
+func (e *DuckDBEngine) buildStatsSearchConditions(searchQuery string, groupBy ViewType) ([]string, []any) {
 	if searchQuery == "" {
 		return nil, nil
 	}
@@ -593,7 +594,7 @@ func (e *DuckDBEngine) buildStatsSearchConditions(searchQuery string, groupBy Vi
 	q := search.Parse(searchQuery)
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	// Text terms — use EXISTS for 1:N views since the stats query has no
 	// participant/label joins.
@@ -646,9 +647,9 @@ func (e *DuckDBEngine) buildStatsSearchConditions(searchQuery string, groupBy Vi
 
 // keyColumns are passed through to buildAggregateSearchConditions to control
 // which columns text search terms filter on.
-func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...string) (string, []interface{}) {
+func (e *DuckDBEngine) buildWhereClause(opts AggregateOptions, keyColumns ...string) (string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
@@ -770,7 +771,7 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 }
 
 // runAggregation executes a generic aggregation query using the view definition.
-func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, whereClause string, args []interface{}, opts AggregateOptions) ([]AggregateRow, error) {
+func (e *DuckDBEngine) runAggregation(ctx context.Context, def aggViewDef, whereClause string, args []any, opts AggregateOptions) ([]AggregateRow, error) {
 	limit := opts.Limit
 	if limit == 0 {
 		limit = 100
@@ -816,6 +817,8 @@ func (e *DuckDBEngine) sortClause(opts AggregateOptions) string {
 		field = "attachment_size"
 	case SortByName:
 		field = "key"
+	default:
+		// SortByCount (and any unset field) keeps the "count" default.
 	}
 
 	dir := "DESC"
@@ -844,9 +847,9 @@ func (e *DuckDBEngine) Aggregate(ctx context.Context, groupBy ViewType, opts Agg
 // buildFilterConditions builds WHERE conditions from a MessageFilter.
 // Uses EXISTS subqueries for join-based filters (sender, recipient, label),
 // which become semi-joins and avoid duplicates without needing DISTINCT.
-func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []interface{}) {
+func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
@@ -1004,7 +1007,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []in
 	// Time period filter
 	if filter.TimeRange.Period != "" {
 		granularity := inferTimeGranularity(filter.TimeRange.Granularity, filter.TimeRange.Period)
-		conditions = append(conditions, fmt.Sprintf("%s = ?", timeExpr(granularity)))
+		conditions = append(conditions, timeExpr(granularity)+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 
@@ -1061,17 +1064,19 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 
 	// Add search query conditions using the view's key columns
 	searchConds, searchArgs := e.buildAggregateSearchConditions(opts.SearchQuery, def.keyColumns...)
+	var whereSb1064 strings.Builder
 	for _, cond := range searchConds {
-		where += " AND " + cond
+		whereSb1064.WriteString(" AND " + cond)
 	}
+	where += whereSb1064.String()
 	args = append(args, searchArgs...)
 
 	return e.runAggregation(ctx, def, where, args, opts)
 }
 
 // executeAggregateQuery runs an aggregate query and returns the results.
-// Expects 6 columns: key, count, total_size, attachment_size, attachment_count, total_unique
-func (e *DuckDBEngine) executeAggregateQuery(ctx context.Context, query string, args []interface{}) ([]AggregateRow, error) {
+// Expects 6 columns: key, count, total_size, attachment_size, attachment_count, total_unique.
+func (e *DuckDBEngine) executeAggregateQuery(ctx context.Context, query string, args []any) ([]AggregateRow, error) {
 	rows, err := e.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate query: %w", err)
@@ -1108,12 +1113,13 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	stats := &TotalStats{}
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	conditions = append(conditions, emailOnlyFilterMsg)
-
-	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
+	conditions = append(conditions,
+		emailOnlyFilterMsg,
+		store.LiveMessagesWhere("msg", opts.HideDeletedFromSource),
+	)
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
 
 	if opts.WithAttachmentsOnly {
@@ -1190,7 +1196,7 @@ func (e *DuckDBEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 		return e.sqliteEngine.ListAccounts(ctx)
 	}
 	if !e.hasSQLite() {
-		return nil, fmt.Errorf("ListAccounts requires SQLite: pass sqlitePath to NewDuckDBEngine")
+		return nil, errors.New("ListAccounts requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
 	rows, err := e.db.QueryContext(ctx, `
@@ -1366,7 +1372,7 @@ func (e *DuckDBEngine) fetchParticipantsForMessages(ctx context.Context, message
 		return fetchParticipantsForMessageList(ctx, e.sqliteEngine.db, noopRebind, "", messages)
 	}
 
-	ids := make([]interface{}, len(messages))
+	ids := make([]any, len(messages))
 	placeholders := make([]string, len(messages))
 	idToIndex := make(map[int64]int, len(messages))
 	for i, msg := range messages {
@@ -1449,7 +1455,7 @@ func (e *DuckDBEngine) fetchLabelsForMessages(ctx context.Context, messages []Me
 // caller-supplied id order intact.
 func (e *DuckDBEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]MessageSummary, error) {
 	if e.sqliteEngine == nil {
-		return nil, fmt.Errorf("GetMessageSummariesByIDs requires SQLite: pass sqlitePath to NewDuckDBEngine")
+		return nil, errors.New("GetMessageSummariesByIDs requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 	return e.sqliteEngine.GetMessageSummariesByIDs(ctx, ids)
 }
@@ -1464,7 +1470,7 @@ func (e *DuckDBEngine) GetMessage(ctx context.Context, id int64) (*MessageDetail
 
 	// Fall back to sqlite_scan
 	if !e.hasSQLite() {
-		return nil, fmt.Errorf("GetMessage requires SQLite: pass sqlitePath to NewDuckDBEngine")
+		return nil, errors.New("GetMessage requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
 	return e.getMessageByQuery(ctx, "m.id = ?", id)
@@ -1480,7 +1486,7 @@ func (e *DuckDBEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID
 
 	// Fall back to sqlite_scan
 	if !e.hasSQLite() {
-		return nil, fmt.Errorf("GetMessageBySourceID requires SQLite: pass sqlitePath to NewDuckDBEngine")
+		return nil, errors.New("GetMessageBySourceID requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
 	return e.getMessageByQuery(ctx, "m.source_message_id = ?", sourceMessageID)
@@ -1492,7 +1498,7 @@ func (e *DuckDBEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	if e.sqliteEngine != nil {
 		return e.sqliteEngine.GetAttachment(ctx, id)
 	}
-	return nil, fmt.Errorf("GetAttachment requires SQLite: pass sqliteDB to NewDuckDBEngine")
+	return nil, errors.New("GetAttachment requires SQLite: pass sqliteDB to NewDuckDBEngine")
 }
 
 // GetMessageRaw returns the decompressed raw MIME data for a message.
@@ -1500,10 +1506,10 @@ func (e *DuckDBEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, err
 	if e.sqliteDB != nil {
 		return getMessageRawShared(ctx, e.sqliteDB, noopRebind, "", id)
 	}
-	return nil, fmt.Errorf("GetMessageRaw requires SQLite: pass sqliteDB to NewDuckDBEngine")
+	return nil, errors.New("GetMessageRaw requires SQLite: pass sqliteDB to NewDuckDBEngine")
 }
 
-func (e *DuckDBEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...interface{}) (*MessageDetail, error) {
+func (e *DuckDBEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...any) (*MessageDetail, error) {
 	return getMessageByQueryShared(ctx, e.db, noopRebind, "sqlite_db.", whereClause, args...)
 }
 
@@ -1518,11 +1524,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 
 	// Fall back to sqlite_scan with LIKE queries (no FTS)
 	if !e.hasSQLite() {
-		return nil, fmt.Errorf("Search requires SQLite: pass sqlitePath to NewDuckDBEngine")
+		return nil, errors.New("Search requires SQLite: pass sqlitePath to NewDuckDBEngine")
 	}
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 	var joins []string
 
 	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
@@ -1699,17 +1705,16 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	return results, nil
 }
 
-// GetGmailIDsByFilter returns Gmail IDs matching a filter.
-// This method delegates to SQLite for authoritative deletion status.
-// The Parquet cache may be stale if messages were deleted after the last cache build,
-// so we use SQLite directly to ensure deleted messages are properly excluded.
+// SearchByDomains returns message summaries for the given sender domains.
+// It delegates to SQLite because domain search needs JOINs across
+// participants and message_recipients that the Parquet cache doesn't carry.
 func (e *DuckDBEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]MessageSummary, error) {
 	// Delegate to SQLite — domain search requires JOINs across participants
 	// and message_recipients which are not available in the Parquet cache.
 	if e.sqliteEngine != nil {
 		return e.sqliteEngine.SearchByDomains(ctx, domains, after, before, limit, offset)
 	}
-	return nil, fmt.Errorf("SearchByDomains requires SQLite engine (participant data not in Parquet cache)")
+	return nil, errors.New("SearchByDomains requires SQLite engine (participant data not in Parquet cache)")
 }
 
 func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFilter) ([]string, error) {
@@ -1721,11 +1726,11 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 
 	// Fall back to Parquet if no SQLite engine available (shouldn't happen in practice)
 	if e.analyticsDir == "" {
-		return nil, fmt.Errorf("GetGmailIDsByFilter requires SQLite or Parquet data")
+		return nil, errors.New("GetGmailIDsByFilter requires SQLite or Parquet data")
 	}
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	// Always exclude deleted messages.
 	// Always pass true: this surface feeds remote-deletion staging and
@@ -1819,7 +1824,7 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		default:
 			te = "strftime(msg.sent_at, '%Y-%m')"
 		}
-		conditions = append(conditions, fmt.Sprintf("%s = ?", te))
+		conditions = append(conditions, te+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 
@@ -1899,7 +1904,7 @@ func HasCompleteParquetData(analyticsDir string) bool {
 // ParquetSyncState represents the sync state from _last_sync.json.
 type ParquetSyncState struct {
 	LastMessageID int64     `json:"last_message_id"`
-	LastSyncAt    time.Time `json:"last_sync_at,omitempty"`
+	LastSyncAt    time.Time `json:"last_sync_at,omitzero"`
 }
 
 // SearchFast searches message metadata in Parquet files (no body text).
@@ -2068,12 +2073,12 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 // searchCacheKeyFor builds a deterministic cache key from search conditions and args.
 // Same query+filter always produces the same key. Uses JSON encoding to avoid
 // ambiguity from delimiter collisions (e.g. args containing commas or pipes).
-func searchCacheKeyFor(conditions []string, args []interface{}) string {
+func searchCacheKeyFor(conditions []string, args []any) string {
 	// JSON marshaling is unambiguous: each element is quoted/escaped independently.
 	// Errors are impossible for string/int/float/bool args, but fall back to fmt.
 	key := struct {
-		C []string      `json:"c"`
-		A []interface{} `json:"a"`
+		C []string `json:"c"`
+		A []any    `json:"a"`
 	}{conditions, args}
 	b, err := json.Marshal(key)
 	if err != nil {
@@ -2089,7 +2094,7 @@ func searchCacheKeyFor(conditions []string, args []interface{}) string {
 // Caller must hold e.searchCacheMu.
 func (e *DuckDBEngine) dropSearchCache() {
 	if e.searchCacheTable != "" {
-		_, _ = e.db.ExecContext(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", e.searchCacheTable))
+		_, _ = e.db.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+e.searchCacheTable)
 	}
 	e.searchCacheKey = ""
 	e.searchCacheTable = ""
@@ -2260,7 +2265,6 @@ func (e *DuckDBEngine) computeSearchStats(ctx context.Context) *TotalStats {
 // old cache.
 func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
-
 	conditions, args := e.buildSearchConditions(q, filter)
 
 	if limit == 0 {
@@ -2344,7 +2348,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	// Phase 2: Count (trivial — reads in-memory temp table only).
 	// Best-effort: if count fails, use -1 (unknown total) and continue.
 	var count int64
-	if err := e.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tempTable)).Scan(&count); err != nil {
+	if err := e.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tempTable).Scan(&count); err != nil {
 		log.Printf("warning: search count query failed (using -1): %v", err)
 		count = -1
 	}
@@ -2363,15 +2367,16 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 // buildSearchConditions builds WHERE conditions for search queries.
 // Shared by SearchFast and SearchFastCount.
 // Note: These conditions reference msg and ms (msg_sender) CTEs.
-func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilter) ([]string, []interface{}) {
+func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilter) ([]string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	conditions = append(conditions, emailOnlyFilterMsg)
-
 	// Apply basic filter conditions (ignoring join flags for search - we handle those differently)
-	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
+	conditions = append(conditions,
+		emailOnlyFilterMsg,
+		store.LiveMessagesWhere("msg", filter.HideDeletedFromSource),
+	)
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -2426,7 +2431,7 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	}
 	if filter.TimeRange.Period != "" {
 		granularity := inferTimeGranularity(filter.TimeRange.Granularity, filter.TimeRange.Period)
-		conditions = append(conditions, fmt.Sprintf("%s = ?", timeExpr(granularity)))
+		conditions = append(conditions, timeExpr(granularity)+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 

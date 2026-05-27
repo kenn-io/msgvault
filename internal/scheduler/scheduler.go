@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -22,7 +23,7 @@ type SyncFunc func(ctx context.Context, email string) error
 type AccountStatus struct {
 	Email     string    `json:"email"`
 	Running   bool      `json:"running"`
-	LastRun   time.Time `json:"last_run,omitempty"`
+	LastRun   time.Time `json:"last_run,omitzero"`
 	NextRun   time.Time `json:"next_run"`
 	Schedule  string    `json:"schedule"`
 	LastError string    `json:"last_error,omitempty"`
@@ -37,7 +38,7 @@ type Job struct {
 type JobStatus struct {
 	Name      string    `json:"name"`
 	Running   bool      `json:"running"`
-	LastRun   time.Time `json:"last_run,omitempty"`
+	LastRun   time.Time `json:"last_run,omitzero"`
 	NextRun   time.Time `json:"next_run"`
 	Schedule  string    `json:"schedule"`
 	LastError string    `json:"last_error,omitempty"`
@@ -166,7 +167,7 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 
 func (s *Scheduler) AddJob(job Job) error {
 	if job.Name == "" || job.Run == nil {
-		return fmt.Errorf("job name and run function are required")
+		return errors.New("job name and run function are required")
 	}
 	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		_ = s.TriggerJob(job.Name)
@@ -383,7 +384,7 @@ func (s *Scheduler) TriggerSync(email string) error {
 	defer s.mu.Unlock()
 
 	if s.stopped {
-		return fmt.Errorf("scheduler is stopped")
+		return errors.New("scheduler is stopped")
 	}
 
 	if _, exists := s.jobs[email]; !exists {
@@ -415,7 +416,7 @@ func (s *Scheduler) TriggerJob(name string) error {
 	}
 	if s.stopped {
 		s.mu.Unlock()
-		return fmt.Errorf("scheduler is stopped")
+		return errors.New("scheduler is stopped")
 	}
 	if s.genericRunning[name] {
 		s.mu.Unlock()

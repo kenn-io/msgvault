@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -50,7 +51,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 
 	// Validate phone number.
 	if importPhone == "" {
-		return usageErr(cmd, fmt.Errorf("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)"))
+		return usageErr(cmd, errors.New("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)"))
 	}
 	if !strings.HasPrefix(importPhone, "+") {
 		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone))
@@ -141,9 +142,8 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		matched, total, err := whatsapp.ImportContacts(s, importContacts)
 		if err != nil {
 			return fmt.Errorf("contact import: %w", err)
-		} else {
-			fmt.Printf("  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
 		}
+		fmt.Printf("  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
 	}
 
 	// Print summary.
@@ -212,7 +212,7 @@ func (p *ImportCLIProgress) OnProgress(processed, added, skipped int64) {
 		if len(name) > 30 {
 			name = name[:27] + "..."
 		}
-		chatStr = fmt.Sprintf(" | Chat: %s", name)
+		chatStr = " | Chat: " + name
 	}
 
 	fmt.Printf("\r  Processed: %d | Added: %d | Skipped: %d | Rate: %.0f/s | Elapsed: %s%s    ",

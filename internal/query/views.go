@@ -52,6 +52,9 @@ func probeColumns(
 			cols[name.String] = true
 		}
 	}
+	if rows.Err() != nil {
+		return cols
+	}
 	return cols
 }
 
@@ -78,8 +81,8 @@ type optionalCol struct {
 // a single view definition, using the probed column set to decide
 // how to handle optional columns.
 func buildViewSQL(def viewDef, probedCols map[string]bool) string {
-	replace := make([]string, len(def.replaceCols))
-	copy(replace, def.replaceCols)
+	replace := make([]string, 0, len(def.replaceCols)+len(def.optionalCols))
+	replace = append(replace, def.replaceCols...)
 
 	var extra []string
 	for _, oc := range def.optionalCols {

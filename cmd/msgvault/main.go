@@ -24,7 +24,7 @@ func run() int {
 	defer cancel()
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		if isSignalCanceled(err, ctx) {
+		if isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
 		}
 		return exitCodeError
@@ -32,6 +32,6 @@ func run() int {
 	return 0
 }
 
-func isSignalCanceled(err error, ctx context.Context) bool {
+func isSignalCanceled(ctx context.Context, err error) bool {
 	return errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled
 }

@@ -136,8 +136,8 @@ func (e *zipWriteError) Error() string { return e.err.Error() }
 func (e *zipWriteError) Unwrap() error { return e.err }
 
 func isWriteError(err error) bool {
-	_, ok := err.(*zipWriteError)
-	return ok
+	var zwe *zipWriteError
+	return errors.As(err, &zwe)
 }
 
 func addAttachmentToZip(zw *zip.Writer, root string, att query.AttachmentInfo, usedNames map[string]int) (int64, error) {

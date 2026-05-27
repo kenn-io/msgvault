@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -69,7 +70,7 @@ func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (m
 	}
 
 	result := make(map[string]int64)
-	err := queryInChunks(s.db, sourceMessageIDs, []interface{}{sourceID},
+	err := queryInChunks(s.db, sourceMessageIDs, []any{sourceID},
 		`SELECT source_message_id, id FROM messages WHERE source_id = ? AND source_message_id IN (%s)`,
 		func(rows *loggedRows) error {
 			var srcID string
@@ -133,7 +134,7 @@ func (s *Store) MessageExistsWithRawBatch(sourceID int64, sourceMessageIDs []str
 	}
 
 	result := make(map[string]int64)
-	err := queryInChunks(s.db, sourceMessageIDs, []interface{}{sourceID},
+	err := queryInChunks(s.db, sourceMessageIDs, []any{sourceID},
 		`SELECT m.source_message_id, m.id
 		 FROM messages m
 		 JOIN message_raw mr ON mr.message_id = m.id
@@ -454,9 +455,9 @@ func replaceMessageRecipientsTx(tx *loggedTx, messageID int64, rs RecipientSet) 
 		totalRows:    len(rs.ParticipantIDs),
 		valuesPerRow: 4,
 		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES ",
-	}, func(start, end int) ([]string, []interface{}) {
+	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]interface{}, 0, (end-start)*4)
+		args := make([]any, 0, (end-start)*4)
 		for i := start; i < end; i++ {
 			values[i-start] = "(?, ?, ?, ?)"
 			displayName := ""
@@ -476,13 +477,6 @@ type Label struct {
 	SourceLabelID sql.NullString
 	Name          string
 	LabelType     sql.NullString
-}
-
-// dbQuerier abstracts *sql.DB and *sql.Tx for functions that need to
-// run both standalone and inside a transaction.
-type dbQuerier interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
-	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
 // EnsureLabel gets or creates a label, handling renames and ID changes.
@@ -514,7 +508,7 @@ func (s *Store) EnsureLabel(
 //   - Name conflict with different source_label_id: upserts, adopting
 //     the new source_label_id (handles deleted+recreated labels, imports)
 func ensureLabelWith(
-	q dbQuerier,
+	q querier,
 	sourceID int64,
 	sourceLabelID, name, labelType string,
 ) (int64, error) {
@@ -544,7 +538,7 @@ func ensureLabelWith(
 		}
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 
@@ -574,14 +568,14 @@ func ensureLabelWith(
 // and merges it into keepID: message-label associations are reassigned
 // and the stale row is deleted. No-op if no conflicting label exists.
 func mergeLabelByName(
-	q dbQuerier, sourceID int64, name string, keepID int64,
+	q querier, sourceID int64, name string, keepID int64,
 ) error {
 	var conflictID int64
 	err := q.QueryRow(`
 		SELECT id FROM labels
 		WHERE source_id = ? AND name = ? AND id != ?
 	`, sourceID, name, keepID).Scan(&conflictID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -656,7 +650,7 @@ func (s *Store) EnsureLabelsBatch(
 				SELECT id, name FROM labels
 				WHERE source_id = ? AND source_label_id = ?
 			`, sourceID, sourceLabelID).Scan(&id, &curName)
-			if err == sql.ErrNoRows || curName == info.Name {
+			if errors.Is(err, sql.ErrNoRows) || curName == info.Name {
 				continue
 			}
 			if err != nil {
@@ -717,9 +711,9 @@ func replaceMessageLabelsTx(tx *loggedTx, messageID int64, labelIDs []int64) err
 		totalRows:    len(labelIDs),
 		valuesPerRow: 2,
 		prefix:       "INSERT INTO message_labels (message_id, label_id) VALUES ",
-	}, func(start, end int) ([]string, []interface{}) {
+	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]interface{}, 0, (end-start)*2)
+		args := make([]any, 0, (end-start)*2)
 		for i := start; i < end; i++ {
 			values[i-start] = "(?, ?)"
 			args = append(args, messageID, labelIDs[i])
@@ -740,9 +734,9 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 			valuesPerRow: 2,
 			prefix:       s.dialect.InsertOrIgnorePrefix("INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "),
 			suffix:       s.dialect.InsertOrIgnoreSuffix(),
-		}, func(start, end int) ([]string, []interface{}) {
+		}, func(start, end int) ([]string, []any) {
 			values := make([]string, end-start)
-			args := make([]interface{}, 0, (end-start)*2)
+			args := make([]any, 0, (end-start)*2)
 			for i := start; i < end; i++ {
 				values[i-start] = "(?, ?)"
 				args = append(args, messageID, labelIDs[i])
@@ -763,7 +757,7 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 	if len(labelIDs) == 0 {
 		return nil
 	}
-	return execInChunks(s.db, labelIDs, []interface{}{messageID},
+	return execInChunks(s.db, labelIDs, []any{messageID},
 		`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
 }
 
@@ -782,7 +776,7 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	if len(sourceMessageIDs) == 0 {
 		return nil
 	}
-	return execInChunks(s.db, sourceMessageIDs, []interface{}{sourceID},
+	return execInChunks(s.db, sourceMessageIDs, []any{sourceID},
 		fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s)`, s.dialect.Now()))
 }
 
@@ -819,14 +813,11 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 	var firstErr error
 
 	for i := 0; i < len(gmailIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(gmailIDs) {
-			end = len(gmailIDs)
-		}
+		end := min(i+chunkSize, len(gmailIDs))
 		chunk := gmailIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -842,7 +833,7 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 			}
 			// Fall back to individual updates for this chunk
 			for _, id := range chunk {
-				s.MarkMessageDeletedByGmailID(false, id) //nolint:errcheck // best-effort
+				s.MarkMessageDeletedByGmailID(false, id) //nolint:errcheck,gosec // best-effort
 			}
 		}
 	}
@@ -917,8 +908,10 @@ func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) 
 	// For large tables, use random offset sampling
 	// This is O(limit) instead of O(n) for ORDER BY RANDOM()
 	// Generate random offsets in Go for dialect portability (SQLite vs Postgres)
-	// Use explicitly seeded RNG for true randomness across process runs
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Use explicitly seeded RNG for true randomness across process runs.
+	// math/rand is fine — this picks rows for sampling, not authentication.
+	rng := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // sampling RNG, not security
+
 	ids := make([]int64, 0, limit)
 	seen := make(map[int64]bool)
 
@@ -1059,10 +1052,7 @@ func (s *Store) backfillFTSRange(minID, maxID int64, progress func(done, total i
 		cursor = batchEnd
 
 		if progress != nil {
-			pos := cursor - minID
-			if pos > idRange {
-				pos = idRange
-			}
+			pos := min(cursor-minID, idRange)
 			progress(pos, idRange)
 		}
 	}
@@ -1148,7 +1138,7 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 // (e.g., "whatsapp", "imessage", "google_voice").
 func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType string) (int64, error) {
 	if phone == "" {
-		return 0, fmt.Errorf("phone number is required")
+		return 0, errors.New("phone number is required")
 	}
 	if !strings.HasPrefix(phone, "+") {
 		return 0, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", phone)
@@ -1195,10 +1185,10 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 	identifierType = strings.TrimSpace(identifierType)
 	identifierValue = strings.TrimSpace(identifierValue)
 	if identifierType == "" {
-		return 0, fmt.Errorf("identifier type is required")
+		return 0, errors.New("identifier type is required")
 	}
 	if identifierValue == "" {
-		return 0, fmt.Errorf("identifier value is required")
+		return 0, errors.New("identifier value is required")
 	}
 
 	var participantID int64
@@ -1215,7 +1205,7 @@ func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, d
 		}
 		return participantID, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("lookup participant identifier: %w", err)
 	}
 
@@ -1701,7 +1691,7 @@ func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePat
 	if err == nil {
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	_, err = s.db.Exec(fmt.Sprintf(`

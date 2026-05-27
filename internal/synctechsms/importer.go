@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +29,7 @@ func NewImporter(st *store.Store, opts ImportOptions) *Importer {
 
 func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	if strings.TrimSpace(i.opts.OwnerPhone) == "" {
-		return ImportSummary{}, fmt.Errorf("owner phone is required for synctech-sms imports")
+		return ImportSummary{}, errors.New("owner phone is required for synctech-sms imports")
 	}
 	files, err := DiscoverBackupFiles(path)
 	if err != nil {
@@ -201,7 +203,7 @@ func (i *Importer) importCall(sourceID int64, call Call) error {
 		return err
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
-	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), fmt.Sprint(call.DurationSeconds))
+	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
 	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
 }
 
@@ -336,10 +338,10 @@ func countImportableAttachments(mms MMS, include bool) int {
 
 func sortedKey(ids []int64) string {
 	cp := append([]int64(nil), ids...)
-	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	slices.Sort(cp)
 	parts := make([]string, len(cp))
 	for idx, id := range cp {
-		parts[idx] = fmt.Sprint(id)
+		parts[idx] = strconv.FormatInt(id, 10)
 	}
 	return strings.Join(parts, ",")
 }
@@ -396,7 +398,7 @@ func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, 
 		return 0, nil
 	}
 	if strings.TrimSpace(i.opts.AttachmentsDir) == "" {
-		return 0, fmt.Errorf("attachments directory is required when importing MMS attachments")
+		return 0, errors.New("attachments directory is required when importing MMS attachments")
 	}
 	// Filter by source_id: source_message_id is unique only per source
 	// (the messages table key is (source_id, source_message_id)), so two

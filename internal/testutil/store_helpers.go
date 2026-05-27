@@ -71,7 +71,7 @@ func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	// Create the schema using a separate connection
 	setupDB, err := sql.Open("pgx", dbURL)
 	require.NoError(t, err, "open setup connection")
-	_, schemaErr := setupDB.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName))
+	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
 	_ = setupDB.Close()
 	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
 

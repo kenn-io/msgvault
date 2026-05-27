@@ -40,27 +40,29 @@ func (e *Enqueuer) EnqueueMessages(ctx context.Context, messageIDs []int64) erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM index_generations WHERE state != ?`,
-		string(vector.GenerationRetired))
-	if err != nil {
-		return fmt.Errorf("select non-retired generations: %w", err)
-	}
-	var gens []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan generation id: %w", err)
+	gens, err := func() ([]int64, error) {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id FROM index_generations WHERE state != ?`,
+			string(vector.GenerationRetired))
+		if err != nil {
+			return nil, fmt.Errorf("select non-retired generations: %w", err)
 		}
-		gens = append(gens, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("iterate generations: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close generation rows: %w", err)
+		defer func() { _ = rows.Close() }()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan generation id: %w", err)
+			}
+			out = append(out, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate generations: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return err
 	}
 	if len(gens) == 0 {
 		return tx.Commit()

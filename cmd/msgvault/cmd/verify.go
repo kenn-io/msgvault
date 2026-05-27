@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -177,7 +178,7 @@ Examples:
 			fmt.Printf("Gmail account %s not found in database.\n", email)
 			fmt.Println("Run 'sync-full' first to populate the archive.")
 			if dbCorrupt {
-				return fmt.Errorf("database integrity check failed")
+				return errors.New("database integrity check failed")
 			}
 			return nil
 		}
@@ -229,7 +230,7 @@ Examples:
 			fmt.Printf("Sampling %d messages...\n", len(sampleIDs))
 
 			verified := 0
-			var errors []string
+			var sampleErrs []string
 
 			for _, msgID := range sampleIDs {
 				// Check context cancellation
@@ -241,10 +242,10 @@ Examples:
 				// Get raw MIME
 				rawData, err := s.GetMessageRaw(msgID)
 				if err != nil {
-					if err == sql.ErrNoRows {
-						errors = append(errors, fmt.Sprintf("msg %d: missing raw MIME", msgID))
+					if errors.Is(err, sql.ErrNoRows) {
+						sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: missing raw MIME", msgID))
 					} else {
-						errors = append(errors, fmt.Sprintf("msg %d: db error (%v)", msgID, err))
+						sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: db error (%v)", msgID, err))
 					}
 					continue
 				}
@@ -252,19 +253,19 @@ Examples:
 				// Verify it can be parsed as MIME
 				_, err = mime.Parse(rawData)
 				if err != nil {
-					errors = append(errors, fmt.Sprintf("msg %d: corrupt MIME (%v)", msgID, err))
+					sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: corrupt MIME (%v)", msgID, err))
 					continue
 				}
 
 				verified++
 			}
 
-			if len(errors) > 0 {
+			if len(sampleErrs) > 0 {
 				fmt.Printf("Sample verified:     %10d of %d\n", verified, len(sampleIDs))
-				fmt.Printf("Sample errors:       %10d\n", len(errors))
-				for i, err := range errors {
+				fmt.Printf("Sample errors:       %10d\n", len(sampleErrs))
+				for i, err := range sampleErrs {
 					if i >= 5 {
-						fmt.Printf("  ... and %d more\n", len(errors)-5)
+						fmt.Printf("  ... and %d more\n", len(sampleErrs)-5)
 						break
 					}
 					fmt.Printf("  - %s\n", err)
@@ -278,7 +279,7 @@ Examples:
 		fmt.Println("Verification complete.")
 
 		if dbCorrupt {
-			return fmt.Errorf("database integrity check failed")
+			return errors.New("database integrity check failed")
 		}
 
 		return nil
@@ -303,17 +304,17 @@ func runIntegrityCheck(s *store.Store) ([]string, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var errors []string
+	var integErrs []string
 	for rows.Next() {
 		var result string
 		if err := rows.Scan(&result); err != nil {
 			return nil, err
 		}
 		if result != "ok" {
-			errors = append(errors, result)
+			integErrs = append(integErrs, result)
 		}
 	}
-	return errors, rows.Err()
+	return integErrs, rows.Err()
 }
 
 // printIntegrityRecoveryHint prints repair guidance tailored to the kind of

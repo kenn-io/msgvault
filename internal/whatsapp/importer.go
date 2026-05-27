@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -148,18 +150,18 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		imp.progress.OnChatStart(chat.RawString, chatTitle(chat), 0)
 
-		// For direct chats: add the remote participant.
+		// For direct chats: add the remote participant. Skip non-phone JIDs
+		// (e.g. lid:..., broadcast) — normalizePhone returns "" for those.
 		if !isGroupChat(chat) && chat.User != "" {
-			phone := normalizePhone(chat.User, chat.Server)
-			if phone == "" {
-				// Non-phone JID (e.g., lid:..., broadcast) — skip.
-			} else if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
-				summary.Errors++
-				imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
-			} else {
-				summary.Participants++
-				_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
-				_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+			if phone := normalizePhone(chat.User, chat.Server); phone != "" {
+				if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
+					summary.Errors++
+					imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
+				} else {
+					summary.Participants++
+					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
+					_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+				}
 			}
 		}
 
@@ -600,7 +602,7 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 	if _, err := io.Copy(h, io.LimitReader(f, maxSize+1)); err != nil {
 		return "", ""
 	}
-	contentHash := fmt.Sprintf("%x", h.Sum(nil))
+	contentHash := hex.EncodeToString(h.Sum(nil))
 
 	// Content-addressed storage: <attachmentsDir>/<hash[:2]>/<hash>
 	// The storage_path stored in DB is the relative portion: <hash[:2]>/<hash>
@@ -698,7 +700,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'message' table not found")
+		return errors.New("not a valid WhatsApp database: 'message' table not found")
 	}
 
 	// Check for the 'jid' table.
@@ -710,7 +712,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'jid' table not found")
+		return errors.New("not a valid WhatsApp database: 'jid' table not found")
 	}
 
 	// Check for the 'chat' table.
@@ -722,7 +724,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'chat' table not found")
+		return errors.New("not a valid WhatsApp database: 'chat' table not found")
 	}
 
 	return nil

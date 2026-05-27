@@ -4,6 +4,7 @@
 // (see sqlite.go). NewPostgreSQLEngine constructs an engine configured for
 // PostgreSQL SQL (tsvector FTS, to_char time truncation, $N placeholders).
 // The underlying engine implementation is the same struct used for SQLite.
+
 package query
 
 import (

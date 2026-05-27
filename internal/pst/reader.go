@@ -2,9 +2,11 @@ package pst
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,7 +160,7 @@ func walkFoldersRecursive(folder *pstlib.Folder, parentPath string, fn WalkFolde
 	if err != nil {
 		// Some PST variants (e.g. 32-bit) can fail to read sub-folder
 		// metadata; log and continue rather than aborting the walk.
-		return nil
+		return nil //nolint:nilerr // intentional: keep walking sibling folders
 	}
 	for i := range subFolders {
 		if err := walkFoldersRecursive(&subFolders[i], path, fn); err != nil {
@@ -216,7 +218,7 @@ func ExtractMessage(msg *pstlib.Message, folderPath string) *MessageEntry {
 	}
 }
 
-var errAttachmentTooLarge = fmt.Errorf("attachment exceeds size limit")
+var errAttachmentTooLarge = errors.New("attachment exceeds size limit")
 
 // limitWriter wraps an io.Writer and returns errAttachmentTooLarge once the
 // remaining byte budget is exhausted.
@@ -281,7 +283,7 @@ func ReadAttachments(msg *pstlib.Message, maxBytes int64) ([]AttachmentEntry, er
 		written, err := att.WriteTo(w)
 		if err != nil {
 			// ErrAttachmentTooLarge means we hit the cap; stop reading further attachments.
-			if err == errAttachmentTooLarge {
+			if errors.Is(err, errAttachmentTooLarge) {
 				break
 			}
 			return nil, fmt.Errorf("read attachment %q: %w", filename, err)
@@ -312,8 +314,8 @@ func isExchangeDN(s string) bool {
 // E.g. "/O=CORP/OU=EXCHANGE/CN=RECIPIENTS/CN=JSMITH" → "JSMITH".
 func extractCN(dn string) string {
 	parts := strings.Split(dn, "/")
-	for i := len(parts) - 1; i >= 0; i-- {
-		p := parts[i]
+	for _, v := range slices.Backward(parts) {
+		p := v
 		if upper := strings.ToUpper(p); strings.HasPrefix(upper, "CN=") {
 			return p[3:]
 		}

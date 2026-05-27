@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"go.kenn.io/msgvault/internal/emlx"
 )
 
@@ -62,7 +62,7 @@ func ResolveAccounts(dbPath string, guids []string) (map[string]AccountInfo, err
 
 	// Build placeholders for IN clause.
 	placeholders := make([]string, len(guids))
-	args := make([]interface{}, len(guids))
+	args := make([]any, len(guids))
 	for i, g := range guids {
 		placeholders[i] = "?"
 		args[i] = g

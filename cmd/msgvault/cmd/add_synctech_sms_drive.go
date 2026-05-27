@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,13 +33,13 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.OwnerPhone == "" {
-				return fmt.Errorf("--owner-phone is required")
+				return errors.New("--owner-phone is required")
 			}
 			if opts.FolderID == "" {
-				return fmt.Errorf("--folder-id is required")
+				return errors.New("--folder-id is required")
 			}
 			if opts.GoogleAccount == "" {
-				return fmt.Errorf("--google-account is required")
+				return errors.New("--google-account is required")
 			}
 			name := args[0]
 			if cfg.GetSynctechSMSSource(name) != nil {

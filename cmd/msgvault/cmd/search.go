@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -59,21 +60,19 @@ Examples:
 		queryStr := strings.Join(args, " ")
 
 		if queryStr == "" && searchAccount == "" && searchCollection == "" {
-			return usageErr(cmd, fmt.Errorf("provide a search query or --account/--collection flag"))
+			return usageErr(cmd, errors.New("provide a search query or --account/--collection flag"))
 		}
 
 		// Use remote search if configured
 		if IsRemoteMode() {
 			if searchAccount != "" {
-				return usageErr(cmd, fmt.Errorf(
-					"--account is not supported in remote mode",
-				))
+				return usageErr(cmd, errors.New("--account is not supported in remote mode"))
 			}
 			if searchCollection != "" {
-				return usageErr(cmd, fmt.Errorf("--collection is not supported in remote mode"))
+				return usageErr(cmd, errors.New("--collection is not supported in remote mode"))
 			}
 			if searchMode != "fts" {
-				return usageErr(cmd, fmt.Errorf("--mode is not supported in remote mode"))
+				return usageErr(cmd, errors.New("--mode is not supported in remote mode"))
 			}
 			return runRemoteSearch(queryStr)
 		}
@@ -252,7 +251,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 		if scopedStore != nil {
 			_ = scopedStore.Close()
 		}
-		return fmt.Errorf("empty search query")
+		return errors.New("empty search query")
 	}
 
 	var s *store.Store
@@ -387,16 +386,16 @@ func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) err
 }
 
 func outputRemoteSearchResultsJSON(results []store.APIMessage, total int64) error {
-	return printJSON(map[string]interface{}{
+	return printJSON(map[string]any{
 		"total":   total,
 		"results": results,
 	})
 }
 
 func outputSearchResultsJSON(results []query.MessageSummary) error {
-	output := make([]map[string]interface{}, len(results))
+	output := make([]map[string]any, len(results))
 	for i, msg := range results {
-		output[i] = map[string]interface{}{
+		output[i] = map[string]any{
 			"id":                     msg.ID,
 			"source_message_id":      msg.SourceMessageID,
 			"conversation_id":        msg.ConversationID,

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -277,7 +278,7 @@ func runIdentityAdd(cmd *cobra.Command, args []string) error {
 	accountArg, identifierArg := args[0], args[1]
 	identifier := strings.TrimSpace(identifierArg)
 	if identifier == "" {
-		return usageErr(cmd, fmt.Errorf("identifier cannot be empty"))
+		return usageErr(cmd, errors.New("identifier cannot be empty"))
 	}
 	if strings.Contains(identityAddSignal, ",") {
 		return usageErr(cmd, fmt.Errorf("signal names cannot contain commas: %q", identityAddSignal))
@@ -341,7 +342,7 @@ func runIdentityRemove(cmd *cobra.Command, args []string) error {
 
 	identifier := strings.TrimSpace(args[1])
 	if identifier == "" {
-		return usageErr(cmd, fmt.Errorf("identifier must not be empty"))
+		return usageErr(cmd, errors.New("identifier must not be empty"))
 	}
 
 	scope, err := ResolveAccountFlag(st, args[0])

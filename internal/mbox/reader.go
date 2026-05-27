@@ -119,7 +119,7 @@ func (r *Reader) Next() (*Message, error) {
 		for {
 			lineStart := r.Offset()
 			line, err := r.readLineBytes()
-			if err != nil && err != io.EOF {
+			if err != nil && !errors.Is(err, io.EOF) {
 				return nil, err
 			}
 			if isFromSeparatorLine(line) {
@@ -128,7 +128,7 @@ func (r *Reader) Next() (*Message, error) {
 				r.hasNextFrom = true
 				break
 			}
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				r.eof = true
 				return nil, io.EOF
 			}
@@ -170,7 +170,7 @@ func (r *Reader) Next() (*Message, error) {
 		}
 
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				r.eof = true
 				break
 			}
@@ -253,7 +253,7 @@ func unescapeFromBytes(line []byte) []byte {
 // It reads up to maxBytes from the stream. This is a heuristic.
 func Validate(r io.Reader, maxBytes int64) error {
 	if maxBytes <= 0 {
-		return fmt.Errorf("maxBytes must be > 0")
+		return errors.New("maxBytes must be > 0")
 	}
 	br := bufio.NewReader(io.LimitReader(r, maxBytes))
 	for {
@@ -263,7 +263,7 @@ func Validate(r io.Reader, maxBytes int64) error {
 		}
 		if err != nil {
 			if err == io.EOF {
-				return fmt.Errorf("no \"From \" separators found (not an mbox file?)")
+				return errors.New("no \"From \" separators found (not an mbox file?)")
 			}
 			return err
 		}

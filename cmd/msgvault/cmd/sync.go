@@ -123,7 +123,7 @@ Examples:
 				return fmt.Errorf("list sources: %w", err)
 			}
 			if len(allSources) == 0 {
-				return fmt.Errorf("no accounts configured - run 'add-account' or 'add-imap' first")
+				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
@@ -170,7 +170,7 @@ Examples:
 					// Surface the collected errors (e.g. broken OAuth config).
 					return fmt.Errorf("%s", syncErrors[0])
 				}
-				return fmt.Errorf("no accounts are ready to sync")
+				return errors.New("no accounts are ready to sync")
 			}
 		}
 
@@ -191,7 +191,7 @@ Examples:
 				break
 			}
 			if target.source == nil {
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: no source found - run 'sync-full' first", target.email))
+				syncErrors = append(syncErrors, target.email+": no source found - run 'sync-full' first")
 				continue
 			}
 			if err := runIncrementalSync(ctx, s, getOAuthMgr, target.source, vf); err != nil {
@@ -219,7 +219,7 @@ Examples:
 
 func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), source *store.Source, vf *vectorFeatures) error {
 	if !source.SyncCursor.Valid || source.SyncCursor.String == "" {
-		return fmt.Errorf("no history ID - run 'sync-full' first")
+		return errors.New("no history ID - run 'sync-full' first")
 	}
 
 	email := source.Identifier

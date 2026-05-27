@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
 	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -185,7 +186,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	// Get body (single PK lookup — only place we touch message_bodies)
 	var bodyText, bodyHTML sql.NullString
 	err = s.db.QueryRow("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", id).Scan(&bodyText, &bodyHTML)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get message body: %w", err)
 	}
 	if bodyText.Valid {
@@ -321,7 +322,7 @@ func (s *Store) searchMessagesQueryImpl(
 	q *search.Query, offset, limit int, ftsAvailable bool,
 ) ([]APIMessage, int64, error) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	conditions = append(conditions, LiveMessagesWhere("m", true))
 
@@ -515,9 +516,9 @@ func (s *Store) searchMessagesQueryImpl(
 	// If the dialect's order-by fragment has ? placeholders, bind the FTS
 	// expression that many extra times — right after the WHERE args and
 	// before LIMIT/OFFSET so Rebind assigns them the correct positions.
-	resultArgs := make([]interface{}, 0, len(args)+ftsOrderArgCount+2)
+	resultArgs := make([]any, 0, len(args)+ftsOrderArgCount+2)
 	resultArgs = append(resultArgs, args...)
-	for i := 0; i < ftsOrderArgCount; i++ {
+	for range ftsOrderArgCount {
 		resultArgs = append(resultArgs, ftsExpr)
 	}
 	resultArgs = append(resultArgs, limit, offset)
@@ -752,7 +753,7 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 	}
 
 	placeholders := make([]string, len(messageIDs))
-	args := make([]interface{}, 0, len(messageIDs)+1)
+	args := make([]any, 0, len(messageIDs)+1)
 	for i, id := range messageIDs {
 		placeholders[i] = "?"
 		args = append(args, id)
@@ -796,7 +797,7 @@ func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
 	}
 
 	placeholders := make([]string, len(messageIDs))
-	args := make([]interface{}, 0, len(messageIDs))
+	args := make([]any, 0, len(messageIDs))
 	for i, id := range messageIDs {
 		placeholders[i] = "?"
 		args = append(args, id)

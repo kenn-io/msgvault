@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -124,7 +126,7 @@ func setupOAuthSecrets(reader *bufio.Reader) (string, error) {
 	path = strings.TrimSpace(path)
 
 	if path == "" {
-		return "", fmt.Errorf("OAuth credentials path is required")
+		return "", errors.New("OAuth credentials path is required")
 	}
 
 	// Expand ~ in path
@@ -188,7 +190,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, s
 	// HTTP, not HTTPS: target deployment is Tailscale or trusted LAN
 	// where TLS terminates at the network layer. API key auth over
 	// HTTP is acceptable in this threat model.
-	url := fmt.Sprintf("http://%s:%d", host, port)
+	url := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 
 	// Auto-generate API key — printed so the user can copy it.
 	// This is an interactive CLI session, not a logged pipeline.
@@ -295,7 +297,7 @@ rate_limit_qps = 5
 `, port)
 
 	composePath := filepath.Join(bundleDir, "docker-compose.yml")
-	if err := os.WriteFile(composePath, []byte(dockerCompose), 0644); err != nil {
+	if err := os.WriteFile(composePath, []byte(dockerCompose), 0600); err != nil {
 		return fmt.Errorf("write docker-compose.yml: %w", err)
 	}
 

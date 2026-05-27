@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -62,9 +63,7 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 			if err := scanner.Err(); err != nil {
 				return false, fmt.Errorf("read confirmation: %w", err)
 			}
-			return false, fmt.Errorf(
-				"no confirmation input (stdin closed); --all-hidden cannot be skipped with --yes",
-			)
+			return false, errors.New("no confirmation input (stdin closed); --all-hidden cannot be skipped with --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		return answer == "y" || answer == "yes", nil

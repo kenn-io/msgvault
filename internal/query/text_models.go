@@ -1,6 +1,9 @@
 package query
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // TextViewType represents the type of view in Texts mode.
 type TextViewType int
@@ -111,10 +114,5 @@ func textSortFieldToSortField(f TextSortField) SortField {
 
 // IsTextMessageType returns true if the given type is a text message type.
 func IsTextMessageType(mt string) bool {
-	for _, t := range TextMessageTypes {
-		if t == mt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(TextMessageTypes, mt)
 }

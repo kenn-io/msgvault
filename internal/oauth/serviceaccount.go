@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -21,7 +22,7 @@ type ServiceAccountManager struct {
 // NewServiceAccountManager creates a manager from a service account JSON key file.
 func NewServiceAccountManager(keyPath string, scopes []string) (*ServiceAccountManager, error) {
 	if len(scopes) == 0 {
-		return nil, fmt.Errorf("service account requires at least one scope")
+		return nil, errors.New("service account requires at least one scope")
 	}
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(keyPath)

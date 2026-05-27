@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 )
 
 // inspectTimeLayout is the stable format used to render TIMESTAMP /
@@ -62,7 +63,7 @@ func (s *Store) InspectMessage(sourceMessageID string) (*MessageInspection, erro
 		JOIN messages m ON m.id = mb.message_id
 		WHERE m.source_message_id = ?
 	`, sourceMessageID).Scan(&bodyText)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if bodyText.Valid {
@@ -76,7 +77,7 @@ func (s *Store) InspectMessage(sourceMessageID string) (*MessageInspection, erro
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ?
 	`, sourceMessageID).Scan(&rawExists)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	insp.RawDataExists = err == nil
@@ -189,7 +190,7 @@ func (s *Store) InspectRawDataExists(sourceMessageID string) (bool, error) {
 		SELECT raw_data FROM message_raw mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ?`, sourceMessageID).Scan(&rawData)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {

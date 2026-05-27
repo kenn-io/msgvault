@@ -127,7 +127,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 		}
 		var decoded rawJSONExport
 		if err := json.Unmarshal(data, &decoded); err != nil {
-			return nil, fmt.Errorf("%w: %s: %v", ErrCorruptJSON, f.name, err)
+			return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, err)
 		}
 		if i == 0 {
 			title = DecodeMojibake(decoded.Title)

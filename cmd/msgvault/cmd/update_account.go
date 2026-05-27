@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,7 +25,7 @@ Examples:
 		email := args[0]
 
 		if updateDisplayName == "" {
-			return usageErr(cmd, fmt.Errorf("nothing to update: use --display-name to set a display name"))
+			return usageErr(cmd, errors.New("nothing to update: use --display-name to set a display name"))
 		}
 
 		dbPath := cfg.DatabaseDSN()

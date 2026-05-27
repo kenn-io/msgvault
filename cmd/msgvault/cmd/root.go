@@ -196,8 +196,8 @@ func sanitizeArgs(args []string) []string {
 			redactNext = false
 			continue
 		}
-		if eq := strings.IndexByte(a, '='); eq != -1 {
-			key := a[:eq]
+		if before, _, ok := strings.Cut(a, "="); ok {
+			key := before
 			if sensitive[key] {
 				out = append(out, key+"=<redacted>")
 				continue

@@ -1,9 +1,9 @@
-// Package remote provides an HTTP client for accessing a remote msgvault server.
 package remote
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,7 +33,7 @@ type Config struct {
 // New creates a new remote store.
 func New(cfg Config) (*Store, error) {
 	if cfg.URL == "" {
-		return nil, fmt.Errorf("remote URL is required")
+		return nil, errors.New("remote URL is required")
 	}
 
 	parsedURL, err := url.Parse(cfg.URL)
@@ -43,7 +43,7 @@ func New(cfg Config) (*Store, error) {
 
 	// Enforce HTTPS unless AllowInsecure is set
 	if parsedURL.Scheme == "http" && !cfg.AllowInsecure {
-		return nil, fmt.Errorf("HTTPS required for remote connections\n\n" +
+		return nil, errors.New("HTTPS required for remote connections\n\n" +
 			"Options:\n" +
 			"  1. Use HTTPS: [remote] url = \"https://nas:8080\"\n" +
 			"  2. For trusted networks: add 'allow_insecure = true' to [remote] in config.toml")
@@ -54,7 +54,7 @@ func New(cfg Config) (*Store, error) {
 	}
 
 	if parsedURL.Host == "" {
-		return nil, fmt.Errorf("remote URL must include a host (e.g., http://nas:8080)")
+		return nil, errors.New("remote URL must include a host (e.g., http://nas:8080)")
 	}
 
 	timeout := cfg.Timeout
@@ -91,7 +91,7 @@ func (s *Store) doRequestWithContext(ctx context.Context, method, path string, b
 	}
 
 	if s.apiKey != "" {
-		req.Header.Set("X-API-Key", s.apiKey)
+		req.Header.Set("X-Api-Key", s.apiKey)
 	}
 	req.Header.Set("Accept", "application/json")
 
@@ -180,6 +180,7 @@ type messageResponse struct {
 // messageDetailResponse includes body and attachments.
 type messageDetailResponse struct {
 	messageResponse
+
 	Body        string               `json:"body"`
 	Attachments []attachmentResponse `json:"attachments"`
 }
@@ -278,7 +279,7 @@ func (s *Store) GetMessage(id int64) (*store.APIMessage, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return nil, nil //nolint:nilnil // store API uses (nil, nil) for not-found; mirrors local Store
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)

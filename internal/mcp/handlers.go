@@ -76,7 +76,7 @@ func translateVectorErr(err error) *mcp.CallToolResult {
 // Returns nil if account is empty (no filter), or an error if not found.
 func (h *handlers) getAccountID(ctx context.Context, account string) (*int64, error) {
 	if account == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // empty input -> no filter, not an error
 	}
 	accounts, err := h.engine.ListAccounts(ctx)
 	if err != nil {
@@ -106,7 +106,7 @@ func getIDArg(args map[string]any, key string) (int64, error) {
 func getDateArg(args map[string]any, key string) (*time.Time, error) {
 	v, ok := args[key].(string)
 	if !ok || v == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // absent optional arg is not an error
 	}
 	t, err := time.Parse("2006-01-02", v)
 	if err != nil {
@@ -120,18 +120,18 @@ func getDateArg(args map[string]any, key string) (*time.Time, error) {
 func (h *handlers) readAttachmentFile(contentHash string) ([]byte, error) {
 	filePath, err := export.StoragePath(h.attachmentsDir, contentHash)
 	if err != nil {
-		return nil, fmt.Errorf("attachment has invalid content hash")
+		return nil, errors.New("attachment has invalid content hash")
 	}
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %v", err)
+		return nil, fmt.Errorf("attachment file not available: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %v", err)
+		return nil, fmt.Errorf("attachment file not available: %w", err)
 	}
 	if info.Size() > maxAttachmentSize {
 		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", info.Size(), maxAttachmentSize)
@@ -139,7 +139,7 @@ func (h *handlers) readAttachmentFile(contentHash string) ([]byte, error) {
 
 	data, err := io.ReadAll(io.LimitReader(f, maxAttachmentSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("attachment file not available: %v", err)
+		return nil, fmt.Errorf("attachment file not available: %w", err)
 	}
 	if int64(len(data)) > maxAttachmentSize {
 		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize)
@@ -227,6 +227,7 @@ type hybridScoreBreakdown struct {
 // present only when explain=true was requested.
 type hybridMessageItem struct {
 	query.MessageSummary
+
 	Score *hybridScoreBreakdown `json:"score,omitempty"`
 }
 
@@ -649,7 +650,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest
 
 	info, err := os.Stat(destDir)
 	if err != nil || !info.IsDir() {
-		return mcp.NewToolResultError(fmt.Sprintf("destination directory does not exist: %s", destDir)), nil
+		return mcp.NewToolResultError("destination directory does not exist: " + destDir), nil //nolint:nilerr // MCP convention: tool errors flow via ToolResultError, not Go error
 	}
 
 	// Sanitize and deduplicate filename.
@@ -805,7 +806,7 @@ func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 
 	viewType, ok := viewTypeMap[groupBy]
 	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid group_by: %s", groupBy)), nil
+		return mcp.NewToolResultError("invalid group_by: " + groupBy), nil
 	}
 
 	rows, err := h.engine.Aggregate(ctx, viewType, opts)
@@ -912,7 +913,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		for _, msg := range results {
 			gmailIDs = append(gmailIDs, msg.SourceMessageID)
 		}
-		description = fmt.Sprintf("query: %s", queryStr)
+		description = "query: " + queryStr
 		if len(description) > 50 {
 			description = description[:50]
 		}
@@ -940,24 +941,24 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		// Build description from filters
 		var parts []string
 		if fromStr != "" {
-			parts = append(parts, fmt.Sprintf("from:%s", fromStr))
+			parts = append(parts, "from:"+fromStr)
 		}
 		if domainStr != "" {
-			parts = append(parts, fmt.Sprintf("domain:%s", domainStr))
+			parts = append(parts, "domain:"+domainStr)
 		}
 		if labelStr != "" {
-			parts = append(parts, fmt.Sprintf("label:%s", labelStr))
+			parts = append(parts, "label:"+labelStr)
 		}
 		if hasAttachment {
 			parts = append(parts, "has:attachment")
 		}
 		if afterDate != nil {
-			parts = append(parts, fmt.Sprintf("after:%s", afterDate.Format("2006-01-02")))
+			parts = append(parts, "after:"+afterDate.Format("2006-01-02"))
 		}
 		if beforeDate != nil {
-			parts = append(parts, fmt.Sprintf("before:%s", beforeDate.Format("2006-01-02")))
+			parts = append(parts, "before:"+beforeDate.Format("2006-01-02"))
 		}
-		description = fmt.Sprintf("filter: %s", strings.Join(parts, " "))
+		description = "filter: " + strings.Join(parts, " ")
 		if len(description) > 50 {
 			description = description[:50]
 		}
@@ -1025,7 +1026,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req mcp.CallToolRequest)
 
 	// Split and clean domain list
 	var domains []string
-	for _, d := range strings.Split(domainsStr, ",") {
+	for d := range strings.SplitSeq(domainsStr, ",") {
 		d = strings.TrimSpace(d)
 		if d != "" {
 			domains = append(domains, d)

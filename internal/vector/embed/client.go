@@ -163,7 +163,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 		// when the server provides it so we don't thrash.
 		ra, ok := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return nil, &retryError{
-			err:           fmt.Errorf("embed: HTTP 429 (rate limited)"),
+			err:           errors.New("embed: HTTP 429 (rate limited)"),
 			retryAfter:    ra,
 			retryAfterSet: ok,
 		}
@@ -174,7 +174,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, want int) ([][]float32
 	if resp.StatusCode >= 400 {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if err != nil {
-			return nil, fmt.Errorf("embed: HTTP %d (read error body: %v): %w",
+			return nil, fmt.Errorf("embed: HTTP %d (read error body: %w): %w",
 				resp.StatusCode, err, ErrPermanent4xx)
 		}
 		msg := strings.TrimSpace(string(body))

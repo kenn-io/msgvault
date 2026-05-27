@@ -3,7 +3,7 @@ package querytest
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"time"
 
 	"go.kenn.io/msgvault/internal/query"
@@ -101,7 +101,7 @@ func (m *MockEngine) GetMessage(ctx context.Context, id int64) (*query.MessageDe
 			return msg, nil
 		}
 	}
-	return nil, fmt.Errorf("not found")
+	return nil, errors.New("not found")
 }
 
 func (m *MockEngine) GetMessageBySourceID(ctx context.Context, sourceID string) (*query.MessageDetail, error) {

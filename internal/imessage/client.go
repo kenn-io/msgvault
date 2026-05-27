@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -121,7 +121,7 @@ func (c *Client) detectTimestampFormat() error {
 // the date filters, for progress reporting.
 func (c *Client) CountFilteredMessages(ctx context.Context) int64 {
 	sqlQuery := "SELECT COUNT(*) FROM message WHERE 1=1"
-	var args []interface{}
+	var args []any
 
 	if !c.afterDate.IsZero() {
 		appleTS := timeToAppleTimestamp(c.afterDate, c.useNanoseconds)
@@ -270,7 +270,7 @@ func (c *Client) fetchPage(
 		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
 		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
 		WHERE m.ROWID > ?`
-	args := []interface{}{afterROWID}
+	args := []any{afterROWID}
 
 	if !c.afterDate.IsZero() {
 		appleTS := timeToAppleTimestamp(c.afterDate, c.useNanoseconds)
@@ -557,6 +557,9 @@ func (c *Client) getChatParticipantIDs(
 			pids = append(pids, pid)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat participants", "error", err)
+	}
 	return pids
 }
 
@@ -567,7 +570,7 @@ func (c *Client) writeMessageRaw(
 	msg *messageRow,
 	body string,
 ) error {
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"rowid":           msg.ROWID,
 		"guid":            msg.GUID,
 		"date":            msg.Date,
@@ -715,6 +718,9 @@ func (c *Client) buildGroupTitle(
 		}
 		names = append(names, name)
 	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat title names", "error", err)
+	}
 	if len(names) == 0 {
 		return ""
 	}
@@ -762,6 +768,9 @@ func (c *Client) linkChatParticipants(
 			continue
 		}
 		_ = s.EnsureConversationParticipant(convID, pid, "member")
+	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat handles", "chat_id", chatROWID, "error", err)
 	}
 }
 

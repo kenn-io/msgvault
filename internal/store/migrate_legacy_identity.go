@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -108,7 +109,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 		switch {
 		case err == nil:
 			return nil
-		case err != sql.ErrNoRows:
+		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("check migration %q in tx: %w", migrationLegacyIdentity, err)
 		}
 
@@ -134,7 +135,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 					src.ID, match.BindValue(),
 				).Scan(&existing)
 				switch {
-				case qerr == sql.ErrNoRows:
+				case errors.Is(qerr, sql.ErrNoRows):
 					_, txErr := tx.Exec(
 						`INSERT INTO account_identities (source_id, address, source_signal)
 						 VALUES (?, ?, ?)`,

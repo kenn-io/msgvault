@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/synctechsms"
@@ -22,7 +22,7 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.OwnerPhone == "" {
-				return fmt.Errorf("--owner-phone is required")
+				return errors.New("--owner-phone is required")
 			}
 			opts.AttachmentsDir = cfg.AttachmentsDir()
 			st, err := openStoreAndInitForIngest()

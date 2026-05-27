@@ -243,7 +243,7 @@ func (m *MockAPI) Close() error {
 }
 
 // getListThreadID returns the threadID to use in ListMessages for a given message ID.
-// Priority: ListThreadIDOverride > UseRawThreadID > default "thread_" + id
+// Priority: ListThreadIDOverride > UseRawThreadID > default "thread_" + id.
 func (m *MockAPI) getListThreadID(id string) string {
 	// Check override first
 	if m.ListThreadIDOverride != nil {

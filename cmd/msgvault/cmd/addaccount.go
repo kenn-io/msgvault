@@ -43,7 +43,7 @@ Examples:
 		email := args[0]
 
 		if headless && forceReauth {
-			return usageErr(cmd, fmt.Errorf("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
+			return usageErr(cmd, errors.New("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
 		}
 
 		// Resolve which client secrets to use
@@ -95,7 +95,7 @@ Examples:
 		saKeyPath := cfg.OAuth.ServiceAccountKeyFor(resolvedApp)
 		if headless {
 			if saKeyPath != "" {
-				return usageErr(cmd, fmt.Errorf("service accounts do not use --headless; run add-account without --headless"))
+				return usageErr(cmd, errors.New("service accounts do not use --headless; run add-account without --headless"))
 			}
 			oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp)
 			return nil
@@ -104,7 +104,7 @@ Examples:
 		// Check for service account configuration first
 		if saKeyPath != "" {
 			if forceReauth {
-				return usageErr(cmd, fmt.Errorf("service accounts do not use --force; tokens are minted on demand from the configured service account key"))
+				return usageErr(cmd, errors.New("service accounts do not use --force; tokens are minted on demand from the configured service account key"))
 			}
 			saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 			if saErr != nil {
@@ -121,7 +121,7 @@ Examples:
 				if errors.As(saErr, &mismatch) {
 					existing, lookupErr := findGmailSource(s, email)
 					if lookupErr != nil {
-						return fmt.Errorf("service account validation failed: %w (also: %v)", saErr, lookupErr)
+						return fmt.Errorf("service account validation failed: %w (also: %w)", saErr, lookupErr)
 					}
 					if existing == nil {
 						return fmt.Errorf(
@@ -251,7 +251,7 @@ Examples:
 			if errors.As(err, &mismatch) {
 				existing, lookupErr := findGmailSource(s, email)
 				if lookupErr != nil {
-					return fmt.Errorf("authorization failed: %w (also: %v)", err, lookupErr)
+					return fmt.Errorf("authorization failed: %w (also: %w)", err, lookupErr)
 				}
 				if existing == nil {
 					return fmt.Errorf(

@@ -96,7 +96,7 @@ charset detection issues in the MIME parser.`,
 	},
 }
 
-// repairStats tracks repair statistics
+// repairStats tracks repair statistics.
 type repairStats struct {
 	subjects      int
 	bodyTexts     int
@@ -229,7 +229,7 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 		for _, r := range repairs {
 			// Update messages table (subject, snippet)
 			var msgUpdates []string
-			var msgArgs []interface{}
+			var msgArgs []any
 			if r.newSubject.Valid {
 				msgUpdates = append(msgUpdates, "subject = ?")
 				msgArgs = append(msgArgs, r.newSubject.String)
@@ -252,7 +252,7 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			// Upsert message_bodies table (body_text, body_html)
 			// Use INSERT ON CONFLICT to handle rows that may not exist yet
 			if r.newBody.Valid || r.newHTML.Valid {
-				var bodyText, bodyHTML interface{}
+				var bodyText, bodyHTML any
 				if r.newBody.Valid {
 					bodyText = r.newBody.String
 				}
@@ -515,7 +515,7 @@ func repairDisplayNames(s *store.Store, stats *repairStats) error {
 	return nil
 }
 
-// repairOtherStrings repairs other string fields that could have encoding issues
+// repairOtherStrings repairs other string fields that could have encoding issues.
 func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	db := s.DB()
 
@@ -671,7 +671,7 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	return nil
 }
 
-// tryParseMIME attempts to parse raw MIME data, returning nil on failure
+// tryParseMIME attempts to parse raw MIME data, returning nil on failure.
 func tryParseMIME(rawData []byte, compression sql.NullString) *mime.Message {
 	if len(rawData) == 0 {
 		return nil
@@ -697,7 +697,7 @@ func tryParseMIME(rawData []byte, compression sql.NullString) *mime.Message {
 	return parsed
 }
 
-// byteReader wraps a byte slice for use with zlib.NewReader
+// byteReader wraps a byte slice for use with zlib.NewReader.
 type byteReader struct {
 	data []byte
 	pos  int

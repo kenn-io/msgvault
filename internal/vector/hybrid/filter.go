@@ -139,9 +139,7 @@ func resolveParticipantIDs(ctx context.Context, db *sql.DB, addrs []string) ([]i
 		parts = append(parts, `LOWER(email_address) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(a))+"%")
 	}
-	q := fmt.Sprintf(
-		`SELECT id FROM participants WHERE %s`,
-		strings.Join(parts, " OR "))
+	q := "SELECT id FROM participants WHERE " + strings.Join(parts, " OR ")
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query participants: %w", err)
@@ -176,9 +174,7 @@ func resolveLabelIDs(ctx context.Context, db *sql.DB, labels []string) ([]int64,
 		parts = append(parts, `LOWER(name) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(l))+"%")
 	}
-	q := fmt.Sprintf(
-		`SELECT id FROM labels WHERE %s`,
-		strings.Join(parts, " OR "))
+	q := "SELECT id FROM labels WHERE " + strings.Join(parts, " OR ")
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query labels: %w", err)

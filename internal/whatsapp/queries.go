@@ -45,8 +45,13 @@ func hasColumn(db *sql.DB, table, column string) bool {
 					cols[name] = true
 				}
 			}
+			err = rows.Err()
 		}
-		columnCache[key] = cols
+		// Only cache a fully-read column set; on query or iteration error
+		// re-probe next time rather than memoizing a partial result.
+		if err == nil {
+			columnCache[key] = cols
+		}
 	}
 	return cols[column]
 }
@@ -167,14 +172,11 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 	// Process in chunks to stay within SQLite's parameter limit.
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -203,7 +205,6 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fetch media: %w", err)
 		}
-
 		for rows.Next() {
 			var m waMedia
 			if err := rows.Scan(
@@ -216,10 +217,11 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 			}
 			result[m.MessageRowID] = m
 		}
-		_ = rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, err
+			_ = rows.Close()
+			return nil, fmt.Errorf("iterate media: %w", err)
 		}
+		_ = rows.Close()
 	}
 
 	return result, nil
@@ -236,14 +238,11 @@ func fetchReactions(db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, 
 
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -345,14 +344,11 @@ func fetchQuotedMessages(db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted,
 
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id

@@ -404,7 +404,7 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -441,7 +441,7 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -464,7 +464,7 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -483,7 +483,7 @@ func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail
 		return nil, err
 	}
 	if msg == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
 	}
 
 	// Convert store.APIMessage to query.MessageDetail
@@ -624,7 +624,7 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -659,7 +659,6 @@ func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter qu
 // total count, and aggregate stats in a single operation.
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
-
 	params := buildFilterQuery(filter)
 	params.Set("q", queryStr)
 	params.Set("offset", strconv.Itoa(offset))
@@ -674,7 +673,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -741,7 +740,7 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -804,14 +803,14 @@ func buildSearchQueryString(q *search.Query) string {
 		parts = append(parts, fmt.Sprintf("smaller:%d", *q.SmallerThan))
 	}
 
-	result := ""
+	var result strings.Builder
 	for i, part := range parts {
 		if i > 0 {
-			result += " "
+			result.WriteString(" ")
 		}
-		result += part
+		result.WriteString(part)
 	}
-	return result
+	return result.String()
 }
 
 // readBody reads the response body into a byte slice.

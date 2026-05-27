@@ -2,8 +2,10 @@ package imap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -114,7 +116,7 @@ func (c *Client) connect(ctx context.Context) error {
 	case AuthXOAuth2:
 		if c.tokenSource == nil {
 			_ = conn.Close()
-			return fmt.Errorf("XOAUTH2 auth requires a token source (use WithTokenSource)")
+			return errors.New("XOAUTH2 auth requires a token source (use WithTokenSource)")
 		}
 		token, err := c.tokenSource(ctx)
 		if err != nil {
@@ -329,7 +331,7 @@ func (c *Client) fetchMailboxMessageIDs(
 	ctx context.Context, mailbox string, uids []imap.UID,
 ) (map[string]bool, error) {
 	if len(uids) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // empty input -> empty result, not an error
 	}
 
 	if err := c.selectMailbox(mailbox); err != nil {
@@ -347,10 +349,7 @@ func (c *Client) fetchMailboxMessageIDs(
 			return result, ctx.Err()
 		}
 
-		end := chunkStart + fetchChunkSize
-		if end > len(uids) {
-			end = len(uids)
-		}
+		end := min(chunkStart+fetchChunkSize, len(uids))
 
 		var uidSet imap.UIDSet
 		for _, uid := range uids[chunkStart:end] {
@@ -528,12 +527,7 @@ func isNetworkError(err error) bool {
 
 // hasAttr checks whether attr is in the attrs list.
 func hasAttr(attrs []imap.MailboxAttr, attr imap.MailboxAttr) bool {
-	for _, a := range attrs {
-		if a == attr {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(attrs, attr)
 }
 
 // compositeID builds a message identifier as "mailbox|uid".
@@ -643,10 +637,7 @@ func (c *Client) ListMessages(ctx context.Context, query string, pageToken strin
 		return &gmailapi.MessageListResponse{ResultSizeEstimate: total}, nil
 	}
 
-	end := offset + listPageSize
-	if end > len(all) {
-		end = len(all)
-	}
+	end := min(offset+listPageSize, len(all))
 
 	nextToken := ""
 	if end < len(all) {
@@ -863,7 +854,7 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 // ListHistory is not supported for IMAP servers.
 // Callers should run a full sync instead of incremental sync for IMAP sources.
 func (c *Client) ListHistory(_ context.Context, _ uint64, _ string) (*gmailapi.HistoryResponse, error) {
-	return nil, fmt.Errorf("IMAP does not support history-based incremental sync")
+	return nil, errors.New("IMAP does not support history-based incremental sync")
 }
 
 // TrashMessage moves a message to the server's Trash folder.
@@ -906,10 +897,9 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 	}
 	return c.withConn(ctx, func(conn *imapclient.Client) error {
 		if !conn.Caps().Has(imap.CapUIDPlus) {
-			return fmt.Errorf(
-				"server does not support UIDPLUS; " +
-					"permanent delete requires UID EXPUNGE " +
-					"(use trash instead)")
+			return errors.New("server does not support UIDPLUS; " +
+				"permanent delete requires UID EXPUNGE " +
+				"(use trash instead)")
 		}
 		if err := c.selectMailbox(mailbox); err != nil {
 			return err
@@ -936,7 +926,7 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 // double-retry problem that would occur if we deleted some messages
 // here and then the executor retried the entire batch.
 func (c *Client) BatchDeleteMessages(_ context.Context, _ []string) error {
-	return fmt.Errorf("IMAP does not support batch delete")
+	return errors.New("IMAP does not support batch delete")
 }
 
 // Close logs out and disconnects from the IMAP server.

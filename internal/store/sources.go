@@ -25,7 +25,7 @@ func (s *Store) GetSourceByID(id int64) (*Source, error) {
 	`, id)
 
 	source, err := scanSource(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("source %d: %w", id, ErrSourceNotFound)
 	}
 	if err != nil {

@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jhillyerd/enmime"
@@ -99,11 +101,14 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
+	ctx := context.Background()
+
 	// Get messages with raw MIME data
-	messages, err := loadMessages(db, limit)
+	messages, err := loadMessages(ctx, db, limit)
 	if err != nil {
 		logger.Error("failed to load messages", "error", err)
-		os.Exit(1)
+		_ = db.Close() // close before exit so the deferred close isn't skipped
+		os.Exit(1)     //nolint:gocritic // db is closed above
 	}
 
 	logger.Info("loaded messages", "count", len(messages))
@@ -133,7 +138,7 @@ func main() {
 		}
 
 		// Load raw MIME
-		rawMime, err := loadRawMime(db, msg.ID)
+		rawMime, err := loadRawMime(ctx, db, msg.ID)
 		if err != nil {
 			continue
 		}
@@ -191,8 +196,8 @@ func main() {
 		} else {
 			mismatches = append(mismatches, MismatchAttachments)
 			addExample(mismatchExamples, MismatchAttachments, msg,
-				fmt.Sprintf("%d", msg.AttachmentCount),
-				fmt.Sprintf("%d", result.Attachments),
+				strconv.Itoa(msg.AttachmentCount),
+				strconv.Itoa(result.Attachments),
 				showExamples)
 		}
 
@@ -286,7 +291,7 @@ func pct(n, total int) float64 {
 	return float64(n) * 100 / float64(total)
 }
 
-func loadMessages(db *sql.DB, limit int) ([]PythonMessage, error) {
+func loadMessages(ctx context.Context, db *sql.DB, limit int) ([]PythonMessage, error) {
 	query := `
 		SELECT
 			m.id,
@@ -302,7 +307,7 @@ func loadMessages(db *sql.DB, limit int) ([]PythonMessage, error) {
 		LIMIT ?
 	`
 
-	rows, err := db.Query(query, limit)
+	rows, err := db.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query messages: %w", err)
 	}
@@ -315,11 +320,10 @@ func loadMessages(db *sql.DB, limit int) ([]PythonMessage, error) {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 
-		// Load participants
-		msg.FromAddresses, _ = loadParticipants(db, msg.ID, "from")
-		msg.ToAddresses, _ = loadParticipants(db, msg.ID, "to")
-		msg.CcAddresses, _ = loadParticipants(db, msg.ID, "cc")
-		msg.BccAddresses, _ = loadParticipants(db, msg.ID, "bcc")
+		msg.FromAddresses, _ = loadParticipants(ctx, db, msg.ID, "from")
+		msg.ToAddresses, _ = loadParticipants(ctx, db, msg.ID, "to")
+		msg.CcAddresses, _ = loadParticipants(ctx, db, msg.ID, "cc")
+		msg.BccAddresses, _ = loadParticipants(ctx, db, msg.ID, "bcc")
 
 		messages = append(messages, msg)
 	}
@@ -327,7 +331,7 @@ func loadMessages(db *sql.DB, limit int) ([]PythonMessage, error) {
 	return messages, rows.Err()
 }
 
-func loadParticipants(db *sql.DB, messageID int64, recipientType string) ([]Address, error) {
+func loadParticipants(ctx context.Context, db *sql.DB, messageID int64, recipientType string) ([]Address, error) {
 	// All recipient types (from, to, cc, bcc) are stored in message_recipients
 	query := `
 		SELECT COALESCE(p.display_name, ''), COALESCE(p.email_address, '')
@@ -336,7 +340,7 @@ func loadParticipants(db *sql.DB, messageID int64, recipientType string) ([]Addr
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
 	`
 
-	rows, err := db.Query(query, messageID, recipientType)
+	rows, err := db.QueryContext(ctx, query, messageID, recipientType)
 	if err != nil {
 		return nil, err
 	}
@@ -354,11 +358,12 @@ func loadParticipants(db *sql.DB, messageID int64, recipientType string) ([]Addr
 	return addresses, rows.Err()
 }
 
-func loadRawMime(db *sql.DB, messageID int64) ([]byte, error) {
+func loadRawMime(ctx context.Context, db *sql.DB, messageID int64) ([]byte, error) {
 	var compressed []byte
 	var compression sql.NullString
 
-	err := db.QueryRow(
+	err := db.QueryRowContext(
+		ctx,
 		"SELECT raw_data, compression FROM message_raw WHERE message_id = ?",
 		messageID,
 	).Scan(&compressed, &compression)

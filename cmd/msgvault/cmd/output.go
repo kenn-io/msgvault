@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 )
 
-// Common flag variables used across aggregate commands
+// Common flag variables used across aggregate commands.
 var (
 	aggLimit  int
 	aggAfter  string
@@ -20,7 +20,7 @@ var (
 	aggJSON   bool
 )
 
-// parseCommonFlags converts string flags to AggregateOptions
+// parseCommonFlags converts string flags to AggregateOptions.
 func parseCommonFlags() (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
 
@@ -47,7 +47,7 @@ func parseCommonFlags() (query.AggregateOptions, error) {
 	return opts, nil
 }
 
-// addCommonAggregateFlags adds shared flags to aggregate commands
+// addCommonAggregateFlags adds shared flags to aggregate commands.
 func addCommonAggregateFlags(cmd *cobra.Command) {
 	cmd.Flags().IntVarP(
 		&aggLimit, "limit", "n", 50, "Maximum number of results",
@@ -65,7 +65,7 @@ func addCommonAggregateFlags(cmd *cobra.Command) {
 	)
 }
 
-// outputAggregateTable prints aggregate results as a table
+// outputAggregateTable prints aggregate results as a table.
 func outputAggregateTable(
 	rows []query.AggregateRow, keyHeader string,
 ) {
@@ -92,11 +92,11 @@ func outputAggregateTable(
 	fmt.Printf("\nShowing %d results\n", len(rows))
 }
 
-// outputAggregateJSON prints aggregate results as JSON
+// outputAggregateJSON prints aggregate results as JSON.
 func outputAggregateJSON(rows []query.AggregateRow) error {
-	output := make([]map[string]interface{}, len(rows))
+	output := make([]map[string]any, len(rows))
 	for i, row := range rows {
-		output[i] = map[string]interface{}{
+		output[i] = map[string]any{
 			"key":             row.Key,
 			"count":           row.Count,
 			"total_size":      row.TotalSize,

@@ -62,9 +62,9 @@ func sqliteDirection(d SortDirection) string {
 
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
-func buildSQLiteTextFilterConditions(filter TextFilter) (string, []interface{}) {
+func buildSQLiteTextFilterConditions(filter TextFilter) (string, []any) {
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if filter.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")
@@ -136,7 +136,7 @@ func buildSQLiteTextFilterConditions(filter TextFilter) (string, []interface{}) 
 		default:
 			timeExprStr = "strftime('%Y-%m', m.sent_at)"
 		}
-		conditions = append(conditions, fmt.Sprintf("%s = ?", timeExprStr))
+		conditions = append(conditions, timeExprStr+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 	if filter.After != nil {
@@ -314,7 +314,7 @@ func (e *SQLiteEngine) TextAggregate(
 	}
 
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")
@@ -470,7 +470,7 @@ func (e *SQLiteEngine) GetTextStats(
 	stats := &TotalStats{}
 
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")

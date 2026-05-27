@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -42,11 +43,11 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	// Reject upfront so the user gets a clear error rather than the
 	// generic "must specify --batch or --all-hidden" hint.
 	if IsRemoteMode() {
-		return fmt.Errorf("delete-deduped is local-only; not supported in remote mode")
+		return errors.New("delete-deduped is local-only; not supported in remote mode")
 	}
 
 	if len(deleteDedupedBatchIDs) == 0 && !deleteDedupedAllHidden {
-		return usageErr(cmd, fmt.Errorf("must specify --batch or --all-hidden"))
+		return usageErr(cmd, errors.New("must specify --batch or --all-hidden"))
 	}
 
 	st, err := openStoreAndInit()

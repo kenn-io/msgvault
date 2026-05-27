@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -153,10 +154,10 @@ func hashFile(path string) (string, error) {
 // avoiding redundant I/O when the caller already computed the hash (e.g. during download).
 func installFromArchiveTo(archivePath, expectedChecksum, dstPath string, precomputedChecksum ...string) error {
 	if expectedChecksum == "" {
-		return fmt.Errorf("empty checksum - refusing to install unverified binary")
+		return errors.New("empty checksum - refusing to install unverified binary")
 	}
 
-	checksum := ""
+	var checksum string
 	if len(precomputedChecksum) > 0 && precomputedChecksum[0] != "" {
 		checksum = precomputedChecksum[0]
 	} else {
@@ -257,7 +258,7 @@ func installBinaryTo(srcPath, dstPath string) error {
 		return fmt.Errorf("install: %w", err)
 	}
 
-	if err := os.Chmod(dstPath, 0755); err != nil {
+	if err := os.Chmod(dstPath, 0755); err != nil { //nolint:gosec // installed binary needs the executable bit
 		return fmt.Errorf("chmod: %w", err)
 	}
 
@@ -283,7 +284,7 @@ func resolveLatestTag(url string) (string, error) {
 			return http.ErrUseLastResponse
 		},
 	}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -321,7 +322,7 @@ func resolveLatestTag(url string) (string, error) {
 // Returns 0 if the size can't be determined; callers degrade gracefully.
 func fetchContentLength(url string) (int64, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("HEAD", url, nil)
+	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -412,7 +413,7 @@ func extractTarGz(archivePath, destDir string) error {
 	tr := tar.NewReader(gzr)
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -442,12 +443,12 @@ func extractTarGz(archivePath, destDir string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(outFile, tr); err != nil {
+			if _, err := io.Copy(outFile, tr); err != nil { //nolint:gosec // extracting our own checksum-verified release archive
 				_ = outFile.Close()
 				return err
 			}
 			_ = outFile.Close()
-			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil {
+			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil { //nolint:gosec // tar header mode from our own release archive
 				return err
 			}
 		}
@@ -459,17 +460,17 @@ func extractTarGz(archivePath, destDir string) error {
 // sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal.
 func sanitizeTarPath(destDir, name string) (string, error) {
 	if strings.HasPrefix(name, "/") {
-		return "", fmt.Errorf("absolute path not allowed")
+		return "", errors.New("absolute path not allowed")
 	}
 
 	cleanName := filepath.Clean(name)
 
 	if filepath.IsAbs(cleanName) {
-		return "", fmt.Errorf("absolute path not allowed")
+		return "", errors.New("absolute path not allowed")
 	}
 
 	if strings.HasPrefix(cleanName, "..") || strings.Contains(cleanName, string(filepath.Separator)+"..") {
-		return "", fmt.Errorf("path traversal not allowed")
+		return "", errors.New("path traversal not allowed")
 	}
 
 	target := filepath.Join(destDir, cleanName)
@@ -483,7 +484,7 @@ func sanitizeTarPath(destDir, name string) (string, error) {
 		return "", err
 	}
 	if !strings.HasPrefix(absTarget, absDestDir+string(filepath.Separator)) && absTarget != absDestDir {
-		return "", fmt.Errorf("path escapes destination directory")
+		return "", errors.New("path escapes destination directory")
 	}
 
 	return target, nil
@@ -533,7 +534,7 @@ func extractZip(archivePath, destDir string) error {
 			return err
 		}
 
-		_, copyErr := io.Copy(outFile, rc)
+		_, copyErr := io.Copy(outFile, rc) //nolint:gosec // extracting our own checksum-verified release archive
 		closeErr := outFile.Close()
 		_ = rc.Close()
 		if copyErr != nil {
@@ -569,7 +570,7 @@ func copyFile(src, dst string) error {
 
 func fetchChecksumFromFile(url, assetName string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url) //nolint:gosec
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -666,8 +667,8 @@ func saveCache(version string) {
 		return
 	}
 	cachePath := filepath.Join(getCacheDir(), cacheFileName)
-	os.MkdirAll(filepath.Dir(cachePath), 0755)      //nolint:errcheck
-	fileutil.SecureWriteFile(cachePath, data, 0600) //nolint:errcheck
+	os.MkdirAll(filepath.Dir(cachePath), 0755)      //nolint:errcheck,gosec
+	fileutil.SecureWriteFile(cachePath, data, 0600) //nolint:errcheck,gosec
 }
 
 // extractBaseSemver extracts the base semver from a version string.
@@ -685,7 +686,7 @@ func extractBaseSemver(v string) string {
 	return v
 }
 
-// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty
+// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty.
 var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
 
 // isDevBuildVersion returns true if the version is a dev build.

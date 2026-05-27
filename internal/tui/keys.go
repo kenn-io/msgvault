@@ -129,7 +129,6 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-
 	// Esc: sub-agg tries goBack() first; top-level clears search
 	case "esc":
 		if isSub {
@@ -377,10 +376,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "S": // Select all visible (only on-screen items)
-		endRow := m.scrollOffset + m.pageSize
-		if endRow > len(m.messages) {
-			endRow = len(m.messages)
-		}
+		endRow := min(m.scrollOffset+m.pageSize, len(m.messages))
 		for i := m.scrollOffset; i < endRow; i++ {
 			m.selection.messageIDs[m.messages[i].ID] = true
 		}
@@ -742,10 +738,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
-		maxScroll := m.detailLineCount - m.detailPageSize()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
 		if m.detailScroll < maxScroll {
 			m.detailScroll++
 		} else {
@@ -764,10 +757,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+d":
 		// Clamp first in case scroll is out of range after resize
 		m.clampDetailScroll()
-		maxScroll := m.detailLineCount - m.detailPageSize()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
 		if m.detailScroll >= maxScroll {
 			return m.showFlash("At bottom")
 		}
@@ -776,10 +766,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "home", "g":
 		m.detailScroll = 0
 	case "end", "G":
-		m.detailScroll = m.detailLineCount - m.detailPageSize()
-		if m.detailScroll < 0 {
-			m.detailScroll = 0
-		}
+		m.detailScroll = max(m.detailLineCount-m.detailPageSize(), 0)
 
 	// View thread
 	case "T":
@@ -866,10 +853,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.threadCursor < 0 {
 			m.threadCursor = 0
 		}
-		maxScroll := itemCount - m.visibleRows()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(itemCount-m.visibleRows(), 0)
 		if m.threadScrollOffset > maxScroll {
 			m.threadScrollOffset = maxScroll
 		}
@@ -920,6 +904,8 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleErrorKeys()
 	case modalHelp:
 		return m.handleHelpKeys(msg)
+	case modalNone:
+		// no modal active; fall through to nil return
 	}
 	return m, nil
 }
@@ -1179,6 +1165,8 @@ func (m *Model) setDrillFilterForView(key string) {
 	case query.ViewTime:
 		m.drillFilter.TimeRange.Period = key
 		m.drillFilter.TimeRange.Granularity = m.timeGranularity
+	case query.ViewTypeCount:
+		// Sentinel for enum length; not a real view.
 	}
 }
 
@@ -1405,10 +1393,7 @@ func (m *Model) toggleAggregateSelection() {
 }
 
 func (m *Model) selectVisibleAggregates() {
-	endRow := m.scrollOffset + m.pageSize
-	if endRow > len(m.rows) {
-		endRow = len(m.rows)
-	}
+	endRow := min(m.scrollOffset+m.pageSize, len(m.rows))
 	for i := m.scrollOffset; i < endRow; i++ {
 		m.selection.aggregateKeys[m.rows[i].Key] = true
 	}

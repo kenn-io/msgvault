@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -117,7 +118,7 @@ func OpenStore() (MessageStore, error) {
 // Unlike OpenStore, this always attempts remote connection.
 func OpenRemoteStore() (RemoteStore, error) {
 	if cfg.Remote.URL == "" {
-		return nil, fmt.Errorf("remote server not configured\n\n" +
+		return nil, errors.New("remote server not configured\n\n" +
 			"Configure in ~/.msgvault/config.toml:\n" +
 			"  [remote]\n" +
 			"  url = \"http://nas:8080\"\n" +

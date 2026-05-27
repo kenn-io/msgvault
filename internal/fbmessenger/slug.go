@@ -1,7 +1,7 @@
 package fbmessenger
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // used as a non-crypto fingerprint, not for authentication
 	"encoding/hex"
 	"strings"
 	"unicode"
@@ -54,7 +54,7 @@ func Slug(name string) string {
 func Address(name string) mime.Address {
 	local := Slug(name)
 	if local == "" {
-		sum := sha1.Sum([]byte(name))
+		sum := sha1.Sum([]byte(name)) //nolint:gosec // deterministic synthetic suffix, not authentication
 		local = "user." + hex.EncodeToString(sum[:4])
 	}
 	return mime.Address{
@@ -77,7 +77,7 @@ func DecodeMojibake(s string) string {
 		if r > 0xFF {
 			return s
 		}
-		buf = append(buf, byte(r))
+		buf = append(buf, byte(r)) //nolint:gosec // bounded above by r <= 0xFF
 	}
 	decoded := string(buf)
 	if !utf8.ValidString(decoded) {
@@ -90,8 +90,8 @@ func DecodeMojibake(s string) string {
 // email. If the input lacks the expected domain suffix, it is returned as-is.
 func StripDomain(email string) string {
 	suffix := "@" + Domain
-	if strings.HasSuffix(email, suffix) {
-		return strings.TrimSuffix(email, suffix)
+	if before, ok := strings.CutSuffix(email, suffix); ok {
+		return before
 	}
 	return email
 }

@@ -94,7 +94,7 @@ func (e *Engine) BuildFilter(ctx context.Context, q *search.Query) (vector.Filte
 // mode=fts is rejected with a clear error (legacy path handles it).
 func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedHit, ResultMeta, error) {
 	if req.Mode == ModeFTS {
-		return nil, ResultMeta{}, fmt.Errorf("mode=fts should be handled by the legacy engine")
+		return nil, ResultMeta{}, errors.New("mode=fts should be handled by the legacy engine")
 	}
 	if req.Mode != ModeVector && req.Mode != ModeHybrid {
 		return nil, ResultMeta{}, fmt.Errorf("unknown mode %q", req.Mode)
@@ -106,7 +106,7 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 	}
 
 	if req.FreeText == "" {
-		return nil, ResultMeta{}, fmt.Errorf("empty query")
+		return nil, ResultMeta{}, errors.New("empty query")
 	}
 
 	vecs, err := e.client.Embed(ctx, []string{req.FreeText})

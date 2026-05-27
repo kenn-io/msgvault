@@ -46,7 +46,7 @@ func discoverDir(dir string) ([]BackupFile, error) {
 		}
 		files, err := classifyPath(path)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // unclassifiable files are skipped, not fatal to the walk
 		}
 		out = append(out, files...)
 		return nil
@@ -109,7 +109,7 @@ func discoverZip(path string) ([]BackupFile, error) {
 		out = append(out, BackupFile{
 			Name: name,
 			Kind: kind,
-			Size: int64(f.UncompressedSize64),
+			Size: int64(f.UncompressedSize64), //nolint:gosec // zip entry size; can't realistically exceed int64
 			Opener: func() (io.ReadCloser, error) {
 				zr, err := zip.OpenReader(path)
 				if err != nil {
@@ -136,6 +136,7 @@ func discoverZip(path string) ([]BackupFile, error) {
 
 type zipEntryReadCloser struct {
 	io.ReadCloser
+
 	closeZip func() error
 }
 

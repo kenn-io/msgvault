@@ -544,10 +544,9 @@ func randomBatchToken() string {
 // choice (run pg_dump out-of-band, or skip the safety net).
 func backupDatabase(st *store.Store, dst string) error {
 	if st.IsPostgreSQL() {
-		return fmt.Errorf(
-			"backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
-				"snapshot the PostgreSQL database with pg_dump out-of-band, " +
-				"then rerun with --no-backup",
+		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
+			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
+			"then rerun with --no-backup",
 		)
 	}
 	if _, err := os.Stat(dst); err == nil {

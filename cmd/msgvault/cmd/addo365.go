@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -34,7 +35,7 @@ Examples:
 		email := args[0]
 
 		if cfg.Microsoft.ClientID == "" {
-			return fmt.Errorf("microsoft OAuth not configured\n\n" +
+			return errors.New("microsoft OAuth not configured\n\n" +
 				"Add to your config.toml:\n\n" +
 				"  [microsoft]\n" +
 				"  client_id = \"your-azure-app-client-id\"\n\n" +

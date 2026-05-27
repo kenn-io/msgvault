@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -68,9 +69,7 @@ Examples:
 		// Legacy two-arg form: import-emlx <identifier> <mail-dir>
 		if len(args) == 2 {
 			if identifier != "" {
-				return fmt.Errorf(
-					"cannot use --identifier with two positional arguments",
-				)
+				return errors.New("cannot use --identifier with two positional arguments")
 			}
 			identifier = args[0]
 			args = args[1:]
@@ -80,9 +79,7 @@ Examples:
 		// accidentally importing the entire ~/Library/Mail tree
 		// under one identifier.
 		if identifier != "" && len(args) == 0 {
-			return fmt.Errorf(
-				"--identifier requires a positional mail-dir argument",
-			)
+			return errors.New("--identifier requires a positional mail-dir argument")
 		}
 
 		// Determine mail directory.
@@ -227,7 +224,7 @@ func importSingleAccount(
 		}
 	}
 
-	printImportSummary(cmd, ctx, *summary)
+	printImportSummary(ctx, cmd, *summary)
 	return importResultError(ctx, *summary)
 }
 
@@ -367,7 +364,7 @@ func importAutoAccounts(
 			}
 		}
 
-		printImportSummary(cmd, ctx, *summary)
+		printImportSummary(ctx, cmd, *summary)
 		_, _ = fmt.Fprintln(out)
 
 		// Accumulate totals.
@@ -416,7 +413,7 @@ func importResultError(ctx context.Context, summary importer.EmlxImportSummary) 
 	return nil
 }
 
-func printImportSummary(cmd *cobra.Command, ctx context.Context, summary importer.EmlxImportSummary) {
+func printImportSummary(ctx context.Context, cmd *cobra.Command, summary importer.EmlxImportSummary) {
 	out := cmd.OutOrStdout()
 
 	if ctx.Err() != nil {

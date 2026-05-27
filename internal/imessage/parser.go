@@ -152,10 +152,7 @@ func extractStreamtypedText(data []byte) string {
 
 	// Use the decoded length to extract exactly the right bytes
 	if textLen > 0 {
-		end := pos + textLen
-		if end > len(data) {
-			end = len(data)
-		}
+		end := min(pos+textLen, len(data))
 		text := string(data[pos:end])
 		for len(text) > 0 && !utf8.ValidString(text) {
 			text = text[:len(text)-1]
@@ -188,18 +185,18 @@ func extractStreamtypedText(data []byte) string {
 func extractKeyedArchiverText(data []byte) string {
 	var archive struct {
 		Top     map[string]plist.UID `plist:"$top"`
-		Objects []interface{}        `plist:"$objects"`
+		Objects []any                `plist:"$objects"`
 	}
 	if _, err := plist.Unmarshal(data, &archive); err != nil {
 		return ""
 	}
 
 	rootUID, ok := archive.Top["root"]
-	if !ok || int(rootUID) >= len(archive.Objects) {
+	if !ok || int(rootUID) >= len(archive.Objects) { //nolint:gosec // index check immediately gates uint64->int
 		return ""
 	}
 
-	rootObj, ok := archive.Objects[rootUID].(map[string]interface{})
+	rootObj, ok := archive.Objects[rootUID].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -208,7 +205,7 @@ func extractKeyedArchiverText(data []byte) string {
 	if !ok {
 		return ""
 	}
-	if int(nsStringUID) >= len(archive.Objects) {
+	if int(nsStringUID) >= len(archive.Objects) { //nolint:gosec // index check gates uint64->int
 		return ""
 	}
 

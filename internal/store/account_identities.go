@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,7 +70,7 @@ func (s *Store) AddAccountIdentity(sourceID int64, address, signal string) error
 	ctx := context.Background()
 
 	const maxAttempts = 5
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for range maxAttempts {
 		err := s.addAccountIdentityOnce(ctx, sourceID, addr, signal, match)
 		if err == nil {
 			return nil
@@ -110,7 +111,7 @@ func (s *Store) addAccountIdentityOnce(
 		WHERE source_id = ? AND ` + whereAddr + s.dialect.SelectForUpdate()
 	err = conn.QueryRowContext(ctx, rebind(selectSQL), sourceID, match.BindValue()).Scan(&existing)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		if _, err := conn.ExecContext(ctx,
 			rebind(`INSERT INTO account_identities (source_id, address, source_signal)
 				VALUES (?, ?, ?)`),
@@ -146,7 +147,7 @@ func (s *Store) addAccountIdentityOnce(
 func mergeSignalSet(existing, signal string) string {
 	set := make(map[string]struct{})
 	if existing != "" {
-		for _, s := range strings.Split(existing, ",") {
+		for s := range strings.SplitSeq(existing, ",") {
 			if s != "" {
 				set[s] = struct{}{}
 			}

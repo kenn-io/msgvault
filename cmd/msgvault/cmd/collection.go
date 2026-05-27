@@ -209,7 +209,7 @@ func runCollectionDelete(_ *cobra.Command, args []string) error {
 
 func resolveAccountList(cmd *cobra.Command, st *store.Store, accounts string) ([]int64, error) {
 	if accounts == "" {
-		return nil, usageErr(cmd, fmt.Errorf("--accounts is required"))
+		return nil, usageErr(cmd, errors.New("--accounts is required"))
 	}
 	parts := strings.Split(accounts, ",")
 	var ids []int64
@@ -253,7 +253,7 @@ func resolveAccountList(cmd *cobra.Command, st *store.Store, accounts string) ([
 		ids = append(ids, scope.SourceIDs()...)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("no valid accounts in --accounts")
+		return nil, errors.New("no valid accounts in --accounts")
 	}
 	return ids, nil
 }

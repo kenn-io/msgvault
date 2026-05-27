@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -36,7 +37,7 @@ var dbTimeLayouts = []string{
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // parseDBTime attempts to parse a timestamp string using known SQLite/go-sqlite3 formats.
@@ -160,7 +161,7 @@ type SourceImportItem struct {
 func (s *Store) StartSync(sourceID int64, syncType string) (int64, error) {
 	ctx := context.Background()
 	const maxAttempts = 5
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for range maxAttempts {
 		id, err := s.startSyncOnce(ctx, sourceID)
 		if err == nil {
 			return id, nil
@@ -288,7 +289,7 @@ func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 	`, sourceID)
 
 	run, err := scanSyncRun(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return run, err
@@ -312,7 +313,7 @@ func (s *Store) GetLatestCheckpointedSync(sourceID int64) (*SyncRun, error) {
 	`, sourceID, sourceID)
 
 	run, err := scanSyncRun(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return run, err
@@ -416,7 +417,7 @@ func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
 	`, sourceID)
 
 	run, err := scanSyncRun(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return run, err
@@ -586,7 +587,7 @@ func (s *Store) GetSourceByIdentifier(identifier string) (*Source, error) {
 	`, identifier)
 
 	source, err := scanSource(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

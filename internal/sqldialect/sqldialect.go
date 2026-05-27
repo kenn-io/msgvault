@@ -25,7 +25,7 @@ func RebindPostgreSQL(query string) string {
 	b.Grow(len(query) + 16)
 	n := 1
 	inQuote := false
-	for i := 0; i < len(query); i++ {
+	for i := range len(query) {
 		ch := query[i]
 		if ch == '\'' {
 			inQuote = !inQuote

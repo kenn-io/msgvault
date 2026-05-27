@@ -835,15 +835,15 @@ func parseMsgIDList(s string) []string {
 		if open < 0 {
 			break
 		}
-		close := strings.IndexByte(s[open+1:], '>')
-		if close < 0 {
+		closeIdx := strings.IndexByte(s[open+1:], '>')
+		if closeIdx < 0 {
 			break
 		}
-		id := s[open+1 : open+1+close]
+		id := s[open+1 : open+1+closeIdx]
 		if id != "" {
 			result = append(result, id)
 		}
-		s = s[open+1+close+1:]
+		s = s[open+1+closeIdx+1:]
 	}
 	return result
 }

@@ -68,7 +68,7 @@ func ParseE2EEJSONFile(rootDir, filePath string) (*Thread, error) {
 	//   - both present, or non-object: object→full decode; non-object→not a thread
 	var top any
 	if err := json.Unmarshal(data, &top); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCorruptJSON, filepath.Base(filePath), err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, filepath.Base(filePath), err)
 	}
 	obj, ok := top.(map[string]any)
 	if !ok {
@@ -84,7 +84,7 @@ func ParseE2EEJSONFile(rootDir, filePath string) (*Thread, error) {
 	}
 	var decoded rawE2EEExport
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrCorruptJSON, filepath.Base(filePath), err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, filepath.Base(filePath), err)
 	}
 
 	thread := &Thread{

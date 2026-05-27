@@ -91,7 +91,7 @@ func (m identifierMatch) WhereClause(column string) string {
 	if m.isEmailShaped {
 		return fmt.Sprintf("LOWER(%s) = LOWER(?)", column)
 	}
-	return fmt.Sprintf("%s = ?", column)
+	return column + " = ?"
 }
 
 // BindValue returns the value to bind for the placeholder in

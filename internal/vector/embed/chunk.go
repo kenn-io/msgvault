@@ -126,20 +126,14 @@ func ChunkText(text string, maxRunes, overlapRunes, maxSpans int) (spans []Chunk
 			tailDropped = true
 			break
 		}
-		windowEnd := cursor + maxRunes
-		if windowEnd > totalRunes {
-			windowEnd = totalRunes
-		}
+		windowEnd := min(cursor+maxRunes, totalRunes)
 		// Look for a soft break in the back quarter of the window;
 		// if found, cut there instead of the hard end. Skip this when
 		// the window already reaches the end of text — no need to find
 		// a "nice" cut for the final span.
 		cut := windowEnd
 		if windowEnd < totalRunes {
-			searchFloor := cursor + (maxRunes * 3 / 4)
-			if searchFloor < cursor+1 {
-				searchFloor = cursor + 1
-			}
+			searchFloor := max(cursor+(maxRunes*3/4), cursor+1)
 			cut = findSoftBreak(text, runeByteOffsets, searchFloor, windowEnd)
 		}
 
@@ -158,10 +152,7 @@ func ChunkText(text string, maxRunes, overlapRunes, maxSpans int) (spans []Chunk
 		// Advance the cursor by (window - overlap), but never less
 		// than 1 rune — guards against pathological inputs where the
 		// soft break sits inside the overlap zone.
-		advance := (cut - cursor) - overlapRunes
-		if advance < 1 {
-			advance = 1
-		}
+		advance := max((cut-cursor)-overlapRunes, 1)
 		cursor += advance
 	}
 	return spans, tailDropped

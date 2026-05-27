@@ -188,7 +188,7 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 // parseReferences parses the References header into individual message IDs.
 func parseReferences(refs string) []string {
 	var result []string
-	for _, ref := range strings.Fields(refs) {
+	for ref := range strings.FieldsSeq(refs) {
 		ref = strings.Trim(ref, "<>")
 		if ref != "" {
 			result = append(result, ref)
@@ -221,7 +221,7 @@ var dateFormats = []string{
 	"2006-01-02 15:04:05",                   // SQL-like without TZ
 }
 
-// numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00
+// numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00.
 var numericOffsetRe = regexp.MustCompile(`[+-]\d{2}:?\d{2}`)
 
 // hasNumericOffset returns true if the string contains a numeric timezone offset or Z (UTC).
@@ -288,10 +288,10 @@ func parseDate(s string) (time.Time, error) {
 	return time.Time{}, nil
 }
 
-// Block tags that should create line breaks when stripped
+// Block tags that should create line breaks when stripped.
 var blockTagRe = regexp.MustCompile(`(?i)<(/?)(p|div|br|hr|h[1-6]|li|tr|td|th|blockquote|pre|table|ul|ol|dl|dt|dd)[^>]*>`)
 
-// Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations)
+// Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations).
 var scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
 var styleTagRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 var headTagRe = regexp.MustCompile(`(?is)<head[^>]*>.*?</head>`)

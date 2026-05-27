@@ -1,0 +1,217 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    # Style/formatting -- conflicts with project conventions or noisy
+    - nlreturn         # forces blank lines before returns
+    - wsl              # whitespace style; too opinionated
+    - wsl_v5           # whitespace style v5
+    - varnamelen       # short var names are idiomatic Go
+    - ireturn          # forbids returning interfaces; conflicts with stdlib patterns
+    - lll              # line length
+    - tagliatelle      # enforces JSON tag casing
+    - exhaustruct      # requires all struct fields; too noisy
+    - nonamedreturns   # named returns useful for docs
+    - tagalign         # cosmetic struct-tag alignment
+    - noinlineerr      # forbids inline err assignments; standard Go idiom
+    - dupl             # duplicate code detection; mostly false positives
+    - dupword          # destroys SQL strings ("m.id, m.id" -> "m.id") and test names
+    - fatcontext       # auto-fix unsafely turns `outerVar = ctx` into `outerVar := ctx`, shadowing
+    - funcorder        # exported-before-unexported ordering
+    - containedctx     # TUI models legitimately store context
+    - gocheckcompilerdirectives # doesn't recognize //go:fix inline (real directive used by gopls)
+    - godox            # TODO/FIXME comments are valid backlog markers, not lint errors
+    - interfacebloat   # Engine/Dialect/Backend are intentional broad abstractions
+    - unqueryvet       # `SELECT *` is intentional for full-table copies and VALUES fixtures
+
+    # Complexity metrics -- trust reviewer judgment
+    - funlen
+    - cyclop
+    - gocognit
+    - maintidx
+    - gocyclo
+    - nestif
+
+    # Opinionated rules that don't fit this project
+    - depguard         # dependency allowlist; not needed
+    - mnd              # magic numbers; too aggressive
+    - gochecknoglobals # globals are used intentionally (sync.Once, regexes, etc.)
+    - gochecknoinits   # cobra commands register via init()
+    - testpackage      # requires _test package suffix; we test internals
+    - paralleltest     # requires t.Parallel(); not always appropriate
+    - tparallel        # similar to paralleltest
+    - gosmopolitan     # i18n checks; not applicable
+    - prealloc         # premature optimization
+    - err113           # forbids dynamic errors; too aggressive for user-facing messages
+    - forbidigo        # forbids fmt.Print*; CLI program needs them
+
+    # Deprecated linter names; use v2 replacement instead
+    - gomodguard       # superseded by gomodguard_v2 in golangci-lint v2.12.x
+
+    # Follow-up work — these surface real refactors that don't belong in the
+    # standup PR. Re-enable in dedicated passes.
+    - contextcheck     # ctx threading through call chains (~50 findings)
+    - unparam          # unused params; needs caller-wide refactor (~38)
+    - goconst          # repeated literals; judgement on which to lift (~33)
+    - wrapcheck        # %w wrapping at every external-package boundary (~29)
+    - noctx            # ~130 DB calls (mostly tests + ctx-less constructors)
+                       # need *Context variants; a dedicated sweep, not standup
+    - nilnil           # (nil, nil) is the idiomatic not-found / empty-input /
+                       # mock-stub signal across store getters, query mocks, and
+                       # the updater; a sentinel-error sweep is its own pass
+    - sqlclosecheck    # batch loops close rows explicitly per-iteration (defer
+                       # would leak across chunks); satisfying it cleanly needs
+                       # per-query helper extraction — a dedicated refactor
+    - recvcheck        # Model/MessageFilter mix value+pointer receivers; making
+                       # them consistent touches many call sites, own pass
+
+  enable:
+    - gomodguard_v2    # explicit v2 opt-in
+
+  settings:
+    govet:
+      disable:
+        # The inline analyzer pesters every call site of functions tagged
+        # //go:fix inline. The tag is intentional (gopls migration aid),
+        # not a compile-error; let gopls and `go fix` handle it on demand.
+        - inline
+
+    errorlint:
+      comparison: true
+      asserts: true
+      errorf: true
+      errorf-multi: true
+
+    exhaustive:
+      # `default:` is an acceptable way to handle the missing cases when the
+      # author has consciously chosen to lump them together.
+      default-signifies-exhaustive: true
+
+    gosec:
+      excludes:
+        # G304: file inclusion via variable. msgvault is a CLI that processes
+        # user-supplied file paths and its own ~/.msgvault/ storage paths;
+        # gosec can't tell those from untrusted-network input.
+        - G304
+        # G301: directory permissions. Same rationale - we operate on the
+        # user's own directories.
+        - G301
+        # G201/G202: SQL string formatting/concatenation. We assemble SQL
+        # dynamically from our own CTE/view/condition fragments; no caller
+        # input reaches the format string. Real bind params still use ? / $N.
+        - G201
+        - G202
+
+    goconst:
+      # Default is 3; raise to filter noise like TUI keycodes, runtime.GOOS
+      # comparisons, and rare yes/no prompts. Real candidates (source types,
+      # SQL table names) recur many more times than the threshold.
+      min-occurrences: 10
+
+    revive:
+      enable-default-rules: true
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        # Most "unused" params are imposed by the cobra RunE / http.HandlerFunc /
+        # tea.Cmd signatures. Renaming each to _ adds churn without value.
+        - name: unused-parameter
+          disabled: true
+
+    gocritic:
+      enable-all: true
+      disabled-tags:
+        - experimental
+        - opinionated
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+        - ifElseChain
+        - singleCaseSwitch
+
+    wrapcheck:
+      # Errors crossing these boundaries don't need extra wrapping.
+      # Internal-to-internal calls preserve full type info; stdlib SQL/HTTP
+      # errors are routinely returned verbatim from helpers, and `os`/
+      # `encoding/json` errors already include the operation in their message.
+      ignore-package-globs:
+        - go.kenn.io/msgvault/*
+        - database/sql
+        - database/sql/*
+        - io
+        - os
+        - encoding/json
+        - encoding/csv
+        - net/http
+        - path/filepath
+      extra-ignore-sigs:
+        # ctx.Err() returns context.Canceled / context.DeadlineExceeded; callers
+        # use errors.Is to distinguish, which wrapping would break.
+        - .Err(
+
+  exclusions:
+    rules:
+      # Tests legitimately repeat fixture strings
+      - linters: [goconst]
+        path: _test\.go
+
+      # gosec G204/G704: test binaries and URLs are controlled
+      # G306/G301/G302: test fixture file/dir permissions are not a real risk
+      # G101: test fixtures use obviously-fake "secret" strings
+      # G117: marshaled "password"/"access_token" fields are test fixtures
+      # G703/G122: test paths/walks operate on t.TempDir
+      # G403: 1024-bit RSA keys are acceptable in tests for speed
+      # G115: int->byte conversions on known small test inputs
+      - linters: [gosec]
+        path: _test\.go
+        text: "G204|G704|G306|G301|G302|G101|G117|G703|G122|G403|G115"
+
+      # staticcheck nil-after-Fatal false positives in tests
+      - linters: [staticcheck]
+        path: _test\.go
+        text: "SA5011"
+
+      # store getters use the idiomatic (nil, nil) signal for not-found rows
+      # (sql.ErrNoRows) and for empty-input batch helpers; callers branch on
+      # the nil result. A sentinel error here would only add caller noise.
+      - linters: [nilnil]
+        path: internal/store/(api|sync)\.go
+
+      # Test suites are exempted from the linter sweep in this standup. The
+      # codebase just migrated to testify (#345); holding the freshly-rewritten
+      # tests to default-all (assertion idioms, auto-fix style, etc.) would mean
+      # rewriting every test and diverging from upstream's test files. Linting
+      # the tests is its own follow-up pass; production code is fully linted.
+      - linters:
+          # test-quality / assertion-style
+          - testifylint
+          - thelper
+          - forcetypeassert
+          - usetesting
+          - errchkjson
+          - dogsled
+          - rowserrcheck
+          - sqlclosecheck
+          - nilnil
+          - nilerr
+          - wastedassign
+          - unused
+          - revive
+          - nolintlint
+          - predeclared
+          # auto-fix style the migration didn't apply to tests
+          - modernize
+          - perfsprint
+          - usestdlibvars
+          - godot
+          - intrange
+          - canonicalheader
+          - copyloopvar
+          - embeddedstructfieldcheck
+          - errorlint
+          - mirror
+          - sloglint
+        path: _test\.go

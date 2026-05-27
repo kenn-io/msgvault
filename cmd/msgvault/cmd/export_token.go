@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,11 +87,10 @@ func (e *tokenExporter) export(
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 	if parsedURL.Scheme == "http" && !allowInsecure {
-		return nil, fmt.Errorf(
-			"HTTPS required for security (OAuth tokens contain sensitive credentials)\n\n" +
-				"Options:\n" +
-				"  1. Use HTTPS: --to https://nas:8080\n" +
-				"  2. For trusted networks (e.g., Tailscale): --allow-insecure")
+		return nil, errors.New("HTTPS required for security (OAuth tokens contain sensitive credentials)\n\n" +
+			"Options:\n" +
+			"  1. Use HTTPS: --to https://nas:8080\n" +
+			"  2. For trusted networks (e.g., Tailscale): --allow-insecure")
 	}
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return nil, fmt.Errorf("URL scheme must be http or https, got: %s", parsedURL.Scheme)
@@ -140,12 +140,12 @@ func (e *tokenExporter) uploadToken(
 ) error {
 	reqURL := baseURL + "/api/v1/auth/token/" + url.PathEscape(email)
 
-	req, err := http.NewRequest("POST", reqURL, bytes.NewReader(tokenData))
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(tokenData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("X-Api-Key", apiKey)
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
@@ -168,13 +168,13 @@ func (e *tokenExporter) addAccount(baseURL, apiKey, email string) {
 	accountBody := fmt.Sprintf(
 		`{"email":%q,"schedule":"0 2 * * *","enabled":true}`, email)
 
-	req, err := http.NewRequest("POST", accountURL, strings.NewReader(accountBody))
+	req, err := http.NewRequest(http.MethodPost, accountURL, strings.NewReader(accountBody))
 	if err != nil {
 		_, _ = fmt.Fprintf(e.stderr, "Warning: Could not create account request: %v\n", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("X-Api-Key", apiKey)
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
@@ -204,12 +204,10 @@ func runExportToken(_ *cobra.Command, args []string) error {
 	apiKey := resolveParam(exportTokenAPIKey, "MSGVAULT_REMOTE_API_KEY", cfg.Remote.APIKey)
 
 	if remoteURL == "" {
-		return fmt.Errorf(
-			"remote URL required: use --to flag, MSGVAULT_REMOTE_URL env var, or [remote] url in config.toml")
+		return errors.New("remote URL required: use --to flag, MSGVAULT_REMOTE_URL env var, or [remote] url in config.toml")
 	}
 	if apiKey == "" {
-		return fmt.Errorf(
-			"API key required: use --api-key flag, MSGVAULT_REMOTE_API_KEY env var, or [remote] api_key in config.toml")
+		return errors.New("API key required: use --api-key flag, MSGVAULT_REMOTE_API_KEY env var, or [remote] api_key in config.toml")
 	}
 
 	exporter := &tokenExporter{
@@ -268,7 +266,7 @@ func validateExportEmail(email string) error {
 		return fmt.Errorf("invalid email format: %s", email)
 	}
 	if strings.ContainsAny(email, "/\\") || strings.Contains(email, "..") {
-		return fmt.Errorf("invalid email format: contains path characters")
+		return errors.New("invalid email format: contains path characters")
 	}
 	return nil
 }

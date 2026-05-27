@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"strings"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -66,9 +67,8 @@ Examples:
 		}
 
 		if !query.HasCompleteParquetData(analyticsDir) {
-			return fmt.Errorf(
-				"analytics cache is empty — sync some " +
-					"messages first")
+			return errors.New("analytics cache is empty — sync some " +
+				"messages first")
 		}
 
 		return executeQuery(

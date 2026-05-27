@@ -53,13 +53,13 @@ func ConfigureSQLLogging(opts SQLLogOptions) {
 	if slow == 0 {
 		slow = 100
 	}
-	max := opts.MaxStmtChars
-	if max == 0 {
-		max = 300
+	maxChars := opts.MaxStmtChars
+	if maxChars == 0 {
+		maxChars = 300
 	}
 	sqlLogSlowMs.Store(slow)
 	sqlLogFull.Store(opts.FullTrace)
-	sqlLogMaxChars.Store(int64(max))
+	sqlLogMaxChars.Store(int64(maxChars))
 }
 
 // loggedDB wraps *sql.DB and emits slog records for every query
@@ -74,6 +74,7 @@ func ConfigureSQLLogging(opts SQLLogOptions) {
 // PostgreSQL without any per-call wrapping.
 type loggedDB struct {
 	*sql.DB
+
 	rebind func(string) string
 }
 
@@ -106,7 +107,7 @@ func (d *loggedDB) QueryContext(
 ) (*loggedRows, error) {
 	query = d.rebind(query)
 	start := time.Now()
-	rows, err := d.DB.QueryContext(ctx, query, args...)
+	rows, err := d.DB.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
 	if err != nil {
 		logStmtWith("query", query, args, err, time.Since(start))
 		return nil, err
@@ -171,11 +172,7 @@ func (d *loggedDB) ExecContext(
 // reaching the driver. Wrapping Begin (not just Exec/Query) is what
 // keeps the auto-rebind promise intact across transactional code.
 func (d *loggedDB) Begin() (*loggedTx, error) {
-	tx, err := d.DB.Begin()
-	if err != nil {
-		return nil, err
-	}
-	return &loggedTx{Tx: tx, rebind: d.rebind}, nil
+	return d.BeginTx(context.Background(), nil)
 }
 
 // BeginTx matches the sql.DB signature but returns *loggedTx.
@@ -194,6 +191,7 @@ func (d *loggedDB) BeginTx(
 // code that previously took *sql.Tx takes *loggedTx instead.
 type loggedTx struct {
 	*sql.Tx
+
 	rebind func(string) string
 }
 
@@ -203,7 +201,7 @@ type loggedTx struct {
 func (t *loggedTx) Exec(
 	query string, args ...any,
 ) (sql.Result, error) {
-	return t.Tx.Exec(t.rebind(query), args...)
+	return t.ExecContext(context.Background(), query, args...)
 }
 
 // ExecContext rebinds before delegating.
@@ -220,19 +218,7 @@ func (t *loggedTx) ExecContext(
 func (t *loggedTx) Query(
 	query string, args ...any,
 ) (*loggedRows, error) {
-	query = t.rebind(query)
-	start := time.Now()
-	rows, err := t.Tx.Query(query, args...)
-	if err != nil {
-		logStmtWith("query", query, args, err, time.Since(start))
-		return nil, err
-	}
-	return &loggedRows{
-		Rows:  rows,
-		query: query,
-		args:  args,
-		start: start,
-	}, nil
+	return t.QueryContext(context.Background(), query, args...)
 }
 
 // QueryContext rebinds and returns *loggedRows.
@@ -241,7 +227,7 @@ func (t *loggedTx) QueryContext(
 ) (*loggedRows, error) {
 	query = t.rebind(query)
 	start := time.Now()
-	rows, err := t.Tx.QueryContext(ctx, query, args...)
+	rows, err := t.Tx.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
 	if err != nil {
 		logStmtWith("query", query, args, err, time.Since(start))
 		return nil, err
@@ -258,7 +244,7 @@ func (t *loggedTx) QueryContext(
 func (t *loggedTx) QueryRow(
 	query string, args ...any,
 ) *sql.Row {
-	return t.Tx.QueryRow(t.rebind(query), args...)
+	return t.QueryRowContext(context.Background(), query, args...)
 }
 
 // QueryRowContext rebinds before delegating.
@@ -292,6 +278,7 @@ func (t *loggedTx) QueryRowContext(
 // the first caller emits a log line.
 type loggedRows struct {
 	*sql.Rows
+
 	query     string
 	args      []any
 	start     time.Time

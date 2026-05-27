@@ -119,7 +119,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -155,7 +155,7 @@ func openPostgres(dbURL string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -207,7 +207,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database (read-only): %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -246,7 +246,7 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -435,17 +435,14 @@ type chunkQuerier interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []interface{}, queryTemplate string, fn func(*loggedRows) error) error {
+func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
-		end := i + chunkSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, 0, len(prefixArgs)+len(chunk))
+		args := make([]any, 0, len(prefixArgs)+len(chunk))
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"
@@ -488,20 +485,14 @@ type chunkInsert struct {
 // parameter limit (999). valueBuilder generates the VALUES placeholders and
 // args for each chunk of row indices. Rebinding to the dialect's placeholder
 // form happens inside tx.Exec (loggedTx wraps the dialect's Rebind).
-func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end int) ([]string, []interface{})) error {
+func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end int) ([]string, []any)) error {
 	// SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999
 	// Leave some margin for safety
 	const maxParams = 900
-	chunkSize := maxParams / c.valuesPerRow
-	if chunkSize < 1 {
-		chunkSize = 1
-	}
+	chunkSize := max(maxParams/c.valuesPerRow, 1)
 
 	for i := 0; i < c.totalRows; i += chunkSize {
-		end := i + chunkSize
-		if end > c.totalRows {
-			end = c.totalRows
-		}
+		end := min(i+chunkSize, c.totalRows)
 
 		values, args := valueBuilder(i, end)
 		query := c.prefix + strings.Join(values, ",") + c.suffix
@@ -516,17 +507,14 @@ func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end in
 // to stay within SQLite's parameter limit. queryTemplate must contain a single %s
 // placeholder for the comma-separated "?" list. The prefix args are prepended before
 // each chunk's args (e.g., a message_id filter).
-func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []interface{}, queryTemplate string) error {
+func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
-		end := i + chunkSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, 0, len(prefixArgs)+len(chunk))
+		args := make([]any, 0, len(prefixArgs)+len(chunk))
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"

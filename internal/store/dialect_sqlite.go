@@ -144,19 +144,20 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 // support will fail with "no such module: fts5" even if the table exists.
 func (d *SQLiteDialect) FTSAvailable(db *sql.DB) bool {
 	var probe int
-	err := db.QueryRow("SELECT 1 FROM messages_fts LIMIT 1").Scan(&probe)
-	return err == nil || err == sql.ErrNoRows
+	err := db.QueryRowContext(context.Background(), "SELECT 1 FROM messages_fts LIMIT 1").Scan(&probe)
+	return err == nil || errors.Is(err, sql.ErrNoRows)
 }
 
 // FTSNeedsBackfill reports whether the FTS5 table needs population.
 // Uses MAX(id) comparisons (instant B-tree lookups) instead of COUNT(*).
 func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
+	ctx := context.Background()
 	var msgMax int64
-	if err := db.QueryRow("SELECT COALESCE(MAX(id), 0) FROM messages").Scan(&msgMax); err != nil || msgMax == 0 {
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM messages").Scan(&msgMax); err != nil || msgMax == 0 {
 		return false
 	}
 	var ftsMax int64
-	if err := db.QueryRow("SELECT COALESCE(MAX(rowid), 0) FROM messages_fts").Scan(&ftsMax); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid), 0) FROM messages_fts").Scan(&ftsMax); err != nil {
 		return false
 	}
 	return ftsMax < msgMax-msgMax/10
@@ -177,18 +178,18 @@ func (d *SQLiteDialect) SchemaFTS() string {
 // only reliable fix when those shadow tables are malformed — the `rebuild`
 // pragma reads from them and `delete-all` is rejected on contentful tables.
 func (d *SQLiteDialect) FTSRebuildSchema(db *sql.DB) error {
-	if _, err := db.Exec("DROP TABLE IF EXISTS messages_fts"); err != nil {
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS messages_fts"); err != nil {
 		return fmt.Errorf("drop messages_fts: %w", err)
 	}
 	schema, err := schemaFS.ReadFile("schema_sqlite.sql")
 	if err != nil {
 		return fmt.Errorf("read schema_sqlite.sql: %w", err)
 	}
-	if _, err := db.Exec(string(schema)); err != nil {
+	if _, err := db.ExecContext(ctx, string(schema)); err != nil {
 		if d.IsNoSuchModuleError(err) {
-			return fmt.Errorf(
-				"cannot rebuild FTS: this msgvault binary was built without " +
-					"FTS5 support (rebuild with `-tags fts5`)",
+			return errors.New("cannot rebuild FTS: this msgvault binary was built without " +
+				"FTS5 support (rebuild with `-tags fts5`)",
 			)
 		}
 		return fmt.Errorf("create messages_fts: %w", err)
@@ -225,7 +226,7 @@ func (d *SQLiteDialect) DatabaseSize(_ *sql.DB, dbPath string) (int64, error) {
 	}
 	info, err := os.Stat(dbPath)
 	if err != nil {
-		return 0, nil
+		return 0, nil //nolint:nilerr // missing/unstattable db file reports 0 size, not an error
 	}
 	return info.Size(), nil
 }
@@ -241,7 +242,7 @@ func (d *SQLiteDialect) SchemaFiles() []string {
 // CheckpointWAL forces a WAL checkpoint using TRUNCATE mode.
 func (d *SQLiteDialect) CheckpointWAL(db *sql.DB) error {
 	var busy, log, checkpointed int
-	err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
+	err := db.QueryRowContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
 	if err != nil {
 		return err
 	}
@@ -284,10 +285,6 @@ func (d *SQLiteDialect) IsReturningError(err error) bool {
 	return isSQLiteError(err, "RETURNING")
 }
 
-// IsBusyError returns true for SQLITE_BUSY and SQLITE_LOCKED. Matching on
-// the result code is more robust than substring matching: BUSY surfaces as
-// "database is locked" but LOCKED surfaces as "database table is locked",
-// so a single substring cannot catch both.
 // BeginExclusive opens a SQLite "BEGIN EXCLUSIVE" transaction on conn.
 // In WAL mode this blocks concurrent writers while readers can proceed.
 func (d *SQLiteDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
@@ -304,6 +301,10 @@ func (d *SQLiteDialect) BeginWriteSQL() string { return "BEGIN IMMEDIATE" }
 // comes from BEGIN IMMEDIATE.
 func (d *SQLiteDialect) SelectForUpdate() string { return "" }
 
+// IsBusyError returns true for SQLITE_BUSY and SQLITE_LOCKED. Matching on
+// the result code is more robust than substring matching: BUSY surfaces as
+// "database is locked" but LOCKED surfaces as "database table is locked",
+// so a single substring cannot catch both.
 func (d *SQLiteDialect) IsBusyError(err error) bool {
 	if err == nil {
 		return false

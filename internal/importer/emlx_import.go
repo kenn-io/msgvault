@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
@@ -91,7 +93,7 @@ func ImportEmlxDir(
 		opts.SourceType = "apple-mail"
 	}
 	if opts.Identifier == "" {
-		return nil, fmt.Errorf("identifier is required")
+		return nil, errors.New("identifier is required")
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -480,13 +482,7 @@ func ImportEmlxDir(
 				// to avoid unique constraint violations in message_labels.
 				existing := pending[idx].LabelIDs
 				for _, lid := range labelIDs {
-					found := false
-					for _, eid := range existing {
-						if eid == lid {
-							found = true
-							break
-						}
-					}
+					found := slices.Contains(existing, lid)
 					if !found {
 						existing = append(existing, lid)
 					}
@@ -547,7 +543,7 @@ func ImportEmlxDir(
 
 	// If cancelled, leave the sync run as "running" so resume works.
 	if ctx.Err() != nil {
-		return summary, nil
+		return summary, nil //nolint:nilerr // cancellation is signalled via summary, not error
 	}
 
 	if hardErrors {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,9 +109,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			if err := scanner.Err(); err != nil {
 				return fmt.Errorf("read confirmation: %w", err)
 			}
-			return fmt.Errorf(
-				"no confirmation input (stdin closed); use --yes",
-			)
+			return errors.New("no confirmation input (stdin closed); use --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if answer != "y" && answer != "yes" {

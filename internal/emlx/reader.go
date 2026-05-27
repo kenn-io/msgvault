@@ -9,6 +9,7 @@ package emlx
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,13 +36,13 @@ type Message struct {
 // Parse parses an .emlx file from its raw bytes.
 func Parse(data []byte) (*Message, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("emlx: empty file")
+		return nil, errors.New("emlx: empty file")
 	}
 
 	// Line 1: byte count (terminated by \n).
 	newline := bytes.IndexByte(data, '\n')
 	if newline < 0 {
-		return nil, fmt.Errorf("emlx: no newline after byte count")
+		return nil, errors.New("emlx: no newline after byte count")
 	}
 	countStr := strings.TrimSpace(string(data[:newline]))
 	byteCount, err := strconv.ParseInt(countStr, 10, 64)

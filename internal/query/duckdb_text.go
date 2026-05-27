@@ -21,9 +21,9 @@ func textTypeFilter() string {
 // All conditions use the msg. prefix and assume the standard parquetCTEs.
 func (e *DuckDBEngine) buildTextFilterConditions(
 	filter TextFilter,
-) (string, []interface{}) {
+) (string, []any) {
 	conditions := []string{textTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if filter.SourceID != nil {
 		conditions = append(conditions, "msg.source_id = ?")
@@ -79,7 +79,7 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 			filter.TimeRange.Granularity, filter.TimeRange.Period,
 		)
 		conditions = append(conditions,
-			fmt.Sprintf("%s = ?", timeExpr(g)))
+			timeExpr(g)+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 	if filter.After != nil {
@@ -254,7 +254,7 @@ func (e *DuckDBEngine) TextAggregate(
 
 	// Build WHERE clause with text type filter.
 	conditions := []string{textTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "msg.source_id = ?")
@@ -456,7 +456,7 @@ func (e *DuckDBEngine) GetTextStats(
 	stats := &TotalStats{}
 
 	conditions := []string{textTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "msg.source_id = ?")

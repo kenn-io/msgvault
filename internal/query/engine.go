@@ -10,7 +10,7 @@ import (
 // Engine provides query operations for msgvault data.
 // This interface can be implemented by different backends:
 // - SQLiteEngine: Direct SQLite queries (flexible, moderate performance)
-// - ParquetEngine: Arrow/Parquet queries (fast aggregates, read-only)
+// - ParquetEngine: Arrow/Parquet queries (fast aggregates, read-only).
 type Engine interface {
 	// Aggregate performs grouping based on the provided ViewType (Sender, Domain, etc.)
 	Aggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error)

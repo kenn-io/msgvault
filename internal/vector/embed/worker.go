@@ -594,10 +594,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 	start := time.Now()
 	vecs := make([][]float32, 0, len(inputs))
 	for i := 0; i < len(inputs); i += embedSubBatchSize {
-		end := i + embedSubBatchSize
-		if end > len(inputs) {
-			end = len(inputs)
-		}
+		end := min(i+embedSubBatchSize, len(inputs))
 		got, err := w.deps.Client.Embed(ctx, inputs[i:end])
 		if err != nil {
 			return embedBatchResult{}, fmt.Errorf("embed: %w", err)

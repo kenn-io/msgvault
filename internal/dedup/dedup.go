@@ -49,6 +49,7 @@ import (
 	"net/textproto"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -259,7 +260,7 @@ type remoteKey struct {
 // the backfill and reports the count as a "would-backfill" preview.
 func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	if len(e.config.AccountSourceIDs) == 0 {
-		return nil, fmt.Errorf("AccountSourceIDs must be non-empty; use per-source iteration for unscoped dedup")
+		return nil, errors.New("AccountSourceIDs must be non-empty; use per-source iteration for unscoped dedup")
 	}
 
 	started := time.Now()
@@ -526,18 +527,9 @@ func (e *Engine) scanNormalizedHashGroups(
 	for id := range candidateMap {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 
-	numWorkers := runtime.NumCPU()
-	if numWorkers > 16 {
-		numWorkers = 16
-	}
-	if numWorkers > len(ids) {
-		numWorkers = len(ids)
-	}
-	if numWorkers < 1 {
-		numWorkers = 1
-	}
+	numWorkers := max(min(min(runtime.NumCPU(), 16), len(ids)), 1)
 
 	work := make(chan rawWorkItem, numWorkers*4)
 	results := make(chan hashResult, numWorkers*4)
@@ -545,10 +537,8 @@ func (e *Engine) scanNormalizedHashGroups(
 	var decompressionFailures atomic.Int32
 
 	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numWorkers {
+		wg.Go(func() {
 			for item := range work {
 				raw := item.rawData
 				if item.compress == "zlib" {
@@ -601,7 +591,7 @@ func (e *Engine) scanNormalizedHashGroups(
 					},
 				}
 			}
-		}()
+		})
 	}
 
 	type hashEntry struct {
@@ -920,9 +910,8 @@ func (e *Engine) stageDeletionManifests(
 	byKey map[remoteKey][]string,
 ) ([]StagedManifest, error) {
 	if e.config.DeletionsDir == "" {
-		return nil, fmt.Errorf(
-			"deletions dir not configured but " +
-				"DeleteDupsFromSourceServer is true",
+		return nil, errors.New("deletions dir not configured but " +
+			"DeleteDupsFromSourceServer is true",
 		)
 	}
 

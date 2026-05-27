@@ -5,6 +5,7 @@
 package vector
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -240,7 +241,7 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // to N-vectors-per-message-via-ChunkText. Without folding this version
 // in, an active generation built under the old single-vector policy
 // would silently accept new chunked entries from an upgraded worker.
-func (c Config) GenerationFingerprint() string {
+func (c *Config) GenerationFingerprint() string {
 	return fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
 }
@@ -252,7 +253,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("vector.backend: unknown backend %q (only \"sqlite-vec\" is supported in MVP)", c.Backend)
 	}
 	if c.Embeddings.Endpoint == "" {
-		return fmt.Errorf("vector.embeddings.endpoint: required")
+		return errors.New("vector.embeddings.endpoint: required")
 	}
 	u, err := url.Parse(c.Embeddings.Endpoint)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {

@@ -126,7 +126,7 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cancelAll && len(args) > 0 {
-			return usageErr(cmd, fmt.Errorf("cannot use --all with a batch ID argument"))
+			return usageErr(cmd, errors.New("cannot use --all with a batch ID argument"))
 		}
 
 		deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
@@ -162,7 +162,7 @@ Examples:
 			}
 			if count == 0 {
 				if len(listErrors) > 0 {
-					return fmt.Errorf("could not list batches to cancel")
+					return errors.New("could not list batches to cancel")
 				}
 				fmt.Println("No pending or in-progress batches to cancel.")
 			} else {
@@ -196,7 +196,7 @@ Examples:
 				fmt.Println("  (none)")
 			}
 			fmt.Println()
-			return usageErr(cmd, fmt.Errorf("provide a batch ID or use --all"))
+			return usageErr(cmd, errors.New("provide a batch ID or use --all"))
 		}
 
 		batchID := args[0]
@@ -415,7 +415,7 @@ Examples:
 			}
 
 			if len(accounts) == 0 {
-				return usageErr(cmd, fmt.Errorf("no account in deletion manifest - use --account flag"))
+				return usageErr(cmd, errors.New("no account in deletion manifest - use --account flag"))
 			} else if len(accounts) == 1 {
 				account = accounts[0]
 			} else {
@@ -690,7 +690,7 @@ func (p *CLIDeletionProgress) OnProgress(processed, succeeded, failed int) {
 	if failed > 0 {
 		status += fmt.Sprintf("  (%d failed)", failed)
 	}
-	status += fmt.Sprintf("  %s", eta)
+	status += "  " + eta
 	if p.tty {
 		fmt.Printf("\r\033[K%s", status)
 	} else {
@@ -699,10 +699,7 @@ func (p *CLIDeletionProgress) OnProgress(processed, succeeded, failed int) {
 }
 
 func (p *CLIDeletionProgress) progressBar(pct float64, width int) string {
-	filled := int(pct / 100 * float64(width))
-	if filled > width {
-		filled = width
-	}
+	filled := min(int(pct/100*float64(width)), width)
 	bar := make([]byte, width)
 	for i := range bar {
 		if i < filled {
@@ -727,19 +724,19 @@ func (p *CLIDeletionProgress) OnComplete(succeeded, failed int) {
 	}
 }
 
-// Helper functions
-func truncate(s string, max int) string {
-	if len(s) <= max {
+// Helper functions.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
-func limitManifests(manifests []*deletion.Manifest, max int) []*deletion.Manifest {
-	if len(manifests) <= max {
+func limitManifests(manifests []*deletion.Manifest, maxN int) []*deletion.Manifest {
+	if len(manifests) <= maxN {
 		return manifests
 	}
-	return manifests[:max]
+	return manifests[:maxN]
 }
 
 // errUserCanceled is returned when the user declines scope escalation.

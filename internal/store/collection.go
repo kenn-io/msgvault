@@ -21,6 +21,7 @@ type Collection struct {
 // IDs and a message-count aggregate.
 type CollectionWithSources struct {
 	Collection
+
 	SourceIDs    []int64
 	MessageCount int64
 }
@@ -90,7 +91,7 @@ func (s *Store) CreateCollection(
 ) (*Collection, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return nil, fmt.Errorf("collection name is required")
+		return nil, errors.New("collection name is required")
 	}
 	if name == DefaultCollectionName {
 		// Mirror the AddSourcesToCollection / RemoveSourcesFromCollection

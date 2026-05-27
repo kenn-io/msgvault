@@ -295,9 +295,9 @@ func parseHTMLLines(lines []string, images []htmlImageRef, absRoot, htmlDir stri
 	remainingStart := 0
 	remaining := lines
 	for i, ln := range lines {
-		if strings.HasPrefix(ln, "Participants:") {
-			rest := strings.TrimSpace(strings.TrimPrefix(ln, "Participants:"))
-			for _, part := range strings.Split(rest, ",") {
+		if after, ok := strings.CutPrefix(ln, "Participants:"); ok {
+			rest := strings.TrimSpace(after)
+			for part := range strings.SplitSeq(rest, ",") {
 				name := strings.TrimSpace(part)
 				if name == "" {
 					continue

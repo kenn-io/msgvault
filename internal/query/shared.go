@@ -69,7 +69,7 @@ func fetchLabelsForMessageList(ctx context.Context, db *sql.DB, rebind rebindFun
 		return nil
 	}
 
-	ids := make([]interface{}, len(messages))
+	ids := make([]any, len(messages))
 	placeholders := make([]string, len(messages))
 	idToIndex := make(map[int64]int)
 	for i, msg := range messages {
@@ -113,7 +113,7 @@ func fetchParticipantsForMessageList(ctx context.Context, db *sql.DB, rebind reb
 		return nil
 	}
 
-	ids := make([]interface{}, len(messages))
+	ids := make([]any, len(messages))
 	placeholders := make([]string, len(messages))
 	idToIndex := make(map[int64]int, len(messages))
 	for i, msg := range messages {
@@ -331,7 +331,7 @@ func getMessageRawShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tab
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
-func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, whereClause string, args ...interface{}) (*MessageDetail, error) {
+func getMessageByQueryShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,

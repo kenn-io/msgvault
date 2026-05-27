@@ -101,7 +101,7 @@ func ImportPst(ctx context.Context, st *store.Store, pstPath string, opts PstImp
 		opts.SourceType = "pst"
 	}
 	if opts.Identifier == "" {
-		return nil, fmt.Errorf("identifier is required")
+		return nil, errors.New("identifier is required")
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200

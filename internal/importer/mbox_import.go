@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +87,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 		opts.SourceType = "mbox"
 	}
 	if opts.Identifier == "" {
-		return nil, fmt.Errorf("identifier is required")
+		return nil, errors.New("identifier is required")
 	}
 	if opts.CheckpointInterval <= 0 {
 		opts.CheckpointInterval = 200
@@ -330,9 +332,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 					if existingWithRaw == nil {
 						existingWithRaw = make(map[string]int64)
 					}
-					for k, v := range one {
-						existingWithRaw[k] = v
-					}
+					maps.Copy(existingWithRaw, one)
 				}
 			}
 
@@ -431,7 +431,7 @@ func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts Mbox
 
 		msg, err := r.Next()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			nextOffset := r.NextFromOffset()

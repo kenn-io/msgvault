@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -163,7 +164,7 @@ func init() {
 func normalizeMCPHTTPAddr(addr string, allowInsecure bool) (string, error) {
 	trimmed := strings.TrimSpace(addr)
 	if trimmed == "" {
-		return "", fmt.Errorf("--http requires an address")
+		return "", errors.New("--http requires an address")
 	}
 
 	// Bare port: "8080" or ":8080".

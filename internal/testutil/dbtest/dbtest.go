@@ -10,12 +10,14 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/stretchr/testify/require"
 )
 
 // StrPtr returns a pointer to a string (useful for optional fields in test opts).
-func StrPtr(s string) *string { return &s }
+//
+//go:fix inline
+func StrPtr(s string) *string { return new(s) }
 
 // TestDB wraps a *sql.DB with auto-increment counters and builder helpers
 // for seeding test data.
@@ -31,25 +33,25 @@ type TestDB struct {
 // NewTestDB creates an in-memory SQLite database with the production schema loaded.
 // schemaPath is the path to schema.sql (e.g. "../store/schema.sql" from the caller's package).
 // The FTS table is dropped so tests start without it by default.
-func NewTestDB(t testing.TB, schemaPath string) *TestDB {
-	t.Helper()
+func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
+	tb.Helper()
 
 	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(t, err, "open db")
-	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(tb, err, "open db")
+	tb.Cleanup(func() { _ = db.Close() })
 
 	schema, err := os.ReadFile(schemaPath)
-	require.NoError(t, err, "read schema.sql")
+	require.NoError(tb, err, "read schema.sql")
 
 	_, err = db.Exec(string(schema))
-	require.NoError(t, err, "create schema")
+	require.NoError(tb, err, "create schema")
 
 	// Drop FTS table so non-FTS tests start clean.
 	_, _ = db.Exec(`DROP TABLE IF EXISTS messages_fts`)
 
 	return &TestDB{
 		DB:                db,
-		T:                 t,
+		T:                 tb,
 		nextParticipantID: 100,
 		nextMessageID:     100,
 	}
@@ -255,17 +257,17 @@ func (tdb *TestDB) AddParticipant(opts ParticipantOpts) int64 {
 	id := tdb.nextParticipantID
 	tdb.nextParticipantID++
 
-	var displayName interface{}
+	var displayName any
 	if opts.DisplayName != nil {
 		displayName = *opts.DisplayName
 	}
 
-	var email interface{}
+	var email any
 	if opts.Email != nil {
 		email = *opts.Email
 	}
 
-	var phone interface{}
+	var phone any
 	if opts.Phone != nil {
 		phone = *opts.Phone
 	}

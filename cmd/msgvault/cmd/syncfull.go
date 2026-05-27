@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -51,7 +52,7 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if syncLimit < 0 {
-			return usageErr(cmd, fmt.Errorf("--limit must be a non-negative number"))
+			return usageErr(cmd, errors.New("--limit must be a non-negative number"))
 		}
 		if syncAfter != "" {
 			if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
@@ -113,7 +114,7 @@ Examples:
 				return fmt.Errorf("list sources: %w", err)
 			}
 			if len(allSources) == 0 {
-				return fmt.Errorf("no accounts configured - run 'add-account' or 'add-imap' first")
+				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
@@ -155,7 +156,7 @@ Examples:
 				if len(syncErrors) > 0 {
 					return fmt.Errorf("%s", syncErrors[0])
 				}
-				return fmt.Errorf("no accounts are ready to sync")
+				return errors.New("no accounts are ready to sync")
 			}
 		}
 
@@ -303,7 +304,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 		switch imapCfg.EffectiveAuthMethod() {
 		case imaplib.AuthXOAuth2:
 			if cfg.Microsoft.ClientID == "" {
-				return nil, fmt.Errorf("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
+				return nil, errors.New("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
 			}
 			msMgr := microsoft.NewManager(
 				cfg.Microsoft.ClientID,
@@ -434,22 +435,24 @@ func buildSyncQuery() string {
 	parts := []string{}
 
 	if syncAfter != "" {
-		parts = append(parts, fmt.Sprintf("after:%s", syncAfter))
+		parts = append(parts, "after:"+syncAfter)
 	}
 	if syncBefore != "" {
-		parts = append(parts, fmt.Sprintf("before:%s", syncBefore))
+		parts = append(parts, "before:"+syncBefore)
 	}
 	if syncQuery != "" {
 		parts = append(parts, syncQuery)
 	}
 
 	result := ""
+	var resultSb447 strings.Builder
 	for i, p := range parts {
 		if i > 0 {
-			result += " "
+			resultSb447.WriteString(" ")
 		}
-		result += p
+		resultSb447.WriteString(p)
 	}
+	result += resultSb447.String()
 	return result
 }
 
@@ -512,7 +515,7 @@ func (p *CLIProgress) printProgress() {
 	// Format latest message date if available
 	dateStr := ""
 	if !p.latestDate.IsZero() {
-		dateStr = fmt.Sprintf(" | Latest: %s", p.latestDate.Format("Jan 2006"))
+		dateStr = " | Latest: " + p.latestDate.Format("Jan 2006")
 	}
 
 	fmt.Printf("\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
@@ -531,10 +534,8 @@ func (p *CLIProgress) OnError(err error) {
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
+	m := (d % time.Hour) / time.Minute
+	s := (d % time.Minute) / time.Second
 
 	if h > 0 {
 		return fmt.Sprintf("%dh %dm", h, m)

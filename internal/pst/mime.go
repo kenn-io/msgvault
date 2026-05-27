@@ -313,7 +313,7 @@ func formatDisplayList(display string) string {
 // writeQP writes s as quoted-printable text to dst.
 // Lines longer than 76 characters are soft-wrapped with "=\r\n".
 // Trailing whitespace before line breaks is encoded per RFC 2045 §6.7.
-func writeQP(dst interface{ Write([]byte) (int, error) }, s string) {
+func writeQP(dst interface{ Write(p []byte) (int, error) }, s string) {
 	const maxLine = 76
 	var line strings.Builder
 

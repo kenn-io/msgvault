@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
+	_ "github.com/mattn/go-sqlite3"     // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
@@ -70,7 +71,7 @@ Use --full-rebuild to recreate all cache files from scratch.`,
 		// postgres:// DSN to the SQLite driver inside buildCache
 		// fails immediately with a confusing driver error.
 		if store.IsPostgresURL(dbPath) {
-			return fmt.Errorf("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+			return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
 		}
 
 		// Check database exists
@@ -163,7 +164,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
 	if err := sqliteDB.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
 		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("get max message id: %w; close sqlite: %v", err, closeErr)
+			return nil, fmt.Errorf("get max message id: %w; close sqlite: %w", err, closeErr)
 		}
 		return nil, fmt.Errorf("get max message id: %w", err)
 	}
@@ -173,7 +174,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		WHERE type = 'table' AND name = 'sync_runs'
 	`).Scan(&hasSyncRunsTable); err != nil {
 		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("check sync_runs table: %w; close sqlite: %v", err, closeErr)
+			return nil, fmt.Errorf("check sync_runs table: %w; close sqlite: %w", err, closeErr)
 		}
 		return nil, fmt.Errorf("check sync_runs table: %w", err)
 	}
@@ -183,7 +184,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			WHERE status = 'completed' AND completed_at IS NOT NULL
 		`).Scan(&lastCompletedSyncRunID); err != nil {
 			if closeErr := sqliteDB.Close(); closeErr != nil {
-				return nil, fmt.Errorf("get last completed sync run id: %w; close sqlite: %v", err, closeErr)
+				return nil, fmt.Errorf("get last completed sync run id: %w; close sqlite: %w", err, closeErr)
 			}
 			return nil, fmt.Errorf("get last completed sync run id: %w", err)
 		}
@@ -494,7 +495,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := os.WriteFile(stateFile, stateData, 0644); err != nil {
+	if err := os.WriteFile(stateFile, stateData, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save sync state: %v\n", err)
 	}
 
@@ -774,7 +775,7 @@ func exportToCSV(db *sql.DB, query string, dest string) error {
 	}
 
 	values := make([]sql.NullString, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range values {
 		ptrs[i] = &values[i]
 	}

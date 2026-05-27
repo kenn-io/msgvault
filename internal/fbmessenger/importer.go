@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,7 +95,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	summary := &ImportSummary{}
 	logger := opts.Logger
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 	}
 	if opts.CheckpointEvery <= 0 {
 		opts.CheckpointEvery = 200
@@ -112,7 +113,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 
 	// Validate --me.
 	if opts.Me == "" {
-		return nil, fmt.Errorf("fbmessenger: --me is required")
+		return nil, errors.New("fbmessenger: --me is required")
 	}
 	if !strings.HasSuffix(opts.Me, "@"+Domain) {
 		return nil, fmt.Errorf("fbmessenger: --me must be a <slug>@%s address, got %q", Domain, opts.Me)
@@ -827,7 +828,7 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 	if _, err := io.Copy(h, f); err != nil {
 		return "", "", 0
 	}
-	contentHash := fmt.Sprintf("%x", h.Sum(nil))
+	contentHash := hex.EncodeToString(h.Sum(nil))
 	rel := filepath.Join(contentHash[:2], contentHash)
 	absStorage := filepath.Join(attachmentsDir, rel)
 

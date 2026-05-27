@@ -139,10 +139,7 @@ func (r *RateLimiter) reserve(op Operation) time.Duration {
 
 	// Calculate wait time based on token deficit
 	deficit := cost - r.tokens
-	waitTime := time.Duration(deficit/r.refillRate*1000) * time.Millisecond
-	if waitTime < minWait {
-		waitTime = minWait
-	}
+	waitTime := max(time.Duration(deficit/r.refillRate*1000)*time.Millisecond, minWait)
 	return waitTime
 }
 

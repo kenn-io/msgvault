@@ -93,6 +93,7 @@ type MessageSummary struct {
 // MessageDetail represents a full message response.
 type MessageDetail struct {
 	MessageSummary
+
 	Body        string           `json:"body"`
 	BodyHTML    string           `json:"body_html,omitempty"`
 	Attachments []AttachmentInfo `json:"attachments"`
@@ -145,6 +146,7 @@ type generationSummary struct {
 // explain=1 was requested.
 type hybridSearchItem struct {
 	MessageSummary
+
 	Score *scoreBreakdown `json:"score,omitempty"`
 }
 
@@ -161,10 +163,13 @@ type scoreBreakdown struct {
 }
 
 // writeJSON writes a JSON response.
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	// Headers already sent; if Encode fails mid-stream (broken pipe,
+	// non-serializable value) there's no meaningful recovery beyond
+	// truncating the response body.
+	_ = json.NewEncoder(w).Encode(data) //nolint:errchkjson // any is the public API; mid-response error is unrecoverable
 }
 
 // writeError writes an error response.
@@ -328,7 +333,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
@@ -673,7 +678,7 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		accounts = []AccountInfo{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"accounts": accounts,
 	})
 }
@@ -731,13 +736,14 @@ func (s *Server) handleSchedulerStatus(w http.ResponseWriter, r *http.Request) {
 // tokenFile represents the on-disk token format (matches oauth package).
 type tokenFile struct {
 	oauth2.Token
+
 	Scopes   []string `json:"scopes,omitempty"`
 	TenantID string   `json:"tenant_id,omitempty"`
 	ClientID string   `json:"client_id,omitempty"`
 }
 
 // handleUploadToken accepts a token from a remote client and saves it.
-// POST /api/v1/auth/token/{email}
+// POST /api/v1/auth/token/{email}.
 func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 	email := chi.URLParam(r, "email")
 	if email == "" {
@@ -860,7 +866,7 @@ type AddAccountRequest struct {
 }
 
 // handleAddAccount adds an account to the config file.
-// POST /api/v1/accounts
+// POST /api/v1/accounts.
 func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	var req AddAccountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -948,7 +954,7 @@ type queryRequest struct {
 }
 
 // handleQuery executes a raw SQL query against DuckDB views.
-// POST /api/v1/query
+// POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	querier, ok := s.engine.(query.SQLQuerier)
 	if !ok {
@@ -1207,7 +1213,7 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 
 	// EmptyValueTargets — comma-separated view type names
 	if v := r.URL.Query().Get("empty_targets"); v != "" {
-		for _, name := range strings.Split(v, ",") {
+		for name := range strings.SplitSeq(v, ",") {
 			if vt, ok := parseViewType(strings.TrimSpace(name)); ok {
 				filter.SetEmptyTarget(vt)
 			}
@@ -1338,7 +1344,7 @@ func formatDeletedAt(deletedAt *time.Time) string {
 }
 
 // handleAggregates returns aggregate data for a view type.
-// GET /api/v1/aggregates?view_type=senders&sort=count&direction=desc&limit=100
+// GET /api/v1/aggregates?view_type=senders&sort=count&direction=desc&limit=100.
 func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1377,7 +1383,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSubAggregates returns sub-aggregate data after drill-down.
-// GET /api/v1/aggregates/sub?view_type=labels&sender=foo@example.com
+// GET /api/v1/aggregates/sub?view_type=labels&sender=foo@example.com.
 func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1418,7 +1424,7 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFilteredMessages returns a filtered list of messages.
-// GET /api/v1/messages/filter?sender=foo@example.com&offset=0&limit=500
+// GET /api/v1/messages/filter?sender=foo@example.com&offset=0&limit=500.
 func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1457,7 +1463,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"count":    len(summaries),
 		"has_more": hasMore,
 		"offset":   filter.Pagination.Offset,
@@ -1467,7 +1473,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleTotalStats returns detailed stats with optional filters.
-// GET /api/v1/stats/total?source_id=1&attachments_only=true
+// GET /api/v1/stats/total?source_id=1&attachments_only=true.
 func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1507,7 +1513,7 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFastSearch performs fast metadata search (subject, sender, recipient).
-// GET /api/v1/search/fast?q=invoice&offset=0&limit=100
+// GET /api/v1/search/fast?q=invoice&offset=0&limit=100.
 func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1582,7 +1588,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeepSearch performs full-text body search via FTS5.
-// GET /api/v1/search/deep?q=invoice&offset=0&limit=100&source_id=1&hide_deleted=true
+// GET /api/v1/search/deep?q=invoice&offset=0&limit=100&source_id=1&hide_deleted=true.
 func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if s.engine == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
@@ -1644,7 +1650,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"query":    queryStr,
 		"messages": summaries,
 		"count":    len(summaries),

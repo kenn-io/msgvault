@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -339,7 +340,8 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 	// Bind the listener before constructing the auth URL so that the redirect
 	// URI embedded in the authorization request matches exactly. Failing fast
 	// here produces a clear error instead of a silent hang.
-	ln, err := net.Listen("tcp", "localhost:"+redirectPort)
+	lc := &net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", "localhost:"+redirectPort)
 	if err != nil {
 		return nil, "", fmt.Errorf(
 			"port %s is already in use — ensure no other process is using it and retry: %w",
@@ -381,7 +383,7 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.URL.Query().Get("state") != state {
 			select {
-			case errChan <- fmt.Errorf("state mismatch: possible CSRF attack"):
+			case errChan <- errors.New("state mismatch: possible CSRF attack"):
 			default:
 			}
 			_, _ = fmt.Fprintf(w, "Error: state mismatch")
@@ -393,13 +395,16 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 			case errChan <- fmt.Errorf("microsoft OAuth error: %s: %s", errMsg, desc):
 			default:
 			}
-			_, _ = fmt.Fprintf(w, "Error: %s", desc)
+			// Set text/plain so any HTML-looking characters in desc are
+			// rendered literally, not interpreted by the browser.
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = fmt.Fprintf(w, "Error: %s", desc) //nolint:gosec // text/plain prevents HTML injection
 			return
 		}
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			select {
-			case errChan <- fmt.Errorf("no code in callback"):
+			case errChan <- errors.New("no code in callback"):
 			default:
 			}
 			_, _ = fmt.Fprintf(w, "Error: no authorization code received")
@@ -412,7 +417,7 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 		_, _ = fmt.Fprintf(w, "Authorization successful! You can close this window.")
 	})
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := server.Serve(ln); err != http.ErrServerClosed {
 			select {
@@ -439,7 +444,7 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 
 	fmt.Printf("Opening browser for Microsoft authorization...\n")
 	fmt.Printf("If browser doesn't open, visit:\n%s\n\n", redactAuthURL(authURL))
-	if err := openBrowser(authURL); err != nil {
+	if err := openBrowser(ctx, authURL); err != nil {
 		m.logger.Warn("failed to open browser", "error", err)
 	}
 
@@ -462,7 +467,7 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 func (m *Manager) resolveTokenEmail(ctx context.Context, email string, token *oauth2.Token, nonce string) (string, *idTokenClaims, error) {
 	rawIDToken, _ := token.Extra("id_token").(string)
 	if rawIDToken == "" {
-		return "", nil, fmt.Errorf("no id_token in authorization response")
+		return "", nil, errors.New("no id_token in authorization response")
 	}
 
 	var claims *idTokenClaims
@@ -502,7 +507,7 @@ func (m *Manager) resolveTokenEmail(ctx context.Context, email string, token *oa
 		return email, claims, nil
 	}
 
-	return "", claims, fmt.Errorf("no email or preferred_username claim in ID token")
+	return "", claims, errors.New("no email or preferred_username claim in ID token")
 }
 
 // verifyIDToken validates the ID token using Microsoft's OIDC discovery and
@@ -533,7 +538,7 @@ func (m *Manager) verifyIDToken(ctx context.Context, rawIDToken, nonce string) (
 
 	// Verify nonce to prevent replay attacks.
 	if idToken.Nonce != nonce {
-		return nil, fmt.Errorf("ID token nonce mismatch (possible replay attack)")
+		return nil, errors.New("ID token nonce mismatch (possible replay attack)")
 	}
 
 	var raw struct {
@@ -570,7 +575,7 @@ func peekTIDFromJWT(rawToken string) (string, error) {
 		return "", fmt.Errorf("parse JWT claims: %w", err)
 	}
 	if claims.TenantID == "" {
-		return "", fmt.Errorf("no tid claim in JWT")
+		return "", errors.New("no tid claim in JWT")
 	}
 	return claims.TenantID, nil
 }
@@ -579,6 +584,7 @@ func peekTIDFromJWT(rawToken string) (string, error) {
 
 type tokenFile struct {
 	oauth2.Token
+
 	Scopes   []string `json:"scopes,omitempty"`
 	TenantID string   `json:"tenant_id,omitempty"`
 }
@@ -747,7 +753,7 @@ func redactAuthURL(rawURL string) string {
 	return u.String()
 }
 
-func openBrowser(rawURL string) error {
+func openBrowser(ctx context.Context, rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -757,14 +763,15 @@ func openBrowser(rawURL string) error {
 		return fmt.Errorf("refused to open URL with scheme %q (only https is allowed)", parsed.Scheme)
 	}
 
+	// rawURL is constrained to https above; pass it directly to the OS opener.
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.CommandContext(ctx, "open", rawURL) //nolint:gosec // rawURL is validated as https
 	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.CommandContext(ctx, "xdg-open", rawURL) //nolint:gosec // rawURL is validated as https
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", rawURL) //nolint:gosec // rawURL is validated as https
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}

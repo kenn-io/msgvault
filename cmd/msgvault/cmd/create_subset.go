@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func runCreateSubset(cmd *cobra.Command, _ []string) error {
 	}
 
 	if subsetRows <= 0 {
-		return usageErr(cmd, fmt.Errorf("--rows must be a positive integer"))
+		return usageErr(cmd, errors.New("--rows must be a positive integer"))
 	}
 
 	srcDBPath := cfg.DatabaseDSN()
@@ -57,8 +58,7 @@ func runCreateSubset(cmd *cobra.Command, _ []string) error {
 	// semantics; refuse early on a PG DSN to mirror the equivalent
 	// guard in backupDatabase (cmd/msgvault/cmd/deduplicate.go).
 	if store.IsPostgresURL(srcDBPath) {
-		return fmt.Errorf(
-			"create-subset is SQLite-only (uses ATTACH DATABASE); not supported with PostgreSQL stores")
+		return errors.New("create-subset is SQLite-only (uses ATTACH DATABASE); not supported with PostgreSQL stores")
 	}
 	if _, err := os.Stat(srcDBPath); os.IsNotExist(err) {
 		return fmt.Errorf(

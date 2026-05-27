@@ -119,11 +119,11 @@ func ParseFile(path string) ([]Contact, error) {
 // extractValue extracts the value part from a vCard line, handling both
 // "KEY:value" and "KEY;params:value" formats.
 func extractValue(line string) string {
-	idx := strings.Index(line, ":")
-	if idx < 0 {
+	_, after, ok := strings.Cut(line, ":")
+	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(line[idx+1:])
+	return strings.TrimSpace(after)
 }
 
 func normalizedPropertyKey(line string) string {
@@ -153,7 +153,7 @@ func decodeQuotedPrintable(s string) string {
 			hi := unhex(s[i+1])
 			lo := unhex(s[i+2])
 			if hi >= 0 && lo >= 0 {
-				b.WriteByte(byte(hi<<4 | lo))
+				b.WriteByte(byte(hi<<4 | lo)) //nolint:gosec // hi and lo are 4-bit nibbles
 				i += 2
 				continue
 			}

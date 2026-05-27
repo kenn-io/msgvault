@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -91,7 +92,6 @@ type RemoteConfig struct {
 	AllowInsecure bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
 }
 
-// Config represents the msgvault configuration.
 // IdentityConfig holds the user's curated identity addresses.
 type IdentityConfig struct {
 	Addresses []string `toml:"addresses"`
@@ -174,7 +174,7 @@ type OAuthConfig struct {
 func (o *OAuthConfig) ClientSecretsFor(name string) (string, error) {
 	if name == "" {
 		if o.ClientSecrets == "" {
-			return "", fmt.Errorf("OAuth client secrets not configured.\n\n" +
+			return "", errors.New("OAuth client secrets not configured.\n\n" +
 				"Set [oauth] client_secrets in config.toml, or use --oauth-app <name>")
 		}
 		return o.ClientSecrets, nil
@@ -620,11 +620,11 @@ func MkTempDir(pattern string, preferredDirs ...string) (string, error) {
 	// Fallback: use ~/.msgvault/tmp/
 	fallbackBase := filepath.Join(DefaultHome(), "tmp")
 	if err := fileutil.SecureMkdirAll(fallbackBase, 0700); err != nil {
-		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %v)", sysErr, err)
+		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %w)", sysErr, err)
 	}
 	dir, err := os.MkdirTemp(fallbackBase, pattern)
 	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %v)", sysErr, err)
+		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %w)", sysErr, err)
 	}
 	secureTempDir(dir)
 	return dir, nil

@@ -455,6 +455,8 @@ func (c *Client) importCallEntry(
 		fmt.Fprintf(&body, "Missed call from %s", record.Name)
 	case fileTypeVoicemail:
 		fmt.Fprintf(&body, "Voicemail from %s", record.Name)
+	default:
+		// fileTypeText / fileTypeGroup are not call records; leave body empty.
 	}
 	if record.Duration != "" {
 		fmt.Fprintf(&body, " (%s)", formatDuration(record.Duration))
@@ -703,7 +705,7 @@ func (c *Client) resolveParticipant(
 	}
 	normalized, err := textimport.NormalizePhone(phone)
 	if err != nil {
-		return 0, nil // skip non-normalizable
+		return 0, nil //nolint:nilerr // non-normalizable phones are skipped silently
 	}
 	if id, ok := cache[normalized]; ok {
 		return id, nil
@@ -953,8 +955,8 @@ func formatDuration(iso string) string {
 		parts = append(parts, iso[:i]+"m")
 		iso = iso[i+1:]
 	}
-	if i := strings.Index(iso, "S"); i >= 0 {
-		parts = append(parts, iso[:i]+"s")
+	if before, _, ok := strings.Cut(iso, "S"); ok {
+		parts = append(parts, before+"s")
 	}
 
 	if len(parts) == 0 {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,10 +25,10 @@ Use --local to force local database.`,
 
 		if IsRemoteMode() {
 			if statsAccount != "" {
-				return usageErr(cmd, fmt.Errorf("--account is not supported in remote mode"))
+				return usageErr(cmd, errors.New("--account is not supported in remote mode"))
 			}
 			if statsCollection != "" {
-				return usageErr(cmd, fmt.Errorf("--collection is not supported in remote mode"))
+				return usageErr(cmd, errors.New("--collection is not supported in remote mode"))
 			}
 		}
 

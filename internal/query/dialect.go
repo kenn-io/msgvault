@@ -10,6 +10,7 @@
 // The store package has a richer Dialect interface for its own needs;
 // this package maintains a minimal parallel abstraction to avoid a
 // cross-package dependency.
+
 package query
 
 import (

@@ -280,7 +280,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			// Also check X-API-Key header
-			authHeader = r.Header.Get("X-API-Key")
+			authHeader = r.Header.Get("X-Api-Key")
 		}
 
 		// Strip "Bearer " prefix if present

@@ -56,7 +56,7 @@ func (f *Fixture) CreateMessage(sourceMessageID string) int64 {
 func (f *Fixture) CreateMessages(count int) []int64 {
 	f.T.Helper()
 	ids := make([]int64, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ids = append(ids, f.CreateMessage(fmt.Sprintf("msg-%d", i)))
 	}
 	return ids
@@ -106,7 +106,7 @@ type MessageFields struct {
 func (f *Fixture) GetMessageFields(msgID int64) MessageFields {
 	f.T.Helper()
 	var mf MessageFields
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT subject, snippet, has_attachments FROM messages WHERE id = ?"), msgID,
 	).Scan(&mf.Subject, &mf.Snippet, &mf.HasAttachments)
 	require.NoError(f.T, err, "GetMessageFields")
@@ -117,7 +117,7 @@ func (f *Fixture) GetMessageFields(msgID int64) MessageFields {
 func (f *Fixture) GetMessageBody(msgID int64) (sql.NullString, sql.NullString) {
 	f.T.Helper()
 	var bodyText, bodyHTML sql.NullString
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), msgID,
 	).Scan(&bodyText, &bodyHTML)
 	require.NoError(f.T, err, "GetMessageBody")

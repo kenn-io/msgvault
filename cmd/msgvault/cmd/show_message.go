@@ -202,9 +202,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 	}
 
 	// Build attachment array
-	attachments := make([]map[string]interface{}, len(msg.Attachments))
+	attachments := make([]map[string]any, len(msg.Attachments))
 	for i, att := range msg.Attachments {
-		attachments[i] = map[string]interface{}{
+		attachments[i] = map[string]any{
 			"id":           att.ID,
 			"filename":     att.Filename,
 			"mime_type":    att.MimeType,
@@ -213,7 +213,7 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		}
 	}
 
-	output := map[string]interface{}{
+	output := map[string]any{
 		"id":                     msg.ID,
 		"source_message_id":      msg.SourceMessageID,
 		"conversation_id":        msg.ConversationID,
@@ -311,16 +311,16 @@ func outputRemoteMessageText(msg *store.APIMessage) error {
 // outputRemoteMessageJSON outputs a remote message as JSON.
 func outputRemoteMessageJSON(msg *store.APIMessage) error {
 	// Build attachment array
-	attachments := make([]map[string]interface{}, len(msg.Attachments))
+	attachments := make([]map[string]any, len(msg.Attachments))
 	for i, att := range msg.Attachments {
-		attachments[i] = map[string]interface{}{
+		attachments[i] = map[string]any{
 			"filename":  att.Filename,
 			"mime_type": att.MimeType,
 			"size":      att.Size,
 		}
 	}
 
-	output := map[string]interface{}{
+	output := map[string]any{
 		"id":              msg.ID,
 		"subject":         msg.Subject,
 		"snippet":         msg.Snippet,

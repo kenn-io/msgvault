@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/vector"
@@ -50,7 +50,8 @@ func (q *Queue) Claim(ctx context.Context, gen vector.GenerationID, batch int) (
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.QueryContext(ctx, `
+	ids, err := func() ([]int64, error) {
+		rows, err := tx.QueryContext(ctx, `
         UPDATE pending_embeddings
            SET claimed_at = ?, claim_token = ?
          WHERE (generation_id, message_id) IN (
@@ -61,25 +62,26 @@ func (q *Queue) Claim(ctx context.Context, gen vector.GenerationID, batch int) (
                 ORDER BY message_id
                 LIMIT ?)
         RETURNING message_id`,
-		now, token, int64(gen), batch)
-	if err != nil {
-		return nil, "", fmt.Errorf("claim query: %w", err)
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, "", fmt.Errorf("scan claimed id: %w", err)
+			now, token, int64(gen), batch)
+		if err != nil {
+			return nil, fmt.Errorf("claim query: %w", err)
 		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, "", fmt.Errorf("claim rows: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", fmt.Errorf("close claim rows: %w", err)
+		defer func() { _ = rows.Close() }()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan claimed id: %w", err)
+			}
+			out = append(out, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("claim rows: %w", err)
+		}
+		return out, nil
+	}()
+	if err != nil {
+		return nil, "", err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, "", fmt.Errorf("commit claim: %w", err)
@@ -92,7 +94,7 @@ func (q *Queue) Claim(ctx context.Context, gen vector.GenerationID, batch int) (
 	// Sort explicitly so callers can rely on ascending ids (matters
 	// for deterministic test assertions and for pairing ids with
 	// fetched message bodies by position).
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids, token, nil
 }
 

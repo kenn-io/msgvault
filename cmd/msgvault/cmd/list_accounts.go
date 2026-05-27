@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -147,9 +148,9 @@ func outputAccountsTable(stats []accountStats) {
 }
 
 func outputAccountsJSON(stats []accountStats) error {
-	output := make([]map[string]interface{}, len(stats))
+	output := make([]map[string]any, len(stats))
 	for i, s := range stats {
-		entry := map[string]interface{}{
+		entry := map[string]any{
 			"id":            s.ID,
 			"email":         s.Email,
 			"type":          s.Type,
@@ -172,17 +173,17 @@ func outputAccountsJSON(stats []accountStats) error {
 // formatCount formats a number with thousand separators.
 func formatCount(n int64) string {
 	if n < 1000 {
-		return fmt.Sprintf("%d", n)
+		return strconv.FormatInt(n, 10)
 	}
 
 	// Format with commas
-	s := fmt.Sprintf("%d", n)
+	s := strconv.FormatInt(n, 10)
 	result := make([]byte, 0, len(s)+(len(s)-1)/3)
-	for i, c := range s {
+	for i := range len(s) {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			result = append(result, ',')
 		}
-		result = append(result, byte(c))
+		result = append(result, s[i]) // s is ASCII decimal digits
 	}
 	return string(result)
 }

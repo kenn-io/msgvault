@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -15,8 +16,8 @@ func Parse(r io.Reader) (*Document, error) {
 	dec := xml.NewDecoder(r)
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
-			return nil, fmt.Errorf("empty SMS Backup & Restore XML")
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("empty SMS Backup & Restore XML")
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read XML root: %w", err)
@@ -40,8 +41,8 @@ func ParseEach(r io.Reader, handle func(Record) error) error {
 	dec := xml.NewDecoder(r)
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
-			return fmt.Errorf("empty SMS Backup & Restore XML")
+		if errors.Is(err, io.EOF) {
+			return errors.New("empty SMS Backup & Restore XML")
 		}
 		if err != nil {
 			return fmt.Errorf("read XML root: %w", err)
@@ -64,7 +65,7 @@ func ParseEach(r io.Reader, handle func(Record) error) error {
 func parseEachMessage(dec *xml.Decoder, root xml.StartElement, handle func(Record) error) error {
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -98,7 +99,7 @@ func parseEachMessage(dec *xml.Decoder, root xml.StartElement, handle func(Recor
 func parseEachCall(dec *xml.Decoder, root xml.StartElement, handle func(Record) error) error {
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -125,7 +126,7 @@ func parseMessages(dec *xml.Decoder, root xml.StartElement) (*Document, error) {
 	doc.BackupDate = unixMillis(attr(root, "backup_date"))
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return doc, nil
 		}
 		if err != nil {
@@ -234,7 +235,7 @@ func parseCalls(dec *xml.Decoder, root xml.StartElement) (*Document, error) {
 	doc.BackupDate = unixMillis(attr(root, "backup_date"))
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return doc, nil
 		}
 		if err != nil {

@@ -283,7 +283,7 @@ func (d *PostgreSQLDialect) IsReturningError(err error) bool { return false }
 // IsBusyError reports whether err indicates the database is held by another
 // connection. PostgreSQL surfaces this as SQLSTATE 55P03 (lock_not_available)
 // for statement_timeout-triggered lock waits and 40P01 (deadlock_detected)
-// for deadlocks; both mean "retry later."
+// for deadlocks; both mean "retry later.".
 func (d *PostgreSQLDialect) IsBusyError(err error) bool {
 	return isPgError(err, "55P03") || isPgError(err, "40P01")
 }
