@@ -229,7 +229,7 @@ func setupRemoteServer(reader *bufio.Reader, oauthSecretsPath string) (string, s
 func generateAPIKey() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("read random bytes for API key: %w", err)
 	}
 	return hex.EncodeToString(bytes), nil
 }

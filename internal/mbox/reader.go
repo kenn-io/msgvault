@@ -209,9 +209,9 @@ func (r *Reader) readLineBytes() ([]byte, error) {
 			return out, io.EOF
 		}
 		if len(out) > 0 {
-			return out, err
+			return out, fmt.Errorf("read mbox line: %w", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("read mbox line: %w", err)
 	}
 }
 
@@ -265,7 +265,7 @@ func Validate(r io.Reader, maxBytes int64) error {
 			if err == io.EOF {
 				return errors.New("no \"From \" separators found (not an mbox file?)")
 			}
-			return err
+			return fmt.Errorf("read mbox line: %w", err)
 		}
 	}
 }

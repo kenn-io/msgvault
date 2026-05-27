@@ -825,7 +825,10 @@ func (h *cancelOnLogMessageHandler) Handle(ctx context.Context, r slog.Record) e
 	if r.Message == h.msg {
 		h.cancel()
 	}
-	return h.next.Handle(ctx, r)
+	if err := h.next.Handle(ctx, r); err != nil {
+		return fmt.Errorf("delegate slog handler: %w", err)
+	}
+	return nil
 }
 
 func (h *cancelOnLogMessageHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

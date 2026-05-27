@@ -140,7 +140,10 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 	s := newMCPServer(opts)
 	stdio := server.NewStdioServer(s)
-	return stdio.Listen(ctx, os.Stdin, os.Stdout)
+	if err := stdio.Listen(ctx, os.Stdin, os.Stdout); err != nil {
+		return fmt.Errorf("serve MCP over stdio: %w", err)
+	}
+	return nil
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over

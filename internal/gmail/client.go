@@ -262,10 +262,18 @@ type rawMessageResponse struct {
 func decodeBase64URL(s string) ([]byte, error) {
 	if strings.ContainsRune(s, '=') {
 		// Input has padding - use URLEncoding which validates padding correctness
-		return base64.URLEncoding.DecodeString(s)
+		decoded, err := base64.URLEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("decode padded base64url: %w", err)
+		}
+		return decoded, nil
 	}
 	// No padding - use RawURLEncoding for unpadded base64url
-	return base64.RawURLEncoding.DecodeString(s)
+	decoded, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("decode unpadded base64url: %w", err)
+	}
+	return decoded, nil
 }
 
 type historyMessageChange struct {
@@ -462,7 +470,7 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 	}
 
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch messages concurrently: %w", err)
 	}
 
 	return results, nil

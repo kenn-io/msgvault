@@ -308,10 +308,10 @@ func (c *Client) enumerateMailbox(
 				nil,
 			).Wait()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("UID SEARCH after reconnect in mailbox %q: %w", mailbox, err)
 			}
 		} else {
-			return nil, err
+			return nil, fmt.Errorf("UID SEARCH in mailbox %q: %w", mailbox, err)
 		}
 	}
 
@@ -939,5 +939,8 @@ func (c *Client) Close() error {
 	conn := c.conn
 	c.conn = nil
 	c.selectedMailbox = ""
-	return conn.Logout().Wait()
+	if err := conn.Logout().Wait(); err != nil {
+		return fmt.Errorf("IMAP logout: %w", err)
+	}
+	return nil
 }

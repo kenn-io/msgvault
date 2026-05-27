@@ -460,7 +460,10 @@ func (m *Manager) browserFlow(ctx context.Context, email string, scopes []string
 		token, err := cfg.Exchange(ctx, code,
 			oauth2.SetAuthURLParam("code_verifier", verifier),
 		)
-		return token, nonce, err
+		if err != nil {
+			return nil, "", fmt.Errorf("exchange authorization code: %w", err)
+		}
+		return token, nonce, nil
 	case err := <-errChan:
 		return nil, "", err
 	case <-ctx.Done():
@@ -782,5 +785,8 @@ func openBrowser(ctx context.Context, rawURL string) error {
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start browser command: %w", err)
+	}
+	return nil
 }

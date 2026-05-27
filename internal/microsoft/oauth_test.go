@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -177,7 +178,7 @@ func testVerifyFn(_ context.Context, rawIDToken string) (*idTokenClaims, error) 
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode JWT payload: %w", err)
 	}
 	var raw struct {
 		Email             string `json:"email"`

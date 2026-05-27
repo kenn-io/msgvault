@@ -280,7 +280,7 @@ func followLogFile(
 			}
 		}
 		if err != nil && err != io.EOF {
-			return err
+			return fmt.Errorf("read log line: %w", err)
 		}
 		select {
 		case <-ctx.Done():

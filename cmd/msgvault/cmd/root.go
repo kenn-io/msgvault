@@ -275,7 +275,10 @@ func ExecuteContext(ctx context.Context) error {
 			logger.Info("msgvault exit", "outcome", "ok")
 		}
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("execute command: %w", err)
+	}
+	return nil
 }
 
 // usageErr re-enables the usage block for cmd and returns err. Use inside

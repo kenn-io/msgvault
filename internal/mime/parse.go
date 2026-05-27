@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"html"
 	"regexp"
 	"strings"
@@ -53,7 +54,7 @@ type Attachment struct {
 func Parse(raw []byte) (*Message, error) {
 	env, err := enmime.ReadEnvelope(bytes.NewReader(raw))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read MIME envelope: %w", err)
 	}
 
 	msg := &Message{

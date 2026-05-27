@@ -294,7 +294,11 @@ func (m *Manager) browserFlow(
 	// Wait for callback
 	select {
 	case code := <-codeChan:
-		return m.config.Exchange(ctx, code)
+		token, err := m.config.Exchange(ctx, code)
+		if err != nil {
+			return nil, fmt.Errorf("exchange authorization code: %w", err)
+		}
+		return token, nil
 	case err := <-errChan:
 		return nil, err
 	case <-ctx.Done():
@@ -600,7 +604,10 @@ func openBrowser(ctx context.Context, rawURL string) error {
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start browser command: %w", err)
+	}
+	return nil
 }
 
 // NewManagerWithScopes creates an OAuth manager with custom scopes.
@@ -648,7 +655,7 @@ func parseClientSecrets(data []byte, scopes []string) (*oauth2.Config, error) {
 				return nil, errors.New("OAuth client is missing redirect_uris (TV/device clients are not supported - Gmail doesn't work with device flow). Please create a 'Desktop application' or 'Web application' OAuth client in Google Cloud Console")
 			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("parse OAuth client secrets: %w", err)
 	}
 	return config, nil
 }

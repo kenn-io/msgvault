@@ -113,14 +113,14 @@ func discoverZip(path string) ([]BackupFile, error) {
 			Opener: func() (io.ReadCloser, error) {
 				zr, err := zip.OpenReader(path)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("open zip archive: %w", err)
 				}
 				for _, entry := range zr.File {
 					if entry.Name == name {
 						rc, err := entry.Open()
 						if err != nil {
 							_ = zr.Close()
-							return nil, err
+							return nil, fmt.Errorf("open zip entry %s: %w", name, err)
 						}
 						return zipEntryReadCloser{ReadCloser: rc, closeZip: zr.Close}, nil
 					}
