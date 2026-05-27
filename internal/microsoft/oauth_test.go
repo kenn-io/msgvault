@@ -176,7 +176,7 @@ func makeIDToken(t *testing.T, claims map[string]any) string {
 func testVerifyFn(_ context.Context, rawIDToken string) (*idTokenClaims, error) {
 	parts := splitJWT(rawIDToken)
 	if len(parts) != 3 {
-		return nil, nil
+		return nil, errors.New("invalid test JWT: expected 3 parts")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {

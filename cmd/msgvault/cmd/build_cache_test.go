@@ -758,18 +758,26 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 		GROUP BY p.email_address
 		ORDER BY count DESC
 	`
-	rows, err := db.Query(senderQuery)
-	require.NoError(err, "sender query")
-
-	senderCounts := make(map[string]int64)
-	for rows.Next() {
-		var email string
-		var count int64
-		_ = rows.Scan(&email, &count)
-		senderCounts[email] = count
+	// queryCounts runs a key/count aggregate and returns the map, closing the
+	// cursor before it returns. A deferred close in this scoped helper keeps
+	// sqlclosecheck satisfied without leaking rows across the sequential
+	// queries below (which reuse the same connection).
+	queryCounts := func(label, query string) map[string]int64 {
+		rows, err := db.Query(query)
+		require.NoError(err, label+" query")
+		defer func() { _ = rows.Close() }()
+		counts := make(map[string]int64)
+		for rows.Next() {
+			var key string
+			var count int64
+			_ = rows.Scan(&key, &count)
+			counts[key] = count
+		}
+		require.NoError(rows.Err(), label+" rows")
+		return counts
 	}
-	require.NoError(rows.Err(), "sender rows")
-	_ = rows.Close()
+
+	senderCounts := queryCounts("sender", senderQuery)
 
 	assert.Equal(int64(3), senderCounts["alice@example.com"], "alice sent count")
 	assert.Equal(int64(2), senderCounts["bob@company.org"], "bob sent count")
@@ -783,18 +791,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 		GROUP BY lbl.name
 		ORDER BY count DESC
 	`
-	rows, err = db.Query(labelQuery)
-	require.NoError(err, "label query")
-
-	labelCounts := make(map[string]int64)
-	for rows.Next() {
-		var name string
-		var count int64
-		_ = rows.Scan(&name, &count)
-		labelCounts[name] = count
-	}
-	require.NoError(rows.Err(), "label rows")
-	_ = rows.Close()
+	labelCounts := queryCounts("label", labelQuery)
 
 	assert.Equal(int64(5), labelCounts["INBOX"], "INBOX count")
 	assert.Equal(int64(2), labelCounts["Work"], "Work count")

@@ -232,7 +232,9 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 	// any wrong-path dispatch is obvious.
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
-		return nil, nil
+		// Unreachable: the assert.Fail above already failed the test; the
+		// return only satisfies the signature.
+		return nil, nil //nolint:nilnil // unreachable guard, see comment above
 	}
 
 	err = runScheduledSync(context.Background(), imapID, s, getOAuthMgr, nil)
@@ -273,7 +275,9 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested for IMAP source", "app=%q", app)
-		return nil, nil
+		// Unreachable: the assert.Fail above already failed the test; the
+		// return only satisfies the signature.
+		return nil, nil //nolint:nilnil // unreachable guard, see comment above
 	}
 
 	// Pass the email (as config.toml `email = "..."` would supply it),
@@ -323,7 +327,9 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 
 	getOAuthMgr := func(app string) (*oauth.Manager, error) {
 		assert.Fail("Gmail OAuth manager unexpectedly requested", "app=%q", app)
-		return nil, nil
+		// Unreachable: the assert.Fail above already failed the test; the
+		// return only satisfies the signature.
+		return nil, nil //nolint:nilnil // unreachable guard, see comment above
 	}
 
 	// Expected to fail at the IMAP connection; what matters is that
