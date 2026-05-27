@@ -1,61 +1,95 @@
 version: "2"
 
 linters:
-  default: all
-  disable:
-    # Style/formatting -- conflicts with project conventions or noisy
-    - nlreturn         # forces blank lines before returns
-    - wsl              # whitespace style; too opinionated
-    - wsl_v5           # whitespace style v5
-    - varnamelen       # short var names are idiomatic Go
-    - ireturn          # forbids returning interfaces; conflicts with stdlib patterns
-    - lll              # line length
-    - tagliatelle      # enforces JSON tag casing
-    - exhaustruct      # requires all struct fields; too noisy
-    - nonamedreturns   # named returns useful for docs
-    - tagalign         # cosmetic struct-tag alignment
-    - noinlineerr      # forbids inline err assignments; standard Go idiom
-    - dupl             # duplicate code detection; mostly false positives
-    - dupword          # destroys SQL strings ("m.id, m.id" -> "m.id") and test names
-    - fatcontext       # auto-fix unsafely turns `outerVar = ctx` into `outerVar := ctx`, shadowing
-    - funcorder        # exported-before-unexported ordering
-    - containedctx     # TUI models legitimately store context
-    - godox            # TODO/FIXME comments are valid backlog markers, not lint errors
-    - interfacebloat   # Engine/Dialect/Backend are intentional broad abstractions
-    - unqueryvet       # `SELECT *` is intentional for full-table copies and VALUES fixtures
-
-    # Complexity metrics -- trust reviewer judgment
-    - funlen
-    - cyclop
-    - gocognit
-    - maintidx
-    - gocyclo
-    - nestif
-
-    # Opinionated rules that don't fit this project
-    - depguard         # dependency allowlist; not needed
-    - mnd              # magic numbers; too aggressive
-    - gochecknoglobals # globals are used intentionally (sync.Once, regexes, etc.)
-    - gochecknoinits   # cobra commands register via init()
-    - testpackage      # requires _test package suffix; we test internals
-    - paralleltest     # requires t.Parallel(); not always appropriate
-    - tparallel        # similar to paralleltest
-    - gosmopolitan     # i18n checks; not applicable
-    - prealloc         # premature optimization
-    - err113           # forbids dynamic errors; too aggressive for user-facing messages
-    - forbidigo        # forbids fmt.Print*; CLI program needs them
-
-    # Deprecated linter names; use v2 replacement instead
-    - gomodguard       # superseded by gomodguard_v2 in golangci-lint v2.12.x
-
-    # Follow-up work — these surface real refactors that don't belong in the
-    # standup PR. Re-enable in dedicated passes.
-    - contextcheck     # ctx threading through call chains (~50 findings)
-    - noctx            # ~130 DB calls (mostly tests + ctx-less constructors)
-                       # need *Context variants; a dedicated sweep, not standup
-
+  # Opt-in linter set: only the linters listed under `enable` run. Using
+  # `default: none` instead of `default: all` means a golangci-lint upgrade
+  # cannot silently turn on a new linter; it stays off until added here.
+  default: none
   enable:
-    - gomodguard_v2    # explicit v2 opt-in
+    - arangolint
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - clickhouselint
+    - copyloopvar
+    - decorder
+    - dogsled
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - forcetypeassert
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - goconst
+    - gocritic
+    - godoclint
+    - godot
+    - goheader
+    - gomoddirectives
+    - gomodguard_v2
+    - goprintffuncname
+    - gosec
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - intrange
+    - iotamixing
+    - loggercheck
+    - makezero
+    - mirror
+    - misspell
+    - modernize
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - testableexamples
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+    - wrapcheck
+    - zerologlint
+  # Deliberately not enabled (kept here so an upgrade cannot quietly re-add them):
+  #   style/opinionated: nlreturn, wsl, wsl_v5, varnamelen, ireturn, lll,
+  #     tagliatelle, exhaustruct, nonamedreturns, tagalign, noinlineerr, dupl,
+  #     dupword, fatcontext, funcorder, containedctx, godox, interfacebloat, unqueryvet
+  #   complexity (trust reviewer judgment): funlen, cyclop, gocognit, maintidx, gocyclo, nestif
+  #   project misfit: depguard, mnd, gochecknoglobals, gochecknoinits, testpackage,
+  #     paralleltest, tparallel, gosmopolitan, prealloc, err113, forbidigo
+  #   deprecated: gomodguard (use gomodguard_v2)
+  #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
     errorlint:
