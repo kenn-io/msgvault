@@ -56,8 +56,6 @@ linters:
     - sqlclosecheck    # batch loops close rows explicitly per-iteration (defer
                        # would leak across chunks); satisfying it cleanly needs
                        # per-query helper extraction — a dedicated refactor
-    - recvcheck        # Model/MessageFilter mix value+pointer receivers; making
-                       # them consistent touches many call sites, own pass
 
   enable:
     - gomodguard_v2    # explicit v2 opt-in

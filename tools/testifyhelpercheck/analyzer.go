@@ -209,7 +209,7 @@ func (s *helperState) add(obj types.Object) {
 	s.objs[obj] = struct{}{}
 }
 
-func (s helperState) has(obj types.Object) bool {
+func (s *helperState) has(obj types.Object) bool {
 	if obj == nil {
 		return false
 	}

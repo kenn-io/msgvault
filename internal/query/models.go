@@ -283,8 +283,8 @@ func (f *MessageFilter) HasEmptyTargets() bool {
 // Clone returns a deep copy of the MessageFilter.
 // This is necessary because EmptyValueTargets is a map, and a simple struct
 // copy would share the underlying map between the original and copy.
-func (f MessageFilter) Clone() MessageFilter {
-	clone := f
+func (f *MessageFilter) Clone() MessageFilter {
+	clone := *f
 	if f.EmptyValueTargets != nil {
 		clone.EmptyValueTargets = make(map[ViewType]bool, len(f.EmptyValueTargets))
 		maps.Copy(clone.EmptyValueTargets, f.EmptyValueTargets)

@@ -99,6 +99,13 @@ type selectionState struct {
 }
 
 // Model is the main TUI model following the Elm architecture.
+//
+// The receiver mix below is intentional: tea.Model (Init/Update/View) uses
+// value receivers so each update returns a modified copy, while the in-place
+// mutation helpers (toggleAggregateSelection, pushBreadcrumb, etc.) use pointer
+// receivers to mutate that copy. Converting either set would break the TUI.
+//
+//nolint:recvcheck // intentional value/pointer mix required by tea.Model semantics
 type Model struct {
 	viewState // Embedded state
 
