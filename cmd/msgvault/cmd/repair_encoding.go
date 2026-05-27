@@ -392,8 +392,6 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 }
 
 func repairDisplayNames(s *store.Store, stats *repairStats) error {
-	db := s.DB()
-
 	// Repair display names in both message_recipients and participants tables
 	tables := []struct {
 		name       string
@@ -415,95 +413,8 @@ func repairDisplayNames(s *store.Store, stats *repairStats) error {
 	for _, table := range tables {
 		fmt.Printf("Scanning %s display names for invalid UTF-8...\n", table.name)
 
-		rows, err := db.Query(table.query)
+		totalRepaired, err := repairDisplayNameTable(s, table.name, table.query, table.updateStmt, stats)
 		if err != nil {
-			return fmt.Errorf("query %s: %w", table.name, err)
-		}
-
-		type nameRepair struct {
-			id      int64
-			newName string
-		}
-
-		const batchSize = 1000
-		var repairs []nameRepair
-		scanned := 0
-		totalRepaired := 0
-
-		// Helper to apply a batch of repairs
-		applyBatch := func() error {
-			if len(repairs) == 0 {
-				return nil
-			}
-
-			tx, err := db.Begin()
-			if err != nil {
-				return fmt.Errorf("begin transaction: %w", err)
-			}
-
-			stmt, err := tx.Prepare(s.Rebind(table.updateStmt))
-			if err != nil {
-				if rbErr := tx.Rollback(); rbErr != nil {
-					logger.Warn("rollback failed", "error", rbErr)
-				}
-				return fmt.Errorf("prepare update: %w", err)
-			}
-			defer func() { _ = stmt.Close() }()
-
-			for _, r := range repairs {
-				if _, err := stmt.Exec(r.newName, r.id); err != nil {
-					if rbErr := tx.Rollback(); rbErr != nil {
-						logger.Warn("rollback failed", "error", rbErr)
-					}
-					return fmt.Errorf("update %s %d: %w", table.name, r.id, err)
-				}
-			}
-
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("commit: %w", err)
-			}
-
-			totalRepaired += len(repairs)
-			repairs = repairs[:0] // Clear slice, keep capacity
-			return nil
-		}
-
-		for rows.Next() {
-			var id int64
-			var name string
-			if err := rows.Scan(&id, &name); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: skipping %s row: scan error: %v\n", table.name, err)
-				stats.skippedRows++
-				continue
-			}
-
-			scanned++
-			if scanned%100000 == 0 {
-				fmt.Printf("Scanned %d %s display names...\n", scanned, table.name)
-			}
-
-			if !utf8.ValidString(name) {
-				repairs = append(repairs, nameRepair{id: id, newName: textutil.EnsureUTF8(name)})
-				stats.displayNames++
-
-				// Apply batch when full
-				if len(repairs) >= batchSize {
-					if err := applyBatch(); err != nil {
-						_ = rows.Close()
-						return err
-					}
-				}
-			}
-		}
-
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("iterate %s: %w", table.name, err)
-		}
-		_ = rows.Close()
-
-		// Apply remaining repairs
-		if err := applyBatch(); err != nil {
 			return err
 		}
 
@@ -515,10 +426,109 @@ func repairDisplayNames(s *store.Store, stats *repairStats) error {
 	return nil
 }
 
-// repairOtherStrings repairs other string fields that could have encoding issues.
-func repairOtherStrings(s *store.Store, stats *repairStats) error {
+// repairDisplayNameTable scans one display-name column for invalid UTF-8 and
+// repairs offending rows in batches. Opening, scanning, and closing the read
+// query all happen here so the deferred rows.Close() is scoped to this single
+// query and cannot leak across the caller's table loop. It returns the number
+// of rows repaired.
+func repairDisplayNameTable(s *store.Store, tableName, query, updateStmt string, stats *repairStats) (int, error) {
 	db := s.DB()
 
+	rows, err := db.Query(query)
+	if err != nil {
+		return 0, fmt.Errorf("query %s: %w", tableName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type nameRepair struct {
+		id      int64
+		newName string
+	}
+
+	const batchSize = 1000
+	var repairs []nameRepair
+	scanned := 0
+	totalRepaired := 0
+
+	// Helper to apply a batch of repairs
+	applyBatch := func() error {
+		if len(repairs) == 0 {
+			return nil
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin transaction: %w", err)
+		}
+
+		stmt, err := tx.Prepare(s.Rebind(updateStmt))
+		if err != nil {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				logger.Warn("rollback failed", "error", rbErr)
+			}
+			return fmt.Errorf("prepare update: %w", err)
+		}
+		defer func() { _ = stmt.Close() }()
+
+		for _, r := range repairs {
+			if _, err := stmt.Exec(r.newName, r.id); err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil {
+					logger.Warn("rollback failed", "error", rbErr)
+				}
+				return fmt.Errorf("update %s %d: %w", tableName, r.id, err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+
+		totalRepaired += len(repairs)
+		repairs = repairs[:0] // Clear slice, keep capacity
+		return nil
+	}
+
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping %s row: scan error: %v\n", tableName, err)
+			stats.skippedRows++
+			continue
+		}
+
+		scanned++
+		if scanned%100000 == 0 {
+			fmt.Printf("Scanned %d %s display names...\n", scanned, tableName)
+		}
+
+		if !utf8.ValidString(name) {
+			repairs = append(repairs, nameRepair{id: id, newName: textutil.EnsureUTF8(name)})
+			stats.displayNames++
+
+			// Apply batch when full
+			if len(repairs) >= batchSize {
+				if err := applyBatch(); err != nil {
+					return totalRepaired, err
+				}
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return totalRepaired, fmt.Errorf("iterate %s: %w", tableName, err)
+	}
+
+	// Apply remaining repairs
+	if err := applyBatch(); err != nil {
+		return totalRepaired, err
+	}
+
+	return totalRepaired, nil
+}
+
+// repairOtherStrings repairs other string fields that could have encoding issues.
+func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	// Tables and columns to repair
 	tables := []struct {
 		name       string
@@ -574,92 +584,8 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	for _, table := range tables {
 		fmt.Printf("Scanning %s.%s for invalid UTF-8...\n", table.name, table.column)
 
-		rows, err := db.Query(table.query)
+		totalRepaired, err := repairOtherStringColumn(s, table.name, table.column, table.query, table.updateStmt, table.counter, stats)
 		if err != nil {
-			return fmt.Errorf("query %s: %w", table.name, err)
-		}
-
-		type repair struct {
-			id       int64
-			newValue string
-		}
-
-		const batchSize = 1000
-		var repairs []repair
-		scanned := 0
-		totalRepaired := 0
-
-		applyBatch := func() error {
-			if len(repairs) == 0 {
-				return nil
-			}
-
-			tx, err := db.Begin()
-			if err != nil {
-				return fmt.Errorf("begin transaction: %w", err)
-			}
-
-			stmt, err := tx.Prepare(s.Rebind(table.updateStmt))
-			if err != nil {
-				if rbErr := tx.Rollback(); rbErr != nil {
-					logger.Warn("rollback failed", "error", rbErr)
-				}
-				return fmt.Errorf("prepare update: %w", err)
-			}
-			defer func() { _ = stmt.Close() }()
-
-			for _, r := range repairs {
-				if _, err := stmt.Exec(r.newValue, r.id); err != nil {
-					if rbErr := tx.Rollback(); rbErr != nil {
-						logger.Warn("rollback failed", "error", rbErr)
-					}
-					return fmt.Errorf("update %s %d: %w", table.name, r.id, err)
-				}
-			}
-
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("commit: %w", err)
-			}
-
-			totalRepaired += len(repairs)
-			repairs = repairs[:0]
-			return nil
-		}
-
-		for rows.Next() {
-			var id int64
-			var value string
-			if err := rows.Scan(&id, &value); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: skipping %s.%s row: scan error: %v\n", table.name, table.column, err)
-				stats.skippedRows++
-				continue
-			}
-
-			scanned++
-			if scanned%100000 == 0 {
-				fmt.Printf("Scanned %d %s.%s...\n", scanned, table.name, table.column)
-			}
-
-			if !utf8.ValidString(value) {
-				repairs = append(repairs, repair{id: id, newValue: textutil.EnsureUTF8(value)})
-				*table.counter++
-
-				if len(repairs) >= batchSize {
-					if err := applyBatch(); err != nil {
-						_ = rows.Close()
-						return err
-					}
-				}
-			}
-		}
-
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("iterate %s: %w", table.name, err)
-		}
-		_ = rows.Close()
-
-		if err := applyBatch(); err != nil {
 			return err
 		}
 
@@ -669,6 +595,104 @@ func repairOtherStrings(s *store.Store, stats *repairStats) error {
 	}
 
 	return nil
+}
+
+// repairOtherStringColumn scans one text column for invalid UTF-8 and repairs
+// offending rows in batches. Opening, scanning, and closing the read query all
+// happen here so the deferred rows.Close() is scoped to this single query and
+// cannot leak across the caller's table loop. counter is incremented once per
+// repaired row. It returns the number of rows repaired.
+func repairOtherStringColumn(s *store.Store, tableName, column, query, updateStmt string, counter *int, stats *repairStats) (int, error) {
+	db := s.DB()
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return 0, fmt.Errorf("query %s: %w", tableName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type repair struct {
+		id       int64
+		newValue string
+	}
+
+	const batchSize = 1000
+	var repairs []repair
+	scanned := 0
+	totalRepaired := 0
+
+	applyBatch := func() error {
+		if len(repairs) == 0 {
+			return nil
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin transaction: %w", err)
+		}
+
+		stmt, err := tx.Prepare(s.Rebind(updateStmt))
+		if err != nil {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				logger.Warn("rollback failed", "error", rbErr)
+			}
+			return fmt.Errorf("prepare update: %w", err)
+		}
+		defer func() { _ = stmt.Close() }()
+
+		for _, r := range repairs {
+			if _, err := stmt.Exec(r.newValue, r.id); err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil {
+					logger.Warn("rollback failed", "error", rbErr)
+				}
+				return fmt.Errorf("update %s %d: %w", tableName, r.id, err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+
+		totalRepaired += len(repairs)
+		repairs = repairs[:0]
+		return nil
+	}
+
+	for rows.Next() {
+		var id int64
+		var value string
+		if err := rows.Scan(&id, &value); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping %s.%s row: scan error: %v\n", tableName, column, err)
+			stats.skippedRows++
+			continue
+		}
+
+		scanned++
+		if scanned%100000 == 0 {
+			fmt.Printf("Scanned %d %s.%s...\n", scanned, tableName, column)
+		}
+
+		if !utf8.ValidString(value) {
+			repairs = append(repairs, repair{id: id, newValue: textutil.EnsureUTF8(value)})
+			*counter++
+
+			if len(repairs) >= batchSize {
+				if err := applyBatch(); err != nil {
+					return totalRepaired, err
+				}
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return totalRepaired, fmt.Errorf("iterate %s: %w", tableName, err)
+	}
+
+	if err := applyBatch(); err != nil {
+		return totalRepaired, err
+	}
+
+	return totalRepaired, nil
 }
 
 // tryParseMIME attempts to parse raw MIME data, returning nil on failure.

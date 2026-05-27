@@ -53,9 +53,6 @@ linters:
     - contextcheck     # ctx threading through call chains (~50 findings)
     - noctx            # ~130 DB calls (mostly tests + ctx-less constructors)
                        # need *Context variants; a dedicated sweep, not standup
-    - sqlclosecheck    # batch loops close rows explicitly per-iteration (defer
-                       # would leak across chunks); satisfying it cleanly needs
-                       # per-query helper extraction — a dedicated refactor
 
   enable:
     - gomodguard_v2    # explicit v2 opt-in
