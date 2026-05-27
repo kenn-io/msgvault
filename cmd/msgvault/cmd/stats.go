@@ -75,10 +75,10 @@ Use --local to force local database.`,
 				return fmt.Errorf("get stats: %w", err)
 			}
 			logger.Info("stats",
-				"messages", dbStats.MessageCount,
+				tableMessages, dbStats.MessageCount,
 				"threads", dbStats.ThreadCount,
-				"attachments", dbStats.AttachmentCount,
-				"labels", dbStats.LabelCount,
+				tableAttachments, dbStats.AttachmentCount,
+				tableLabels, dbStats.LabelCount,
 				"accounts", dbStats.SourceCount,
 				"db_bytes", dbStats.DatabaseSize,
 			)
@@ -123,10 +123,10 @@ Use --local to force local database.`,
 			return fmt.Errorf("get stats: %w", err)
 		}
 		logger.Info("stats",
-			"messages", dbStats.MessageCount,
+			tableMessages, dbStats.MessageCount,
 			"threads", dbStats.ThreadCount,
-			"attachments", dbStats.AttachmentCount,
-			"labels", dbStats.LabelCount,
+			tableAttachments, dbStats.AttachmentCount,
+			tableLabels, dbStats.LabelCount,
 			"accounts", dbStats.SourceCount,
 			"db_bytes", dbStats.DatabaseSize,
 		)

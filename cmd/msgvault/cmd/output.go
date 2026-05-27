@@ -61,7 +61,7 @@ func addCommonAggregateFlags(cmd *cobra.Command) {
 		"Filter to messages before date (YYYY-MM-DD)",
 	)
 	cmd.Flags().BoolVar(
-		&aggJSON, "json", false, "Output as JSON",
+		&aggJSON, outputFormatJSON, false, "Output as JSON",
 	)
 }
 

@@ -40,6 +40,13 @@ const (
 
 	redirectPort = "8089"
 	callbackPath = "/callback/microsoft"
+
+	// scopeOfflineAccess is the OAuth scope requesting a refresh token.
+	scopeOfflineAccess = "offline_access"
+	// scopeEmail is the OpenID "email" scope requested alongside the IMAP scope.
+	scopeEmail = "email"
+	// logKeyEmail is the structured-log field key carrying the account email.
+	logKeyEmail = "email"
 )
 
 // scopesForEmail returns the OAuth scopes appropriate for the given email.
@@ -49,7 +56,7 @@ func scopesForEmail(email string) []string {
 	if isPersonalMicrosoftAccount(email) {
 		imapScope = ScopeIMAPPersonal
 	}
-	return []string{imapScope, "offline_access", "openid", "email"}
+	return []string{imapScope, scopeOfflineAccess, "openid", scopeEmail}
 }
 
 // isPersonalMicrosoftAccount returns true for common consumer Microsoft domains.
@@ -160,12 +167,12 @@ func (m *Manager) Authorize(ctx context.Context, email string) error {
 		correctIMAPScope := imapScopeForTenant(claims.TenantID)
 		if scopes[0] != correctIMAPScope {
 			m.logger.Info("correcting IMAP scope based on tenant ID, re-authorizing",
-				"email", email,
+				logKeyEmail, email,
 				"tid", claims.TenantID,
 				"from", scopes[0],
 				"to", correctIMAPScope,
 			)
-			scopes = []string{correctIMAPScope, "offline_access", "openid", "email"}
+			scopes = []string{correctIMAPScope, scopeOfflineAccess, "openid", scopeEmail}
 			token, nonce, err = flow(ctx, email, scopes)
 			if err != nil {
 				return fmt.Errorf("re-authorize with correct IMAP scope: %w", err)
@@ -224,7 +231,7 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 	if tf.TenantID == "" && m.tenantID != "" && m.tenantID != DefaultTenant {
 		tf.TenantID = m.tenantID
 		m.logger.Info("migrating pre-scope-correction token: binding tenant ID",
-			"email", email, "tenant", m.tenantID)
+			logKeyEmail, email, "tenant", m.tenantID)
 	}
 
 	// Validate persisted scopes against tenant ID to detect stale tokens
@@ -234,7 +241,7 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 		correctScope := imapScopeForTenant(tf.TenantID)
 		if tf.Scopes[0] != correctScope {
 			m.logger.Debug("stale IMAP scope detected",
-				"email", email,
+				logKeyEmail, email,
 				"current_scope", tf.Scopes[0],
 				"expected_scope", correctScope,
 				"tenant_id", tf.TenantID,
@@ -662,9 +669,9 @@ func (m *Manager) DeleteToken(email string) error {
 	if loadErr == nil && tf.RefreshToken != "" {
 		if revokeErr := m.revokeToken(tf.RefreshToken, tf.TenantID); revokeErr != nil {
 			m.logger.Warn("failed to revoke Microsoft token (will expire naturally)",
-				"email", email, "error", revokeErr)
+				logKeyEmail, email, "error", revokeErr)
 		} else {
-			m.logger.Info("revoked Microsoft refresh token", "email", email)
+			m.logger.Info("revoked Microsoft refresh token", logKeyEmail, email)
 		}
 	}
 

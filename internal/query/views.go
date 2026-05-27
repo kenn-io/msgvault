@@ -117,15 +117,15 @@ func buildViewSQL(def viewDef, probedCols map[string]bool) string {
 // have optional columns, returning a map of table name -> column set.
 // Used by both RegisterViews and RegisterViewsWithColumns.
 func probeAllOptionalColumns(db *sql.DB, analyticsDir string) map[string]map[string]bool {
-	msgGlob := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
+	msgGlob := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")
 	tablePath := func(name string) string {
 		return filepath.Join(analyticsDir, name, "*.parquet")
 	}
 	return map[string]map[string]bool{
-		"messages":      probeColumns(db, msgGlob, true),
-		"participants":  probeColumns(db, tablePath("participants"), false),
-		"conversations": probeColumns(db, tablePath("conversations"), false),
-		"sources":       probeColumns(db, tablePath("sources"), false),
+		datasetMessages:      probeColumns(db, msgGlob, true),
+		datasetParticipants:  probeColumns(db, tablePath(datasetParticipants), false),
+		datasetConversations: probeColumns(db, tablePath(datasetConversations), false),
+		"sources":            probeColumns(db, tablePath("sources"), false),
 	}
 }
 
@@ -151,7 +151,7 @@ func RegisterViewsWithColumns(db *sql.DB, analyticsDir string, optCols map[strin
 // pre-computed optional column map so no additional Parquet probes occur.
 func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
 	msgGlob := filepath.Join(
-		analyticsDir, "messages", "**", "*.parquet",
+		analyticsDir, datasetMessages, "**", "*.parquet",
 	)
 	tablePath := func(name string) string {
 		return filepath.Join(analyticsDir, name, "*.parquet")
@@ -170,7 +170,7 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 	}{
 		{
 			def: viewDef{
-				name:             "messages",
+				name:             datasetMessages,
 				pathPattern:      msgGlob,
 				hivePartitioning: true,
 				replaceCols: []string{
@@ -201,12 +201,12 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					},
 				},
 			},
-			probe: colsFor("messages"),
+			probe: colsFor(datasetMessages),
 		},
 		{
 			def: viewDef{
-				name:        "participants",
-				pathPattern: tablePath("participants"),
+				name:        datasetParticipants,
+				pathPattern: tablePath(datasetParticipants),
 				replaceCols: []string{
 					"CAST(id AS BIGINT) AS id",
 					"CAST(email_address AS VARCHAR) AS email_address",
@@ -221,7 +221,7 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					},
 				},
 			},
-			probe: colsFor("participants"),
+			probe: colsFor(datasetParticipants),
 		},
 		{
 			def: viewDef{
@@ -268,8 +268,8 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 		},
 		{
 			def: viewDef{
-				name:        "conversations",
-				pathPattern: tablePath("conversations"),
+				name:        datasetConversations,
+				pathPattern: tablePath(datasetConversations),
 				replaceCols: []string{
 					"CAST(id AS BIGINT) AS id",
 					"CAST(source_conversation_id AS VARCHAR) AS source_conversation_id",
@@ -287,7 +287,7 @@ func createBaseViews(db *sql.DB, analyticsDir string, optCols map[string]map[str
 					},
 				},
 			},
-			probe: colsFor("conversations"),
+			probe: colsFor(datasetConversations),
 		},
 		{
 			def: viewDef{

@@ -376,11 +376,11 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	// Source type drives dispatch. A nil source falls back to Gmail to
 	// preserve the token-first workflow (tokens uploaded via API before
 	// the source row exists).
-	sourceType := "gmail"
+	sourceType := sourceTypeGmail
 	if src != nil {
 		sourceType = src.SourceType
 		if sourceType == "" {
-			sourceType = "gmail"
+			sourceType = sourceTypeGmail
 		}
 	}
 
@@ -389,9 +389,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		err     error
 	)
 	switch sourceType {
-	case "gmail":
+	case sourceTypeGmail:
 		summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, vf)
-	case "imap":
+	case sourceTypeIMAP:
 		summary, err = runScheduledIMAPSync(ctx, src, s, vf)
 	default:
 		return fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler (only gmail and imap)", identifier, sourceType)
@@ -453,9 +453,9 @@ func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, 
 	var imapSrc *store.Source
 	for _, src := range sources {
 		switch src.SourceType {
-		case "gmail":
+		case sourceTypeGmail:
 			return src, nil
-		case "imap":
+		case sourceTypeIMAP:
 			if imapSrc == nil {
 				imapSrc = src
 			}
@@ -523,7 +523,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 		syncer.SetEmbedEnqueuer(vf.Enqueuer)
 	}
 
-	source, err := s.GetOrCreateSource("gmail", email)
+	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	if err != nil {
 		return nil, fmt.Errorf("get source: %w", err)
 	}
@@ -556,7 +556,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	defer func() { _ = apiClient.Close() }()
 
 	opts := sync.DefaultOptions()
-	opts.SourceType = "imap"
+	opts.SourceType = sourceTypeIMAP
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 	opts.NoResume = true
 

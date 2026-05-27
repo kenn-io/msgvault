@@ -126,7 +126,7 @@ func executeQuery(
 	}
 
 	switch format {
-	case "json":
+	case outputFormatJSON:
 		return writeJSON(w, cols, allRows)
 	case "csv":
 		return writeCSV(w, cols, allRows)
@@ -265,7 +265,7 @@ func writeTable(
 func init() {
 	rootCmd.AddCommand(queryCmd)
 	queryCmd.Flags().StringVar(
-		&queryFormat, "format", "json",
+		&queryFormat, "format", outputFormatJSON,
 		"Output format: json, csv, or table",
 	)
 }

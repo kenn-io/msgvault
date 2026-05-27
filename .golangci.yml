@@ -53,7 +53,6 @@ linters:
     # standup PR. Re-enable in dedicated passes.
     - contextcheck     # ctx threading through call chains (~50 findings)
     - unparam          # unused params; needs caller-wide refactor (~38)
-    - goconst          # repeated literals; judgement on which to lift (~33)
     - wrapcheck        # %w wrapping at every external-package boundary (~29)
     - noctx            # ~130 DB calls (mostly tests + ctx-less constructors)
                        # need *Context variants; a dedicated sweep, not standup

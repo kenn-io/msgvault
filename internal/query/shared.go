@@ -13,6 +13,14 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// Analytics dataset names. Each is both the Parquet subdirectory under
+// analyticsDir and the view/probe key for that dataset's optional columns.
+const (
+	datasetMessages      = "messages"
+	datasetParticipants  = "participants"
+	datasetConversations = "conversations"
+)
+
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
 // NULL and empty string handle old data where message_type was not yet populated.
 const emailOnlyFilterMsg = "(msg.message_type = 'email' OR msg.message_type IS NULL OR msg.message_type = '')"

@@ -213,7 +213,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	if store.IsPostgresURL(dbPath) {
 		return cacheStaleness{}
 	}
-	messagesDir := filepath.Join(analyticsDir, "messages")
+	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 
 	hasParquetData := query.HasParquetData(analyticsDir)

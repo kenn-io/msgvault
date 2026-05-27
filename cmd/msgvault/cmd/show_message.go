@@ -186,19 +186,19 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 	// Build address arrays
 	fromAddrs := make([]map[string]string, len(msg.From))
 	for i, addr := range msg.From {
-		fromAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		fromAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	toAddrs := make([]map[string]string, len(msg.To))
 	for i, addr := range msg.To {
-		toAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		toAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	ccAddrs := make([]map[string]string, len(msg.Cc))
 	for i, addr := range msg.Cc {
-		ccAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		ccAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	bccAddrs := make([]map[string]string, len(msg.Bcc))
 	for i, addr := range msg.Bcc {
-		bccAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		bccAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 
 	// Build attachment array
@@ -227,8 +227,8 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		"to":                     toAddrs,
 		"cc":                     ccAddrs,
 		"bcc":                    bccAddrs,
-		"labels":                 msg.Labels,
-		"attachments":            attachments,
+		tableLabels:              msg.Labels,
+		tableAttachments:         attachments,
 		"body_text":              msg.BodyText,
 		"body_html":              msg.BodyHTML,
 	}
@@ -329,8 +329,8 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 		"sent_at":         msg.SentAt.Format(time.RFC3339),
 		"size_estimate":   msg.SizeEstimate,
 		"has_attachments": msg.HasAttachments,
-		"labels":          msg.Labels,
-		"attachments":     attachments,
+		tableLabels:       msg.Labels,
+		tableAttachments:  attachments,
 		"body":            msg.Body,
 	}
 
@@ -341,5 +341,5 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 
 func init() {
 	rootCmd.AddCommand(showMessageCmd)
-	showMessageCmd.Flags().BoolVar(&showMessageJSON, "json", false, "Output as JSON")
+	showMessageCmd.Flags().BoolVar(&showMessageJSON, outputFormatJSON, false, "Output as JSON")
 }

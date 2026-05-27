@@ -23,7 +23,7 @@ type ThreadDir struct {
 	// Name is the thread directory basename (e.g. "testuser_ABC123XYZ").
 	// For E2EE exports, this is the filename without extension.
 	Name string
-	// Format is "json", "html", "both", or "e2ee_json".
+	// Format is formatJSON, "html", "both", or "e2ee_json".
 	Format string
 }
 
@@ -294,7 +294,7 @@ func detectFormat(threadPath string) (string, bool) {
 	case hasJSON && hasHTML:
 		return "both", true
 	case hasJSON:
-		return "json", true
+		return formatJSON, true
 	case hasHTML:
 		return "html", true
 	}

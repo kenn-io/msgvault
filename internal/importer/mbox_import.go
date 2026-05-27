@@ -77,6 +77,9 @@ type mboxCheckpoint struct {
 
 const defaultMaxMboxMessageBytes int64 = 128 << 20 // 128 MiB
 
+// sourceTypeMbox is the default sources.source_type for MBOX imports.
+const sourceTypeMbox = "mbox"
+
 // ImportMbox imports a single MBOX file into the msgvault database.
 //
 // This is intended for services like HEY.com that provide an export in MBOX
@@ -84,7 +87,7 @@ const defaultMaxMboxMessageBytes int64 = 128 << 20 // 128 MiB
 // parsed bodies, participants, recipients, and (optionally) attachments.
 func ImportMbox(ctx context.Context, st *store.Store, mboxPath string, opts MboxImportOptions) (*MboxImportSummary, error) {
 	if opts.SourceType == "" {
-		opts.SourceType = "mbox"
+		opts.SourceType = sourceTypeMbox
 	}
 	if opts.Identifier == "" {
 		return nil, errors.New("identifier is required")

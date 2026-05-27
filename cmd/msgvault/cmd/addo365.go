@@ -104,7 +104,7 @@ Examples:
 			return fmt.Errorf("look up existing source: %w", err)
 		}
 		for _, src := range existing {
-			if src.SourceType == "imap" && isMicrosoftIMAPSource(src, email) {
+			if src.SourceType == sourceTypeIMAP && isMicrosoftIMAPSource(src, email) {
 				source = src
 				break
 			}
@@ -115,7 +115,7 @@ Examples:
 				return fmt.Errorf("update source identifier: %w", err)
 			}
 		} else {
-			source, err = s.GetOrCreateSource("imap", identifier)
+			source, err = s.GetOrCreateSource(sourceTypeIMAP, identifier)
 			if err != nil {
 				return fmt.Errorf("create source: %w", err)
 			}

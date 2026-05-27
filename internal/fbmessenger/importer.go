@@ -46,7 +46,7 @@ type ImportOptions struct {
 	Me string
 	// RootDir is the DYI export root directory.
 	RootDir string
-	// Format overrides auto-detection. One of "auto", "json", "html",
+	// Format overrides auto-detection. One of "auto", formatJSON, "html",
 	// "both". Empty is treated as "auto".
 	Format string
 	// AttachmentsDir is the content-addressed attachment storage root.
@@ -105,7 +105,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		format = "auto"
 	}
 	switch format {
-	case "auto", "json", "html", "both":
+	case "auto", formatJSON, "html", "both":
 		// valid
 	default:
 		return nil, fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
@@ -263,13 +263,13 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		// E2EE threads bypass the format filter entirely.
 		if effective != "e2ee_json" {
 			switch format {
-			case "json":
+			case formatJSON:
 				if effective == "html" {
 					continue
 				}
-				effective = "json"
+				effective = formatJSON
 			case "html":
-				if effective == "json" {
+				if effective == formatJSON {
 					continue
 				}
 				effective = "html"
@@ -277,7 +277,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 				// Keep as-is; "both" threads get both parsed.
 			case "auto":
 				if effective == "both" {
-					effective = "json"
+					effective = formatJSON
 				}
 			}
 		}
@@ -430,7 +430,7 @@ func importThread(
 		if err := runHTML("html_"); err != nil {
 			return err
 		}
-	case effective == "json":
+	case effective == formatJSON:
 		if err := runJSON(""); err != nil {
 			return err
 		}

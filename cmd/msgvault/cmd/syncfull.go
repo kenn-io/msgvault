@@ -95,7 +95,7 @@ Examples:
 				return fmt.Errorf("look up source: %w", err)
 			}
 			for _, src := range allMatches {
-				if src.SourceType == "gmail" || src.SourceType == "imap" {
+				if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
 					sources = append(sources, src)
 				}
 			}
@@ -105,7 +105,7 @@ Examples:
 					return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
 				}
 				// Not in DB yet - assume Gmail (legacy behaviour)
-				sources = []*store.Source{{SourceType: "gmail", Identifier: args[0]}}
+				sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
 			}
 		} else {
 			// Sync all configured sources
@@ -118,7 +118,7 @@ Examples:
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					if !cfg.OAuth.HasAnyConfig() {
 						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
 						continue
@@ -136,7 +136,7 @@ Examples:
 							continue
 						}
 					}
-				case "imap":
+				case sourceTypeIMAP:
 					skipMsg, parseErr := imapSkipReason(src)
 					if parseErr != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
@@ -193,7 +193,7 @@ Examples:
 			}
 
 			// Ensure credentials are available before syncing Gmail sources.
-			if src.SourceType == "gmail" || src.SourceType == "" {
+			if src.SourceType == sourceTypeGmail || src.SourceType == "" {
 				appName := sourceOAuthApp(src)
 				if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
 					if _, err := getOAuthMgr(appName); err != nil {
@@ -234,7 +234,7 @@ Examples:
 // access.
 func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string) (gmail.API, error) {
 	switch src.SourceType {
-	case "gmail", "":
+	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
 		var tokenSource oauth2.TokenSource
 
@@ -270,7 +270,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 			gmail.WithRateLimiter(rateLimiter),
 		), nil
 
-	case "imap":
+	case sourceTypeIMAP:
 		if !src.SyncConfig.Valid || src.SyncConfig.String == "" {
 			return nil, fmt.Errorf("IMAP source %s has no config (run 'add-imap' first)", src.Identifier)
 		}
@@ -341,7 +341,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// Build query from flags (Gmail only; IMAP date filters are
 	// handled via WithDateFilter on the client).
 	query := buildSyncQuery()
-	if query != "" && src.SourceType == "imap" {
+	if query != "" && src.SourceType == sourceTypeIMAP {
 		// --after/--before are handled natively by IMAP SEARCH;
 		// only warn about --query which has no IMAP equivalent.
 		if syncQuery != "" {
@@ -363,7 +363,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// resume is unreliable because additions or deletions shift
 	// the offsets. Already-imported messages are efficiently
 	// skipped via MessageExistsWithRawBatch.
-	if src.SourceType == "imap" {
+	if src.SourceType == sourceTypeIMAP {
 		opts.NoResume = true
 	}
 
@@ -382,7 +382,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		displayID = src.DisplayName.String
 	}
 	fmt.Printf("Starting full sync for %s\n", displayID)
-	if query != "" && src.SourceType != "imap" {
+	if query != "" && src.SourceType != sourceTypeIMAP {
 		fmt.Printf("Query: %s\n", query)
 	}
 	fmt.Println()
