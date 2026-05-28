@@ -137,7 +137,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 // regression-guards the precedence bug where pickEmbedGeneration
 // targeted an existing active generation even when a building
 // generation for the configured model was in flight. The user
-// expectation is that `msgvault build-embeddings` drains the in-progress build
+// expectation is that `msgvault embeddings build` drains the in-progress build
 // (so it can be activated) rather than continuing to top up the old
 // active generation.
 func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *testing.T) {
@@ -275,7 +275,7 @@ func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
 // TestPickEmbedGeneration_ResumeReseedsUnseededBuilding regression-
 // guards the crash-window bug where a process that died between
 // inserting the building row and committing the initial seed would
-// leave the queue empty; a later `msgvault build-embeddings` would then "drain"
+// leave the queue empty; a later `msgvault embeddings build` would then "drain"
 // zero rows and silently activate an unseeded generation. The resume
 // path must call EnsureSeeded on the matched build before returning,
 // reseeding pending_embeddings so the activation gate sees real work
@@ -352,12 +352,12 @@ func TestPickEmbedGeneration_ResumeRacesActivation(t *testing.T) {
 	b := openTestBackend(t)
 
 	// Create the building generation as if the operator had just run
-	// `msgvault build-embeddings --full-rebuild`. CreateGeneration seeds pending
+	// `msgvault embeddings build --full-rebuild`. CreateGeneration seeds pending
 	// rows for id=1 via openTestBackend's seed message.
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
 	require.NoError(err, "CreateGeneration")
 	// Simulate the race: another actor (the daemon, or a concurrent
-	// `msgvault build-embeddings` run that finished first) activated the
+	// `msgvault embeddings build` run that finished first) activated the
 	// generation. From this actor's perspective BuildingGeneration
 	// returned non-nil a moment ago, but the state has since flipped.
 	require.NoError(b.ActivateGeneration(ctx, gen), "ActivateGeneration")

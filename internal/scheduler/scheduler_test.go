@@ -709,7 +709,7 @@ func TestEmbedJob_Run_DoesNotActivateWhilePending(t *testing.T) {
 // daemon silently topping up an unrelated rebuild. When a building
 // generation's fingerprint differs from the configured one, the
 // daemon must bail out so the operator can resolve via the CLI
-// (`msgvault build-embeddings --full-rebuild` or retire the stale build).
+// (`msgvault embeddings build --full-rebuild` or retire the stale build).
 func TestEmbedJob_Run_LeavesMismatchedBuildingForCLI(t *testing.T) {
 	building := &vector.Generation{ID: 33, State: vector.GenerationBuilding, Fingerprint: "old:512"}
 	backend := &fakeBackend{

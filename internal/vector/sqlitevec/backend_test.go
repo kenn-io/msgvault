@@ -140,7 +140,7 @@ func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
 // exists but seeded_at is NULL because the previous attempt died
 // before the seed transaction committed. A naive resume would skip
 // seedPending, leave pending_embeddings empty, and let
-// `msgvault build-embeddings` activate the unseeded generation — silently
+// `msgvault embeddings build` activate the unseeded generation — silently
 // replacing the prior active index with an empty one. The fix is to
 // re-run seedPending whenever seeded_at IS NULL on resume.
 func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) {

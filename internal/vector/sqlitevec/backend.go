@@ -175,7 +175,7 @@ func (b *Backend) markGenerationSeeded(ctx context.Context, gen vector.Generatio
 // EnsureSeeded re-runs the initial seed pass for gen if seeded_at is
 // NULL. Used on the resume path so that a crash between
 // claimOrInsertBuilding and the original seedPending commit cannot
-// cause a later `msgvault build-embeddings` to "drain" zero pending rows and
+// cause a later `msgvault embeddings build` to "drain" zero pending rows and
 // activate an unseeded generation. Returns an error if gen no longer
 // exists or has been activated/retired (state != 'building'); the
 // caller should surface --full-rebuild guidance in that case.

@@ -124,7 +124,7 @@ func runEmbed(ctx context.Context) error {
 			fmt.Printf("Generation %d activated.\n", gen)
 		} else {
 			fmt.Fprintf(os.Stderr,
-				"Generation %d still has %d pending rows; run `msgvault build-embeddings` again to finish, then it will activate automatically.\n",
+				"Generation %d still has %d pending rows; run `msgvault embeddings build` again to finish, then it will activate automatically.\n",
 				gen, remaining)
 		}
 	}
@@ -187,7 +187,7 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 	//
 	//  1. A matching in-flight rebuild gets drained even if an
 	//     (older / stale) active generation also exists — otherwise
-	//     `msgvault build-embeddings` would top up the active index forever and
+	//     `msgvault embeddings build` would top up the active index forever and
 	//     leave the new build stranded in `building`.
 	//
 	//  2. A mismatched in-flight rebuild is rejected immediately,

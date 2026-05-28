@@ -546,7 +546,7 @@ func (s *Server) handleHybridSearch(
 				"vector search is not configured")
 		case errors.Is(err, vector.ErrIndexStale):
 			writeError(w, http.StatusServiceUnavailable, "index_stale",
-				"the vector index does not match the configured model; run `msgvault build-embeddings --full-rebuild`")
+				"the vector index does not match the configured model; run `msgvault embeddings build --full-rebuild`")
 		case errors.Is(err, vector.ErrIndexBuilding):
 			writeError(w, http.StatusServiceUnavailable, "index_building",
 				"the initial vector index is still being built")

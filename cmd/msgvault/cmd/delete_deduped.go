@@ -26,7 +26,7 @@ after a local delete.
 Parquet analytics and the vector index may contain stale entries for
 deleted rows until rebuilt; the rebuild commands are separate. Run
 'msgvault build-cache --full-rebuild' for parquet analytics and
-'msgvault build-embeddings --full-rebuild' for the vector index.`,
+'msgvault embeddings build --full-rebuild' for the vector index.`,
 	RunE: runDeleteDeduped,
 }
 
@@ -150,7 +150,7 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	// Note: parquet analytics and the vector index may contain entries
 	// for deleted rows; the post-run summary recommends rebuilding each
 	// separately ('build-cache --full-rebuild' and
-	// 'build-embeddings --full-rebuild').
+	// 'embeddings build --full-rebuild').
 
 	var deletedTotal int64
 	var batchCount int64
@@ -176,7 +176,7 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(out, "\nDeleted %d message(s) from %d batch(es).\n\n", deletedTotal, batchCount)
 	_, _ = fmt.Fprintln(out, "Caches may have stale entries; rebuild each separately:")
 	_, _ = fmt.Fprintln(out, "  'msgvault build-cache --full-rebuild'        (parquet analytics)")
-	_, _ = fmt.Fprintln(out, "  'msgvault build-embeddings --full-rebuild'   (vector index, if enabled)")
+	_, _ = fmt.Fprintln(out, "  'msgvault embeddings build --full-rebuild'   (vector index, if enabled)")
 
 	return nil
 }

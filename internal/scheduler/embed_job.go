@@ -46,7 +46,7 @@ type EmbedJob struct {
 	// vector.Config.GenerationFingerprint() — "model:dim:preprocess").
 	// When set, a building OR active generation whose fingerprint
 	// differs is left alone: the CLI is the only entry point that can
-	// resolve a mismatch (`build-embeddings --full-rebuild` or retire).
+	// resolve a mismatch (`embeddings build --full-rebuild` or retire).
 	// When empty, the daemon falls back to "any building generation"
 	// for building gens and "the active generation as-is" for active —
 	// see pickTarget for why empty-fingerprint plus a present building
@@ -164,7 +164,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 //     can activate. Building takes precedence over active even when
 //     active matches, because a stranded build is the bigger problem.
 //  2. Mismatched building generation — log and bail. Resolution
-//     requires the CLI (`msgvault build-embeddings --full-rebuild` or retire),
+//     requires the CLI (`msgvault embeddings build --full-rebuild` or retire),
 //     not the daemon.
 //  3. Active generation whose fingerprint matches config — incremental
 //     top-up. A mismatched active fingerprint is treated the same as a
