@@ -129,7 +129,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			gen, row.Fingerprint, expected)
 	}
 	if row.PendingCount > 0 && !embeddingsActivateForce {
-		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings build` or pass --force",
+		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
 			gen, row.PendingCount)
 	}
 

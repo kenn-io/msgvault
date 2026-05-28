@@ -20,6 +20,11 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	requirepkg.NotNil(t, buildCmd.Flags().Lookup("full-rebuild"))
 	requirepkg.NotNil(t, buildCmd.Flags().Lookup("yes"))
 
+	resumeCmd, _, err := rootCmd.Find([]string{"embeddings", "resume"})
+	requirepkg.NoError(t, err)
+	requirepkg.Equal(t, "resume", resumeCmd.Name())
+	requirepkg.Nil(t, resumeCmd.Flags().Lookup("full-rebuild"))
+
 	listCmd, _, err := rootCmd.Find([]string{"embeddings", "list"})
 	requirepkg.NoError(t, err)
 	requirepkg.Equal(t, "list", listCmd.Name())

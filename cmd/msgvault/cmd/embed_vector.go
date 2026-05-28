@@ -122,7 +122,7 @@ func runEmbed(ctx context.Context) error {
 			fmt.Printf("Generation %d activated.\n", gen)
 		} else {
 			fmt.Fprintf(os.Stderr,
-				"Generation %d still has %d pending rows; run `msgvault embeddings build` again to finish, then it will activate automatically.\n",
+				"Generation %d still has %d pending rows; run `msgvault embeddings resume` again to finish, then it will activate automatically.\n",
 				gen, remaining)
 		}
 	}

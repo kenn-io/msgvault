@@ -21,6 +21,15 @@ var embeddingsCmd = &cobra.Command{
 }
 
 var embeddingsBuildCmd = newEmbeddingsBuildCmd("build")
+var embeddingsResumeCmd = &cobra.Command{
+	Use:   "resume",
+	Short: "Resume or top up the current vector embedding generation",
+	Long: `Resume or top up the current vector embedding generation.
+If a matching generation is building, this drains its pending queue and
+activates it when complete. Otherwise it embeds pending rows for the
+active generation.`,
+	RunE: runEmbeddingsResume,
+}
 var embeddingsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List vector embedding generations",
@@ -69,6 +78,18 @@ func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
 	return runEmbed(cmd.Context())
 }
 
+func runEmbeddingsResume(cmd *cobra.Command, args []string) error {
+	oldFullRebuild := embedFullRebuild
+	oldYes := embedYes
+	embedFullRebuild = false
+	embedYes = false
+	defer func() {
+		embedFullRebuild = oldFullRebuild
+		embedYes = oldYes
+	}()
+	return runEmbeddingsBuild(cmd, args)
+}
+
 func init() {
 	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
@@ -76,6 +97,7 @@ func init() {
 	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")
 	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateForce, "force", false, "Allow activation with pending rows or a fingerprint mismatch")
 	embeddingsCmd.AddCommand(embeddingsBuildCmd)
+	embeddingsCmd.AddCommand(embeddingsResumeCmd)
 	embeddingsCmd.AddCommand(embeddingsListCmd)
 	embeddingsCmd.AddCommand(embeddingsRetireCmd)
 	embeddingsCmd.AddCommand(embeddingsActivateCmd)
