@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"errors"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -334,16 +332,4 @@ func formatETA(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%ds", s)
 	}
-}
-
-// confirmEmbed reads a y/N answer from stdin. Default is no.
-func confirmEmbed(prompt string) bool {
-	fmt.Fprint(os.Stderr, prompt+"[y/N]: ")
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y" || line == "yes"
 }

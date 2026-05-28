@@ -7,8 +7,12 @@ import (
 )
 
 var (
-	embedFullRebuild bool
-	embedYes         bool
+	embedFullRebuild            bool
+	embedYes                    bool
+	embeddingsRetireYes         bool
+	embeddingsRetireForceActive bool
+	embeddingsActivateForce     bool
+	embeddingsActivateYes       bool
 )
 
 var embeddingsCmd = &cobra.Command{
@@ -17,6 +21,23 @@ var embeddingsCmd = &cobra.Command{
 }
 
 var embeddingsBuildCmd = newEmbeddingsBuildCmd("build")
+var embeddingsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List vector embedding generations",
+	RunE:  runEmbeddingsList,
+}
+var embeddingsRetireCmd = &cobra.Command{
+	Use:   "retire <generation-id>",
+	Short: "Retire a vector embedding generation",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runEmbeddingsRetire,
+}
+var embeddingsActivateCmd = &cobra.Command{
+	Use:   "activate <generation-id>",
+	Short: "Activate a completed vector embedding generation",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runEmbeddingsActivate,
+}
 var embedCmd = newEmbeddingsBuildCmd("build-embeddings")
 
 func newEmbeddingsBuildCmd(use string) *cobra.Command {
@@ -50,7 +71,14 @@ func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
 
 func init() {
 	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
+	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
+	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")
+	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")
+	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateForce, "force", false, "Allow activation with pending rows or a fingerprint mismatch")
 	embeddingsCmd.AddCommand(embeddingsBuildCmd)
+	embeddingsCmd.AddCommand(embeddingsListCmd)
+	embeddingsCmd.AddCommand(embeddingsRetireCmd)
+	embeddingsCmd.AddCommand(embeddingsActivateCmd)
 	rootCmd.AddCommand(embeddingsCmd)
 	rootCmd.AddCommand(embedCmd)
 }

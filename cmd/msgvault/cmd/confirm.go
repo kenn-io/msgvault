@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -83,4 +84,16 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 	default:
 		return false, fmt.Errorf("unknown ConfirmMode: %d", mode)
 	}
+}
+
+// confirmEmbed reads a y/N answer from stdin. Default is no.
+func confirmEmbed(prompt string) bool {
+	fmt.Fprint(os.Stderr, prompt+"[y/N]: ")
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes"
 }
