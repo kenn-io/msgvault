@@ -152,7 +152,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := activateEmbeddingGeneration(cmd.Context(), db, gen); err != nil {
+	if err := activateEmbeddingGeneration(cmd.Context(), db, gen, embeddingsActivateForce); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d activated.\n", gen)
@@ -281,7 +281,7 @@ func retireEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Gener
 	return fmt.Errorf("generation %d could not be retired from %q state", gen, row.State)
 }
 
-func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID) error {
+func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID, force bool) error {
 	now := time.Now().Unix()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -298,12 +298,24 @@ func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Gen
 	res, err := tx.ExecContext(ctx,
 		`UPDATE index_generations
 		 SET state = 'active', activated_at = ?, completed_at = COALESCE(completed_at, ?)
-		 WHERE id = ? AND state = 'building'`, now, now, int64(gen))
+		 WHERE id = ? AND state = 'building'
+		   AND (? OR NOT EXISTS (
+		       SELECT 1 FROM pending_embeddings WHERE generation_id = ?
+		   ))`, now, now, int64(gen), force, int64(gen))
 	if err != nil {
 		return fmt.Errorf("activate generation %d: %w", gen, err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		var pending int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pending); err != nil {
+			return fmt.Errorf("count pending rows for generation %d: %w", gen, err)
+		}
+		if pending > 0 && !force {
+			return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
+				gen, pending)
+		}
 		return fmt.Errorf("generation %d not in %q state", gen, vector.GenerationBuilding)
 	}
 	if err := tx.Commit(); err != nil {

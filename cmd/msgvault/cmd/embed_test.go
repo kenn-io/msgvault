@@ -79,7 +79,7 @@ func TestActivateEmbeddingGenerationRetiresPreviousActive(t *testing.T) {
 	_, err := db.ExecContext(ctx, `DELETE FROM pending_embeddings WHERE generation_id = 2`)
 	require.NoError(err)
 
-	require.NoError(activateEmbeddingGeneration(ctx, db, 2))
+	require.NoError(activateEmbeddingGeneration(ctx, db, 2, false))
 
 	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
 	assert.Equal(vector.GenerationActive, active.State)
@@ -108,6 +108,24 @@ func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
 
 	require.Error(err)
 	assert.Contains(err.Error(), "pending embedding rows")
+}
+
+func TestActivateEmbeddingGenerationProtectsPendingRace(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	db := newEmbeddingMetadataTestDB(t)
+	ctx := t.Context()
+
+	err := activateEmbeddingGeneration(ctx, db, 2, false)
+	require.Error(err)
+	assert.Contains(err.Error(), "pending embedding rows")
+
+	building := mustGetEmbeddingGeneration(ctx, t, db, 2)
+	assert.Equal(vector.GenerationBuilding, building.State)
+
+	require.NoError(activateEmbeddingGeneration(ctx, db, 2, true))
+	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
+	assert.Equal(vector.GenerationActive, active.State)
 }
 
 func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
