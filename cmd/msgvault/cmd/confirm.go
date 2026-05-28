@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 // ConfirmMode selects the prompt and validation for confirmDestructive.
@@ -86,10 +87,10 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 	}
 }
 
-// confirmEmbed reads a y/N answer from stdin. Default is no.
-func confirmEmbed(prompt string) bool {
-	fmt.Fprint(os.Stderr, prompt+"[y/N]: ")
-	r := bufio.NewReader(os.Stdin)
+// confirmEmbed reads a y/N answer from the command input. Default is no.
+func confirmEmbed(cmd *cobra.Command, prompt string) bool {
+	fmt.Fprint(cmd.ErrOrStderr(), prompt+"[y/N]: ")
+	r := bufio.NewReader(cmd.InOrStdin())
 	line, err := r.ReadString('\n')
 	if err != nil {
 		return false

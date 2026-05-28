@@ -12,13 +12,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
-func runEmbed(ctx context.Context) error {
+func runEmbed(cmd *cobra.Command) error {
+	ctx := cmd.Context()
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
@@ -51,9 +53,9 @@ func runEmbed(ctx context.Context) error {
 		Fingerprint: cfg.Vector.GenerationFingerprint(),
 		Confirm: func() bool {
 			return embedYes ||
-				confirmEmbed("Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
+				confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
 		},
-		Stderr: os.Stderr,
+		Stderr: cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return err
@@ -140,7 +142,7 @@ type embedGenerationOpts struct {
 	// Confirm is only called when FullRebuild is true. Returns
 	// true if the user agreed to proceed.
 	Confirm func() bool
-	Stderr  *os.File
+	Stderr  io.Writer
 }
 
 // pickEmbedGeneration resolves which generation this embed run

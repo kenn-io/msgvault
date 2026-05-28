@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,4 +75,14 @@ func TestConfirmDestructive_YesNo_StdinClosed(t *testing.T) {
 	ok, err := confirmDestructive(strings.NewReader(""), &out, ConfirmModeYesNo)
 	require.NoError(t, err, "want nil (cancel-on-EOF) on closed stdin")
 	assert.False(t, ok, "want false on closed stdin")
+}
+
+func TestConfirmEmbedUsesCommandIO(t *testing.T) {
+	var errOut bytes.Buffer
+	cmd := &cobra.Command{Use: "test"}
+	cmd.SetIn(strings.NewReader("yes\n"))
+	cmd.SetErr(&errOut)
+
+	assert.True(t, confirmEmbed(cmd, "Proceed? "))
+	assert.Equal(t, "Proceed? [y/N]: ", errOut.String())
 }

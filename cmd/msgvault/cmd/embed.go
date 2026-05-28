@@ -75,7 +75,7 @@ func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
 	if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
 		return errors.New("[vector.embeddings] endpoint and model are required")
 	}
-	return runEmbed(cmd.Context())
+	return runEmbed(cmd)
 }
 
 func runEmbeddingsResume(cmd *cobra.Command, args []string) error {

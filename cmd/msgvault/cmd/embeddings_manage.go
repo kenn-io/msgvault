@@ -93,7 +93,7 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 
 	if !embeddingsRetireYes {
 		prompt := fmt.Sprintf("Retire generation %d (%s)? ", gen, row.Fingerprint)
-		if !confirmEmbed(prompt) {
+		if !confirmEmbed(cmd, prompt) {
 			return errors.New("aborted")
 		}
 	}
@@ -143,7 +143,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			prompt += fmt.Sprintf(" and retire active generation %d (%s)", active.ID, active.Fingerprint)
 		}
 		prompt += "? "
-		if !confirmEmbed(prompt) {
+		if !confirmEmbed(cmd, prompt) {
 			return errors.New("aborted")
 		}
 	}
