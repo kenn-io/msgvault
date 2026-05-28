@@ -88,9 +88,6 @@ jobs:
           determinate: false
 
       - name: Build
-        env:
-          NIX_CONFIG: |
-            access-tokens = github.com=${{ github.token }}
         run: nix build
 
   # PostgreSQL backend lane: runs the full Go test suite against a live

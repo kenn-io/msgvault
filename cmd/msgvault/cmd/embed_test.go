@@ -128,6 +128,30 @@ func TestActivateEmbeddingGenerationProtectsPendingRace(t *testing.T) {
 	assert.Equal(vector.GenerationActive, active.State)
 }
 
+func TestActivateEmbeddingGenerationRefusesUnseededWithoutForce(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	db := newEmbeddingMetadataTestDB(t)
+	ctx := t.Context()
+
+	_, err := db.ExecContext(ctx, `
+DELETE FROM pending_embeddings WHERE generation_id = 2;
+UPDATE index_generations SET seeded_at = NULL WHERE id = 2;
+`)
+	require.NoError(err)
+
+	err = activateEmbeddingGeneration(ctx, db, 2, false)
+	require.Error(err)
+	assert.Contains(err.Error(), "finished seeding")
+
+	building := mustGetEmbeddingGeneration(ctx, t, db, 2)
+	assert.Equal(vector.GenerationBuilding, building.State)
+
+	require.NoError(activateEmbeddingGeneration(ctx, db, 2, true))
+	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
+	assert.Equal(vector.GenerationActive, active.State)
+}
+
 func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -224,10 +248,10 @@ CREATE TABLE pending_embeddings (
 	fp := newTestConfigForFingerprint("").Vector.GenerationFingerprint()
 	_, err = db.Exec(`
 INSERT INTO index_generations
-	(id, model, dimension, fingerprint, started_at, completed_at, activated_at, state, message_count)
+	(id, model, dimension, fingerprint, started_at, seeded_at, completed_at, activated_at, state, message_count)
 VALUES
-	(1, 'model', 4, ?, 100, 110, 111, 'active', 2),
-	(2, 'model', 4, ?, 120, NULL, NULL, 'building', 1);
+	(1, 'model', 4, ?, 100, 101, 110, 111, 'active', 2),
+	(2, 'model', 4, ?, 120, 121, NULL, NULL, 'building', 1);
 INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES (2, 42, 120);
 `, fp, fp)
 	requirepkg.NoError(t, err)

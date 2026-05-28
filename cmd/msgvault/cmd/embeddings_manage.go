@@ -24,6 +24,7 @@ type embeddingGenerationRow struct {
 	Fingerprint  string
 	State        vector.GenerationState
 	StartedAt    time.Time
+	SeededAt     *time.Time
 	CompletedAt  *time.Time
 	ActivatedAt  *time.Time
 	MessageCount int64
@@ -136,6 +137,10 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
 			gen, row.PendingCount)
 	}
+	if row.SeededAt == nil && !embeddingsActivateForce {
+		return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
+			gen)
+	}
 
 	active, hasActive, err := activeEmbeddingGeneration(cmd.Context(), db)
 	if err != nil {
@@ -170,11 +175,19 @@ func openEmbeddingsMetadataDB() (*sql.DB, func(), error) {
 		}
 		return nil, nil, fmt.Errorf("stat vectors.db: %w", err)
 	}
-	db, err := sql.Open("sqlite3", vecPath)
+	db, err := sql.Open("sqlite3", sqliteDSNWithBusyTimeout(vecPath))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open vectors.db: %w", err)
 	}
 	return db, func() { _ = db.Close() }, nil
+}
+
+func sqliteDSNWithBusyTimeout(path string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "_busy_timeout=5000"
 }
 
 func parseGenerationID(s string) (vector.GenerationID, error) {
@@ -189,7 +202,7 @@ func listEmbeddingGenerations(ctx context.Context, db *sql.DB) ([]embeddingGener
 	rows, err := db.QueryContext(ctx, `
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       COUNT(p.message_id) AS pending_count
+		       g.seeded_at, COUNT(p.message_id) AS pending_count
 		  FROM index_generations g
 		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
 		 GROUP BY g.id
@@ -217,7 +230,7 @@ func getEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Generati
 	row := db.QueryRowContext(ctx, `
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       COUNT(p.message_id) AS pending_count
+		       g.seeded_at, COUNT(p.message_id) AS pending_count
 		  FROM index_generations g
 		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
 		 WHERE g.id = ?
@@ -236,7 +249,7 @@ func activeEmbeddingGeneration(ctx context.Context, db *sql.DB) (embeddingGenera
 	row := db.QueryRowContext(ctx, `
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       COUNT(p.message_id) AS pending_count
+		       g.seeded_at, COUNT(p.message_id) AS pending_count
 		  FROM index_generations g
 		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
 		 WHERE g.state = ?
@@ -299,9 +312,10 @@ func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Gen
 		`UPDATE index_generations
 		 SET state = 'active', activated_at = ?, completed_at = COALESCE(completed_at, ?)
 		 WHERE id = ? AND state = 'building'
+		   AND (? OR seeded_at IS NOT NULL)
 		   AND (? OR NOT EXISTS (
 		       SELECT 1 FROM pending_embeddings WHERE generation_id = ?
-		   ))`, now, now, int64(gen), force, int64(gen))
+		   ))`, now, now, int64(gen), force, force, int64(gen))
 	if err != nil {
 		return fmt.Errorf("activate generation %d: %w", gen, err)
 	}
@@ -315,6 +329,19 @@ func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Gen
 		if pending > 0 && !force {
 			return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
 				gen, pending)
+		}
+		var state vector.GenerationState
+		var seededAt sql.NullInt64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT state, seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&state, &seededAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+			}
+			return fmt.Errorf("lookup generation %d: %w", gen, err)
+		}
+		if state == vector.GenerationBuilding && !seededAt.Valid && !force {
+			return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
+				gen)
 		}
 		return fmt.Errorf("generation %d not in %q state", gen, vector.GenerationBuilding)
 	}
@@ -331,7 +358,7 @@ type generationScanner interface {
 func scanEmbeddingGeneration(s generationScanner) (embeddingGenerationRow, error) {
 	var row embeddingGenerationRow
 	var startedAt int64
-	var completedAt, activatedAt sql.NullInt64
+	var seededAt, completedAt, activatedAt sql.NullInt64
 	if err := s.Scan(
 		&row.ID,
 		&row.Model,
@@ -342,11 +369,16 @@ func scanEmbeddingGeneration(s generationScanner) (embeddingGenerationRow, error
 		&completedAt,
 		&activatedAt,
 		&row.MessageCount,
+		&seededAt,
 		&row.PendingCount,
 	); err != nil {
 		return embeddingGenerationRow{}, err
 	}
 	row.StartedAt = time.Unix(startedAt, 0)
+	if seededAt.Valid {
+		t := time.Unix(seededAt.Int64, 0)
+		row.SeededAt = &t
+	}
 	if completedAt.Valid {
 		t := time.Unix(completedAt.Int64, 0)
 		row.CompletedAt = &t
