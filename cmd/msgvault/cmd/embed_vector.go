@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -21,6 +20,8 @@ import (
 
 func runEmbed(cmd *cobra.Command) error {
 	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
@@ -55,7 +56,7 @@ func runEmbed(cmd *cobra.Command) error {
 			return embedYes ||
 				confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
 		},
-		Stderr: cmd.ErrOrStderr(),
+		Stderr: errOut,
 	})
 	if err != nil {
 		return err
@@ -92,20 +93,20 @@ func runEmbed(cmd *cobra.Command) error {
 		EmbedTimeout:    cfg.Vector.Embeddings.Timeout,
 		EmbedMaxRetries: cfg.Vector.Embeddings.MaxRetries,
 		TotalPending:    totalPending,
-		Progress:        newProgressPrinter(os.Stderr, totalPending, cfg.Vector.Embeddings.ETAWindow),
+		Progress:        newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 	})
 
 	if n, err := worker.ReclaimStale(ctx); err != nil {
 		return fmt.Errorf("reclaim stale: %w", err)
 	} else if n > 0 {
-		fmt.Fprintf(os.Stderr, "Reclaimed %d stale claims.\n", n)
+		fmt.Fprintf(errOut, "Reclaimed %d stale claims.\n", n)
 	}
 
 	res, err := worker.RunOnce(ctx, gen)
 	if err != nil {
 		return fmt.Errorf("embed run: %w", err)
 	}
-	fmt.Printf("Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
+	fmt.Fprintf(out, "Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
 		res.Claimed, res.Succeeded, res.Failed, res.Truncated)
 
 	// Activation is a function of the generation's final state, not
@@ -121,9 +122,9 @@ func runEmbed(cmd *cobra.Command) error {
 			if err := backend.ActivateGeneration(ctx, gen); err != nil {
 				return fmt.Errorf("activate generation: %w", err)
 			}
-			fmt.Printf("Generation %d activated.\n", gen)
+			fmt.Fprintf(out, "Generation %d activated.\n", gen)
 		} else {
-			fmt.Fprintf(os.Stderr,
+			fmt.Fprintf(errOut,
 				"Generation %d still has %d pending rows; run `msgvault embeddings resume` again to finish, then it will activate automatically.\n",
 				gen, remaining)
 		}
