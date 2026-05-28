@@ -62,7 +62,10 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 			formatGenerationTimePtr(row.ActivatedAt),
 		)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush embedding generations table: %w", err)
+	}
+	return nil
 }
 
 func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
@@ -85,6 +88,7 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	case vector.GenerationRetired:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d is already retired.\n", gen)
 		return nil
+	case vector.GenerationBuilding:
 	case vector.GenerationActive:
 		if !embeddingsRetireForceActive {
 			return fmt.Errorf("generation %d is active; pass --force-active to retire the serving generation", gen)
@@ -133,13 +137,13 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			gen, row.PendingCount)
 	}
 
-	active, err := activeEmbeddingGeneration(cmd.Context(), db)
+	active, hasActive, err := activeEmbeddingGeneration(cmd.Context(), db)
 	if err != nil {
 		return err
 	}
 	if !embeddingsActivateYes {
 		prompt := fmt.Sprintf("Activate generation %d (%s)", gen, row.Fingerprint)
-		if active != nil {
+		if hasActive {
 			prompt += fmt.Sprintf(" and retire active generation %d (%s)", active.ID, active.Fingerprint)
 		}
 		prompt += "? "
@@ -228,7 +232,7 @@ func getEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.Generati
 	return g, nil
 }
 
-func activeEmbeddingGeneration(ctx context.Context, db *sql.DB) (*embeddingGenerationRow, error) {
+func activeEmbeddingGeneration(ctx context.Context, db *sql.DB) (embeddingGenerationRow, bool, error) {
 	row := db.QueryRowContext(ctx, `
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
@@ -239,12 +243,12 @@ func activeEmbeddingGeneration(ctx context.Context, db *sql.DB) (*embeddingGener
 		 GROUP BY g.id`, string(vector.GenerationActive))
 	g, err := scanEmbeddingGeneration(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return embeddingGenerationRow{}, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup active generation: %w", err)
+		return embeddingGenerationRow{}, false, fmt.Errorf("lookup active generation: %w", err)
 	}
-	return &g, nil
+	return g, true, nil
 }
 
 func retireEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID) error {

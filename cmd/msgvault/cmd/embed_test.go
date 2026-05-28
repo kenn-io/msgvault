@@ -14,78 +14,86 @@ import (
 )
 
 func TestEmbeddingsCommandRegistration(t *testing.T) {
+	require := requirepkg.New(t)
+
 	buildCmd, _, err := rootCmd.Find([]string{"embeddings", "build"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "build", buildCmd.Name())
-	requirepkg.NotNil(t, buildCmd.Flags().Lookup("full-rebuild"))
-	requirepkg.NotNil(t, buildCmd.Flags().Lookup("yes"))
+	require.NoError(err)
+	require.Equal("build", buildCmd.Name())
+	require.NotNil(buildCmd.Flags().Lookup("full-rebuild"))
+	require.NotNil(buildCmd.Flags().Lookup("yes"))
 
 	resumeCmd, _, err := rootCmd.Find([]string{"embeddings", "resume"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "resume", resumeCmd.Name())
-	requirepkg.Nil(t, resumeCmd.Flags().Lookup("full-rebuild"))
+	require.NoError(err)
+	require.Equal("resume", resumeCmd.Name())
+	require.Nil(resumeCmd.Flags().Lookup("full-rebuild"))
 
 	listCmd, _, err := rootCmd.Find([]string{"embeddings", "list"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "list", listCmd.Name())
+	require.NoError(err)
+	require.Equal("list", listCmd.Name())
 
 	retireCmd, _, err := rootCmd.Find([]string{"embeddings", "retire"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "retire", retireCmd.Name())
-	requirepkg.NotNil(t, retireCmd.Flags().Lookup("yes"))
-	requirepkg.NotNil(t, retireCmd.Flags().Lookup("force-active"))
+	require.NoError(err)
+	require.Equal("retire", retireCmd.Name())
+	require.NotNil(retireCmd.Flags().Lookup("yes"))
+	require.NotNil(retireCmd.Flags().Lookup("force-active"))
 
 	activateCmd, _, err := rootCmd.Find([]string{"embeddings", "activate"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "activate", activateCmd.Name())
-	requirepkg.NotNil(t, activateCmd.Flags().Lookup("yes"))
-	requirepkg.NotNil(t, activateCmd.Flags().Lookup("force"))
+	require.NoError(err)
+	require.Equal("activate", activateCmd.Name())
+	require.NotNil(activateCmd.Flags().Lookup("yes"))
+	require.NotNil(activateCmd.Flags().Lookup("force"))
 
 	legacyCmd, _, err := rootCmd.Find([]string{"build-embeddings"})
-	requirepkg.NoError(t, err)
-	requirepkg.Equal(t, "build-embeddings", legacyCmd.Name())
-	requirepkg.NotEmpty(t, legacyCmd.Deprecated)
-	requirepkg.NotNil(t, legacyCmd.Flags().Lookup("full-rebuild"))
-	requirepkg.NotNil(t, legacyCmd.Flags().Lookup("yes"))
+	require.NoError(err)
+	require.Equal("build-embeddings", legacyCmd.Name())
+	require.NotEmpty(legacyCmd.Deprecated)
+	require.NotNil(legacyCmd.Flags().Lookup("full-rebuild"))
+	require.NotNil(legacyCmd.Flags().Lookup("yes"))
 }
 
 func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	db := newEmbeddingMetadataTestDB(t)
 
 	rows, err := listEmbeddingGenerations(t.Context(), db)
-	requirepkg.NoError(t, err)
-	requirepkg.Len(t, rows, 2)
+	require.NoError(err)
+	require.Len(rows, 2)
 
-	assertpkg.Equal(t, vector.GenerationID(1), rows[0].ID)
-	assertpkg.Equal(t, vector.GenerationActive, rows[0].State)
-	assertpkg.Equal(t, int64(2), rows[0].MessageCount)
-	assertpkg.Equal(t, int64(0), rows[0].PendingCount)
+	assert.Equal(vector.GenerationID(1), rows[0].ID)
+	assert.Equal(vector.GenerationActive, rows[0].State)
+	assert.Equal(int64(2), rows[0].MessageCount)
+	assert.Equal(int64(0), rows[0].PendingCount)
 
-	assertpkg.Equal(t, vector.GenerationID(2), rows[1].ID)
-	assertpkg.Equal(t, vector.GenerationBuilding, rows[1].State)
-	assertpkg.Equal(t, int64(1), rows[1].PendingCount)
+	assert.Equal(vector.GenerationID(2), rows[1].ID)
+	assert.Equal(vector.GenerationBuilding, rows[1].State)
+	assert.Equal(int64(1), rows[1].PendingCount)
 }
 
 func TestActivateEmbeddingGenerationRetiresPreviousActive(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	db := newEmbeddingMetadataTestDB(t)
 	ctx := t.Context()
 
 	_, err := db.ExecContext(ctx, `DELETE FROM pending_embeddings WHERE generation_id = 2`)
-	requirepkg.NoError(t, err)
+	require.NoError(err)
 
-	requirepkg.NoError(t, activateEmbeddingGeneration(ctx, db, 2))
+	require.NoError(activateEmbeddingGeneration(ctx, db, 2))
 
-	active := mustGetEmbeddingGeneration(t, ctx, db, 2)
-	assertpkg.Equal(t, vector.GenerationActive, active.State)
-	assertpkg.NotNil(t, active.ActivatedAt)
-	assertpkg.NotNil(t, active.CompletedAt)
+	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
+	assert.Equal(vector.GenerationActive, active.State)
+	assert.NotNil(active.ActivatedAt)
+	assert.NotNil(active.CompletedAt)
 
-	retired := mustGetEmbeddingGeneration(t, ctx, db, 1)
-	assertpkg.Equal(t, vector.GenerationRetired, retired.State)
-	assertpkg.NotNil(t, retired.CompletedAt)
+	retired := mustGetEmbeddingGeneration(ctx, t, db, 1)
+	assert.Equal(vector.GenerationRetired, retired.State)
+	assert.NotNil(retired.CompletedAt)
 }
 
 func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
 	withEmbeddingCommandConfig(t, dbPath)
 
@@ -93,15 +101,18 @@ func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
 	embeddingsActivateYes = true
 	t.Cleanup(func() { embeddingsActivateYes = oldYes })
 	cmd := embeddingsActivateCmd
+	oldCtx := cmd.Context()
 	cmd.SetContext(context.Background())
-	t.Cleanup(func() { cmd.SetContext(nil) })
+	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 	err := runEmbeddingsActivate(cmd, []string{"2"})
 
-	requirepkg.Error(t, err)
-	assertpkg.Contains(t, err.Error(), "pending embedding rows")
+	require.Error(err)
+	assert.Contains(err.Error(), "pending embedding rows")
 }
 
 func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
 	withEmbeddingCommandConfig(t, dbPath)
 
@@ -115,21 +126,22 @@ func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
 	})
 
 	cmd := embeddingsRetireCmd
+	oldCtx := cmd.Context()
 	cmd.SetContext(context.Background())
-	t.Cleanup(func() { cmd.SetContext(nil) })
+	t.Cleanup(func() { cmd.SetContext(oldCtx) })
 
 	err := runEmbeddingsRetire(cmd, []string{"1"})
-	requirepkg.Error(t, err)
-	assertpkg.Contains(t, err.Error(), "active")
+	require.Error(err)
+	assert.Contains(err.Error(), "active")
 
 	embeddingsRetireForceActive = true
-	requirepkg.NoError(t, runEmbeddingsRetire(cmd, []string{"1"}))
+	require.NoError(runEmbeddingsRetire(cmd, []string{"1"}))
 
 	db, err := sql.Open("sqlite3", dbPath)
-	requirepkg.NoError(t, err)
-	t.Cleanup(func() { requirepkg.NoError(t, db.Close()) })
-	row := mustGetEmbeddingGeneration(t, t.Context(), db, 1)
-	assertpkg.Equal(t, vector.GenerationRetired, row.State)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	row := mustGetEmbeddingGeneration(t.Context(), t, db, 1)
+	assert.Equal(vector.GenerationRetired, row.State)
 }
 
 func newEmbeddingMetadataTestDB(t *testing.T) *sql.DB {
@@ -207,7 +219,7 @@ func newTestConfigForFingerprint(vecPath string) *config.Config {
 	}
 }
 
-func mustGetEmbeddingGeneration(t *testing.T, ctx context.Context, db *sql.DB, gen vector.GenerationID) embeddingGenerationRow {
+func mustGetEmbeddingGeneration(ctx context.Context, t *testing.T, db *sql.DB, gen vector.GenerationID) embeddingGenerationRow {
 	t.Helper()
 	row, err := getEmbeddingGeneration(ctx, db, gen)
 	requirepkg.NoError(t, err)

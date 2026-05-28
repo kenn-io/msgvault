@@ -30,7 +30,7 @@ var collectionCreateCmd = &cobra.Command{
 }
 
 var collectionListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   cmdUseList,
 	Short: "List all collections",
 	RunE:  runCollectionList,
 }

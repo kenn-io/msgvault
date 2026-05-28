@@ -31,7 +31,7 @@ active generation.`,
 	RunE: runEmbeddingsResume,
 }
 var embeddingsListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   cmdUseList,
 	Short: "List vector embedding generations",
 	RunE:  runEmbeddingsList,
 }

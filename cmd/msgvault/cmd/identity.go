@@ -40,7 +40,7 @@ case-insensitivity is handled at compare time by consumers, not at the store.`,
 }
 
 var identityListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   cmdUseList,
 	Short: "List confirmed identifiers across one or more accounts",
 	RunE:  runIdentityList,
 }
