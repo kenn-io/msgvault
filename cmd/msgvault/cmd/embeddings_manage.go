@@ -101,7 +101,7 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 			return errors.New("aborted")
 		}
 	}
-	if err := retireEmbeddingGeneration(cmd.Context(), db, gen); err != nil {
+	if err := retireEmbeddingGeneration(cmd.Context(), db, gen, embeddingsRetireForceActive); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d retired.\n", gen)
@@ -251,17 +251,34 @@ func activeEmbeddingGeneration(ctx context.Context, db *sql.DB) (embeddingGenera
 	return g, true, nil
 }
 
-func retireEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID) error {
+func retireEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID, forceActive bool) error {
+	stateFilter := `state = ?`
+	args := []any{string(vector.GenerationBuilding), int64(gen)}
+	if forceActive {
+		stateFilter = `state IN (?, ?)`
+		args = []any{string(vector.GenerationBuilding), string(vector.GenerationActive), int64(gen)}
+	}
 	res, err := db.ExecContext(ctx,
-		`UPDATE index_generations SET state = 'retired' WHERE id = ?`, int64(gen))
+		`UPDATE index_generations SET state = 'retired' WHERE `+stateFilter+` AND id = ?`, args...)
 	if err != nil {
 		return fmt.Errorf("retire generation %d: %w", gen, err)
 	}
 	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+	if n > 0 {
+		return nil
 	}
-	return nil
+
+	row, err := getEmbeddingGeneration(ctx, db, gen)
+	if err != nil {
+		return err
+	}
+	if row.State == vector.GenerationRetired {
+		return nil
+	}
+	if row.State == vector.GenerationActive && !forceActive {
+		return fmt.Errorf("generation %d is active; pass --force-active to retire the serving generation", gen)
+	}
+	return fmt.Errorf("generation %d could not be retired from %q state", gen, row.State)
 }
 
 func activateEmbeddingGeneration(ctx context.Context, db *sql.DB, gen vector.GenerationID) error {

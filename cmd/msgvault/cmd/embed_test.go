@@ -144,6 +144,24 @@ func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
 	assert.Equal(vector.GenerationRetired, row.State)
 }
 
+func TestRetireEmbeddingGenerationProtectsActiveRace(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	db := newEmbeddingMetadataTestDB(t)
+	ctx := t.Context()
+
+	err := retireEmbeddingGeneration(ctx, db, 1, false)
+	require.Error(err)
+	assert.Contains(err.Error(), "force-active")
+
+	active := mustGetEmbeddingGeneration(ctx, t, db, 1)
+	assert.Equal(vector.GenerationActive, active.State)
+
+	require.NoError(retireEmbeddingGeneration(ctx, db, 1, true))
+	retired := mustGetEmbeddingGeneration(ctx, t, db, 1)
+	assert.Equal(vector.GenerationRetired, retired.State)
+}
+
 func newEmbeddingMetadataTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := newEmbeddingMetadataTestDBFile(t)
