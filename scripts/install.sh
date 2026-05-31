@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="wesm/msgvault"
+REPO="kenn-io/msgvault"
 BINARY_NAME="msgvault"
 
 # Colors
