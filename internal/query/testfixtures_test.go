@@ -178,8 +178,10 @@ type MessageOpt struct {
 	SizeEstimate   int64
 	HasAttachments bool
 	DeletedAt      *time.Time
-	SourceID       int64 // defaults to 1
-	ConversationID int64 // 0 = auto-assign
+	SourceID       int64  // defaults to 1
+	ConversationID int64  // 0 = auto-assign
+	MessageType    string // defaults to "email"
+	SenderID       *int64 // nil = NULL (direct sender for text/chat messages)
 }
 
 // AddMessage adds a message and returns its ID.
@@ -217,6 +219,8 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SizeEstimate:    opt.SizeEstimate,
 		HasAttachments:  opt.HasAttachments,
 		DeletedAt:       opt.DeletedAt,
+		SenderID:        opt.SenderID,
+		MessageType:     opt.MessageType,
 		Year:            sentAt.Year(),
 		Month:           int(sentAt.Month()),
 	})

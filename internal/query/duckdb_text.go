@@ -17,6 +17,20 @@ func textTypeFilter() string {
 	return "msg.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')"
 }
 
+// textSenderJoin resolves the sending participant (p_sender) for each text
+// message. The sender lives on either messages.sender_id (iMessage/SMS,
+// Messenger) or a message_recipients row of type 'from', so we COALESCE the
+// two. The 'from' lookup uses an uncorrelated derived table joined on
+// message_id rather than a correlated scalar subquery in the JOIN ON clause:
+// DuckDB cannot push the message_type filter through a correlated join and
+// instead evaluates it across the entire (email-dominated) messages dataset,
+// exhausting memory. The derived table optimizes cleanly.
+const textSenderJoin = `LEFT JOIN (
+			SELECT message_id, ANY_VALUE(participant_id) AS participant_id
+			FROM mr WHERE recipient_type = 'from' GROUP BY message_id
+		) fr ON fr.message_id = msg.id
+		JOIN p p_sender ON p_sender.id = COALESCE(msg.sender_id, fr.participant_id)`
+
 // buildTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the msg. prefix and assume the standard parquetCTEs.
 func (e *DuckDBEngine) buildTextFilterConditions(
@@ -196,24 +210,16 @@ func textAggViewDef(
 	case TextViewContacts:
 		keyExpr := "COALESCE(NULLIF(p_sender.phone_number, ''), " +
 			"p_sender.email_address)"
-		senderJoin := `JOIN p p_sender ON p_sender.id = COALESCE(msg.sender_id,
-			(SELECT mr_fb.participant_id FROM mr mr_fb
-			 WHERE mr_fb.message_id = msg.id AND mr_fb.recipient_type = 'from'
-			 LIMIT 1))`
 		return aggViewDef{
 			keyExpr:    keyExpr,
-			joinClause: senderJoin,
+			joinClause: textSenderJoin,
 			nullGuard:  keyExpr + " IS NOT NULL",
 		}, nil
 	case TextViewContactNames:
 		nameExpr := participantNameExpr("p_sender")
-		senderJoin := `JOIN p p_sender ON p_sender.id = COALESCE(msg.sender_id,
-			(SELECT mr_fb.participant_id FROM mr mr_fb
-			 WHERE mr_fb.message_id = msg.id AND mr_fb.recipient_type = 'from'
-			 LIMIT 1))`
 		return aggViewDef{
 			keyExpr:    nameExpr,
-			joinClause: senderJoin,
+			joinClause: textSenderJoin,
 			nullGuard:  nameExpr + " IS NOT NULL",
 		}, nil
 	case TextViewSources:
