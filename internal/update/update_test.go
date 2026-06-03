@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -342,6 +343,21 @@ func TestIsNewer(t *testing.T) {
 	}
 }
 
+// TestUpdateURLsTargetCanonicalRepo guards the only manual sync point between
+// the updater and the repository's GitHub location. When the org was renamed
+// (wesm -> kenn-io) these constants were missed, so GitHub served a repo-rename
+// 301 that resolveLatestTag rejected with "unexpected redirect target". This
+// fails loudly if the URLs ever drift from the canonical repo again.
+func TestUpdateURLsTargetCanonicalRepo(t *testing.T) {
+	t.Parallel()
+	const wantPrefix = "https://github.com/kenn-io/msgvault/"
+	assert := assertpkg.New(t)
+	assert.Truef(strings.HasPrefix(githubLatestReleaseURL, wantPrefix),
+		"githubLatestReleaseURL must target the canonical repo, got %q", githubLatestReleaseURL)
+	assert.Truef(strings.HasPrefix(githubReleaseDownloadBase, wantPrefix),
+		"githubReleaseDownloadBase must target the canonical repo, got %q", githubReleaseDownloadBase)
+}
+
 func TestResolveLatestTag(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -354,13 +370,13 @@ func TestResolveLatestTag(t *testing.T) {
 		{
 			name:     "valid 302 redirect",
 			status:   http.StatusFound,
-			location: "https://github.com/wesm/msgvault/releases/tag/v0.30.1",
+			location: "https://github.com/kenn-io/msgvault/releases/tag/v0.30.1",
 			wantTag:  "v0.30.1",
 		},
 		{
 			name:     "pre-release tag",
 			status:   http.StatusFound,
-			location: "https://github.com/wesm/msgvault/releases/tag/v0.9.0-rc1",
+			location: "https://github.com/kenn-io/msgvault/releases/tag/v0.9.0-rc1",
 			wantTag:  "v0.9.0-rc1",
 		},
 		{
@@ -371,13 +387,13 @@ func TestResolveLatestTag(t *testing.T) {
 		{
 			name:       "redirect target without /tag/",
 			status:     http.StatusFound,
-			location:   "https://github.com/wesm/msgvault/releases",
+			location:   "https://github.com/kenn-io/msgvault/releases",
 			wantErrSub: "unexpected redirect target",
 		},
 		{
 			name:       "empty tag after /tag/",
 			status:     http.StatusFound,
-			location:   "https://github.com/wesm/msgvault/releases/tag/",
+			location:   "https://github.com/kenn-io/msgvault/releases/tag/",
 			wantErrSub: "empty tag",
 		},
 	}
