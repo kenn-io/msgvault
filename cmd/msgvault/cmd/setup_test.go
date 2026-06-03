@@ -54,7 +54,7 @@ func TestCreateNASBundle(t *testing.T) {
 	require.NoError(err, "read docker-compose.yml")
 	composeStr := string(composeData)
 	assert.Contains(composeStr, "9090:8080", "docker-compose.yml should map port 9090:8080")
-	assert.Contains(composeStr, "ghcr.io/wesm/msgvault", "docker-compose.yml should reference the msgvault image")
+	assert.Contains(composeStr, "ghcr.io/kenn-io/msgvault", "docker-compose.yml should reference the msgvault image")
 }
 
 func TestCreateNASBundle_NoSecrets(t *testing.T) {
