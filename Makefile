@@ -17,6 +17,13 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 
+# Keep golangci-lint results scoped to this git worktree. Its cache can contain
+# absolute source paths, so sharing the default user cache across worktrees can
+# replay diagnostics for deleted worktree paths.
+DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --git-path golangci-lint-cache)
+GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
+export GOLANGCI_LINT_CACHE
+
 .PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench help
 
 # Build the binary (debug)
