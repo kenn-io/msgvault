@@ -27,8 +27,8 @@ const (
 	// githubLatestReleaseURL is the HTML endpoint that 302-redirects to
 	// /releases/tag/<tag>. Unlike api.github.com it is not rate-limited
 	// at 60 req/hr per IP for unauthenticated callers.
-	githubLatestReleaseURL    = "https://github.com/wesm/msgvault/releases/latest"
-	githubReleaseDownloadBase = "https://github.com/wesm/msgvault/releases/download"
+	githubLatestReleaseURL    = "https://github.com/kenn-io/msgvault/releases/latest"
+	githubReleaseDownloadBase = "https://github.com/kenn-io/msgvault/releases/download"
 	updateUserAgent           = "msgvault-update"
 	cacheFileName             = "update_check.json"
 	cacheDuration             = 1 * time.Hour
