@@ -22,7 +22,58 @@ import (
 var (
 	verifySampleSize  int
 	verifySkipDBCheck bool
+	verifyJSON        bool
 )
+
+// verifyResult is the machine-readable form of a verify run, emitted when
+// --json is set. Difference is gmailTotal-archived: a positive value means
+// Gmail reports more messages than the archive holds; a negative value means
+// the archive holds more than Gmail's profile total reports. Gmail's profile
+// total and the archive policy are not guaranteed to cover identical message
+// sets, so the delta is reported as a signed number rather than as "missing".
+type verifyResult struct {
+	Email                    string `json:"email"`
+	ArchiveAccountFound      bool   `json:"archive_account_found"`
+	DatabaseIntegrityChecked bool   `json:"database_integrity_checked"`
+	DatabaseIntegrityOK      *bool  `json:"database_integrity_ok,omitempty"`
+
+	GmailMessagesTotal int64   `json:"gmail_messages_total"`
+	ArchivedMessages   int64   `json:"archived_messages"`
+	Difference         int64   `json:"difference"`
+	RawMIMEMessages    int64   `json:"raw_mime_messages"`
+	RawMIMECoveragePct float64 `json:"raw_mime_coverage_percent"`
+
+	SampleSize        int  `json:"sample_size"`
+	SampleVerified    int  `json:"sample_verified"`
+	SampleErrors      int  `json:"sample_errors"`
+	SampleInterrupted bool `json:"sample_interrupted"`
+}
+
+// newVerifyResult assembles the machine-readable summary from the counts
+// gathered during a run. It is separated from the Gmail/database plumbing so
+// the difference and coverage math can be unit-tested without network or
+// database access.
+func newVerifyResult(email string, archiveAccountFound bool, integrityOK *bool, gmailTotal, archived, withRaw int64, sampleSize, sampleVerified, sampleErrors int, sampleInterrupted bool) verifyResult {
+	rawPct := float64(0)
+	if archived > 0 {
+		rawPct = float64(withRaw) / float64(archived) * 100
+	}
+	return verifyResult{
+		Email:                    email,
+		ArchiveAccountFound:      archiveAccountFound,
+		DatabaseIntegrityChecked: integrityOK != nil,
+		DatabaseIntegrityOK:      integrityOK,
+		GmailMessagesTotal:       gmailTotal,
+		ArchivedMessages:         archived,
+		Difference:               gmailTotal - archived,
+		RawMIMEMessages:          withRaw,
+		RawMIMECoveragePct:       rawPct,
+		SampleSize:               sampleSize,
+		SampleVerified:           sampleVerified,
+		SampleErrors:             sampleErrors,
+		SampleInterrupted:        sampleInterrupted,
+	}
+}
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify <email>",
@@ -41,10 +92,25 @@ This command:
 Examples:
   msgvault verify you@gmail.com
   msgvault verify you@gmail.com --sample 200
-  msgvault verify you@gmail.com --skip-db-check`,
+  msgvault verify you@gmail.com --skip-db-check
+  msgvault verify you@gmail.com --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		email := args[0]
+
+		// In --json mode, suppress all human-readable progress so stdout
+		// carries only the final JSON object. Failures still surface as
+		// returned errors, which Cobra prints to stderr.
+		emitf := func(format string, a ...any) {
+			if !verifyJSON {
+				fmt.Printf(format, a...)
+			}
+		}
+		emitln := func(a ...any) {
+			if !verifyJSON {
+				fmt.Println(a...)
+			}
+		}
 
 		// Open database
 		dbPath := cfg.DatabaseDSN()
@@ -68,31 +134,38 @@ Examples:
 		// check was skipped intentionally and point them at the right
 		// out-of-band tool.
 		var dbCorrupt bool
+		var dbIntegrityOK *bool
 		if !verifySkipDBCheck {
 			if s.IsPostgreSQL() {
-				fmt.Println("Skipping database integrity check (PostgreSQL — use pg_amcheck out-of-band).")
-				fmt.Println()
+				emitln("Skipping database integrity check (PostgreSQL — use pg_amcheck out-of-band).")
+				emitln()
 			} else {
-				fmt.Println("Running database integrity check...")
+				emitln("Running database integrity check...")
 				integrityErrors, err := runIntegrityCheck(s)
 				if err != nil {
 					return fmt.Errorf("integrity check failed: %w", err)
 				}
 				if len(integrityErrors) == 0 {
-					fmt.Println("  Database integrity: OK")
+					ok := true
+					dbIntegrityOK = &ok
+					emitln("  Database integrity: OK")
 				} else {
 					dbCorrupt = true
-					fmt.Printf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
+					ok := false
+					dbIntegrityOK = &ok
+					emitf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
 					for i, ie := range integrityErrors {
 						if i >= 10 {
-							fmt.Printf("  ... and %d more errors\n", len(integrityErrors)-10)
+							emitf("  ... and %d more errors\n", len(integrityErrors)-10)
 							break
 						}
-						fmt.Printf("  - %s\n", ie)
+						emitf("  - %s\n", ie)
 					}
-					printIntegrityRecoveryHint(integrityErrors)
+					if !verifyJSON {
+						printIntegrityRecoveryHint(integrityErrors)
+					}
 				}
-				fmt.Println()
+				emitln()
 			}
 		}
 
@@ -119,7 +192,7 @@ Examples:
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		go func() {
 			<-sigChan
-			fmt.Println("\nInterrupted.")
+			emitln("\nInterrupted.")
 			cancel()
 		}()
 
@@ -145,8 +218,13 @@ Examples:
 			if mgrErr != nil {
 				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr))
 			}
-			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
-				isatty.IsCygwinTerminal(os.Stdin.Fd())
+			// Machine-readable mode must not enter an interactive OAuth
+			// flow that writes prompts to stdout before the JSON object.
+			interactive := false
+			if !verifyJSON {
+				interactive = isatty.IsTerminal(os.Stdin.Fd()) ||
+					isatty.IsCygwinTerminal(os.Stdin.Fd())
+			}
 			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive)
 			if err != nil {
 				return err
@@ -163,7 +241,7 @@ Examples:
 			return fmt.Errorf("get Gmail profile: %w", err)
 		}
 
-		fmt.Printf("Verifying archive for %s...\n\n", profile.EmailAddress)
+		emitf("Verifying archive for %s...\n\n", profile.EmailAddress)
 
 		// Look up the Gmail source by the user-supplied identifier,
 		// not the canonical profile address — the source is keyed
@@ -175,6 +253,18 @@ Examples:
 			return fmt.Errorf("get source: %w", err)
 		}
 		if source == nil {
+			if verifyJSON {
+				if err := printJSON(newVerifyResult(
+					profile.EmailAddress, false, dbIntegrityOK, profile.MessagesTotal, 0, 0,
+					0, 0, 0, false,
+				)); err != nil {
+					return err
+				}
+				if dbCorrupt {
+					return errors.New("database integrity check failed")
+				}
+				return nil
+			}
 			fmt.Printf("Gmail account %s not found in database.\n", email)
 			fmt.Println("Run 'sync-full' first to populate the archive.")
 			if dbCorrupt {
@@ -196,26 +286,30 @@ Examples:
 
 		// Print summary
 		gmailTotal := profile.MessagesTotal
-		fmt.Printf("Gmail messages:      %10d\n", gmailTotal)
-		fmt.Printf("Archived messages:   %10d\n", archiveCount)
+		emitf("Gmail messages:      %10d\n", gmailTotal)
+		emitf("Archived messages:   %10d\n", archiveCount)
 		diff := gmailTotal - archiveCount
 		if diff > 0 {
-			fmt.Printf("Missing:             %10d\n", diff)
+			emitf("Missing:             %10d\n", diff)
 		} else if diff < 0 {
-			fmt.Printf("Extra in archive:    %10d\n", -diff)
+			emitf("Extra in archive:    %10d\n", -diff)
 		} else {
-			fmt.Printf("Difference:          %10d\n", diff)
+			emitf("Difference:          %10d\n", diff)
 		}
-		fmt.Println()
+		emitln()
 
 		rawPct := float64(0)
 		if archiveCount > 0 {
 			rawPct = float64(withRaw) / float64(archiveCount) * 100
 		}
-		fmt.Printf("With raw MIME:       %10d (%.1f%%)\n", withRaw, rawPct)
-		fmt.Println()
+		emitf("With raw MIME:       %10d (%.1f%%)\n", withRaw, rawPct)
+		emitln()
 
-		// Sample verification
+		// Sample verification.
+		sampleSize := 0
+		sampleVerified := 0
+		sampleErrorCount := 0
+		sampleInterrupted := false
 		if archiveCount > 0 && verifySampleSize > 0 {
 			actualSampleSize := verifySampleSize
 			if int64(actualSampleSize) > archiveCount {
@@ -226,8 +320,9 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("get sample IDs: %w", err)
 			}
+			sampleSize = len(sampleIDs)
 
-			fmt.Printf("Sampling %d messages...\n", len(sampleIDs))
+			emitf("Sampling %d messages...\n", len(sampleIDs))
 
 			verified := 0
 			var sampleErrs []string
@@ -235,7 +330,8 @@ Examples:
 			for _, msgID := range sampleIDs {
 				// Check context cancellation
 				if ctx.Err() != nil {
-					fmt.Println("\nVerification interrupted.")
+					sampleInterrupted = true
+					emitln("\nVerification interrupted.")
 					break
 				}
 
@@ -259,24 +355,35 @@ Examples:
 
 				verified++
 			}
+			sampleVerified = verified
+			sampleErrorCount = len(sampleErrs)
 
 			if len(sampleErrs) > 0 {
-				fmt.Printf("Sample verified:     %10d of %d\n", verified, len(sampleIDs))
-				fmt.Printf("Sample errors:       %10d\n", len(sampleErrs))
+				emitf("Sample verified:     %10d of %d\n", verified, len(sampleIDs))
+				emitf("Sample errors:       %10d\n", len(sampleErrs))
 				for i, err := range sampleErrs {
 					if i >= 5 {
-						fmt.Printf("  ... and %d more\n", len(sampleErrs)-5)
+						emitf("  ... and %d more\n", len(sampleErrs)-5)
 						break
 					}
-					fmt.Printf("  - %s\n", err)
+					emitf("  - %s\n", err)
 				}
 			} else {
-				fmt.Printf("Sample verified:     %10d (all OK)\n", verified)
+				emitf("Sample verified:     %10d (all OK)\n", verified)
 			}
 		}
 
-		fmt.Println()
-		fmt.Println("Verification complete.")
+		emitln()
+		emitln("Verification complete.")
+
+		if verifyJSON {
+			if err := printJSON(newVerifyResult(
+				profile.EmailAddress, true, dbIntegrityOK, gmailTotal, archiveCount, withRaw,
+				sampleSize, sampleVerified, sampleErrorCount, sampleInterrupted,
+			)); err != nil {
+				return err
+			}
+		}
 
 		if dbCorrupt {
 			return errors.New("database integrity check failed")
@@ -363,5 +470,6 @@ func isFTSIntegrityError(msg string) bool {
 func init() {
 	verifyCmd.Flags().IntVar(&verifySampleSize, "sample", 100, "Number of messages to sample for MIME verification")
 	verifyCmd.Flags().BoolVar(&verifySkipDBCheck, "skip-db-check", false, "Skip SQLite integrity check")
+	verifyCmd.Flags().BoolVar(&verifyJSON, flagJSON, false, "Output as JSON")
 	rootCmd.AddCommand(verifyCmd)
 }
