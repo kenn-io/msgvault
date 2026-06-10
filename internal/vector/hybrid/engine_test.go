@@ -163,6 +163,73 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	assert.Equal(len(results), meta.ReturnedCount)
 }
 
+// TestBuildFTSMatch covers the FreeText → FTS5 MATCH sanitization
+// directly (no DB needed). Every term is quote-wrapped with a "*"
+// prefix, embedded double-quotes are doubled, stray "*" is stripped,
+// and punctuation-only terms (which the FTS5 tokenizer would drop) are
+// removed — yielding "" when nothing usable remains so the caller skips
+// the BM25 branch instead of dispatching a malformed MATCH.
+func TestBuildFTSMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain terms", "budget review", `"budget"* "review"*`},
+		{"trailing question mark", "budget?", `"budget?"*`},
+		{"comma and question (issue #366)", "what's the budget, roughly?", `"what's"* "the"* "budget,"* "roughly?"*`},
+		{"embedded double quote doubled", `say "hi"`, `"say"* """hi"""*`},
+		{"stray star stripped", "bud*get", `"budget"*`},
+		{"punctuation-only dropped", "??? ,,, !!!", ""},
+		{"empty", "", ""},
+		{"mixed tokenless dropped", "--- budget ???", `"budget"*`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertpkg.Equal(t, tc.want, buildFTSMatch(tc.in))
+		})
+	}
+}
+
+// TestEngine_Hybrid_PunctuationQuery is the regression test for #366: a
+// --mode hybrid query containing FTS5 metacharacters (",", "?", "(",
+// ")", ":") used to reach `messages_fts MATCH` unescaped and crash the
+// fused query with "fts5: syntax error near ...". The engine now
+// tokenizes and quote-escapes FreeText into a valid MATCH expression,
+// so these queries succeed — and a metacharacter-laden query still
+// matches on its real terms via the BM25 branch.
+func TestEngine_Hybrid_PunctuationQuery(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newEngineFixture(t)
+
+	for _, q := range []string{
+		"what's the budget, roughly?",
+		"meeting, tomorrow?",
+		"review (Q3): costs, etc.",
+	} {
+		_, _, err := f.Engine.Search(ctx, SearchRequest{
+			Mode:     ModeHybrid,
+			FreeText: q,
+			Limit:    5,
+		})
+		require.NoErrorf(err, "hybrid search must not raise an FTS5 syntax error for %q", q)
+	}
+
+	// Punctuation is neutralized, not dropped: "meeting, tomorrow?"
+	// must still surface the "meeting tomorrow" message (id 1) through
+	// the BM25 branch.
+	results, _, err := f.Engine.Search(ctx, SearchRequest{
+		Mode:     ModeHybrid,
+		FreeText: "meeting, tomorrow?",
+		Limit:    5,
+	})
+	require.NoError(err, "Search")
+	require.NotEmpty(results, "expected hits for 'meeting, tomorrow?'")
+	assert.Equal(int64(1), results[0].MessageID, "top hit")
+}
+
 func TestEngine_Vector_HappyPath(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

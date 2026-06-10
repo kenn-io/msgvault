@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
+	"unicode"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -145,8 +148,21 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 	if !ok {
 		return nil, ResultMeta{}, errors.New("hybrid mode requires a FusingBackend; non-fusing fallback not wired in MVP")
 	}
+	// FTSQuery is contractually a pre-tokenized FTS5 MATCH expression
+	// (see vector.FusedRequest). An explicit override passes through
+	// verbatim; an empty one falls back to the raw FreeText, which must
+	// be tokenized and quote-escaped before it reaches the fused CTE's
+	// `messages_fts MATCH` — otherwise FTS5 metacharacters in a natural-
+	// language query (",", "?", ...) reach the parser raw and raise a
+	// syntax error (issue #366). Only the hybrid path was affected:
+	// --mode fts sanitizes via Store.SearchMessages, and --mode vector
+	// has no BM25 branch at all.
+	ftsQuery := req.FTSQuery
+	if ftsQuery == "" {
+		ftsQuery = buildFTSMatch(req.FreeText)
+	}
 	fReq := vector.FusedRequest{
-		FTSQuery:     firstNonEmpty(req.FTSQuery, req.FreeText),
+		FTSQuery:     ftsQuery,
 		QueryVec:     queryVec,
 		Generation:   active.ID,
 		KPerSignal:   e.cfg.KPerSignal,
@@ -186,9 +202,41 @@ func vectorHitsToFused(hits []vector.Hit) []vector.FusedHit {
 	return out
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+// buildFTSMatch turns a raw free-text query into an FTS5 MATCH
+// expression for the hybrid BM25 branch, mirroring the --mode fts path
+// (Store.SearchMessages → strings.Fields → dialect.BuildFTSArg): each
+// whitespace-separated term is quote-escaped and prefix-matched, and
+// terms the FTS5 tokenizer would drop entirely (punctuation-only) are
+// skipped. Returns "" when nothing usable remains, which the fused
+// query treats as "skip BM25" (vector-only) rather than dispatching a
+// malformed MATCH. Quoting each term is what neutralizes embedded
+// metacharacters like "," and "?" that otherwise crash FTS5 (#366).
+func buildFTSMatch(freeText string) string {
+	terms := strings.Fields(freeText)
+	kept := terms[:0]
+	for _, t := range terms {
+		if hasFTSToken(t) {
+			kept = append(kept, t)
+		}
 	}
-	return b
+	if len(kept) == 0 {
+		return ""
+	}
+	_, arg := query.SQLiteQueryDialect{}.BuildFTSTerm(kept)
+	return arg
+}
+
+// hasFTSToken reports whether s contains a rune the default FTS5
+// tokenizer (unicode61) emits as part of a token — a Unicode letter or
+// digit. Punctuation-only terms tokenize to nothing, so a MATCH built
+// from them is a syntax error; callers drop them. Mirrors the helper of
+// the same name in internal/store (the two packages keep parallel
+// minimal abstractions rather than share a dependency).
+func hasFTSToken(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
