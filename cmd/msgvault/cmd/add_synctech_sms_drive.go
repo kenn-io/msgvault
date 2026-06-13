@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -113,11 +114,17 @@ func runConfiguredSynctechSMSSource(ctx context.Context, src config.SynctechSMSS
 
 func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Store, src config.SynctechSMSSource) error {
 	opts := synctechImportOptions(src)
+	if opts.OwnerPhone == "" {
+		return fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
+	}
 	var err error
 	switch src.Backend {
 	case "", "local":
 		if src.Path == "" {
 			return fmt.Errorf("synctech-sms source %q path is required for local backend", src.Name)
+		}
+		if _, err := ensureConfiguredSynctechSMSSource(st, src, opts); err != nil {
+			return err
 		}
 		_, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
 	case "drive":
@@ -130,6 +137,21 @@ func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Stor
 	}
 	rebuildCacheAfterScheduledSync("synctech-sms:" + src.Name)
 	return nil
+}
+
+func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) (*store.Source, error) {
+	if opts.OwnerPhone == "" {
+		return nil, fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
+	}
+	source, err := st.GetOrCreateSource(synctechsms.SourceType, opts.OwnerPhone)
+	if err != nil {
+		return nil, fmt.Errorf("get source: %w", err)
+	}
+	confirmDefaultIdentity(io.Discard, st, source.ID, src.Name, opts.OwnerPhone, "account-identifier")
+	if err := runPostSourceCreateMigrations(st); err != nil {
+		return nil, fmt.Errorf("post-source-create migrations: %w", err)
+	}
+	return source, nil
 }
 
 func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) error {
@@ -147,9 +169,9 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 	if src.FolderID == "" {
 		return fmt.Errorf("synctech-sms source %q folder_id is required", src.Name)
 	}
-	source, err := st.GetOrCreateSource(synctechsms.SourceType, src.OwnerPhone)
+	source, err := ensureConfiguredSynctechSMSSource(st, src, opts)
 	if err != nil {
-		return fmt.Errorf("get source: %w", err)
+		return err
 	}
 	syncID, err := st.StartSync(source.ID, synctechsms.AdapterName)
 	if err != nil {

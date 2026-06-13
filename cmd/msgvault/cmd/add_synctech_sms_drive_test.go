@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -91,6 +92,46 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 	assert.False(item.ErrorMessage.Valid, "source import error")
 	assertSourceMessageCount(t, f.Store, source.ID, 1)
 	assertSourceConversationMessageCount(t, f.Store, source.ID, 1)
+}
+
+func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() {
+		cfg = savedCfg
+	})
+	cfg = config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	cfg.Identity.Addresses = []string{"legacy@example.com"}
+	st := testutil.NewTestStore(t)
+	emailSource, err := st.GetOrCreateSource("gmail", "mailbox@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	src := synctechDriveTestSource()
+	client := fakeSynctechDriveClient{}
+
+	err = runSynctechSMSDriveSourceWithClient(context.Background(), st, src, synctechImportOptions(src), client)
+	require.NoError(err, "runSynctechSMSDriveSourceWithClient")
+
+	synctechSource := getSynctechSource(t, st, src.OwnerPhone)
+	synctechIDs, err := st.ListAccountIdentities(synctechSource.ID)
+	require.NoError(err, "ListAccountIdentities synctech")
+	require.Len(synctechIDs, 1, "Synctech should keep only its owner-phone identity")
+	assert.Equal(src.OwnerPhone, synctechIDs[0].Address, "Synctech identity address")
+	assert.Equal("account-identifier", synctechIDs[0].SourceSignal, "Synctech identity signal")
+
+	emailIDs, err := st.ListAccountIdentities(emailSource.ID)
+	require.NoError(err, "ListAccountIdentities gmail")
+	require.Len(emailIDs, 1, "post-source migration should run for eligible email sources")
+	assert.Equal("legacy@example.com", emailIDs[0].Address, "migrated identity address")
+	assert.Equal("config_migration", emailIDs[0].SourceSignal, "migrated identity signal")
+
+	applied, err := st.IsMigrationApplied("legacy_identity_to_per_account")
+	require.NoError(err, "IsMigrationApplied")
+	assert.True(applied, "post-source migration sentinel should be set")
 }
 
 func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
