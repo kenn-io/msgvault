@@ -357,6 +357,7 @@ func (s *Store) UpsertSourceImportItem(item SourceImportItem) error {
 
 func (s *Store) GetSourceImportItem(sourceID int64, provider, providerID string) (*SourceImportItem, error) {
 	var item SourceImportItem
+	var checksum sql.NullString
 	err := s.db.QueryRow(`
 		SELECT id, source_id, provider, provider_id, name, checksum, size,
 		       modified_at, imported_at, status, records_imported, error_message
@@ -364,7 +365,7 @@ func (s *Store) GetSourceImportItem(sourceID int64, provider, providerID string)
 		WHERE source_id = ? AND provider = ? AND provider_id = ?
 	`, sourceID, provider, providerID).Scan(
 		&item.ID, &item.SourceID, &item.Provider, &item.ProviderID, &item.Name,
-		&item.Checksum, &item.Size, &item.ModifiedAt, &item.ImportedAt,
+		&checksum, &item.Size, &item.ModifiedAt, &item.ImportedAt,
 		&item.Status, &item.RecordsImported, &item.ErrorMessage,
 	)
 	if err == sql.ErrNoRows {
@@ -373,6 +374,7 @@ func (s *Store) GetSourceImportItem(sourceID int64, provider, providerID string)
 	if err != nil {
 		return nil, fmt.Errorf("get source import item: %w", err)
 	}
+	item.Checksum = checksum.String
 	return &item, nil
 }
 
@@ -388,11 +390,12 @@ func (s *Store) ListImportedSourceItemChecksums(sourceID int64, provider string)
 	defer func() { _ = rows.Close() }()
 	out := map[string]string{}
 	for rows.Next() {
-		var providerID, checksum string
+		var providerID string
+		var checksum sql.NullString
 		if err := rows.Scan(&providerID, &checksum); err != nil {
 			return nil, fmt.Errorf("scan source import item checksum: %w", err)
 		}
-		out[providerID] = checksum
+		out[providerID] = checksum.String
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate source import item checksums: %w", err)

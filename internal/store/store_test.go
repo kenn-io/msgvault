@@ -143,6 +143,18 @@ func TestStore_SourceImportItems(t *testing.T) {
 	checksums, err = f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
 	require.NoError(err, "ListImportedSourceItemChecksums imported")
 	assert.Equal("abc123", checksums["drive-file-1"], "imported checksum")
+
+	_, err = f.Store.DB().Exec(
+		`UPDATE source_import_items SET checksum = NULL WHERE source_id = ? AND provider = ? AND provider_id = ?`,
+		src.ID, "drive", "drive-file-1",
+	)
+	require.NoError(err, "set checksum NULL")
+	got, err = f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
+	require.NoError(err, "GetSourceImportItem with NULL checksum")
+	assert.Empty(got.Checksum, "NULL checksum should surface as empty string")
+	checksums, err = f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	require.NoError(err, "ListImportedSourceItemChecksums with NULL checksum")
+	assert.Empty(checksums["drive-file-1"], "NULL imported checksum should surface as empty string")
 }
 
 func TestStore_Conversation(t *testing.T) {
