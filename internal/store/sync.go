@@ -508,6 +508,18 @@ func (s *Store) UpdateSourceSyncCursor(sourceID int64, cursor string) error {
 	return err
 }
 
+// TouchSourceLastSyncAt records that a source-level sync completed even when
+// the adapter does not maintain a cursor.
+func (s *Store) TouchSourceLastSyncAt(sourceID int64) error {
+	now := s.dialect.Now()
+	_, err := s.db.Exec(fmt.Sprintf(`
+		UPDATE sources
+		SET last_sync_at = %s, updated_at = %s
+		WHERE id = ?
+	`, now, now), sourceID)
+	return err
+}
+
 // ListSources returns all sources, optionally filtered by source type.
 // Pass an empty string to return all sources.
 func (s *Store) ListSources(sourceType string) ([]*Source, error) {

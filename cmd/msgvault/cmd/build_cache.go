@@ -828,6 +828,30 @@ func rebuildCacheAfterWrite(dbPath string) {
 	}
 }
 
+func rebuildCacheAfterScheduledSync(identifier string) {
+	// The Parquet cache is SQLite-only; skip on PostgreSQL DSNs.
+	dbPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(dbPath) {
+		return
+	}
+	analyticsDir := cfg.AnalyticsDir()
+	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.NeedsBuild {
+		logger.Info("rebuilding cache after sync",
+			"identifier", identifier, "reason", staleness.Reason,
+			"full_rebuild", staleness.FullRebuild)
+		result, err := buildCache(
+			dbPath, analyticsDir, staleness.FullRebuild)
+		if err != nil {
+			logger.Error("cache build failed", "error", err)
+			// Don't fail the sync for cache build errors.
+		} else if !result.Skipped {
+			logger.Info("cache build completed",
+				"exported", result.ExportedCount,
+			)
+		}
+	}
+}
+
 func init() {
 	rootCmd.AddCommand(buildCacheCmd)
 	rootCmd.AddCommand(cacheStatsCmd)
