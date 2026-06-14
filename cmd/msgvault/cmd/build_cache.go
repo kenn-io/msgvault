@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -826,6 +828,72 @@ func rebuildCacheAfterWrite(dbPath string) {
 	if !result.Skipped {
 		logger.Info("cache rebuilt", "exported", result.ExportedCount)
 	}
+}
+
+// buildCacheSubprocess runs `msgvault build-cache` as a child process
+// instead of calling buildCache in-process.
+//
+// The daemon (`serve`) holds a long-lived go-sqlite3 connection to the
+// SQLite database for its entire lifetime. buildCache, in turn, uses
+// DuckDB's sqlite_scanner extension, which statically links its OWN copy
+// of the SQLite library and ATTACHes the same database file. Two
+// independent SQLite library instances in one process do not share the
+// unix VFS's in-process POSIX advisory-lock and WAL-index bookkeeping, so
+// when DuckDB's copy opens/closes the WAL it can drop the daemon's
+// advisory locks and leave the on-disk -wal/-shm inconsistent with the
+// daemon's in-memory WAL-index. After that, every newly-opened go-sqlite3
+// connection in the process fails with "disk I/O error: no such file or
+// directory" until the daemon restarts (see issue #379).
+//
+// Running build-cache in a fresh process keeps DuckDB's SQLite copy out of
+// the daemon's address space entirely, so the daemon's own connections are
+// never affected.
+//
+// Global flags that affect config resolution (--config, --home, --local)
+// are forwarded so the child loads identical configuration. --no-log-file
+// keeps the child from writing to the daemon's log file; its output is
+// captured and surfaced on failure instead.
+func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate msgvault executable: %w", err)
+	}
+
+	// Serialize with each other so parallel per-account syncs in the
+	// daemon don't spawn concurrent cache builds racing on shared files.
+	buildCacheMu.Lock()
+	defer buildCacheMu.Unlock()
+
+	args := globalConfigFlagArgs()
+	args = append(args, "--no-log-file", "build-cache")
+	if fullRebuild {
+		args = append(args, "--full-rebuild")
+	}
+
+	cmd := exec.CommandContext(ctx, exe, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("build-cache subprocess: %w; output: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// globalConfigFlagArgs reconstructs the persistent flags that affect
+// configuration resolution so a child process loads the same config as
+// the running one.
+func globalConfigFlagArgs() []string {
+	var args []string
+	if cfgFile != "" {
+		args = append(args, "--config", cfgFile)
+	}
+	if homeDir != "" {
+		args = append(args, "--home", homeDir)
+	}
+	if useLocal {
+		args = append(args, "--local")
+	}
+	return args
 }
 
 func init() {

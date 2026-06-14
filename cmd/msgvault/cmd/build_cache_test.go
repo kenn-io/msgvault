@@ -1718,3 +1718,39 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		}
 	}
 }
+
+// TestGlobalConfigFlagArgs verifies that the persistent flags affecting
+// config resolution are forwarded to the build-cache subprocess so it
+// loads identical configuration to the daemon that spawned it.
+func TestGlobalConfigFlagArgs(t *testing.T) {
+	// Save and restore the package globals these flags bind to.
+	origCfg, origHome, origLocal := cfgFile, homeDir, useLocal
+	t.Cleanup(func() { cfgFile, homeDir, useLocal = origCfg, origHome, origLocal })
+
+	tests := []struct {
+		name    string
+		cfgFile string
+		homeDir string
+		local   bool
+		want    []string
+	}{
+		{name: "none set", want: nil},
+		{name: "config only", cfgFile: "/etc/msgvault.toml", want: []string{"--config", "/etc/msgvault.toml"}},
+		{name: "home only", homeDir: "/data/msgvault", want: []string{"--home", "/data/msgvault"}},
+		{name: "local only", local: true, want: []string{"--local"}},
+		{
+			name:    "all set",
+			cfgFile: "/etc/msgvault.toml",
+			homeDir: "/data/msgvault",
+			local:   true,
+			want:    []string{"--config", "/etc/msgvault.toml", "--home", "/data/msgvault", "--local"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgFile, homeDir, useLocal = tt.cfgFile, tt.homeDir, tt.local
+			assertpkg.Equal(t, tt.want, globalConfigFlagArgs())
+		})
+	}
+}
