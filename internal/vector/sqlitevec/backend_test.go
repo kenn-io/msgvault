@@ -827,20 +827,21 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 	require.NoError(err, "reset")
 
 	rows := []struct {
-		id      int64
-		size    int64
-		subject string
-		to, cc  int64
+		id          int64
+		size        int64
+		subject     string
+		messageType string
+		to, cc      int64
 	}{
-		{1, 100_000, "quarterly planning", 10, 0},
-		{2, 5_000_000, "quarterly review", 20, 10},
-		{3, 100_000, "lunch", 20, 0},
-		{4, 20_000_000, "quarterly deep dive", 30, 0},
+		{1, 100_000, "quarterly planning", "email", 10, 0},
+		{2, 5_000_000, "quarterly review", "sms", 20, 10},
+		{3, 100_000, "lunch", "sms", 20, 0},
+		{4, 20_000_000, "quarterly deep dive", "email", 30, 0},
 	}
 	for _, r := range rows {
 		_, err := b.mainDB.ExecContext(ctx,
-			`INSERT INTO messages (id, subject, size_estimate) VALUES (?, ?, ?)`,
-			r.id, r.subject, r.size)
+			`INSERT INTO messages (id, subject, size_estimate, message_type) VALUES (?, ?, ?, ?)`,
+			r.id, r.subject, r.size, r.messageType)
 		require.NoErrorf(err, "insert msg %d", r.id)
 		if r.to != 0 {
 			_, err := b.mainDB.ExecContext(ctx,
@@ -901,12 +902,17 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 		got := matched(t, vector.Filter{SubjectSubstrings: []string{"quarterly", "deep"}})
 		assertpkg.Truef(t, got[4] && !got[1] && !got[2] && !got[3], "subject=[quarterly, deep]: got %v, want {4}", got)
 	})
+	t.Run("MessageTypes", func(t *testing.T) {
+		got := matched(t, vector.Filter{MessageTypes: []string{"sms"}})
+		assertpkg.Truef(t, got[2] && got[3] && !got[1] && !got[4], "MessageTypes=[sms]: got %v, want {2,3}", got)
+	})
 	t.Run("CombinedFilter", func(t *testing.T) {
 		size := int64(1_000_000)
 		got := matched(t, vector.Filter{
 			ToGroups:          [][]int64{{20}},
 			LargerThan:        &size,
 			SubjectSubstrings: []string{"quarterly"},
+			MessageTypes:      []string{"sms"},
 		})
 		assertpkg.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "combined to=20 + >1MB + quarterly: got %v, want {2}", got)
 	})

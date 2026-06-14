@@ -46,6 +46,7 @@ Supported operators (local mode only - remote uses simple text search):
   newer_than:  Relative date
   larger:      Size filter (5M, 100K)
   smaller:     Size filter
+  message_type: Message type filter (sms, mms, whatsapp, email)
 
 Bare words and "quoted phrases" perform full-text search.
 

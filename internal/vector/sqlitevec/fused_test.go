@@ -290,6 +290,7 @@ func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    message_type TEXT NOT NULL DEFAULT 'email',
     source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
@@ -484,6 +485,63 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 			assertpkg.Lenf(t, got, len(c.want), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
 		})
 	}
+}
+
+func TestFusedSearch_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	main := openFusedMainWithSchema(t, mainPath)
+
+	rows := []struct {
+		id          int64
+		messageType string
+	}{
+		{1, "email"},
+		{2, "sms"},
+		{3, "sms"},
+		{4, "mms"},
+	}
+	for _, r := range rows {
+		_, err := main.ExecContext(ctx,
+			`INSERT INTO messages (id, message_type) VALUES (?, ?)`,
+			r.id, r.messageType)
+		require.NoErrorf(err, "insert msg %d", r.id)
+		_, err = main.ExecContext(ctx,
+			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
+			r.id, "", "topic")
+		require.NoErrorf(err, "insert fts %d", r.id)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(dir, "vectors.db"),
+		MainPath:  mainPath,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
+
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	requirepkg.NoError(t, err, "FusedSearch")
+
+	got := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		got[h.MessageID] = true
+	}
+	assertpkg.Equal(t, map[int64]bool{2: true, 3: true}, got, "message_type=sms hits")
 }
 
 // TestFusedSearch_SenderMatchesFromRecipientOnly confirms the sender

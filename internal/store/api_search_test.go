@@ -148,3 +148,39 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
+	f := storetest.New(t)
+
+	emailMsg := f.NewMessage().
+		WithSourceMessageID("message-type-email").
+		WithSubject("lunch plans").
+		WithSnippet("grab tacos").
+		Create(t, f.Store)
+	requirepkg.NoError(t, f.Store.UpsertMessageBody(emailMsg,
+		sql.NullString{String: "lunch tacos", Valid: true},
+		sql.NullString{}), "UpsertMessageBody email")
+
+	smsMsg := f.NewMessage().
+		WithSourceMessageID("message-type-sms").
+		WithSubject("lunch plans").
+		WithSnippet("grab sushi").
+		Create(t, f.Store)
+	_, err := f.Store.DB().Exec(
+		f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`),
+		"sms", smsMsg)
+	requirepkg.NoError(t, err, "mark sms")
+	requirepkg.NoError(t, f.Store.UpsertMessageBody(smsMsg,
+		sql.NullString{String: "lunch sushi", Valid: true},
+		sql.NullString{}), "UpsertMessageBody sms")
+
+	_, err = f.Store.BackfillFTS(nil)
+	requirepkg.NoError(t, err, "BackfillFTS")
+
+	msgs, total, err := f.Store.SearchMessagesQuery(search.Parse("message_type=sms lunch"), 0, 50)
+	requirepkg.NoError(t, err, "SearchMessagesQuery")
+	requirepkg.Equal(t, int64(1), total, "total")
+	requirepkg.Len(t, msgs, 1, "messages")
+	assertpkg.Equal(t, "sms", msgs[0].MessageType, "MessageType")
+	assertpkg.Equal(t, smsMsg, msgs[0].ID, "ID")
+}

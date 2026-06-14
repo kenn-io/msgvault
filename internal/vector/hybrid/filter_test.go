@@ -105,6 +105,16 @@ func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
 	assert.NotNil(f.Before, "Before should be parsed")
 }
 
+func TestBuildFilter_MessageType(t *testing.T) {
+	ctx := context.Background()
+	db := newFilterTestDB(t)
+
+	f, err := BuildFilter(ctx, db, nil, search.Parse(`message_type=sms message_type:mms lunch`))
+	requirepkg.NoError(t, err, "BuildFilter")
+
+	assertpkg.Equal(t, []string{"sms", "mms"}, f.MessageTypes, "MessageTypes")
+}
+
 // TestBuildFilter_LabelsAndAttachments checks the label: and
 // has:attachment operators.
 func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
