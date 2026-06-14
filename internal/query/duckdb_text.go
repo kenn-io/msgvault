@@ -134,6 +134,11 @@ func (e *DuckDBEngine) ListConversations(
 	} else {
 		orderBy += " DESC"
 	}
+	// Append the unique conversation PK as a tiebreaker so conversations
+	// sharing the primary sort key (e.g. identical last_message_at) get a
+	// total, stable order across LIMIT/OFFSET pages. conv.id is selectable in
+	// the outer SELECT. [C3]
+	orderBy += ", conv.id DESC"
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {

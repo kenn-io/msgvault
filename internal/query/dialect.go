@@ -40,6 +40,25 @@ type Dialect interface {
 	// Returns a single-row, single-column integer: 1 if present, 0 if absent.
 	HasFTSTableSQL() string
 
+	// FTSLivenessSQL returns a runtime liveness probe to run AFTER
+	// HasFTSTableSQL confirms the FTS relation exists, or "" when the
+	// existence probe is already authoritative.
+	//
+	// SQLite needs this: HasFTSTableSQL only checks sqlite_master for the
+	// messages_fts virtual table, which does NOT prove the fts5 module is
+	// loadable. A DB created by an fts5-enabled binary but opened by a
+	// binary built without fts5 still has the row in sqlite_master, yet any
+	// query against it fails with "no such module: fts5". The liveness probe
+	// (`SELECT 1 FROM messages_fts LIMIT 1`) surfaces that so search falls
+	// back to LIKE instead of erroring. This mirrors the store dialect's
+	// FTSAvailable contract (internal/store/dialect_sqlite.go).
+	//
+	// PostgreSQL returns "" — its HasFTSTableSQL information_schema column
+	// probe is an authoritative metadata check (the tsvector column either
+	// exists and is queryable or it does not), so no extra liveness query
+	// is needed.
+	FTSLivenessSQL() string
+
 	// FTSJoin returns a JOIN clause that must be added to the FROM clause
 	// when using FTSSearchExpression. Empty string if no join is needed
 	// (PostgreSQL has the tsvector column on messages directly).
@@ -88,6 +107,12 @@ func (SQLiteQueryDialect) FTSSearchExpression() string {
 
 func (SQLiteQueryDialect) HasFTSTableSQL() string {
 	return `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages_fts'`
+}
+
+// FTSLivenessSQL probes that the fts5 module is actually loadable, not just
+// that the messages_fts row exists in sqlite_master. See the interface doc.
+func (SQLiteQueryDialect) FTSLivenessSQL() string {
+	return `SELECT 1 FROM messages_fts LIMIT 1`
 }
 
 func (SQLiteQueryDialect) FTSJoin() string {
@@ -141,13 +166,13 @@ func (PostgreSQLQueryDialect) BoolTrueExpr(col string) string { return col }
 func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity string) string {
 	switch granularity {
 	case "year":
-		return fmt.Sprintf("to_char(%s, 'YYYY')", column)
+		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY')", column)
 	case "month":
-		return fmt.Sprintf("to_char(%s, 'YYYY-MM')", column)
+		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM')", column)
 	case "day":
-		return fmt.Sprintf("to_char(%s, 'YYYY-MM-DD')", column)
+		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD')", column)
 	default:
-		return fmt.Sprintf("to_char(%s, 'YYYY-MM')", column)
+		return fmt.Sprintf("to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM')", column)
 	}
 }
 
@@ -163,9 +188,21 @@ func (PostgreSQLQueryDialect) FTSSearchExpression() string {
 }
 
 func (PostgreSQLQueryDialect) HasFTSTableSQL() string {
+	// Scope to the connection's current schema (matching the store dialect's
+	// postgresColumnExistsSQL). Without this, a schema-scoped connection would
+	// falsely report FTS available because a sibling schema happens to have a
+	// messages.search_fts column, then fail the actual search with
+	// "column m.search_fts does not exist". [cr2-8]
 	return `SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name = 'messages' AND column_name = 'search_fts'`
+		WHERE table_schema = current_schema()
+		  AND table_name = 'messages' AND column_name = 'search_fts'`
 }
+
+// FTSLivenessSQL is empty for PostgreSQL: the information_schema column
+// probe in HasFTSTableSQL is already authoritative, and there is no
+// messages_fts relation to probe (PG uses an inline search_fts tsvector
+// column). Returning "" keeps the SQLite-only liveness query off the PG path.
+func (PostgreSQLQueryDialect) FTSLivenessSQL() string { return "" }
 
 // FTSJoin: PostgreSQL's tsvector column lives on messages — no join needed.
 func (PostgreSQLQueryDialect) FTSJoin() string { return "" }
@@ -188,28 +225,17 @@ func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg str
 	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(tsTerms, " & ")
 }
 
-// SanitizeFTSQuery builds a tsquery arg from a single user string: splits on
-// whitespace, strips tsquery metacharacters, and joins with " & " with ":*"
-// prefix matching. Returns "" if empty.
+// SanitizeFTSQuery builds a tsquery arg from a single user string using the
+// allowlist tokenizer sqldialect.EscapeTSQueryTerm: the input is split on every
+// rune that isn't a Unicode letter or digit, and each resulting lexeme is
+// suffixed with ":*" for prefix matching and joined with " & ". This mirrors
+// BuildFTSTerm exactly so both PG FTS paths emit the same lexeme set, and
+// guarantees no tsquery metacharacter (`<`, `=`, `&`, etc.) ever reaches
+// to_tsquery. Returns "" if the input collapses to nothing usable.
 func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
-	var b strings.Builder
-	for _, r := range query {
-		switch r {
-		case '&', '|', '!', '(', ')', ':', '*', '\\', '\'':
-			continue
-		case '@', '.', '-', '/', ',', ';', '"':
-			b.WriteRune(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	tokens := strings.Fields(b.String())
-	if len(tokens) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(tokens))
-	for _, t := range tokens {
-		parts = append(parts, t+":*")
+	var parts []string
+	for _, lex := range sqldialect.EscapeTSQueryTerm(query) {
+		parts = append(parts, lex+":*")
 	}
 	return strings.Join(parts, " & ")
 }

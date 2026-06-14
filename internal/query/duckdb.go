@@ -1243,6 +1243,12 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	} else {
 		orderBy += " ASC"
 	}
+	// Append the unique PK as a tiebreaker so messages sharing the primary
+	// sort key (e.g. identical sent_at) get a total, stable order — otherwise
+	// LIMIT/OFFSET pagination can drop or duplicate rows across pages. Applied
+	// to both the pagination-determining CTE order and the outer in-page order
+	// below (both consume this orderBy). [C3]
+	orderBy += ", msg.id DESC"
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {
@@ -1971,7 +1977,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		LEFT JOIN msg_labels mlbl ON mlbl.message_id = msg.id
 		LEFT JOIN conv c ON c.id = msg.conversation_id
 		WHERE %s
-		ORDER BY msg.sent_at DESC
+		ORDER BY msg.sent_at DESC, msg.id DESC
 		LIMIT ? OFFSET ?
 	`, e.parquetCTEs(), strings.Join(conditions, " AND "))
 
@@ -2109,7 +2115,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 		WITH %s,
 		page AS (
 			SELECT sm.id FROM %s sm
-			ORDER BY sm.sent_at DESC
+			ORDER BY sm.sent_at DESC, sm.id DESC
 			LIMIT ? OFFSET ?
 		),
 		msg_labels AS (
@@ -2142,7 +2148,7 @@ func (e *DuckDBEngine) searchPageFromCache(ctx context.Context, limit, offset in
 		LEFT JOIN att ON att.message_id = sm.id
 		LEFT JOIN msg_labels mlbl ON mlbl.message_id = sm.id
 		LEFT JOIN conv c ON c.id = sm.conversation_id
-		ORDER BY sm.sent_at DESC
+		ORDER BY sm.sent_at DESC, sm.id DESC
 	`, e.parquetCTEs(), e.searchCacheTable, e.searchCacheTable)
 
 	rows, err := e.db.QueryContext(ctx, pageQuery, limit, offset)
