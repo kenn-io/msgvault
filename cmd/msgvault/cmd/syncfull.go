@@ -175,7 +175,7 @@ Examples:
 
 		// Open vector backend (optional) so newly-ingested messages
 		// are enqueued for embedding.
-		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 		if err != nil {
 			return fmt.Errorf("vector features: %w", err)
 		}

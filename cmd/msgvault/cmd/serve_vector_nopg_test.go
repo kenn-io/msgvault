@@ -1,0 +1,40 @@
+//go:build sqlite_vec && !pgvector
+
+package cmd
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+)
+
+// TestSetupVectorFeatures_PostgresWithoutPgvectorTag verifies that when
+// vector features are built with sqlite_vec but WITHOUT the pgvector tag,
+// invoking setupVectorFeatures against a postgres:// DSN fails from the
+// pgvector stub (pgvector.Open → ErrNotBuilt), not from a hard-coded
+// up-front refusal. The old "SQLite-only" refusal was removed when serve
+// gained real PG vector support; this pins that no remaining code path
+// emits it under this tag combo.
+func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+
+	cfg = &config.Config{}
+	cfg.Vector.Enabled = true
+	cfg.Vector.Backend = "sqlite-vec"
+	cfg.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
+	cfg.Vector.Embeddings.Model = "test-model"
+	cfg.Vector.Embeddings.Dimension = 768
+	cfg.Vector.Embeddings.BatchSize = 32
+
+	_, err := setupVectorFeatures(context.Background(), nil, "postgres://user@host/db", false)
+	require.Error(t, err, "setupVectorFeatures with postgres DSN and no pgvector tag")
+	// Must come from the stub, not the removed up-front refusal.
+	assert.Contains(t, err.Error(), "pgvector support not compiled in",
+		"error should be the pgvector stub's not-built message")
+	assert.NotContains(t, err.Error(), "SQLite-only",
+		"the old up-front SQLite-only refusal must be gone")
+}

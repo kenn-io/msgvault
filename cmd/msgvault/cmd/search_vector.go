@@ -1,10 +1,11 @@
-//go:build sqlite_vec
+//go:build sqlite_vec || pgvector
 
 package cmd
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -13,12 +14,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
@@ -29,42 +32,95 @@ import (
 // Scope means no scope flag was supplied.
 func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, scope Scope) error {
 	if queryStr == "" {
-		return fmt.Errorf("empty search query")
+		return errors.New("empty search query")
 	}
 	if !cfg.Vector.Enabled {
-		return fmt.Errorf("vector search not enabled; set [vector].enabled = true in config")
+		return errors.New("vector search not enabled; set [vector].enabled = true in config")
 	}
 	if cfg.Vector.Embeddings.Endpoint == "" || cfg.Vector.Embeddings.Model == "" {
-		return fmt.Errorf("vector search requires [vector.embeddings] endpoint and model in config")
+		return errors.New("vector search requires [vector.embeddings] endpoint and model in config")
 	}
 
 	ctx := cmd.Context()
 
-	mainDB, err := sql.Open("sqlite3", cfg.DatabaseDSN())
-	if err != nil {
-		return fmt.Errorf("open main db: %w", err)
-	}
-	defer func() { _ = mainDB.Close() }()
+	dsn := cfg.DatabaseDSN()
 
-	vecDBPath := cfg.Vector.DBPath
-	if vecDBPath == "" {
-		vecDBPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
-	}
-
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		return fmt.Errorf("register sqlite-vec: %w", err)
+	// Resolve the dialect from the DSN so the participant/label lookups in
+	// BuildFilter and the IN-clause in hydrateHybridResults run with the
+	// driver's native placeholders. SQLite's Rebind is identity, so the
+	// SQLite path below is byte-identical to before.
+	var dialect store.Dialect = &store.SQLiteDialect{}
+	if store.IsPostgresURL(dsn) {
+		dialect = &store.PostgreSQLDialect{}
 	}
 
-	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecDBPath,
-		MainPath:  cfg.DatabaseDSN(),
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    mainDB,
-	})
-	if err != nil {
-		return fmt.Errorf("open vectors.db: %w", err)
+	var (
+		mainDB  *sql.DB
+		backend vector.Backend
+		closeFn func() error
+	)
+	if store.IsPostgresURL(dsn) {
+		// PostgreSQL: pgvector embeddings live in the SAME database as
+		// messages, so there is no separate vectors.db. Open the main
+		// store (which registers the pgx driver and sets statement_timeout
+		// via pgx RuntimeParams during connect; search_path is taken from
+		// the DSN if present — InitConn is a no-op) and share its handle
+		// with the pgvector backend.
+		st, err := store.Open(dsn)
+		if err != nil {
+			return fmt.Errorf("open main db: %w", err)
+		}
+		mainDB = st.DB()
+		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			DB:            mainDB,
+			Dimension:     cfg.Vector.Embeddings.Dimension,
+			SkipExtension: cfg.Vector.SkipExtensionCreate,
+		})
+		if err != nil {
+			_ = st.Close()
+			return fmt.Errorf("open pgvector backend: %w", err)
+		}
+		backend = pgb
+		// pgvector.Close is a no-op (the store owns the handle); close the
+		// store to release the pool.
+		closeFn = func() error {
+			_ = pgb.Close()
+			return st.Close()
+		}
+	} else {
+		var err error
+		mainDB, err = sql.Open("sqlite3", dsn)
+		if err != nil {
+			return fmt.Errorf("open main db: %w", err)
+		}
+
+		vecDBPath := cfg.Vector.DBPath
+		if vecDBPath == "" {
+			vecDBPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+		}
+
+		if err := sqlitevec.RegisterExtension(); err != nil {
+			_ = mainDB.Close()
+			return fmt.Errorf("register sqlite-vec: %w", err)
+		}
+
+		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			Path:      vecDBPath,
+			MainPath:  dsn,
+			Dimension: cfg.Vector.Embeddings.Dimension,
+			MainDB:    mainDB,
+		})
+		if err != nil {
+			_ = mainDB.Close()
+			return fmt.Errorf("open vectors.db: %w", err)
+		}
+		backend = sb
+		closeFn = func() error {
+			_ = sb.Close()
+			return mainDB.Close()
+		}
 	}
-	defer func() { _ = backend.Close() }()
+	defer func() { _ = closeFn() }()
 
 	active, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.Vector.GenerationFingerprint())
 	if err != nil {
@@ -85,11 +141,12 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 		RRFK:                cfg.Vector.Search.RRFK,
 		KPerSignal:          cfg.Vector.Search.KPerSignal,
 		SubjectBoost:        cfg.Vector.Search.SubjectBoost,
+		Rebind:              dialect.Rebind,
 	})
 
 	q := search.Parse(queryStr)
 
-	filter, err := hybrid.BuildFilter(ctx, mainDB, q)
+	filter, err := hybrid.BuildFilter(ctx, mainDB, dialect.Rebind, q)
 	if err != nil {
 		return fmt.Errorf("build filter: %w", err)
 	}
@@ -152,7 +209,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 
-	results, err := hydrateHybridResults(ctx, mainDB, hits)
+	results, err := hydrateHybridResults(ctx, mainDB, dialect.Rebind, hits)
 	if err != nil {
 		return fmt.Errorf("hydrate results: %w", err)
 	}
@@ -176,9 +233,17 @@ type hybridResultRow struct {
 
 // hydrateHybridResults fetches subject, sender, and sent_at for each
 // hit from the main DB, preserving the RRF ordering of the input hits.
-func hydrateHybridResults(ctx context.Context, db *sql.DB, hits []vector.FusedHit) ([]hybridResultRow, error) {
+//
+// rebind converts the IN-clause ? placeholders to the driver's native
+// form. On PostgreSQL pgx rejects bare ?, so the caller must pass the
+// dialect's Rebind; nil falls back to identity (SQLite leaves the
+// placeholders unchanged).
+func hydrateHybridResults(ctx context.Context, db *sql.DB, rebind func(string) string, hits []vector.FusedHit) ([]hybridResultRow, error) {
 	if len(hits) == 0 {
 		return nil, nil
+	}
+	if rebind == nil {
+		rebind = func(s string) string { return s }
 	}
 	placeholders := make([]string, len(hits))
 	args := make([]any, len(hits))
@@ -193,11 +258,23 @@ func hydrateHybridResults(ctx context.Context, db *sql.DB, hits []vector.FusedHi
 	// whose row was soft-deleted between ranking and hydration,
 	// returning a result list shorter than the ranked hits. Hydrate
 	// whatever was ranked.
-	q := fmt.Sprintf(`
+	//
+	// Sender hydration: email messages store the sender in
+	// message_recipients (recipient_type='from'); chat/SMS messages
+	// store it via messages.sender_id. COALESCE the subquery result
+	// first so that the message_recipients path wins for email
+	// (matching the main query engine's behaviour) and falls back to
+	// sender_id for chat/SMS sources.
+	q := rebind(fmt.Sprintf(`
 		SELECT m.id, COALESCE(m.subject,''), COALESCE(p.email_address,''), m.sent_at
 		FROM messages m
-		LEFT JOIN participants p ON p.id = m.sender_id
-		WHERE m.id IN (%s)`, strings.Join(placeholders, ","))
+		LEFT JOIN participants p ON p.id = COALESCE(
+			(SELECT mr.participant_id FROM message_recipients mr
+			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+			 ORDER BY mr.id LIMIT 1),
+			m.sender_id
+		)
+		WHERE m.id IN (%s)`, strings.Join(placeholders, ",")))
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query messages: %w", err)
@@ -286,7 +363,9 @@ func outputHybridResultsTable(results []hybridResultRow, meta hybrid.ResultMeta,
 				r.MessageID, date, from, subject)
 		}
 	}
-	_ = w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush table output: %w", err)
+	}
 	fmt.Printf("\nShowing %d results (generation #%d %s, fingerprint=%q)\n",
 		len(results), int64(meta.Generation.ID), meta.Generation.State, meta.Generation.Fingerprint)
 	return nil

@@ -122,25 +122,9 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 	cfg = &config.Config{}
 	cfg.Vector.Enabled = false
 
-	vf, err := setupVectorFeatures(context.Background(), nil, "")
+	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
 	requirepkg.NoError(t, err, "setupVectorFeatures")
 	assertpkg.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
-}
-
-// TestSetupVectorFeatures_RefusesPostgres verifies setupVectorFeatures
-// returns a clear error when invoked against a postgres:// DSN. The
-// underlying backend (sqlite-vec + ATTACH DATABASE) cannot work on PG;
-// fail closed at the entry point rather than crashing downstream when
-// sql.Open("sqlite3", "postgres://...") gets a non-sqlite DSN.
-func TestSetupVectorFeatures_RefusesPostgres(t *testing.T) {
-	savedCfg := cfg
-	defer func() { cfg = savedCfg }()
-	cfg = &config.Config{}
-	cfg.Vector.Enabled = true
-
-	_, err := setupVectorFeatures(context.Background(), nil, "postgres://user@host/db")
-	requirepkg.Error(t, err, "setupVectorFeatures with postgres DSN")
-	assertpkg.ErrorContains(t, err, "SQLite-only")
 }
 
 // TestFindScheduledSyncSource verifies that the scheduler's

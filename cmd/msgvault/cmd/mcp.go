@@ -99,7 +99,7 @@ Add to Claude Desktop config:
 		// query-only server, so the worker and enqueuer fields go
 		// unused — only Backend, HybridEngine, and VectorCfg reach
 		// the MCP layer.
-		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, true)
 		if err != nil {
 			return fmt.Errorf("vector features: %w", err)
 		}

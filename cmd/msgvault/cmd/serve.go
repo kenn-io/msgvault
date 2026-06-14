@@ -104,7 +104,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build optional vector-search components. Returns (nil, nil) when
 	// cfg.Vector.Enabled is false, or an error when enabled but the
 	// binary was built without -tags sqlite_vec.
-	vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+	vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 	if err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
@@ -195,6 +195,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Worker:      vf.Worker,
 			Backend:     vf.Backend,
 			VectorsDB:   vf.VectorsDB,
+			Rebind:      vf.Rebind,
 			Fingerprint: vf.Cfg.GenerationFingerprint(),
 			Log:         logger,
 		}

@@ -72,7 +72,7 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 		_ = b.Close()
 		requirepkg.NoError(t, err, "CreateGeneration")
 	}
-	if err := b.ActivateGeneration(ctx, gid); err != nil {
+	if err := b.ActivateGeneration(ctx, gid, true); err != nil {
 		_ = b.Close()
 		requirepkg.NoError(t, err, "ActivateGeneration")
 	}
@@ -93,10 +93,12 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 	return s, restore
 }
 
-// fakeEmbedServer is a tiny stub /v1/embeddings server that returns the
-// requested number of zero-vectors at the configured dimension.
-func fakeEmbedServer(t *testing.T, dim int) *httptest.Server {
+// fakeEmbedServer is a tiny stub /v1/embeddings server that returns one
+// zero-vector (with the leading element set to 1) per input at the test
+// dimension.
+func fakeEmbedServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	const dim = 4
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Input []string `json:"input"`
@@ -130,7 +132,7 @@ func fakeEmbedServer(t *testing.T, dim int) *httptest.Server {
 // before the embedding endpoint is contacted, so the embed stub will
 // never be hit if the wiring is correct.
 func TestSearchCmd_VectorMode_UnknownAccount(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -154,7 +156,7 @@ func TestSearchCmd_VectorMode_UnknownAccount(t *testing.T) {
 // results, but reaching the empty-result branch proves the SourceID
 // was resolved and the engine ran without error.
 func TestSearchCmd_VectorMode_AccountScopingResolves(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -182,7 +184,7 @@ func TestSearchCmd_VectorMode_AccountScopingResolves(t *testing.T) {
 // and silently ignored --collection.
 func TestSearchCmd_VectorMode_CollectionScopingResolves(t *testing.T) {
 	require := requirepkg.New(t)
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -209,7 +211,7 @@ func TestSearchCmd_VectorMode_CollectionScopingResolves(t *testing.T) {
 // TestSearchCmd_VectorMode_CollectionUnknown mirrors the FTS path's
 // unknown-collection rejection.
 func TestSearchCmd_VectorMode_CollectionUnknown(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -230,7 +232,7 @@ func TestSearchCmd_VectorMode_CollectionUnknown(t *testing.T) {
 // TestSearchCmd_HybridMode_UnknownAccount mirrors the vector test for
 // mode=hybrid, since the account-lookup path is shared.
 func TestSearchCmd_HybridMode_UnknownAccount(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -260,7 +262,7 @@ func TestSearchCmd_HybridMode_UnknownAccount(t *testing.T) {
 // runHybridSearch's raw sql.DB sees the schema.
 func TestSearchCmd_VectorMode_UnscopedRunsMigrations(t *testing.T) {
 	require := requirepkg.New(t)
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)

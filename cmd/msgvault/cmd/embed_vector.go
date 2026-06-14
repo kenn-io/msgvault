@@ -1,4 +1,4 @@
-//go:build sqlite_vec
+//go:build sqlite_vec || pgvector
 
 package cmd
 
@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
@@ -28,24 +29,51 @@ func runEmbed(cmd *cobra.Command) error {
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		return fmt.Errorf("register sqlite-vec: %w", err)
+	var (
+		backend   vector.Backend
+		vectorsDB *sql.DB
+		closeFn   func() error
+		rebind    func(string) string
+	)
+	if s.IsPostgreSQL() {
+		// pgvector embeddings live in the same Postgres database as
+		// messages — no separate vectors.db. The queue/worker layer is
+		// dialect-aware via rebind, so the build pipeline runs directly
+		// against pgx.
+		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			DB:            s.DB(),
+			Dimension:     cfg.Vector.Embeddings.Dimension,
+			SkipExtension: cfg.Vector.SkipExtensionCreate,
+		})
+		if err != nil {
+			return fmt.Errorf("open pgvector backend: %w", err)
+		}
+		backend = pgb
+		vectorsDB = pgb.DB()
+		closeFn = pgb.Close
+		rebind = (&store.PostgreSQLDialect{}).Rebind
+	} else {
+		if err := sqlitevec.RegisterExtension(); err != nil {
+			return fmt.Errorf("register sqlite-vec: %w", err)
+		}
+		vecPath := cfg.Vector.DBPath
+		if vecPath == "" {
+			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+		}
+		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			Path:      vecPath,
+			MainPath:  cfg.DatabaseDSN(),
+			Dimension: cfg.Vector.Embeddings.Dimension,
+			MainDB:    s.DB(),
+		})
+		if err != nil {
+			return fmt.Errorf("open vectors.db: %w", err)
+		}
+		backend = sb
+		vectorsDB = sb.DB()
+		closeFn = sb.Close
 	}
-
-	vecPath := cfg.Vector.DBPath
-	if vecPath == "" {
-		vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
-	}
-	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecPath,
-		MainPath:  cfg.DatabaseDSN(),
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    s.DB(),
-	})
-	if err != nil {
-		return fmt.Errorf("open vectors.db: %w", err)
-	}
-	defer func() { _ = backend.Close() }()
+	defer func() { _ = closeFn() }()
 
 	gen, rebuildInProgress, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
 		FullRebuild: embedFullRebuild,
@@ -70,14 +98,14 @@ func runEmbed(cmd *cobra.Command) error {
 		Timeout:    cfg.Vector.Embeddings.Timeout,
 		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
 	})
-	totalPending, err := pendingCount(ctx, backend.DB(), gen)
+	totalPending, err := pendingCount(ctx, vectorsDB, rebind, gen)
 	if err != nil {
 		return fmt.Errorf("count pending: %w", err)
 	}
 
 	worker := embed.NewWorker(embed.WorkerDeps{
 		Backend:   backend,
-		VectorsDB: backend.DB(),
+		VectorsDB: vectorsDB,
 		MainDB:    s.DB(),
 		Client:    client,
 		Preprocess: embed.PreprocessConfig{
@@ -92,6 +120,7 @@ func runEmbed(cmd *cobra.Command) error {
 		BatchSize:       cfg.Vector.Embeddings.BatchSize,
 		EmbedTimeout:    cfg.Vector.Embeddings.Timeout,
 		EmbedMaxRetries: cfg.Vector.Embeddings.MaxRetries,
+		Rebind:          rebind,
 		TotalPending:    totalPending,
 		Progress:        newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 	})
@@ -99,14 +128,14 @@ func runEmbed(cmd *cobra.Command) error {
 	if n, err := worker.ReclaimStale(ctx); err != nil {
 		return fmt.Errorf("reclaim stale: %w", err)
 	} else if n > 0 {
-		fmt.Fprintf(errOut, "Reclaimed %d stale claims.\n", n)
+		_, _ = fmt.Fprintf(errOut, "Reclaimed %d stale claims.\n", n)
 	}
 
 	res, err := worker.RunOnce(ctx, gen)
 	if err != nil {
 		return fmt.Errorf("embed run: %w", err)
 	}
-	fmt.Fprintf(out, "Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
+	_, _ = fmt.Fprintf(out, "Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
 		res.Claimed, res.Succeeded, res.Failed, res.Truncated)
 
 	// Activation is a function of the generation's final state, not
@@ -114,17 +143,19 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		remaining, err := pendingCount(ctx, backend.DB(), gen)
+		remaining, err := pendingCount(ctx, vectorsDB, rebind, gen)
 		if err != nil {
 			return fmt.Errorf("count pending: %w", err)
 		}
 		if remaining == 0 {
-			if err := backend.ActivateGeneration(ctx, gen); err != nil {
+			// force=false: we already gated on remaining==0 above, and the
+			// backend re-asserts the seeded/no-pending gate atomically.
+			if err := backend.ActivateGeneration(ctx, gen, false); err != nil {
 				return fmt.Errorf("activate generation: %w", err)
 			}
-			fmt.Fprintf(out, "Generation %d activated.\n", gen)
+			_, _ = fmt.Fprintf(out, "Generation %d activated.\n", gen)
 		} else {
-			fmt.Fprintf(errOut,
+			_, _ = fmt.Fprintf(errOut,
 				"Generation %d still has %d pending rows; run `msgvault embeddings resume` again to finish, then it will activate automatically.\n",
 				gen, remaining)
 		}
@@ -173,7 +204,7 @@ type embedGenerationOpts struct {
 func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embedGenerationOpts) (vector.GenerationID, bool, error) {
 	if opts.FullRebuild {
 		if opts.Confirm != nil && !opts.Confirm() {
-			return 0, false, fmt.Errorf("aborted")
+			return 0, false, errors.New("aborted")
 		}
 		gen, err := backend.CreateGeneration(ctx, opts.Model, opts.Dimension, opts.Fingerprint)
 		if err != nil {
@@ -249,10 +280,16 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 	}
 }
 
-func pendingCount(ctx context.Context, db *sql.DB, gen vector.GenerationID) (int, error) {
+// pendingCount counts queue rows for gen. rebind translates the
+// ?-placeholder to the driver's native form; nil is treated as the
+// identity so the SQLite path is unchanged.
+func pendingCount(ctx context.Context, db *sql.DB, rebind func(string) string, gen vector.GenerationID) (int, error) {
+	if rebind == nil {
+		rebind = func(q string) string { return q }
+	}
 	var n int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n); err != nil {
+		rebind(`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`), int64(gen)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("query pending: %w", err)
 	}
 	return n, nil
@@ -293,17 +330,14 @@ func newProgressPrinterWithMinInterval(w io.Writer, total int, windowSize int, m
 		usPerChar := float64(p.BatchElapsed.Microseconds()) / float64(max1(p.BatchChars))
 
 		if total > 0 && windowedRate > 0 {
-			remaining := total - p.Done
-			if remaining < 0 {
-				remaining = 0
-			}
+			remaining := max(total-p.Done, 0)
 			eta := time.Duration(float64(remaining)/windowedRate) * time.Second
 			pct := 100 * float64(p.Done) / float64(total)
-			fmt.Fprintf(w,
+			_, _ = fmt.Fprintf(w,
 				"progress: %d/%d (%.1f%%) — %.0f msg/s (last %d), %.1f ms/msg, %.2f µs/char, ETA %s\n",
 				p.Done, total, pct, windowedRate, samples, msPerMsg, usPerChar, formatETA(eta))
 		} else {
-			fmt.Fprintf(w,
+			_, _ = fmt.Fprintf(w,
 				"progress: %d embedded — %.0f msg/s (last %d), %.1f ms/msg, %.2f µs/char\n",
 				p.Done, windowedRate, samples, msPerMsg, usPerChar)
 		}
