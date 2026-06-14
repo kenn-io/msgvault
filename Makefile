@@ -17,6 +17,15 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 
+# Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
+# pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
+# is required too because several tests are gated on BOTH tags
+# (//go:build sqlite_vec && pgvector) — the pgvector<->sqlitevec parity test
+# (internal/vector/pgvector/parity_test.go) and the PG command-wiring tests
+# (cmd/msgvault/cmd/{serve_vector_pg,embed_pg,search_vector_pg,embed_vector_pg}_test.go).
+# Omitting sqlite_vec compiles those out and the target gives false confidence.
+PG_TEST_TAGS := fts5 sqlite_vec pgvector
+
 # Keep golangci-lint results scoped to this git worktree. Its cache can contain
 # absolute source paths, so sharing the default user cache across worktrees can
 # replay diagnostics for deleted worktree paths.
@@ -75,7 +84,7 @@ test-pg:
 		echo "MSGVAULT_TEST_DB must be set, e.g., postgres://user:pass@localhost:5432/db" >&2; \
 		exit 1; \
 	fi
-	go test -tags fts5 ./...
+	go test -tags "$(PG_TEST_TAGS)" ./...
 
 # Format code
 fmt:

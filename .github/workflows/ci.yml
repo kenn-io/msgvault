@@ -76,6 +76,50 @@ jobs:
           name: msgvault-windows-amd64
           path: msgvault.exe
 
+  # pgvector lane: runs every pgvector-tagged test against a live
+  # pgvector/pgvector image — backend, embed queue/worker/enqueue, hybrid
+  # filter, scheduler embed-job, and serve/search CLI. The `pgvector` build
+  # tag is required; without it these files compile out and ship no tests,
+  # so this code would otherwise have zero CI coverage.
+  test-pgvector:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: msgvault_test
+          POSTGRES_PASSWORD: testpw
+          POSTGRES_DB: msgvault_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U msgvault_test -d msgvault_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MSGVAULT_TEST_DB: postgres://msgvault_test:testpw@localhost:5432/msgvault_test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Enable pgvector extension
+        env:
+          PGPASSWORD: testpw
+        run: |
+          psql -h localhost -U msgvault_test -d msgvault_test -c "CREATE EXTENSION IF NOT EXISTS vector"
+
+      - name: Test (pgvector-tagged)
+        run: go test -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+
   nix-build:
     runs-on: ubuntu-latest
     steps:
