@@ -3,10 +3,12 @@ package store
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"strings"
 	"time"
@@ -784,11 +786,24 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 // This is used by the deletion executor which only has the Gmail message ID.
 // When permanent is true, the message row is deleted entirely; otherwise it is
 // soft-deleted by setting deleted_from_source_at.
+//
+// A2 (deferred): the match is NOT scoped by source_id, so a Gmail-ID collision
+// across two accounts would delete/soft-delete the wrong account's row (blast
+// radius: one row in the colliding account). This is deferred rather than fixed
+// because the deletion Manifest carries only a flat []GmailIDs with no per-id
+// source_id (internal/deletion/manifest.go), and a single manifest can legitimately
+// span multiple accounts (see internal/tui/actions.go resolveGmailIDs /
+// internal/mcp/handlers.go, where the account filter is optional), so a single
+// Filters.Account cannot scope every id correctly. Properly scoping this needs a
+// manifest schema/version change (out of scope). Gmail IDs are random enough that
+// a cross-account collision is astronomically unlikely. See docs/PG_STATUS.md.
 func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) error {
 	if permanent {
+		// A2 (deferred): unscoped by source_id — see function doc.
 		_, err := s.db.Exec(`DELETE FROM messages WHERE source_message_id = ?`, gmailID)
 		return err
 	}
+	// A2 (deferred): unscoped by source_id — see function doc.
 	_, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE messages
 		SET deleted_from_source_at = %s
@@ -804,6 +819,11 @@ func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) erro
 // Uses best-effort semantics: if a chunk fails, it falls back to individual updates
 // for that chunk and continues with remaining chunks. Returns the first error encountered
 // (if any) after processing all IDs.
+//
+// A2 (deferred): the IN (...) match is NOT scoped by source_id — same unscoped
+// collision caveat as MarkMessageDeletedByGmailID; see that function's doc and
+// docs/PG_STATUS.md for why it is deferred (manifest lacks per-id source_id and
+// can span multiple accounts; collision astronomically unlikely).
 func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 	if len(gmailIDs) == 0 {
 		return nil
@@ -823,6 +843,7 @@ func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 			args[j] = id
 		}
 
+		// A2 (deferred): unscoped by source_id — see function doc.
 		query := fmt.Sprintf(
 			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)`,
 			s.dialect.Now(), strings.Join(placeholders, ","))
@@ -982,7 +1003,13 @@ func (s *Store) BackfillFTS(progress func(done, total int64)) (int64, error) {
 		return 0, nil
 	}
 
-	if _, err := s.db.Exec(s.dialect.FTSClearSQL()); err != nil {
+	// runMaintenance disables the pool-wide 30s statement_timeout for the
+	// clear: FTSClearSQL is a full-table tsvector rewrite that exceeds 30s on
+	// a large archive (finding S1). No-op timeout reset on SQLite.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, s.dialect.FTSClearSQL())
+		return err
+	}); err != nil {
 		return 0, fmt.Errorf("clear FTS: %w", err)
 	}
 
@@ -998,7 +1025,16 @@ func (s *Store) BackfillFTS(progress func(done, total int64)) (int64, error) {
 // exists to recover from. On successful completion, fts5Available is set to
 // true. Returns an error if the binary was built without FTS5 support.
 func (s *Store) RebuildFTS(progress func(done, total int64)) (int64, error) {
-	if err := s.dialect.FTSRebuildSchema(s.db.DB); err != nil {
+	// runMaintenance disables the pool-wide 30s statement_timeout for the
+	// schema teardown/rebuild. On PG, FTSRebuildSchema runs a full-table
+	// `UPDATE messages SET search_fts = NULL` (identical cost to the hatched
+	// FTSClearSQL) plus a GIN rebuild over a populated table — both can exceed
+	// 30s on a large archive and would cancel the rebuild-fts recovery command
+	// with SQLSTATE 57014 (finding S1). On SQLite the reset SQL is "" so this
+	// is an ordinary transaction around the DROP/CREATE of messages_fts.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.FTSRebuildSchema(tx)
+	}); err != nil {
 		return 0, err
 	}
 
@@ -1046,7 +1082,20 @@ func (s *Store) backfillFTSRange(minID, maxID int64, progress func(done, total i
 		batchEnd := cursor + batchSize
 		n, err := s.backfillFTSBatch(cursor, batchEnd)
 		if err != nil {
-			return indexed, fmt.Errorf("backfill batch [%d,%d): %w", cursor, batchEnd, err)
+			// Only the specific PG tsvector-overflow error (a single
+			// pathological row whose body exceeds PostgreSQL's tsvector
+			// limit) is recoverable by retrying the batch row by row and
+			// skipping the offending row(s). EVERY OTHER error (dead
+			// connection, a non-size SQLSTATE, etc.) is systemic — it would
+			// hit every row and silently clear-then-skip the whole archive —
+			// so it must ABORT and propagate, not be masked as success.
+			if !s.dialect.IsFTSValueTooLargeError(err) {
+				return indexed, err
+			}
+			n, err = s.backfillFTSRowByRow(cursor, batchEnd)
+			if err != nil {
+				return indexed, err
+			}
 		}
 		indexed += n
 		cursor = batchEnd
@@ -1059,13 +1108,61 @@ func (s *Store) backfillFTSRange(minID, maxID int64, progress func(done, total i
 	return indexed, nil
 }
 
-// backfillFTSBatch inserts FTS rows for messages with id in [fromID, toID).
-func (s *Store) backfillFTSBatch(fromID, toID int64) (int64, error) {
-	result, err := s.db.Exec(s.dialect.FTSBackfillBatchSQL(), fromID, toID)
-	if err != nil {
-		return 0, err
+// backfillFTSRowByRow re-runs the batch backfill one message id at a time over
+// [fromID, toID), called only after a whole-batch failure that was classified
+// as the recoverable PG tsvector-overflow error. A row is skipped (with a
+// logged warning naming the id) ONLY when its per-row failure is itself the
+// tsvector-overflow error; any OTHER per-row error aborts and is returned so a
+// systemic failure cannot be swallowed. Returns the number of rows indexed.
+func (s *Store) backfillFTSRowByRow(fromID, toID int64) (int64, error) {
+	var indexed int64
+	for id := fromID; id < toID; id++ {
+		n, err := s.backfillFTSBatch(id, id+1)
+		if err != nil {
+			if !s.dialect.IsFTSValueTooLargeError(err) {
+				return indexed, err
+			}
+			slog.Warn("skipping message in FTS backfill",
+				slog.Int64("message_id", id),
+				slog.Any("error", err))
+			continue
+		}
+		indexed += n
 	}
-	return result.RowsAffected()
+	return indexed, nil
+}
+
+// backfillFTSBatchErrHook is a test-only seam: when non-nil it is consulted
+// before each batch's UPDATE, and a non-nil return forces backfillFTSBatch to
+// fail for the given id range. It lets tests exercise backfillFTSRowByRow's
+// skip-and-continue fallback deterministically without depending on a body that
+// happens to overflow PostgreSQL's tsvector limit after the LEFT cap. Nil (and
+// thus a no-op) in production; only export_test.go ever sets it.
+var backfillFTSBatchErrHook func(fromID, toID int64) error
+
+// backfillFTSBatch inserts FTS rows for messages with id in [fromID, toID).
+//
+// Each batch runs under runMaintenance so the pool-wide 30s statement_timeout
+// is disabled for the batch: a 5000-row tsvector rewrite can exceed 30s on a
+// large archive (finding S1). Each batch remains its own committed transaction,
+// preserving the existing "partial progress is preserved if interrupted"
+// semantics. No-op timeout reset on SQLite.
+func (s *Store) backfillFTSBatch(fromID, toID int64) (int64, error) {
+	if backfillFTSBatchErrHook != nil {
+		if err := backfillFTSBatchErrHook(fromID, toID); err != nil {
+			return 0, err
+		}
+	}
+	var affected int64
+	err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), fromID, toID)
+		if err != nil {
+			return err
+		}
+		affected, err = result.RowsAffected()
+		return err
+	})
+	return affected, err
 }
 
 // RecomputeConversationStats updates the denormalized stats columns on all conversations

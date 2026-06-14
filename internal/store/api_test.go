@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -494,5 +495,54 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 			assertpkg.Equal(t, tt.wantCount, total, "total")
 			assertpkg.Len(t, messages, tt.wantLen, "len(messages)")
 		})
+	}
+}
+
+// TestSearchMessagesLikePaginationStability is the C3 regression for the
+// searchMessagesLike LIKE fallback (api.go), whose ORDER BY gained the
+// ", m.id DESC" tiebreaker. The seeded rows leave sent_at NULL, so
+// COALESCE(sent_at, received_at, internal_date) is NULL for all of them — the
+// ambiguous shared-sort-key case. Without the PK tiebreaker, LIMIT/OFFSET paging
+// over them could drop or duplicate an id across adjacent pages. This path is
+// only reachable white-box (unexported method) and is engine-agnostic SQL, so it
+// is exercised here on SQLite; the cross-backend store-API paths are covered by
+// TestStoreAPI_PaginationStability_IdenticalSentAt.
+func TestSearchMessagesLikePaginationStability(t *testing.T) {
+	st := openTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	requirepkg.NoError(t, err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	requirepkg.NoError(t, err, "EnsureConversation")
+
+	const n = 5
+	const tag = "likepage"
+	wantIDs := make(map[int64]struct{}, n)
+	for i := range n {
+		// Shared subject token so the LIKE filter selects exactly these rows;
+		// sent_at left NULL (seedMessage default) => identical sort key.
+		mid := seedMessage(t, st, source.ID, convID,
+			fmt.Sprintf("like-msg-%d", i), tag+" subject", "snippet body")
+		wantIDs[mid] = struct{}{}
+	}
+
+	seen := make([]int64, 0, n)
+	for offset := range n {
+		msgs, _, err := st.searchMessagesLike(tag, offset, 1)
+		requirepkg.NoError(t, err, "searchMessagesLike offset=%d", offset)
+		requirepkg.Lenf(t, msgs, 1, "page at offset=%d returned no row (pagination skipped a row)", offset)
+		seen = append(seen, msgs[0].ID)
+	}
+
+	gotSet := make(map[int64]struct{}, len(seen))
+	for _, id := range seen {
+		_, dup := gotSet[id]
+		assertpkg.Falsef(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
+		gotSet[id] = struct{}{}
+	}
+	assertpkg.Len(t, seen, n, "paged ids should cover every row exactly once")
+	for id := range wantIDs {
+		_, ok := gotSet[id]
+		assertpkg.Truef(t, ok, "expected id %d missing from paged results (row skipped)", id)
 	}
 }

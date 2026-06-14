@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,9 @@ func TestPostgresConnConfigRuntimeParams(t *testing.T) {
 
 	assert.Equal(t, "30s", cfg.RuntimeParams["statement_timeout"])
 	assert.Equal(t, "on", cfg.RuntimeParams["default_transaction_read_only"])
+	// hnsw.ef_search must be raised above pgvector's default of 40 so the
+	// vector backend's inner ANN over-fetch is not throttled below k.
+	assert.Equal(t, strconv.Itoa(HNSWEfSearch), cfg.RuntimeParams["hnsw.ef_search"])
 }
 
 func TestStoreCloseRunsRegisteredCleanup(t *testing.T) {

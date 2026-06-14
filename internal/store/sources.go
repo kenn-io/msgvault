@@ -126,8 +126,14 @@ func (s *Store) GetSourcesByDisplayName(displayName string) ([]*Source, error) {
 // FTS5 rows are cleaned up explicitly (no FK cascade for virtual tables).
 // CASCADE handles conversations, messages, labels, attachments, sync state.
 // Orphaned participants are left for a future `gc` command.
+//
+// Runs under runMaintenance: the cascade DELETE removes millions of rows
+// across messages/recipients/labels/bodies/raw on a large archive and the
+// FTSDelete rewrites every matching tsvector, so the maintenance hatch
+// disables the pool-wide 30s statement_timeout for this tx (finding S1).
+// No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
-	return s.withTx(func(tx *loggedTx) error {
+	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
 		return s.removeSourceExec(tx, sourceID)
 	})
 }

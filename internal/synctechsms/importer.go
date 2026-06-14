@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -244,7 +245,10 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 		return fmt.Errorf("replace to recipient: %w", err)
 	}
 	if err := i.store.UpsertFTS(msgID, subject, body, "", "", ""); err != nil {
-		return fmt.Errorf("upsert fts: %w", err)
+		// FTS is an index, not data: a failure to populate it must never abort
+		// the import. Warn and continue, matching the other UpsertFTS callers
+		// (sync.go, importer/ingest.go, fbmessenger, whatsapp). [C2]
+		slog.Warn("failed to upsert FTS", "message", msgID, "error", err)
 	}
 	return nil
 }

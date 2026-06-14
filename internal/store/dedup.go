@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -376,14 +377,22 @@ func (s *Store) UndoDedup(batchID string) (int64, error) {
 // Attachments cascade-delete from the metadata row; on-disk blobs are
 // content-addressed and survive until separate cleanup.
 func (s *Store) DeleteDedupedBatch(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
-		DELETE FROM messages
-		WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
-	`, batchID)
-	if err != nil {
-		return 0, fmt.Errorf("delete dedup batch %q: %w", batchID, err)
-	}
-	return result.RowsAffected()
+	// runMaintenance disables the pool-wide 30s statement_timeout for this
+	// tx: the cascade DELETE is unbounded and exceeds 30s on a large archive
+	// (finding S1). No-op timeout reset on SQLite.
+	var deleted int64
+	err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM messages
+			WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
+		`, batchID)
+		if err != nil {
+			return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
+		}
+		deleted, err = result.RowsAffected()
+		return err
+	})
+	return deleted, err
 }
 
 // DeleteAllDeduped permanently deletes every dedup-hidden row regardless of
@@ -402,41 +411,36 @@ func (s *Store) DeleteDedupedBatch(batchID string) (int64, error) {
 // Attachments cascade-delete from the metadata row; on-disk blobs are
 // content-addressed and survive until separate cleanup.
 func (s *Store) DeleteAllDeduped() (deleted int64, distinctBatches int64, err error) {
-	committed := false
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, 0, fmt.Errorf("delete all dedup-hidden: begin tx: %w", err)
-	}
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	// runMaintenance wraps the count + cascade DELETE in one transaction with
+	// the pool-wide 30s statement_timeout disabled: the unbounded cascade
+	// DELETE exceeds 30s on a large archive (finding S1). The count and the
+	// delete share the tx so they observe the same snapshot, as before.
+	// No-op timeout reset on SQLite.
+	err = s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(DISTINCT delete_batch_id)
+			FROM messages
+			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
+		`).Scan(&distinctBatches); err != nil {
+			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
-	}()
 
-	if err = tx.QueryRow(`
-		SELECT COUNT(DISTINCT delete_batch_id)
-		FROM messages
-		WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
-	`).Scan(&distinctBatches); err != nil {
-		return 0, 0, fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
-	}
-
-	result, err := tx.Exec(`
-		DELETE FROM messages
-		WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
-	`)
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM messages
+			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
+		`)
+		if err != nil {
+			return fmt.Errorf("delete all dedup-hidden: delete: %w", err)
+		}
+		deleted, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete all dedup-hidden: rows affected: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("delete all dedup-hidden: delete: %w", err)
+		return 0, 0, err
 	}
-	deleted, err = result.RowsAffected()
-	if err != nil {
-		return 0, 0, fmt.Errorf("delete all dedup-hidden: rows affected: %w", err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return 0, 0, fmt.Errorf("delete all dedup-hidden: commit: %w", err)
-	}
-	committed = true
 	return deleted, distinctBatches, nil
 }
 
