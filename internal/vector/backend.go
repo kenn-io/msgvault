@@ -72,10 +72,11 @@ type Chunk struct {
 //   - Sender/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
 //     slice is one search-token resolution (substring → matching IDs).
 //     SenderGroups is at the message level too — multiple `from`
-//     recipient rows on a single message can satisfy different tokens,
-//     and the message's sender_id is also considered for each group
-//     (legacy rows where sender_id is NULL fall back to a `from`
-//     recipient row).
+//     recipient rows on a single message can satisfy different tokens.
+//     Matching is solely against `from` recipient rows in
+//     message_recipients; messages.sender_id is intentionally NOT
+//     consulted, mirroring the canonical FTS filter in
+//     internal/store/api.go so the vector and SQLite paths agree.
 //   - SubjectSubstrings each add one `m.subject LIKE ? ESCAPE '\'`
 //     condition, ANDed together (all substrings must match).
 //   - After/Before are half-open against m.sent_at:
@@ -135,8 +136,29 @@ type Backend interface {
 	// ResolveActiveForFingerprint and forces a --full-rebuild instead
 	// of silently mixing inconsistently-prepared vectors.
 	CreateGeneration(ctx context.Context, model string, dimension int, fingerprint string) (GenerationID, error)
-	ActivateGeneration(ctx context.Context, gen GenerationID) error
-	RetireGeneration(ctx context.Context, gen GenerationID) error
+
+	// ActivateGeneration atomically retires the current active generation
+	// (if any, deleting its embeddings on backends that share an index
+	// graph) and promotes gen to active. The promotion enforces, inside the
+	// same transaction as the state flip, that gen is in state='building'
+	// and — unless force is true — that gen has finished seeding
+	// (seeded_at IS NOT NULL) and has zero pending embedding rows. force
+	// bypasses the seeded/pending gate (operator `--force`); the gate stays
+	// atomic so a concurrent enqueue cannot slip a pending row in between a
+	// caller's pre-check and the flip. On a gate failure the backend returns
+	// a precise error distinguishing pending vs unseeded vs not-building.
+	ActivateGeneration(ctx context.Context, gen GenerationID, force bool) error
+
+	// RetireGeneration marks gen as retired, deleting its embeddings on
+	// backends that share an index graph (pgvector) and reaping its pending
+	// queue rows. Unless force is true, the state-flip UPDATE refuses to
+	// retire a generation in state='active', returning ErrRefuseRetireActive
+	// WITHOUT deleting anything; the guard is enforced atomically inside the
+	// retire transaction so a concurrent activation between a caller's
+	// pre-flight read and the flip cannot retire (and on pgvector delete the
+	// embeddings of) the now-serving generation. force bypasses the guard
+	// (operator `--force-active`) and retires unconditionally.
+	RetireGeneration(ctx context.Context, gen GenerationID, force bool) error
 
 	// ActiveGeneration returns the current active generation, or
 	// ErrNoActiveGeneration if none exists.
@@ -175,10 +197,13 @@ type Backend interface {
 //
 // FusedSearch returns the RRF-ordered hits, a saturation flag, and
 // any error. saturated is true when either the BM25 or the ANN
-// per-signal pool produced KPerSignal candidates — the pool hit its
-// cap, and the final result set has truncated potentially-relevant
-// hits. Callers surface this to clients as pool_saturated so the
-// user can raise KPerSignal or narrow the query.
+// per-signal pool produced MORE THAN KPerSignal candidates — each pool
+// is over-fetched by one probe row (cap KPerSignal+1) and that probe
+// slot filled, so the final result set may have truncated
+// potentially-relevant hits. (The over-fetch/probe is the implementation's
+// chosen way to detect the cap; both concrete backends use it.) Callers
+// surface this to clients as pool_saturated so the user can raise
+// KPerSignal or narrow the query.
 type FusingBackend interface {
 	Backend
 	FusedSearch(ctx context.Context, req FusedRequest) (hits []FusedHit, saturated bool, err error)
@@ -186,7 +211,7 @@ type FusingBackend interface {
 
 // FusedRequest is the parameter bundle for a single-query fused hybrid search.
 type FusedRequest struct {
-	FTSQuery     string    // pre-tokenized FTS5 MATCH expression; empty skips BM25
+	FTSQuery     string    // full-text query; empty skips BM25. Dialect-specific: sqlitevec treats it as an FTS5 MATCH expression, pgvector feeds it raw to websearch_to_tsquery
 	QueryVec     []float32 // query embedding; nil skips ANN
 	Generation   GenerationID
 	KPerSignal   int

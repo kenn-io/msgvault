@@ -65,7 +65,7 @@ func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:example.com to:alice cc:other.com`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 
 	// from:example.com → alice, bob, dave.work (all @example.com).
@@ -90,7 +90,7 @@ func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`larger:1M smaller:10M subject:quarterly subject:"offsite plan" after:2025-01-01 before:2025-06-01`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	if assert.NotNil(f.LargerThan, "LargerThan") {
 		assert.Equal(int64(1024*1024), *f.LargerThan)
@@ -114,7 +114,7 @@ func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:Work has:attachment`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	require.Len(f.LabelGroups, 1, "LabelGroups should have one group")
 	assert.Lenf(f.LabelGroups[0], 1, "want one group with one id (Work); got %v", f.LabelGroups)
@@ -130,7 +130,7 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`lunch plans`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	requirepkg.NoError(t, err, "BuildFilter")
 	assertpkg.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
 }
@@ -146,7 +146,7 @@ func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`from:nobody@nowhere.invalid`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.SenderGroups, 1, "want one group with sentinel; got %v", f.SenderGroups)
 	require.Len(f.SenderGroups[0], 1)
@@ -162,7 +162,7 @@ func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`label:nonexistent-label-xyz`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.LabelGroups, 1, "want one group with sentinel; got %v", f.LabelGroups)
 	require.Len(f.LabelGroups[0], 1)
@@ -186,7 +186,7 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 		require := requirepkg.New(t)
 		assert := assertpkg.New(t)
 		q := search.Parse(`from:alice from:bob`)
-		f, err := BuildFilter(ctx, db, q)
+		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
 		require.Lenf(f.SenderGroups, 2, "want 2 groups (one per from: token); got %v", f.SenderGroups)
 		for i, g := range f.SenderGroups {
@@ -201,7 +201,7 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 		require := requirepkg.New(t)
 		assert := assertpkg.New(t)
 		q := search.Parse(`from:alice from:nobody@nowhere.invalid`)
-		f, err := BuildFilter(ctx, db, q)
+		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
 		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
 		require.Len(f.SenderGroups[0], 1)
@@ -216,7 +216,7 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 		// from:example.com → alice, bob, dave.work all match @example.com.
 		// from:work → only dave.work. Two groups, IDs preserved per group.
 		q := search.Parse(`from:example.com from:work`)
-		f, err := BuildFilter(ctx, db, q)
+		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
 		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
 		assert.Lenf(f.SenderGroups[0], 3,
@@ -239,7 +239,7 @@ func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:bob`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.ToGroups, 2, "want 2 groups (one per to: token); got %v", f.ToGroups)
 	for i, g := range f.ToGroups {
@@ -264,7 +264,7 @@ func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testi
 	db := newFilterTestDB(t)
 
 	q := search.Parse(`to:alice to:nobody@nowhere.invalid`)
-	f, err := BuildFilter(ctx, db, q)
+	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.ToGroups, 2, "want 2 groups; got %v", f.ToGroups)
 	require.Len(f.ToGroups[0], 1)
@@ -283,7 +283,7 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 		require := requirepkg.New(t)
 		assert := assertpkg.New(t)
 		q := search.Parse(`label:Work label:Archive`)
-		f, err := BuildFilter(ctx, db, q)
+		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
 		require.Lenf(f.LabelGroups, 2, "want 2 groups; got %v", f.LabelGroups)
 		for i, g := range f.LabelGroups {
@@ -298,7 +298,7 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 		require := requirepkg.New(t)
 		assert := assertpkg.New(t)
 		q := search.Parse(`label:Work label:nonexistent-xyz`)
-		f, err := BuildFilter(ctx, db, q)
+		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
 		require.Lenf(f.LabelGroups, 2, "want 2 groups; got %v", f.LabelGroups)
 		require.Len(f.LabelGroups[0], 1)
@@ -332,7 +332,7 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			q := search.Parse(c.query)
-			f, err := BuildFilter(ctx, db, q)
+			f, err := BuildFilter(ctx, db, nil, q)
 			requirepkg.NoError(t, err, "BuildFilter")
 			requirepkg.Lenf(t, f.LabelGroups, c.wantGroups,
 				"query %q: LabelGroups %v", c.query, f.LabelGroups)

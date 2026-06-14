@@ -314,7 +314,7 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 	// query-time live filtering (dropDeletedFromSource,
 	// filteredMessageIDs) enforces the live-message contract.
 	rows, err := b.mainDB.QueryContext(ctx,
-		fmt.Sprintf(`SELECT id FROM messages WHERE %s`, store.LiveMessagesWhere("", true)))
+		`SELECT id FROM messages WHERE `+store.LiveMessagesWhere("", true))
 	if err != nil {
 		return fmt.Errorf("select messages: %w", err)
 	}
@@ -351,7 +351,7 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 
 // ActivateGeneration atomically retires the current active generation
 // (if any) and promotes `gen` to active.
-func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationID) error {
+func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationID, force bool) error {
 	now := time.Now().Unix()
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -359,31 +359,157 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx,
+	// Demote the current active generation and capture its id in a single
+	// statement via RETURNING (SQLite 3.35+), so the id whose queue rows we reap
+	// below is provably the row this UPDATE retired (no separate SELECT that
+	// could diverge). No active row -> no row returned -> demoted invalid -> the
+	// reap is skipped, exactly as before. Done inside the tx so the demote+reap
+	// is atomic with the activation below.
+	var demoted sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
 		`UPDATE index_generations
 		 SET state = 'retired', completed_at = COALESCE(completed_at, ?)
-		 WHERE state = 'active'`, now); err != nil {
+		 WHERE state = 'active'
+		 RETURNING id`, now).Scan(&demoted); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("retire previous active: %w", err)
 	}
+	if demoted.Valid {
+		// Reap the demoted generation's queue rows in the same tx. Retired
+		// generations are never re-targeted by pickTarget, so leftover
+		// pending_embeddings rows would be orphaned forever (the
+		// index_generations row is preserved, so the ON DELETE CASCADE never
+		// fires). Keeps the "retired generations have zero pending items"
+		// stats invariant true. [cr2-3, cr2-4]
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pending_embeddings WHERE generation_id = ?`, demoted.Int64); err != nil {
+			return fmt.Errorf("delete retired generation %d pending: %w", demoted.Int64, err)
+		}
+	}
+	// Re-check the seeded/no-pending gate IN the activation tx (unless force).
+	// SQLite serializes writers, so the gate and flip are atomic once inside
+	// the tx: this closes the window between a CALLER's pre-flight pending read
+	// and this flip — no pending row committed before this statement can sneak
+	// gen past the gate. It does NOT prevent an enqueue that commits just AFTER
+	// this flip from leaving one pending row on the now-active gen; that
+	// post-flip row is acceptable and is drained by the embed worker's
+	// active-generation top-up on the next run (see embed_job.go pickTarget /
+	// enqueue.go). [cr2-1]
 	res, err := tx.ExecContext(ctx,
 		`UPDATE index_generations
 		 SET state = 'active', activated_at = ?, completed_at = COALESCE(completed_at, ?)
-		 WHERE id = ? AND state = 'building'`, now, now, int64(gen))
+		 WHERE id = ? AND state = 'building'
+		   AND (? OR seeded_at IS NOT NULL)
+		   AND (? OR NOT EXISTS (
+		       SELECT 1 FROM pending_embeddings WHERE generation_id = ?
+		   ))`, now, now, int64(gen), force, force, int64(gen))
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("generation %d not in 'building' state", gen)
+		return activateGateError(ctx, tx, gen, force)
 	}
 	return tx.Commit()
 }
 
-// RetireGeneration marks the given generation as retired.
-func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID) error {
-	_, err := b.db.ExecContext(ctx,
-		`UPDATE index_generations SET state = 'retired' WHERE id = ?`, int64(gen))
-	return err
+// activateGateError re-reads gen inside the activation tx to return a
+// precise reason the gated promote affected zero rows: pending rows present,
+// not finished seeding, unknown generation, or not in 'building' state.
+func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
+	var pending int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pending); err != nil {
+		return fmt.Errorf("count pending rows for generation %d: %w", gen, err)
+	}
+	if pending > 0 && !force {
+		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
+			gen, pending)
+	}
+	var state vector.GenerationState
+	var seededAt sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state, seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&state, &seededAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == vector.GenerationBuilding && !seededAt.Valid && !force {
+		return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
+			gen)
+	}
+	return fmt.Errorf("generation %d not in 'building' state", gen)
+}
+
+// RetireGeneration marks the given generation as retired and reaps its
+// queue rows in one transaction.
+//
+// Unless force is true, the state-flip UPDATE refuses to retire a generation
+// in state='active' (WHERE state != 'active'): if it affects zero rows the
+// active guard tripped, so the tx rolls back returning ErrRefuseRetireActive
+// WITHOUT reaping pending rows. SQLite serializes writers, so the guard and
+// flip are atomic once inside the tx — closing the CLI's pre-flight TOCTOU so
+// a concurrent activation cannot retire the now-serving generation without
+// --force-active. force retires unconditionally (operator override).
+func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID, force bool) error {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin retire tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The active-gen guard is the WHERE clause itself: when force is false we
+	// only retire a generation that is NOT active, so a concurrent activation
+	// that flipped gen to active before this statement leaves zero rows
+	// affected and we bail out before reaping anything. force=true drops the
+	// guard (? OR ... is always satisfiable).
+	res, err := tx.ExecContext(ctx,
+		`UPDATE index_generations SET state = 'retired'
+		 WHERE id = ? AND (? OR state != 'active')`, int64(gen), force)
+	if err != nil {
+		return fmt.Errorf("retire generation %d: %w", gen, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return retireGateError(ctx, tx, gen, force)
+	}
+	// Reap the retired generation's queue rows in the same tx so they cannot
+	// be orphaned (no future run re-targets a retired generation, and the
+	// preserved index_generations row means the ON DELETE CASCADE never
+	// fires). Keeps the "retired generations have zero pending items"
+	// stats invariant true. [cr2-2, cr2-4]
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen)); err != nil {
+		return fmt.Errorf("delete retired generation %d pending: %w", gen, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit retire generation %d: %w", gen, err)
+	}
+	return nil
+}
+
+// retireGateError re-reads gen inside the retire tx to explain why the gated
+// state flip affected zero rows: the generation is active (and force was not
+// passed) or it does not exist. Mirrors activateGateError so the management
+// command gets precise, actionable errors now that the guard lives in the
+// backend.
+func retireGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
+	var state vector.GenerationState
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == vector.GenerationActive && !force {
+		return fmt.Errorf("%w: generation %d", vector.ErrRefuseRetireActive, gen)
+	}
+	// A non-active row always matches `state != 'active'`, so the gated UPDATE
+	// would have affected it (a no-op flip still counts as a matched row).
+	// Reaching here for a non-active, existing generation means the row
+	// vanished mid-tx; surface it rather than reporting a phantom retire.
+	return fmt.Errorf("retire generation %d: state flip affected no rows (state=%q)", gen, state)
 }
 
 // ActiveGeneration returns the current active generation, or
@@ -397,7 +523,7 @@ func (b *Backend) ActiveGeneration(ctx context.Context) (vector.Generation, erro
 func (b *Backend) BuildingGeneration(ctx context.Context) (*vector.Generation, error) {
 	g, err := b.generationByState(ctx, vector.GenerationBuilding)
 	if errors.Is(err, vector.ErrNoActiveGeneration) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // (nil, nil) signals "no building generation"; callers nil-check the pointer
 	}
 	if err != nil {
 		return nil, err
@@ -448,14 +574,32 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return nil
 	}
 
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin upsert tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Read the generation's dimension and lifecycle state inside the write
+	// transaction and refuse to write to a retired generation. SQLite has
+	// no SELECT ... FOR UPDATE, but a write tx serializes against other
+	// writers (Activate/Retire), so this read is consistent for the life of
+	// the upsert. sqlitevec's vec0 PARTITION KEY isolates retired rows so it
+	// does not delete them on retire, making re-pollution impossible here;
+	// the guard is kept for symmetry with the pgvector backend and to
+	// document the invariant that retired generations are immutable.
 	var dim int
-	err := b.db.QueryRowContext(ctx,
-		`SELECT dimension FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim)
+	var state string
+	err = tx.QueryRowContext(ctx,
+		`SELECT dimension, state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
 	}
 	if err != nil {
 		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == string(vector.GenerationRetired) {
+		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
 	}
 	for _, c := range chunks {
 		if len(c.Vector) != dim {
@@ -463,12 +607,6 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 				vector.ErrDimensionMismatch, c.ChunkIndex, c.MessageID, len(c.Vector), dim)
 		}
 	}
-
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin upsert tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
 	// message_count tracks distinct messages, not chunks. Count how
 	// many of the message_ids in this batch already have any row in
@@ -635,9 +773,9 @@ func float32SliceBlob(v []float32) []byte {
 	buf := make([]byte, 4*len(v))
 	for i, f := range v {
 		bits := math.Float32bits(f)
-		buf[4*i] = byte(bits)
-		buf[4*i+1] = byte(bits >> 8)
-		buf[4*i+2] = byte(bits >> 16)
+		buf[4*i] = byte(bits & 0xff)
+		buf[4*i+1] = byte((bits >> 8) & 0xff)
+		buf[4*i+2] = byte((bits >> 16) & 0xff)
 		buf[4*i+3] = byte(bits >> 24)
 	}
 	return buf
@@ -650,7 +788,7 @@ func blobToFloat32(b []byte, dim int) ([]float32, error) {
 		return nil, fmt.Errorf("blob length %d does not match dimension %d", len(b), dim)
 	}
 	out := make([]float32, dim)
-	for i := 0; i < dim; i++ {
+	for i := range dim {
 		bits := uint32(b[4*i]) | uint32(b[4*i+1])<<8 | uint32(b[4*i+2])<<16 | uint32(b[4*i+3])<<24
 		out[i] = math.Float32frombits(bits)
 	}
@@ -697,7 +835,7 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 // ordered by ascending distance and assigned 1-based ranks.
 func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, filter vector.Filter) ([]vector.Hit, error) {
 	if len(queryVec) == 0 {
-		return nil, fmt.Errorf("search: empty query vector")
+		return nil, errors.New("search: empty query vector")
 	}
 
 	var dim int
@@ -768,10 +906,8 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		//   - deletion-level: existing soft-delete filter may shrink
 		//     the result; the doubling loop below already handles
 		//     this dimension.
-		fetch := k * chunkOverfetchFactor * deletedOverfetchFactor
-		if fetch < k {
-			fetch = k // guard against overflow or degenerate small k
-		}
+		// max() guards against overflow or degenerate small k.
+		fetch := max(k*chunkOverfetchFactor*deletedOverfetchFactor, k)
 		for {
 			if fetch > chunkCeiling {
 				fetch = chunkCeiling
@@ -854,10 +990,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		 ORDER BY distance ASC
 	`, vecTable, idClause)
 
-	fetch := k * chunkOverfetchFactor
-	if fetch < k {
-		fetch = k
-	}
+	fetch := max(k*chunkOverfetchFactor, k)
 	for {
 		if fetch > chunkCeiling {
 			fetch = chunkCeiling
@@ -987,9 +1120,9 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 	if err != nil {
 		return nil, fmt.Errorf("encode hit ids: %w", err)
 	}
-	q := fmt.Sprintf(`SELECT id FROM messages
+	q := `SELECT id FROM messages
 	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND %s`, store.LiveMessagesWhere("", true))
+	         AND ` + store.LiveMessagesWhere("", true)
 	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
 	if err != nil {
 		return nil, fmt.Errorf("live-hit filter: %w", err)

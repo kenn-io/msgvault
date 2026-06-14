@@ -6,7 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -134,7 +134,7 @@ CREATE TABLE message_recipients (
 
 // newFusedBackendForTest opens a backend pointing at a main DB seeded
 // with FTS content and the minimum schema FusedSearch needs.
-func newFusedBackendForTest(t *testing.T) (*Backend, context.Context, func()) {
+func newFusedBackendForTest(t *testing.T) (*Backend, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	main, mainPath := openFusedMainDB(t)
@@ -146,9 +146,8 @@ func newFusedBackendForTest(t *testing.T) (*Backend, context.Context, func()) {
 		MainDB:    main,
 	})
 	require.NoError(t, err, "Open")
-	cleanup := func() { _ = b.Close() }
-	t.Cleanup(cleanup)
-	return b, ctx, cleanup
+	t.Cleanup(func() { _ = b.Close() })
+	return b, ctx
 }
 
 // seedAndEmbed inserts any missing message rows into the main DB,
@@ -163,7 +162,7 @@ func seedAndEmbed(t *testing.T, b *Backend, vecs map[int64][]float32) vector.Gen
 	for id := range vecs {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 
 	expectedDim := len(vecs[ids[0]])
 	for _, id := range ids {

@@ -45,15 +45,147 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	_, err = b.ActiveGeneration(ctx)
 	require.Error(err, "ActiveGeneration should error before activation")
 
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 	g, err := b.ActiveGeneration(ctx)
 	require.NoError(err, "ActiveGeneration after activate")
 	assert.Equal(vector.GenerationActive, g.State)
 	assert.Equal("nomic-embed-text-v1.5:768", g.Fingerprint)
 
-	require.NoError(b.RetireGeneration(ctx, gid), "RetireGeneration")
+	require.NoError(b.RetireGeneration(ctx, gid, true), "RetireGeneration")
 	_, err = b.ActiveGeneration(ctx)
 	require.Error(err, "ActiveGeneration should error after retire")
+}
+
+// pendingCount returns the number of pending_embeddings rows for a generation.
+func pendingCount(t *testing.T, b *Backend, gen vector.GenerationID) int {
+	t.Helper()
+	var n int
+	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n),
+		"count pending rows")
+	return n
+}
+
+// TestBackend_RetireGeneration_CleansPending pins the cr2-2/cr2-4 fix for the
+// explicit-retire path: RetireGeneration must DELETE the generation's
+// pending_embeddings rows in the same tx as the state flip. A retired
+// generation is never re-targeted by pickTarget, so leftover queue rows would
+// be orphaned forever and would violate the documented "retired generations
+// have zero pending items" stats invariant.
+func TestBackend_RetireGeneration_CleansPending(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+
+	// CreateGeneration seeds one pending row (for msg id=1 in the test main DB).
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration")
+	requirepkg.Equal(t, 1, pendingCount(t, b, gen), "precondition: pending row present")
+
+	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, false), "RetireGeneration")
+
+	assertpkg.Equal(t, 0, pendingCount(t, b, gen),
+		"retire must delete the generation's pending_embeddings rows")
+}
+
+// genStateSV reads index_generations.state for a generation.
+func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.GenerationState {
+	t.Helper()
+	var s vector.GenerationState
+	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&s),
+		"read state for generation %d", gen)
+	return s
+}
+
+// TestBackend_RetireGeneration_ActiveGuard pins the retire-TOCTOU class-closing
+// fix: the active-gen guard lives ATOMICALLY inside RetireGeneration's tx.
+//   - force=false against the ACTIVE generation is refused with
+//     ErrRefuseRetireActive, leaving state='active' and its pending rows intact
+//     (no destructive reap of the now-serving generation).
+//   - force=true retires the active generation and reaps its pending rows.
+//   - force=false against a NON-active (building) generation retires fine.
+func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+
+	// Build + force-activate genA, leaving an undrained pending row on it.
+	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration A")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
+	requirepkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
+
+	// (1) Non-forced retire of the ACTIVE gen is refused atomically: sentinel
+	// error, state unchanged, pending rows NOT reaped.
+	err = b.RetireGeneration(ctx, genA, false)
+	requirepkg.ErrorIs(t, err, vector.ErrRefuseRetireActive,
+		"non-forced retire of active gen must return ErrRefuseRetireActive")
+	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA),
+		"refused retire must leave the active gen's state unchanged")
+	assertpkg.Equal(t, 1, pendingCount(t, b, genA),
+		"refused retire must NOT reap the active gen's pending rows")
+
+	// (2) Forced retire succeeds: state flips to retired and pending is reaped.
+	requirepkg.NoError(t, b.RetireGeneration(ctx, genA, true),
+		"forced retire of active gen must succeed")
+	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA),
+		"forced retire flips state to retired")
+	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
+		"forced retire reaps the gen's pending rows")
+
+	// (3) A NON-active (building) generation retires fine without force.
+	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration B")
+	requirepkg.Equal(t, vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
+	requirepkg.NoError(t, b.RetireGeneration(ctx, genB, false),
+		"non-forced retire of a non-active gen must succeed")
+	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genB),
+		"non-active gen retires to retired without force")
+}
+
+// TestBackend_ActivateGeneration_AutoRetireCleansPending pins the
+// cr2-3/cr2-4 fix for the auto-retire path: activating a new generation must
+// reap the demoted (now-retired) generation's pending_embeddings rows in the
+// same tx as the state flip.
+func TestBackend_ActivateGeneration_AutoRetireCleansPending(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+
+	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration A")
+	// Force-activate A while it still has its seeded pending row (mimicking an
+	// undrained incremental queue row left on the active gen at re-embed time).
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
+
+	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration B")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
+
+	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
+		"auto-retire must delete the demoted generation's pending_embeddings rows")
+
+	// RETURNING-id provability: the demote folds into one
+	// `UPDATE ... WHERE state='active' RETURNING id` statement (SQLite 3.35+),
+	// so the id whose pending rows get reaped is exactly the row that flipped to
+	// retired. Assert the previously-active gen (genA) is the sole retired row
+	// AND that it is the one whose pending was reaped, while the new active gen
+	// (genB) is not retired. This pins that the RETURNING'd id == the reaped id
+	// == the previously-active generation.
+	retired := singleRetiredGenSV(t, b)
+	assertpkg.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
+	assertpkg.NotEqual(t, genB, retired, "the newly-activated gen must not be retired")
+	assertpkg.Equal(t, 0, pendingCount(t, b, retired),
+		"pending reaped for exactly the RETURNING'd (retired) id")
+}
+
+// singleRetiredGenSV returns the id of the one generation in state='retired',
+// failing if there is not exactly one. Used by the auto-retire RETURNING-id
+// test to prove the reaped id is the same row whose state flipped to retired.
+func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
+	t.Helper()
+	var id int64
+	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+		`SELECT id FROM index_generations WHERE state = 'retired'`).Scan(&id),
+		"expected exactly one retired generation")
+	return vector.GenerationID(id)
 }
 
 func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
@@ -640,7 +772,7 @@ func TestBackend_Search_DimensionMismatch(t *testing.T) {
 // id and failed with `too many SQL variables` once it crossed the cap.
 func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	const total = 1200 // well past SQLite's 999-variable ceiling
 	// The helper seeds 3 FTS rows; insert `total` more messages each
@@ -686,7 +818,7 @@ func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
 // larger/smaller size bounds, and subject substring match.
 func TestBackend_Search_NewFilterFields(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	// Reset and seed 4 messages with distinct recipient / size / subject
 	// profiles so each assertion is unambiguous.
@@ -787,7 +919,7 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 // they are AND'd together. Same shape as label group AND'ing.
 func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients; DELETE FROM message_labels`)
@@ -882,7 +1014,7 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	// Reset the fused helper's seed data so we control the rows.
 	_, err := b.mainDB.ExecContext(ctx,
@@ -939,7 +1071,7 @@ func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
 // participant-level intersection (which would drop such messages).
 func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients`)
@@ -1011,7 +1143,7 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients`)
@@ -1050,7 +1182,7 @@ func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
 func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients`)
@@ -1118,7 +1250,7 @@ func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
 func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients`)
@@ -1176,7 +1308,7 @@ func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testin
 // remainder without looping forever.
 func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts; DELETE FROM message_recipients`)
@@ -1286,7 +1418,7 @@ func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
 	// CreateGeneration produces a building gen alongside it instead of
 	// reusing the same row.
 	genA := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
-	require.NoError(b.ActivateGeneration(ctx, genA), "ActivateGeneration(genA)")
+	require.NoError(b.ActivateGeneration(ctx, genA, true), "ActivateGeneration(genA)")
 
 	// Second generation: re-embed the same message 1, mirroring the
 	// "rebuild in progress" state where every message is dual-embedded
@@ -1377,13 +1509,16 @@ func TestBackend_LoadVector(t *testing.T) {
 	}
 	chunks := []vector.Chunk{{MessageID: 1, Vector: vec, SourceCharLen: 42}}
 	require.NoError(b.Upsert(ctx, gid, chunks), "Upsert")
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	got, err := b.LoadVector(ctx, 1)
 	require.NoError(err, "LoadVector")
 	require.Len(got, 768)
 	for i, v := range got {
-		require.Equalf(vec[i], v, "mismatch at i=%d", i)
+		// InDelta (not InEpsilon) because vec[0] == 0 and epsilon is a
+		// relative tolerance; the float32 round-trip is exact, so 1e-6
+		// is generous.
+		require.InDeltaf(vec[i], v, 1e-6, "mismatch at i=%d", i)
 	}
 }
 
@@ -1399,7 +1534,7 @@ func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
 	}
 	chunks := []vector.Chunk{{MessageID: 1, Vector: vec, SourceCharLen: 42}}
 	require.NoError(b.Upsert(ctx, gid, chunks), "Upsert")
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	_, err = b.LoadVector(ctx, 999)
 	require.Error(err, "LoadVector for missing message should error")

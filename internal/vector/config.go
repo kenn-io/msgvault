@@ -42,12 +42,20 @@ const embedPolicyVersion = 1
 // [vector] TOML table.
 type Config struct {
 	Enabled    bool             `toml:"enabled"`
-	Backend    string           `toml:"backend"` // "sqlite-vec" (MVP); "lance" reserved
+	Backend    string           `toml:"backend"` // "sqlite-vec" or "pgvector"; concrete backend is DSN-selected
 	DBPath     string           `toml:"db_path"` // backend-specific
 	Embeddings EmbeddingsConfig `toml:"embeddings"`
 	Preprocess PreprocessConfig `toml:"preprocess"`
 	Search     SearchConfig     `toml:"search"`
 	Embed      EmbedConfig      `toml:"embed"`
+
+	// SkipExtensionCreate skips the `CREATE EXTENSION IF NOT EXISTS
+	// vector` step on the pgvector backend while still letting Migrate
+	// create the schema tables and indexes. Set this on a managed or
+	// locked-down PostgreSQL where the `vector` extension is installed by
+	// an administrator and the msgvault role lacks the superuser privilege
+	// CREATE EXTENSION requires. Ignored on the sqlite-vec backend.
+	SkipExtensionCreate bool `toml:"skip_extension_create"`
 }
 
 // EmbeddingsConfig configures the external OpenAI-compatible
@@ -249,8 +257,14 @@ func (c *Config) GenerationFingerprint() string {
 // Validate returns a descriptive error if the config is unusable.
 // Only called when Enabled is true; disabled configs are not checked.
 func (c *Config) Validate() error {
-	if c.Backend != "sqlite-vec" {
-		return fmt.Errorf("vector.backend: unknown backend %q (only \"sqlite-vec\" is supported in MVP)", c.Backend)
+	// The concrete backend is selected at the command layer from the
+	// database DSN (SQLite → sqlite-vec, PostgreSQL → pgvector); this
+	// field is a declared marker, not the selector. Accept either known
+	// backend and reject anything else.
+	switch c.Backend {
+	case "sqlite-vec", "pgvector":
+	default:
+		return fmt.Errorf("vector.backend: unknown backend %q (supported: \"sqlite-vec\", \"pgvector\")", c.Backend)
 	}
 	if c.Embeddings.Endpoint == "" {
 		return errors.New("vector.embeddings.endpoint: required")

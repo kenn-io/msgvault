@@ -29,7 +29,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
-		assertpkg.NoErrorf(t, err, "table %s missing", tbl)
+		requirepkg.NoErrorf(t, err, "table %s missing", tbl)
 	}
 
 	// Idempotent: running again must not error.
@@ -119,7 +119,7 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 	require.NoError(err, "seed embeddings")
 	// vec0 demands its rowid match the second PK column; here the
 	// legacy schema uses message_id, so 10 and 20 both go in directly.
-	blob := func(v []float32) []byte { return float32SliceBlob(v) }
+	blob := float32SliceBlob
 	v10 := make([]float32, 768)
 	v20 := make([]float32, 768)
 	for i := range v10 {
@@ -152,6 +152,7 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 		require.NoError(rows.Scan(&r.eid, &r.mid, &r.ci, &r.charLen, &r.trunc), "scan")
 		got = append(got, r)
 	}
+	require.NoError(rows.Err(), "iterate embeddings")
 	// AUTOINCREMENT allocates fresh embedding_ids — they must be
 	// distinct and positive. The actual values depend on insertion
 	// order, so verify the *shape* (distinct, all > 0) rather than
@@ -165,8 +166,8 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 	assert.Equalf(int64(0), got[1].ci, "row[1]")
 	assert.Equalf(int64(75), got[1].charLen, "row[1]")
 	assert.Equalf(int64(1), got[1].trunc, "row[1]")
-	assert.Greater(got[0].eid, int64(0), "embedding_id should be positive")
-	assert.Greater(got[1].eid, int64(0), "embedding_id should be positive")
+	assert.Positive(got[0].eid, "embedding_id should be positive")
+	assert.Positive(got[1].eid, "embedding_id should be positive")
 	assert.NotEqual(got[0].eid, got[1].eid, "embedding_ids should be distinct")
 
 	// vec0 rowid is now the AUTOINCREMENT embedding_id (not the
@@ -360,7 +361,7 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 	// being tested against distinct conns rather than a single reused
 	// one.
 	held := make([]*sql.Conn, conns)
-	for i := 0; i < conns; i++ {
+	for i := range conns {
 		c, err := db.Conn(ctx)
 		require.NoErrorf(err, "conn %d", i)
 		held[i] = c
@@ -381,6 +382,7 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 		_, err = c.ExecContext(ctx,
 			`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
 			 VALUES (?, ?, ?)`, 9999999, int64(i), int64(i))
+		//nolint:testifylint // guarded assert+continue: a require here would abort the per-conn loop instead of skipping to the next connection
 		if !assert.Errorf(err, "conn %d: FK-violating insert should fail", i) {
 			continue
 		}

@@ -60,6 +60,11 @@ type Config struct {
 	RRFK                int
 	KPerSignal          int
 	SubjectBoost        float64
+	// Rebind converts ? placeholders to the driver's native form for the
+	// participant/label lookup SQL that BuildFilter runs against mainDB.
+	// Pass PostgreSQLDialect.Rebind on PG (pgx rejects bare ?); leave nil
+	// (or SQLiteDialect.Rebind, which is identity) on SQLite.
+	Rebind func(string) string
 }
 
 // Engine orchestrates the generation check, query embedding, and fusion
@@ -82,7 +87,7 @@ func NewEngine(backend vector.Backend, mainDB *sql.DB, client EmbeddingClient, c
 // package-level BuildFilter so callers that already hold an *Engine
 // don't need to plumb a *sql.DB separately.
 func (e *Engine) BuildFilter(ctx context.Context, q *search.Query) (vector.Filter, error) {
-	return BuildFilter(ctx, e.mainDB, q)
+	return BuildFilter(ctx, e.mainDB, e.cfg.Rebind, q)
 }
 
 // Search runs hybrid or vector mode. Resolves the active generation
