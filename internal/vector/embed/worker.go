@@ -50,7 +50,12 @@ type WorkerDeps struct {
 	// and returns an error. A successful batch resets the counter.
 	// Default 5.
 	MaxConsecutiveFailures int
-	Log                    *slog.Logger
+	// Rebind translates ?-placeholders to the driver's native form.
+	// nil is treated as the identity (used by SQLite); pgvector callers
+	// must wire in (&store.PostgreSQLDialect{}).Rebind so the queue's
+	// IN-clause and UPDATE statements run on pgx.
+	Rebind func(string) string
+	Log    *slog.Logger
 	// TotalPending is the queue depth at run start, used by a Progress
 	// callback (if any) to report percent done and ETA. Zero disables
 	// the denominator — Progress still fires but leaves ETA empty.
@@ -82,8 +87,13 @@ type ProgressReport struct {
 // parallelize, construct multiple workers that share the same Backend
 // and DB handles.
 type Worker struct {
-	deps     WorkerDeps
-	q        *Queue
+	deps WorkerDeps
+	q    *Queue
+	// rebind translates ?-placeholders to the driver's native form for
+	// queries the worker issues directly against MainDB (embedBatch's
+	// IN-clause). Resolved in NewWorker from WorkerDeps.Rebind; nil is
+	// normalized to the identity so the SQLite path is unchanged.
+	rebind   func(string) string
 	runStart time.Time // valid only during a RunOnce call
 }
 
@@ -103,7 +113,11 @@ func NewWorker(d WorkerDeps) *Worker {
 	if d.MaxConsecutiveFailures == 0 {
 		d.MaxConsecutiveFailures = 5
 	}
-	return &Worker{deps: d, q: NewQueue(d.VectorsDB)}
+	rebind := d.Rebind
+	if rebind == nil {
+		rebind = func(q string) string { return q }
+	}
+	return &Worker{deps: d, q: NewQueue(d.VectorsDB, rebind), rebind: rebind}
 }
 
 // derivedStaleThreshold picks a default StaleThreshold from the
@@ -188,6 +202,44 @@ func (w *Worker) ReclaimStale(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// startEmbedRun inserts an embed_runs row and returns the new row's id.
+// A failure is non-fatal — run tracking is observability, not correctness.
+func (w *Worker) startEmbedRun(ctx context.Context, gen vector.GenerationID, now int64) int64 {
+	if w.deps.VectorsDB == nil {
+		return 0
+	}
+	var id int64
+	err := w.deps.VectorsDB.QueryRowContext(ctx,
+		w.rebind(`INSERT INTO embed_runs (generation_id, started_at) VALUES (?, ?) RETURNING id`),
+		int64(gen), now).Scan(&id)
+	if err != nil {
+		w.deps.Log.Warn("embed_runs: start insert failed", "error", err)
+		return 0
+	}
+	return id
+}
+
+// finalizeEmbedRun stamps ended_at plus result counters on the run row
+// opened by startEmbedRun. A zero runID means startEmbedRun failed; skip.
+func (w *Worker) finalizeEmbedRun(ctx context.Context, runID int64, res RunResult, runErr error, now int64) {
+	if runID == 0 || w.deps.VectorsDB == nil {
+		return
+	}
+	var errText *string
+	if runErr != nil {
+		s := runErr.Error()
+		errText = &s
+	}
+	_, err := w.deps.VectorsDB.ExecContext(ctx,
+		w.rebind(`UPDATE embed_runs
+		             SET ended_at = ?, claimed = ?, succeeded = ?, failed = ?, truncated = ?, error = ?
+		           WHERE id = ?`),
+		now, res.Claimed, res.Succeeded, res.Failed, res.Truncated, errText, runID)
+	if err != nil {
+		w.deps.Log.Warn("embed_runs: finalize update failed", "error", err)
+	}
+}
+
 // RunOnce drains the queue for the given generation until empty,
 // releasing claimed rows on embed or upsert error so another worker can
 // retry them. Returns when pending is empty or ctx is cancelled.
@@ -196,12 +248,25 @@ func (w *Worker) ReclaimStale(ctx context.Context) (int, error) {
 // MaxConsecutiveFailures, so a persistently misconfigured embedder
 // (bad credentials, unreachable endpoint) surfaces quickly instead of
 // looping forever. A successful batch resets the failure counter.
-func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResult, error) {
-	var res RunResult
+func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (res RunResult, retErr error) {
 	consecutiveFailures := 0
 	var lastErr error
 	completedRows := 0
 	w.runStart = time.Now()
+	runID := w.startEmbedRun(ctx, gen, w.runStart.Unix())
+	defer func() {
+		// Finalize on a context detached from the caller's cancellation so
+		// the embed_runs row is stamped (ended_at/counters/error) even when
+		// RunOnce exits because ctx was cancelled (Ctrl-C / SIGTERM /
+		// daemon shutdown). Running the close-out UPDATE on the cancelled
+		// ctx would short-circuit in database/sql and leave the row open
+		// forever, corrupting the "find in-flight/crashed runs" signal.
+		// A short timeout keeps shutdown from hanging on a wedged DB.
+		// Mirrors the query/duckdb.go cleanup convention.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		w.finalizeEmbedRun(fctx, runID, res, retErr, time.Now().Unix())
+	}()
 	// orphanDrainErr/orphanDrainCount preserve the latest orphan-drain
 	// failure across iterations so we can surface it on the empty-claim
 	// exit. Without this, a Complete() failure on orphan rows would be
@@ -271,6 +336,14 @@ func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResul
 					// upsert/complete failure, ctx cancel — a fresh
 					// failure that should fail this run immediately.
 					lastErr = drainErr
+					// A retired generation is a benign drop, never a hard
+					// abort. downshiftDrain handles ErrGenerationRetired
+					// inline today (so it does not surface here), but guard
+					// defensively so a future drain path that propagates the
+					// sentinel cannot trip the generic non-4xx abort below.
+					if errors.Is(drainErr, vector.ErrGenerationRetired) {
+						continue
+					}
 					if !errors.Is(drainErr, ErrPermanent4xx) {
 						return res, fmt.Errorf("downshift drain: %w", drainErr)
 					}
@@ -333,6 +406,38 @@ func (w *Worker) RunOnce(ctx context.Context, gen vector.GenerationID) (RunResul
 		}
 
 		if err := w.deps.Backend.Upsert(ctx, gen, eb.chunks); err != nil {
+			if errors.Is(err, vector.ErrGenerationRetired) {
+				// The generation was retired out from under this worker
+				// (its claims were reclaimed and a newer generation took
+				// over, or an operator retired it). Per the documented
+				// contract on vector.ErrGenerationRetired this is a benign
+				// "drop the batch" signal, NOT a hard failure: re-embedding
+				// would just re-fail identically and burn embedding-API cost
+				// up to MaxConsecutiveFailures. Token-aware DROP the claimed
+				// rows (Complete is a token-scoped DELETE, safe against a
+				// concurrent newer claim), do not count this as a failure,
+				// and continue draining so the run finishes cleanly.
+				// Drop the FULL claimed batch, not just the embedded subset:
+				// missing/empty rows were claimed under this token too, and
+				// leaving them claimed would strand them until ReclaimStale
+				// (cr2-5). `ids` is exactly the set of message IDs claimed for
+				// this batch (every one is embedded, missing, or empty).
+				w.deps.Log.Info("embed: generation retired mid-run; dropping batch",
+					"gen", gen, "ids", len(ids))
+				if cerr := w.q.Complete(ctx, gen, token, ids); cerr != nil {
+					// A Complete failure during a retired-gen drop leaves these
+					// rows claimed; route it through the orphan-drain surfacing
+					// channel so RunOnce cannot report a false-clean drain while
+					// rows remain stuck (cr2-6). Re-embedding a retired
+					// generation is pointless, so surface-and-continue (no
+					// consecutiveFailures escalation), matching the orphan path.
+					w.deps.Log.Error("complete drop after retired generation", "error", cerr,
+						"gen", gen, "ids", len(ids))
+					orphanDrainErr = cerr
+					orphanDrainCount += len(ids)
+				}
+				continue
+			}
 			res.Failed += len(eb.embeddedIDs)
 			if rerr := w.q.Release(ctx, gen, token, eb.embeddedIDs); rerr != nil {
 				w.deps.Log.Error("release after upsert failure", "error", rerr)
@@ -461,11 +566,11 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := fmt.Sprintf(`
+	query := w.rebind(fmt.Sprintf(`
         SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(mb.body_html, '')
           FROM messages m
           LEFT JOIN message_bodies mb ON mb.message_id = m.id
-         WHERE m.id IN (%s)`, strings.Join(placeholders, ","))
+         WHERE m.id IN (%s)`, strings.Join(placeholders, ",")))
 
 	rows, err := w.deps.MainDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -704,6 +809,16 @@ func (w *Worker) downshiftDrain(
 ) (embedded int, dropped int, err error) {
 	var deferredDrops []int64
 	var lastDeferredErr error
+	// retiredObserved records that at least one singleton's Upsert reported
+	// the generation as retired. It is load-bearing for the end-of-drain
+	// decision (cr2-7): once a generation is retired, no future run will ever
+	// re-claim these rows (pickTarget never targets retired gens), so the
+	// endpoint-misconfig protection that Releases on embedded==0 is moot and
+	// would only orphan the deferred rows and trigger the re-embed/hard-abort
+	// loop. retiredDrainErr captures a Complete failure during a retired drop
+	// so RunOnce can surface it rather than report a false-clean run (cr2-6).
+	var retiredObserved bool
+	var retiredDrainErr error
 
 	for i, id := range ids {
 		select {
@@ -740,6 +855,29 @@ func (w *Worker) downshiftDrain(
 			continue
 		}
 		if uerr := w.deps.Backend.Upsert(ctx, gen, eb.chunks); uerr != nil {
+			if errors.Is(uerr, vector.ErrGenerationRetired) {
+				// Benign per the ErrGenerationRetired contract: the
+				// generation was retired mid-drain. Token-aware DROP this
+				// singleton's row and continue the drain rather than
+				// wrapping into a non-4xx error (which RunOnce would treat
+				// as a hard abort). The remaining claimed rows will also
+				// observe the retired state and drop the same way, so the
+				// drain finishes cleanly and RunOnce returns nil. Record the
+				// retirement so the end-of-drain decision drops any deferred
+				// 4xx rows instead of Releasing them (cr2-7).
+				retiredObserved = true
+				w.deps.Log.Info("embed: generation retired mid-drain; dropping singleton",
+					"gen", gen, "id", id)
+				if cerr := w.q.Complete(ctx, gen, token, []int64{id}); cerr != nil {
+					// Surface the Complete failure rather than swallowing it
+					// (cr2-6): the row stays claimed and RunOnce must not
+					// report a clean run.
+					w.deps.Log.Error("complete drop after retired generation (drain)", "error", cerr,
+						"gen", gen, "id", id)
+					retiredDrainErr = cerr
+				}
+				continue
+			}
 			w.releaseDownshiftRemainder(ctx, gen, token, append(append([]int64(nil), deferredDrops...), ids[i:]...))
 			return embedded, dropped, fmt.Errorf("upsert: %w", uerr)
 		}
@@ -759,6 +897,39 @@ func (w *Worker) downshiftDrain(
 
 	// Drain finished. Decide deferred-drop fate.
 	if len(deferredDrops) == 0 {
+		// No deferred 4xx rows. Surface a retired-drop Complete failure if one
+		// occurred (cr2-6); otherwise the drain is clean.
+		if retiredDrainErr != nil {
+			return embedded, dropped, fmt.Errorf("complete drop after retired generation: %w", retiredDrainErr)
+		}
+		return embedded, dropped, nil
+	}
+	// A retirement was observed: the generation is gone, so re-claiming is
+	// impossible (pickTarget never targets retired gens). Releasing the
+	// deferred 4xx rows would orphan them forever and trigger the wasteful
+	// re-embed/hard-abort loop. Token-DROP them instead and return nil
+	// (benign) — UNLESS a retired-drop Complete already failed, in which case
+	// we surface that so RunOnce reports the stuck rows (cr2-6/cr2-7). This
+	// check MUST precede the embedded==0 all-drop Release path below; the
+	// retiredObserved flag (not embedded==0 alone) is what distinguishes a
+	// retired generation from a misconfigured endpoint, preserving the
+	// silent-delete-on-misconfig guard.
+	if retiredObserved {
+		for _, id := range deferredDrops {
+			w.deps.Log.Warn("dropping deferred 4xx pending message; generation retired",
+				"gen", gen, "id", id, "error", lastDeferredErr)
+		}
+		dropStart := time.Now()
+		if cerr := w.q.Complete(ctx, gen, token, deferredDrops); cerr != nil {
+			res.Failed += len(deferredDrops)
+			return embedded, dropped, fmt.Errorf("complete drop after retired generation: %w", cerr)
+		}
+		dropped += len(deferredDrops)
+		*completedRows += len(deferredDrops)
+		w.reportProgress(*completedRows, len(deferredDrops), 0, time.Since(dropStart))
+		if retiredDrainErr != nil {
+			return embedded, dropped, fmt.Errorf("complete drop after retired generation: %w", retiredDrainErr)
+		}
 		return embedded, dropped, nil
 	}
 	if embedded > 0 {
