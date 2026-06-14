@@ -52,9 +52,9 @@ func RebindPostgreSQL(query string) string {
 // returned lexeme is safe to suffix with `:*` for prefix matching and
 // join with ` & `.
 //
-// This logic intentionally mirrors the broader punctuation-splitting
-// behavior of query.PostgreSQLQueryDialect.SanitizeFTSQuery so the two
-// PG FTS code paths produce the same lexeme set for the same input.
+// Both PG FTS code paths share this allowlist tokenizer:
+// query.PostgreSQLQueryDialect.BuildFTSTerm and SanitizeFTSQuery both
+// call it, so they produce the same lexeme set for the same input.
 func EscapeTSQueryTerm(s string) []string {
 	var lexemes []string
 	var cur strings.Builder

@@ -93,19 +93,29 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 }
 
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
-// The bm25 weights mirror the PostgreSQL dialect's setweight scheme so the
-// two backends order results consistently. Weights are positional over
-// every column declared in messages_fts — UNINDEXED columns count too even
-// though they cannot match — so the leading 1.0 is the placeholder for
-// `message_id UNINDEXED`. The remaining slots map to (subject, body,
-// from_addr, to_addr, cc_addr). PostgreSQL applies setweight 'A'=1.0 to
-// subject and 'B'=0.4 to sender, leaving body and other recipients at
-// default 'D'=0.1 — a 10:4:1 ratio. bm25 multiplies per-column scores by
-// these weights, so 10/1/4/1/1 across (subject, body, from, to, cc)
-// reproduces that ordering: subject-only > sender-only > body/recipient-
-// only matches. bm25 returns lower (more negative) scores for more
-// relevant rows, so callers ORDER BY this expression ascending (the
-// default).
+//
+// The bm25 weights approximate PostgreSQL's setweight field-priority
+// preferences (subject heaviest, then sender, then body / other
+// recipients) for typical email shapes. This is a best-effort SQLite
+// tuning, NOT a strict cross-backend parity guarantee.
+//
+// Weights are positional over every column declared in messages_fts —
+// UNINDEXED columns count too even though they cannot match — so the
+// leading 1.0 is the placeholder for `message_id UNINDEXED`. The
+// remaining slots map to (subject, body, from_addr, to_addr, cc_addr).
+// PostgreSQL applies setweight 'A'=1.0 to subject and 'B'=0.4 to sender,
+// leaving body and other recipients at default 'D'=0.1 — a 10:4:1 ratio,
+// which bm25 reproduces as 10/1/4/1/1 across (subject, body, from, to,
+// cc). bm25 returns lower (more negative) scores for more relevant rows,
+// so callers ORDER BY this expression ascending (the default).
+//
+// Known divergence: SQLite's bm25() applies Okapi BM25 document-length
+// normalization while PostgreSQL's default ts_rank() does not, so very
+// long subject-hit documents can still rank below short body-hit
+// documents on SQLite while PG ranks them subject-first. See
+// docs/search-ranking.md ("Where the two diverge") and
+// TestFTSRank_KnownDivergence for the expected-behavior pin and
+// rationale.
 func (d *SQLiteDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
 	return "JOIN messages_fts ON messages_fts.rowid = m.id",
 		"messages_fts MATCH ?",
@@ -149,18 +159,27 @@ func (d *SQLiteDialect) FTSAvailable(db *sql.DB) bool {
 }
 
 // FTSNeedsBackfill reports whether the FTS5 table needs population.
-// Uses MAX(id) comparisons (instant B-tree lookups) instead of COUNT(*).
+// Probes for the existence of ANY message lacking an FTS entry, matching the
+// PostgreSQL EXISTS(search_fts IS NULL) semantics. The previous MAX(rowid)
+// vs MAX(id) heuristic missed a hole left at a LOW id while later ids were
+// indexed — reachable because UpsertFTS failures during sync are
+// warn-and-continue (sync.go) while the message row still commits, so id N can
+// be unindexed while N+1.. are indexed. messages_fts.rowid == messages.id and
+// there are no triggers, so the NOT EXISTS join is rowid-served and cheap on
+// FTS5 (no full body scan).
 func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
-	ctx := context.Background()
-	var msgMax int64
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM messages").Scan(&msgMax); err != nil || msgMax == 0 {
+	var exists bool
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT EXISTS (
+			SELECT 1 FROM messages m
+			 WHERE NOT EXISTS (
+			     SELECT 1 FROM messages_fts f WHERE f.rowid = m.id
+			 )
+		)`,
+	).Scan(&exists); err != nil {
 		return false
 	}
-	var ftsMax int64
-	if err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid), 0) FROM messages_fts").Scan(&ftsMax); err != nil {
-		return false
-	}
-	return ftsMax < msgMax-msgMax/10
+	return exists
 }
 
 // FTSClearSQL returns the SQL to clear all FTS5 data.
@@ -177,16 +196,20 @@ func (d *SQLiteDialect) SchemaFTS() string {
 // DROP pathway discards FTS5 shadow tables in their entirety, which is the
 // only reliable fix when those shadow tables are malformed — the `rebuild`
 // pragma reads from them and `delete-all` is rejected on contentful tables.
-func (d *SQLiteDialect) FTSRebuildSchema(db *sql.DB) error {
-	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS messages_fts"); err != nil {
+//
+// Runs on the querier so RebuildFTS can route it through the maintenance
+// transaction (finding S1). SQLite DDL is transactional, so DROP/CREATE of
+// the virtual table run fine inside the tx runMaintenance opens; SQLite has
+// no statement_timeout, so the hatch is a plain transaction here.
+func (d *SQLiteDialect) FTSRebuildSchema(q querier) error {
+	if _, err := q.Exec("DROP TABLE IF EXISTS messages_fts"); err != nil {
 		return fmt.Errorf("drop messages_fts: %w", err)
 	}
 	schema, err := schemaFS.ReadFile("schema_sqlite.sql")
 	if err != nil {
 		return fmt.Errorf("read schema_sqlite.sql: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, string(schema)); err != nil {
+	if _, err := q.Exec(string(schema)); err != nil {
 		if d.IsNoSuchModuleError(err) {
 			return errors.New("cannot rebuild FTS: this msgvault binary was built without " +
 				"FTS5 support (rebuild with `-tags fts5`)",
@@ -196,6 +219,11 @@ func (d *SQLiteDialect) FTSRebuildSchema(db *sql.DB) error {
 	}
 	return nil
 }
+
+// EnsureFTSIndex is a no-op for SQLite: its messages_fts virtual table (and
+// the index it implies) is created via the SchemaFTS file during InitSchema,
+// not a post-migration step (cr2-10).
+func (d *SQLiteDialect) EnsureFTSIndex(querier) error { return nil }
 
 // LegacyColumnMigrations returns the ALTER TABLE ADD COLUMN statements that
 // bring older SQLite databases up to the current schema. IsDuplicateColumnError
@@ -301,6 +329,11 @@ func (d *SQLiteDialect) BeginWriteSQL() string { return "BEGIN IMMEDIATE" }
 // comes from BEGIN IMMEDIATE.
 func (d *SQLiteDialect) SelectForUpdate() string { return "" }
 
+// MaintenanceTimeoutResetSQL returns "" — SQLite has no statement_timeout,
+// so Store.runMaintenance issues no reset statement and SQLite's
+// transactional behavior is unchanged.
+func (d *SQLiteDialect) MaintenanceTimeoutResetSQL() string { return "" }
+
 // IsBusyError returns true for SQLITE_BUSY and SQLITE_LOCKED. Matching on
 // the result code is more robust than substring matching: BUSY surfaces as
 // "database is locked" but LOCKED surfaces as "database table is locked",
@@ -319,3 +352,8 @@ func (d *SQLiteDialect) IsBusyError(err error) bool {
 	}
 	return false
 }
+
+// IsFTSValueTooLargeError always returns false for SQLite: FTS5 has no
+// per-value size limit analogous to PostgreSQL's tsvector "string is too long"
+// (SQLSTATE 54000), so the backfill never has a row to skip on SQLite.
+func (d *SQLiteDialect) IsFTSValueTooLargeError(err error) bool { return false }
