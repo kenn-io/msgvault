@@ -870,7 +870,9 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
 		args = append(args, "--full-rebuild")
 	}
 
-	cmd := exec.CommandContext(ctx, exe, args...)
+	// exe is this binary (os.Executable) and args are our own fixed
+	// subcommand plus operator-controlled config flags, not untrusted input.
+	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("build-cache subprocess: %w; output: %s",
