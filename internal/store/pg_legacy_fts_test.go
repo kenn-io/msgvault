@@ -26,6 +26,7 @@ import (
 // then drop the search_fts column (CASCADE drops its GIN index too), then
 // re-run InitSchema and assert the column + index + availability are restored.
 func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
+	require := requirepkg.New(t)
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
 		t.Skip("cr2-10 legacy-upgrade test requires MSGVAULT_TEST_DB pointing at PostgreSQL")
@@ -37,37 +38,37 @@ func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
 	// Simulate a legacy DB created before FTS: drop the column (and its GIN
 	// index via CASCADE). This is the exact pre-upgrade shape.
 	_, err := db.Exec(`ALTER TABLE messages DROP COLUMN search_fts CASCADE`)
-	requirepkg.NoError(t, err, "drop search_fts to simulate legacy schema")
+	require.NoError(err, "drop search_fts to simulate legacy schema")
 
 	var preCol int
-	requirepkg.NoError(t, db.QueryRow(`
+	require.NoError(db.QueryRow(`
 		SELECT COUNT(*) FROM information_schema.columns
 		WHERE table_schema = current_schema()
 		  AND table_name = 'messages' AND column_name = 'search_fts'`).Scan(&preCol),
 		"probe search_fts column (pre)")
-	requirepkg.Equal(t, 0, preCol, "precondition: legacy schema has no search_fts column")
+	require.Equal(0, preCol, "precondition: legacy schema has no search_fts column")
 
 	// Upgrade: re-run InitSchema. Must succeed (the bug made this fail loud).
-	requirepkg.NoError(t, st.InitSchema(), "InitSchema must succeed on a legacy PG schema")
+	require.NoError(st.InitSchema(), "InitSchema must succeed on a legacy PG schema")
 
 	// The search_fts column was re-added by the migration.
 	var colCount int
-	requirepkg.NoError(t, db.QueryRow(`
+	require.NoError(db.QueryRow(`
 		SELECT COUNT(*) FROM information_schema.columns
 		WHERE table_schema = current_schema()
 		  AND table_name = 'messages' AND column_name = 'search_fts'`).Scan(&colCount),
 		"probe search_fts column")
-	requirepkg.Equal(t, 1, colCount, "search_fts column must exist after upgrade")
+	require.Equal(1, colCount, "search_fts column must exist after upgrade")
 
 	// The GIN index was created by EnsureFTSIndex (post-migration).
 	var idxCount int
-	requirepkg.NoError(t, db.QueryRow(`
+	require.NoError(db.QueryRow(`
 		SELECT COUNT(*) FROM pg_indexes
 		WHERE schemaname = current_schema()
 		  AND tablename = 'messages' AND indexname = 'messages_search_fts_idx'`).Scan(&idxCount),
 		"probe GIN index")
-	requirepkg.Equal(t, 1, idxCount, "messages_search_fts_idx must exist after upgrade")
+	require.Equal(1, idxCount, "messages_search_fts_idx must exist after upgrade")
 
 	// And the dialect now reports FTS available.
-	requirepkg.True(t, st.FTS5Available(), "FTS must be available after legacy upgrade")
+	require.True(st.FTS5Available(), "FTS must be available after legacy upgrade")
 }

@@ -508,12 +508,14 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 // is exercised here on SQLite; the cross-backend store-API paths are covered by
 // TestStoreAPI_PaginationStability_IdenticalSentAt.
 func TestSearchMessagesLikePaginationStability(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	st := openTestStore(t)
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource")
+	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 
 	const n = 5
 	const tag = "likepage"
@@ -529,20 +531,20 @@ func TestSearchMessagesLikePaginationStability(t *testing.T) {
 	seen := make([]int64, 0, n)
 	for offset := range n {
 		msgs, _, err := st.searchMessagesLike(tag, offset, 1)
-		requirepkg.NoError(t, err, "searchMessagesLike offset=%d", offset)
-		requirepkg.Lenf(t, msgs, 1, "page at offset=%d returned no row (pagination skipped a row)", offset)
+		require.NoError(err, "searchMessagesLike offset=%d", offset)
+		require.Lenf(msgs, 1, "page at offset=%d returned no row (pagination skipped a row)", offset)
 		seen = append(seen, msgs[0].ID)
 	}
 
 	gotSet := make(map[int64]struct{}, len(seen))
 	for _, id := range seen {
 		_, dup := gotSet[id]
-		assertpkg.Falsef(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
+		assert.Falsef(dup, "id %d appeared on more than one page (unstable pagination)", id)
 		gotSet[id] = struct{}{}
 	}
-	assertpkg.Len(t, seen, n, "paged ids should cover every row exactly once")
+	assert.Len(seen, n, "paged ids should cover every row exactly once")
 	for id := range wantIDs {
 		_, ok := gotSet[id]
-		assertpkg.Truef(t, ok, "expected id %d missing from paged results (row skipped)", id)
+		assert.Truef(ok, "expected id %d missing from paged results (row skipped)", id)
 	}
 }

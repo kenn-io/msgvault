@@ -102,9 +102,10 @@ func nullSearchFTSCount(t *testing.T, st interface{ DB() *sql.DB }) int {
 // search_fts non-NULL. Without the cap this would fail with SQLSTATE 54000
 // ("string is too long for tsvector") and leave the row permanently NULL.
 func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
+	require := requirepkg.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
 
 	msgID := f.CreateMessage("oversized-upsert")
 
@@ -112,10 +113,10 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 	// lives. A >1MB body must not error.
 	err := f.Store.UpsertFTS(msgID, "subject line", oversizedBody(),
 		"alice@example.com", "bob@example.com", "")
-	requirepkg.NoError(t, err, "UpsertFTS with oversized body must succeed (truncated indexing)")
+	require.NoError(err, "UpsertFTS with oversized body must succeed (truncated indexing)")
 
 	var isNull bool
-	requirepkg.NoError(t, f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRow(
 		"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 		"probe search_fts")
 	assertpkg.False(t, isNull, "search_fts must be non-NULL after truncated upsert")
@@ -128,9 +129,11 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 // oversized row index fine; the row-by-row retry fallback is the belt-and-
 // suspenders guarantee that no single bad row can wedge later batches.
 func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
 
 	// 5500 messages spans at least two 5000-row backfill batches. The oversized
 	// body lands at index 2500 — inside the FIRST batch — so we can assert that
@@ -138,30 +141,30 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 	const total = 5500
 	const oversizedIdx = 2500
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(ids, total)
 
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(ids[oversizedIdx],
+	require.NoError(f.Store.UpsertMessageBody(ids[oversizedIdx],
 		sql.NullString{String: oversizedBody(), Valid: true}, sql.NullString{}),
 		"attach oversized body")
 
 	// Give a couple of normal rows after the oversized one bodies too, so the
 	// "rows after the bad one are indexed" claim is concrete.
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(ids[total-1],
+	require.NoError(f.Store.UpsertMessageBody(ids[total-1],
 		sql.NullString{String: "final sentinel body apricot", Valid: true}, sql.NullString{}),
 		"attach sentinel body")
 
 	n, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS must complete despite an oversized body")
-	assertpkg.Equal(t, int64(total), n, "every message should be indexed")
+	require.NoError(err, "BackfillFTS must complete despite an oversized body")
+	assert.Equal(int64(total), n, "every message should be indexed")
 
 	// No row may be left NULL — not the oversized one, nor any after it.
-	assertpkg.Equal(t, 0, nullSearchFTSCount(t, f.Store),
+	assert.Equal(0, nullSearchFTSCount(t, f.Store),
 		"no message may be left with NULL search_fts after backfill")
 
 	// The sentinel row (last id, after the oversized one) is searchable.
 	_, sentinelTotal, err := f.Store.SearchMessages("apricot", 0, 10)
-	requirepkg.NoError(t, err, "SearchMessages apricot")
-	assertpkg.Equal(t, int64(1), sentinelTotal, "sentinel row after oversized must be searchable")
+	require.NoError(err, "SearchMessages apricot")
+	assert.Equal(int64(1), sentinelTotal, "sentinel row after oversized must be searchable")
 }
 
 // TestPG_FTSUpsert_MultibyteOversizedBody (finding B1) is the regression for
@@ -175,25 +178,26 @@ func TestPG_BackfillFTS_OversizedBodyDoesNotWedge(t *testing.T) {
 // must end up indexed (search_fts non-NULL). The key property: a pathological
 // multibyte body can never wedge the sync FTS path.
 func TestPG_FTSUpsert_MultibyteOversizedBody(t *testing.T) {
+	require := requirepkg.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
 
 	msgID := f.CreateMessage("multibyte-upsert")
 	body := multibyteOversizedBody()
 	// Sanity: the raw body really is large enough to overflow tsvector
 	// pre-truncation (so the test would catch a regression that removed the
 	// byte cap), and is genuinely multibyte.
-	requirepkg.Greater(t, len(body), 1_100_000, "raw multibyte body must exceed 1MB of bytes")
-	requirepkg.Less(t, len([]rune(body)), len(body), "body must contain multibyte runes")
+	require.Greater(len(body), 1_100_000, "raw multibyte body must exceed 1MB of bytes")
+	require.Less(len([]rune(body)), len(body), "body must contain multibyte runes")
 
 	err := f.Store.UpsertFTS(msgID, "subject line", body,
 		"alice@example.com", "bob@example.com", "")
-	requirepkg.NoError(t, err,
+	require.NoError(err,
 		"UpsertFTS with a multibyte oversized body must NOT return a hard error (byte-truncated)")
 
 	var isNull bool
-	requirepkg.NoError(t, f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRow(
 		"SELECT search_fts IS NULL FROM messages WHERE id = $1", msgID).Scan(&isNull),
 		"probe search_fts")
 	assertpkg.False(t, isNull,
@@ -260,14 +264,16 @@ func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
 // property: BackfillFTS COMPLETES WITHOUT ERROR and indexes every OTHER row,
 // regardless of whether the pathological row itself survives the char cap.
 func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
 
 	const total = 6
 	const oversizedIdx = 3 // middle row, so rows after it must still index
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(ids, total)
 
 	// Give every row a distinct searchable token so per-row indexing is
 	// provable; overwrite the middle row with the pathological multibyte body.
@@ -276,16 +282,16 @@ func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 		"deltafruit", "epsilonfruit", "zetafruit",
 	}
 	for i, id := range ids {
-		requirepkg.NoError(t, f.Store.UpsertMessageBody(id,
+		require.NoError(f.Store.UpsertMessageBody(id,
 			sql.NullString{String: tokens[i] + " shared", Valid: true}, sql.NullString{}),
 			"attach body %d", i)
 	}
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(ids[oversizedIdx],
+	require.NoError(f.Store.UpsertMessageBody(ids[oversizedIdx],
 		sql.NullString{String: multibyteOversizedBody(), Valid: true}, sql.NullString{}),
 		"attach multibyte oversized body")
 
 	n, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err,
+	require.NoError(err,
 		"BackfillFTS must COMPLETE without error despite a pathological multibyte body")
 
 	// Every row EXCEPT possibly the pathological one is indexed; at most one row
@@ -293,9 +299,9 @@ func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 	// skipped. The invariant is: BackfillFTS never errors and never wedges later
 	// rows.
 	nulls := nullSearchFTSCount(t, f.Store)
-	assertpkg.LessOrEqual(t, nulls, 1,
+	assert.LessOrEqual(nulls, 1,
 		"at most the one pathological row may be left NULL; got %d", nulls)
-	assertpkg.GreaterOrEqual(t, n, int64(total-1),
+	assert.GreaterOrEqual(n, int64(total-1),
 		"every row except (at most) the pathological one must be indexed")
 
 	// Every non-oversized token — including the ones AFTER the pathological row
@@ -305,7 +311,7 @@ func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 			continue
 		}
 		_, hits, searchErr := f.Store.SearchMessages(tok, 0, 10)
-		requirepkg.NoError(t, searchErr, "SearchMessages %q", tok)
-		assertpkg.Equal(t, int64(1), hits, "token %q must be searchable after backfill", tok)
+		require.NoError(searchErr, "SearchMessages %q", tok)
+		assert.Equal(int64(1), hits, "token %q must be searchable after backfill", tok)
 	}
 }

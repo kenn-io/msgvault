@@ -5,7 +5,6 @@ package pgvector
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +27,7 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	assert.Equal(t, gid, bg.ID, "BuildingGeneration id mismatch")
 
 	_, err = b.ActiveGeneration(ctx)
-	assert.Error(t, err, "ActiveGeneration should error before activation")
+	require.Error(t, err, "ActiveGeneration should error before activation")
 
 	require.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
@@ -106,7 +105,7 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 
 	_, err = b.CreateGeneration(ctx, "model-b", 768, "")
 	require.Error(t, err, "second Create with different fingerprint: want error")
-	assert.True(t, errors.Is(err, vector.ErrBuildingInProgress),
+	assert.ErrorIs(t, err, vector.ErrBuildingInProgress,
 		"error = %v, want wrapping ErrBuildingInProgress", err)
 }
 
@@ -164,7 +163,7 @@ func TestBackend_EnsureSeeded_RejectsActiveGeneration(t *testing.T) {
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
 
 	err = b.EnsureSeeded(ctx, gen)
-	assert.True(t, errors.Is(err, vector.ErrGenerationNotBuilding),
+	assert.ErrorIs(t, err, vector.ErrGenerationNotBuilding,
 		"EnsureSeeded on active gen returned %v, want ErrGenerationNotBuilding", err)
 }
 
@@ -178,7 +177,7 @@ func TestBackend_Upsert_RejectsDimensionMismatch(t *testing.T) {
 	err = b.Upsert(ctx, gen, []vector.Chunk{
 		{MessageID: 1, Vector: []float32{1, 2, 3}}, // 3 dims, gen has 4
 	})
-	assert.True(t, errors.Is(err, vector.ErrDimensionMismatch),
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch,
 		"err=%v, want wrapping ErrDimensionMismatch", err)
 }
 
@@ -189,7 +188,7 @@ func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
 	err := b.Upsert(ctx, vector.GenerationID(999), []vector.Chunk{
 		{MessageID: 1, Vector: []float32{0, 0, 0, 0}},
 	})
-	assert.True(t, errors.Is(err, vector.ErrUnknownGeneration),
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration,
 		"err=%v, want wrapping ErrUnknownGeneration", err)
 }
 
@@ -291,7 +290,7 @@ func TestBackend_LoadVector_RoundTrip(t *testing.T) {
 	require.NoError(t, err, "LoadVector")
 	require.Len(t, got, len(original), "loaded len")
 	for i := range original {
-		assert.Equal(t, original[i], got[i], "dim[%d]", i)
+		assert.InDelta(t, original[i], got[i], 0, "dim[%d]", i)
 	}
 }
 
@@ -339,7 +338,7 @@ func TestBackend_Stats_ScopedAndAggregate(t *testing.T) {
 func TestBackend_Stats_UnknownGeneration(t *testing.T) {
 	b, ctx, _ := newBackendForTest(t)
 	_, err := b.Stats(ctx, vector.GenerationID(999))
-	assert.True(t, errors.Is(err, vector.ErrUnknownGeneration),
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration,
 		"err=%v, want wrapping ErrUnknownGeneration", err)
 }
 
@@ -372,7 +371,7 @@ func TestBackend_Upsert_MultiChunk_StoresAllChunks(t *testing.T) {
 	s, err := b.Stats(ctx, gen)
 	require.NoError(t, err, "Stats")
 	assert.Equal(t, int64(1), s.EmbeddingCount, "Stats.EmbeddingCount (distinct messages, not chunks)")
-	assert.Greater(t, s.StorageBytes, int64(0), "Stats.StorageBytes want > 0")
+	assert.Positive(t, s.StorageBytes, "Stats.StorageBytes want > 0")
 }
 
 // TestBackend_Upsert_MultiChunk_ReplaceShrinks confirms re-upserting a

@@ -47,10 +47,12 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 // PG-only: the fallback exists for the PostgreSQL tsvector-overflow case
 // (SQLite's FTS5 has no such limit, so a real backfill never errors there).
 func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	skipUnlessPostgres(t)
 
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
 
 	// Six messages in a single backfill batch (well under the 5000 batch size).
 	// Each gets a distinct, searchable body token so we can prove per-row
@@ -58,14 +60,14 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 	const total = 6
 	const badIdx = 3 // a row in the middle, so rows after it must still index
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(ids, total)
 
 	tokens := []string{
 		"alphafruit", "betafruit", "gammafruit",
 		"deltafruit", "epsilonfruit", "zetafruit",
 	}
 	for i, id := range ids {
-		requirepkg.NoError(t, f.Store.UpsertMessageBody(id,
+		require.NoError(f.Store.UpsertMessageBody(id,
 			sql.NullString{String: tokens[i] + " shared", Valid: true}, sql.NullString{}),
 			"attach body %d", i)
 	}
@@ -94,46 +96,46 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 	defer restore()
 
 	n, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS must complete despite a forced bad row")
+	require.NoError(err, "BackfillFTS must complete despite a forced bad row")
 
 	// (a) ONLY the bad row was skipped: total-1 rows indexed, exactly one NULL.
-	assertpkg.Equal(t, int64(total-1), n, "every row except the bad one should be indexed")
-	assertpkg.Equal(t, 1, nullSearchFTSCount(t, f.Store),
+	assert.Equal(int64(total-1), n, "every row except the bad one should be indexed")
+	assert.Equal(1, nullSearchFTSCount(t, f.Store),
 		"exactly one row (the bad one) left with NULL search_fts")
 
 	// The bad row specifically is the NULL one.
 	var badIsNull bool
-	requirepkg.NoError(t, f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRow(
 		"SELECT search_fts IS NULL FROM messages WHERE id = $1", badID).Scan(&badIsNull),
 		"probe bad row")
-	assertpkg.True(t, badIsNull, "the forced-bad row must be left NULL")
+	assert.True(badIsNull, "the forced-bad row must be left NULL")
 
 	// (c) Good rows BEFORE and AFTER the bad one are indexed and searchable.
 	for i, tok := range tokens {
 		if i == badIdx {
 			// The bad row must NOT be searchable.
 			_, badTotal, searchErr := f.Store.SearchMessages(tok, 0, 10)
-			requirepkg.NoError(t, searchErr, "SearchMessages %q", tok)
-			assertpkg.Equal(t, int64(0), badTotal, "bad row token %q must not be searchable", tok)
+			require.NoError(searchErr, "SearchMessages %q", tok)
+			assert.Equal(int64(0), badTotal, "bad row token %q must not be searchable", tok)
 			continue
 		}
 		_, hits, searchErr := f.Store.SearchMessages(tok, 0, 10)
-		requirepkg.NoError(t, searchErr, "SearchMessages %q", tok)
-		assertpkg.Equal(t, int64(1), hits, "good row token %q must be searchable", tok)
+		require.NoError(searchErr, "SearchMessages %q", tok)
+		assert.Equal(int64(1), hits, "good row token %q must be searchable", tok)
 	}
 
 	// Concretely prove a row AFTER the bad one indexed: zetafruit is the last id.
 	_, afterHits, err := f.Store.SearchMessages("zetafruit", 0, 10)
-	requirepkg.NoError(t, err, "SearchMessages zetafruit")
-	assertpkg.Equal(t, int64(1), afterHits, "row after the bad one must be searchable")
+	require.NoError(err, "SearchMessages zetafruit")
+	assert.Equal(int64(1), afterHits, "row after the bad one must be searchable")
 
 	// (b) A warning naming the skipped id was logged.
 	logs := buf.String()
-	assertpkg.Contains(t, logs, "skipping message in FTS backfill",
+	assert.Contains(logs, "skipping message in FTS backfill",
 		"a skip warning must be logged")
-	assertpkg.Contains(t, logs, fmt.Sprintf(`"message_id":%d`, badID),
+	assert.Contains(logs, fmt.Sprintf(`"message_id":%d`, badID),
 		"the skip warning must name the skipped message id")
-	assertpkg.Equal(t, 1, strings.Count(logs, "skipping message in FTS backfill"),
+	assert.Equal(1, strings.Count(logs, "skipping message in FTS backfill"),
 		"exactly one row should be skipped")
 }
 

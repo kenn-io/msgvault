@@ -28,6 +28,8 @@ func isPostgresTestDB() bool {
 // PostgreSQL the probe is the EXISTS(search_fts IS NULL) short-circuit; on
 // SQLite it is the MAX(rowid) vs MAX(id) comparison. Both must agree.
 func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
@@ -37,15 +39,15 @@ func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
 	// (with 20 unindexed rows it cannot round to "already backfilled").
 	const total = 20
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(ids, total)
 
-	assertpkg.True(t, f.Store.NeedsFTSBackfill(),
+	assert.True(f.Store.NeedsFTSBackfill(),
 		"NeedsFTSBackfill must be true while messages have no FTS entry")
 
 	_, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS")
+	require.NoError(err, "BackfillFTS")
 
-	assertpkg.False(t, f.Store.NeedsFTSBackfill(),
+	assert.False(f.Store.NeedsFTSBackfill(),
 		"NeedsFTSBackfill must be false after a complete backfill")
 }
 
@@ -59,6 +61,7 @@ func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
 // Runs on both backends; before the fix this passed on PG (EXISTS probe) and
 // failed on SQLite, proving the divergence.
 func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	if !f.Store.FTS5Available() {
 		t.Skip("FTS5 not available")
@@ -66,11 +69,11 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 
 	const total = 20
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(ids, total)
 
 	_, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS")
-	requirepkg.False(t, f.Store.NeedsFTSBackfill(),
+	require.NoError(err, "BackfillFTS")
+	require.False(f.Store.NeedsFTSBackfill(),
 		"precondition: fully backfilled index must not need backfill")
 
 	// Remove the FTS entry for the LOWEST id only. The highest id stays indexed,
@@ -83,7 +86,7 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 		_, err = f.Store.DB().Exec(
 			"DELETE FROM messages_fts WHERE rowid = ?", lowest)
 	}
-	requirepkg.NoError(t, err, "punch a hole at the lowest id")
+	require.NoError(err, "punch a hole at the lowest id")
 
 	assertpkg.True(t, f.Store.NeedsFTSBackfill(),
 		"NeedsFTSBackfill must be true when a LOW id is unindexed even if later ids are indexed")

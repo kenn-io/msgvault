@@ -370,6 +370,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 // connection's search_path is scoped to the one WITHOUT it; the probe must
 // return 0 (FTS not available here) even though a sibling has the column.
 func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
+	require := requirepkg.New(t)
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") && !strings.HasPrefix(dbURL, "postgresql://") {
 		t.Skip("cr2-8 schema-scoping test requires MSGVAULT_TEST_DB pointing at PostgreSQL")
@@ -377,26 +378,26 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 
 	buf := make([]byte, 8)
 	_, err := rand.Read(buf)
-	requirepkg.NoError(t, err, "random suffix")
+	require.NoError(err, "random suffix")
 	suffix := hex.EncodeToString(buf)
 	hasSchema := "cr2_8_has_" + suffix
 	noSchema := "cr2_8_no_" + suffix
 
 	setupDB, err := sql.Open("pgx", dbURL)
-	requirepkg.NoError(t, err, "open setup connection")
+	require.NoError(err, "open setup connection")
 	defer func() { _ = setupDB.Close() }()
 	for _, s := range []struct {
 		name    string
 		withFTS bool
 	}{{hasSchema, true}, {noSchema, false}} {
 		_, err := setupDB.Exec("CREATE SCHEMA " + s.name)
-		requirepkg.NoErrorf(t, err, "create schema %s", s.name)
+		require.NoErrorf(err, "create schema %s", s.name)
 		cols := "id BIGINT"
 		if s.withFTS {
 			cols += ", search_fts TSVECTOR"
 		}
 		_, err = setupDB.Exec("CREATE TABLE " + s.name + ".messages (" + cols + ")")
-		requirepkg.NoErrorf(t, err, "create messages in %s", s.name)
+		require.NoErrorf(err, "create messages in %s", s.name)
 	}
 	t.Cleanup(func() {
 		_, _ = setupDB.Exec("DROP SCHEMA " + hasSchema + " CASCADE")
@@ -409,11 +410,11 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 		sep = "&"
 	}
 	scopedDB, err := sql.Open("pgx", dbURL+sep+"search_path="+noSchema)
-	requirepkg.NoError(t, err, "open scoped connection")
+	require.NoError(err, "open scoped connection")
 	defer func() { _ = scopedDB.Close() }()
 
 	var count int
-	requirepkg.NoError(t,
+	require.NoError(
 		scopedDB.QueryRow(query.PostgreSQLQueryDialect{}.HasFTSTableSQL()).Scan(&count),
 		"run HasFTSTableSQL probe")
 	assertpkg.Equal(t, 0, count,

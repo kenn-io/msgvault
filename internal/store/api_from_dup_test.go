@@ -33,18 +33,19 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path as well as SQLite.
 func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
+	require := requirepkg.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromdup@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource")
+	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(src.ID, "thread-fromdup", "Thread FromDup")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant alice")
+	require.NoError(err, "EnsureParticipant alice")
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant bob")
+	require.NoError(err, "EnsureParticipant bob")
 	carolID, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant carol")
+	require.NoError(err, "EnsureParticipant carol")
 
 	// All messages share one sent_at so ORDER BY sent_at DESC, id DESC is fully
 	// deterministic and any row multiplication provably displaces a sibling page
@@ -66,14 +67,14 @@ func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
 			Snippet:         sql.NullString{String: subjectTag + " snippet", Valid: true},
 			SizeEstimate:    1000,
 		})
-		requirepkg.NoError(t, err, "UpsertMessage %d", i)
+		require.NoError(err, "UpsertMessage %d", i)
 		wantIDs[mid] = struct{}{}
 		ids = append(ids, mid)
 	}
 
 	// Give every message a single 'from' row...
 	for _, mid := range ids {
-		requirepkg.NoError(t,
+		require.NoError(
 			st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
 			"ReplaceMessageRecipients single from")
 	}
@@ -81,7 +82,7 @@ func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
 	// join this message would appear three times, displacing two other rows from
 	// any page large enough to start at it.
 	dupID := ids[n-1]
-	requirepkg.NoError(t,
+	require.NoError(
 		st.ReplaceMessageRecipients(dupID, "from",
 			[]int64{aliceID, bobID, carolID},
 			[]string{"Alice", "Bob", "Carol"}),

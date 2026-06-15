@@ -21,16 +21,17 @@ import (
 // drive the unexported fallback directly; the join fix is dialect-agnostic and
 // the cross-backend coverage lives in TestStoreAPI_MultipleFromRows_NoDuplication.
 func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
+	require := requirepkg.New(t)
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromduplike@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource")
+	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(src.ID, "thread-fromduplike", "Thread FromDupLike")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant alice")
+	require.NoError(err, "EnsureParticipant alice")
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant bob")
+	require.NoError(err, "EnsureParticipant bob")
 
 	const n = 3
 	const tag = "fromdupliketag"
@@ -49,16 +50,16 @@ func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
 			Snippet:         sql.NullString{String: tag + " snippet", Valid: true},
 			SizeEstimate:    100,
 		})
-		requirepkg.NoError(t, err, "UpsertMessage %d", i)
+		require.NoError(err, "UpsertMessage %d", i)
 		wantIDs[id] = struct{}{}
 		ids = append(ids, id)
-		requirepkg.NoError(t,
+		require.NoError(
 			st.ReplaceMessageRecipients(id, "from", []int64{aliceID}, []string{"Alice"}),
 			"single from %d", i)
 	}
 	// Last message gets TWO distinct 'from' rows — duplicated on the old join.
 	dupID := ids[n-1]
-	requirepkg.NoError(t,
+	require.NoError(
 		st.ReplaceMessageRecipients(dupID, "from",
 			[]int64{aliceID, bobID}, []string{"Alice", "Bob"}),
 		"two-from")

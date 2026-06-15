@@ -138,6 +138,7 @@ func (f *e2eFixture) attachmentRowsForMessage(gmailID string) int {
 // message with the same Gmail ID (no overlap in our fixture, but the
 // assertion locks in source isolation behavior).
 func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
+	assert := assert.New(t)
 	f := newE2EFixture(t)
 
 	tc := newE2EContext(t, f)
@@ -154,16 +155,16 @@ func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
 	require.NoError(t, err, "Execute")
 
 	// All A messages are now marked deleted_from_source_at; B is untouched.
-	assert.Equal(t, 0, f.countLive(f.sourceA.ID), "source A live count")
-	assert.Equal(t, 2, f.countLive(f.sourceB.ID), "source B live count (unaffected)")
-	assert.Equal(t, 3, f.countTotal(f.sourceA.ID), "source A row count after trash (soft delete)")
+	assert.Equal(0, f.countLive(f.sourceA.ID), "source A live count")
+	assert.Equal(2, f.countLive(f.sourceB.ID), "source B live count (unaffected)")
+	assert.Equal(3, f.countTotal(f.sourceA.ID), "source A row count after trash (soft delete)")
 
 	// Attachment rows are untouched on trash (only permanent delete cascades).
-	assert.Equal(t, 1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after trash")
+	assert.Equal(1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after trash")
 
 	// Mock Gmail was called for each ID exactly once via TrashMessage.
-	assert.Equal(t, 3, len(tc.MockAPI.TrashCalls), "TrashCalls")
-	assert.Equal(t, 0, len(tc.MockAPI.DeleteCalls), "DeleteCalls (trash method)")
+	assert.Len(tc.MockAPI.TrashCalls, 3, "TrashCalls")
+	assert.Empty(tc.MockAPI.DeleteCalls, "DeleteCalls (trash method)")
 }
 
 // TestExecutor_E2E_PermanentDeleteCascadesAttachments verifies that
@@ -171,6 +172,7 @@ func TestExecutor_E2E_TrashOnlyMarksTargetSource(t *testing.T) {
 // cascades attachment rows. Cross-source shared attachments remain
 // referenced via the other source.
 func TestExecutor_E2E_PermanentDeleteCascadesAttachments(t *testing.T) {
+	assert := assert.New(t)
 	f := newE2EFixture(t)
 	tc := newE2EContext(t, f)
 
@@ -185,14 +187,14 @@ func TestExecutor_E2E_PermanentDeleteCascadesAttachments(t *testing.T) {
 	require.NoError(t, err, "Execute")
 
 	// msg-a1 and msg-a2 rows are gone (permanent).
-	assert.Equal(t, 1, f.countTotal(f.sourceA.ID), "source A row count after permanent delete")
+	assert.Equal(1, f.countTotal(f.sourceA.ID), "source A row count after permanent delete")
 	// Attachments for those messages cascade away.
-	assert.Equal(t, 0, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after delete")
-	assert.Equal(t, 0, f.attachmentRowsForMessage("msg-a2"), "msg-a2 attachment rows after delete")
+	assert.Equal(0, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after delete")
+	assert.Equal(0, f.attachmentRowsForMessage("msg-a2"), "msg-a2 attachment rows after delete")
 	// Source B's row referencing the same shared content_hash survives.
-	assert.Equal(t, 1, f.attachmentRowsForMessage("msg-b1"), "msg-b1 attachment rows (cross-source shared)")
+	assert.Equal(1, f.attachmentRowsForMessage("msg-b1"), "msg-b1 attachment rows (cross-source shared)")
 
-	assert.Equal(t, 2, len(tc.MockAPI.DeleteCalls), "DeleteCalls")
+	assert.Len(tc.MockAPI.DeleteCalls, 2, "DeleteCalls")
 }
 
 // TestExecutor_E2E_BatchDeleteMarksDBAcrossSources verifies that the batch
@@ -201,6 +203,7 @@ func TestExecutor_E2E_PermanentDeleteCascadesAttachments(t *testing.T) {
 // filter; this test pins that behavior so future schema changes don't
 // silently regress it.
 func TestExecutor_E2E_BatchDeleteMarksDBAcrossSources(t *testing.T) {
+	assert := assert.New(t)
 	f := newE2EFixture(t)
 	tc := newE2EContext(t, f)
 
@@ -211,13 +214,13 @@ func TestExecutor_E2E_BatchDeleteMarksDBAcrossSources(t *testing.T) {
 	require.NoError(t, err, "ExecuteBatch")
 
 	// Both sources see one of their messages soft-deleted.
-	assert.Equal(t, 2, f.countLive(f.sourceA.ID), "source A live count (msg-a1 deleted, a2+a3 remain)")
-	assert.Equal(t, 1, f.countLive(f.sourceB.ID), "source B live count (msg-b1 deleted)")
+	assert.Equal(2, f.countLive(f.sourceA.ID), "source A live count (msg-a1 deleted, a2+a3 remain)")
+	assert.Equal(1, f.countLive(f.sourceB.ID), "source B live count (msg-b1 deleted)")
 
 	// Batch path doesn't cascade attachments — it sets deleted_from_source_at.
-	assert.Equal(t, 1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after batch trash")
+	assert.Equal(1, f.attachmentRowsForMessage("msg-a1"), "msg-a1 attachment rows after batch trash")
 
-	assert.Equal(t, 1, len(tc.MockAPI.BatchDeleteCalls), "BatchDeleteCalls")
+	assert.Len(tc.MockAPI.BatchDeleteCalls, 1, "BatchDeleteCalls")
 }
 
 // TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile
@@ -226,6 +229,8 @@ func TestExecutor_E2E_BatchDeleteMarksDBAcrossSources(t *testing.T) {
 // referenced anywhere in the DB — exercising the orphan-detection query
 // against a state mutated by the executor itself.
 func TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := newE2EFixture(t)
 	tc := newE2EContext(t, f)
 
@@ -237,20 +242,20 @@ func TestExecutor_E2E_PermanentDeletePreservesOtherSourceAttachmentFile(t *testi
 		BatchSize: 100,
 		Resume:    true,
 	})
-	require.NoError(t, err, "Execute")
+	require.NoError(err, "Execute")
 
 	// After deletion, source A still has msg-a3 (no attachments).
 	// AttachmentPathsUniqueToSource(A) should be empty: the only remaining
 	// candidate path would have been msg-a2's, but its row is gone.
 	pathsA, err := f.store.AttachmentPathsUniqueToSource(f.sourceA.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(A)")
-	assert.Empty(t, pathsA, "source A unique paths after delete")
+	require.NoError(err, "AttachmentPathsUniqueToSource(A)")
+	assert.Empty(pathsA, "source A unique paths after delete")
 
 	// Source B's unique-b path is still uniquely owned by B; shared is
 	// also unique to B now that A's reference is gone.
 	pathsB, err := f.store.AttachmentPathsUniqueToSource(f.sourceB.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(B)")
-	assert.Len(t, pathsB, 2, "source B unique paths after A's permanent delete (shared became unique to B)")
+	require.NoError(err, "AttachmentPathsUniqueToSource(B)")
+	assert.Len(pathsB, 2, "source B unique paths after A's permanent delete (shared became unique to B)")
 }
 
 // e2eContext bridges the e2eFixture to the executor test plumbing.

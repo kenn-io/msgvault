@@ -338,6 +338,7 @@ func parseGenerationID(s string) (vector.GenerationID, error) {
 	return vector.GenerationID(id), nil
 }
 
+//nolint:unparam // rebind is a no-op here (no ? placeholders) but kept for signature symmetry with the other embedding-generation query helpers and their shared call sites
 func listEmbeddingGenerations(ctx context.Context, db *sql.DB, rebind func(string) string) ([]embeddingGenerationRow, error) {
 	// No ? placeholders in this query; rebind is a no-op here but kept for
 	// symmetry so all helpers share the same signature.

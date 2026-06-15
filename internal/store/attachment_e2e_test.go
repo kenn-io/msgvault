@@ -110,6 +110,7 @@ const (
 // and that the helper is idempotent (re-upserting the same (message_id,
 // content_hash) pair is a no-op).
 func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	// Three messages in source A referencing the same content hash.
@@ -121,22 +122,24 @@ func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
 	c.addAttachment("msg-3", "shared.pdf", hashShared)
 
 	// One row per message, all referencing the same hash.
-	assert.Equal(t, 3, c.attachmentRowsForHash(hashShared), "rows for hashShared")
+	assert.Equal(3, c.attachmentRowsForHash(hashShared), "rows for hashShared")
 
 	// Idempotent re-upsert: existing (message_id, content_hash) is a no-op.
 	c.addAttachment("msg-2", "shared.pdf", hashShared)
-	assert.Equal(t, 3, c.attachmentRowsForHash(hashShared), "rows for hashShared after re-upsert")
+	assert.Equal(3, c.attachmentRowsForHash(hashShared), "rows for hashShared after re-upsert")
 
 	// IsAttachmentPathReferenced reports the hash storage path as referenced.
 	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
 	require.NoError(t, err, "IsAttachmentPathReferenced")
-	assert.True(t, referenced, "expected referenced=true while messages still hold the hash")
+	assert.True(referenced, "expected referenced=true while messages still hold the hash")
 }
 
 // TestAttachment_E2E_CascadeOnMessageDelete verifies that deleting a message
 // row removes its attachment row via ON DELETE CASCADE — but leaves other
 // messages' attachment rows that reference the same content_hash intact.
 func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	// Two messages in source A referencing the shared hash plus one with a
@@ -148,27 +151,27 @@ func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
 	c.addAttachment("msg-2", "shared.pdf", hashShared)
 	c.addAttachment("msg-3", "unique.pdf", hashUniqA)
 
-	assert.Equal(t, 3, c.attachmentRowCount(), "initial attachment count")
+	assert.Equal(3, c.attachmentRowCount(), "initial attachment count")
 
 	// Permanently delete msg-1; its attachment row cascades.
 	err := c.store.MarkMessageDeletedByGmailID(true, "msg-1")
-	require.NoError(t, err, "MarkMessageDeletedByGmailID(permanent, msg-1)")
+	require.NoError(err, "MarkMessageDeletedByGmailID(permanent, msg-1)")
 
-	assert.Equal(t, 1, c.attachmentRowsForHash(hashShared), "rows for hashShared after delete")
+	assert.Equal(1, c.attachmentRowsForHash(hashShared), "rows for hashShared after delete")
 
 	// The shared storage path is still referenced (msg-2 holds it).
 	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
-	require.NoError(t, err, "IsAttachmentPathReferenced")
-	assert.True(t, referenced, "shared path should remain referenced via msg-2 after msg-1 delete")
+	require.NoError(err, "IsAttachmentPathReferenced")
+	assert.True(referenced, "shared path should remain referenced via msg-2 after msg-1 delete")
 
 	// Now delete the last referrer of hashShared.
 	err = c.store.MarkMessageDeletedByGmailID(true, "msg-2")
-	require.NoError(t, err, "MarkMessageDeletedByGmailID(permanent, msg-2)")
-	assert.Equal(t, 0, c.attachmentRowsForHash(hashShared), "rows for hashShared after both deleted")
+	require.NoError(err, "MarkMessageDeletedByGmailID(permanent, msg-2)")
+	assert.Equal(0, c.attachmentRowsForHash(hashShared), "rows for hashShared after both deleted")
 
 	referenced, err = c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
-	require.NoError(t, err, "IsAttachmentPathReferenced after both deleted")
-	assert.False(t, referenced, "shared path should be unreferenced after both messages deleted")
+	require.NoError(err, "IsAttachmentPathReferenced after both deleted")
+	assert.False(referenced, "shared path should be unreferenced after both messages deleted")
 }
 
 // TestAttachment_E2E_CrossSourceDedupPromotion verifies that
@@ -176,6 +179,8 @@ func TestAttachment_E2E_CascadeOnMessageDelete(t *testing.T) {
 // a hash shared with another source is NOT reported as unique. After the
 // other source is removed, the same hash becomes unique.
 func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	// Layout:
@@ -192,37 +197,39 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 
 	// Before removing B: A's unique-set is just hashUniqA.
 	pathsA, err := c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(A)")
+	require.NoError(err, "AttachmentPathsUniqueToSource(A)")
 	wantA := hashUniqA[:2] + "/" + hashUniqA
-	if assert.Len(t, pathsA, 1, "pathsA before B removal") {
-		assert.Equal(t, wantA, pathsA[0], "pathsA[0] before B removal")
+	if assert.Len(pathsA, 1, "pathsA before B removal") {
+		assert.Equal(wantA, pathsA[0], "pathsA[0] before B removal")
 	}
 
 	// Symmetric: B has only unique-B as a unique path.
 	pathsB, err := c.store.AttachmentPathsUniqueToSource(c.srcB.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(B)")
+	require.NoError(err, "AttachmentPathsUniqueToSource(B)")
 	wantB := hashUniqB[:2] + "/" + hashUniqB
-	if assert.Len(t, pathsB, 1, "pathsB before A removal") {
-		assert.Equal(t, wantB, pathsB[0], "pathsB[0] before A removal")
+	if assert.Len(pathsB, 1, "pathsB before A removal") {
+		assert.Equal(wantB, pathsB[0], "pathsB[0] before A removal")
 	}
 
 	// Remove source B. The shared hash is now unique to A.
 	err = c.store.RemoveSource(c.srcB.ID)
-	require.NoError(t, err, "RemoveSource(B)")
+	require.NoError(err, "RemoveSource(B)")
 
 	pathsA, err = c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(A) after B removal")
+	require.NoError(err, "AttachmentPathsUniqueToSource(A) after B removal")
 	got := testutil.MakeSet(pathsA...)
 	for _, want := range []string{hashShared[:2] + "/" + hashShared, wantA} {
-		assert.Truef(t, got[want], "paths missing %q after B removal; got %v", want, pathsA)
+		assert.Truef(got[want], "paths missing %q after B removal; got %v", want, pathsA)
 	}
-	assert.Len(t, pathsA, 2, "pathsA len after B removal; got %v", pathsA)
+	assert.Len(pathsA, 2, "pathsA len after B removal; got %v", pathsA)
 }
 
 // TestAttachment_E2E_RemoveSourceCascadesAttachmentRows verifies that
 // removing a source cascades all of its attachment rows but leaves rows
 // in other sources alone — even when they share content_hash.
 func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	c.addMessage("msg-a1", c.srcA.ID, c.convA)
@@ -230,20 +237,20 @@ func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
 	c.addAttachment("msg-a1", "shared.pdf", hashShared)
 	c.addAttachment("msg-b1", "shared.pdf", hashShared)
 
-	assert.Equal(t, 2, c.attachmentRowCount(), "initial attachment count")
-	assert.Equal(t, 2, c.attachmentRowsForHash(hashShared), "initial rows for shared hash")
+	assert.Equal(2, c.attachmentRowCount(), "initial attachment count")
+	assert.Equal(2, c.attachmentRowsForHash(hashShared), "initial rows for shared hash")
 
 	err := c.store.RemoveSource(c.srcA.ID)
-	require.NoError(t, err, "RemoveSource(A)")
+	require.NoError(err, "RemoveSource(A)")
 
-	assert.Equal(t, 1, c.attachmentRowCount(), "attachment count after A removed")
-	assert.Equal(t, 1, c.attachmentRowsForHash(hashShared), "rows for shared hash after A removed (B keeps reference)")
+	assert.Equal(1, c.attachmentRowCount(), "attachment count after A removed")
+	assert.Equal(1, c.attachmentRowsForHash(hashShared), "rows for shared hash after A removed (B keeps reference)")
 
 	// IsAttachmentPathReferenced still reports the shared path as referenced
 	// (B's row).
 	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
-	require.NoError(t, err, "IsAttachmentPathReferenced")
-	assert.True(t, referenced, "shared path should remain referenced via source B")
+	require.NoError(err, "IsAttachmentPathReferenced")
+	assert.True(referenced, "shared path should remain referenced via source B")
 }
 
 // TestAttachment_E2E_OrphanCleanupLifecycle simulates the full orphan-cleanup
@@ -251,6 +258,8 @@ func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
 // paths, run the source removal, then verify per-file reference checks against
 // the post-removal DB state.
 func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	// Source A has one unique attachment + one shared with B.
@@ -267,28 +276,28 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 	// Pipeline step 1: collect candidate paths for source A *before* the
 	// cascade — matching remove_account.go's ordering.
 	candidates, err := c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource(A)")
+	require.NoError(err, "AttachmentPathsUniqueToSource(A)")
 	wantUniqAPath := hashUniqA[:2] + "/" + hashUniqA
-	if assert.Len(t, candidates, 1, "candidates for A") {
-		assert.Equal(t, wantUniqAPath, candidates[0], "candidates[0] for A")
+	if assert.Len(candidates, 1, "candidates for A") {
+		assert.Equal(wantUniqAPath, candidates[0], "candidates[0] for A")
 	}
 
 	// Pipeline step 2: cascade-delete source A.
 	hadActive, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
-	require.NoError(t, err, "RemoveSourceSerialized(A)")
-	assert.False(t, hadActive, "hadActiveSync want false (no sync running in fixture)")
+	require.NoError(err, "RemoveSourceSerialized(A)")
+	assert.False(hadActive, "hadActiveSync want false (no sync running in fixture)")
 
 	// Pipeline step 3: per-candidate reference recheck. The candidate path
 	// for A is now unreferenced (msg-a2 row is gone); the shared path is
 	// still referenced by source B.
 	referenced, err := c.store.IsAttachmentPathReferenced(wantUniqAPath)
-	require.NoError(t, err, "IsAttachmentPathReferenced(uniqA)")
-	assert.False(t, referenced, "uniqA path should be unreferenced after source A removed")
+	require.NoError(err, "IsAttachmentPathReferenced(uniqA)")
+	assert.False(referenced, "uniqA path should be unreferenced after source A removed")
 
 	sharedPath := hashShared[:2] + "/" + hashShared
 	referenced, err = c.store.IsAttachmentPathReferenced(sharedPath)
-	require.NoError(t, err, "IsAttachmentPathReferenced(shared)")
-	assert.True(t, referenced, "shared path should remain referenced after source A removed")
+	require.NoError(err, "IsAttachmentPathReferenced(shared)")
+	assert.True(referenced, "shared path should remain referenced after source A removed")
 }
 
 // TestAttachment_E2E_NullAndEmptyHashesIgnored verifies that attachments with
@@ -296,6 +305,8 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 // AttachmentPathsUniqueToSource (mirroring the existing focused test but in
 // a multi-message context).
 func TestAttachment_E2E_NullAndEmptyHashesIgnored(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	c := newAttachmentCorpus(t)
 
 	c.addMessage("msg-a1", c.srcA.ID, c.convA)
@@ -311,17 +322,17 @@ func TestAttachment_E2E_NullAndEmptyHashesIgnored(t *testing.T) {
 		 VALUES (?, 'null-hash.pdf', 'application/pdf', 'nn/nullpath', NULL, 0, %s)`,
 		"CURRENT_TIMESTAMP",
 	)), c.msgRows["msg-a2"])
-	require.NoError(t, err, "insert null-hash attachment")
+	require.NoError(err, "insert null-hash attachment")
 
 	// Attachment with empty storage_path — also excluded.
 	err = c.store.UpsertAttachment(c.msgRows["msg-a3"], "empty.pdf",
 		"application/pdf", "", "emptypathhash", 0)
-	require.NoError(t, err, "UpsertAttachment(empty)")
+	require.NoError(err, "UpsertAttachment(empty)")
 
 	paths, err := c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
-	require.NoError(t, err, "AttachmentPathsUniqueToSource")
+	require.NoError(err, "AttachmentPathsUniqueToSource")
 	want := hashUniqA[:2] + "/" + hashUniqA
-	if assert.Len(t, paths, 1, "paths want 1 only") {
-		assert.Equal(t, want, paths[0], "paths[0]")
+	if assert.Len(paths, 1, "paths want 1 only") {
+		assert.Equal(want, paths[0], "paths[0]")
 	}
 }

@@ -139,8 +139,6 @@ func newBackendForTest(t *testing.T) (*Backend, context.Context, *sql.DB) {
 // unitVec returns a unit vector of the given dimension with 1.0 at
 // position axis and 0.0 elsewhere — the building block for similarity
 // assertions where we know which message should rank first.
-//
-//nolint:unparam // dim kept for future non-4-dim coverage; shared with backend_test.go call sites
 func unitVec(dim, axis int) []float32 {
 	v := make([]float32, dim)
 	v[axis] = 1

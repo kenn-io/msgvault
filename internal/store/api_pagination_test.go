@@ -27,13 +27,14 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path (the engine the Q2 fix did not touch).
 func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
+	require := requirepkg.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "page@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource")
+	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(src.ID, "thread-page", "Thread Page")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(err, "EnsureConversation")
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	requirepkg.NoError(t, err, "EnsureParticipant")
+	require.NoError(err, "EnsureParticipant")
 
 	// Several messages sharing one sent_at: the ambiguous case that makes
 	// ordering by sent_at alone non-deterministic under LIMIT/OFFSET.
@@ -52,8 +53,8 @@ func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
 			Snippet:         sql.NullString{String: "snippet", Valid: true},
 			SizeEstimate:    1000,
 		})
-		requirepkg.NoError(t, err, "UpsertMessage %d", i)
-		requirepkg.NoError(t,
+		require.NoError(err, "UpsertMessage %d", i)
+		require.NoError(
 			st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
 			"ReplaceMessageRecipients %d", i)
 		wantIDs[mid] = struct{}{}

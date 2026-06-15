@@ -83,6 +83,8 @@ func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 // FKs to sources; that is authoritative for the cascade tables this lock must
 // cover.
 func TestExclusiveLockTablesCoverCascade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
 
@@ -99,7 +101,7 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		  AND c.confdeltype = 'c'
 		  AND ns.nspname = current_schema()
 	`)
-	require.NoError(t, err, "query cascade tables")
+	require.NoError(err, "query cascade tables")
 	defer func() { _ = rows.Close() }()
 
 	lockSet := make(map[string]bool, len(exclusiveLockTables))
@@ -110,7 +112,7 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	var cascadeTables []string
 	for rows.Next() {
 		var name string
-		require.NoError(t, rows.Scan(&name), "scan cascade table name")
+		require.NoError(rows.Scan(&name), "scan cascade table name")
 		// conrelid::regclass may schema-qualify; take the bare table name.
 		if i := strings.LastIndex(name, "."); i >= 0 {
 			name = name[i+1:]
@@ -118,14 +120,14 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		name = strings.Trim(name, `"`)
 		cascadeTables = append(cascadeTables, name)
 	}
-	require.NoError(t, rows.Err(), "iterate cascade tables")
+	require.NoError(rows.Err(), "iterate cascade tables")
 
 	// Sanity: the catalog must actually report cascade tables, otherwise the
 	// query is wrong and the test would vacuously pass.
-	require.NotEmpty(t, cascadeTables, "expected cascade-to-sources tables in catalog")
-	assert.Contains(t, cascadeTables, "source_import_items",
+	require.NotEmpty(cascadeTables, "expected cascade-to-sources tables in catalog")
+	assert.Contains(cascadeTables, "source_import_items",
 		"source_import_items must be a direct cascade target (sanity)")
-	assert.Contains(t, cascadeTables, "sync_checkpoints",
+	assert.Contains(cascadeTables, "sync_checkpoints",
 		"sync_checkpoints must be a direct cascade target (sanity)")
 
 	var missing []string
@@ -135,7 +137,7 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		}
 	}
 	sort.Strings(missing)
-	assert.Empty(t, missing,
+	assert.Empty(missing,
 		"every ON DELETE CASCADE-to-sources table must be in exclusiveLockTables; missing: %v", missing)
 }
 
@@ -173,32 +175,34 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 
 	// Negative control: a low SET LOCAL timeout cancels the long sleep.
 	t.Run("low_timeout_cancels_without_reset", func(t *testing.T) {
+		require := require.New(t)
 		tx, err := st.DB().BeginTx(ctx, nil)
-		require.NoError(t, err, "begin tx")
+		require.NoError(err, "begin tx")
 		defer func() { _ = tx.Rollback() }()
 
 		_, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = '100ms'")
-		require.NoError(t, err, "set low statement_timeout")
+		require.NoError(err, "set low statement_timeout")
 
 		_, err = tx.ExecContext(ctx, "SELECT pg_sleep(0.3)")
-		require.Error(t, err, "pg_sleep(0.3) must be cancelled under a 100ms timeout")
+		require.Error(err, "pg_sleep(0.3) must be cancelled under a 100ms timeout")
 		assert.True(t, is57014(err), "expected SQLSTATE 57014 (query_canceled), got %v", err)
 	})
 
 	// Positive: the dialect's exact reset SQL lifts the low timeout in-tx.
 	t.Run("reset_sql_lifts_low_timeout", func(t *testing.T) {
+		require := require.New(t)
 		tx, err := st.DB().BeginTx(ctx, nil)
-		require.NoError(t, err, "begin tx")
+		require.NoError(err, "begin tx")
 		defer func() { _ = tx.Rollback() }()
 
 		_, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = '100ms'")
-		require.NoError(t, err, "set low statement_timeout")
+		require.NoError(err, "set low statement_timeout")
 
 		_, err = tx.ExecContext(ctx, d.MaintenanceTimeoutResetSQL())
-		require.NoError(t, err, "apply maintenance reset SQL")
+		require.NoError(err, "apply maintenance reset SQL")
 
 		_, err = tx.ExecContext(ctx, "SELECT pg_sleep(0.3)")
-		require.NoError(t, err, "pg_sleep(0.3) must succeed once the timeout is reset to 0")
+		require.NoError(err, "pg_sleep(0.3) must succeed once the timeout is reset to 0")
 	})
 
 	// End-to-end: runMaintenance over a 1-connection pool whose session
@@ -206,27 +210,28 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 	// session GUC across Close, so runMaintenance reuses it; the hatch's
 	// SET LOCAL statement_timeout = 0 must override it for the maintenance tx.
 	t.Run("runMaintenance_overrides_session_timeout", func(t *testing.T) {
+		require := require.New(t)
 		st.DB().SetMaxOpenConns(1)
 		st.DB().SetMaxIdleConns(1)
 
 		// Pin the session timeout on the single pooled connection.
 		conn, err := st.DB().Conn(ctx)
-		require.NoError(t, err, "grab the single pooled connection")
+		require.NoError(err, "grab the single pooled connection")
 		_, err = conn.ExecContext(ctx, "SET statement_timeout = '100ms'")
-		require.NoError(t, err, "set session statement_timeout low")
-		require.NoError(t, conn.Close(), "return connection to pool")
+		require.NoError(err, "set session statement_timeout low")
+		require.NoError(conn.Close(), "return connection to pool")
 
 		// Confirm the session timeout actually bites without the hatch: a bare
 		// pg_sleep(0.3) on the pool must be cancelled.
 		_, err = st.DB().ExecContext(ctx, "SELECT pg_sleep(0.3)")
-		require.Error(t, err, "bare pg_sleep(0.3) must be cancelled by the 100ms session timeout")
-		require.True(t, is57014(err), "expected 57014 from bare pg_sleep, got %v", err)
+		require.Error(err, "bare pg_sleep(0.3) must be cancelled by the 100ms session timeout")
+		require.True(is57014(err), "expected 57014 from bare pg_sleep, got %v", err)
 
 		// Through the hatch: the same long sleep must complete.
 		err = st.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			_, err := tx.ExecContext(ctx, "SELECT pg_sleep(0.3)")
 			return err
 		})
-		require.NoError(t, err, "runMaintenance must lift the session timeout and let pg_sleep(0.3) complete")
+		require.NoError(err, "runMaintenance must lift the session timeout and let pg_sleep(0.3) complete")
 	})
 }

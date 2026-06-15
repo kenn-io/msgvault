@@ -13,18 +13,19 @@ import (
 // as `<`, `>`, `=`, `#`, `$`) ever survives into the to_tsquery argument. A
 // stray `<` would open tsquery's phrase operator and raise SQLSTATE 42601.
 func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
+	assert := assert.New(t)
 	d := PostgreSQLQueryDialect{}
 
 	// "<3" must collapse to the single lexeme "3:*" with no angle brackets.
 	got := d.SanitizeFTSQuery("<3")
-	assert.NotContains(t, got, "<")
-	assert.NotContains(t, got, ">")
-	assert.Equal(t, "3:*", got)
+	assert.NotContains(got, "<")
+	assert.NotContains(got, ">")
+	assert.Equal("3:*", got)
 
 	// Inputs that are entirely metacharacters yield an empty arg.
-	assert.Empty(t, d.SanitizeFTSQuery("<>=#$"))
-	assert.Empty(t, d.SanitizeFTSQuery(""))
-	assert.Empty(t, d.SanitizeFTSQuery("   "))
+	assert.Empty(d.SanitizeFTSQuery("<>=#$"))
+	assert.Empty(d.SanitizeFTSQuery(""))
+	assert.Empty(d.SanitizeFTSQuery("   "))
 }
 
 // TestPostgreSQLSanitizeFTSQuery_AllowlistOnly asserts the output never contains
