@@ -124,7 +124,7 @@ func seedThree(t *testing.T) *fusedFixture {
 func TestFusedSearch_FTSOnly(t *testing.T) {
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -170,7 +170,7 @@ func TestFusedSearch_ANNOnly(t *testing.T) {
 func TestFusedSearch_Hybrid(t *testing.T) {
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		QueryVec:   unitVec(4, 1), // points at msg 2 (no 'quantum')
 		Generation: f.gen,
 		KPerSignal: 10,
@@ -247,7 +247,7 @@ func TestFusedSearch_MultiChunk_OneHitPerMessage(t *testing.T) {
 	// that would give it extra RRF weight and crowd out the competitor.
 	t.Run("hybrid", func(t *testing.T) {
 		hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-			FTSQuery:   "report",
+			FTSTerms:   []string{"report"},
 			QueryVec:   unitVec(4, 0),
 			Generation: f.gen,
 			KPerSignal: 10,
@@ -273,7 +273,7 @@ func TestFusedSearch_MultiChunk_OneHitPerMessage(t *testing.T) {
 func TestFusedSearch_Saturated(t *testing.T) {
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 1, // smaller than the 2-row FTS pool → saturates
 		Limit:      10,
@@ -287,7 +287,7 @@ func TestFusedSearch_Saturated(t *testing.T) {
 func TestFusedSearch_FilterBySource(t *testing.T) {
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -302,7 +302,7 @@ func TestFusedSearch_FilterBySource(t *testing.T) {
 	assert.False(t, saturated, "empty filtered pool cannot saturate")
 
 	hits, saturated, err = f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -318,7 +318,7 @@ func TestFusedSearch_FilterByDateRange(t *testing.T) {
 	f := seedThree(t)
 	after := time.Date(2025, 1, 16, 0, 0, 0, 0, time.UTC) // exclude msg 1
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -339,7 +339,7 @@ func TestFusedSearch_FilterByLabel(t *testing.T) {
 		`INSERT INTO message_labels (message_id, label_id) VALUES (3, 42)`)
 	require.NoError(t, err, "insert label")
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -359,7 +359,7 @@ func TestFusedSearch_FilterBySender(t *testing.T) {
          VALUES (1, 'from', 99)`)
 	require.NoError(t, err, "insert from-recipient")
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -380,7 +380,7 @@ func TestFusedSearch_FilterBySender_NoMatch(t *testing.T) {
 	// participant_id=777 is not a from-recipient on any of the three seeded
 	// messages — the filter should exclude every candidate.
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
 		KPerSignal: 10,
 		Limit:      10,
@@ -422,7 +422,7 @@ func TestFusedSearch_RejectsEmptyRequest(t *testing.T) {
 func TestFusedSearch_UnknownGeneration(t *testing.T) {
 	f := newFusedFixture(t)
 	_, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "anything",
+		FTSTerms:   []string{"anything"},
 		Generation: 999,
 		KPerSignal: 10,
 		Limit:      10,
@@ -450,7 +450,7 @@ func TestFusedSearch_DimensionMismatch(t *testing.T) {
 func TestFusedSearch_SubjectBoost(t *testing.T) {
 	f := seedThree(t)
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:     "quantum",
+		FTSTerms:     []string{"quantum"},
 		QueryVec:     unitVec(4, 1),
 		Generation:   f.gen,
 		KPerSignal:   10,
@@ -474,7 +474,7 @@ func TestFusedSearch_SkipsDeletedMessages(t *testing.T) {
 		`UPDATE messages SET deleted_from_source_at = NOW() WHERE id = 1`)
 	require.NoError(t, err, "soft-delete")
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
-		FTSQuery:   "quantum",
+		FTSTerms:   []string{"quantum"},
 		QueryVec:   unitVec(4, 0),
 		Generation: f.gen,
 		KPerSignal: 10,

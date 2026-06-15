@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -29,7 +30,7 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // KPerSignal before fusion. The extra "probe" row exists only so the
 // outer query can report whether the pool was full on either side.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
-	if req.QueryVec == nil && req.FTSQuery == "" {
+	if req.QueryVec == nil && len(req.FTSTerms) == 0 {
 		return nil, false, errors.New("FusedSearch: neither vector nor FTS query provided")
 	}
 
@@ -228,8 +229,12 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 		queryVecArg = float32SliceBlob(req.QueryVec)
 	}
 	var ftsArg any
-	if req.FTSQuery != "" {
-		ftsArg = req.FTSQuery
+	if len(req.FTSTerms) > 0 {
+		// Render the dialect-neutral terms into the FTS5 MATCH arg
+		// (quoted, prefix-* terms). nil ftsArg → the CTE's
+		// `:fts_query IS NOT NULL` guard skips the BM25 leg.
+		_, arg := query.SQLiteQueryDialect{}.BuildFTSTerm(req.FTSTerms)
+		ftsArg = arg
 	}
 
 	// When the subject boost is active, the SQL LIMIT must not cut

@@ -32,7 +32,7 @@ func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   unitVec(768, 1),
 		Generation: gid,
 		KPerSignal: 10,
@@ -59,7 +59,7 @@ func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   nil, // FTS-only
 		Generation: gid,
 		KPerSignal: 10,
@@ -86,7 +86,7 @@ func TestFusedSearch_VectorOnly_BM25ScoreIsNaN(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "",
+		FTSTerms:   nil,
 		QueryVec:   unitVec(768, 1),
 		Generation: gid,
 		KPerSignal: 10,
@@ -168,7 +168,7 @@ func TestFusedSearch_NoSignals_Errors(t *testing.T) {
 func TestFusedSearch_UnknownGeneration(t *testing.T) {
 	b, ctx := newFusedBackendForTest(t)
 	_, _, err := b.FusedSearch(ctx, vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   unitVec(768, 0),
 		Generation: vector.GenerationID(9999),
 		KPerSignal: 10, Limit: 5, RRFK: 60,
@@ -251,7 +251,7 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 	// BM25 branch without ORDER BY would be free to pick any 3
 	// matching rows, dropping higher-ranked ones.
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		Generation: gid,
 		KPerSignal: 3,
 		Limit:      10,
@@ -465,7 +465,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := vector.FusedRequest{
-				FTSQuery:   "topic",
+				FTSTerms:   []string{"topic"},
 				Generation: gid,
 				Filter:     c.filter,
 				KPerSignal: 10,
@@ -542,7 +542,7 @@ func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "topic",
+		FTSTerms:   []string{"topic"},
 		Generation: gid,
 		Filter:     vector.Filter{SenderGroups: [][]int64{{100}}},
 		KPerSignal: 10,
@@ -590,7 +590,7 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := vector.FusedRequest{
-				FTSQuery:   "meeting",
+				FTSTerms:   []string{"meeting"},
 				QueryVec:   unitVec(768, 1),
 				Generation: gid,
 				Filter:     c.filter,
@@ -769,7 +769,7 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 	hits, saturated, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
 		Generation: gid,
-		FTSQuery:   "report",
+		FTSTerms:   []string{"report"},
 		Filter:     vector.Filter{HasAttachment: &yes},
 		KPerSignal: 1, Limit: 5, RRFK: 60,
 	})
@@ -829,7 +829,7 @@ func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
 	req := vector.FusedRequest{
 		QueryVec:     queryVec,
 		Generation:   gid,
-		FTSQuery:     "planning OR review",
+		FTSTerms:     []string{"planning"},
 		KPerSignal:   20,
 		Limit:        3,
 		RRFK:         60,
@@ -900,7 +900,7 @@ func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:     queryVec,
 		Generation:   gid,
-		FTSQuery:     "planning OR review",
+		FTSTerms:     []string{"planning"},
 		KPerSignal:   total,
 		Limit:        3,
 		RRFK:         60,
@@ -957,7 +957,7 @@ func TestFusedSearch_NullSubjectExcludedBySubjectFilter(t *testing.T) {
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
 		Generation: gid,
-		FTSQuery:   "report",
+		FTSTerms:   []string{"report"},
 		Filter:     vector.Filter{SubjectSubstrings: []string{"report"}},
 		KPerSignal: 10, Limit: 10, RRFK: 60,
 	})

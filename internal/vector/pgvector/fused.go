@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -26,17 +27,20 @@ const fusedANNChunksPerMessage = 8
 
 // FusedSearch runs the single-query hybrid CTE against pgvector.
 // Mirrors sqlitevec.FusedSearch (spec §5.3) but built around
-// websearch_to_tsquery + ts_rank_cd on the inline messages.search_fts
-// column and pgvector's `<=>` cosine-distance operator. The 'simple'
-// text-search configuration matches what FTSUpsert/FTSBackfillBatchSQL
-// in internal/store/dialect_pg.go writes into search_fts, so query-
-// time tokens line up with stored tokens (no English stemming on
-// either side). The returned saturated flag is true when either
-// per-signal pool produced more than KPerSignal candidates — the pool
-// was capped and downstream callers should consider raising
+// to_tsquery + ts_rank_cd on the inline messages.search_fts
+// column and pgvector's `<=>` cosine-distance operator. The FTS
+// argument is rendered from req.FTSTerms via
+// query.PostgreSQLQueryDialect.BuildFTSTerm (lexeme:* AND-joined) so
+// the BM25 leg prefix-matches the same term set SQLite does. The
+// 'simple' text-search configuration matches what
+// FTSUpsert/FTSBackfillBatchSQL in internal/store/dialect_pg.go writes
+// into search_fts, so query-time tokens line up with stored tokens (no
+// English stemming on either side). The returned saturated flag is true
+// when either per-signal pool produced more than KPerSignal candidates —
+// the pool was capped and downstream callers should consider raising
 // KPerSignal or narrowing the query.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
-	useFTS := req.FTSQuery != ""
+	useFTS := len(req.FTSTerms) > 0
 	useANN := req.QueryVec != nil
 	if !useFTS && !useANN {
 		return nil, false, errors.New("FusedSearch: neither vector nor FTS query provided")
@@ -121,7 +125,13 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		}
 
 		if useFTS {
-			ftsArg := bind(req.FTSQuery)
+			// Render the dialect-neutral terms into a PG tsquery arg
+			// (lexeme:* AND-joined) BEFORE binding. to_tsquery requires a
+			// pre-formatted argument (operators &, prefix :*) and ERRORS on
+			// raw text — this is safe ONLY because we always feed it
+			// PostgreSQLQueryDialect.BuildFTSTerm's output, never raw text.
+			_, tsArg := query.PostgreSQLQueryDialect{}.BuildFTSTerm(req.FTSTerms)
+			ftsArg := bind(tsArg)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
 			// Empty filter: scan messages directly with an inline liveness
@@ -136,9 +146,9 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			ctes = append(ctes,
 				fmt.Sprintf(`fts_pool AS (
     SELECT m.id AS message_id,
-           ts_rank_cd(m.search_fts, websearch_to_tsquery('simple', %s), 32) AS bm25
+           ts_rank_cd(m.search_fts, to_tsquery('simple', %s), 32) AS bm25
       FROM messages m
-%s     WHERE m.search_fts @@ websearch_to_tsquery('simple', %s)
+%s     WHERE m.search_fts @@ to_tsquery('simple', %s)
 %s     ORDER BY bm25 DESC
      LIMIT %s
 )`, ftsArg, ftsFrom, ftsArg, ftsLive, kp1Arg),

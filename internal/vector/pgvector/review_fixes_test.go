@@ -370,7 +370,7 @@ func TestFusedSearch_EmptyFilterParity(t *testing.T) {
 		{
 			name: "hybrid_fts_and_ann",
 			req: vector.FusedRequest{
-				FTSQuery:   "quantum",
+				FTSTerms:   []string{"quantum"},
 				QueryVec:   unitVec(4, 1),
 				Generation: f.gen,
 				KPerSignal: 10,

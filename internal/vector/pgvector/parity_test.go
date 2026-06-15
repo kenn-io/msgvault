@@ -46,10 +46,10 @@ var parityCorpus = []parityDoc{
 const parityDim = 4
 
 // buildSqlitevecParity stands up an in-memory/temp sqlitevec FusedSearch
-// backend seeded with the shared corpus, mirroring sqlitevec's
+// backend seeded with the given corpus, mirroring sqlitevec's
 // fused_test.go fixture shape. Returns the backend, ctx, and the active
 // generation.
-func buildSqlitevecParity(t *testing.T) (*sqlitevec.Backend, context.Context, vector.GenerationID) {
+func buildSqlitevecParity(t *testing.T, corpus []parityDoc) (*sqlitevec.Backend, context.Context, vector.GenerationID) {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -86,7 +86,7 @@ CREATE TABLE message_recipients (
 	_, err = main.Exec(schema)
 	require.NoError(t, err, "schema")
 
-	for _, d := range parityCorpus {
+	for _, d := range corpus {
 		_, err := main.Exec(`INSERT INTO messages (id, subject) VALUES (?, ?)`, d.id, d.subject)
 		require.NoErrorf(t, err, "insert msg %d", d.id)
 		_, err = main.Exec(
@@ -106,8 +106,8 @@ CREATE TABLE message_recipients (
 
 	gid, err := b.CreateGeneration(ctx, "m", parityDim, "")
 	require.NoError(t, err, "CreateGeneration")
-	chunks := make([]vector.Chunk, 0, len(parityCorpus))
-	for _, d := range parityCorpus {
+	chunks := make([]vector.Chunk, 0, len(corpus))
+	for _, d := range corpus {
 		chunks = append(chunks, vector.Chunk{MessageID: d.id, Vector: unitVec(parityDim, d.axis)})
 	}
 	require.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
@@ -116,17 +116,17 @@ CREATE TABLE message_recipients (
 }
 
 // buildPgvectorParity stands up a live pgvector FusedSearch backend
-// seeded with the SAME shared corpus, reusing the pgvector fused
-// fixture helpers.
-func buildPgvectorParity(t *testing.T) (*fusedFixture, vector.GenerationID) {
+// seeded with the SAME corpus, reusing the pgvector fused fixture
+// helpers.
+func buildPgvectorParity(t *testing.T, corpus []parityDoc) (*fusedFixture, vector.GenerationID) {
 	t.Helper()
 	f := newFusedFixture(t)
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
-	for _, d := range parityCorpus {
+	for _, d := range corpus {
 		f.seedMsg(t, d.id, d.subject, d.body, 10, base, false)
 	}
-	vecs := make(map[int64][]float32, len(parityCorpus))
-	for _, d := range parityCorpus {
+	vecs := make(map[int64][]float32, len(corpus))
+	for _, d := range corpus {
 		vecs[d.id] = unitVec(parityDim, d.axis)
 	}
 	f.embedAll(t, vecs)
@@ -157,8 +157,8 @@ func idSeq(hits []vector.FusedHit) []int64 {
 func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 	// Build the live pgvector side first; if MSGVAULT_TEST_DB is absent
 	// newFusedFixture skips, keeping the sqlitevec-only build green.
-	pf, pgGen := buildPgvectorParity(t)
-	sb, sctx, sGen := buildSqlitevecParity(t)
+	pf, pgGen := buildPgvectorParity(t, parityCorpus)
+	sb, sctx, sGen := buildSqlitevecParity(t, parityCorpus)
 
 	cases := []struct {
 		name string
@@ -199,7 +199,7 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 			name: "fts_only_single_doc",
 			req: func(gen vector.GenerationID) vector.FusedRequest {
 				return vector.FusedRequest{
-					FTSQuery:   "bravo",
+					FTSTerms:   []string{"bravo"},
 					Generation: gen,
 					KPerSignal: 10,
 					Limit:      10,
@@ -216,7 +216,7 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 			req: func(gen vector.GenerationID) vector.FusedRequest {
 				return vector.FusedRequest{
 					QueryVec:   unitVec(parityDim, 0),
-					FTSQuery:   "delta",
+					FTSTerms:   []string{"delta"},
 					Generation: gen,
 					KPerSignal: 10,
 					Limit:      10,
@@ -240,4 +240,122 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 				"ordering mismatch: sqlitevec=%v pgvector=%v", sIDs, pIDs)
 		})
 	}
+}
+
+// idSet collects the message ids of a hit list into a set, so two
+// backends can be compared for membership equality regardless of order.
+func idSet(hits []vector.FusedHit) map[int64]bool {
+	out := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		out[h.MessageID] = true
+	}
+	return out
+}
+
+// ftsParityCorpus is a dedicated fixture for the FTS-term parity test.
+// Bodies are chosen so the regression-prone query terms exercise three
+// behaviors that used to diverge between FTS5 and PostgreSQL:
+//   - a prefix-sensitive term ("invoic" must match "invoice"/"invoices")
+//   - the literal word "or" (must be a lexeme, NOT a boolean operator)
+//   - an ordinary stopword-like word riding along in the term set
+//
+// Only msg 1's body contains every term in {monthly, bill, or, invoice},
+// so the AND-of-prefix FTS leg selects exactly it on both backends; the
+// other docs round out the ANN pool on well-separated axes.
+var ftsParityCorpus = []parityDoc{
+	{1, "billing notice", "your monthly bill or invoice is ready", 0},
+	{2, "shipping update", "the package shipped this morning", 1},
+	{3, "newsletter", "weekly digest of company news", 2},
+	{4, "invoices archive", "past invoices and receipts are attached", 3},
+}
+
+// TestParity_HybridFTSTermsMatchAcrossBackends is the cross-backend
+// proof that the dialect-neutral FusedRequest.FTSTerms fix restores
+// PG<->SQLite hybrid FTS parity. Before the fix, the hybrid engine
+// hardcoded SQLite FTS5 syntax into the shared request and PG fed it to
+// websearch_to_tsquery, which dropped the prefix `*` (PG exact-matched
+// while SQLite prefix-matched) and reinterpreted "or" as a boolean
+// operator. Now each backend renders FTSTerms via its own dialect's
+// BuildFTSTerm, so both prefix-match the same lexeme set.
+//
+// We assert SET-equality (not exact order) of the hybrid top-K because
+// BM25 and ts_rank_cd legitimately order multi-match FTS results
+// differently; membership is the parity contract. A second case proves
+// PG prefix matching now works ("invoic" matches "invoice"/"invoices").
+func TestParity_HybridFTSTermsMatchAcrossBackends(t *testing.T) {
+	pf, pgGen := buildPgvectorParity(t, ftsParityCorpus)
+	sb, sctx, sGen := buildSqlitevecParity(t, ftsParityCorpus)
+
+	cases := []struct {
+		name string
+		req  func(gen vector.GenerationID) vector.FusedRequest
+	}{
+		{
+			// Prefix + "or" + stopword-laden term set, FTS-ONLY (no
+			// QueryVec) so the assertion compares the FTS legs directly
+			// across backends instead of letting the ANN leg return the
+			// whole corpus and mask an FTS divergence. The AND-of-prefix
+			// FTS leg selects msg 1 (the only doc with all four terms) on
+			// both backends. Pre-fix, PG dropped msg 1 from the FTS leg
+			// (no prefix match, "or" treated as a boolean operator), so
+			// the id sets would differ.
+			name: "fts_terms_prefix_or_stopword",
+			req: func(gen vector.GenerationID) vector.FusedRequest {
+				return vector.FusedRequest{
+					FTSTerms:   []string{"monthly", "bill", "or", "invoice"},
+					Generation: gen,
+					KPerSignal: 10,
+					Limit:      10,
+					RRFK:       60,
+				}
+			},
+		},
+		{
+			// Pure prefix proof: "invoic" must match both "invoice"
+			// (msg 1) and "invoices" (msg 4) on BOTH backends. Pre-fix PG
+			// exact-matched and found neither.
+			name: "fts_prefix_invoic_matches_invoice_and_invoices",
+			req: func(gen vector.GenerationID) vector.FusedRequest {
+				return vector.FusedRequest{
+					FTSTerms:   []string{"invoic"},
+					Generation: gen,
+					KPerSignal: 10,
+					Limit:      10,
+					RRFK:       60,
+				}
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			sHits, _, err := sb.FusedSearch(sctx, c.req(sGen))
+			require.NoError(err, "sqlitevec FusedSearch")
+			pHits, _, err := pf.b.FusedSearch(pf.ctx, c.req(pgGen))
+			require.NoError(err, "pgvector FusedSearch")
+
+			sSet := idSet(sHits)
+			pSet := idSet(pHits)
+			require.NotEmpty(sSet, "sqlitevec returned no hits")
+			assert.Equalf(sSet, pSet,
+				"hybrid id-set mismatch: sqlitevec=%v pgvector=%v", idSeq(sHits), idSeq(pHits))
+		})
+	}
+
+	// Explicit prefix membership: "invoic" must surface both the
+	// "invoice" doc (1) and the "invoices" doc (4) on the PG backend,
+	// which is exactly what regressed when the prefix `*` was dropped.
+	pHits, _, err := pf.b.FusedSearch(pf.ctx, vector.FusedRequest{
+		FTSTerms:   []string{"invoic"},
+		Generation: pgGen,
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(t, err, "pgvector prefix FusedSearch")
+	pSet := idSet(pHits)
+	assert.Truef(t, pSet[1] && pSet[4],
+		"pgvector prefix 'invoic' must match invoice(1) and invoices(4); got %v", idSeq(pHits))
 }

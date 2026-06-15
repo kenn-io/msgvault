@@ -211,7 +211,14 @@ type FusingBackend interface {
 
 // FusedRequest is the parameter bundle for a single-query fused hybrid search.
 type FusedRequest struct {
-	FTSQuery     string    // full-text query; empty skips BM25. Dialect-specific: sqlitevec treats it as an FTS5 MATCH expression, pgvector feeds it raw to websearch_to_tsquery
+	// FTSTerms are dialect-neutral, already-tokenized and
+	// punctuation-filtered search terms. An empty/nil slice skips the
+	// BM25 leg (vector-only). Each FusingBackend renders the terms via
+	// its own query dialect's BuildFTSTerm (SQLite FTS5 MATCH;
+	// PostgreSQL to_tsquery with :* prefix lexemes), so both backends
+	// prefix-match the SAME term set rather than diverging on a
+	// pre-built dialect-specific expression.
+	FTSTerms     []string
 	QueryVec     []float32 // query embedding; nil skips ANN
 	Generation   GenerationID
 	KPerSignal   int
