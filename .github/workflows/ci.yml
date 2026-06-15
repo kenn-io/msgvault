@@ -161,8 +161,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # This lane uses a stock postgres:16 image (no pgvector extension), so it
+      # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"
+      # and fail here. pgvector is covered by the dedicated test-pgvector job
+      # against a pgvector/pgvector image. (Run go test directly rather than
+      # `make test-pg`, whose PG_TEST_TAGS include pgvector.)
       - name: Test (PostgreSQL)
-        run: make test-pg
+        run: go test -tags "fts5 sqlite_vec" ./...
 
       - name: Concurrency tests (-count=5)
         run: |
