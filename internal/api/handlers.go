@@ -211,10 +211,6 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
 }
 
-func stringPtr(value string) *string {
-	return &value
-}
-
 func nullableTimePtr(value time.Time) *string {
 	formatted := value.UTC().Format(time.RFC3339)
 	return &formatted
@@ -772,7 +768,7 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 		UpdatedAt:  source.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if source.DisplayName.Valid {
-		status.DisplayName = stringPtr(source.DisplayName.String)
+		status.DisplayName = new(source.DisplayName.String)
 	}
 	if source.LastSyncAt.Valid {
 		status.LastSyncAt = nullableTimePtr(source.LastSyncAt.Time)
@@ -818,13 +814,13 @@ func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
 		status.CompletedAt = nullableTimePtr(run.CompletedAt.Time)
 	}
 	if run.ErrorMessage.Valid {
-		status.ErrorMessage = stringPtr(run.ErrorMessage.String)
+		status.ErrorMessage = new(run.ErrorMessage.String)
 	}
 	if run.CursorBefore.Valid {
-		status.CursorBefore = stringPtr(run.CursorBefore.String)
+		status.CursorBefore = new(run.CursorBefore.String)
 	}
 	if run.CursorAfter.Valid {
-		status.CursorAfter = stringPtr(run.CursorAfter.String)
+		status.CursorAfter = new(run.CursorAfter.String)
 	}
 	return status
 }

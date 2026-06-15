@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -148,7 +147,7 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 		&config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		adapter,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
