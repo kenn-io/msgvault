@@ -33,6 +33,12 @@ func TestHydrateHybridResults_PostgresRebindsINClause(t *testing.T) {
 	ctx := context.Background()
 
 	// Minimal scaffolding for the columns hydrateHybridResults selects.
+	// message_recipients must exist even though we seed no rows: the hydrate
+	// query LEFT JOINs a `recipient_type='from'` subquery against it (sender
+	// hydration COALESCEs that ahead of messages.sender_id). Creating it in
+	// this isolated schema makes the query self-contained — otherwise it only
+	// resolved by accident via a message_recipients table left in `public` by
+	// a prior run, and failed on a fresh DB (CI) with "relation does not exist".
 	_, err = db.ExecContext(ctx, `
 		CREATE TABLE participants (
 			id BIGINT PRIMARY KEY,
@@ -44,6 +50,12 @@ func TestHydrateHybridResults_PostgresRebindsINClause(t *testing.T) {
 			sender_id BIGINT,
 			subject TEXT,
 			sent_at TIMESTAMPTZ
+		);
+		CREATE TABLE message_recipients (
+			id BIGINT PRIMARY KEY,
+			message_id BIGINT NOT NULL,
+			participant_id BIGINT NOT NULL,
+			recipient_type TEXT NOT NULL
 		);`)
 	require.NoError(t, err, "create scaffolding tables")
 

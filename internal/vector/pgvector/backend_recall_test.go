@@ -385,6 +385,18 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	_, err = conn.ExecContext(ctx, "SET enable_seqscan = off")
 	require.NoError(t, err, "disable seqscan")
 
+	// Also penalize explicit sorts. enable_seqscan=off alone still leaves the
+	// planner a btree/PK index-scan + Sort alternative for the inner
+	// ORDER BY embedding <=> query LIMIT k, and on a freshly bulk-loaded
+	// corpus its estimated cost can edge out the HNSW index (observed flaky in
+	// CI: the planner picked the sort path). The HNSW index returns rows in
+	// distance order without a Sort node, so penalizing sorts pushes the
+	// planner onto it deterministically. This does NOT weaken the ef_search
+	// contrast below: both contrast queries still traverse the HNSW graph, so
+	// the default-vs-raised ef_search cap remains exactly what is measured.
+	_, err = conn.ExecContext(ctx, "SET enable_sort = off")
+	require.NoError(t, err, "penalize explicit sort")
+
 	// (1) Prove the inner ANN subquery uses the HNSW index, not a Seq Scan.
 	_, err = conn.ExecContext(ctx, "SET hnsw.ef_search = 40")
 	require.NoError(t, err, "set default ef_search")
