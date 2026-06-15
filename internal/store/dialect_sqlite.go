@@ -112,8 +112,8 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 // Known divergence: SQLite's bm25() applies Okapi BM25 document-length
 // normalization while PostgreSQL's default ts_rank() does not, so very
 // long subject-hit documents can still rank below short body-hit
-// documents on SQLite while PG ranks them subject-first. See
-// docs/search-ranking.md ("Where the two diverge") and
+// documents on SQLite while PG ranks them subject-first. See the
+// docs-site search ranking page ("Where Ordering Can Diverge") and
 // TestFTSRank_KnownDivergence for the expected-behavior pin and
 // rationale.
 func (d *SQLiteDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {

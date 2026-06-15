@@ -257,8 +257,8 @@ The TUI can connect to a remote server by configuring `[remote].url`. Use `--loc
 
 - [Setup Guide](https://msgvault.io/guides/oauth-setup/): OAuth, first sync, headless servers
 - [Searching](https://msgvault.io/usage/searching/): query syntax and operators
-- [Search ranking across backends](docs/search-ranking.md): how result order differs between SQLite (BM25) and PostgreSQL (ts_rank), and why
-- [PostgreSQL backend](docs/postgresql.md): run msgvault on PostgreSQL with pgvector semantic/hybrid search
+- [Search ranking across backends](https://msgvault.io/architecture/search-ranking/): how result order differs between SQLite and PostgreSQL
+- [PostgreSQL backend](https://msgvault.io/architecture/postgresql/): run msgvault on PostgreSQL with pgvector semantic/hybrid search
 - [Interactive TUI](https://msgvault.io/usage/tui/): keybindings, views, deletion staging
 - [CLI Reference](https://msgvault.io/cli-reference/): all commands and flags
 - [Multi-Account](https://msgvault.io/usage/multi-account/): managing multiple Gmail accounts

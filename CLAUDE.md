@@ -136,17 +136,16 @@ Core tables:
 Schema files in `internal/store/`:
 - `schema.sql` - Core schema (SQLite; shared structure)
 - `schema_sqlite.sql` - SQLite FTS5 virtual table
-- `schema_pg.sql` - PostgreSQL tsvector column + GIN index (opt-in, scaffold)
+- `schema_pg.sql` - PostgreSQL-native schema with tsvector column + GIN index
 
-**Database backend**: SQLite is the default. PostgreSQL support is
-scaffolded behind a `Dialect` interface (`internal/store/dialect.go`);
-see `docs/PG_STATUS.md` for the current state and follow-up
-work required to make PostgreSQL functional end-to-end.
+**Database backend**: SQLite is the default. PostgreSQL is opt-in via
+`[data].database_url` and runs through the same store/query interfaces.
+See `docs/PG_STATUS.md` for the current implementation state and
+follow-up work.
 
-**Test env**: `MSGVAULT_TEST_DB=postgres://...` is scaffolded for the future
-PostgreSQL store test suite (`make test-pg`). Until the blockers in
-`docs/PG_STATUS.md` are resolved, PostgreSQL tests are expected to fail before
-schema initialization completes.
+**Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
+tests (`make test-pg`). pgvector tests require a PostgreSQL instance
+with the `vector` extension and the `pgvector` build tag.
 
 ## Parquet Analytics
 
@@ -249,7 +248,7 @@ automatically:
 ```bash
 make install-hooks             # Install pre-commit hook via prek
 make test                      # Run tests (SQLite default)
-make test-pg                   # PostgreSQL scaffold check; expected to fail until PG_STATUS blockers are fixed
+make test-pg                   # Run PostgreSQL-backed tests with MSGVAULT_TEST_DB set
 make fmt                       # Format code (go fmt)
 make lint                      # Run linter (auto-fix)
 make lint-ci                   # Run linter (CI, no auto-fix)

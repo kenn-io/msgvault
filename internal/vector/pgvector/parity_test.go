@@ -26,7 +26,7 @@ import (
 // (The backends use different distance metrics — sqlitevec L2 vs pgvector
 // cosine — so the raw distance values differ; because these vectors are
 // unit-normalized the two metrics are monotonic transforms of each other
-// and rank neighbors identically. See docs/search-ranking.md.)
+// and rank neighbors identically. See the docs-site search ranking page.)
 type parityDoc struct {
 	id      int64
 	subject string
