@@ -22,7 +22,11 @@ import (
 // tokens (the documented tokenizer divergence between FTS5 and
 // to_tsvector('simple')) so the ordering assertion is clean. axis is the
 // unit-vector axis the message's embedding points along, giving each
-// backend an identical, well-separated ANN signal.
+// backend a well-separated ANN signal with the *same neighbor ordering*.
+// (The backends use different distance metrics — sqlitevec L2 vs pgvector
+// cosine — so the raw distance values differ; because these vectors are
+// unit-normalized the two metrics are monotonic transforms of each other
+// and rank neighbors identically. See docs/search-ranking.md.)
 type parityDoc struct {
 	id      int64
 	subject string
@@ -31,8 +35,10 @@ type parityDoc struct {
 }
 
 // parityCorpus is the fixture both backends index. Vectors are unit
-// vectors on distinct axes so ANN distances are well separated and
-// identical across backends; bodies use plain alphabetic tokens so the
+// vectors on distinct axes so ANN distances are well separated and yield
+// the same neighbor *ordering* across backends (the metrics themselves
+// differ — sqlitevec L2 vs pgvector cosine — but agree on ordering for
+// unit-normalized vectors); bodies use plain alphabetic tokens so the
 // two tokenizers agree. The four-token shared word "report" lets an
 // FTS-heavy query touch every doc, while axis-specific tokens let a
 // query select a single doc.
@@ -167,7 +173,9 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 		{
 			// ANN-heavy: query points along axis 0 → msg 1 closest, then
 			// 2, 3, 4 by axis distance. No FTS signal, so the ordering is
-			// purely the (identical) cosine distances.
+			// purely the ANN distances. The two backends use different
+			// metrics (sqlitevec L2 vs pgvector cosine) but agree on this
+			// ordering because the fixture vectors are unit-normalized.
 			name: "ann_only_axis0",
 			req: func(gen vector.GenerationID) vector.FusedRequest {
 				return vector.FusedRequest{

@@ -140,3 +140,34 @@ disabled (`b=0`) loaded via `sqlite3_create_function`, or a
 field-priority sort layer applied to BM25 output outside the scorer.
 Neither is implemented today; both are out of scope for the current
 weight tuning.
+
+## Vector ranking: SQLite L2 vs PostgreSQL cosine
+
+The text-ranking divergence above is about the FTS scorers. The
+**vector** (semantic / hybrid) side has a separate, distinct caveat:
+the two backends do not currently rank vectors by the same distance
+metric.
+
+- **SQLite (sqlite-vec).** The `vec0` virtual tables are declared as
+  plain `FLOAT[N]` columns with no `distance=...` option, so they use
+  sqlite-vec's default **L2 (Euclidean)** distance.
+- **PostgreSQL (pgvector).** The HNSW index and the `<=>` operator rank
+  by **cosine** distance (`vector_cosine_ops`).
+
+For **unit-normalized** embeddings these two metrics produce the
+**same ranking** — squared-L2 and cosine distance are monotonic
+transforms of one another on the unit sphere
+(`||a − b||² = 2(1 − cos θ)` when `||a|| = ||b|| = 1`), so nearest
+neighbors come out in the same order even though the raw distance
+*values* differ. Most modern embedding endpoints return normalized
+vectors, so in practice the two backends usually agree.
+
+They are **not** identical for **non-normalized** vectors: there L2 and
+cosine can rank neighbors differently, and the SQLite and PostgreSQL
+backends can return different vector/hybrid orderings for the same
+query and data.
+
+Full cosine parity for the SQLite backend — switching the `vec0` tables
+to `distance=cosine` plus a one-time rebuild migration of any existing
+vector tables so already-embedded archives pick up the new metric — is
+**deferred to a follow-up PR**.
