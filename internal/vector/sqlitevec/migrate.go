@@ -273,22 +273,31 @@ func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, di
 	// build. Materializing into memory is cheap (one vec is ~3 KB at
 	// 768 dims; even 100K vecs is ~300 MB and pre-chunking deployments
 	// are typically much smaller — the user's vault has ~12K vecs).
-	rows, err := db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT generation_id, message_id, embedding FROM %s`, name))
-	if err != nil {
-		return fmt.Errorf("read legacy rows: %w", err)
-	}
+	// Scoped in a closure so `defer rows.Close()` runs before the DROP
+	// TABLE below — the virtual-table iterator must not be held open
+	// across the DDL (see comment above).
 	var legacyRows []vecRow
-	for rows.Next() {
-		var r vecRow
-		if err := rows.Scan(&r.gen, &r.msgID, &r.blob); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan legacy row: %w", err)
+	readLegacy := func() error {
+		rows, err := db.QueryContext(ctx,
+			`SELECT generation_id, message_id, embedding FROM `+name)
+		if err != nil {
+			return fmt.Errorf("read legacy rows: %w", err)
 		}
-		legacyRows = append(legacyRows, r)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var r vecRow
+			if err := rows.Scan(&r.gen, &r.msgID, &r.blob); err != nil {
+				return fmt.Errorf("scan legacy row: %w", err)
+			}
+			legacyRows = append(legacyRows, r)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate legacy rows: %w", err)
+		}
+		return nil
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close legacy rows: %w", err)
+	if err := readLegacy(); err != nil {
+		return err
 	}
 
 	// Build (generation_id, message_id) -> embedding_id mapping from
@@ -297,21 +306,29 @@ func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, di
 	// every legacy vec0 row has a corresponding embedding_id.
 	type key struct{ gen, msg int64 }
 	mapping := make(map[key]int64, len(legacyRows))
-	mapRows, err := db.QueryContext(ctx,
-		`SELECT generation_id, message_id, embedding_id FROM embeddings WHERE chunk_index = 0`)
-	if err != nil {
-		return fmt.Errorf("read embedding_id mapping: %w", err)
-	}
-	for mapRows.Next() {
-		var g, m, eid int64
-		if err := mapRows.Scan(&g, &m, &eid); err != nil {
-			_ = mapRows.Close()
-			return fmt.Errorf("scan embedding_id mapping: %w", err)
+	// Scoped in a closure for the same reason as readLegacy: the result
+	// set is fully drained and closed before the rebuild transaction.
+	readMapping := func() error {
+		mapRows, err := db.QueryContext(ctx,
+			`SELECT generation_id, message_id, embedding_id FROM embeddings WHERE chunk_index = 0`)
+		if err != nil {
+			return fmt.Errorf("read embedding_id mapping: %w", err)
 		}
-		mapping[key{g, m}] = eid
+		defer func() { _ = mapRows.Close() }()
+		for mapRows.Next() {
+			var g, m, eid int64
+			if err := mapRows.Scan(&g, &m, &eid); err != nil {
+				return fmt.Errorf("scan embedding_id mapping: %w", err)
+			}
+			mapping[key{g, m}] = eid
+		}
+		if err := mapRows.Err(); err != nil {
+			return fmt.Errorf("iterate embedding_id mapping: %w", err)
+		}
+		return nil
 	}
-	if err := mapRows.Close(); err != nil {
-		return fmt.Errorf("close mapping rows: %w", err)
+	if err := readMapping(); err != nil {
+		return err
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -325,7 +342,7 @@ func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, di
 		}
 	}()
 
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE %s`, name)); err != nil {
+	if _, err := tx.ExecContext(ctx, `DROP TABLE `+name); err != nil {
 		return fmt.Errorf("drop legacy %s: %w", name, err)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE VIRTUAL TABLE %s USING vec0(

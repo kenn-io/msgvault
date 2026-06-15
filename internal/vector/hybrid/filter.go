@@ -28,10 +28,19 @@ import (
 // Caller is responsible for any additional filter fields that do not
 // derive from the query string (e.g. a SourceID coming from an HTTP
 // account parameter) — just set them on the returned Filter.
-func BuildFilter(ctx context.Context, db *sql.DB, q *search.Query) (vector.Filter, error) {
+//
+// rebind converts the ? placeholders in the participant/label lookup
+// SQL to the driver's native form. Pass the dialect's Rebind on
+// PostgreSQL (so ? becomes $N — pgx rejects bare ?); pass nil (or
+// SQLiteDialect.Rebind, which is identity) on SQLite to leave the
+// queries unchanged.
+func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q *search.Query) (vector.Filter, error) {
 	var f vector.Filter
 	if q == nil {
 		return f, nil
+	}
+	if rebind == nil {
+		rebind = identityRebind
 	}
 
 	groupFilters := []struct {
@@ -47,7 +56,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, q *search.Query) (vector.Filte
 		if len(gf.addrs) == 0 {
 			continue
 		}
-		groups, err := resolveAddressGroups(ctx, db, gf.addrs)
+		groups, err := resolveAddressGroups(ctx, db, rebind, gf.addrs)
 		if err != nil {
 			return f, err
 		}
@@ -55,7 +64,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, q *search.Query) (vector.Filte
 	}
 
 	if len(q.Labels) > 0 {
-		groups, err := resolveLabelGroups(ctx, db, q.Labels)
+		groups, err := resolveLabelGroups(ctx, db, rebind, q.Labels)
 		if err != nil {
 			return f, err
 		}
@@ -93,10 +102,10 @@ func BuildFilter(ctx context.Context, db *sql.DB, q *search.Query) (vector.Filte
 // group, which makes the per-group EXISTS check fail and returns zero
 // hits overall — preserving the SQLite path's "any unknown token
 // poisons the whole field" semantic.
-func resolveAddressGroups(ctx context.Context, db *sql.DB, addrs []string) ([][]int64, error) {
+func resolveAddressGroups(ctx context.Context, db *sql.DB, rebind func(string) string, addrs []string) ([][]int64, error) {
 	groups := make([][]int64, 0, len(addrs))
 	for _, a := range addrs {
-		ids, err := resolveParticipantIDs(ctx, db, []string{a})
+		ids, err := resolveParticipantIDs(ctx, db, rebind, []string{a})
 		if err != nil {
 			return nil, err
 		}
@@ -110,10 +119,10 @@ func resolveAddressGroups(ctx context.Context, db *sql.DB, addrs []string) ([][]
 
 // resolveLabelGroups is the label-side counterpart of
 // resolveAddressGroups.
-func resolveLabelGroups(ctx context.Context, db *sql.DB, labels []string) ([][]int64, error) {
+func resolveLabelGroups(ctx context.Context, db *sql.DB, rebind func(string) string, labels []string) ([][]int64, error) {
 	groups := make([][]int64, 0, len(labels))
 	for _, l := range labels {
-		ids, err := resolveLabelIDs(ctx, db, []string{l})
+		ids, err := resolveLabelIDs(ctx, db, rebind, []string{l})
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +138,7 @@ func resolveLabelGroups(ctx context.Context, db *sql.DB, labels []string) ([][]i
 // contains any of the supplied tokens as a substring. Mirrors the
 // `from:` / `to:` behavior in internal/store/api.go so vector/hybrid
 // search agrees with the FTS path.
-func resolveParticipantIDs(ctx context.Context, db *sql.DB, addrs []string) ([]int64, error) {
+func resolveParticipantIDs(ctx context.Context, db *sql.DB, rebind func(string) string, addrs []string) ([]int64, error) {
 	if len(addrs) == 0 {
 		return nil, nil
 	}
@@ -139,7 +148,7 @@ func resolveParticipantIDs(ctx context.Context, db *sql.DB, addrs []string) ([]i
 		parts = append(parts, `LOWER(email_address) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(a))+"%")
 	}
-	q := "SELECT id FROM participants WHERE " + strings.Join(parts, " OR ")
+	q := rebind("SELECT id FROM participants WHERE " + strings.Join(parts, " OR "))
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query participants: %w", err)
@@ -164,7 +173,7 @@ func resolveParticipantIDs(ctx context.Context, db *sql.DB, addrs []string) ([]i
 // `label:` behavior in internal/store/api.go (LOWER(l.name) LIKE
 // '%token%' ESCAPE '\') so vector/hybrid search agrees with the FTS
 // path on which label matches a user-supplied token.
-func resolveLabelIDs(ctx context.Context, db *sql.DB, labels []string) ([]int64, error) {
+func resolveLabelIDs(ctx context.Context, db *sql.DB, rebind func(string) string, labels []string) ([]int64, error) {
 	if len(labels) == 0 {
 		return nil, nil
 	}
@@ -174,7 +183,7 @@ func resolveLabelIDs(ctx context.Context, db *sql.DB, labels []string) ([]int64,
 		parts = append(parts, `LOWER(name) LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(l))+"%")
 	}
-	q := "SELECT id FROM labels WHERE " + strings.Join(parts, " OR ")
+	q := rebind("SELECT id FROM labels WHERE " + strings.Join(parts, " OR "))
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query labels: %w", err)
@@ -201,6 +210,11 @@ func resolveLabelIDs(ctx context.Context, db *sql.DB, labels []string) ([]int64,
 // backend IN (...) check returns zero rows instead of degrading
 // back to "unrestricted".
 const noMatchSentinel int64 = -1
+
+// identityRebind leaves a query unchanged. Used as the SQLite default
+// when BuildFilter is called with a nil rebind (SQLite's ? placeholders
+// are already native, so no rewrite is needed).
+func identityRebind(q string) string { return q }
 
 // escapeLike escapes SQL LIKE special characters (%, _, \) so they
 // are matched literally. Used with ESCAPE '\'. Mirrors escapeLike in

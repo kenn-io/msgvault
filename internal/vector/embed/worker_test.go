@@ -4,6 +4,8 @@ package embed
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,6 +14,8 @@ import (
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestDerivedStaleThreshold(t *testing.T) {
@@ -58,10 +62,7 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 	// MaxInputChars=80 with the worker's overlap heuristic. Any value
 	// well above BatchSize would do; 12 is comfortably enough to
 	// exercise multiple sub-batches.
-	var body string
-	for i := 0; i < 40; i++ {
-		body += "lorem ipsum dolor sit amet consectetur adipiscing elit. "
-	}
+	body := strings.Repeat("lorem ipsum dolor sit amet consectetur adipiscing elit. ", 40)
 	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
 	require.NoError(err, "update body")
 
@@ -277,13 +278,10 @@ func TestWorker_FansOutLongMessageIntoMultipleChunks(t *testing.T) {
 	// Replace the seeded message's body with one long enough to need
 	// multiple chunks at MaxInputChars=200. Each "paragraph" is ~150
 	// chars; six paragraphs ≈ 900 chars → at least 4 chunks.
-	body := ""
-	for i := 0; i < 6; i++ {
-		body += "lorem ipsum dolor sit amet consectetur adipiscing elit. " +
-			"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. " +
-			"ut enim ad minim veniam quis nostrud exercitation. " +
-			"\n\n"
-	}
+	body := strings.Repeat("lorem ipsum dolor sit amet consectetur adipiscing elit. "+
+		"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. "+
+		"ut enim ad minim veniam quis nostrud exercitation. "+
+		"\n\n", 6)
 	_, err := f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, body)
 	require.NoError(err, "update body")
 
@@ -450,7 +448,7 @@ func TestWorker_ReclaimStale_FromStartup(t *testing.T) {
 	})
 
 	// Simulate a crashed worker: claim 2 rows, then back-date the claim.
-	q := NewQueue(f.VectorsDB)
+	q := NewQueue(f.VectorsDB, nil)
 	ids, _, err := q.Claim(ctx, f.BuildingGen, 2)
 	require.NoError(err, "Claim setup")
 	require.Len(ids, 2)
@@ -750,8 +748,8 @@ func TestWorker_OrphanCompleteFailureDoesNotStrandValidWork(t *testing.T) {
 
 	res, err := w.RunOnce(ctx, f.BuildingGen)
 	require.Error(err, "want non-nil error (orphan drain failed and orphan remained stuck)")
-	assert.ErrorContains(err, "orphan-drain")
-	assert.ErrorContains(err, "ReclaimStale", "user knows recovery is automatic")
+	require.ErrorContains(err, "orphan-drain")
+	require.ErrorContains(err, "ReclaimStale", "user knows recovery is automatic")
 	assert.Equal(1, res.Succeeded, "the valid message must be counted as completed")
 	assert.NotZero(res.Failed, "orphan drain failure should be reported")
 	require.NotEmpty(reports, "expected progress for valid embedded row even though orphan drain failed")
@@ -929,7 +927,7 @@ func TestWorker_ProgressCalledPerSuccessfulBatch(t *testing.T) {
 		assert.Equalf(wantDone[i], p.Done, "report[%d].Done", i)
 		assert.Equalf(wantBatchMsgs[i], p.BatchMsgs, "report[%d].BatchMsgs", i)
 		assert.Equalf(5, p.TotalPending, "report[%d].TotalPending", i)
-		assert.Greaterf(p.BatchChars, 0, "report[%d].BatchChars (non-empty fixture bodies)", i)
+		assert.Positivef(p.BatchChars, "report[%d].BatchChars (non-empty fixture bodies)", i)
 		assert.GreaterOrEqualf(p.BatchElapsed, time.Duration(0), "report[%d].BatchElapsed", i)
 		assert.GreaterOrEqualf(p.RunElapsed, p.BatchElapsed,
 			"report[%d].RunElapsed=%s < BatchElapsed=%s", i, p.RunElapsed, p.BatchElapsed)
@@ -1056,7 +1054,7 @@ func TestWorker_DownshiftDrain_AllDrop_StillTripsCap(t *testing.T) {
 	})
 	_, err := w.RunOnce(context.Background(), f.BuildingGen)
 	requirepkg.Error(t, err, "expected abort error")
-	assertpkg.ErrorContains(t, err, "consecutive failures")
+	requirepkg.ErrorContains(t, err, "consecutive failures")
 	assertpkg.ErrorContains(t, err, "misconfigured", "expected original 4xx body in error")
 }
 
@@ -1093,8 +1091,8 @@ func TestWorker_DownshiftDrain_AllDropClean_NoSilentDelete(t *testing.T) {
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
 	requirepkg.Error(t, err, "expected cap-trip error on misconfigured endpoint")
 	assert.Equal(0, res.Succeeded, "no embeds during all-drop")
-	assert.ErrorContains(err, "consecutive failures", "expected cap-trip error")
-	assert.ErrorContains(err, "bad-api-key", "expected original 4xx body in error")
+	requirepkg.ErrorContains(t, err, "consecutive failures", "expected cap-trip error")
+	requirepkg.ErrorContains(t, err, "bad-api-key", "expected original 4xx body in error")
 	// Critical: rows must NOT have been silently deleted. They
 	// should still be in pending_embeddings (released back, not
 	// Completed) so a corrected config can re-claim them on the
@@ -1126,7 +1124,7 @@ func TestWorker_SingletonBatch_4xx_NoSilentDelete(t *testing.T) {
 	})
 	_, err := w.RunOnce(context.Background(), f.BuildingGen)
 	requirepkg.Error(t, err, "expected abort after cap")
-	assertpkg.ErrorContains(t, err, "consecutive failures")
+	requirepkg.ErrorContains(t, err, "consecutive failures")
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 1)
 }
 
@@ -1163,6 +1161,373 @@ func TestWorker_DownshiftDrain_CtxCancelMidDrain(t *testing.T) {
 	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 2)
 }
 
+// embedRunRow captures the embed_runs lifecycle columns for assertions.
+type embedRunRow struct {
+	startedAt int64
+	endedAt   sql.NullInt64
+	claimed   int64
+	succeeded int64
+	failed    int64
+	errText   sql.NullString
+}
+
+// readSingleEmbedRun returns the sole embed_runs row for gen, requiring
+// exactly one to exist.
+func readSingleEmbedRun(t *testing.T, db *sql.DB, gen int64) embedRunRow {
+	t.Helper()
+	var n int
+	requirepkg.NoError(t,
+		db.QueryRow(`SELECT COUNT(*) FROM embed_runs WHERE generation_id = ?`, gen).Scan(&n),
+		"count embed_runs")
+	requirepkg.Equal(t, 1, n, "exactly one embed_runs row must be opened per RunOnce")
+	var r embedRunRow
+	requirepkg.NoError(t,
+		db.QueryRow(`SELECT started_at, ended_at, claimed, succeeded, failed, error
+		               FROM embed_runs WHERE generation_id = ?`, gen).
+			Scan(&r.startedAt, &r.endedAt, &r.claimed, &r.succeeded, &r.failed, &r.errText),
+		"read embed_runs row")
+	return r
+}
+
+// TestWorker_EmbedRun_LifecycleHappyPath asserts that a successful RunOnce
+// opens exactly one embed_runs row and stamps it on exit: started_at set,
+// ended_at non-NULL, error NULL, and counters matching the result.
+func TestWorker_EmbedRun_LifecycleHappyPath(t *testing.T) {
+	f := newWorkerFixture(t, 3)
+	w := NewWorker(WorkerDeps{
+		Backend:   f.Backend,
+		VectorsDB: f.VectorsDB,
+		MainDB:    f.MainDB,
+		Client:    f.FakeClient,
+		BatchSize: 3,
+	})
+	res, err := w.RunOnce(context.Background(), f.BuildingGen)
+	requirepkg.NoError(t, err, "RunOnce")
+
+	r := readSingleEmbedRun(t, f.VectorsDB, int64(f.BuildingGen))
+	assertpkg.Positive(t, r.startedAt, "started_at must be stamped")
+	assertpkg.True(t, r.endedAt.Valid, "ended_at must be stamped on clean exit")
+	assertpkg.False(t, r.errText.Valid, "error must be NULL on success")
+	assertpkg.Equal(t, int64(res.Succeeded), r.succeeded, "succeeded counter")
+	assertpkg.Equal(t, int64(3), r.succeeded, "all three messages embedded")
+}
+
+// TestWorker_EmbedRun_FinalizedOnCancellation pins embed-queue-concurrency-1:
+// even when RunOnce exits because ctx was cancelled mid-drain, the
+// embed_runs row must be finalized (ended_at set, error populated) rather
+// than left open forever. This FAILS against the pre-fix code that ran the
+// finalize UPDATE on the already-cancelled ctx, and PASSES once finalize
+// runs on a detached context.
+func TestWorker_EmbedRun_FinalizedOnCancellation(t *testing.T) {
+	f := newWorkerFixture(t, 3)
+	ctx, cancel := context.WithCancel(context.Background())
+	var singletonCalls int
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			return nil, fmt.Errorf("embed: HTTP 400: %w", ErrPermanent4xx)
+		}
+		singletonCalls++
+		if singletonCalls == 2 {
+			cancel()
+			return nil, context.Canceled
+		}
+		v := make([]float32, 4)
+		v[0] = 1
+		return [][]float32{v}, nil
+	}
+	w := NewWorker(WorkerDeps{
+		Backend:   f.Backend,
+		VectorsDB: f.VectorsDB,
+		MainDB:    f.MainDB,
+		Client:    f.FakeClient,
+		BatchSize: 3,
+	})
+	_, err := w.RunOnce(ctx, f.BuildingGen)
+	requirepkg.ErrorIs(t, err, context.Canceled)
+
+	r := readSingleEmbedRun(t, f.VectorsDB, int64(f.BuildingGen))
+	assertpkg.True(t, r.endedAt.Valid,
+		"ended_at must be stamped even when RunOnce exits via cancellation")
+	assertpkg.True(t, r.errText.Valid,
+		"error must record the cancellation cause, not be left NULL")
+}
+
+// retiredUpsertBackend wraps a real vector.Backend but forces every
+// Upsert to return vector.ErrGenerationRetired, simulating a generation
+// that was retired out from under a stale worker mid-run. All other
+// methods delegate to the embedded backend.
+type retiredUpsertBackend struct {
+	vector.Backend
+}
+
+func (b retiredUpsertBackend) Upsert(_ context.Context, gen vector.GenerationID, _ []vector.Chunk) error {
+	return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
+}
+
+// TestWorker_RetiredGenerationDrainsWithoutHardError pins
+// concurrency-locks-1/2: when Backend.Upsert returns
+// vector.ErrGenerationRetired, the worker must treat it as a benign
+// "drop the batch" signal — NOT a hard failure. RunOnce must return nil,
+// the queue must fully drain (the retired rows are token-dropped via
+// Complete), and the embedding client must be invoked at most once per
+// batch (no re-embed loop burning API cost up to MaxConsecutiveFailures).
+//
+// Revert-proof: without the ErrGenerationRetired guards in RunOnce's
+// Upsert path, the worker would Release the rows, re-Claim them, and
+// re-embed identically until MaxConsecutiveFailures, then return a
+// spurious "embed worker aborting" error — failing both the nil-error
+// and the embed-call-count assertions.
+func TestWorker_RetiredGenerationDrainsWithoutHardError(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 3)
+
+	var embedCalls int
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		embedCalls++
+		out := make([][]float32, len(inputs))
+		for i := range inputs {
+			v := make([]float32, 4)
+			v[0] = 1
+			out[i] = v
+		}
+		return out, nil
+	}
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              1, // one message per batch → at most one embed call each
+		MaxConsecutiveFailures: 5,
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce must return nil for a retired generation (benign drop)")
+	assert.Equal(0, res.Failed, "retired-generation drop must not count as a failure")
+	assert.Equal(0, res.Succeeded, "nothing was actually embedded (rows dropped)")
+
+	// Queue fully drained: every retired row was token-dropped via Complete.
+	assert.Equal(0, countAvailable(t, f.VectorsDB, int64(f.BuildingGen)), "available after drain")
+	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
+
+	// At most one embed call per batch (3 messages, BatchSize=1 → exactly 3).
+	// Without the guard the worker would re-embed each row up to
+	// MaxConsecutiveFailures times before aborting.
+	assert.LessOrEqualf(embedCalls, 3, "embed client invoked %d times; expected <= 1 per batch (no re-embed loop)", embedCalls)
+}
+
+// TestWorker_RetiredGenerationDrainsViaDownshift covers the downshift
+// drain arm of concurrency-locks-2: a multi-message batch trips
+// ErrPermanent4xx (forcing the singleton downshift), each singleton then
+// embeds fine but Upsert returns ErrGenerationRetired. The drain must
+// treat the retired generation as a benign drop (token-drop + continue)
+// rather than wrapping it into a non-4xx error that hard-aborts RunOnce.
+func TestWorker_RetiredGenerationDrainsViaDownshift(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 3)
+
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			// Force the downshift to BatchSize=1.
+			return nil, fmt.Errorf("embed: HTTP 400: too long: %w", ErrPermanent4xx)
+		}
+		v := make([]float32, 4)
+		v[0] = 1
+		return [][]float32{v}, nil
+	}
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              3, // multi-message batch → 4xx → downshift
+		MaxConsecutiveFailures: 5,
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce must return nil when the generation is retired mid-drain")
+	assert.Equal(0, res.Succeeded, "nothing durably embedded (rows dropped)")
+	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
+}
+
+// TestWorker_RetiredGeneration_DrainsFullClaimedBatch pins cr2-5: the
+// main-batch ErrGenerationRetired arm must Complete the FULL claimed batch
+// (embedded + missing + empty), not just the embedded subset. Here a batch of
+// two is claimed; msg 2 was deleted from the main DB so it reaches embedBatch
+// as "missing". msg 1 embeds, but Upsert reports the generation retired, so
+// the whole batch must be benignly dropped. Before the fix only msg 1 was
+// Completed, stranding msg 2 claimed until ReclaimStale and permanently
+// inflating PendingCount.
+//
+// Revert-proof: dropping the full-batch Complete back to eb.embeddedIDs makes
+// assertPending(...,0) fail with one stranded row for the missing message.
+func TestWorker_RetiredGeneration_DrainsFullClaimedBatch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 2)
+
+	const missingID = 2
+	_, err := f.MainDB.ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, missingID)
+	require.NoError(err, "delete missing from main")
+	_, err = f.MainDB.ExecContext(ctx, `DELETE FROM message_bodies WHERE message_id = ?`, missingID)
+	require.NoError(err, "delete missing body")
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              2, // both rows claimed in one batch
+		MaxConsecutiveFailures: 5,
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce must return nil for a retired generation (benign drop)")
+	assert.Equal(0, res.Failed, "retired drop must not count as a failure")
+	// The full claimed batch (embedded msg 1 + missing msg 2) must be drained.
+	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
+	assert.Equal(0, countAvailable(t, f.VectorsDB, int64(f.BuildingGen)), "no rows left claimed or available")
+}
+
+// TestWorker_RetiredDownshift_MixedWith4xxDropsCleanly pins cr2-7. A batch of
+// three trips ErrPermanent4xx (forcing the singleton downshift). In the
+// drain, msg 1 keeps returning 4xx (deferred), while msg 2 and msg 3 embed
+// fine but their Upsert reports the generation retired. The drain therefore
+// ends with embedded==0 and a non-empty deferredDrops set. The retiredObserved
+// flag must make the worker token-DROP the deferred 4xx row and return nil —
+// NOT take the embedded==0 all-drop Release path (which would orphan the row
+// for a generation no future run re-claims, then re-embed/hard-abort).
+//
+// Revert-proof: removing the retiredObserved branch makes downshiftDrain take
+// the embedded==0 Release+ErrPermanent4xx path; RunOnce then re-claims and
+// re-embeds the released row each loop until MaxConsecutiveFailures, returning
+// a non-nil "consecutive failures" abort and leaving the row in
+// pending_embeddings — failing the nil-error, res.Failed==0, and
+// assertPending(...,0) assertions below.
+func TestWorker_RetiredDownshift_MixedWith4xxDropsCleanly(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 3)
+
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			// Force the downshift to BatchSize=1.
+			return nil, fmt.Errorf("embed: HTTP 400: batch: %w", ErrPermanent4xx)
+		}
+		// Singleton for msg 1 keeps returning 4xx → deferred drop candidate.
+		if strings.Contains(inputs[0], "msg 1") {
+			return nil, fmt.Errorf("embed: HTTP 400: msg-specific: %w", ErrPermanent4xx)
+		}
+		// msg 2 / msg 3 embed fine; their Upsert will report retired.
+		v := make([]float32, 4)
+		v[0] = 1
+		return [][]float32{v}, nil
+	}
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              3, // multi-message batch → 4xx → downshift
+		MaxConsecutiveFailures: 5,
+	})
+
+	res, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "RunOnce must return nil: retirement is benign, deferred 4xx row is dropped not released")
+	assert.Equal(0, res.Failed, "retired-generation drain must not count failures")
+	assert.Equal(0, res.Succeeded, "nothing durably embedded (all rows dropped)")
+	// No orphaned rows: the deferred 4xx singleton was token-DROPPED, not
+	// released back to the queue for a generation no future run re-claims.
+	assertPending(t, f.VectorsDB, int64(f.BuildingGen), 0)
+}
+
+// TestWorker_RetiredDrainCompleteFailure_Surfaces pins cr2-6 for the main-loop
+// retired arm: when the retired-gen drop's Complete DELETE fails at the DB
+// level and those are the last queue rows, RunOnce must NOT report a clean
+// (nil) run. The failure is routed through the same orphan-drain surfacing
+// channel so the empty-claim exit returns a non-nil error referencing
+// ReclaimStale, rather than swallowing it with a log line.
+func TestWorker_RetiredDrainCompleteFailure_Surfaces(t *testing.T) {
+	require := requirepkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 1)
+
+	_, err := f.VectorsDB.ExecContext(ctx, `
+        CREATE TRIGGER block_pending_delete_retired
+        BEFORE DELETE ON pending_embeddings
+        BEGIN
+            SELECT RAISE(FAIL, 'simulated complete failure during retired drop');
+        END`)
+	require.NoError(err, "install trigger")
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              1,
+		MaxConsecutiveFailures: 5,
+	})
+
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	require.Error(err, "Complete failure during retired drop must be surfaced, not swallowed")
+	require.ErrorContains(err, "ReclaimStale", "caller must learn recovery is automatic")
+	// The row stays claimed (the trigger blocked the DELETE).
+	var claimed int
+	require.NoError(f.VectorsDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND claim_token IS NOT NULL`,
+		int64(f.BuildingGen)).Scan(&claimed), "count claimed")
+	require.Equal(1, claimed, "retired-drop Complete failure leaves the row claimed")
+}
+
+// TestWorker_RetiredDownshiftCompleteFailure_Surfaces pins cr2-6 for the
+// downshift retired arm: a Complete failure while dropping a retired-gen
+// singleton in downshiftDrain must surface from RunOnce (non-nil error)
+// rather than being logged and lost.
+func TestWorker_RetiredDownshiftCompleteFailure_Surfaces(t *testing.T) {
+	require := requirepkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 2)
+
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		if len(inputs) > 1 {
+			return nil, fmt.Errorf("embed: HTTP 400: batch: %w", ErrPermanent4xx)
+		}
+		v := make([]float32, 4)
+		v[0] = 1
+		return [][]float32{v}, nil
+	}
+
+	_, err := f.VectorsDB.ExecContext(ctx, `
+        CREATE TRIGGER block_pending_delete_downshift
+        BEFORE DELETE ON pending_embeddings
+        BEGIN
+            SELECT RAISE(FAIL, 'simulated complete failure during downshift retired drop');
+        END`)
+	require.NoError(err, "install trigger")
+
+	w := NewWorker(WorkerDeps{
+		Backend:                retiredUpsertBackend{Backend: f.Backend},
+		VectorsDB:              f.VectorsDB,
+		MainDB:                 f.MainDB,
+		Client:                 f.FakeClient,
+		BatchSize:              2, // multi-message → 4xx → downshift, then retired Upsert
+		MaxConsecutiveFailures: 5,
+	})
+
+	_, err = w.RunOnce(ctx, f.BuildingGen)
+	require.Error(err, "downshift retired-drop Complete failure must surface from RunOnce")
+}
+
 func TestWorker_DownshiftDrain_TransientErrorReleasesRemainingAndErrors(t *testing.T) {
 	require := requirepkg.New(t)
 	f := newWorkerFixture(t, 3)
@@ -1173,7 +1538,7 @@ func TestWorker_DownshiftDrain_TransientErrorReleasesRemainingAndErrors(t *testi
 		}
 		singletonCalls++
 		if singletonCalls == 2 {
-			return nil, fmt.Errorf("temporary network failure")
+			return nil, errors.New("temporary network failure")
 		}
 		v := make([]float32, 4)
 		v[0] = 1

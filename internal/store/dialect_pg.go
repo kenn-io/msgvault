@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
@@ -84,20 +86,97 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 	return " ON CONFLICT DO NOTHING"
 }
 
+// maxFTSBodyChars bounds the message-body text fed to to_tsvector. PostgreSQL
+// imposes a hard 1MB (1048575 bytes) limit on a single tsvector value and
+// errors with SQLSTATE 54000 ("string is too long for tsvector") when a
+// document exceeds it.
+//
+// IMPORTANT — this is a HEURISTIC, not a guarantee. PostgreSQL's tsvector limit
+// is on the packed lexeme+position bytes, NOT on the character count of the
+// input. A character cap therefore CANNOT bound the resulting tsvector size for
+// adversarial or multibyte input: a body of ~600000 distinct 2-byte multibyte
+// tokens packs ~1.2MB of lexeme bytes and still trips SQLSTATE 54000 (verified
+// empirically). The 600000-char cap makes the error unlikely for typical
+// (mostly-ASCII, repetitive) bodies, but does not make it impossible.
+//
+// A residual SQLSTATE 54000 is handled GRACEFULLY rather than wedging FTS:
+//   - Sync path (FTSUpsert): ALL FIVE tsvector inputs (subject, body, from, to,
+//     cc) are additionally byte-truncated in Go to maxFTSBodyBytes BEFORE
+//     binding (see below) — the SQL LEFT char cap cannot bound multibyte input,
+//     so byte-truncating every field (not just the body) is what keeps a
+//     multibyte subject/recipient list from tripping the limit. Any UpsertFTS
+//     error is warn-only at the call site — the message still persists with
+//     search_fts left NULL.
+//   - Backfill path (FTSBackfillBatchSQL): the body lives in the DB, so only
+//     the LEFT char cap applies; backfillFTSRowByRow skips the offending row
+//     (with a logged warning) and continues, so one pathological row never
+//     aborts BackfillFTS or wedges later batches.
+//
+// SQLite's FTS5 has no such limit, so this cap is PostgreSQL-only.
+const maxFTSBodyChars = 600000
+
+// maxFTSBodyBytes is the BYTE bound applied to EACH tsvector input field
+// (subject, body, from, to, cc) on the sync path (FTSUpsert) as defense-in-
+// depth, in addition to the SQL LEFT char cap. It is
+// well under PostgreSQL's 1MB (1048575-byte) tsvector limit: for the worst-case
+// shape — a body of all-distinct multibyte tokens, where the packed tsvector
+// (lexeme bytes + per-position overhead) is roughly the same order as the input
+// byte length — bounding the input to 700000 bytes keeps the resulting tsvector
+// under the limit with comfortable margin. (The empirical overflow was ~600000
+// distinct 2-byte chars producing a 1.2MB tsvector; 700000 input bytes of that
+// same density stays below 1MB.) Truncation is rune-safe (never splits a
+// multibyte rune). A UTF-8-safe byte truncation is not cleanly available in SQL
+// (no convert_to/convert_from boundary hack is attempted), so the backfill SQL
+// path keeps the char cap and relies on the row-by-row skip for any residual.
+const maxFTSBodyBytes = 700000
+
+// truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
+// without splitting a multibyte UTF-8 rune. If s already fits it is returned
+// unchanged.
+func truncateBytesRuneSafe(s string) string {
+	if len(s) <= maxFTSBodyBytes {
+		return s
+	}
+	// Walk back from maxFTSBodyBytes to the start of the rune that straddles
+	// the boundary so we never emit a partial rune.
+	cut := maxFTSBodyBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
 // FTSUpsert updates the tsvector column on messages for a single message.
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
 // is no separate virtual table — the operation is an UPDATE, not an INSERT.
+//
+// ALL FIVE tsvector inputs (subject, body, from, to, cc) are bounded twice on
+// this sync path: byte-truncated to maxFTSBodyBytes in Go here (rune-safe,
+// robust against multibyte input that the SQL char cap cannot bound) and
+// additionally LEFT-capped to maxFTSBodyChars in SQL. The SQL LEFT char cap
+// cannot bound multibyte input, so a multibyte subject/recipient list could
+// otherwise still trip SQLSTATE 54000 and leave search_fts NULL — the Go
+// byte-truncation closes that gap for every field, not just the body. A
+// residual 54000 is still possible only for pathologically dense input;
+// callers treat the returned error as warn-only on the sync path (search_fts
+// stays NULL), so a bad input can never wedge FTS.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
+	subject := truncateBytesRuneSafe(doc.Subject)
+	body := truncateBytesRuneSafe(doc.Body)
+	fromAddr := truncateBytesRuneSafe(doc.FromAddr)
+	toAddrs := truncateBytesRuneSafe(doc.ToAddrs)
+	ccAddrs := truncateBytesRuneSafe(doc.CcAddrs)
+	charCap := strconv.Itoa(maxFTSBodyChars)
 	_, err := q.Exec(
 		`UPDATE messages SET search_fts =
-			setweight(to_tsvector('simple', COALESCE($2, '')), 'A') ||
-			setweight(to_tsvector('simple', COALESCE($4, '')), 'B') ||
-			to_tsvector('simple', COALESCE($3, '')) ||
-			to_tsvector('simple', COALESCE($5, '')) ||
-			to_tsvector('simple', COALESCE($6, ''))
+			setweight(to_tsvector('simple', LEFT(COALESCE($2, ''), `+charCap+`)), 'A') ||
+			setweight(to_tsvector('simple', LEFT(COALESCE($4, ''), `+charCap+`)), 'B') ||
+			to_tsvector('simple', LEFT(COALESCE($3, ''), `+charCap+`)) ||
+			to_tsvector('simple', LEFT(COALESCE($5, ''), `+charCap+`)) ||
+			to_tsvector('simple', LEFT(COALESCE($6, ''), `+charCap+`))
 		WHERE id = $1`,
-		doc.MessageID, doc.Subject, doc.Body,
-		doc.FromAddr, doc.ToAddrs, doc.CcAddrs,
+		doc.MessageID, subject, body,
+		fromAddr, toAddrs, ccAddrs,
 	)
 	return err
 }
@@ -125,18 +204,19 @@ func (d *PostgreSQLDialect) FTSDeleteSQL() string {
 // Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
 // so messages without a body row are still indexed (subject + participants).
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
+	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', COALESCE(m.subject, '')), 'A') ||
-		to_tsvector('simple', COALESCE(src.body_text, '')) ||
-		setweight(to_tsvector('simple', COALESCE(
+		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
+		to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)) ||
+		setweight(to_tsvector('simple', LEFT(COALESCE(
 			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
 			END,
 			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
 			''
-		)), 'B') ||
-		to_tsvector('simple', COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), '')) ||
-		to_tsvector('simple', COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''))
+		), ` + charCap + `)), 'B') ||
+		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)) ||
+		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `))
 	FROM (
 		SELECT m2.id, mb.body_text
 		FROM messages m2
@@ -155,18 +235,23 @@ func (d *PostgreSQLDialect) FTSAvailable(db *sql.DB) bool {
 }
 
 // FTSNeedsBackfill reports whether the tsvector column needs population.
-// Counts NULL search_fts rows directly so an interrupted backfill that
-// leaves a low-id row NULL (and later inserts continue normally) still
-// flags the gap — the previous max-vs-max comparison missed that case.
-// Costs one indexable WHERE COUNT(*) per startup probe.
+// Probes for the existence of any NULL search_fts row so an interrupted
+// backfill that leaves a low-id row NULL (and later inserts continue normally)
+// still flags the gap — the previous max-vs-max comparison missed that case.
+//
+// Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
+// `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message
+// on each startup. EXISTS short-circuits at the first NULL row. The partial
+// btree index idx_messages_search_fts_null (created by EnsureFTSIndex) makes
+// even the false case index-served and self-pruning as backfill completes.
 func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
-	var nullCount int64
+	var exists bool
 	if err := db.QueryRow(
-		"SELECT COUNT(*) FROM messages WHERE search_fts IS NULL",
-	).Scan(&nullCount); err != nil {
+		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL)",
+	).Scan(&exists); err != nil {
 		return false
 	}
-	return nullCount > 0
+	return exists
 }
 
 // FTSClearSQL returns the SQL to clear all tsvector data.
@@ -185,14 +270,20 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // CREATE INDEX pair is the PG analogue of SQLite's DROP-and-recreate
 // of the messages_fts virtual table; it covers a malformed index just
 // as the SQLite path covers a malformed shadow table.
-func (d *PostgreSQLDialect) FTSRebuildSchema(db *sql.DB) error {
-	if _, err := db.Exec("DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
+//
+// Runs on the querier so RebuildFTS can route it through the maintenance
+// transaction: the full-table `UPDATE messages SET search_fts = NULL` here
+// has the same cost as FTSClearSQL (which is already hatched), and the GIN
+// rebuild over a populated table can likewise exceed the pool-wide 30s
+// statement_timeout on a large archive (finding S1).
+func (d *PostgreSQLDialect) FTSRebuildSchema(q querier) error {
+	if _, err := q.Exec("DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := db.Exec("UPDATE messages SET search_fts = NULL"); err != nil {
+	if _, err := q.Exec("UPDATE messages SET search_fts = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
-	if _, err := db.Exec(
+	if _, err := q.Exec(
 		"CREATE INDEX IF NOT EXISTS messages_search_fts_idx ON messages USING GIN (search_fts)",
 	); err != nil {
 		return fmt.Errorf("create messages_search_fts_idx: %w", err)
@@ -223,7 +314,37 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delete_batch_id TEXT`, "delete_batch_id"},
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title TEXT`, "title"},
 		{`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
+		// FTS tsvector column for legacy PG databases created before FTS
+		// support. Inline in schema_pg.sql's CREATE TABLE (a no-op on a
+		// pre-existing table), so without this an upgraded DB never gets the
+		// column and FTS stays unavailable. Its GIN index is created
+		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
 	}
+}
+
+// EnsureFTSIndex creates the GIN index on messages.search_fts idempotently.
+// It runs after LegacyColumnMigrations (which adds search_fts on legacy DBs),
+// so the column is guaranteed present. The index is intentionally NOT in
+// schema_pg.sql: that file is Exec'd as one statement before migrations, and
+// a legacy table missing the column would fail the index there and roll back
+// the entire schema apply (cr2-10).
+func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
+	if _, err := q.Exec(
+		"CREATE INDEX IF NOT EXISTS messages_search_fts_idx ON messages USING GIN (search_fts)",
+	); err != nil {
+		return fmt.Errorf("create messages_search_fts_idx: %w", err)
+	}
+	// Partial btree index that serves the FTSNeedsBackfill probe (a GIN index
+	// on search_fts cannot answer an IS NULL predicate). It only indexes the
+	// rows still awaiting backfill, so it self-prunes to empty as backfill
+	// completes and stays tiny thereafter.
+	if _, err := q.Exec(
+		"CREATE INDEX IF NOT EXISTS idx_messages_search_fts_null ON messages (id) WHERE search_fts IS NULL",
+	); err != nil {
+		return fmt.Errorf("create idx_messages_search_fts_null: %w", err)
+	}
+	return nil
 }
 
 // DatabaseSize queries pg_database_size() for the current database.
@@ -280,12 +401,57 @@ func (d *PostgreSQLDialect) IsNoSuchModuleError(err error) bool { return false }
 // IsReturningError always returns false for PostgreSQL (RETURNING always supported).
 func (d *PostgreSQLDialect) IsReturningError(err error) bool { return false }
 
-// IsBusyError reports whether err indicates the database is held by another
-// connection. PostgreSQL surfaces this as SQLSTATE 55P03 (lock_not_available)
-// for statement_timeout-triggered lock waits and 40P01 (deadlock_detected)
-// for deadlocks; both mean "retry later.".
+// IsBusyError reports whether err indicates write contention that a bounded
+// retry loop should treat as "retry later". The SQLSTATEs covered:
+//
+//   - 55P03 (lock_not_available): a NOWAIT request (or lock_timeout) could not
+//     acquire a lock. We do not set lock_timeout here, so this fires for NOWAIT
+//     callers; included for completeness.
+//   - 40P01 (deadlock_detected): the deadlock detector aborted this transaction.
+//   - 57014 (query_canceled): raised when statement_timeout fires. Under
+//     contention a statement blocks on a lock until statement_timeout cancels
+//     it, so 57014 is the common contention symptom on PostgreSQL. 57014 is
+//     also raised by user/context cancellation; treating it as busy is
+//     acceptable because every busy-retry loop here is bounded, so a genuine
+//     cancel cannot spin indefinitely.
 func (d *PostgreSQLDialect) IsBusyError(err error) bool {
-	return isPgError(err, "55P03") || isPgError(err, "40P01")
+	return isPgError(err, "55P03") || isPgError(err, "40P01") || isPgError(err, "57014")
+}
+
+// IsFTSValueTooLargeError reports whether err is PostgreSQL's
+// program_limit_exceeded (SQLSTATE 54000), which to_tsvector raises as
+// "string is too long for tsvector". This is the single FTS error the backfill
+// may skip-and-continue on; all other errors abort.
+func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
+	return isPgError(err, "54000")
+}
+
+// exclusiveLockTables is the table list BeginExclusive locks IN EXCLUSIVE
+// MODE. It mirrors every INSERT/UPDATE/DELETE the sync/import pipeline emits
+// (verified against internal/store/messages.go, internal/store/sync.go,
+// internal/store/account_identities.go, internal/store/migrations.go, and
+// internal/sync/*.go) PLUS every table reached by ON DELETE CASCADE when
+// RemoveSourceSerialized deletes a source.
+//
+// Invariant: every table with an ON DELETE CASCADE foreign-key chain to
+// sources(id) MUST appear here, otherwise the cascade DELETE can race a
+// concurrent writer to that table and reopen the very race the EXCLUSIVE
+// lock exists to close. TestExclusiveLockTablesCoverCascade pins this by
+// diffing the catalog against this list.
+//
+//   - source_import_items: written by UpsertSourceImportItem (internal/store/sync.go)
+//     and cascade-reachable from sources — a real race before it was added here.
+//   - sync_checkpoints: cascade-reachable from sources; no writer today, but
+//     included so a future checkpoint writer cannot race the cascade.
+//
+// collections is included (despite not being a direct sources cascade target)
+// so a concurrent collection rename cannot race the collection_sources cascade.
+var exclusiveLockTables = []string{
+	"sync_runs", "sources", "conversations", "conversation_participants",
+	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"attachments", "labels", "participants", "participant_identifiers", "reactions",
+	"collections", "collection_sources", "account_identities", "applied_migrations",
+	"source_import_items", "sync_checkpoints",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the
@@ -297,24 +463,23 @@ func (d *PostgreSQLDialect) IsBusyError(err error) bool {
 // lock that INSERT/UPDATE/DELETE acquire; ACCESS SHARE (reads) is still
 // permitted.
 //
-// The table list mirrors every INSERT/UPDATE/DELETE the sync/import
-// pipeline emits (verified against internal/store/messages.go,
-// internal/store/sync.go, internal/store/account_identities.go,
-// internal/store/migrations.go, and internal/sync/*.go) plus the
-// collection_sources / account_identities / applied_migrations rows
-// reached by ON DELETE CASCADE when RemoveSourceSerialized deletes a
-// source. collections is included so a concurrent collection rename
-// cannot race the cascade.
+// The locked set lives in exclusiveLockTables. A SET LOCAL
+// statement_timeout = 0 is issued first so a busy daemon's lock-wait
+// (and the cascade DELETE / FTSDelete that RemoveSourceSerialized runs on
+// this same connection afterwards) cannot be cancelled by the pool-wide
+// 30s statement_timeout on a large archive (finding S1). SET LOCAL
+// auto-resets at COMMIT/ROLLBACK, so it cannot leak to other pooled
+// connections.
 func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return err
 	}
+	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return err
+	}
 	if _, err := conn.ExecContext(ctx,
-		"LOCK TABLE sync_runs, sources, conversations, conversation_participants, "+
-			"messages, message_recipients, message_labels, message_bodies, message_raw, "+
-			"attachments, labels, participants, participant_identifiers, reactions, "+
-			"collections, collection_sources, account_identities, applied_migrations "+
-			"IN EXCLUSIVE MODE",
+		"LOCK TABLE "+strings.Join(exclusiveLockTables, ", ")+" IN EXCLUSIVE MODE",
 	); err != nil {
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		return err
@@ -329,6 +494,13 @@ func (d *PostgreSQLDialect) BeginWriteSQL() string { return "BEGIN" }
 // SelectForUpdate returns " FOR UPDATE" so a SELECT inside a write
 // transaction takes a row-level lock that serializes subsequent merges.
 func (d *PostgreSQLDialect) SelectForUpdate() string { return " FOR UPDATE" }
+
+// MaintenanceTimeoutResetSQL disables the per-statement timeout for the
+// current transaction. SET LOCAL auto-resets at tx end, so the pool-wide
+// statement_timeout cannot leak away on other connections.
+func (d *PostgreSQLDialect) MaintenanceTimeoutResetSQL() string {
+	return "SET LOCAL statement_timeout = 0"
+}
 
 // isPgError checks if err is a pgconn.PgError with the given SQLSTATE code.
 func isPgError(err error, code string) bool {

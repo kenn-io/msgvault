@@ -437,7 +437,7 @@ func (f *fakeBackend) BuildingGeneration(ctx context.Context) (*vector.Generatio
 func (f *fakeBackend) CreateGeneration(ctx context.Context, model string, dim int, fp string) (vector.GenerationID, error) {
 	panic("unexpected: CreateGeneration")
 }
-func (f *fakeBackend) ActivateGeneration(ctx context.Context, gen vector.GenerationID) error {
+func (f *fakeBackend) ActivateGeneration(ctx context.Context, gen vector.GenerationID, _ bool) error {
 	f.mu.Lock()
 	f.activateCallIDs = append(f.activateCallIDs, gen)
 	f.mu.Unlock()
@@ -448,7 +448,7 @@ func (f *fakeBackend) activations() []vector.GenerationID {
 	defer f.mu.Unlock()
 	return append([]vector.GenerationID(nil), f.activateCallIDs...)
 }
-func (f *fakeBackend) RetireGeneration(ctx context.Context, gen vector.GenerationID) error {
+func (f *fakeBackend) RetireGeneration(ctx context.Context, gen vector.GenerationID, _ bool) error {
 	panic("unexpected: RetireGeneration")
 }
 func (f *fakeBackend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []vector.Chunk) error {

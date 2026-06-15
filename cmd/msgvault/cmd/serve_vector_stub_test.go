@@ -1,4 +1,4 @@
-//go:build !sqlite_vec
+//go:build !sqlite_vec && !pgvector
 
 package cmd
 
@@ -22,7 +22,7 @@ func TestSetupVectorFeatures_EnabledWithoutTag(t *testing.T) {
 	cfg = &config.Config{}
 	cfg.Vector.Enabled = true
 
-	vf, err := setupVectorFeatures(context.Background(), nil, "")
+	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
 	require.Error(t, err, "setupVectorFeatures with Enabled=true but no tag")
 	assert.Nil(t, vf, "vf should be nil when error is returned")
 	msg := err.Error()

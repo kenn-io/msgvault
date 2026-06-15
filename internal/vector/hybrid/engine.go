@@ -9,7 +9,6 @@ import (
 	"strings"
 	"unicode"
 
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -60,6 +59,11 @@ type Config struct {
 	RRFK                int
 	KPerSignal          int
 	SubjectBoost        float64
+	// Rebind converts ? placeholders to the driver's native form for the
+	// participant/label lookup SQL that BuildFilter runs against mainDB.
+	// Pass PostgreSQLDialect.Rebind on PG (pgx rejects bare ?); leave nil
+	// (or SQLiteDialect.Rebind, which is identity) on SQLite.
+	Rebind func(string) string
 }
 
 // Engine orchestrates the generation check, query embedding, and fusion
@@ -82,7 +86,7 @@ func NewEngine(backend vector.Backend, mainDB *sql.DB, client EmbeddingClient, c
 // package-level BuildFilter so callers that already hold an *Engine
 // don't need to plumb a *sql.DB separately.
 func (e *Engine) BuildFilter(ctx context.Context, q *search.Query) (vector.Filter, error) {
-	return BuildFilter(ctx, e.mainDB, q)
+	return BuildFilter(ctx, e.mainDB, e.cfg.Rebind, q)
 }
 
 // Search runs hybrid or vector mode. Resolves the active generation
@@ -148,21 +152,26 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 	if !ok {
 		return nil, ResultMeta{}, errors.New("hybrid mode requires a FusingBackend; non-fusing fallback not wired in MVP")
 	}
-	// FTSQuery is contractually a pre-tokenized FTS5 MATCH expression
-	// (see vector.FusedRequest). An explicit override passes through
-	// verbatim; an empty one falls back to the raw FreeText, which must
-	// be tokenized and quote-escaped before it reaches the fused CTE's
-	// `messages_fts MATCH` — otherwise FTS5 metacharacters in a natural-
-	// language query (",", "?", ...) reach the parser raw and raise a
-	// syntax error (issue #366). Only the hybrid path was affected:
-	// --mode fts sanitizes via Store.SearchMessages, and --mode vector
-	// has no BM25 branch at all.
-	ftsQuery := req.FTSQuery
-	if ftsQuery == "" {
-		ftsQuery = buildFTSMatch(req.FreeText)
+	// FusedRequest.FTSTerms carries dialect-neutral, already-tokenized
+	// and punctuation-filtered terms (see vector.FusedRequest); each
+	// backend renders them through its own query dialect's BuildFTSTerm,
+	// so PG and SQLite prefix-match the SAME term set instead of one
+	// backend consuming the other's pre-built FTS5 expression. We
+	// tokenize FreeText here (strings.Fields + drop punctuation-only
+	// terms the FTS5 tokenizer would discard); an empty result skips the
+	// BM25 leg (vector-only) rather than dispatching a malformed query.
+	// An explicit FTSQuery override is also tokenized, never passed
+	// through verbatim. Tokenizing here is what neutralizes FTS5/tsquery
+	// metacharacters in a natural-language query (",", "?", ...) before
+	// they reach either backend's parser (issue #366). Only the hybrid
+	// path needs this: --mode fts sanitizes via Store.SearchMessages and
+	// --mode vector has no BM25 branch at all.
+	terms := ftsTerms(req.FreeText)
+	if req.FTSQuery != "" {
+		terms = ftsTerms(req.FTSQuery)
 	}
 	fReq := vector.FusedRequest{
-		FTSQuery:     ftsQuery,
+		FTSTerms:     terms,
 		QueryVec:     queryVec,
 		Generation:   active.ID,
 		KPerSignal:   e.cfg.KPerSignal,
@@ -202,16 +211,17 @@ func vectorHitsToFused(hits []vector.Hit) []vector.FusedHit {
 	return out
 }
 
-// buildFTSMatch turns a raw free-text query into an FTS5 MATCH
-// expression for the hybrid BM25 branch, mirroring the --mode fts path
-// (Store.SearchMessages → strings.Fields → dialect.BuildFTSArg): each
-// whitespace-separated term is quote-escaped and prefix-matched, and
-// terms the FTS5 tokenizer would drop entirely (punctuation-only) are
-// skipped. Returns "" when nothing usable remains, which the fused
-// query treats as "skip BM25" (vector-only) rather than dispatching a
-// malformed MATCH. Quoting each term is what neutralizes embedded
-// metacharacters like "," and "?" that otherwise crash FTS5 (#366).
-func buildFTSMatch(freeText string) string {
+// ftsTerms turns a raw free-text query into the dialect-neutral term
+// slice for the hybrid BM25 branch, mirroring the --mode fts path
+// (Store.SearchMessages → strings.Fields): each whitespace-separated
+// term is kept verbatim, except terms the FTS5/tsquery tokenizers would
+// drop entirely (punctuation-only) are skipped. Returns nil when
+// nothing usable remains, which the fused query treats as "skip BM25"
+// (vector-only) rather than dispatching a malformed query. Each backend
+// renders these raw terms through its own query dialect's BuildFTSTerm,
+// which quote-escapes / lexeme-splits them — that is what neutralizes
+// embedded metacharacters like "," and "?" per backend (#366).
+func ftsTerms(freeText string) []string {
 	terms := strings.Fields(freeText)
 	kept := terms[:0]
 	for _, t := range terms {
@@ -220,10 +230,9 @@ func buildFTSMatch(freeText string) string {
 		}
 	}
 	if len(kept) == 0 {
-		return ""
+		return nil
 	}
-	_, arg := query.SQLiteQueryDialect{}.BuildFTSTerm(kept)
-	return arg
+	return kept
 }
 
 // hasFTSToken reports whether s contains a rune the default FTS5

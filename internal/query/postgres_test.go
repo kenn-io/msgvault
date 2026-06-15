@@ -46,9 +46,9 @@ func TestPostgresTimeTruncExpression(t *testing.T) {
 		gran string
 		want string
 	}{
-		{"year", "to_char(col, 'YYYY')"},
-		{"month", "to_char(col, 'YYYY-MM')"},
-		{"day", "to_char(col, 'YYYY-MM-DD')"},
+		{"year", "to_char(col AT TIME ZONE 'UTC', 'YYYY')"},
+		{"month", "to_char(col AT TIME ZONE 'UTC', 'YYYY-MM')"},
+		{"day", "to_char(col AT TIME ZONE 'UTC', 'YYYY-MM-DD')"},
 	} {
 		got := d.TimeTruncExpression("col", tc.gran)
 		assertpkg.Equal(t, tc.want, got, "TimeTruncExpression(%q, %q)", "col", tc.gran)

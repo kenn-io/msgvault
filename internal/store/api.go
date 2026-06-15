@@ -90,10 +90,14 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 			m.has_attachments,
 			m.size_estimate
 		FROM messages m
-		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		WHERE %s
-		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
+		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
 	`, participantDisplaySQL, LiveMessagesWhere("m", true))
 
@@ -142,7 +146,11 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 			m.size_estimate,
 			m.deleted_from_source_at
 		FROM messages m
-		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		WHERE m.id = ?
 	`, participantDisplaySQL)
@@ -251,7 +259,11 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 			m.has_attachments,
 			m.size_estimate
 		FROM messages m
-		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		WHERE m.id IN (%s) AND %s
 	`, participantDisplaySQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
@@ -463,15 +475,24 @@ func (s *Store) searchMessagesQueryImpl(
 	}
 
 	// after: / before:
+	// Bind time.Time directly rather than an RFC3339 ('T'-separated) string.
+	// The *time.Time bind is correct on BOTH backends — pgx encodes it as a
+	// TIMESTAMPTZ value (RFC3339 already carries the 'Z' offset, so the old
+	// string bind was fine on PG too) and go-sqlite3 serializes it to the
+	// sortable layout matching how sent_at was stored. The bug this fixes was
+	// SQLite-only: comparing an RFC3339 string against SQLite's space-separated
+	// stored timestamps put the 'T' (0x54) after the space (0x20), shifting the
+	// day boundary. Binding time.Time also keeps this store API consistent with
+	// the query engine, which binds time.Time the same way. [cr2-9]
 	if q.AfterDate != nil {
 		conditions = append(conditions,
 			"COALESCE(m.sent_at, m.received_at, m.internal_date) >= ?")
-		args = append(args, q.AfterDate.Format(time.RFC3339))
+		args = append(args, *q.AfterDate)
 	}
 	if q.BeforeDate != nil {
 		conditions = append(conditions,
 			"COALESCE(m.sent_at, m.received_at, m.internal_date) < ?")
-		args = append(args, q.BeforeDate.Format(time.RFC3339))
+		args = append(args, *q.BeforeDate)
 	}
 
 	whereClause := strings.Join(conditions, " AND ")
@@ -493,7 +514,7 @@ func (s *Store) searchMessagesQueryImpl(
 	}
 
 	// Results query.
-	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC"
+	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
 	if ftsEnabled {
 		orderBy = ftsOrder + ", " + orderBy
 	}
@@ -510,8 +531,11 @@ func (s *Store) searchMessagesQueryImpl(
 			m.size_estimate
 		FROM messages m
 		%s
-		LEFT JOIN message_recipients mr
-			ON mr.message_id = m.id AND mr.recipient_type = 'from'
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		WHERE %s
 		ORDER BY %s
@@ -598,11 +622,15 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			m.has_attachments,
 			m.size_estimate
 		FROM messages m
-		LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		WHERE %s
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
-		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC
+		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
 	`, participantDisplaySQL, LiveMessagesWhere("m", true))
 

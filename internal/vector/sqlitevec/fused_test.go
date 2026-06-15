@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,16 +23,16 @@ import (
 func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   unitVec(768, 1),
 		Generation: gid,
 		KPerSignal: 10,
@@ -49,16 +50,16 @@ func TestFusedSearch_BothSignalsContribute(t *testing.T) {
 func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   nil, // FTS-only
 		Generation: gid,
 		KPerSignal: 10,
@@ -76,16 +77,16 @@ func TestFusedSearch_FTSOnly_VectorScoreIsNaN(t *testing.T) {
 func TestFusedSearch_VectorOnly_BM25ScoreIsNaN(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "",
+		FTSTerms:   nil,
 		QueryVec:   unitVec(768, 1),
 		Generation: gid,
 		KPerSignal: 10,
@@ -106,7 +107,7 @@ func TestFusedSearch_VectorOnly_BM25ScoreIsNaN(t *testing.T) {
 // — a vector-only query that maxed out KPerSignal would falsely
 // report not-saturated.
 func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	// Seed 5 vectors all close to axis 0, then query along axis 0.
 	// With KPerSignal=2 the ANN CTE probes for 3 (= 2+1) — when the
 	// extra slot is filled, saturation must be reported.
@@ -115,7 +116,7 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 		vecs[i] = unitVec(768, 0)
 	}
 	gid := seedAndEmbed(t, b, vecs)
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
@@ -133,12 +134,12 @@ func TestFusedSearch_AnnSaturation_VectorOnly(t *testing.T) {
 // TestFusedSearch_AnnSaturation_VectorOnly: with fewer matches than
 // KPerSignal, saturation must NOT be reported.
 func TestFusedSearch_AnnSaturation_BelowCap(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 0),
 	})
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
@@ -153,7 +154,7 @@ func TestFusedSearch_AnnSaturation_BelowCap(t *testing.T) {
 }
 
 func TestFusedSearch_NoSignals_Errors(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 	})
@@ -165,9 +166,9 @@ func TestFusedSearch_NoSignals_Errors(t *testing.T) {
 }
 
 func TestFusedSearch_UnknownGeneration(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	_, _, err := b.FusedSearch(ctx, vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		QueryVec:   unitVec(768, 0),
 		Generation: vector.GenerationID(9999),
 		KPerSignal: 10, Limit: 5, RRFK: 60,
@@ -221,7 +222,7 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	// Confirm the ground-truth BM25 ordering in the attached DB so
 	// the assertion below reflects what FTS5 would produce without
@@ -230,23 +231,27 @@ func TestFusedSearch_BM25TopKRespectsRank(t *testing.T) {
 		id   int64
 		rank float64
 	}
-	rows, err := main.QueryContext(ctx,
-		`SELECT rowid, rank FROM messages_fts WHERE messages_fts MATCH 'meeting' ORDER BY rank`)
-	require.NoError(err, "ground-truth rank query")
-	var expected []ranked
-	for rows.Next() {
-		var r ranked
-		require.NoError(rows.Scan(&r.id, &r.rank), "scan")
-		expected = append(expected, r)
-	}
-	_ = rows.Close()
+	expected := func() []ranked {
+		rows, err := main.QueryContext(ctx,
+			`SELECT rowid, rank FROM messages_fts WHERE messages_fts MATCH 'meeting' ORDER BY rank`)
+		require.NoError(err, "ground-truth rank query")
+		defer func() { _ = rows.Close() }()
+		var got []ranked
+		for rows.Next() {
+			var r ranked
+			require.NoError(rows.Scan(&r.id, &r.rank), "scan")
+			got = append(got, r)
+		}
+		require.NoError(rows.Err(), "iterate ground-truth rank rows")
+		return got
+	}()
 	require.GreaterOrEqual(len(expected), 4, "ground-truth matches")
 
 	// Request only the top 3 BM25 matches via the fused CTE. The
 	// BM25 branch without ORDER BY would be free to pick any 3
 	// matching rows, dropping higher-ranked ones.
 	req := vector.FusedRequest{
-		FTSQuery:   "meeting",
+		FTSTerms:   []string{"meeting"},
 		Generation: gid,
 		KPerSignal: 3,
 		Limit:      10,
@@ -310,7 +315,7 @@ CREATE TABLE message_recipients (
 	return db
 }
 
-func formatInt(n int64) string { return fmt.Sprintf("%d", n) }
+func formatInt(n int64) string { return strconv.FormatInt(n, 10) }
 
 // TestFusedSearch_PinnedPoolKeepsAttach regression-guards the pool
 // pinning in openFusedConn. SQLite's ATTACH DATABASE is per-connection,
@@ -327,9 +332,9 @@ func formatInt(n int64) string { return fmt.Sprintf("%d", n) }
 func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	conn, err := b.openFusedConn(ctx)
 	require.NoError(err, "openFusedConn")
@@ -339,7 +344,7 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 
 	// Hit vec.* repeatedly. If the pool ever hands out a fresh
 	// connection mid-test, the ATTACH is gone and the query errors.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var n int
 		err := conn.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM vec.embeddings WHERE generation_id = ?`,
@@ -361,10 +366,16 @@ func TestFusedSearch_PinnedPoolKeepsAttach(t *testing.T) {
 	// is exactly the intended serialisation, not a failure.
 	queryCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
+	// This is a serialisation probe, not a data read: we only inspect
+	// secondErr to distinguish a deadlock-avoidance timeout from a
+	// "no such table" pool-pin regression. The result set is never
+	// iterated, so there are no per-row errors to surface; close it
+	// immediately if the driver returned a handle.
 	rows, secondErr := conn.QueryContext(queryCtx,
 		`SELECT COUNT(*) FROM vec.embeddings`)
 	if rows != nil {
-		_ = rows.Close()
+		_ = rows.Err()
+		_ = rows.Close() //nolint:sqlclosecheck // nil-guarded probe close; defer cannot guard a possibly-nil handle cleanly
 	}
 	// Finish the tx so the connection is released.
 	_ = tx.Rollback()
@@ -425,7 +436,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	require.NoError(b.ActivateGeneration(ctx, gid), "Activate")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	mid := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
@@ -454,7 +465,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := vector.FusedRequest{
-				FTSQuery:   "topic",
+				FTSTerms:   []string{"topic"},
 				Generation: gid,
 				Filter:     c.filter,
 				KPerSignal: 10,
@@ -470,7 +481,7 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 			for _, id := range c.want {
 				assertpkg.Truef(t, got[id], "missing expected id %d (got %v)", id, got)
 			}
-			assertpkg.Equalf(t, len(c.want), len(got), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
+			assertpkg.Lenf(t, got, len(c.want), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
 		})
 	}
 }
@@ -528,10 +539,10 @@ func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	require.NoError(b.ActivateGeneration(ctx, gid), "Activate")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	req := vector.FusedRequest{
-		FTSQuery:   "topic",
+		FTSTerms:   []string{"topic"},
 		Generation: gid,
 		Filter:     vector.Filter{SenderGroups: [][]int64{{100}}},
 		KPerSignal: 10,
@@ -557,13 +568,13 @@ func TestFusedSearch_SenderMatchesFromRecipientOnly(t *testing.T) {
 // a typo'd to:nonexistent would broaden results instead of returning
 // none.
 func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 		3: unitVec(768, 2),
 	})
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid), "Activate")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	const sentinel int64 = -1 // mirrors hybrid.noMatchSentinel
 	cases := []struct {
@@ -579,7 +590,7 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := vector.FusedRequest{
-				FTSQuery:   "meeting",
+				FTSTerms:   []string{"meeting"},
 				QueryVec:   unitVec(768, 1),
 				Generation: gid,
 				Filter:     c.filter,
@@ -608,7 +619,7 @@ func TestFusedSearch_RecipientFiltersMatchNoneSentinel(t *testing.T) {
 // higher.
 func TestFusedSearch_SubjectBoost(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	// Reset so we control subjects precisely.
 	_, err := b.mainDB.ExecContext(ctx,
@@ -643,7 +654,7 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 		1: unitVec(768, 0),   // identical to query → distance ~0
 		2: unitVec(768, 137), // distant
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	t.Run("boost_lifts_subject_match_above_higher_ann", func(t *testing.T) {
 		require := requirepkg.New(t)
@@ -730,7 +741,7 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 // update this test too.
 func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts`)
@@ -752,13 +763,13 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	yes := true
 	hits, saturated, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
 		Generation: gid,
-		FTSQuery:   "report",
+		FTSTerms:   []string{"report"},
 		Filter:     vector.Filter{HasAttachment: &yes},
 		KPerSignal: 1, Limit: 5, RRFK: 60,
 	})
@@ -775,7 +786,7 @@ func TestFusedSearch_EmptyFilteredSetReportsNotSaturated(t *testing.T) {
 func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts`)
@@ -813,12 +824,12 @@ func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
 		vecs[int64(i+1)] = v
 	}
 	gid := seedAndEmbed(t, b, vecs)
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	req := vector.FusedRequest{
 		QueryVec:     queryVec,
 		Generation:   gid,
-		FTSQuery:     "planning OR review",
+		FTSTerms:     []string{"planning"},
 		KPerSignal:   20,
 		Limit:        3,
 		RRFK:         60,
@@ -846,7 +857,7 @@ func TestFusedSearch_SubjectBoostOverFetchesBeyondLimit(t *testing.T) {
 func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts`)
@@ -884,12 +895,12 @@ func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
 		vecs[i] = v
 	}
 	gid := seedAndEmbed(t, b, vecs)
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:     queryVec,
 		Generation:   gid,
-		FTSQuery:     "planning OR review",
+		FTSTerms:     []string{"planning"},
 		KPerSignal:   total,
 		Limit:        3,
 		RRFK:         60,
@@ -920,7 +931,7 @@ func TestFusedSearch_SubjectBoostPromotesDeepRankHit(t *testing.T) {
 // subject-only queries.
 func TestFusedSearch_NullSubjectExcludedBySubjectFilter(t *testing.T) {
 	require := requirepkg.New(t)
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
 		`DELETE FROM messages; DELETE FROM messages_fts`)
@@ -941,12 +952,12 @@ func TestFusedSearch_NullSubjectExcludedBySubjectFilter(t *testing.T) {
 		1: unitVec(768, 0),
 		2: unitVec(768, 1),
 	})
-	require.NoError(b.ActivateGeneration(ctx, gid), "ActivateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "ActivateGeneration")
 
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   unitVec(768, 0),
 		Generation: gid,
-		FTSQuery:   "report",
+		FTSTerms:   []string{"report"},
 		Filter:     vector.Filter{SubjectSubstrings: []string{"report"}},
 		KPerSignal: 10, Limit: 10, RRFK: 60,
 	})
@@ -963,7 +974,7 @@ func TestFusedSearch_NullSubjectExcludedBySubjectFilter(t *testing.T) {
 }
 
 func TestFusedSearch_DimensionMismatch(t *testing.T) {
-	b, ctx, _ := newFusedBackendForTest(t)
+	b, ctx := newFusedBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		1: unitVec(768, 0),
 	})

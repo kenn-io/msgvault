@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -33,19 +34,32 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex() error {
 		return nil
 	}
 
-	if err := s.dedupeParticipantsByPhone(); err != nil {
-		return fmt.Errorf("dedupe participants by phone: %w", err)
-	}
+	// Route the whole migration (dedupe + DROP + CREATE UNIQUE INDEX) through
+	// ONE runMaintenance transaction, mirroring the attachment unique-index
+	// migration in InitSchema. runMaintenance disables the pool-wide 30s
+	// statement_timeout for this tx: both the dedupe DELETEs/UPDATEs and the
+	// UNIQUE-index build over the full participants table scale with participant
+	// count and can exceed 30s on a large archive (finding S1). Running them in
+	// one tx also guarantees the index is built against the just-deduped table.
+	// No-op timeout reset on SQLite.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.dedupeParticipantsByPhone(ctx, tx); err != nil {
+			return fmt.Errorf("dedupe participants by phone: %w", err)
+		}
 
-	if _, err := s.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`); err != nil {
-		return fmt.Errorf("drop idx_participants_phone: %w", err)
-	}
+		if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_participants_phone`); err != nil {
+			return fmt.Errorf("drop idx_participants_phone: %w", err)
+		}
 
-	if _, err := s.db.Exec(`
-		CREATE UNIQUE INDEX idx_participants_phone ON participants(phone_number)
-		    WHERE phone_number IS NOT NULL
-	`); err != nil {
-		return fmt.Errorf("create unique idx_participants_phone: %w", err)
+		if _, err := tx.ExecContext(ctx, `
+			CREATE UNIQUE INDEX idx_participants_phone ON participants(phone_number)
+			    WHERE phone_number IS NOT NULL
+		`); err != nil {
+			return fmt.Errorf("create unique idx_participants_phone: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	return s.MarkMigrationApplied(migrationPhoneUniqueIndex)
@@ -60,65 +74,67 @@ func (s *Store) ensureParticipantsPhoneUniqueIndex() error {
 // repoint are deleted first so the merge is conflict-free. Then the
 // loser participants are deleted, which CASCADEs any remaining
 // references (participant_identifiers etc.).
-func (s *Store) dedupeParticipantsByPhone() error {
-	return s.withTx(func(tx *loggedTx) error {
-		// Pull every participant id involved in a duplicate-phone
-		// group, ordered so the per-phone winner (lowest id) comes
-		// first within each group.
-		rows, err := tx.Query(`
-			SELECT phone_number, id FROM participants
-			 WHERE phone_number IS NOT NULL
-			   AND phone_number IN (
-			       SELECT phone_number FROM participants
-			        WHERE phone_number IS NOT NULL
-			        GROUP BY phone_number
-			       HAVING COUNT(*) > 1
-			   )
-			 ORDER BY phone_number, id
-		`)
-		if err != nil {
-			return fmt.Errorf("scan duplicate phone groups: %w", err)
-		}
-		groups := map[string][]int64{}
-		for rows.Next() {
-			var phone string
-			var id int64
-			if err := rows.Scan(&phone, &id); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan phone dup row: %w", err)
-			}
-			groups[phone] = append(groups[phone], id)
-		}
-		if err := rows.Err(); err != nil {
+//
+// Runs on the caller-supplied maintenance transaction (ctx, tx) so the dedupe
+// and the subsequent UNIQUE-index build share one statement_timeout-disabled tx
+// (finding S1) and the index is built against the just-deduped table.
+func (s *Store) dedupeParticipantsByPhone(ctx context.Context, tx *loggedTx) error {
+	// Pull every participant id involved in a duplicate-phone
+	// group, ordered so the per-phone winner (lowest id) comes
+	// first within each group.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT phone_number, id FROM participants
+		 WHERE phone_number IS NOT NULL
+		   AND phone_number IN (
+		       SELECT phone_number FROM participants
+		        WHERE phone_number IS NOT NULL
+		        GROUP BY phone_number
+		       HAVING COUNT(*) > 1
+		   )
+		 ORDER BY phone_number, id
+	`)
+	if err != nil {
+		return fmt.Errorf("scan duplicate phone groups: %w", err)
+	}
+	groups := map[string][]int64{}
+	for rows.Next() {
+		var phone string
+		var id int64
+		if err := rows.Scan(&phone, &id); err != nil {
 			_ = rows.Close()
-			return fmt.Errorf("iterate phone dup rows: %w", err)
+			return fmt.Errorf("scan phone dup row: %w", err)
 		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close phone dup rows: %w", err)
-		}
+		groups[phone] = append(groups[phone], id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate phone dup rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close phone dup rows: %w", err)
+	}
 
-		for _, ids := range groups {
-			if len(ids) < 2 {
-				continue
-			}
-			winner := ids[0]
-			losers := ids[1:]
-			for _, loser := range losers {
-				if err := mergeParticipant(tx, winner, loser); err != nil {
-					return err
-				}
+	for _, ids := range groups {
+		if len(ids) < 2 {
+			continue
+		}
+		winner := ids[0]
+		losers := ids[1:]
+		for _, loser := range losers {
+			if err := mergeParticipant(ctx, tx, winner, loser); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // mergeParticipant moves every reference from loser onto winner,
 // deleting any rows whose new (winner-scoped) key would clash with an
 // existing row, then deletes loser from participants.
-func mergeParticipant(tx *loggedTx, winner, loser int64) error {
+func mergeParticipant(ctx context.Context, tx *loggedTx, winner, loser int64) error {
 	// (1) message_recipients UNIQUE(message_id, participant_id, recipient_type)
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM message_recipients
 		 WHERE participant_id = ?
 		   AND EXISTS (
@@ -130,7 +146,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	`, loser, winner); err != nil {
 		return fmt.Errorf("dedupe message_recipients (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE message_recipients SET participant_id = ? WHERE participant_id = ?`,
 		winner, loser,
 	); err != nil {
@@ -138,7 +154,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	}
 
 	// (2) conversation_participants PRIMARY KEY (conversation_id, participant_id)
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM conversation_participants
 		 WHERE participant_id = ?
 		   AND EXISTS (
@@ -149,7 +165,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	`, loser, winner); err != nil {
 		return fmt.Errorf("dedupe conversation_participants (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE conversation_participants SET participant_id = ? WHERE participant_id = ?`,
 		winner, loser,
 	); err != nil {
@@ -157,7 +173,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	}
 
 	// (3) reactions UNIQUE(message_id, participant_id, reaction_type, reaction_value)
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM reactions
 		 WHERE participant_id = ?
 		   AND EXISTS (
@@ -170,7 +186,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	`, loser, winner); err != nil {
 		return fmt.Errorf("dedupe reactions (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE reactions SET participant_id = ? WHERE participant_id = ?`,
 		winner, loser,
 	); err != nil {
@@ -178,7 +194,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	}
 
 	// (4) messages.sender_id — nullable, no UNIQUE, plain UPDATE.
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE messages SET sender_id = ? WHERE sender_id = ?`,
 		winner, loser,
 	); err != nil {
@@ -192,7 +208,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	// time. Move them onto the winner and rely on the unique constraint
 	// failing only when a true duplicate exists; in practice phone-keyed
 	// participants rarely have non-phone identifiers attached.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM participant_identifiers
 		 WHERE participant_id = ?
 		   AND EXISTS (
@@ -204,7 +220,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 	`, loser, winner); err != nil {
 		return fmt.Errorf("dedupe participant_identifiers (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`,
 		winner, loser,
 	); err != nil {
@@ -213,7 +229,7 @@ func mergeParticipant(tx *loggedTx, winner, loser int64) error {
 
 	// (6) Finally drop the loser. participant_identifiers cascades; the
 	// other FKs are already cleared by the repoints above.
-	if _, err := tx.Exec(`DELETE FROM participants WHERE id = ?`, loser); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, loser); err != nil {
 		return fmt.Errorf("delete loser participant id=%d: %w", loser, err)
 	}
 	return nil

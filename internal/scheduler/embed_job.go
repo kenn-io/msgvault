@@ -18,6 +18,9 @@ type EmbedRunner interface {
 	ReclaimStale(ctx context.Context) (int, error)
 }
 
+// Compile-time check that the production worker satisfies EmbedRunner.
+var _ EmbedRunner = (*embed.Worker)(nil)
+
 // EmbedJob runs the vector-embedding worker. Each invocation prefers
 // an in-flight rebuild for the configured fingerprint over the
 // existing active generation, drains its queue via RunOnce, and
@@ -41,6 +44,14 @@ type EmbedJob struct {
 	// pending_embeddings for activation gating. May be nil; in that
 	// case the daemon will not auto-activate building generations.
 	VectorsDB *sql.DB
+
+	// Rebind translates ?-placeholders to the driver's native form for
+	// queries this job issues directly against VectorsDB (pendingCount).
+	// nil is treated as the identity (used by SQLite); the PostgreSQL
+	// serve path must wire in (&store.PostgreSQLDialect{}).Rebind so the
+	// activation-gate count runs on pgx — a bare ? is rejected by the
+	// pgx driver.
+	Rebind func(string) string
 
 	// Fingerprint is the configured generation fingerprint (typically
 	// vector.Config.GenerationFingerprint() — "model:dim:preprocess").
@@ -149,7 +160,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 			"gen", target, "remaining", remaining)
 		return
 	}
-	if err := j.Backend.ActivateGeneration(ctx, target); err != nil {
+	// force=false: the pendingCount==0 check above is the scheduler's gate,
+	// and the backend re-asserts it atomically inside the activation tx.
+	if err := j.Backend.ActivateGeneration(ctx, target, false); err != nil {
 		log.Warn("embed: activation failed", "gen", target, "error", err)
 		return
 	}
@@ -222,9 +235,13 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 // pendingCount returns the number of pending_embeddings rows for gen.
 // Used by the activation gate.
 func (j *EmbedJob) pendingCount(ctx context.Context, gen vector.GenerationID) (int, error) {
+	rebind := j.Rebind
+	if rebind == nil {
+		rebind = func(q string) string { return q }
+	}
 	var n int
 	if err := j.VectorsDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n); err != nil {
+		rebind(`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`), int64(gen)).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil

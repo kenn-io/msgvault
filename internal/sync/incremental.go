@@ -178,10 +178,14 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 					summary.BytesDownloaded += int64(len(raw.Raw))
 				}
 
-				// Hook vector-search enqueue. Non-fatal on failure: missed
-				// IDs get picked up by full-rebuild.
+				// Hook vector-search enqueue. On PostgreSQL this is a
+				// hard error (no automatic recovery); on SQLite it is
+				// non-fatal (full-rebuild picks missed IDs up).
 				if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
 					if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
+						if s.store.IsPostgreSQL() {
+							return nil, fmt.Errorf("vector enqueue failed (PG): %w", err)
+						}
 						s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
 					}
 				}
@@ -286,8 +290,12 @@ func (s *Syncer) handleLabelChange(ctx context.Context, sourceID int64, messageI
 				return false, err
 			}
 			// Hook vector-search enqueue for the new message.
+			// On PostgreSQL this is a hard error; on SQLite non-fatal.
 			if s.embedEnqueuer != nil && insertedID > 0 {
 				if err := s.embedEnqueuer.EnqueueMessages(ctx, []int64{insertedID}); err != nil {
+					if s.store.IsPostgreSQL() {
+						return false, fmt.Errorf("vector enqueue failed (PG): %w", err)
+					}
 					s.logger.Warn("vector enqueue failed", "ids", 1, "error", err)
 				}
 			}

@@ -172,6 +172,11 @@ func (e *SQLiteEngine) ListConversations(
 	} else {
 		orderBy += " DESC"
 	}
+	// Append the unique conversation PK as a tiebreaker so conversations
+	// sharing the primary sort key (e.g. identical last_message_at) get a
+	// total, stable order across LIMIT/OFFSET pages. c.id is the GROUP BY key
+	// and is selectable here. [C3]
+	orderBy += ", c.id DESC"
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {

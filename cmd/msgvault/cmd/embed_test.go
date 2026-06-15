@@ -10,6 +10,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -56,7 +57,7 @@ func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
 	assert := assertpkg.New(t)
 	db := newEmbeddingMetadataTestDB(t)
 
-	rows, err := listEmbeddingGenerations(t.Context(), db)
+	rows, err := listEmbeddingGenerations(t.Context(), db, sqliteRebind)
 	require.NoError(err)
 	require.Len(rows, 2)
 
@@ -68,27 +69,6 @@ func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
 	assert.Equal(vector.GenerationID(2), rows[1].ID)
 	assert.Equal(vector.GenerationBuilding, rows[1].State)
 	assert.Equal(int64(1), rows[1].PendingCount)
-}
-
-func TestActivateEmbeddingGenerationRetiresPreviousActive(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	db := newEmbeddingMetadataTestDB(t)
-	ctx := t.Context()
-
-	_, err := db.ExecContext(ctx, `DELETE FROM pending_embeddings WHERE generation_id = 2`)
-	require.NoError(err)
-
-	require.NoError(activateEmbeddingGeneration(ctx, db, 2, false))
-
-	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
-	assert.Equal(vector.GenerationActive, active.State)
-	assert.NotNil(active.ActivatedAt)
-	assert.NotNil(active.CompletedAt)
-
-	retired := mustGetEmbeddingGeneration(ctx, t, db, 1)
-	assert.Equal(vector.GenerationRetired, retired.State)
-	assert.NotNil(retired.CompletedAt)
 }
 
 func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
@@ -110,49 +90,14 @@ func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
 	assert.Contains(err.Error(), "pending embedding rows")
 }
 
-func TestActivateEmbeddingGenerationProtectsPendingRace(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	db := newEmbeddingMetadataTestDB(t)
-	ctx := t.Context()
-
-	err := activateEmbeddingGeneration(ctx, db, 2, false)
-	require.Error(err)
-	assert.Contains(err.Error(), "pending embedding rows")
-
-	building := mustGetEmbeddingGeneration(ctx, t, db, 2)
-	assert.Equal(vector.GenerationBuilding, building.State)
-
-	require.NoError(activateEmbeddingGeneration(ctx, db, 2, true))
-	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
-	assert.Equal(vector.GenerationActive, active.State)
-}
-
-func TestActivateEmbeddingGenerationRefusesUnseededWithoutForce(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	db := newEmbeddingMetadataTestDB(t)
-	ctx := t.Context()
-
-	_, err := db.ExecContext(ctx, `
-DELETE FROM pending_embeddings WHERE generation_id = 2;
-UPDATE index_generations SET seeded_at = NULL WHERE id = 2;
-`)
-	require.NoError(err)
-
-	err = activateEmbeddingGeneration(ctx, db, 2, false)
-	require.Error(err)
-	assert.Contains(err.Error(), "finished seeding")
-
-	building := mustGetEmbeddingGeneration(ctx, t, db, 2)
-	assert.Equal(vector.GenerationBuilding, building.State)
-
-	require.NoError(activateEmbeddingGeneration(ctx, db, 2, true))
-	active := mustGetEmbeddingGeneration(ctx, t, db, 2)
-	assert.Equal(vector.GenerationActive, active.State)
-}
-
-func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
+// TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck pins the
+// CLI UX gate that runs against the committed metadata read BEFORE any
+// backend connection: retiring an active generation without --force-active
+// must fail fast. The positive (force-active) path drives a real backend
+// transition and lives in the sqlite_vec-tagged
+// TestRunEmbeddingsRetire_ForceActive so this untagged test stays buildable
+// without a vector backend tag.
+func TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
@@ -175,33 +120,6 @@ func TestRetireEmbeddingGenerationRefusesActiveWithoutForce(t *testing.T) {
 	err := runEmbeddingsRetire(cmd, []string{"1"})
 	require.Error(err)
 	assert.Contains(err.Error(), "active")
-
-	embeddingsRetireForceActive = true
-	require.NoError(runEmbeddingsRetire(cmd, []string{"1"}))
-
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(db.Close()) })
-	row := mustGetEmbeddingGeneration(t.Context(), t, db, 1)
-	assert.Equal(vector.GenerationRetired, row.State)
-}
-
-func TestRetireEmbeddingGenerationProtectsActiveRace(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	db := newEmbeddingMetadataTestDB(t)
-	ctx := t.Context()
-
-	err := retireEmbeddingGeneration(ctx, db, 1, false)
-	require.Error(err)
-	assert.Contains(err.Error(), "force-active")
-
-	active := mustGetEmbeddingGeneration(ctx, t, db, 1)
-	assert.Equal(vector.GenerationActive, active.State)
-
-	require.NoError(retireEmbeddingGeneration(ctx, db, 1, true))
-	retired := mustGetEmbeddingGeneration(ctx, t, db, 1)
-	assert.Equal(vector.GenerationRetired, retired.State)
 }
 
 func newEmbeddingMetadataTestDB(t *testing.T) *sql.DB {
@@ -279,9 +197,13 @@ func newTestConfigForFingerprint(vecPath string) *config.Config {
 	}
 }
 
+// sqliteRebind is the identity rebind function used by tests that operate
+// directly against SQLite. It mirrors (&store.SQLiteDialect{}).Rebind.
+var sqliteRebind = (&store.SQLiteDialect{}).Rebind
+
 func mustGetEmbeddingGeneration(ctx context.Context, t *testing.T, db *sql.DB, gen vector.GenerationID) embeddingGenerationRow {
 	t.Helper()
-	row, err := getEmbeddingGeneration(ctx, db, gen)
+	row, err := getEmbeddingGeneration(ctx, db, sqliteRebind, gen)
 	requirepkg.NoError(t, err)
 	return row
 }

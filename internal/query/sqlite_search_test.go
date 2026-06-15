@@ -179,6 +179,50 @@ func TestHasFTSTable(t *testing.T) {
 		"expected hasFTSTable to return true after creating FTS table")
 }
 
+// ftsModuleMissingDialect simulates an fts5-less SQLite binary: the
+// messages_fts row exists in sqlite_master (HasFTSTableSQL still returns
+// >0, inherited from SQLiteQueryDialect), but the runtime liveness probe
+// fails as it would with `no such module: fts5`. We model the failure by
+// pointing the liveness SQL at a relation that does not exist, which the
+// SQLite driver rejects with an error (not sql.ErrNoRows).
+type ftsModuleMissingDialect struct {
+	SQLiteQueryDialect
+}
+
+func (ftsModuleMissingDialect) FTSLivenessSQL() string {
+	return `SELECT 1 FROM messages_fts_module_absent LIMIT 1`
+}
+
+// TestHasFTSTable_LivenessProbeFailureFallsBack pins pg-fts-sql-1: when the
+// messages_fts table is listed in sqlite_master but is not actually
+// queryable (fts5 module absent), hasFTSTable must return false so Search
+// falls back to LIKE instead of emitting a `no such module: fts5` error.
+//
+// Revert-proof: drop the dialect-aware liveness probe in hasFTSTable (trust
+// only HasFTSTableSQL's sqlite_master COUNT) and this test fails —
+// hasFTSTable returns true and Search would JOIN messages_fts and error.
+func TestHasFTSTable_LivenessProbeFailureFallsBack(t *testing.T) {
+	env := newTestEnv(t)
+	env.EnableFTS() // creates a real, queryable messages_fts table
+
+	// Sanity: with the real dialect the table is live and detected.
+	requirepkg.True(t, env.Engine.hasFTSTable(env.Ctx),
+		"baseline: real FTS table must be detected as available")
+
+	// Now build an engine whose liveness probe fails as if fts5 were absent.
+	// HasFTSTableSQL still reports the table present (it exists in
+	// sqlite_master), so only the liveness probe distinguishes the two cases.
+	brokenEngine := NewEngineWithDialect(env.DB, ftsModuleMissingDialect{})
+	assertpkg.False(t, brokenEngine.hasFTSTable(env.Ctx),
+		"FTS must be treated as unavailable when the liveness probe fails")
+
+	// And Search must still work via the LIKE fallback, not error out.
+	q := &search.Query{TextTerms: []string{"World"}}
+	results, err := brokenEngine.Search(env.Ctx, q, 100, 0)
+	assertpkg.NoError(t, err, "Search must fall back to LIKE, not surface a module error")
+	_ = results
+}
+
 func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 	env := newTestEnv(t)
 

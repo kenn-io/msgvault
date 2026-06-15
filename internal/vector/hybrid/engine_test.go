@@ -116,12 +116,12 @@ CREATE TABLE message_recipients (
 	gid, err := b.CreateGeneration(ctx, "fake-model", 4, "")
 	requirepkg.NoError(t, err, "CreateGeneration")
 	chunks := []vector.Chunk{
-		{MessageID: 1, Vector: unitVec(4, 0), SourceCharLen: 50},
-		{MessageID: 2, Vector: unitVec(4, 1), SourceCharLen: 30},
-		{MessageID: 3, Vector: unitVec(4, 2), SourceCharLen: 40},
+		{MessageID: 1, Vector: unitVec(0), SourceCharLen: 50},
+		{MessageID: 2, Vector: unitVec(1), SourceCharLen: 30},
+		{MessageID: 3, Vector: unitVec(2), SourceCharLen: 40},
 	}
 	requirepkg.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid), "Activate")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	fp := "fake-model:4"
 	eng := NewEngine(b, mainDB, &fakeEmbedder{dim: 4}, Config{
@@ -139,7 +139,8 @@ CREATE TABLE message_recipients (
 	}
 }
 
-func unitVec(dim, axis int) []float32 {
+func unitVec(axis int) []float32 {
+	const dim = 4
 	v := make([]float32, dim)
 	v[axis] = 1.0
 	return v
@@ -163,30 +164,29 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	assert.Equal(len(results), meta.ReturnedCount)
 }
 
-// TestBuildFTSMatch covers the FreeText → FTS5 MATCH sanitization
-// directly (no DB needed). Every term is quote-wrapped with a "*"
-// prefix, embedded double-quotes are doubled, stray "*" is stripped,
-// and punctuation-only terms (which the FTS5 tokenizer would drop) are
-// removed — yielding "" when nothing usable remains so the caller skips
-// the BM25 branch instead of dispatching a malformed MATCH.
-func TestBuildFTSMatch(t *testing.T) {
+// TestFTSTerms covers the FreeText → dialect-neutral term-slice
+// tokenizer directly (no DB needed). FreeText is split on whitespace
+// and terms the FTS5/tsquery tokenizers would drop entirely
+// (punctuation-only) are removed; the raw words are kept verbatim
+// (per-dialect quoting/lexeme-splitting happens later in each backend's
+// BuildFTSTerm). Returns nil when nothing usable remains so the caller
+// skips the BM25 branch instead of dispatching a malformed query.
+func TestFTSTerms(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
-		want string
+		want []string
 	}{
-		{"plain terms", "budget review", `"budget"* "review"*`},
-		{"trailing question mark", "budget?", `"budget?"*`},
-		{"comma and question (issue #366)", "what's the budget, roughly?", `"what's"* "the"* "budget,"* "roughly?"*`},
-		{"embedded double quote doubled", `say "hi"`, `"say"* """hi"""*`},
-		{"stray star stripped", "bud*get", `"budget"*`},
-		{"punctuation-only dropped", "??? ,,, !!!", ""},
-		{"empty", "", ""},
-		{"mixed tokenless dropped", "--- budget ???", `"budget"*`},
+		{"plain terms", "budget review", []string{"budget", "review"}},
+		{"trailing question mark", "budget?", []string{"budget?"}},
+		{"comma and question (issue #366)", "what's the budget, roughly?", []string{"what's", "the", "budget,", "roughly?"}},
+		{"punctuation-only dropped", "??? ,,, !!!", nil},
+		{"empty", "", nil},
+		{"mixed tokenless dropped", "--- budget ???", []string{"budget"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assertpkg.Equal(t, tc.want, buildFTSMatch(tc.in))
+			assertpkg.Equal(t, tc.want, ftsTerms(tc.in))
 		})
 	}
 }
@@ -317,7 +317,7 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
 			i, "meeting", "meeting meeting")
 		require.NoErrorf(err, "insert fts %d", i)
-		require.NoErrorf(f.Backend.Upsert(ctx, f.GenID, []vector.Chunk{{MessageID: i, Vector: unitVec(4, 0), SourceCharLen: 10}}),
+		require.NoErrorf(f.Backend.Upsert(ctx, f.GenID, []vector.Chunk{{MessageID: i, Vector: unitVec(0), SourceCharLen: 10}}),
 			"upsert msg %d", i)
 	}
 
@@ -346,7 +346,7 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 func TestEngine_NoGenerations_ReturnsNotEnabled(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID), "Retire")
+	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
@@ -371,8 +371,8 @@ func TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout(t *testing.T) {
 	_, _, err := timingOutEng.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
-	assertpkg.ErrorIs(t, err, context.DeadlineExceeded)
+	requirepkg.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
+	requirepkg.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 // timeoutEmbedder always reports the request context's deadline-exceeded
@@ -391,7 +391,7 @@ func (timeoutEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error)
 func TestEngine_BuildingOnly_ReturnsBuilding(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID), "Retire")
+	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	// A new building generation must be present; CreateGeneration
 	// writes one directly.
 	_, err := f.Backend.CreateGeneration(ctx, "fake-model", 4, "")

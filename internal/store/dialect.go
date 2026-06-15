@@ -105,8 +105,29 @@ type Dialect interface {
 	// Used to recover from malformed FTS shadow-table state that in-place
 	// rebuild operations (e.g., SQLite's rebuild pragma) cannot clear.
 	// SQLite: DROP TABLE IF EXISTS messages_fts + re-execute schema_sqlite.sql.
-	// PostgreSQL: TODO (REINDEX / recompute tsvector column).
-	FTSRebuildSchema(db *sql.DB) error
+	// PostgreSQL: DROP INDEX + full-table search_fts = NULL + recreate GIN.
+	//
+	// Takes a querier (not *sql.DB) so RebuildFTS can run it on the
+	// maintenance transaction whose statement_timeout has been disabled — the
+	// PG path includes a full-table tsvector clear (same cost as FTSClearSQL)
+	// plus a GIN rebuild over a populated table, both of which can exceed the
+	// pool-wide 30s timeout on a large archive (finding S1).
+	FTSRebuildSchema(q querier) error
+
+	// EnsureFTSIndex idempotently creates any FTS index that must be created
+	// AFTER LegacyColumnMigrations have added the FTS column. SQLite is a
+	// no-op (its messages_fts virtual table is created via SchemaFTS). For
+	// PostgreSQL it creates the GIN index on messages.search_fts; this lives
+	// here, not in schema_pg.sql, because a legacy PG database missing the
+	// search_fts column would fail the schema-file Exec on the index before
+	// the ADD COLUMN migration could run. Called by InitSchema after
+	// LegacyColumnMigrations. [cr2-10]
+	//
+	// Takes a querier (not *sql.DB) so InitSchema can run it on the
+	// maintenance transaction whose statement_timeout has been disabled —
+	// the GIN build over a populated messages table can exceed the pool-wide
+	// 30s timeout on a large archive (finding S1).
+	EnsureFTSIndex(q querier) error
 
 	// LegacyColumnMigrations returns ALTER TABLE ADD COLUMN statements to
 	// bring older databases up to date with schema columns added over time.
@@ -125,9 +146,13 @@ type Dialect interface {
 
 	// Connection lifecycle
 
-	// InitConn performs driver-specific connection initialization.
-	// Called after opening a connection. For SQLite: no-op (PRAGMAs are set via
-	// DSN parameters). For PostgreSQL: SET search_path, statement_timeout, etc.
+	// InitConn performs driver-specific connection initialization, called
+	// after opening a connection. Both backends are currently no-ops:
+	// SQLite PRAGMAs are set via DSN parameters, and PostgreSQL
+	// per-connection settings (statement_timeout, hnsw.ef_search, and
+	// search_path when present) are applied via pgx RuntimeParams / DSN
+	// parameters at open time — a SET on a pooled *sql.DB would not
+	// deterministically reach every pooled connection.
 	InitConn(db *sql.DB) error
 
 	// SchemaFiles returns the filenames of embedded schema files to execute during InitSchema.
@@ -167,6 +192,15 @@ type Dialect interface {
 	// (SQLITE_LOCKED). Used to surface actionable errors from maintenance
 	// commands that need exclusive access.
 	IsBusyError(err error) bool
+
+	// IsFTSValueTooLargeError returns true if err indicates an FTS value
+	// exceeded a hard backend limit (PostgreSQL: SQLSTATE 54000
+	// program_limit_exceeded, "string is too long for tsvector"). This is the
+	// ONLY error for which the FTS backfill is allowed to skip the offending
+	// row and continue; every other error must abort so a systemic failure
+	// (dead connection, etc.) is not silently masked. SQLite's FTS5 has no
+	// such limit, so the SQLite impl always returns false.
+	IsFTSValueTooLargeError(err error) bool
 
 	// BoolTrueExpr returns a SQL boolean expression that evaluates to true
 	// when col holds a "true" value. SQLite stores booleans as 0/1 INTEGER
@@ -221,4 +255,22 @@ type Dialect interface {
 	// to lock the matched row; SQLite already serializes writers under
 	// BEGIN IMMEDIATE and returns "".
 	SelectForUpdate() string
+
+	// MaintenanceTimeoutResetSQL returns a statement that disables any
+	// per-statement execution timeout for the remainder of the current
+	// transaction, or "" if the backend has no such timeout.
+	//
+	// PostgreSQL: "SET LOCAL statement_timeout = 0". The pool-wide 30s
+	// statement_timeout (postgresConnConfig) would otherwise cancel
+	// maintenance operations whose cost scales with archive size — cascade
+	// source deletes, FTS clear/backfill rewrites, GIN index builds, the
+	// attachment-dedup unique-index migration, and dedup cascade deletes —
+	// with SQLSTATE 57014 on a large archive. SET LOCAL applies only to the
+	// enclosing transaction and auto-resets at COMMIT/ROLLBACK, so it can
+	// never leak the GUC to another pooled connection (unlike a bare session
+	// SET). Callers MUST run this inside an explicit transaction.
+	//
+	// SQLite: "" (no statement_timeout concept). Store.runMaintenance skips
+	// the statement when this is empty, preserving SQLite behavior exactly.
+	MaintenanceTimeoutResetSQL() string
 }

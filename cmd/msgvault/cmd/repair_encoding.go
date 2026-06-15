@@ -64,7 +64,7 @@ charset detection issues in the MIME parser.`,
 		// pending_embeddings table is irrelevant and there's nothing
 		// to do.
 		if len(reembedNeededIDs) > 0 {
-			vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+			vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 			if err != nil {
 				fmt.Fprintf(os.Stderr,
 					"Warning: failed to open vectors.db for re-enqueue: %v\n", err)

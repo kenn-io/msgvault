@@ -298,9 +298,8 @@ CREATE TABLE IF NOT EXISTS source_import_items (
 CREATE TABLE IF NOT EXISTS collections (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    description TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS collection_sources (
@@ -308,6 +307,9 @@ CREATE TABLE IF NOT EXISTS collection_sources (
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     PRIMARY KEY (collection_id, source_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
+    ON collection_sources(source_id);
 
 -- Confirmed per-account "me" identities used by sent-message detection
 -- in dedup. Identity is account-scoped: an address confirmed for one
@@ -359,8 +361,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);
 CREATE INDEX IF NOT EXISTS idx_messages_deleted ON messages(source_id, deleted_from_source_at);
 CREATE INDEX IF NOT EXISTS idx_messages_source_message_id ON messages(source_message_id);
 
--- Full-text search GIN index on tsvector column
-CREATE INDEX IF NOT EXISTS messages_search_fts_idx ON messages USING GIN (search_fts);
+-- Full-text search GIN index on messages.search_fts is created by
+-- PostgreSQLDialect.EnsureFTSIndex AFTER LegacyColumnMigrations add the
+-- column, not here: a legacy DB missing search_fts would fail this index
+-- during the schema-file Exec and roll back the whole apply. [cr2-10]
 
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);

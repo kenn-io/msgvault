@@ -1192,10 +1192,10 @@ func (f *fakeBackend) Search(_ context.Context, _ vector.GenerationID, _ []float
 func (f *fakeBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
-func (f *fakeBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID) error {
+func (f *fakeBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID, _ bool) error {
 	return errors.New("not implemented")
 }
-func (f *fakeBackend) RetireGeneration(_ context.Context, _ vector.GenerationID) error {
+func (f *fakeBackend) RetireGeneration(_ context.Context, _ vector.GenerationID, _ bool) error {
 	return errors.New("not implemented")
 }
 func (f *fakeBackend) BuildingGeneration(_ context.Context) (*vector.Generation, error) {

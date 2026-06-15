@@ -66,6 +66,7 @@ func TestConfig_Validate(t *testing.T) {
 		{"UnsupportedScheme_File", func(c *Config) { c.Embeddings.Endpoint = "file:///tmp/endpoint" }, "endpoint"},
 		{"Hostless", func(c *Config) { c.Embeddings.Endpoint = "http:///v1" }, "endpoint"},
 		{"HTTPS_OK", func(c *Config) { c.Embeddings.Endpoint = "https://host:8080/v1" }, ""},
+		{"PgvectorBackend_OK", func(c *Config) { c.Backend = "pgvector" }, ""},
 		{"ZeroDim", func(c *Config) { c.Embeddings.Dimension = 0 }, "dimension"},
 		{"NegativeDim", func(c *Config) { c.Embeddings.Dimension = -1 }, "dimension"},
 		{"UnknownBackend", func(c *Config) { c.Backend = "mystery" }, "backend"},

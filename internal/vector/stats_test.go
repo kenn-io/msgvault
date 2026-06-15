@@ -51,11 +51,11 @@ func (f *statsFakeBackend) CreateGeneration(context.Context, string, int, string
 	return 0, errors.New("not implemented")
 }
 
-func (f *statsFakeBackend) ActivateGeneration(context.Context, GenerationID) error {
+func (f *statsFakeBackend) ActivateGeneration(context.Context, GenerationID, bool) error {
 	return errors.New("not implemented")
 }
 
-func (f *statsFakeBackend) RetireGeneration(context.Context, GenerationID) error {
+func (f *statsFakeBackend) RetireGeneration(context.Context, GenerationID, bool) error {
 	return errors.New("not implemented")
 }
 
