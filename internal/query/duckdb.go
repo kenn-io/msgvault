@@ -878,9 +878,30 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		args = append(args, filter.MessageType)
 	}
 
-	// Sender filter - check both message_recipients (email) and direct sender_id (WhatsApp/chat)
-	// Also checks phone_number for phone-based lookups (e.g., from:+447...)
-	if filter.Sender != "" {
+	// Sender + sender-name filters - check both message_recipients (email)
+	// and direct sender_id (WhatsApp/chat). Also checks phone_number for
+	// phone-based lookups (e.g., from:+447...).
+	//
+	// When BOTH the email and the display name are filtered, they must
+	// match the SAME from-row (or the SAME direct sender), not two
+	// independent EXISTS that a multi-author message could satisfy via
+	// different rows.
+	if filter.Sender != "" && filter.SenderName != "" {
+		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
+			SELECT 1 FROM mr
+			JOIN p ON p.id = mr.participant_id
+			WHERE mr.message_id = msg.id
+			  AND mr.recipient_type = 'from'
+			  AND (p.email_address = ? OR p.phone_number = ?)
+			  AND %s = ?
+		) OR EXISTS (
+			SELECT 1 FROM p
+			WHERE p.id = msg.sender_id
+			  AND (p.email_address = ? OR p.phone_number = ?)
+			  AND %s = ?
+		))`, participantNameExpr("p"), participantNameExpr("p")))
+		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
+	} else if filter.Sender != "" {
 		conditions = append(conditions, `(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -908,7 +929,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	}
 
 	// Sender name filter - check both message_recipients (email) and direct sender_id (WhatsApp/chat)
-	if filter.SenderName != "" {
+	if filter.SenderName != "" && filter.Sender == "" {
 		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -921,7 +942,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			  AND %s = ?
 		))`, participantNameExpr("p"), participantNameExpr("p")))
 		args = append(args, filter.SenderName, filter.SenderName)
-	} else if filter.MatchesEmpty(ViewSenderNames) {
+	} else if filter.SenderName == "" && filter.MatchesEmpty(ViewSenderNames) {
 		// A message has an "empty sender name" only if it has no from-recipient name AND no direct sender_id with a name.
 		conditions = append(conditions, fmt.Sprintf(`(NOT EXISTS (
 			SELECT 1 FROM mr
@@ -1744,8 +1765,26 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	conditions = append(conditions, store.LiveMessagesWhere("msg", true))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
 
-	// Use EXISTS subqueries for filtering (becomes semi-joins, no duplicates)
-	if filter.Sender != "" {
+	// Use EXISTS subqueries for filtering (becomes semi-joins, no duplicates).
+	// When BOTH the email and the display name are filtered, they must match
+	// the SAME from-row (or the SAME direct sender), not two independent
+	// EXISTS that a multi-author message could satisfy via different rows.
+	if filter.Sender != "" && filter.SenderName != "" {
+		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
+			SELECT 1 FROM mr
+			JOIN p ON p.id = mr.participant_id
+			WHERE mr.message_id = msg.id
+			  AND mr.recipient_type = 'from'
+			  AND (p.email_address = ? OR p.phone_number = ?)
+			  AND %s = ?
+		) OR EXISTS (
+			SELECT 1 FROM p
+			WHERE p.id = msg.sender_id
+			  AND (p.email_address = ? OR p.phone_number = ?)
+			  AND %s = ?
+		))`, participantNameExpr("p"), participantNameExpr("p")))
+		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
+	} else if filter.Sender != "" {
 		conditions = append(conditions, `(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -1758,9 +1797,7 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			  AND (p.email_address = ? OR p.phone_number = ?)
 		))`)
 		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
-	}
-
-	if filter.SenderName != "" {
+	} else if filter.SenderName != "" {
 		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id

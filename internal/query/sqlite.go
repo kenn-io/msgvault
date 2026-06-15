@@ -351,12 +351,35 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 		args = append(args, filter.MessageType)
 	}
 
-	// Sender filter — check both message_recipients (email) and direct sender_id (WhatsApp/chat).
-	// Also checks phone_number for phone-based lookups (e.g., from:+447...).
-	// Uses EXISTS (not a plain JOIN) so a message with multiple 'from' rows is
-	// not multiplied into duplicate result rows.
-	if filter.Sender != "" {
-		conditions = append(conditions, `(EXISTS (
+	// Sender + sender-name filters — check both message_recipients (email)
+	// and direct sender_id (WhatsApp/chat). Also checks phone_number for
+	// phone-based lookups (e.g., from:+447...). Uses EXISTS (not a plain
+	// JOIN) so a message with multiple 'from' rows is not multiplied into
+	// duplicate result rows.
+	//
+	// When BOTH the email and the display name are filtered, they must
+	// match the SAME from-row (or the SAME direct sender), not two
+	// independent EXISTS that a multi-author message could satisfy via
+	// different rows. So fold them into a single correlated EXISTS per
+	// branch when both are set; otherwise keep the per-field EXISTS.
+	if filter.Sender != "" && filter.SenderName != "" {
+		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
+			SELECT 1 FROM message_recipients mr_filter_from
+			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+			WHERE mr_filter_from.message_id = m.id
+			  AND mr_filter_from.recipient_type = 'from'
+			  AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)
+			  AND %s = ?
+		) OR EXISTS (
+			SELECT 1 FROM participants p_direct_sender
+			WHERE p_direct_sender.id = m.sender_id
+			  AND (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)
+			  AND %s = ?
+		))`, participantNameExpr("p_filter_from"), participantNameExpr("p_direct_sender")))
+		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
+	} else {
+		if filter.Sender != "" {
+			conditions = append(conditions, `(EXISTS (
 			SELECT 1 FROM message_recipients mr_filter_from
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
@@ -367,12 +390,12 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			WHERE p_direct_sender.id = m.sender_id
 			  AND (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)
 		))`)
-		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
-	} else if filter.MatchesEmpty(ViewSenders) {
-		// A message has an "empty sender" only if it has no from-recipient with a
-		// non-empty email/phone AND no direct sender_id. NOT EXISTS keeps the
-		// predicate message-scoped (no per-from-row multiplication).
-		conditions = append(conditions, `(NOT EXISTS (
+			args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
+		} else if filter.MatchesEmpty(ViewSenders) {
+			// A message has an "empty sender" only if it has no from-recipient with a
+			// non-empty email/phone AND no direct sender_id. NOT EXISTS keeps the
+			// predicate message-scoped (no per-from-row multiplication).
+			conditions = append(conditions, `(NOT EXISTS (
 			SELECT 1 FROM message_recipients mr_filter_from
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
@@ -382,13 +405,13 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			    (p_filter_from.phone_number IS NOT NULL AND p_filter_from.phone_number != '')
 			  )
 		) AND m.sender_id IS NULL)`)
-	}
+		}
 
-	// Sender name filter — check both message_recipients (email) and direct sender_id (WhatsApp/chat).
-	// Uses EXISTS so a message with multiple 'from' rows sharing the queried
-	// display name is not multiplied into duplicate result rows.
-	if filter.SenderName != "" {
-		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
+		// Sender name filter — check both message_recipients (email) and direct sender_id (WhatsApp/chat).
+		// Uses EXISTS so a message with multiple 'from' rows sharing the queried
+		// display name is not multiplied into duplicate result rows.
+		if filter.SenderName != "" {
+			conditions = append(conditions, fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM message_recipients mr_filter_from
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
@@ -399,8 +422,11 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			WHERE p_direct_sender.id = m.sender_id
 			  AND %s = ?
 		))`, participantNameExpr("p_filter_from"), participantNameExpr("p_direct_sender")))
-		args = append(args, filter.SenderName, filter.SenderName)
-	} else if filter.MatchesEmpty(ViewSenderNames) {
+			args = append(args, filter.SenderName, filter.SenderName)
+		}
+	}
+
+	if filter.SenderName == "" && filter.MatchesEmpty(ViewSenderNames) {
 		// A message has an "empty sender name" only if it has no from-recipient name AND no direct sender_id with a name.
 		conditions = append(conditions, fmt.Sprintf(`(NOT EXISTS (
 			SELECT 1 FROM message_recipients mr_sn
@@ -1134,7 +1160,28 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	// non-multiplicative.
 	joins := []string{`JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'`}
 
-	if filter.Sender != "" {
+	// When BOTH the email and the display name are filtered, they must
+	// match the SAME from-row (or the SAME direct sender), not two
+	// independent EXISTS that a multi-author message could satisfy via
+	// different rows.
+	if filter.Sender != "" && filter.SenderName != "" {
+		conditions = append(conditions, fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM message_recipients mr_from
+				JOIN participants p_from ON p_from.id = mr_from.participant_id
+				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
+				  AND (p_from.email_address = ? OR p_from.phone_number = ?)
+				  AND %s = ?
+			)
+			OR EXISTS (
+				SELECT 1 FROM participants p_ds
+				WHERE p_ds.id = m.sender_id
+				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
+				  AND %s = ?
+			)
+		)`, participantNameExpr("p_from"), participantNameExpr("p_ds")))
+		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
+	} else if filter.Sender != "" {
 		conditions = append(conditions, `(
 			EXISTS (
 				SELECT 1 FROM message_recipients mr_from
@@ -1149,9 +1196,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			)
 		)`)
 		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
-	}
-
-	if filter.SenderName != "" {
+	} else if filter.SenderName != "" {
 		conditions = append(conditions, fmt.Sprintf(`(
 			EXISTS (
 				SELECT 1 FROM message_recipients mr_from
