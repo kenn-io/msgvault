@@ -145,7 +145,7 @@ func TestStore_SourceImportItems(t *testing.T) {
 	assert.Equal("abc123", checksums["drive-file-1"], "imported checksum")
 
 	_, err = f.Store.DB().Exec(
-		`UPDATE source_import_items SET checksum = NULL WHERE source_id = ? AND provider = ? AND provider_id = ?`,
+		f.Store.Rebind(`UPDATE source_import_items SET checksum = NULL WHERE source_id = ? AND provider = ? AND provider_id = ?`),
 		src.ID, "drive", "drive-file-1",
 	)
 	require.NoError(err, "set checksum NULL")
