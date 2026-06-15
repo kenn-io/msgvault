@@ -2,6 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +14,7 @@ import (
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -111,6 +117,64 @@ client_secrets = "/path/to/secrets.json"
 
 	scheduled := cfg.ScheduledAccounts()
 	assertpkg.Empty(t, scheduled, "expected no scheduled accounts")
+}
+
+func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+
+	source, err := s.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "create source")
+	require.NoError(s.UpdateSourceDisplayName(source.ID, "Alice"), "set display name")
+	require.NoError(s.UpdateSourceSyncCursor(source.ID, "history-1"), "set sync cursor")
+
+	completedID, err := s.StartSync(source.ID, "full")
+	require.NoError(err, "start sync")
+	require.NoError(s.UpdateSyncCheckpoint(completedID, &store.Checkpoint{
+		MessagesProcessed: 3,
+		MessagesAdded:     2,
+		MessagesUpdated:   1,
+	}), "update checkpoint")
+	require.NoError(s.CompleteSync(completedID, "history-2"), "complete sync")
+
+	adapter := &storeAPIAdapter{store: s}
+	srv := api.NewServer(
+		&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		adapter,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp api.SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.Equal(source.ID, got.ID, "ID")
+	assert.Equal("gmail", got.SourceType, "SourceType")
+	assert.Equal("alice@example.com", got.Identifier, "Identifier")
+	require.NotNil(got.DisplayName, "DisplayName")
+	assert.Equal("Alice", *got.DisplayName, "DisplayName")
+	assert.Nil(got.ActiveSync, "ActiveSync")
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(completedID, got.LatestSync.ID, "LatestSync.ID")
+	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
+	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
+	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
+	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 }
 
 // TestSetupVectorFeatures_Disabled verifies that when

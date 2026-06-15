@@ -302,12 +302,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// storeAPIAdapter adapts store.Store to api.MessageStore.
+// storeAPIAdapter adapts store.Store to the API store interfaces.
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
 	store *store.Store
 }
+
+var _ api.MessageStore = (*storeAPIAdapter)(nil)
+var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
@@ -331,6 +334,22 @@ func (a *storeAPIAdapter) SearchMessages(query string, offset, limit int) ([]api
 
 func (a *storeAPIAdapter) SearchMessagesQuery(q *search.Query, offset, limit int) ([]api.APIMessage, int64, error) {
 	return a.store.SearchMessagesQuery(q, offset, limit)
+}
+
+func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {
+	return a.store.ListSources(sourceType)
+}
+
+func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetActiveSync(sourceID)
+}
+
+func (a *storeAPIAdapter) GetLatestSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLatestSync(sourceID)
+}
+
+func (a *storeAPIAdapter) GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSync(sourceID)
 }
 
 // schedulerAdapter adapts scheduler.Scheduler to api.SyncScheduler.

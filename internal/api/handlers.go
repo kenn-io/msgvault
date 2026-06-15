@@ -60,6 +60,40 @@ type AccountInfo struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+// SourceStatusResponse represents source sync status for all matching sources.
+type SourceStatusResponse struct {
+	Sources []SourceStatus `json:"sources"`
+}
+
+// SourceStatus represents one source and its read-only sync status.
+type SourceStatus struct {
+	ID                 int64          `json:"id"`
+	SourceType         string         `json:"source_type"`
+	Identifier         string         `json:"identifier"`
+	DisplayName        *string        `json:"display_name"`
+	LastSyncAt         *string        `json:"last_sync_at"`
+	UpdatedAt          string         `json:"updated_at"`
+	ActiveSync         *SyncRunStatus `json:"active_sync"`
+	LatestSync         *SyncRunStatus `json:"latest_sync"`
+	LastSuccessfulSync *SyncRunStatus `json:"last_successful_sync"`
+}
+
+// SyncRunStatus represents the API-visible details for a sync run.
+type SyncRunStatus struct {
+	ID                int64   `json:"id"`
+	SourceID          int64   `json:"source_id"`
+	StartedAt         string  `json:"started_at"`
+	CompletedAt       *string `json:"completed_at"`
+	Status            string  `json:"status"`
+	MessagesProcessed int64   `json:"messages_processed"`
+	MessagesAdded     int64   `json:"messages_added"`
+	MessagesUpdated   int64   `json:"messages_updated"`
+	ErrorsCount       int64   `json:"errors_count"`
+	ErrorMessage      *string `json:"error_message"`
+	CursorBefore      *string `json:"cursor_before"`
+	CursorAfter       *string `json:"cursor_after"`
+}
+
 // SchedulerStatusResponse represents scheduler status.
 type SchedulerStatusResponse struct {
 	Running  bool            `json:"running"`
@@ -175,6 +209,15 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 // writeError writes an error response.
 func writeError(w http.ResponseWriter, status int, err string, message string) {
 	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func nullableTimePtr(value time.Time) *string {
+	formatted := value.UTC().Format(time.RFC3339)
+	return &formatted
 }
 
 // messageDetailFromQuery builds a MessageDetail response from a query-engine
@@ -681,6 +724,109 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"accounts": accounts,
 	})
+}
+
+// handleSourceStatus returns read-only sync status for all matching sources.
+func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
+	statusStore, ok := s.store.(SourceStatusStore)
+	if s.store == nil || !ok {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
+		return
+	}
+
+	sourceType := r.URL.Query().Get("source_type")
+	sources, err := statusStore.ListSources(sourceType)
+	if err != nil {
+		s.logger.Error("failed to list sources for status",
+			"source_type", sourceType,
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source status")
+		return
+	}
+
+	statuses := make([]SourceStatus, 0, len(sources))
+	for _, source := range sources {
+		status, err := s.sourceStatus(statusStore, source)
+		if err != nil {
+			s.logger.Error("failed to build source sync status",
+				"source_id", source.ID,
+				"source_type", source.SourceType,
+				"identifier", source.Identifier,
+				"error", err,
+			)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source status")
+			return
+		}
+		statuses = append(statuses, status)
+	}
+
+	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
+}
+
+func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Source) (SourceStatus, error) {
+	status := SourceStatus{
+		ID:         source.ID,
+		SourceType: source.SourceType,
+		Identifier: source.Identifier,
+		UpdatedAt:  source.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if source.DisplayName.Valid {
+		status.DisplayName = stringPtr(source.DisplayName.String)
+	}
+	if source.LastSyncAt.Valid {
+		status.LastSyncAt = nullableTimePtr(source.LastSyncAt.Time)
+	}
+
+	active, err := statusStore.GetActiveSync(source.ID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return SourceStatus{}, fmt.Errorf("get active sync: %w", err)
+	}
+	status.ActiveSync = syncRunStatus(active)
+
+	latest, err := statusStore.GetLatestSync(source.ID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
+	}
+	status.LatestSync = syncRunStatus(latest)
+
+	lastSuccessful, err := statusStore.GetLastSuccessfulSync(source.ID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return SourceStatus{}, fmt.Errorf("get last successful sync: %w", err)
+	}
+	status.LastSuccessfulSync = syncRunStatus(lastSuccessful)
+
+	return status, nil
+}
+
+func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
+	if run == nil {
+		return nil
+	}
+
+	status := &SyncRunStatus{
+		ID:                run.ID,
+		SourceID:          run.SourceID,
+		StartedAt:         run.StartedAt.UTC().Format(time.RFC3339),
+		Status:            run.Status,
+		MessagesProcessed: run.MessagesProcessed,
+		MessagesAdded:     run.MessagesAdded,
+		MessagesUpdated:   run.MessagesUpdated,
+		ErrorsCount:       run.ErrorsCount,
+	}
+	if run.CompletedAt.Valid {
+		status.CompletedAt = nullableTimePtr(run.CompletedAt.Time)
+	}
+	if run.ErrorMessage.Valid {
+		status.ErrorMessage = stringPtr(run.ErrorMessage.String)
+	}
+	if run.CursorBefore.Valid {
+		status.CursorBefore = stringPtr(run.CursorBefore.String)
+	}
+	if run.CursorAfter.Valid {
+		status.CursorAfter = stringPtr(run.CursorAfter.String)
+	}
+	return status
 }
 
 // handleTriggerSync manually triggers a sync for an account.

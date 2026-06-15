@@ -109,6 +109,26 @@ func TestParseDBTime_MultipleFormats(t *testing.T) {
 	assert.LessOrEqual(age, time.Minute, "StartedAt age = %v, expected recent time", age)
 }
 
+func TestStore_GetLatestSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+
+	_, err := f.Store.GetLatestSync(f.Source.ID)
+	require.ErrorIs(err, store.ErrSyncRunNotFound, "GetLatestSync before any runs")
+
+	firstID := f.StartSync()
+	require.NoError(f.Store.CompleteSync(firstID, "history-1"), "CompleteSync first")
+
+	secondID := f.StartSync()
+
+	run, err := f.Store.GetLatestSync(f.Source.ID)
+	require.NoError(err, "GetLatestSync")
+	require.NotNil(run, "expected sync run")
+	assert.Equal(secondID, run.ID, "ID")
+	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
+}
+
 // TestListSources_ParsesTimestamps verifies that ListSources correctly parses
 // timestamps for all returned sources.
 func TestListSources_ParsesTimestamps(t *testing.T) {

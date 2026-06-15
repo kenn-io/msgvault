@@ -22,6 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -158,6 +160,93 @@ func TestHandleListMessagesPagination(t *testing.T) {
 
 	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
 	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
+}
+
+func TestHandleSourceStatus(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	gmail, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource gmail")
+	require.NoError(st.UpdateSourceDisplayName(gmail.ID, "Alice"), "UpdateSourceDisplayName")
+	require.NoError(st.UpdateSourceSyncCursor(gmail.ID, "history-1"), "UpdateSourceSyncCursor")
+
+	completedID, err := st.StartSync(gmail.ID, "full")
+	require.NoError(err, "StartSync completed")
+	require.NoError(st.UpdateSyncCheckpoint(completedID, &store.Checkpoint{
+		PageToken:         "page-1",
+		MessagesProcessed: 10,
+		MessagesAdded:     8,
+		MessagesUpdated:   2,
+	}), "UpdateSyncCheckpoint")
+	require.NoError(st.CompleteSync(completedID, "history-2"), "CompleteSync")
+
+	runningID, err := st.StartSync(gmail.ID, "incremental")
+	require.NoError(err, "StartSync running")
+
+	_, err = st.GetOrCreateSource("imap", "imaps://mail.example.com/alice")
+	require.NoError(err, "GetOrCreateSource imap")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.Equal(gmail.ID, got.ID, "ID")
+	assert.Equal("gmail", got.SourceType, "SourceType")
+	assert.Equal("alice@example.com", got.Identifier, "Identifier")
+	require.NotNil(got.DisplayName, "DisplayName")
+	assert.Equal("Alice", *got.DisplayName, "DisplayName")
+	require.NotNil(got.LastSyncAt, "LastSyncAt")
+	assert.NotEmpty(*got.LastSyncAt, "LastSyncAt")
+	assert.NotEmpty(got.UpdatedAt, "UpdatedAt")
+
+	require.NotNil(got.ActiveSync, "ActiveSync")
+	assert.Equal(runningID, got.ActiveSync.ID, "ActiveSync.ID")
+	assert.Equal(store.SyncStatusRunning, got.ActiveSync.Status, "ActiveSync.Status")
+
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(runningID, got.LatestSync.ID, "LatestSync.ID")
+
+	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
+	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
+	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
+	assert.Equal(int64(10), got.LastSuccessfulSync.MessagesProcessed, "LastSuccessfulSync.MessagesProcessed")
+	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+}
+
+func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	source, err := st.GetOrCreateSource("gmail", "empty@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+	assert.Equal(source.ID, resp.Sources[0].ID, "ID")
+	assert.Nil(resp.Sources[0].ActiveSync, "ActiveSync")
+	assert.Nil(resp.Sources[0].LatestSync, "LatestSync")
+	assert.Nil(resp.Sources[0].LastSuccessfulSync, "LastSuccessfulSync")
 }
 
 func TestHandleGetMessage(t *testing.T) {

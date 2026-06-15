@@ -294,13 +294,32 @@ func (s *Store) GetActiveSync(sourceID int64) (*SyncRun, error) {
 		       error_message, cursor_before, cursor_after
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'running'
-		ORDER BY started_at DESC
+		ORDER BY started_at DESC, id DESC
 		LIMIT 1
 	`, sourceID)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("active sync for source %d: %w", sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
+// GetLatestSync returns the most recent sync run for a source, if any.
+func (s *Store) GetLatestSync(sourceID int64) (*SyncRun, error) {
+	row := s.db.QueryRow(`
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after
+		FROM sync_runs
+		WHERE source_id = ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, sourceID)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err
 }
