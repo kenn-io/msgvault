@@ -70,7 +70,15 @@ Add to Claude Desktop config:
 		var engine query.Engine
 		analyticsDir := cfg.AnalyticsDir()
 
-		if !mcpForceSQL && query.HasCompleteParquetData(analyticsDir) {
+		// The Parquet analytics cache is a SQLite → DuckDB ETL and has no
+		// meaning when the system of record is PostgreSQL: the cache may be
+		// stale relative to PG, and NewDuckDBEngine would receive the
+		// PostgreSQL DSN/handle in its SQLite slots, routing SQLite-specific
+		// queries through a PG connection. On PG, skip the cache entirely and
+		// use the dialect-aware engine directly (mirrors serve.go / tui.go).
+		if s.IsPostgreSQL() {
+			engine = query.NewEngine(s.DB(), true)
+		} else if mcpShouldUseParquet(mcpForceSQL, analyticsDir) {
 			var duckOpts query.DuckDBOptions
 			if mcpNoSQLiteScanner {
 				duckOpts.DisableSQLiteScanner = true
@@ -79,13 +87,13 @@ Add to Claude Desktop config:
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to open Parquet engine: %v\n", err)
 				fmt.Fprintf(os.Stderr, "Falling back to SQLite\n")
-				engine = query.NewEngine(s.DB(), s.IsPostgreSQL())
+				engine = query.NewEngine(s.DB(), false)
 			} else {
 				engine = duckEngine
 				defer func() { _ = duckEngine.Close() }()
 			}
 		} else {
-			engine = query.NewEngine(s.DB(), s.IsPostgreSQL())
+			engine = query.NewEngine(s.DB(), false)
 		}
 
 		// Derive from cmd.Context() so signal handling installed by
@@ -131,6 +139,16 @@ Add to Claude Desktop config:
 		}
 		return mcpserver.ServeWithOptions(ctx, opts)
 	},
+}
+
+// mcpShouldUseParquet reports whether the MCP server should use the
+// DuckDB/Parquet engine. This is the SQLite-only branch of the engine
+// selection: PostgreSQL stores must be handled by the caller before this
+// is consulted (the Parquet cache is a SQLite → DuckDB ETL with no
+// PostgreSQL meaning). It returns true only when the user has not forced
+// SQLite and a complete Parquet cache exists.
+func mcpShouldUseParquet(forceSQL bool, analyticsDir string) bool {
+	return !forceSQL && query.HasCompleteParquetData(analyticsDir)
 }
 
 func init() {
