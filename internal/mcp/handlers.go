@@ -23,7 +23,70 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
-const maxLimit = 1000
+const (
+	maxLimit               = 1000
+	maxSearchMessagesLimit = 50
+	defaultSearchLimit     = 20
+	// totalCountUnknown is returned when the backend cannot report a full match
+	// count (hybrid/vector ranking depth, or list_messages has_more without a
+	// separate count query). Clients should use has_more for paging.
+	totalCountUnknown = -1
+)
+
+type paginatedResponse[T any] struct {
+	Data     []T   `json:"data"`
+	Total    int64 `json:"total"`
+	Returned int   `json:"returned"`
+	Offset   int   `json:"offset"`
+	HasMore  bool  `json:"has_more"`
+}
+
+func newPaginatedResponse[T any](data []T, total int64, offset int) paginatedResponse[T] {
+	if data == nil {
+		data = []T{}
+	}
+	returned := len(data)
+	return paginatedResponse[T]{
+		Data:     data,
+		Total:    total,
+		Returned: returned,
+		Offset:   offset,
+		HasMore:  int64(offset+returned) < total,
+	}
+}
+
+// newPaginatedResponseHasMore builds a page when total match count is unknown.
+// When hasMore is false, total is exact (offset+returned). When hasMore is true,
+// total is totalCountUnknown — use has_more to fetch the next page.
+func newPaginatedResponseHasMore[T any](data []T, offset int, hasMore bool) paginatedResponse[T] {
+	if data == nil {
+		data = []T{}
+	}
+	returned := len(data)
+	total := int64(offset + returned)
+	if hasMore {
+		total = totalCountUnknown
+	}
+	return paginatedResponse[T]{
+		Data:     data,
+		Total:    total,
+		Returned: returned,
+		Offset:   offset,
+		HasMore:  hasMore,
+	}
+}
+
+func searchLimitArg(args map[string]any) int {
+	limit := limitArg(args, "limit", defaultSearchLimit)
+	if limit > maxSearchMessagesLimit {
+		return maxSearchMessagesLimit
+	}
+	return limit
+}
+
+func listLimitArg(args map[string]any) int {
+	return searchLimitArg(args)
+}
 
 type handlers struct {
 	engine         query.Engine
@@ -163,11 +226,6 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	explain, _ := args["explain"].(bool)
 
 	if mode == "vector" || mode == "hybrid" {
-		if off := limitArg(args, "offset", 0); off > 0 {
-			return mcp.NewToolResultError(
-				"pagination_unsupported: mode=" + mode + " only supports offset=0",
-			), nil
-		}
 		return h.searchMessagesHybrid(ctx, args, queryStr, mode, explain)
 	}
 
@@ -177,7 +235,7 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 		), nil
 	}
 
-	limit := limitArg(args, "limit", 20)
+	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
 
 	// Look up account filter
@@ -208,7 +266,12 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 		}
 	}
 
-	return jsonResult(results)
+	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search count failed: %v", err)), nil
+	}
+
+	return jsonResult(newPaginatedResponse(results, totalMatched, offset))
 }
 
 // hybridScoreBreakdown exposes fused-score components for debugging.
@@ -241,15 +304,13 @@ type hybridGenerationSummary struct {
 	State       string `json:"state"`
 }
 
-// hybridSearchResponse is the full response body for a mode=vector or
-// mode=hybrid request on the search_messages tool.
-type hybridSearchResponse struct {
-	Query         string                  `json:"query"`
+// searchMessagesHybridResponse is the paginated body for mode=vector|hybrid.
+type searchMessagesHybridResponse struct {
+	paginatedResponse[hybridMessageItem]
+
 	Mode          string                  `json:"mode"`
-	Returned      int                     `json:"returned"`
 	PoolSaturated bool                    `json:"pool_saturated"`
 	Generation    hybridGenerationSummary `json:"generation"`
-	Messages      []hybridMessageItem     `json:"messages"`
 }
 
 // searchMessagesHybrid runs vector or hybrid search via the configured
@@ -274,10 +335,8 @@ func (h *handlers) searchMessagesHybrid(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	limit := limitArg(args, "limit", 20)
-	if maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
-		limit = maxPage
-	}
+	limit := searchLimitArg(args)
+	offset := limitArg(args, "offset", 0)
 
 	parsed := search.Parse(queryStr)
 	freeText := strings.Join(parsed.TextTerms, " ")
@@ -305,11 +364,26 @@ func (h *handlers) searchMessagesHybrid(
 		filter.SourceIDs = []int64{*sourceID}
 	}
 
+	maxPage := h.vectorCfg.Search.MaxPageSizeHybridClamp()
+	fetchLimit := offset + limit
+	if maxPage > 0 {
+		if offset >= maxPage {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"pagination_limit: offset %d exceeds hybrid ranking window (max %d); "+
+					"use mode=fts for deeper pagination",
+				offset, maxPage,
+			)), nil
+		}
+		if fetchLimit > maxPage {
+			fetchLimit = maxPage
+		}
+	}
+
 	req := hybrid.SearchRequest{
 		Mode:         hybrid.Mode(mode),
 		FreeText:     freeText,
 		Filter:       filter,
-		Limit:        limit,
+		Limit:        fetchLimit,
 		SubjectTerms: subjectTerms,
 		Explain:      explain,
 	}
@@ -367,11 +441,18 @@ func (h *handlers) searchMessagesHybrid(
 		items = append(items, item)
 	}
 
-	return jsonResult(hybridSearchResponse{
-		Query:         queryStr,
-		Mode:          mode,
-		Returned:      len(items),
-		PoolSaturated: meta.PoolSaturated,
+	var page []hybridMessageItem
+	if offset < len(items) {
+		end := min(offset+limit, len(items))
+		page = items[offset:end]
+	}
+	hasMore := offset+limit < len(items) ||
+		(meta.PoolSaturated && len(hits) >= fetchLimit)
+
+	return jsonResult(searchMessagesHybridResponse{
+		paginatedResponse: newPaginatedResponseHasMore(page, offset, hasMore),
+		Mode:              mode,
+		PoolSaturated:     meta.PoolSaturated,
 		Generation: hybridGenerationSummary{
 			ID:          int64(meta.Generation.ID),
 			Model:       meta.Generation.Model,
@@ -379,7 +460,6 @@ func (h *handlers) searchMessagesHybrid(
 			Fingerprint: meta.Generation.Fingerprint,
 			State:       string(meta.Generation.State),
 		},
-		Messages: items,
 	})
 }
 
@@ -698,7 +778,7 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 	filter := query.MessageFilter{
 		SourceID: sourceID,
 		Pagination: query.Pagination{
-			Limit:  limitArg(args, "limit", 20),
+			Limit:  listLimitArg(args) + 1,
 			Offset: limitArg(args, "offset", 0),
 		},
 	}
@@ -732,7 +812,14 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("list failed: %v", err)), nil
 	}
 
-	return jsonResult(results)
+	pageLimit := listLimitArg(args)
+	offset := filter.Pagination.Offset
+	hasMore := len(results) > pageLimit
+	if hasMore {
+		results = results[:pageLimit]
+	}
+
+	return jsonResult(newPaginatedResponseHasMore(results, offset, hasMore))
 }
 
 // getStatsResponse is the JSON body returned by the get_stats MCP tool.

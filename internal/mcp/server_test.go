@@ -48,6 +48,22 @@ type attachmentMeta struct {
 	Size     int64  `json:"size"`
 }
 
+type paginatedSearchMessages struct {
+	Data     []query.MessageSummary `json:"data"`
+	Total    int64                  `json:"total"`
+	Returned int                    `json:"returned"`
+	Offset   int                    `json:"offset"`
+	HasMore  bool                   `json:"has_more"`
+}
+
+type paginatedListMessages struct {
+	Data     []query.MessageSummary `json:"data"`
+	Total    int64                  `json:"total"`
+	Returned int                    `json:"returned"`
+	Offset   int                    `json:"offset"`
+	HasMore  bool                   `json:"has_more"`
+}
+
 // newTestHandlers creates a handlers instance with the given mock engine.
 func newTestHandlers(eng *querytest.MockEngine) *handlers {
 	return &handlers{engine: eng}
@@ -99,10 +115,10 @@ func TestSearchMessages(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("valid query", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
-		requirepkg.Len(t, msgs, 1, "msgs")
-		assertpkg.Equal(t, "Hello", msgs[0].Subject, "subject")
-		assertpkg.Equal(t, "thread-abc", msgs[0].SourceConversationID, "SourceConversationID")
+		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
+		requirepkg.Len(t, resp.Data, 1, "data")
+		assertpkg.Equal(t, "Hello", resp.Data[0].Subject, "subject")
+		assertpkg.Equal(t, "thread-abc", resp.Data[0].SourceConversationID, "SourceConversationID")
 	})
 
 	t.Run("missing query", func(t *testing.T) {
@@ -119,9 +135,9 @@ func TestSearchFallbackToFTS(t *testing.T) {
 	}
 	h := newTestHandlers(eng)
 
-	msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{"query": "important meeting notes"})
-	requirepkg.Len(t, msgs, 1, "FTS fallback msgs")
-	assertpkg.Equal(t, int64(2), msgs[0].ID, "FTS fallback ID")
+	resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "important meeting notes"})
+	requirepkg.Len(t, resp.Data, 1, "FTS fallback data")
+	assertpkg.Equal(t, int64(2), resp.Data[0].ID, "FTS fallback ID")
 }
 
 func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
@@ -283,19 +299,56 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	assertpkg.Equal(t, "false", string(val), "pool_saturated")
 }
 
-func TestSearchMessages_HybridModePaginationUnsupported(t *testing.T) {
-	// offset>0 must be rejected before any hybrid-engine lookup. The
-	// pagination check runs first, so a missing hybridEngine does not
-	// mask the pagination_unsupported error.
-	h := newTestHandlers(&querytest.MockEngine{})
+func TestSearchMessages_HybridModePagination(t *testing.T) {
+	const msgID = int64(77)
+	backend := &fakeBackend{
+		active: vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{
+			{MessageID: 10, Score: 0.9},
+			{MessageID: 20, Score: 0.8},
+			{MessageID: msgID, Score: 0.7},
+		},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	mockEng := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			10: testutil.NewMessageDetail(10).WithBodyText("first hit").BuildPtr(),
+			20: testutil.NewMessageDetail(20).WithBodyText("second hit").BuildPtr(),
+			77: testutil.NewMessageDetail(msgID).WithBodyText("third hit").BuildPtr(),
+		},
+	}
+	h := &handlers{
+		engine:       mockEng,
+		hybridEngine: engine,
+		backend:      backend,
+		vectorCfg:    vector.Config{},
+	}
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
-		"query":  "meeting notes",
+	type hybridPage struct {
+		Data []struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+		Offset   int  `json:"offset"`
+		Returned int  `json:"returned"`
+		HasMore  bool `json:"has_more"`
+	}
+	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+		"query":  "hit",
 		"mode":   "vector",
 		"offset": float64(1),
+		"limit":  float64(1),
 	})
-	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "pagination_unsupported", "expected 'pagination_unsupported' error, got: %s")
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	require.Len(resp.Data, 1, "data")
+	assert.Equal(int64(20), resp.Data[0].ID, "second ranked hit")
+	assert.Equal(1, resp.Offset, "offset")
+	assert.True(resp.HasMore, "has_more")
 }
 
 func TestSearchMessages_UnknownMode(t *testing.T) {
@@ -452,13 +505,14 @@ func TestListMessages(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("valid filters", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "list_messages", h.listMessages, map[string]any{
+		resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
 			"from":  "alice@example.com",
 			"after": "2024-01-01",
 			"limit": float64(10),
 		})
-		requirepkg.Len(t, msgs, 1, "msgs")
-		assertpkg.Equal(t, "thread-list", msgs[0].SourceConversationID, "SourceConversationID")
+		requirepkg.Len(t, resp.Data, 1, "data")
+		assertpkg.Equal(t, "thread-list", resp.Data[0].SourceConversationID, "SourceConversationID")
+		assertpkg.False(t, resp.HasMore, "has_more")
 	})
 
 	errorCases := []struct {
@@ -937,11 +991,11 @@ func TestAccountFilter(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("search with valid account", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{
+		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
 			"query":   "test",
 			"account": "alice@gmail.com",
 		})
-		assertpkg.Len(t, msgs, 1, "msgs")
+		assertpkg.Len(t, resp.Data, 1, "data")
 	})
 
 	t.Run("search with invalid account", func(t *testing.T) {
@@ -954,10 +1008,10 @@ func TestAccountFilter(t *testing.T) {
 	})
 
 	t.Run("list with valid account", func(t *testing.T) {
-		msgs := runTool[[]query.MessageSummary](t, "list_messages", h.listMessages, map[string]any{
+		resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
 			"account": "bob@gmail.com",
 		})
-		assertpkg.Len(t, msgs, 1, "msgs")
+		assertpkg.Len(t, resp.Data, 1, "data")
 	})
 
 	t.Run("list with invalid account", func(t *testing.T) {
@@ -987,11 +1041,11 @@ func TestAccountFilter(t *testing.T) {
 
 	t.Run("empty account means no filter", func(t *testing.T) {
 		// Empty string should not filter - return all results
-		msgs := runTool[[]query.MessageSummary](t, "search_messages", h.searchMessages, map[string]any{
+		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
 			"query":   "test",
 			"account": "",
 		})
-		assertpkg.Len(t, msgs, 1, "msgs")
+		assertpkg.Len(t, resp.Data, 1, "data")
 	})
 }
 

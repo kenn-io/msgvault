@@ -186,7 +186,9 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) e
 func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 	if !vectorAvailable {
 		return mcp.NewTool(ToolSearchMessages,
-			mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. (This server is not configured for vector search; only keyword FTS is available.)"),
+			mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+				"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
+				"(This server is not configured for vector search; only keyword FTS is available.)"),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("query",
 				mcp.Required(),
@@ -198,7 +200,11 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		)
 	}
 	return mcp.NewTool(ToolSearchMessages,
-		mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. Vector search is configured: set mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. Vector/hybrid modes require free-text terms in the query; filter-only queries must use mode=fts."),
+		mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+			"All modes paginate via offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
+			"total=-1 means the full match count is unknown — use has_more. "+
+			"Vector/hybrid ranking depth is capped by max_page_size_hybrid in config; beyond that use mode=fts. "+
+			"Vector search is configured: set mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. Vector/hybrid modes require free-text terms in the query; filter-only queries must use mode=fts."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -206,10 +212,8 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		),
 		withAccount(),
 		withLimit("20"),
-		// offset is FTS-only here. Vector/hybrid responses don't page —
-		// callers should bump limit (capped by max_page_size_hybrid) instead.
 		mcp.WithNumber("offset",
-			mcp.Description("Number of results to skip for pagination (default 0). Only valid for mode=fts; mode=vector and mode=hybrid reject offset>0 with pagination_unsupported."),
+			mcp.Description("Number of results to skip for pagination (default 0)."),
 		),
 		mcp.WithString("mode",
 			mcp.Description("Search mode: fts (default, keyword only), vector (semantic only), or hybrid (BM25 + vector fused via RRF)"),
@@ -258,7 +262,9 @@ func exportAttachmentTool() mcp.Tool {
 
 func listMessagesTool() mcp.Tool {
 	return mcp.NewTool(ToolListMessages,
-		mcp.WithDescription("List messages with optional filters. Returns message summaries sorted by date."),
+		mcp.WithDescription("List messages with optional filters. Returns message summaries sorted by date. "+
+			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
+			"total=-1 when has_more is true (full count unknown)."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		withAccount(),
 		mcp.WithString("from",
