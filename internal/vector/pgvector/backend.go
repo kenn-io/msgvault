@@ -286,6 +286,76 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 	return nil
 }
 
+// CatchUpPending idempotently enqueues every live message that is
+// missing from gen's pending_embeddings, and reports how many rows it
+// inserted. It is the self-healing counterpart to the per-sync
+// Enqueuer: sync persists a message row in one transaction and enqueues
+// it in a separate one, so a failed enqueue leaves the message
+// committed but absent from the queue, and the next incremental sync
+// skips it as already-ingested. Running this before draining the queue
+// re-derives the queue from the source of truth (the live messages
+// table) so any such gap self-heals on the next embed run.
+//
+// This mirrors seedPending's INSERT … SELECT … ON CONFLICT DO NOTHING
+// shape but targets an arbitrary non-retired generation (typically the
+// active one on the incremental top-up path, where seedPending never
+// re-runs). It is cheap when nothing is missing: the (generation_id,
+// message_id) primary key resolves every would-be duplicate via the
+// conflict clause, inserting zero rows. PostgreSQL-only — the SQLite
+// build does not compile this file, and its full-rebuild path already
+// recovers missed IDs.
+func (b *Backend) CatchUpPending(ctx context.Context, gen vector.GenerationID) (int64, error) {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin catch-up tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Skip retired generations: pickTarget never re-targets them, so any
+	// row we inserted would be orphaned forever. Restricting the catch-up
+	// to a non-retired generation keeps the "retired generations have
+	// zero pending items" invariant intact.
+	var state string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state FROM index_generations WHERE id = $1`, int64(gen)).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return 0, fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == string(vector.GenerationRetired) {
+		return 0, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+	}
+
+	// Disable the pool-wide 30s statement_timeout for this tx: this single
+	// INSERT ... SELECT over the whole messages table can exceed it on a
+	// large archive, exactly as seedPending notes. SET LOCAL is tx-scoped.
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return 0, fmt.Errorf("disable statement_timeout for catch-up: %w", err)
+	}
+
+	now := time.Now().Unix()
+	stmt := fmt.Sprintf(`
+		INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
+		SELECT $1, id, $2
+		  FROM messages
+		 WHERE %s
+		ON CONFLICT (generation_id, message_id) DO NOTHING`,
+		store.LiveMessagesWhere("", true))
+	res, err := tx.ExecContext(ctx, stmt, int64(gen), now)
+	if err != nil {
+		return 0, fmt.Errorf("catch-up pending: %w", err)
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("catch-up rows affected: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit catch-up pending: %w", err)
+	}
+	return inserted, nil
+}
+
 // ActivateGeneration atomically retires the current active generation
 // (if any) and promotes gen to active.
 //

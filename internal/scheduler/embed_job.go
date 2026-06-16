@@ -112,6 +112,27 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		}
 	}
 
+	// PostgreSQL self-heal: sync persists a message row and enqueues it
+	// for embedding in two separate transactions, so a failed enqueue
+	// leaves the message committed but missing from pending_embeddings,
+	// and the next incremental sync skips it as already-ingested. Before
+	// draining, re-derive target's queue from the live messages table so
+	// any such gap is recovered. Idempotent and cheap when nothing is
+	// missing (ON CONFLICT drops every would-be duplicate). Only the
+	// pgvector backend implements CatchUpPending; SQLite is unaffected
+	// (its full-rebuild path already recovers missed IDs).
+	if cu, ok := j.Backend.(interface {
+		CatchUpPending(ctx context.Context, gen vector.GenerationID) (int64, error)
+	}); ok {
+		if caught, err := cu.CatchUpPending(ctx, target); err != nil {
+			log.Warn("embed: catch-up of missed enqueues failed; continuing with current queue",
+				"gen", target, "error", err)
+		} else if caught > 0 {
+			log.Info("embed: caught up messages missing from the embed queue",
+				"gen", target, "count", caught)
+		}
+	}
+
 	res, err := j.Worker.RunOnce(ctx, target)
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)

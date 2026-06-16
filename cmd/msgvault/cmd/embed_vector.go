@@ -90,6 +90,29 @@ func runEmbed(cmd *cobra.Command) error {
 		return err
 	}
 
+	// PostgreSQL self-heal: sync persists a message row and enqueues it
+	// for embedding in two separate transactions, so a failed enqueue
+	// leaves the message committed but missing from pending_embeddings,
+	// and the next incremental sync skips it as already-ingested. Before
+	// draining, re-derive gen's queue from the live messages table so any
+	// such gap is recovered. Idempotent and cheap when nothing is missing
+	// (every would-be duplicate is dropped by ON CONFLICT). Done before
+	// the pending count below so the progress ETA includes recovered rows.
+	// SQLite is unaffected — its full-rebuild path already recovers missed
+	// IDs, and this file's other branch builds a sqlitevec backend that
+	// does not implement CatchUpPending.
+	if cu, ok := backend.(interface {
+		CatchUpPending(ctx context.Context, gen vector.GenerationID) (int64, error)
+	}); s.IsPostgreSQL() && ok {
+		caught, err := cu.CatchUpPending(ctx, gen)
+		if err != nil {
+			return fmt.Errorf("catch up pending: %w", err)
+		}
+		if caught > 0 {
+			_, _ = fmt.Fprintf(errOut, "Caught up %d message(s) missing from the embed queue.\n", caught)
+		}
+	}
+
 	client := embed.NewClient(embed.Config{
 		Endpoint:   cfg.Vector.Embeddings.Endpoint,
 		APIKey:     cfg.Vector.Embeddings.APIKey(),
