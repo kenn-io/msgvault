@@ -366,6 +366,8 @@ func (poisonDefaultTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestHTTPHelpersDoNotUseDefaultTransport(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	oldDefaultTransport := http.DefaultTransport
 	http.DefaultTransport = poisonDefaultTransport{}
 	t.Cleanup(func() {
@@ -392,21 +394,21 @@ func TestHTTPHelpersDoNotUseDefaultTransport(t *testing.T) {
 	defer srv.Close()
 
 	tag, err := resolveLatestTag(srv.URL + "/latest")
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, "v0.30.1", tag)
+	require.NoError(err)
+	assert.Equal("v0.30.1", tag)
 
 	size, err := fetchContentLength(srv.URL + "/asset")
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, int64(7), size)
+	require.NoError(err)
+	assert.Equal(int64(7), size)
 
 	checksum, err := fetchChecksumFromFile(srv.URL+"/SHA256SUMS", assetName)
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, testHash64, checksum)
+	require.NoError(err)
+	assert.Equal(testHash64, checksum)
 
 	dest := filepath.Join(t.TempDir(), assetName)
 	gotChecksum, err := downloadFile(srv.URL+"/asset", dest, 7, nil)
-	requirepkg.NoError(t, err)
-	assertpkg.NotEmpty(t, gotChecksum)
+	require.NoError(err)
+	assert.NotEmpty(gotChecksum)
 }
 
 func TestDownloadHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
