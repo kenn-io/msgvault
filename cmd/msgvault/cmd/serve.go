@@ -186,7 +186,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:     jobName,
 			Schedule: source.Schedule,
 			Run: func(ctx context.Context) error {
-				return runConfiguredSynctechSMSSource(ctx, source)
+				return runConfiguredSynctechSMSSourceWithStore(ctx, s, source)
 			},
 		}); err != nil {
 			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
@@ -433,27 +433,8 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		"duration", time.Since(startTime),
 	)
 
-	// Rebuild cache if stale (covers new messages and deletions). The
-	// Parquet cache is SQLite-only; skip on PostgreSQL DSNs.
-	dbPath := cfg.DatabaseDSN()
-	if store.IsPostgresURL(dbPath) {
-		return nil
-	}
-	analyticsDir := cfg.AnalyticsDir()
-	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.NeedsBuild {
-		logger.Info("rebuilding cache after sync",
-			"identifier", identifier, "reason", staleness.Reason,
-			"full_rebuild", staleness.FullRebuild)
-		// Build in a subprocess: buildCache uses DuckDB's bundled SQLite
-		// library, which corrupts the daemon's own long-lived go-sqlite3
-		// connections' WAL/lock state when run in-process (issue #379).
-		if err := buildCacheSubprocess(ctx, staleness.FullRebuild); err != nil {
-			logger.Error("cache build failed", "error", err)
-			// Don't fail the sync for cache build errors
-		} else {
-			logger.Info("cache build completed")
-		}
-	}
+	// Rebuild cache if stale (covers new messages and deletions).
+	rebuildCacheAfterScheduledSync(ctx, identifier)
 
 	return nil
 }

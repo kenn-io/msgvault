@@ -31,10 +31,6 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	if strings.TrimSpace(i.opts.OwnerPhone) == "" {
 		return ImportSummary{}, errors.New("owner phone is required for synctech-sms imports")
 	}
-	files, err := DiscoverBackupFiles(path)
-	if err != nil {
-		return ImportSummary{}, err
-	}
 	src, err := i.store.GetOrCreateSource(SourceType, i.opts.OwnerPhone)
 	if err != nil {
 		return ImportSummary{}, fmt.Errorf("get source: %w", err)
@@ -43,7 +39,7 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	if err != nil {
 		return ImportSummary{}, fmt.Errorf("start sync: %w", err)
 	}
-	summary, importErr := i.importFiles(src.ID, files)
+	summary, importErr := i.ImportPathIntoSource(src.ID, path)
 	if importErr != nil {
 		_ = i.store.FailSync(syncID, importErr.Error())
 		return summary, importErr
@@ -60,7 +56,24 @@ func (i *Importer) ImportPath(path string) (ImportSummary, error) {
 	return summary, nil
 }
 
-func (i *Importer) importFiles(sourceID int64, files []BackupFile) (ImportSummary, error) {
+// ImportPathIntoSource imports Synctech SMS backup records into an existing
+// source without starting, completing, or failing a sync run. Callers that own
+// a broader lifecycle, such as Google Drive polling, use this to avoid nested
+// sync_runs.
+func (i *Importer) ImportPathIntoSource(sourceID int64, path string) (ImportSummary, error) {
+	if strings.TrimSpace(i.opts.OwnerPhone) == "" {
+		return ImportSummary{}, errors.New("owner phone is required for synctech-sms imports")
+	}
+	files, err := DiscoverBackupFiles(path)
+	if err != nil {
+		return ImportSummary{}, err
+	}
+	return i.ImportFilesIntoSource(sourceID, files)
+}
+
+// ImportFilesIntoSource imports already-discovered backup files into an
+// existing source without owning sync lifecycle.
+func (i *Importer) ImportFilesIntoSource(sourceID int64, files []BackupFile) (ImportSummary, error) {
 	var summary ImportSummary
 	summary.FilesSeen = len(files)
 	for _, file := range files {

@@ -898,6 +898,32 @@ func globalConfigFlagArgs() []string {
 	return args
 }
 
+// rebuildCacheAfterScheduledSync rebuilds the Parquet cache if it is stale
+// after a scheduled sync. The cache is SQLite-only, so it is skipped on
+// PostgreSQL DSNs. The build runs in a subprocess (see buildCacheSubprocess)
+// to keep DuckDB's bundled SQLite library out of a long-lived daemon's
+// address space (issue #379).
+func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
+	dbPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(dbPath) {
+		return
+	}
+	analyticsDir := cfg.AnalyticsDir()
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if !staleness.NeedsBuild {
+		return
+	}
+	logger.Info("rebuilding cache after sync",
+		"identifier", identifier, "reason", staleness.Reason,
+		"full_rebuild", staleness.FullRebuild)
+	if err := buildCacheSubprocess(ctx, staleness.FullRebuild); err != nil {
+		logger.Error("cache build failed", "error", err)
+		// Don't fail the sync for cache build errors.
+	} else {
+		logger.Info("cache build completed")
+	}
+}
+
 func init() {
 	rootCmd.AddCommand(buildCacheCmd)
 	rootCmd.AddCommand(cacheStatsCmd)
