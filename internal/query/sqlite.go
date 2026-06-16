@@ -441,8 +441,25 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 		))`, participantNameExpr("p_sn"), participantNameExpr("p_ds")))
 	}
 
-	// Recipient filter — use EXISTS to avoid 1:N join multiplication.
-	if filter.Recipient != "" {
+	// Recipient + recipient-name filters — use EXISTS to avoid 1:N join
+	// multiplication.
+	//
+	// When BOTH the email and the display name are filtered, they must match
+	// the SAME to/cc/bcc row, not two independent EXISTS that a
+	// multi-recipient message could satisfy via different rows. So fold them
+	// into a single correlated EXISTS when both are set; otherwise keep the
+	// per-field EXISTS.
+	if filter.Recipient != "" && filter.RecipientName != "" {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM message_recipients mr_filter_to
+			JOIN participants p_filter_to ON p_filter_to.id = mr_filter_to.participant_id
+			WHERE mr_filter_to.message_id = m.id
+			  AND mr_filter_to.recipient_type IN ('to', 'cc', 'bcc')
+			  AND p_filter_to.email_address = ?
+			  AND %s = ?
+		)`, participantNameExpr("p_filter_to")))
+		args = append(args, filter.Recipient, filter.RecipientName)
+	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM message_recipients mr_filter_to
 			JOIN participants p_filter_to ON p_filter_to.id = mr_filter_to.participant_id
@@ -460,7 +477,9 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 	}
 
 	// Recipient name filter — use EXISTS to avoid 1:N join multiplication.
-	if filter.RecipientName != "" {
+	// When the recipient email is also set, the combined predicate above
+	// already constrains the name to the same to/cc/bcc row.
+	if filter.RecipientName != "" && filter.Recipient == "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_recipients mr_filter_to
 			JOIN participants p_filter_to ON p_filter_to.id = mr_filter_to.participant_id
@@ -469,7 +488,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			  AND %s = ?
 		)`, participantNameExpr("p_filter_to")))
 		args = append(args, filter.RecipientName)
-	} else if filter.MatchesEmpty(ViewRecipientNames) {
+	} else if filter.RecipientName == "" && filter.MatchesEmpty(ViewRecipientNames) {
 		conditions = append(conditions, fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM message_recipients mr_rn
 			JOIN participants p_rn ON p_rn.id = mr_rn.participant_id
@@ -1212,7 +1231,20 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		args = append(args, filter.SenderName, filter.SenderName)
 	}
 
-	if filter.Recipient != "" {
+	// When BOTH the recipient email and the display name are filtered, they
+	// must match the SAME to/cc/bcc row, not two independent EXISTS that a
+	// multi-recipient message could satisfy via different rows.
+	if filter.Recipient != "" && filter.RecipientName != "" {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM message_recipients mr_to
+			JOIN participants p_to ON p_to.id = mr_to.participant_id
+			WHERE mr_to.message_id = m.id
+			  AND mr_to.recipient_type IN ('to', 'cc', 'bcc')
+			  AND p_to.email_address = ?
+			  AND %s = ?
+		)`, participantNameExpr("p_to")))
+		args = append(args, filter.Recipient, filter.RecipientName)
+	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM message_recipients mr_to
 			JOIN participants p_to ON p_to.id = mr_to.participant_id
@@ -1221,9 +1253,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			  AND p_to.email_address = ?
 		)`)
 		args = append(args, filter.Recipient)
-	}
-
-	if filter.RecipientName != "" {
+	} else if filter.RecipientName != "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_recipients mr_to
 			JOIN participants p_to ON p_to.id = mr_to.participant_id

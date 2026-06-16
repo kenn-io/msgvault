@@ -957,8 +957,23 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		))`, participantNameExpr("p"), participantNameExpr("p")))
 	}
 
-	// Recipient filter - use EXISTS subquery (becomes semi-join)
-	if filter.Recipient != "" {
+	// Recipient + recipient-name filters - use EXISTS subquery (becomes
+	// semi-join).
+	//
+	// When BOTH the email and the display name are filtered, they must match
+	// the SAME to/cc/bcc row, not two independent EXISTS that a
+	// multi-recipient message could satisfy via different rows.
+	if filter.Recipient != "" && filter.RecipientName != "" {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM mr
+			JOIN p ON p.id = mr.participant_id
+			WHERE mr.message_id = msg.id
+			  AND mr.recipient_type IN ('to', 'cc', 'bcc')
+			  AND p.email_address = ?
+			  AND %s = ?
+		)`, participantNameExpr("p")))
+		args = append(args, filter.Recipient, filter.RecipientName)
+	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -971,8 +986,10 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		conditions = append(conditions, "NOT EXISTS (SELECT 1 FROM mr WHERE mr.message_id = msg.id AND mr.recipient_type IN ('to', 'cc', 'bcc'))")
 	}
 
-	// Recipient name filter - use EXISTS subquery (becomes semi-join)
-	if filter.RecipientName != "" {
+	// Recipient name filter - use EXISTS subquery (becomes semi-join). When
+	// the recipient email is also set, the combined predicate above already
+	// constrains the name to the same to/cc/bcc row.
+	if filter.RecipientName != "" && filter.Recipient == "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -981,7 +998,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			  AND %s = ?
 		)`, participantNameExpr("p")))
 		args = append(args, filter.RecipientName)
-	} else if filter.MatchesEmpty(ViewRecipientNames) {
+	} else if filter.RecipientName == "" && filter.MatchesEmpty(ViewRecipientNames) {
 		conditions = append(conditions, fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -1812,7 +1829,20 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		args = append(args, filter.SenderName, filter.SenderName)
 	}
 
-	if filter.Recipient != "" {
+	// When BOTH the recipient email and the display name are filtered, they
+	// must match the SAME to/cc/bcc row, not two independent EXISTS that a
+	// multi-recipient message could satisfy via different rows.
+	if filter.Recipient != "" && filter.RecipientName != "" {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM mr
+			JOIN p ON p.id = mr.participant_id
+			WHERE mr.message_id = msg.id
+			  AND mr.recipient_type IN ('to', 'cc', 'bcc')
+			  AND p.email_address = ?
+			  AND %s = ?
+		)`, participantNameExpr("p")))
+		args = append(args, filter.Recipient, filter.RecipientName)
+	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -1821,9 +1851,7 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			  AND p.email_address = ?
 		)`)
 		args = append(args, filter.Recipient)
-	}
-
-	if filter.RecipientName != "" {
+	} else if filter.RecipientName != "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM mr
 			JOIN p ON p.id = mr.participant_id

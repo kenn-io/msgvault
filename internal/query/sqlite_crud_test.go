@@ -618,6 +618,87 @@ func TestGetGmailIDsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
 		"same-row sender email+name must still match")
 }
 
+// addMultiRecipientMessage inserts a message with TWO distinct 'to' rows so the
+// queried recipient email lives on one row and the queried display name on the
+// other. It returns the message subject. Used to prove that combining a
+// Recipient (email) filter with a RecipientName filter binds BOTH to the SAME
+// to/cc/bcc row rather than matching across different recipients of a
+// multi-recipient message.
+func addMultiRecipientMessage(env *testEnv, subject string) string {
+	recipAID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("recip-a@example.com"),
+		DisplayName: new("Recip A"),
+		Domain:      "example.com",
+	})
+	recipBID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("recip-b@example.com"),
+		DisplayName: new("Recip B"),
+		Domain:      "example.com",
+	})
+
+	env.AddMessage(dbtest.MessageOpts{Subject: subject, SentAt: "2024-06-10 10:00:00", ToIDs: []int64{recipAID, recipBID}})
+	return subject
+}
+
+// TestListMessages_RecipientEmailAndName_SameToRow asserts that when BOTH the
+// Recipient (email) and RecipientName filters are set, they must match the SAME
+// to/cc/bcc row of a multi-recipient message — a cross-row match (email on
+// Recip A, name on Recip B) must NOT match, while a same-row match still does.
+func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	subject := addMultiRecipientMessage(env, "Two Recipients")
+
+	// Cross-row: email on Recip A's row, name on Recip B's row. The pre-fix
+	// builder emitted two independent EXISTS and matched; the fix must not.
+	crossRow := env.MustListMessages(MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip B",
+	})
+	for _, m := range crossRow {
+		assert.NotEqual(subject, m.Subject,
+			"cross-row recipient email+name must not match a multi-recipient message")
+	}
+
+	// Same-row: email and name both on Recip A's row — still matches.
+	sameRow := env.MustListMessages(MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip A",
+	})
+	assert.True(slices.ContainsFunc(sameRow, func(m MessageSummary) bool { return m.Subject == subject }),
+		"same-row recipient email+name must still match")
+}
+
+// TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow mirrors
+// TestListMessages_RecipientEmailAndName_SameToRow for the GetGmailIDsByFilter
+// builder site (deletion/staging path).
+func TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.New(t)
+	env := newTestEnv(t)
+
+	addMultiRecipientMessage(env, "Two Recipients GID")
+	crossRowMsgID := env.LastMessageID()
+	crossRowGmailID := fmt.Sprintf("msg%d", crossRowMsgID)
+
+	crossRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip B",
+	})
+	require.NoError(err, "GetGmailIDsByFilter cross-row")
+	assert.NotContains(crossRow, crossRowGmailID,
+		"cross-row recipient email+name must not match a multi-recipient message")
+
+	sameRow, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip A",
+	})
+	require.NoError(err, "GetGmailIDsByFilter same-row")
+	assert.Contains(sameRow, crossRowGmailID,
+		"same-row recipient email+name must still match")
+}
+
 func TestGetGmailIDsByFilter_RecipientName(t *testing.T) {
 	env := newTestEnv(t)
 
