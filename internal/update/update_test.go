@@ -409,6 +409,15 @@ func TestHTTPHelpersDoNotUseDefaultTransport(t *testing.T) {
 	assertpkg.NotEmpty(t, gotChecksum)
 }
 
+func TestDownloadHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
+	client := newUpdateDownloadHTTPClient()
+	defer client.CloseIdleConnections()
+
+	assertpkg.Zero(t, client.Timeout)
+	assertpkg.NotNil(t, client.Transport)
+	assertpkg.NotSame(t, http.DefaultTransport, client.Transport)
+}
+
 func TestResolveLatestTag(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

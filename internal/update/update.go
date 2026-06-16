@@ -346,7 +346,7 @@ func fetchContentLength(url string) (int64, error) {
 }
 
 func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded, total int64)) (string, error) {
-	client := newUpdateHTTPClient(nil)
+	client := newUpdateDownloadHTTPClient()
 	defer client.CloseIdleConnections()
 
 	resp, err := client.Get(url)
@@ -600,6 +600,12 @@ func newUpdateHTTPClient(checkRedirect func(*http.Request, []*http.Request) erro
 		Timeout:       30 * time.Second,
 		Transport:     newUpdateHTTPTransport(),
 		CheckRedirect: checkRedirect,
+	}
+}
+
+func newUpdateDownloadHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: newUpdateHTTPTransport(),
 	}
 }
 
