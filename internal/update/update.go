@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -278,12 +279,11 @@ func getCacheDir() string {
 // /releases/tag/<tag> and returns the tag. Using the HTML endpoint
 // avoids api.github.com's 60-req/hr unauthenticated rate limit.
 func resolveLatestTag(url string) (string, error) {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newUpdateHTTPClient(func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+	defer client.CloseIdleConnections()
+
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
@@ -321,7 +321,9 @@ func resolveLatestTag(url string) (string, error) {
 // of the eventual asset (following redirects to the S3 backend).
 // Returns 0 if the size can't be determined; callers degrade gracefully.
 func fetchContentLength(url string) (int64, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newUpdateHTTPClient(nil)
+	defer client.CloseIdleConnections()
+
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return 0, err
@@ -344,7 +346,10 @@ func fetchContentLength(url string) (int64, error) {
 }
 
 func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded, total int64)) (string, error) {
-	resp, err := http.Get(url) //nolint:gosec
+	client := newUpdateHTTPClient(nil)
+	defer client.CloseIdleConnections()
+
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -569,7 +574,9 @@ func copyFile(src, dst string) error {
 }
 
 func fetchChecksumFromFile(url, assetName string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newUpdateHTTPClient(nil)
+	defer client.CloseIdleConnections()
+
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
@@ -586,6 +593,29 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 	}
 
 	return extractChecksum(string(body), assetName), nil
+}
+
+func newUpdateHTTPClient(checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     newUpdateHTTPTransport(),
+		CheckRedirect: checkRedirect,
+	}
+}
+
+func newUpdateHTTPTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 func extractChecksum(releaseBody, assetName string) string {
