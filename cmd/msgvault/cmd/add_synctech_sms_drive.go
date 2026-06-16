@@ -154,7 +154,23 @@ func ensureConfiguredSynctechSMSSource(st *store.Store, src config.SynctechSMSSo
 	return source, nil
 }
 
+// validateSynctechSMSDriveSource checks the required Drive source fields.
+// It runs before Drive client construction so a misconfigured source
+// surfaces a clear config error instead of an OAuth/token failure.
+func validateSynctechSMSDriveSource(src config.SynctechSMSSource) error {
+	if src.GoogleAccount == "" {
+		return fmt.Errorf("synctech-sms source %q google_account is required", src.Name)
+	}
+	if src.FolderID == "" {
+		return fmt.Errorf("synctech-sms source %q folder_id is required", src.Name)
+	}
+	return nil
+}
+
 func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions) error {
+	if err := validateSynctechSMSDriveSource(src); err != nil {
+		return err
+	}
 	client, err := newSynctechSMSDriveClient(ctx, src)
 	if err != nil {
 		return err
@@ -163,11 +179,8 @@ func runSynctechSMSDriveSource(ctx context.Context, st *store.Store, src config.
 }
 
 func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, opts synctechsms.ImportOptions, client synctechsms.DriveClient) (retErr error) {
-	if src.GoogleAccount == "" {
-		return fmt.Errorf("synctech-sms source %q google_account is required", src.Name)
-	}
-	if src.FolderID == "" {
-		return fmt.Errorf("synctech-sms source %q folder_id is required", src.Name)
+	if err := validateSynctechSMSDriveSource(src); err != nil {
+		return err
 	}
 	source, err := ensureConfiguredSynctechSMSSource(st, src, opts)
 	if err != nil {
