@@ -366,6 +366,61 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 	assert.True(resp.HasMore, "has_more")
 }
 
+func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
+	// Regression: offset=40&limit=20 with max_page_size_hybrid=50 fetches the
+	// last 10 hits in-window. Pool saturation must not set has_more=true when
+	// the next page (offset=60) exceeds the ranking window.
+	maxPage := 50
+	hits := make([]vector.Hit, maxPage)
+	msgs := make(map[int64]*query.MessageDetail, maxPage)
+	for i := range maxPage {
+		id := int64(i + 1)
+		hits[i] = vector.Hit{MessageID: id, Score: 1.0 - float64(i)*0.01}
+		msgs[id] = testutil.NewMessageDetail(id).WithBodyText("hit").BuildPtr()
+	}
+	backend := &fakeBackend{
+		active: vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: hits,
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	h := &handlers{
+		engine:       &querytest.MockEngine{Messages: msgs},
+		hybridEngine: engine,
+		backend:      backend,
+		vectorCfg:    vector.Config{Search: vector.SearchConfig{MaxPageSizeHybrid: &maxPage}},
+	}
+
+	type hybridPage struct {
+		Data []struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+		HasMore bool `json:"has_more"`
+	}
+	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+		"query":  "hit",
+		"mode":   "vector",
+		"offset": float64(40),
+		"limit":  float64(20),
+	})
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	require.Len(resp.Data, 10, "data")
+	assert.False(resp.HasMore, "has_more")
+
+	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+		"query":  "hit",
+		"mode":   "vector",
+		"offset": float64(60),
+		"limit":  float64(20),
+	})
+	assert.Contains(resultText(t, r), "pagination_limit")
+}
+
 func TestSearchMessages_UnknownMode(t *testing.T) {
 	h := newTestHandlers(&querytest.MockEngine{})
 
