@@ -127,17 +127,31 @@ func TestSearchMessages(t *testing.T) {
 }
 
 func TestSearchFallbackToFTS(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
 	eng := &querytest.MockEngine{
 		SearchFastResults: nil, // fast returns nothing
-		SearchResults: []query.MessageSummary{
-			testutil.NewMessageSummary(2).WithSubject("Body match").WithFromEmail("bob@example.com").Build(),
+		SearchFunc: func(_ context.Context, _ *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+			assert.Equal(2, limit, "FTS fallback should fetch one extra row for has_more")
+			assert.Equal(0, offset, "offset")
+			return []query.MessageSummary{
+				testutil.NewMessageSummary(2).WithSubject("Body match").WithFromEmail("bob@example.com").Build(),
+				testutil.NewMessageSummary(3).WithSubject("Second body match").Build(),
+			}, nil
 		},
 	}
 	h := newTestHandlers(eng)
 
-	resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "important meeting notes"})
-	requirepkg.Len(t, resp.Data, 1, "FTS fallback data")
-	assertpkg.Equal(t, int64(2), resp.Data[0].ID, "FTS fallback ID")
+	resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
+		"query": "important meeting notes",
+		"limit": float64(1),
+	})
+	require.Len(resp.Data, 1, "FTS fallback data")
+	assert.Equal(int64(2), resp.Data[0].ID, "FTS fallback ID")
+	assert.Equal(int64(totalCountUnknown), resp.Total, "FTS fallback total")
+	assert.Equal(1, resp.Returned, "returned")
+	assert.True(resp.HasMore, "has_more")
 }
 
 func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {

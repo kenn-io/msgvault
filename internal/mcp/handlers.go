@@ -28,8 +28,9 @@ const (
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
 	// totalCountUnknown is returned when the backend cannot report a full match
-	// count (hybrid/vector ranking depth, or list_messages has_more without a
-	// separate count query). Clients should use has_more for paging.
+	// count (body FTS fallback, hybrid/vector ranking depth, or list_messages
+	// has_more without a separate count query). Clients should use has_more for
+	// paging.
 	totalCountUnknown = -1
 )
 
@@ -71,6 +72,21 @@ func newPaginatedResponseHasMore[T any](data []T, offset int, hasMore bool) pagi
 		Data:     data,
 		Total:    total,
 		Returned: returned,
+		Offset:   offset,
+		HasMore:  hasMore,
+	}
+}
+
+// newPaginatedResponseNoTotal builds a page when the backend cannot report a
+// total match count. total is always totalCountUnknown; use has_more to page.
+func newPaginatedResponseNoTotal[T any](data []T, offset int, hasMore bool) paginatedResponse[T] {
+	if data == nil {
+		data = []T{}
+	}
+	return paginatedResponse[T]{
+		Data:     data,
+		Total:    totalCountUnknown,
+		Returned: len(data),
 		Offset:   offset,
 		HasMore:  hasMore,
 	}
@@ -260,10 +276,15 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 
 	// If fast search returns nothing and query has free text, try full FTS.
 	if len(results) == 0 && len(q.TextTerms) > 0 {
-		results, err = h.engine.Search(ctx, q, limit, offset)
+		results, err = h.engine.Search(ctx, q, limit+1, offset)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
+		hasMore := len(results) > limit
+		if hasMore {
+			results = results[:limit]
+		}
+		return jsonResult(newPaginatedResponseNoTotal(results, offset, hasMore))
 	}
 
 	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
