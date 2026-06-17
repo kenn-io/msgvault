@@ -12,10 +12,10 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/sync"
 	"golang.org/x/oauth2"
 )
 
@@ -71,7 +71,7 @@ Examples:
 
 		// Open vector backend (optional) so newly-ingested messages
 		// are enqueued for embedding.
-		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 		if err != nil {
 			return fmt.Errorf("vector features: %w", err)
 		}
@@ -103,9 +103,9 @@ Examples:
 			}
 			for _, src := range allMatches {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
-				case "imap":
+				case sourceTypeIMAP:
 					imapTargets = append(imapTargets, src)
 				}
 			}
@@ -123,11 +123,11 @@ Examples:
 				return fmt.Errorf("list sources: %w", err)
 			}
 			if len(allSources) == 0 {
-				return fmt.Errorf("no accounts configured - run 'add-account' or 'add-imap' first")
+				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					if !cfg.OAuth.HasAnyConfig() {
 						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
 						continue
@@ -150,7 +150,7 @@ Examples:
 						}
 					}
 					gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
-				case "imap":
+				case sourceTypeIMAP:
 					skipMsg, parseErr := imapSkipReason(src)
 					if parseErr != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
@@ -170,7 +170,7 @@ Examples:
 					// Surface the collected errors (e.g. broken OAuth config).
 					return fmt.Errorf("%s", syncErrors[0])
 				}
-				return fmt.Errorf("no accounts are ready to sync")
+				return errors.New("no accounts are ready to sync")
 			}
 		}
 
@@ -191,7 +191,7 @@ Examples:
 				break
 			}
 			if target.source == nil {
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: no source found - run 'sync-full' first", target.email))
+				syncErrors = append(syncErrors, target.email+": no source found - run 'sync-full' first")
 				continue
 			}
 			if err := runIncrementalSync(ctx, s, getOAuthMgr, target.source, vf); err != nil {
@@ -219,7 +219,7 @@ Examples:
 
 func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), source *store.Source, vf *vectorFeatures) error {
 	if !source.SyncCursor.Valid || source.SyncCursor.String == "" {
-		return fmt.Errorf("no history ID - run 'sync-full' first")
+		return errors.New("no history ID - run 'sync-full' first")
 	}
 
 	email := source.Identifier
@@ -302,7 +302,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 
 	elapsed := time.Since(startTime)
 	logger.Info("incremental sync completed",
-		"email", email,
+		keyEmail, email,
 		"messages_added", summary.MessagesAdded,
 		"elapsed", elapsed,
 	)

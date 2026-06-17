@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/tui"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/tui"
 )
 
 var forceSQL bool
@@ -105,44 +105,54 @@ Remote Mode:
 
 			analyticsDir := cfg.AnalyticsDir()
 
-			// Check if cache needs to be built/updated (unless forcing SQL or skipping)
-			if !forceSQL && !skipCacheBuild {
-				staleness := cacheNeedsBuild(dbPath, analyticsDir)
-				if staleness.NeedsBuild {
-					fmt.Printf("Building analytics cache (%s)...\n", staleness.Reason)
-					result, err := buildCache(dbPath, analyticsDir, staleness.FullRebuild)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: Failed to build cache: %v\n", err)
-						fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
-					} else if !result.Skipped {
-						fmt.Printf("Cached %d messages for fast queries.\n", result.ExportedCount)
+			// The Parquet analytics cache is a SQLite → DuckDB ETL and
+			// has no meaning when the system of record is PostgreSQL —
+			// buildCache feeds the DSN to the SQLite driver and
+			// cacheNeedsBuild dispatches ? placeholders that pgx
+			// rejects. On PG, skip the entire cache pipeline and go
+			// straight to the dialect-aware query engine.
+			if s.IsPostgreSQL() {
+				engine = query.NewEngine(s.DB(), true)
+			} else {
+				// Check if cache needs to be built/updated (unless forcing SQL or skipping)
+				if !forceSQL && !skipCacheBuild {
+					staleness := cacheNeedsBuild(dbPath, analyticsDir)
+					if staleness.NeedsBuild {
+						fmt.Printf("Building analytics cache (%s)...\n", staleness.Reason)
+						result, err := buildCache(dbPath, analyticsDir, staleness.FullRebuild)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: Failed to build cache: %v\n", err)
+							fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
+						} else if !result.Skipped {
+							fmt.Printf("Cached %d messages for fast queries.\n", result.ExportedCount)
+						}
 					}
 				}
-			}
 
-			// Determine query engine to use
-			if !forceSQL && query.HasCompleteParquetData(analyticsDir) {
-				// Use DuckDB for fast Parquet queries
-				var duckOpts query.DuckDBOptions
-				if noSQLiteScanner {
-					duckOpts.DisableSQLiteScanner = true
-				}
-				duckEngine, err := query.NewDuckDBEngine(analyticsDir, dbPath, s.DB(), duckOpts)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Failed to open Parquet engine: %v\n", err)
-					fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
-					engine = query.NewSQLiteEngine(s.DB())
+				// Determine query engine to use
+				if !forceSQL && query.HasCompleteParquetData(analyticsDir) {
+					// Use DuckDB for fast Parquet queries
+					var duckOpts query.DuckDBOptions
+					if noSQLiteScanner {
+						duckOpts.DisableSQLiteScanner = true
+					}
+					duckEngine, err := query.NewDuckDBEngine(analyticsDir, dbPath, s.DB(), duckOpts)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: Failed to open Parquet engine: %v\n", err)
+						fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
+						engine = query.NewEngine(s.DB(), false)
+					} else {
+						engine = duckEngine
+						defer func() { _ = duckEngine.Close() }()
+					}
 				} else {
-					engine = duckEngine
-					defer func() { _ = duckEngine.Close() }()
+					// Use SQLite directly
+					if !forceSQL {
+						fmt.Fprintf(os.Stderr, "Note: No cache data available, using SQLite (slow for large archives)\n")
+						fmt.Fprintf(os.Stderr, "Run 'msgvault build-cache' to enable fast queries.\n")
+					}
+					engine = query.NewEngine(s.DB(), false)
 				}
-			} else {
-				// Use SQLite directly
-				if !forceSQL {
-					fmt.Fprintf(os.Stderr, "Note: No cache data available, using SQLite (slow for large archives)\n")
-					fmt.Fprintf(os.Stderr, "Run 'msgvault build-cache' to enable fast queries.\n")
-				}
-				engine = query.NewSQLiteEngine(s.DB())
 			}
 		}
 
@@ -194,8 +204,16 @@ type cacheStaleness struct {
 // cacheNeedsBuild checks if the analytics cache needs to be built or
 // updated. Collects all staleness signals before returning so that
 // e.g. a mixed add+delete sync correctly reports both.
+//
+// The Parquet cache is a SQLite-only ETL — when dbPath points at a
+// PostgreSQL DSN, this returns "no build needed" rather than dispatching
+// SQLite-shaped queries against pgx (which would fail on the ?
+// placeholders and the sqlite_master probe).
 func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
-	messagesDir := filepath.Join(analyticsDir, "messages")
+	if store.IsPostgresURL(dbPath) {
+		return cacheStaleness{}
+	}
+	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 
 	hasParquetData := query.HasParquetData(analyticsDir)

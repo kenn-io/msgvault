@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/testutil"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // ControllerTestEnv encapsulates common setup for ActionController tests.
@@ -26,9 +28,7 @@ func NewControllerTestEnv(t *testing.T, engine *querytest.MockEngine) *Controlle
 	t.Helper()
 	dir := t.TempDir()
 	mgr, err := deletion.NewManager(filepath.Join(dir, "deletions"))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager")
 	return &ControllerTestEnv{
 		t:    t,
 		Ctrl: NewActionController(engine, dir, mgr),
@@ -71,9 +71,7 @@ func (e *ControllerTestEnv) StageForDeletion(args stageArgs) *deletion.Manifest 
 		Messages:           args.messages,
 		DrillFilter:        args.drillFilter,
 	})
-	if err != nil {
-		e.t.Fatalf("unexpected error: %v", err)
-	}
+	requirepkg.NoError(e.t, err)
 	return manifest
 }
 
@@ -89,13 +87,9 @@ func TestStageForDeletion_FromAggregateSelection(t *testing.T) {
 		view:       query.ViewSenders,
 	})
 
-	if len(manifest.GmailIDs) != 3 {
-		t.Errorf("expected 3 gmail IDs, got %d", len(manifest.GmailIDs))
-	}
-	testutil.AssertStrings(t, manifest.Filters.Senders, "alice@example.com")
-	if manifest.CreatedBy != "tui" {
-		t.Errorf("expected createdBy 'tui', got %q", manifest.CreatedBy)
-	}
+	assertpkg.Len(t, manifest.GmailIDs, 3)
+	assertpkg.Equal(t, []string{"alice@example.com"}, manifest.Filters.Senders)
+	assertpkg.Equal(t, "tui", manifest.CreatedBy)
 }
 
 func TestStageForDeletion_FromMessageSelection(t *testing.T) {
@@ -113,7 +107,7 @@ func TestStageForDeletion_FromMessageSelection(t *testing.T) {
 		messages:  messages,
 	})
 
-	testutil.AssertStringSet(t, manifest.GmailIDs, "gid_a", "gid_c")
+	assertpkg.ElementsMatch(t, []string{"gid_a", "gid_c"}, manifest.GmailIDs)
 }
 
 func TestStageForDeletion_NoSelection(t *testing.T) {
@@ -123,9 +117,7 @@ func TestStageForDeletion_NoSelection(t *testing.T) {
 		AggregateViewType: query.ViewSenders,
 		TimeGranularity:   query.TimeYear,
 	})
-	if err == nil {
-		t.Fatal("expected error for empty selection")
-	}
+	requirepkg.Error(t, err)
 }
 
 func TestStageForDeletion_MultipleAggregates_DeterministicFilter(t *testing.T) {
@@ -133,9 +125,9 @@ func TestStageForDeletion_MultipleAggregates_DeterministicFilter(t *testing.T) {
 
 	agg := testutil.MakeSet("charlie@example.com", "alice@example.com", "bob@example.com")
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		manifest := env.StageForDeletion(stageArgs{aggregates: agg, view: query.ViewSenders})
-		testutil.AssertStrings(t, manifest.Filters.Senders, "alice@example.com", "bob@example.com", "charlie@example.com")
+		assertpkg.Equal(t, []string{"alice@example.com", "bob@example.com", "charlie@example.com"}, manifest.Filters.Senders)
 	}
 }
 
@@ -147,16 +139,20 @@ func TestStageForDeletion_ViewTypes(t *testing.T) {
 		check    func(t *testing.T, f deletion.Filters)
 	}{
 		{"senders", query.ViewSenders, "a@b.com", func(t *testing.T, f deletion.Filters) {
-			testutil.AssertStrings(t, f.Senders, "a@b.com")
+			t.Helper()
+			assertpkg.Equal(t, []string{"a@b.com"}, f.Senders)
 		}},
 		{"recipients", query.ViewRecipients, "c@d.com", func(t *testing.T, f deletion.Filters) {
-			testutil.AssertStrings(t, f.Recipients, "c@d.com")
+			t.Helper()
+			assertpkg.Equal(t, []string{"c@d.com"}, f.Recipients)
 		}},
 		{"domains", query.ViewDomains, "example.com", func(t *testing.T, f deletion.Filters) {
-			testutil.AssertStrings(t, f.SenderDomains, "example.com")
+			t.Helper()
+			assertpkg.Equal(t, []string{"example.com"}, f.SenderDomains)
 		}},
 		{"labels", query.ViewLabels, "INBOX", func(t *testing.T, f deletion.Filters) {
-			testutil.AssertStrings(t, f.Labels, "INBOX")
+			t.Helper()
+			assertpkg.Equal(t, []string{"INBOX"}, f.Labels)
 		}},
 	}
 
@@ -187,9 +183,7 @@ func TestStageForDeletion_AccountFilter(t *testing.T) {
 		accountID:  &accountID,
 		accounts:   accounts,
 	})
-	if manifest.Filters.Account != "test@gmail.com" {
-		t.Errorf("expected account 'test@gmail.com', got %q", manifest.Filters.Account)
-	}
+	assertpkg.Equal(t, "test@gmail.com", manifest.Filters.Account)
 }
 
 func TestStageForDeletion_DrillFilterApplied(t *testing.T) {
@@ -215,15 +209,9 @@ func TestStageForDeletion_DrillFilterApplied(t *testing.T) {
 	})
 
 	// Verify the filter passed to the engine includes both drill context and selection
-	if capturedFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drill filter sender 'alice@example.com', got %q", capturedFilter.Sender)
-	}
-	if capturedFilter.TimeRange.Period != "2024-01" {
-		t.Errorf("expected time period '2024-01', got %q", capturedFilter.TimeRange.Period)
-	}
-	if len(manifest.GmailIDs) != 2 {
-		t.Errorf("expected 2 gmail IDs, got %d", len(manifest.GmailIDs))
-	}
+	assertpkg.Equal(t, "alice@example.com", capturedFilter.Sender)
+	assertpkg.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
+	assertpkg.Len(t, manifest.GmailIDs, 2)
 }
 
 func TestStageForDeletion_NoDrillFilter(t *testing.T) {
@@ -242,20 +230,14 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 		view:       query.ViewTime,
 	})
 
-	if capturedFilter.Sender != "" {
-		t.Errorf("expected no sender filter, got %q", capturedFilter.Sender)
-	}
-	if capturedFilter.TimeRange.Period != "2024-01" {
-		t.Errorf("expected time period '2024-01', got %q", capturedFilter.TimeRange.Period)
-	}
+	assertpkg.Empty(t, capturedFilter.Sender)
+	assertpkg.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
 }
 
 func TestExportAttachments_NilDetail(t *testing.T) {
 	env := newTestEnv(t)
 	cmd := env.Ctrl.ExportAttachments(nil, nil)
-	if cmd != nil {
-		t.Error("expected nil cmd for nil detail")
-	}
+	assertpkg.Nil(t, cmd, "expected nil cmd for nil detail")
 }
 
 func TestExportAttachments_NoSelection(t *testing.T) {
@@ -266,9 +248,7 @@ func TestExportAttachments_NoSelection(t *testing.T) {
 		},
 	}
 	cmd := env.Ctrl.ExportAttachments(detail, map[int]bool{})
-	if cmd != nil {
-		t.Error("expected nil cmd for empty selection")
-	}
+	assertpkg.Nil(t, cmd, "expected nil cmd for empty selection")
 }
 
 func TestExportAttachments_ErrBehavior(t *testing.T) {
@@ -295,6 +275,8 @@ func TestExportAttachments_ErrBehavior(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			env := newTestEnv(t)
 			detail := &query.MessageDetail{
 				ID:          1,
@@ -307,27 +289,24 @@ func TestExportAttachments_ErrBehavior(t *testing.T) {
 			}
 
 			cmd := env.Ctrl.ExportAttachments(detail, selection)
-			if cmd == nil {
-				t.Fatal("expected non-nil cmd")
-			}
+			require.NotNil(cmd)
 
 			msg := cmd()
 			result, ok := msg.(ExportResultMsg)
-			if !ok {
-				t.Fatalf("expected ExportResultMsg, got %T", msg)
-			}
+			require.True(ok, "expected ExportResultMsg, got %T", msg)
 
-			if tt.wantErr && result.Err == nil {
-				t.Error("expected Err to be set")
-			}
-			if !tt.wantErr && result.Err != nil {
-				t.Errorf("expected Err to be nil, got %v", result.Err)
+			if tt.wantErr {
+				assert.Error(result.Err)
+			} else {
+				assert.NoError(result.Err)
 			}
 		})
 	}
 }
 
 func TestExportAttachments_PartialSuccess(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Partial success: one valid file exports, one missing file fails.
 	// Err should be nil because stats.Count > 0 (some files succeeded).
 	env := newTestEnv(t)
@@ -341,12 +320,8 @@ func TestExportAttachments_PartialSuccess(t *testing.T) {
 	missingHash := "def456abc123def456abc123def456abc123def456abc123def456abc123def4"
 	attachmentsDir := filepath.Join(env.Dir, "attachments")
 	hashDir := filepath.Join(attachmentsDir, validHash[:2])
-	if err := os.MkdirAll(hashDir, 0o755); err != nil {
-		t.Fatalf("failed to create hash dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(hashDir, validHash), []byte("test content"), 0o644); err != nil {
-		t.Fatalf("failed to write attachment: %v", err)
-	}
+	require.NoError(os.MkdirAll(hashDir, 0o755), "failed to create hash dir")
+	require.NoError(os.WriteFile(filepath.Join(hashDir, validHash), []byte("test content"), 0o644), "failed to write attachment")
 
 	detail := &query.MessageDetail{
 		ID:      1,
@@ -359,28 +334,22 @@ func TestExportAttachments_PartialSuccess(t *testing.T) {
 	selection := map[int]bool{0: true, 1: true}
 
 	cmd := env.Ctrl.ExportAttachments(detail, selection)
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd")
-	}
+	require.NotNil(cmd)
 
 	msg := cmd()
 	result, ok := msg.(ExportResultMsg)
-	if !ok {
-		t.Fatalf("expected ExportResultMsg, got %T", msg)
-	}
+	require.True(ok, "expected ExportResultMsg, got %T", msg)
 
 	// Partial success should NOT set Err
-	if result.Err != nil {
-		t.Errorf("expected Err to be nil for partial success, got %v", result.Err)
-	}
+	require.NoError(result.Err, "expected Err to be nil for partial success")
 
 	// Result should contain both success info and error details
-	if result.Result == "" {
-		t.Error("expected non-empty Result")
-	}
+	assert.NotEmpty(result.Result)
 }
 
 func TestExportAttachments_FullSuccess(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Full success: all attachments export without errors.
 	env := newTestEnv(t)
 
@@ -392,12 +361,8 @@ func TestExportAttachments_FullSuccess(t *testing.T) {
 	validHash := "abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
 	attachmentsDir := filepath.Join(env.Dir, "attachments")
 	hashDir := filepath.Join(attachmentsDir, validHash[:2])
-	if err := os.MkdirAll(hashDir, 0o755); err != nil {
-		t.Fatalf("failed to create hash dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(hashDir, validHash), []byte("test content"), 0o644); err != nil {
-		t.Fatalf("failed to write attachment: %v", err)
-	}
+	require.NoError(os.MkdirAll(hashDir, 0o755), "failed to create hash dir")
+	require.NoError(os.WriteFile(filepath.Join(hashDir, validHash), []byte("test content"), 0o644), "failed to write attachment")
 
 	detail := &query.MessageDetail{
 		ID:      1,
@@ -409,20 +374,12 @@ func TestExportAttachments_FullSuccess(t *testing.T) {
 	selection := map[int]bool{0: true}
 
 	cmd := env.Ctrl.ExportAttachments(detail, selection)
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd")
-	}
+	require.NotNil(cmd)
 
 	msg := cmd()
 	result, ok := msg.(ExportResultMsg)
-	if !ok {
-		t.Fatalf("expected ExportResultMsg, got %T", msg)
-	}
+	require.True(ok, "expected ExportResultMsg, got %T", msg)
 
-	if result.Err != nil {
-		t.Errorf("expected Err to be nil for full success, got %v", result.Err)
-	}
-	if result.Result == "" {
-		t.Error("expected non-empty Result")
-	}
+	require.NoError(result.Err, "expected Err to be nil for full success")
+	assert.NotEmpty(result.Result)
 }

@@ -1,0 +1,34 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Alice Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000120000,
+      "content": "See you soon",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "Alice Example",
+      "timestamp_ms": 1600000060000,
+      "content": "caf\u00c3\u00a9 time?",
+      "type": "Generic",
+      "reactions": [
+        {"reaction": "\u00e2\u009d\u00a4", "actor": "Test User"},
+        {"reaction": "\u00f0\u009f\u0091\u008d", "actor": "Alice Example"}
+      ]
+    },
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000000000,
+      "content": "Hello",
+      "type": "Generic"
+    }
+  ],
+  "title": "Alice Example",
+  "is_still_participant": true,
+  "thread_type": "Regular",
+  "thread_path": "inbox/alice_ABC123"
+}

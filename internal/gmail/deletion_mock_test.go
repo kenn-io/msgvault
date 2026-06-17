@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func setupDeletionMockTest(t *testing.T) (*DeletionMockAPI, context.Context) {
@@ -13,13 +16,9 @@ func setupDeletionMockTest(t *testing.T) (*DeletionMockAPI, context.Context) {
 
 func assertCallSequence(t *testing.T, mock *DeletionMockAPI, expectedOps ...string) {
 	t.Helper()
-	if len(mock.CallSequence) != len(expectedOps) {
-		t.Fatalf("CallSequence length = %d, want %d", len(mock.CallSequence), len(expectedOps))
-	}
+	requirepkg.Len(t, mock.CallSequence, len(expectedOps), "CallSequence length")
 	for i, want := range expectedOps {
-		if got := mock.CallSequence[i].Operation; got != want {
-			t.Errorf("CallSequence[%d].Operation = %q, want %q", i, got, want)
-		}
+		assertpkg.Equal(t, want, mock.CallSequence[i].Operation, "CallSequence[%d].Operation", i)
 	}
 }
 
@@ -34,6 +33,8 @@ func TestDeletionMockAPI_CallSequence(t *testing.T) {
 }
 
 func TestDeletionMockAPI_Reset(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mockAPI, ctx := setupDeletionMockTest(t)
 
 	// Dirty all trackable fields with successful calls
@@ -61,69 +62,31 @@ func TestDeletionMockAPI_Reset(t *testing.T) {
 	mockAPI.BeforeBatchDelete = func([]string) error { hookCalled = true; return nil }
 
 	// Assert call-tracking data is populated before Reset
-	if len(mockAPI.TrashCalls) == 0 {
-		t.Fatal("TrashCalls should be populated before Reset")
-	}
-	if len(mockAPI.DeleteCalls) == 0 {
-		t.Fatal("DeleteCalls should be populated before Reset")
-	}
-	if len(mockAPI.BatchDeleteCalls) == 0 {
-		t.Fatal("BatchDeleteCalls should be populated before Reset")
-	}
-	if len(mockAPI.CallSequence) == 0 {
-		t.Fatal("CallSequence should be populated before Reset")
-	}
+	require.NotEmpty(mockAPI.TrashCalls, "TrashCalls should be populated before Reset")
+	require.NotEmpty(mockAPI.DeleteCalls, "DeleteCalls should be populated before Reset")
+	require.NotEmpty(mockAPI.BatchDeleteCalls, "BatchDeleteCalls should be populated before Reset")
+	require.NotEmpty(mockAPI.CallSequence, "CallSequence should be populated before Reset")
 
 	mockAPI.Reset()
 
-	if len(mockAPI.TrashErrors) != 0 {
-		t.Error("TrashErrors not cleared")
-	}
-	if len(mockAPI.DeleteErrors) != 0 {
-		t.Error("DeleteErrors not cleared")
-	}
-	if mockAPI.BatchDeleteError != nil {
-		t.Error("BatchDeleteError not cleared")
-	}
-	if len(mockAPI.TransientTrashFailures) != 0 {
-		t.Error("TransientTrashFailures not cleared")
-	}
-	if len(mockAPI.TransientDeleteFailures) != 0 {
-		t.Error("TransientDeleteFailures not cleared")
-	}
-	if mockAPI.RateLimitAfterCalls != 0 {
-		t.Error("RateLimitAfterCalls not cleared")
-	}
-	if mockAPI.RateLimitDuration != 0 {
-		t.Error("RateLimitDuration not cleared")
-	}
-	if len(mockAPI.TrashCalls) != 0 {
-		t.Error("TrashCalls not cleared")
-	}
-	if len(mockAPI.DeleteCalls) != 0 {
-		t.Error("DeleteCalls not cleared")
-	}
-	if len(mockAPI.BatchDeleteCalls) != 0 {
-		t.Error("BatchDeleteCalls not cleared")
-	}
-	if len(mockAPI.CallSequence) != 0 {
-		t.Error("CallSequence not cleared")
-	}
-	if mockAPI.BeforeTrash != nil {
-		t.Error("BeforeTrash not cleared")
-	}
-	if mockAPI.BeforeDelete != nil {
-		t.Error("BeforeDelete not cleared")
-	}
-	if mockAPI.BeforeBatchDelete != nil {
-		t.Error("BeforeBatchDelete not cleared")
-	}
+	assert.Empty(mockAPI.TrashErrors, "TrashErrors not cleared")
+	assert.Empty(mockAPI.DeleteErrors, "DeleteErrors not cleared")
+	require.NoError(mockAPI.BatchDeleteError, "BatchDeleteError not cleared")
+	assert.Empty(mockAPI.TransientTrashFailures, "TransientTrashFailures not cleared")
+	assert.Empty(mockAPI.TransientDeleteFailures, "TransientDeleteFailures not cleared")
+	assert.Equal(0, mockAPI.RateLimitAfterCalls, "RateLimitAfterCalls not cleared")
+	assert.Equal(0, mockAPI.RateLimitDuration, "RateLimitDuration not cleared")
+	assert.Empty(mockAPI.TrashCalls, "TrashCalls not cleared")
+	assert.Empty(mockAPI.DeleteCalls, "DeleteCalls not cleared")
+	assert.Empty(mockAPI.BatchDeleteCalls, "BatchDeleteCalls not cleared")
+	assert.Empty(mockAPI.CallSequence, "CallSequence not cleared")
+	assert.Nil(mockAPI.BeforeTrash, "BeforeTrash not cleared")
+	assert.Nil(mockAPI.BeforeDelete, "BeforeDelete not cleared")
+	assert.Nil(mockAPI.BeforeBatchDelete, "BeforeBatchDelete not cleared")
 
 	// Verify hooks are not invoked after Reset
 	_ = mockAPI.TrashMessage(ctx, "after-reset")
-	if hookCalled {
-		t.Error("hook was invoked after Reset")
-	}
+	assert.False(hookCalled, "hook was invoked after Reset")
 }
 
 func TestDeletionMockAPI_GetCallCount(t *testing.T) {
@@ -143,17 +106,14 @@ func TestDeletionMockAPI_GetCallCount(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := mockAPI.GetTrashCallCount(tt.msgID); got != tt.want {
-			t.Errorf("GetTrashCallCount(%q) = %d, want %d", tt.msgID, got, tt.want)
-		}
+		got := mockAPI.GetTrashCallCount(tt.msgID)
+		assertpkg.Equal(t, tt.want, got, "GetTrashCallCount(%q)", tt.msgID)
 	}
 }
 
 func TestDeletionMockAPI_Close(t *testing.T) {
 	mockAPI, _ := setupDeletionMockTest(t)
-	if err := mockAPI.Close(); err != nil {
-		t.Errorf("Close() error = %v, want nil", err)
-	}
+	assertpkg.NoError(t, mockAPI.Close(), "Close()")
 }
 
 func TestDeletionMockAPI_Hooks(t *testing.T) {
@@ -222,11 +182,11 @@ func TestDeletionMockAPI_Hooks(t *testing.T) {
 			hookCalled := false
 			tt.setupHook(mockAPI, &hookCalled)
 			err := tt.act(ctx, mockAPI)
-			if !hookCalled {
-				t.Error("hook was not called")
-			}
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
+			assertpkg.True(t, hookCalled, "hook was not called")
+			if tt.wantErr {
+				assertpkg.Error(t, err)
+			} else {
+				assertpkg.NoError(t, err)
 			}
 		})
 	}
@@ -238,9 +198,7 @@ func TestDeletionMockAPI_GetDeleteCallCount(t *testing.T) {
 	_ = mockAPI.DeleteMessage(ctx, "msg1")
 	_ = mockAPI.DeleteMessage(ctx, "msg1")
 
-	if mockAPI.GetDeleteCallCount("msg1") != 2 {
-		t.Errorf("GetDeleteCallCount(msg1) = %d, want 2", mockAPI.GetDeleteCallCount("msg1"))
-	}
+	assertpkg.Equal(t, 2, mockAPI.GetDeleteCallCount("msg1"), "GetDeleteCallCount(msg1)")
 }
 
 func TestDeletionMockAPI_TransientFailures(t *testing.T) {
@@ -269,15 +227,11 @@ func TestDeletionMockAPI_TransientFailures(t *testing.T) {
 			mockAPI, ctx := setupDeletionMockTest(t)
 			mockAPI.SetTransientFailure("msg1", tt.failCount, tt.isTrash)
 
-			for i := 0; i < tt.failCount; i++ {
-				if err := tt.callMethod(ctx, mockAPI); err == nil {
-					t.Errorf("call %d should fail", i+1)
-				}
+			for i := range tt.failCount {
+				requirepkg.Error(t, tt.callMethod(ctx, mockAPI), "call %d should fail", i+1)
 			}
 
-			if err := tt.callMethod(ctx, mockAPI); err != nil {
-				t.Errorf("call after failures should succeed, got: %v", err)
-			}
+			assertpkg.NoError(t, tt.callMethod(ctx, mockAPI), "call after failures should succeed")
 		})
 	}
 }

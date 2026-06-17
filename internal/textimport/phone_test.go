@@ -1,6 +1,11 @@
 package textimport
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestNormalizePhone(t *testing.T) {
 	tests := []struct {
@@ -46,18 +51,11 @@ func TestNormalizePhone(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			got, err := NormalizePhone(tt.input)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("NormalizePhone(%q) = %q, want error", tt.input, got)
-				}
+				assert.Error(t, err, "NormalizePhone(%q) = %q, want error", tt.input, got)
 				return
 			}
-			if err != nil {
-				t.Errorf("NormalizePhone(%q) error: %v", tt.input, err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("NormalizePhone(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			require.NoError(t, err, "NormalizePhone(%q)", tt.input)
+			assert.Equal(t, tt.want, got, "NormalizePhone(%q)", tt.input)
 		})
 	}
 }

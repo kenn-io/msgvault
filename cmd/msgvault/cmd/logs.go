@@ -151,10 +151,7 @@ func logFileSortKey(path string) string {
 		_, _ = fmt.Sscanf(name[idx+5:], "%d", &num)
 		// Invert: higher rotation number = older = should sort first.
 		// 999 is reserved for the active file, so cap at 998.
-		inverted := 998 - num
-		if inverted < 0 {
-			inverted = 0
-		}
+		inverted := max(998-num, 0)
 		return fmt.Sprintf("%s.%03d", date, inverted)
 	}
 	// Active file (no rotation suffix) sorts after all rotations
@@ -283,7 +280,7 @@ func followLogFile(
 			}
 		}
 		if err != nil && err != io.EOF {
-			return err
+			return fmt.Errorf("read log line: %w", err)
 		}
 		select {
 		case <-ctx.Done():

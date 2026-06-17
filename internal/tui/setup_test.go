@@ -11,9 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/search"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ansiStart is the escape sequence prefix found in styled terminal output.
@@ -76,7 +78,7 @@ func newMockEngine(cfg MockConfig) *querytest.MockEngine {
 // Test Fixtures
 // =============================================================================
 
-// TestModelBuilder helps construct Model instances for testing
+// TestModelBuilder helps construct Model instances for testing.
 type TestModelBuilder struct {
 	rows               []query.AggregateRow
 	messages           []query.MessageSummary
@@ -336,105 +338,91 @@ func (b *TestModelBuilder) configureState(m *Model) {
 func sendKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newM, cmd := m.Update(k)
-	return newM.(Model), cmd
+	return asModel(t, newM), cmd
 }
 
 // sendMsg sends any tea.Msg through Update and returns the concrete Model.
-func sendMsg(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
+func sendMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
-	newM, cmd := m.Update(msg)
-	return newM.(Model), cmd
+	newM, _ := m.Update(msg)
+	return asModel(t, newM)
 }
 
-// assertModal checks that the model is in the expected modal state
+// asModel asserts that a tea.Model is the concrete Model type, failing the
+// test otherwise. Centralizes the checked type assertion used across the TUI
+// tests where Update/handle* return the tea.Model interface.
+func asModel(t *testing.T, m tea.Model) Model {
+	t.Helper()
+	model, ok := m.(Model)
+	require.True(t, ok, "expected Model, got %T", m)
+	return model
+}
+
+// assertModal checks that the model is in the expected modal state.
 func assertModal(t *testing.T, m Model, expected modalType) {
 	t.Helper()
-	if m.modal != expected {
-		t.Errorf("expected modal %v, got %v", expected, m.modal)
-	}
+	assert.Equal(t, expected, m.modal)
 }
 
 // assertModalCleared checks that the modal is dismissed and modalResult is empty.
 func assertModalCleared(t *testing.T, m Model) {
 	t.Helper()
-	if m.modal != modalNone {
-		t.Errorf("expected modalNone, got %v", m.modal)
-	}
-	if m.modalResult != "" {
-		t.Errorf("expected empty modalResult, got %q", m.modalResult)
-	}
+	assert.Equal(t, modalNone, m.modal)
+	assert.Empty(t, m.modalResult)
 }
 
 // assertPendingManifestCleared checks that pendingManifest is nil.
 func assertPendingManifestCleared(t *testing.T, m Model) {
 	t.Helper()
-	if m.pendingManifest != nil {
-		t.Error("expected pendingManifest to be nil")
-	}
+	assert.Nil(t, m.pendingManifest)
 }
 
 // assertPendingManifestGmailIDs checks that pendingManifest has the expected number of Gmail IDs.
 func assertPendingManifestGmailIDs(t *testing.T, m Model, expectedCount int) {
 	t.Helper()
-	if m.pendingManifest == nil {
-		t.Fatal("expected pendingManifest to be set")
-	}
-	if len(m.pendingManifest.GmailIDs) != expectedCount {
-		t.Errorf("expected %d Gmail IDs, got %d", expectedCount, len(m.pendingManifest.GmailIDs))
-	}
+	require.NotNil(t, m.pendingManifest, "expected pendingManifest to be set")
+	assert.Len(t, m.pendingManifest.GmailIDs, expectedCount)
 }
 
 // assertSelectionViewTypeMatches checks that aggregateViewType matches the model's viewType.
 func assertSelectionViewTypeMatches(t *testing.T, m Model) {
 	t.Helper()
-	if m.selection.aggregateViewType != m.viewType {
-		t.Errorf("expected aggregateViewType %v to match viewType %v", m.selection.aggregateViewType, m.viewType)
-	}
+	assert.Equal(t, m.viewType, m.selection.aggregateViewType, "aggregateViewType should match viewType")
 }
 
 // assertHasSelection checks that the model has at least one selection.
 func assertHasSelection(t *testing.T, m Model, expected bool) {
 	t.Helper()
-	if m.hasSelection() != expected {
-		t.Errorf("expected hasSelection()=%v, got %v", expected, m.hasSelection())
-	}
+	assert.Equal(t, expected, m.hasSelection(), "hasSelection()")
 }
 
 // assertMessageSelected checks that a specific message ID is selected.
 func assertMessageSelected(t *testing.T, m Model, id int64) {
 	t.Helper()
-	if !m.selection.messageIDs[id] {
-		t.Errorf("expected message ID %d to be selected", id)
-	}
+	assert.True(t, m.selection.messageIDs[id], "expected message ID %d to be selected", id)
 }
 
 // assertFilterKey checks the model's filterKey field.
 func assertFilterKey(t *testing.T, m Model, expected string) {
 	t.Helper()
-	if m.filterKey != expected {
-		t.Errorf("expected filterKey=%q, got %q", expected, m.filterKey)
-	}
+	assert.Equal(t, expected, m.filterKey, "filterKey")
 }
 
 // assertBreadcrumbCount checks the number of breadcrumbs.
 func assertBreadcrumbCount(t *testing.T, m Model, expected int) {
 	t.Helper()
-	if len(m.breadcrumbs) != expected {
-		t.Errorf("expected %d breadcrumbs, got %d", expected, len(m.breadcrumbs))
-	}
+	assert.Len(t, m.breadcrumbs, expected)
 }
 
-// assertLevel checks that the model is at the expected view level
+// assertLevel checks that the model is at the expected view level.
 func assertLevel(t *testing.T, m Model, expected viewLevel) {
 	t.Helper()
-	if m.level != expected {
-		t.Errorf("expected level %v, got %v", expected, m.level)
-	}
+	assert.Equal(t, expected, m.level, "level")
 }
 
-// Common test data
+// Common test data.
 var (
-	// testAggregateRows provides a standard set of aggregate rows for testing
+	// testAggregateRows provides a standard set of aggregate rows for testing.
 	testAggregateRows = []query.AggregateRow{
 		{Key: "alice@example.com", Count: 100, TotalSize: 1000, AttachmentCount: 5},
 		{Key: "bob@example.com", Count: 50, TotalSize: 500, AttachmentCount: 2},
@@ -486,8 +474,8 @@ func (m Model) withSearchQuery(q string) Model {
 }
 
 // withRequestID sets the aggregate request ID for testing stale response handling.
-func (m Model) withAggregateRequestID(id uint64) Model {
-	m.aggregateRequestID = id
+func (m Model) withAggregateRequestID() Model {
+	m.aggregateRequestID = 1
 	return m
 }
 
@@ -517,47 +505,47 @@ func sumAggregateStats(rows []query.AggregateRow) (count, size, attachments int6
 // Key Event Helpers - reduce verbosity of tea.KeyMsg construction
 // -----------------------------------------------------------------------------
 
-// key returns a KeyMsg for a single rune (e.g., key('x'), key(' '))
+// key returns a KeyMsg for a single rune (e.g., key('x'), key(' ')).
 func key(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
-// keyEnter returns a KeyMsg for the Enter key
+// keyEnter returns a KeyMsg for the Enter key.
 func keyEnter() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyEnter}
 }
 
-// keyEsc returns a KeyMsg for the Escape key
+// keyEsc returns a KeyMsg for the Escape key.
 func keyEsc() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyEscape}
 }
 
-// keyTab returns a KeyMsg for the Tab key
+// keyTab returns a KeyMsg for the Tab key.
 func keyTab() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyTab}
 }
 
-// keyDown returns a KeyMsg for the Down arrow key
+// keyDown returns a KeyMsg for the Down arrow key.
 func keyDown() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyDown}
 }
 
-// keyShiftTab returns a KeyMsg for Shift+Tab
+// keyShiftTab returns a KeyMsg for Shift+Tab.
 func keyShiftTab() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyShiftTab}
 }
 
-// keyLeft returns a KeyMsg for the Left arrow key
+// keyLeft returns a KeyMsg for the Left arrow key.
 func keyLeft() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyLeft}
 }
 
-// keyRight returns a KeyMsg for the Right arrow key
+// keyRight returns a KeyMsg for the Right arrow key.
 func keyRight() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRight}
 }
 
-// keyHome returns a KeyMsg for the Home key
+// keyHome returns a KeyMsg for the Home key.
 func keyHome() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyHome}
 }
@@ -571,8 +559,9 @@ func makeRow(key string, count int) query.AggregateRow {
 	return query.AggregateRow{Key: key, Count: int64(count)}
 }
 
-// makeRows creates n AggregateRows with sequential keys ("row-0", "row-1", ...).
-func makeRows(n int) []query.AggregateRow {
+// makeRows creates 10 AggregateRows with sequential keys ("row-0", "row-1", ...).
+func makeRows() []query.AggregateRow {
+	const n = 10
 	rows := make([]query.AggregateRow, n)
 	for i := range rows {
 		rows[i] = query.AggregateRow{
@@ -598,36 +587,29 @@ func makeMessages(n int) []query.MessageSummary {
 // assertSelected checks that the given key is selected.
 func assertSelected(t *testing.T, m Model, key string) {
 	t.Helper()
-	if !m.selection.aggregateKeys[key] {
-		t.Errorf("expected %q to be selected", key)
-	}
+	assert.True(t, m.selection.aggregateKeys[key], "expected %q to be selected", key)
 }
 
 // assertNotSelected checks that the given key is not selected.
 func assertNotSelected(t *testing.T, m Model, key string) {
 	t.Helper()
-	if m.selection.aggregateKeys[key] {
-		t.Errorf("expected %q to not be selected", key)
-	}
+	assert.False(t, m.selection.aggregateKeys[key], "expected %q to not be selected", key)
 }
 
 // assertSelectionCount checks the number of selected items.
 func assertSelectionCount(t *testing.T, m Model, expected int) {
 	t.Helper()
-	got := len(m.selection.aggregateKeys)
-	if got != expected {
-		t.Errorf("expected %d selected items, got %d", expected, got)
-	}
+	assert.Len(t, m.selection.aggregateKeys, expected)
 }
 
 // -----------------------------------------------------------------------------
 // Key Application Helpers - remove handleXKeys casting boilerplate
 // -----------------------------------------------------------------------------
 
-// selectRow moves the cursor to the given index and toggles selection with space.
-func selectRow(t *testing.T, m Model, index int) Model {
+// selectRow moves the cursor to the first row and toggles selection with space.
+func selectRow(t *testing.T, m Model) Model {
 	t.Helper()
-	m.cursor = index
+	m.cursor = 0
 	return applyAggregateKey(t, m, key(' '))
 }
 
@@ -635,54 +617,50 @@ func selectRow(t *testing.T, m Model, index int) Model {
 // filter matches wantAccount.
 func assertPendingManifest(t *testing.T, m Model, wantAccount string) {
 	t.Helper()
-	if m.pendingManifest == nil {
-		t.Fatal("expected pendingManifest to be set")
-	}
-	if m.pendingManifest.Filters.Account != wantAccount {
-		t.Errorf("expected manifest account=%q, got %q", wantAccount, m.pendingManifest.Filters.Account)
-	}
+	require.NotNil(t, m.pendingManifest, "expected pendingManifest to be set")
+	assert.Equal(t, wantAccount, m.pendingManifest.Filters.Account, "manifest account")
 }
 
 // applyAggregateKey sends a key through handleAggregateKeys and returns the concrete Model.
 func applyAggregateKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleAggregateKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applyAggregateKeyWithCmd sends a key through handleAggregateKeys and returns Model and Cmd.
 func applyAggregateKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleAggregateKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyMessageListKey sends a key through handleMessageListKeys and returns the concrete Model.
 func applyMessageListKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageListKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applyMessageListKeyWithCmd sends a key through handleMessageListKeys and returns Model and Cmd.
 func applyMessageListKeyWithCmd(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleMessageListKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyModalKey sends a key through handleModalKeys and returns the concrete Model and Cmd.
 func applyModalKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleModalKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // applyDetailKey sends a key through handleMessageDetailKeys and returns the concrete Model.
 func applyDetailKey(t *testing.T, m Model, k tea.KeyMsg) Model {
 	t.Helper()
 	newModel, _ := m.handleMessageDetailKeys(k)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // -----------------------------------------------------------------------------
@@ -703,30 +681,22 @@ func countViewLines(view string) int {
 func assertViewFitsHeight(t *testing.T, view string, height int) {
 	t.Helper()
 	actual := countViewLines(view)
-	if actual > height {
-		t.Errorf("View has %d lines but terminal height is %d", actual, height)
-	}
+	assert.LessOrEqual(t, actual, height, "View has %d lines but terminal height is %d", actual, height)
 }
 
 // resizeModel sends a WindowSizeMsg and returns the updated model.
 func resizeModel(t *testing.T, m Model, w, h int) Model {
 	t.Helper()
 	newModel, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // assertState checks level, viewType, and cursor in one call.
 func assertState(t *testing.T, m Model, level viewLevel, view query.ViewType, cursor int) {
 	t.Helper()
-	if m.level != level {
-		t.Errorf("want level %v, got %v", level, m.level)
-	}
-	if m.viewType != view {
-		t.Errorf("want viewType %v, got %v", view, m.viewType)
-	}
-	if m.cursor != cursor {
-		t.Errorf("want cursor %d, got %d", cursor, m.cursor)
-	}
+	assert.Equal(t, level, m.level, "level")
+	assert.Equal(t, view, m.viewType, "viewType")
+	assert.Equal(t, cursor, m.cursor, "cursor")
 }
 
 // drillDown presses Enter on the current cursor item and returns the updated Model.
@@ -756,7 +726,7 @@ func applySearchResults(t *testing.T, m Model, reqID uint64, msgs []query.Messag
 		totalCount: total,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applySearchResultsWithStats simulates search results that include aggregate stats.
@@ -769,7 +739,7 @@ func applySearchResultsWithStats(t *testing.T, m Model, reqID uint64, msgs []que
 		stats:      stats,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // applySearchResultsAppend simulates appended (paginated) search results.
@@ -782,77 +752,62 @@ func applySearchResultsAppend(t *testing.T, m Model, reqID uint64, msgs []query.
 		append:     true,
 	}
 	newModel, _ := m.Update(msg)
-	return newModel.(Model)
+	return asModel(t, newModel)
 }
 
 // assertContextStats checks contextStats fields. Use -1 for size or attachments to skip that check.
 func assertContextStats(t *testing.T, m Model, wantCount int, wantSize int64, wantAttach int) {
 	t.Helper()
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set")
+	assert.Equal(t, int64(wantCount), m.contextStats.MessageCount, "MessageCount")
+	if wantSize != -1 {
+		assert.Equal(t, wantSize, m.contextStats.TotalSize, "TotalSize")
 	}
-	if m.contextStats.MessageCount != int64(wantCount) {
-		t.Errorf("got MessageCount=%d, want %d", m.contextStats.MessageCount, wantCount)
-	}
-	if wantSize != -1 && m.contextStats.TotalSize != wantSize {
-		t.Errorf("got TotalSize=%d, want %d", m.contextStats.TotalSize, wantSize)
-	}
-	if wantAttach != -1 && m.contextStats.AttachmentCount != int64(wantAttach) {
-		t.Errorf("got AttachmentCount=%d, want %d", m.contextStats.AttachmentCount, wantAttach)
+	if wantAttach != -1 {
+		assert.Equal(t, int64(wantAttach), m.contextStats.AttachmentCount, "AttachmentCount")
 	}
 }
 
 // assertSearchMode checks the model's searchMode field.
 func assertSearchMode(t *testing.T, m Model, expected searchModeKind) {
 	t.Helper()
-	if m.searchMode != expected {
-		t.Errorf("expected searchMode %v, got %v", expected, m.searchMode)
-	}
+	assert.Equal(t, expected, m.searchMode, "searchMode")
 }
 
 // assertLoading checks the model's loading state fields.
 func assertLoading(t *testing.T, m Model, loading, inlineSearchLoading bool) {
 	t.Helper()
-	if m.loading != loading {
-		t.Errorf("expected loading=%v, got %v", loading, m.loading)
-	}
-	if m.inlineSearchLoading != inlineSearchLoading {
-		t.Errorf("expected inlineSearchLoading=%v, got %v", inlineSearchLoading, m.inlineSearchLoading)
-	}
+	assert.Equal(t, loading, m.loading, "loading")
+	assert.Equal(t, inlineSearchLoading, m.inlineSearchLoading, "inlineSearchLoading")
 }
 
 // assertCmd checks whether a command is nil or non-nil as expected.
 func assertCmd(t *testing.T, cmd tea.Cmd, wantCmd bool) {
 	t.Helper()
-	if wantCmd && cmd == nil {
-		t.Error("expected command to be returned")
-	}
-	if !wantCmd && cmd != nil {
-		t.Error("expected no command")
+	if wantCmd {
+		assert.NotNil(t, cmd, "expected command to be returned")
+	} else {
+		assert.Nil(t, cmd, "expected no command")
 	}
 }
 
 // assertSearchQuery checks the model's searchQuery field.
 func assertSearchQuery(t *testing.T, m Model, expected string) {
 	t.Helper()
-	if m.searchQuery != expected {
-		t.Errorf("expected searchQuery=%q, got %q", expected, m.searchQuery)
-	}
+	assert.Equal(t, expected, m.searchQuery, "searchQuery")
 }
 
 // assertInlineSearchActive checks the model's inlineSearchActive field.
 func assertInlineSearchActive(t *testing.T, m Model, expected bool) {
 	t.Helper()
-	if m.inlineSearchActive != expected {
-		t.Errorf("expected inlineSearchActive=%v, got %v", expected, m.inlineSearchActive)
-	}
+	assert.Equal(t, expected, m.inlineSearchActive, "inlineSearchActive")
 }
 
 // applyInlineSearchKey sends a key through handleInlineSearchKeys and returns Model and Cmd.
 func applyInlineSearchKey(t *testing.T, m Model, k tea.KeyMsg) (Model, tea.Cmd) {
 	t.Helper()
 	newModel, cmd := m.handleInlineSearchKeys(k)
-	return newModel.(Model), cmd
+	return asModel(t, newModel), cmd
 }
 
 // =============================================================================

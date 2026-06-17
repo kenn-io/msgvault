@@ -4,15 +4,16 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"strings"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 var queryFormat string
@@ -66,9 +67,8 @@ Examples:
 		}
 
 		if !query.HasCompleteParquetData(analyticsDir) {
-			return fmt.Errorf(
-				"analytics cache is empty — sync some " +
-					"messages first")
+			return errors.New("analytics cache is empty — sync some " +
+				"messages first")
 		}
 
 		return executeQuery(
@@ -126,7 +126,7 @@ func executeQuery(
 	}
 
 	switch format {
-	case "json":
+	case outputFormatJSON:
 		return writeJSON(w, cols, allRows)
 	case "csv":
 		return writeCSV(w, cols, allRows)
@@ -203,6 +203,10 @@ func writeCSV(
 	return cw.Error()
 }
 
+// nil error return mirrors writeJSON/writeCSV so the format switch can
+// `return writeTable(...)` uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning writeJSON/writeCSV siblings
 func writeTable(
 	w io.Writer, cols []string, rows [][]any,
 ) error {
@@ -265,7 +269,7 @@ func writeTable(
 func init() {
 	rootCmd.AddCommand(queryCmd)
 	queryCmd.Flags().StringVar(
-		&queryFormat, "format", "json",
+		&queryFormat, "format", outputFormatJSON,
 		"Output format: json, csv, or table",
 	)
 }

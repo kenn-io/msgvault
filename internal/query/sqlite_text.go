@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Compile-time interface assertion.
@@ -44,13 +44,13 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 // textMsgTypeFilter returns a SQL condition restricting to text message types.
 // Uses the m. table alias used in text query methods.
 func textMsgTypeFilter() string {
-	return "m.message_type IN ('whatsapp','imessage','sms','google_voice_text')"
+	return "m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')"
 }
 
 // textMsgTypeFilterAlias returns a SQL condition restricting to text message types
 // using the given table alias.
 func textMsgTypeFilterAlias(alias string) string {
-	return alias + ".message_type IN ('whatsapp','imessage','sms','google_voice_text')"
+	return alias + ".message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')"
 }
 
 func sqliteDirection(d SortDirection) string {
@@ -62,9 +62,9 @@ func sqliteDirection(d SortDirection) string {
 
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
-func buildSQLiteTextFilterConditions(filter TextFilter) (string, []interface{}) {
+func buildSQLiteTextFilterConditions(filter TextFilter) (string, []any) {
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if filter.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")
@@ -136,7 +136,7 @@ func buildSQLiteTextFilterConditions(filter TextFilter) (string, []interface{}) 
 		default:
 			timeExprStr = "strftime('%Y-%m', m.sent_at)"
 		}
-		conditions = append(conditions, fmt.Sprintf("%s = ?", timeExprStr))
+		conditions = append(conditions, timeExprStr+" = ?")
 		args = append(args, filter.TimeRange.Period)
 	}
 	if filter.After != nil {
@@ -172,6 +172,11 @@ func (e *SQLiteEngine) ListConversations(
 	} else {
 		orderBy += " DESC"
 	}
+	// Append the unique conversation PK as a tiebreaker so conversations
+	// sharing the primary sort key (e.g. identical last_message_at) get a
+	// total, stable order across LIMIT/OFFSET pages. c.id is the GROUP BY key
+	// and is selectable here. [C3]
+	orderBy += ", c.id DESC"
 
 	limit := filter.Pagination.Limit
 	if limit == 0 {
@@ -257,8 +262,7 @@ func textAggSQLiteDimension(
 			whereExpr: keyExpr + " IS NOT NULL",
 		}, nil
 	case TextViewContactNames:
-		nameExpr := "COALESCE(NULLIF(TRIM(p_agg.display_name), ''), " +
-			"NULLIF(p_agg.phone_number, ''), p_agg.email_address)"
+		nameExpr := participantNameExpr("p_agg")
 		senderJoin := `JOIN participants p_agg ON p_agg.id = COALESCE(m.sender_id,
 			(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 			 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
@@ -315,7 +319,7 @@ func (e *SQLiteEngine) TextAggregate(
 	}
 
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")
@@ -449,7 +453,7 @@ func (e *SQLiteEngine) TextSearch(
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE fts.messages_fts MATCH ?
-		  AND m.message_type IN ('whatsapp','imessage','sms','google_voice_text')
+		  AND m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')
 		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
@@ -471,7 +475,7 @@ func (e *SQLiteEngine) GetTextStats(
 	stats := &TotalStats{}
 
 	conditions := []string{textMsgTypeFilter()}
-	var args []interface{}
+	var args []any
 
 	if opts.SourceID != nil {
 		conditions = append(conditions, "m.source_id = ?")

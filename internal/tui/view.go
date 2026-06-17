@@ -5,18 +5,18 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // Monochrome theme - inherits terminal background where possible.
 // Only cursor, title bar, and alt rows use explicit backgrounds.
 var (
-	// Explicit backgrounds only for elements that need contrast
+	// Explicit backgrounds only for elements that need contrast.
 	bgAlt    = lipgloss.AdaptiveColor{Light: "#f0f0f0", Dark: "#181818"}
 	bgCursor = lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#282828"}
 
-	// Title bar style - bold with visible background
+	// Title bar style - bold with visible background.
 	titleBarStyle = lipgloss.NewStyle().
 			Bold(true).
 			Background(lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#333333"}).
@@ -27,29 +27,29 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#999999"}).
 			Padding(0, 1)
 
-	// Spinner style - NOT faint so it's visible
+	// Spinner style - NOT faint so it's visible.
 	spinnerStyle = lipgloss.NewStyle().
 			Bold(true)
 
 	tableHeaderStyle = lipgloss.NewStyle().
 				Bold(true)
 
-	// Separator line style for under headers
+	// Separator line style for under headers.
 	separatorStyle = lipgloss.NewStyle().
 			Faint(true)
 
-	// Cursor row: subtle background for visibility
+	// Cursor row: subtle background for visibility.
 	cursorRowStyle = lipgloss.NewStyle().
 			Background(bgCursor)
 
-	// Selected (checked) rows: bold, inherits terminal background
+	// Selected (checked) rows: bold, inherits terminal background.
 	selectedRowStyle = lipgloss.NewStyle().
 				Bold(true)
 
-	// Normal rows inherit terminal background
+	// Normal rows inherit terminal background.
 	normalRowStyle = lipgloss.NewStyle()
 
-	// Alternating rows: very subtle shift from terminal default
+	// Alternating rows: very subtle shift from terminal default.
 	altRowStyle = lipgloss.NewStyle().
 			Background(bgAlt)
 
@@ -133,7 +133,7 @@ func viewTypePrefix(vt query.ViewType) string {
 }
 
 // buildTitleBar builds the title bar line (line 1 of the header).
-// Format: "msgvault [version] - Account          update: vX.Y.Z"
+// Format: "msgvault [version] - Account          update: vX.Y.Z".
 func (m Model) buildTitleBar() string {
 	// Build title with version
 	titleText := "msgvault"
@@ -226,7 +226,7 @@ func (m Model) buildBreadcrumb() string {
 		if m.messageDetail != nil {
 			subject = m.messageDetail.Subject
 		}
-		return fmt.Sprintf("Message: %s", truncateRunes(subject, 50))
+		return "Message: " + truncateRunes(subject, 50)
 	case levelThreadView:
 		if m.threadTruncated {
 			return fmt.Sprintf("Thread (showing %d of %d+ messages)", len(m.threadMessages), len(m.threadMessages))
@@ -264,7 +264,7 @@ func (m Model) buildStatsString() string {
 
 // headerView renders a two-level header:
 // Line 1: msgvault [version] - account
-// Line 2: breadcrumb | stats
+// Line 2: breadcrumb | stats.
 func (m Model) headerView() string {
 	line1 := m.buildTitleBar()
 
@@ -274,10 +274,7 @@ func (m Model) headerView() string {
 
 	breadcrumbStyled := statsStyle.Render(" " + breadcrumb + " ")
 	statsStyled := statsStyle.Render(statsStr + " ")
-	gap := m.width - lipgloss.Width(breadcrumbStyled) - lipgloss.Width(statsStyled)
-	if gap < 0 {
-		gap = 0
-	}
+	gap := max(m.width-lipgloss.Width(breadcrumbStyled)-lipgloss.Width(statsStyled), 0)
 	line2 := breadcrumbStyled + strings.Repeat(" ", gap) + statsStyled
 
 	return line1 + "\n" + line2
@@ -310,13 +307,7 @@ func (m Model) aggregateTableView() string {
 	var sb strings.Builder
 
 	// Calculate column widths (reserve 3 for selection indicator)
-	keyWidth := m.width - 43
-	if keyWidth < 20 {
-		keyWidth = 20
-	}
-	if keyWidth > 57 {
-		keyWidth = 57
-	}
+	keyWidth := min(max(m.width-43, 20), 57)
 
 	// Header row with sort indicators
 	sortIndicator := func(field query.SortField) string {
@@ -362,10 +353,7 @@ func (m Model) aggregateTableView() string {
 	sb.WriteString("\n")
 
 	// Data rows - show at most pageSize-1 to leave room for info line
-	endRow := m.scrollOffset + m.pageSize - 1
-	if endRow > len(m.rows) {
-		endRow = len(m.rows)
-	}
+	endRow := min(m.scrollOffset+m.pageSize-1, len(m.rows))
 
 	for i := m.scrollOffset; i < endRow; i++ {
 		row := m.rows[i]
@@ -465,10 +453,7 @@ func (m Model) messageListView() string {
 	dateWidth := 16
 	fromWidth := 25
 	sizeWidth := 8
-	subjectWidth := m.width - dateWidth - fromWidth - sizeWidth - 9
-	if subjectWidth < 20 {
-		subjectWidth = 20
-	}
+	subjectWidth := max(m.width-dateWidth-fromWidth-sizeWidth-9, 20)
 
 	// Header row with sort indicators
 	msgSortIndicator := func(field query.MessageSortField) string {
@@ -508,10 +493,7 @@ func (m Model) messageListView() string {
 	sb.WriteString("\n")
 
 	// Data rows - show at most pageSize-1 to leave room for info line
-	endRow := m.scrollOffset + m.pageSize - 1
-	if endRow > len(m.messages) {
-		endRow = len(m.messages)
-	}
+	endRow := min(m.scrollOffset+m.pageSize-1, len(m.messages))
 
 	// Show "No results" indicator when search returned zero matches
 	if len(m.messages) == 0 && !m.loading {
@@ -659,58 +641,59 @@ func (m Model) buildDetailLines() []string {
 	var lines []string
 
 	// Subject
-	lines = append(lines, fmt.Sprintf("Subject: %s", msg.Subject))
-	lines = append(lines, "")
-
-	// Date
-	lines = append(lines, fmt.Sprintf("Date: %s", msg.SentAt.Format("Mon, 02 Jan 2006 15:04:05 MST")))
+	lines = append(lines,
+		"Subject: "+msg.Subject,
+		"",
+		// Date
+		"Date: "+msg.SentAt.Format("Mon, 02 Jan 2006 15:04:05 MST"),
+	)
 
 	// From
 	if len(msg.From) > 0 {
 		from := formatAddresses(msg.From)
-		lines = append(lines, fmt.Sprintf("From: %s", from))
+		lines = append(lines, "From: "+from)
 	}
 
 	// To
 	if len(msg.To) > 0 {
 		to := formatAddresses(msg.To)
-		lines = append(lines, fmt.Sprintf("To: %s", to))
+		lines = append(lines, "To: "+to)
 	}
 
 	// Cc
 	if len(msg.Cc) > 0 {
 		cc := formatAddresses(msg.Cc)
-		lines = append(lines, fmt.Sprintf("Cc: %s", cc))
+		lines = append(lines, "Cc: "+cc)
 	}
 
 	// Bcc
 	if len(msg.Bcc) > 0 {
 		bcc := formatAddresses(msg.Bcc)
-		lines = append(lines, fmt.Sprintf("Bcc: %s", bcc))
+		lines = append(lines, "Bcc: "+bcc)
 	}
 
 	// Labels
 	if len(msg.Labels) > 0 {
-		lines = append(lines, fmt.Sprintf("Labels: %s", strings.Join(msg.Labels, ", ")))
+		lines = append(lines, "Labels: "+strings.Join(msg.Labels, ", "))
 	}
 
 	// Attachments
 	if len(msg.Attachments) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("Attachments (%d):", len(msg.Attachments)))
+		lines = append(lines,
+			"",
+			fmt.Sprintf("Attachments (%d):", len(msg.Attachments)),
+		)
 		for _, att := range msg.Attachments {
 			lines = append(lines, fmt.Sprintf("  📎 %s (%s)", att.Filename, formatBytes(att.Size)))
 		}
 	}
 
 	// Separator
-	lines = append(lines, "")
 	sepWidth := min(m.width-2, 80)
 	if sepWidth < 1 {
 		sepWidth = 40 // Reasonable default
 	}
-	lines = append(lines, strings.Repeat("─", sepWidth))
-	lines = append(lines, "")
+	lines = append(lines, "", strings.Repeat("─", sepWidth), "")
 
 	// Body - wrap lines to fit width
 	body := msg.BodyText
@@ -783,10 +766,7 @@ func (m Model) messageDetailView() string {
 		startLine = 0
 	}
 
-	endLine := startLine + detailPageSize
-	if endLine > len(lines) {
-		endLine = len(lines)
-	}
+	endLine := min(startLine+detailPageSize, len(lines))
 
 	visibleLines := lines[startLine:endLine]
 
@@ -824,7 +804,7 @@ func (m Model) messageDetailView() string {
 		infoContent := "/" + m.detailSearchInput.View()
 		sb.WriteString(m.renderInfoLine(infoContent, false))
 	} else if m.detailSearchQuery != "" {
-		matchInfo := fmt.Sprintf(" /%s", m.detailSearchQuery)
+		matchInfo := " /" + m.detailSearchQuery
 		if len(m.detailSearchMatches) > 0 {
 			matchInfo += fmt.Sprintf(" [%d/%d]", m.detailSearchMatchIndex+1, len(m.detailSearchMatches))
 		} else {
@@ -862,10 +842,7 @@ func (m Model) threadView() string {
 	// Calculate column widths (reserve 3 for selection indicator + 6 for spacing)
 	dateWidth := 16
 	sizeWidth := 8
-	fromSubjectWidth := m.width - dateWidth - sizeWidth - 9
-	if fromSubjectWidth < 1 {
-		fromSubjectWidth = 1
-	}
+	fromSubjectWidth := max(m.width-dateWidth-sizeWidth-9, 1)
 
 	// Header row
 	headerRow := fmt.Sprintf("   %-*s  %-*s  %*s",
@@ -881,16 +858,12 @@ func (m Model) threadView() string {
 	sb.WriteString("\n")
 
 	// Calculate visible rows (account for header + separator + notification line)
-	visibleRows := m.height - 5 // header, breadcrumb, table header, separator, footer
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
+	visibleRows := max(
+		// header, breadcrumb, table header, separator, footer
+		m.height-5, 1)
 
 	// Determine visible range
-	endRow := m.threadScrollOffset + visibleRows
-	if endRow > len(m.threadMessages) {
-		endRow = len(m.threadMessages)
-	}
+	endRow := min(m.threadScrollOffset+visibleRows, len(m.threadMessages))
 
 	// Render visible messages
 	for i := m.threadScrollOffset; i < endRow; i++ {
@@ -1105,10 +1078,7 @@ func (m Model) footerView() string {
 	keysStr := strings.Join(keys, " │ ")
 
 	// Use lipgloss.Width for ANSI-aware width calculation (handles Unicode arrows ↑↓ correctly)
-	gap := m.width - lipgloss.Width(keysStr) - lipgloss.Width(posStr) - lipgloss.Width(selStr) - 2
-	if gap < 0 {
-		gap = 0
-	}
+	gap := max(m.width-lipgloss.Width(keysStr)-lipgloss.Width(posStr)-lipgloss.Width(selStr)-2, 0)
 
 	return footerStyle.Render(keysStr + strings.Repeat(" ", gap) + selStr + posStr)
 }
@@ -1125,10 +1095,7 @@ func (m Model) spinnerIndicator() string {
 // Used on the second-to-last line of table views (before footer).
 func (m Model) renderInfoLine(content string, loading bool) string {
 	// statsStyle has Padding(0, 1) which adds 2 characters, so content should be m.width-2
-	contentWidth := m.width - 2
-	if contentWidth < 1 {
-		contentWidth = 1
-	}
+	contentWidth := max(m.width-2, 1)
 
 	if content == "" && !loading {
 		return statsStyle.Render(strings.Repeat(" ", contentWidth))
@@ -1137,10 +1104,7 @@ func (m Model) renderInfoLine(content string, loading bool) string {
 		indicator := m.spinnerIndicator()
 		currentWidth := lipgloss.Width(content)
 		indicatorWidth := lipgloss.Width(indicator)
-		gap := contentWidth - currentWidth - indicatorWidth
-		if gap < 1 {
-			gap = 1
-		}
+		gap := max(contentWidth-currentWidth-indicatorWidth, 1)
 		// Render spinner with bold style so it's visible (statsStyle is faint)
 		styledIndicator := spinnerStyle.Render(indicator)
 		content += strings.Repeat(" ", gap) + styledIndicator
@@ -1158,10 +1122,7 @@ func (m Model) renderNotificationLine() string {
 			flash := " " + m.flashMessage
 			flashWidth := lipgloss.Width(flash)
 			indicatorWidth := lipgloss.Width(indicator)
-			gap := m.width - flashWidth - indicatorWidth
-			if gap < 1 {
-				gap = 1
-			}
+			gap := max(m.width-flashWidth-indicatorWidth, 1)
 			return flashStyle.Render(padRight(flash+strings.Repeat(" ", gap)+indicator, m.width))
 		}
 		return flashStyle.Render(padRight(" "+m.flashMessage, m.width))
@@ -1170,13 +1131,6 @@ func (m Model) renderNotificationLine() string {
 		return m.renderInfoLine("", true)
 	}
 	return normalRowStyle.Render(strings.Repeat(" ", m.width))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // overlayModal renders a modal dialog over the content.
@@ -1220,13 +1174,7 @@ var rawHelpLines = []string{
 
 // helpMaxVisible returns the max visible lines for the help modal given terminal height.
 func (m Model) helpMaxVisible() int {
-	v := m.height - 6
-	if v < 1 {
-		v = 1
-	}
-	if v > len(rawHelpLines) {
-		v = len(rawHelpLines)
-	}
+	v := min(max(m.height-6, 1), len(rawHelpLines))
 	return v
 }
 
@@ -1322,10 +1270,7 @@ func (m Model) renderHelpModal() string {
 	maxVisible := m.helpMaxVisible()
 
 	// Clamp scroll offset
-	maxScroll := len(rawHelpLines) - maxVisible
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(len(rawHelpLines)-maxVisible, 0)
 	if m.helpScroll > maxScroll {
 		m.helpScroll = maxScroll
 	}
@@ -1414,6 +1359,8 @@ func (m Model) overlayModal(background string) string {
 		modalContent = m.renderExportResultModal()
 	case modalError:
 		modalContent = m.renderErrorModal()
+	case modalNone:
+		// no modal; modalContent stays empty
 	}
 
 	if modalContent == "" {
@@ -1429,17 +1376,11 @@ func (m Model) overlayModal(background string) string {
 
 	// Calculate vertical centering
 	modalHeight := len(modalLines)
-	startLine := (len(bgLines) - modalHeight) / 2
-	if startLine < 0 {
-		startLine = 0
-	}
+	startLine := max((len(bgLines)-modalHeight)/2, 0)
 
 	// Calculate horizontal centering
 	modalWidth := lipgloss.Width(modal)
-	leftPadding := (m.width - modalWidth) / 2
-	if leftPadding < 0 {
-		leftPadding = 0
-	}
+	leftPadding := max((m.width-modalWidth)/2, 0)
 
 	// Overlay modal onto background, preserving background where modal doesn't cover
 	for i, modalLine := range modalLines {

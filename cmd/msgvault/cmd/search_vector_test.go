@@ -8,13 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // newVectorSearchTestEnv stands up the CLI prerequisites for a
@@ -35,16 +36,10 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 
 	dbPath := filepath.Join(dir, "msgvault.db")
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	requirepkg.NoError(t, err, "open store")
+	requirepkg.NoError(t, s.InitSchema(), "init schema")
 
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		t.Fatalf("RegisterExtension: %v", err)
-	}
+	requirepkg.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	ctx := context.Background()
 	vecPath := filepath.Join(dir, "vectors.db")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
@@ -53,40 +48,41 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 		Dimension: 4,
 		MainDB:    s.DB(),
 	})
-	if err != nil {
-		t.Fatalf("sqlitevec.Open: %v", err)
+	requirepkg.NoError(t, err, "sqlitevec.Open")
+	// Build the vector config first so the generation can be seeded
+	// with the same fingerprint the search command will compute at run
+	// time. Otherwise ResolveActiveForFingerprint rejects the active
+	// generation as stale before the search ever reaches the index.
+	vecCfg := vector.Config{
+		Enabled: true,
+		Backend: "sqlite-vec",
+		DBPath:  vecPath,
+		Embeddings: vector.EmbeddingsConfig{
+			Endpoint:  embedSrvURL + "/v1",
+			Model:     "fake-model",
+			Dimension: 4,
+		},
+		Search: vector.SearchConfig{
+			RRFK:       60,
+			KPerSignal: 10,
+		},
 	}
-	gid, err := b.CreateGeneration(ctx, "fake-model", 4)
+	gid, err := b.CreateGeneration(ctx, "fake-model", 4, vecCfg.GenerationFingerprint())
 	if err != nil {
 		_ = b.Close()
-		t.Fatalf("CreateGeneration: %v", err)
+		requirepkg.NoError(t, err, "CreateGeneration")
 	}
-	if err := b.ActivateGeneration(ctx, gid); err != nil {
+	if err := b.ActivateGeneration(ctx, gid, true); err != nil {
 		_ = b.Close()
-		t.Fatalf("ActivateGeneration: %v", err)
+		requirepkg.NoError(t, err, "ActivateGeneration")
 	}
-	if err := b.Close(); err != nil {
-		t.Fatalf("close backend: %v", err)
-	}
+	requirepkg.NoError(t, b.Close(), "close backend")
 
 	savedCfg := cfg
 	cfg = &config.Config{
 		HomeDir: dir,
 		Data:    config.DataConfig{DataDir: dir},
-		Vector: vector.Config{
-			Enabled: true,
-			Backend: "sqlite-vec",
-			DBPath:  vecPath,
-			Embeddings: vector.EmbeddingsConfig{
-				Endpoint:  embedSrvURL + "/v1",
-				Model:     "fake-model",
-				Dimension: 4,
-			},
-			Search: vector.SearchConfig{
-				RRFK:       60,
-				KPerSignal: 10,
-			},
-		},
+		Vector:  vecCfg,
 	}
 
 	restore := func() {
@@ -97,10 +93,12 @@ func newVectorSearchTestEnv(t *testing.T, embedSrvURL string) (*store.Store, fun
 	return s, restore
 }
 
-// fakeEmbedServer is a tiny stub /v1/embeddings server that returns the
-// requested number of zero-vectors at the configured dimension.
-func fakeEmbedServer(t *testing.T, dim int) *httptest.Server {
+// fakeEmbedServer is a tiny stub /v1/embeddings server that returns one
+// zero-vector (with the leading element set to 1) per input at the test
+// dimension.
+func fakeEmbedServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	const dim = 4
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Input []string `json:"input"`
@@ -134,7 +132,7 @@ func fakeEmbedServer(t *testing.T, dim int) *httptest.Server {
 // before the embedding endpoint is contacted, so the embed stub will
 // never be hit if the wiring is correct.
 func TestSearchCmd_VectorMode_UnknownAccount(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -148,12 +146,8 @@ func TestSearchCmd_VectorMode_UnknownAccount(t *testing.T) {
 		"hello",
 	})
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for unknown --account, got nil")
-	}
-	if !strings.Contains(err.Error(), "no account found") {
-		t.Errorf("error = %q, want substring 'no account found'", err)
-	}
+	requirepkg.Error(t, err, "expected error for unknown --account")
+	assertpkg.ErrorContains(t, err, "no account found")
 }
 
 // TestSearchCmd_VectorMode_AccountScopingResolves verifies that a
@@ -162,14 +156,13 @@ func TestSearchCmd_VectorMode_UnknownAccount(t *testing.T) {
 // results, but reaching the empty-result branch proves the SourceID
 // was resolved and the engine ran without error.
 func TestSearchCmd_VectorMode_AccountScopingResolves(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)
 	defer restore()
-	if _, err := s.GetOrCreateSource("gmail", "alice@example.com"); err != nil {
-		t.Fatalf("seed source: %v", err)
-	}
+	_, err := s.GetOrCreateSource("gmail", "alice@example.com")
+	requirepkg.NoError(t, err, "seed source")
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
@@ -179,14 +172,10 @@ func TestSearchCmd_VectorMode_AccountScopingResolves(t *testing.T) {
 		"--account", "alice@example.com",
 		"hello",
 	})
-	err := root.Execute()
+	err = root.Execute()
 	out := done()
-	if err != nil {
-		t.Fatalf("expected no error for known account, got %v (out=%s)", err, out)
-	}
-	if !strings.Contains(out, "No messages found") {
-		t.Errorf("expected 'No messages found' (empty index), got: %s", out)
-	}
+	requirepkg.NoError(t, err, "expected no error for known account (out=%s)", out)
+	assertpkg.Contains(t, out, "No messages found", "expected 'No messages found' (empty index)")
 }
 
 // TestSearchCmd_VectorMode_CollectionScopingResolves verifies that
@@ -194,18 +183,16 @@ func TestSearchCmd_VectorMode_AccountScopingResolves(t *testing.T) {
 // path. Earlier the vector branch only looked at --account directly
 // and silently ignored --collection.
 func TestSearchCmd_VectorMode_CollectionScopingResolves(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	require := requirepkg.New(t)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)
 	defer restore()
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("seed source: %v", err)
-	}
-	if _, err := s.CreateCollection("alice-only", "", []int64{src.ID}); err != nil {
-		t.Fatalf("create collection: %v", err)
-	}
+	require.NoError(err, "seed source")
+	_, err = s.CreateCollection("alice-only", "", []int64{src.ID})
+	require.NoError(err, "create collection")
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
@@ -217,18 +204,14 @@ func TestSearchCmd_VectorMode_CollectionScopingResolves(t *testing.T) {
 	})
 	err = root.Execute()
 	out := done()
-	if err != nil {
-		t.Fatalf("expected no error for known collection, got %v (out=%s)", err, out)
-	}
-	if !strings.Contains(out, "No messages found") {
-		t.Errorf("expected 'No messages found' (empty index), got: %s", out)
-	}
+	require.NoError(err, "expected no error for known collection (out=%s)", out)
+	assertpkg.Contains(t, out, "No messages found", "expected 'No messages found' (empty index)")
 }
 
 // TestSearchCmd_VectorMode_CollectionUnknown mirrors the FTS path's
 // unknown-collection rejection.
 func TestSearchCmd_VectorMode_CollectionUnknown(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -242,18 +225,14 @@ func TestSearchCmd_VectorMode_CollectionUnknown(t *testing.T) {
 		"hello",
 	})
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for unknown --collection, got nil")
-	}
-	if !strings.Contains(err.Error(), "no collection") {
-		t.Errorf("error = %q, want substring 'no collection'", err)
-	}
+	requirepkg.Error(t, err, "expected error for unknown --collection")
+	assertpkg.ErrorContains(t, err, "no collection")
 }
 
 // TestSearchCmd_HybridMode_UnknownAccount mirrors the vector test for
 // mode=hybrid, since the account-lookup path is shared.
 func TestSearchCmd_HybridMode_UnknownAccount(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	_, restore := newVectorSearchTestEnv(t, srv.URL)
@@ -267,12 +246,8 @@ func TestSearchCmd_HybridMode_UnknownAccount(t *testing.T) {
 		"hello",
 	})
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for unknown --account, got nil")
-	}
-	if !strings.Contains(err.Error(), "no account found") {
-		t.Errorf("error = %q, want substring 'no account found'", err)
-	}
+	requirepkg.Error(t, err, "expected error for unknown --account")
+	assertpkg.ErrorContains(t, err, "no account found")
 }
 
 // TestSearchCmd_VectorMode_UnscopedRunsMigrations regression-guards
@@ -286,25 +261,22 @@ func TestSearchCmd_HybridMode_UnknownAccount(t *testing.T) {
 // deleted_at, then assert the dispatch path restores it before
 // runHybridSearch's raw sql.DB sees the schema.
 func TestSearchCmd_VectorMode_UnscopedRunsMigrations(t *testing.T) {
-	srv := fakeEmbedServer(t, 4)
+	require := requirepkg.New(t)
+	srv := fakeEmbedServer(t)
 	defer srv.Close()
 
 	s, restore := newVectorSearchTestEnv(t, srv.URL)
 	defer restore()
 
-	if _, err := s.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at`); err != nil {
-		t.Fatalf("drop deleted_at to simulate pre-migration DB: %v", err)
-	}
+	_, err := s.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at`)
+	require.NoError(err, "drop deleted_at to simulate pre-migration DB")
 	// Sanity: column is gone.
 	var cnt int
-	if err := s.DB().QueryRow(
+	err = s.DB().QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'deleted_at'`,
-	).Scan(&cnt); err != nil {
-		t.Fatalf("pragma_table_info pre-dispatch: %v", err)
-	}
-	if cnt != 0 {
-		t.Fatalf("setup: deleted_at still present (cnt=%d)", cnt)
-	}
+	).Scan(&cnt)
+	require.NoError(err, "pragma_table_info pre-dispatch")
+	require.Zero(cnt, "setup: deleted_at still present")
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
@@ -321,12 +293,9 @@ func TestSearchCmd_VectorMode_UnscopedRunsMigrations(t *testing.T) {
 	_ = root.Execute()
 	_ = done()
 
-	if err := s.DB().QueryRow(
+	err = s.DB().QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'deleted_at'`,
-	).Scan(&cnt); err != nil {
-		t.Fatalf("pragma_table_info post-dispatch: %v", err)
-	}
-	if cnt != 1 {
-		t.Fatalf("dispatch did not re-add deleted_at column (cnt=%d) — runHybridSearch would query a missing column on an upgraded DB", cnt)
-	}
+	).Scan(&cnt)
+	require.NoError(err, "pragma_table_info post-dispatch")
+	require.Equal(1, cnt, "dispatch did not re-add deleted_at column — runHybridSearch would query a missing column on an upgraded DB")
 }

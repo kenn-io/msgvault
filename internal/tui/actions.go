@@ -2,14 +2,15 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // ExportResultMsg is returned when attachment export completes.
@@ -69,7 +70,7 @@ func (c *ActionController) StageForDeletion(ctx DeletionContext) (*deletion.Mani
 	}
 
 	if len(gmailIDs) == 0 {
-		return nil, fmt.Errorf("no messages selected")
+		return nil, errors.New("no messages selected")
 	}
 
 	description := c.buildManifestDescription(ctx)
@@ -93,7 +94,7 @@ func (c *ActionController) resolveGmailIDs(dctx DeletionContext) ([]string, erro
 
 			ids, err := c.queries.GetGmailIDsByFilter(ctx, filter)
 			if err != nil {
-				return nil, fmt.Errorf("error loading messages: %v", err)
+				return nil, fmt.Errorf("error loading messages: %w", err)
 			}
 			for _, id := range ids {
 				gmailIDSet[id] = true
@@ -141,6 +142,8 @@ func (c *ActionController) buildFilterForAggregate(key string, dctx DeletionCont
 	case query.ViewTime:
 		filter.TimeRange.Period = key
 		filter.TimeRange.Granularity = dctx.TimeGranularity
+	default:
+		// SenderNames / RecipientNames / Count are not drill-down targets here.
 	}
 	return filter
 }
@@ -197,6 +200,8 @@ func (c *ActionController) applyManifestFilters(m *deletion.Manifest, ctx Deleti
 			m.Filters.SenderDomains = keys
 		case query.ViewLabels:
 			m.Filters.Labels = keys
+		default:
+			// SenderNames / RecipientNames / Time / Count don't map to manifest filters.
 		}
 	}
 }
@@ -236,7 +241,7 @@ func (c *ActionController) ExportAttachments(detail *query.MessageDetail, select
 		// Partial success (some files exported, some errors) should show the
 		// detailed Result which includes both the success info and error list.
 		if stats.WriteError || stats.Count == 0 {
-			msg.Err = fmt.Errorf("export failed")
+			msg.Err = errors.New("export failed")
 		}
 		return msg
 	}

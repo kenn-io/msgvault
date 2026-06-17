@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/query"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // =============================================================================
@@ -20,12 +22,8 @@ func TestQuitConfirmationModal(t *testing.T) {
 
 	assertModal(t, model, modalQuitConfirm)
 
-	if model.quitting {
-		t.Error("should not be quitting yet")
-	}
-	if cmd != nil {
-		t.Error("should not have quit command yet")
-	}
+	assertpkg.False(t, model.quitting, "should not be quitting yet")
+	assertpkg.Nil(t, cmd, "should not have quit command yet")
 
 	// Press 'n' to cancel
 	model, _ = sendKey(t, model, key('n'))
@@ -39,12 +37,8 @@ func TestQuitConfirmationConfirm(t *testing.T) {
 	// Press 'y' to confirm quit
 	m, cmd := applyModalKey(t, model, key('y'))
 
-	if !m.quitting {
-		t.Error("expected quitting = true")
-	}
-	if cmd == nil {
-		t.Error("expected quit command")
-	}
+	assertpkg.True(t, m.quitting)
+	assertpkg.NotNil(t, cmd, "expected quit command")
 }
 
 // =============================================================================
@@ -52,6 +46,7 @@ func TestQuitConfirmationConfirm(t *testing.T) {
 // =============================================================================
 
 func TestAccountSelectorModal(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithAccounts(
 			query.AccountInfo{ID: 1, Identifier: "alice@example.com"},
@@ -63,32 +58,21 @@ func TestAccountSelectorModal(t *testing.T) {
 	// Press 'A' to open account selector
 	m := applyAggregateKey(t, model, key('A'))
 
-	if m.modal != modalAccountSelector {
-		t.Errorf("expected modalAccountSelector, got %v", m.modal)
-	}
-	if m.modalCursor != 0 {
-		t.Errorf("expected modalCursor = 0 (All Accounts), got %d", m.modalCursor)
-	}
+	assert.Equal(modalAccountSelector, m.modal)
+	assert.Equal(0, m.modalCursor, "expected All Accounts")
 
 	// Navigate down
 	m, _ = applyModalKey(t, m, key('j'))
-	if m.modalCursor != 1 {
-		t.Errorf("expected modalCursor = 1, got %d", m.modalCursor)
-	}
+	assert.Equal(1, m.modalCursor)
 
 	// Select account
 	var cmd tea.Cmd
 	m, cmd = applyModalKey(t, m, keyEnter())
 
-	if m.modal != modalNone {
-		t.Errorf("expected modalNone after selection, got %v", m.modal)
-	}
-	if m.accountFilter == nil || *m.accountFilter != 1 {
-		t.Errorf("expected accountFilter = 1, got %v", m.accountFilter)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload data")
-	}
+	assert.Equal(modalNone, m.modal, "after selection")
+	requirepkg.NotNil(t, m.accountFilter)
+	assert.Equal(int64(1), *m.accountFilter)
+	assert.NotNil(cmd, "expected command to reload data")
 }
 
 func TestOpenAccountSelector(t *testing.T) {
@@ -96,9 +80,7 @@ func TestOpenAccountSelector(t *testing.T) {
 		m := NewBuilder().Build()
 		m.openAccountSelector()
 		assertModal(t, m, modalAccountSelector)
-		if m.modalCursor != 0 {
-			t.Errorf("expected modalCursor 0, got %d", m.modalCursor)
-		}
+		assertpkg.Equal(t, 0, m.modalCursor)
 	})
 
 	t.Run("with matching filter", func(t *testing.T) {
@@ -110,9 +92,7 @@ func TestOpenAccountSelector(t *testing.T) {
 		m.accountFilter = &acctID
 		m.openAccountSelector()
 		assertModal(t, m, modalAccountSelector)
-		if m.modalCursor != 2 { // index 1 + 1 for "All Accounts"
-			t.Errorf("expected modalCursor 2, got %d", m.modalCursor)
-		}
+		assertpkg.Equal(t, 2, m.modalCursor, "index 1 + 1 for All Accounts")
 	})
 }
 
@@ -121,93 +101,65 @@ func TestOpenAccountSelector(t *testing.T) {
 // =============================================================================
 
 func TestFilterToggleModal(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().WithPageSize(10).WithSize(100, 20).Build()
 
 	// Press 'f' to open filter modal
 	m := applyAggregateKey(t, model, key('f'))
 
-	if m.modal != modalFilterToggle {
-		t.Errorf("expected modalFilterToggle, got %v", m.modal)
-	}
-	if m.modalCursor != 0 {
-		t.Errorf("expected modalCursor = 0, got %d", m.modalCursor)
-	}
+	assert.Equal(modalFilterToggle, m.modal)
+	assert.Equal(0, m.modalCursor)
 
 	// Space toggles checkbox at cursor 0 (attachments only) — modal stays open
 	m, _ = applyModalKey(t, m, key(' '))
 
-	if m.modal != modalFilterToggle {
-		t.Errorf("expected modal to stay open after Space, got %v", m.modal)
-	}
-	if !m.filters.attachmentsOnly {
-		t.Error("expected attachmentsOnly = true after toggling")
-	}
+	assert.Equal(modalFilterToggle, m.modal, "expected modal to stay open after Space")
+	assert.True(m.filters.attachmentsOnly, "after toggling")
 
 	// Toggle again with 'x' to uncheck
 	m, _ = applyModalKey(t, m, key('x'))
-	if m.filters.attachmentsOnly {
-		t.Error("expected attachmentsOnly = false after second toggle")
-	}
+	assert.False(m.filters.attachmentsOnly, "after second toggle")
 
 	// Navigate down to "Hide deleted from source"
 	m, _ = applyModalKey(t, m, key('j'))
-	if m.modalCursor != 1 {
-		t.Errorf("expected modalCursor = 1, got %d", m.modalCursor)
-	}
+	assert.Equal(1, m.modalCursor)
 
 	// Space toggles
 	m, _ = applyModalKey(t, m, key(' '))
-	if !m.filters.hideDeletedFromSource {
-		t.Error("expected hideDeletedFromSource = true after Space toggle")
-	}
+	assert.True(m.filters.hideDeletedFromSource, "after Space toggle")
 
 	// Enter applies and closes modal
 	var cmd tea.Cmd
 	m, cmd = applyModalKey(t, m, keyEnter())
 
-	if m.modal != modalNone {
-		t.Errorf("expected modalNone after Enter, got %v", m.modal)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload data after Enter")
-	}
+	assert.Equal(modalNone, m.modal, "after Enter")
+	assert.NotNil(cmd, "expected command to reload data after Enter")
 
 	// Esc also applies and closes
 	m2 := applyAggregateKey(t, model, key('f'))
 	m2, cmd = applyModalKey(t, m2, keyEsc())
-	if m2.modal != modalNone {
-		t.Errorf("expected modalNone after Esc, got %v", m2.modal)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload data after Esc")
-	}
+	assert.Equal(modalNone, m2.modal, "after Esc")
+	assert.NotNil(cmd, "expected command to reload data after Esc")
 }
 
 func TestFilterToggleInMessageList(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().WithLevel(levelMessageList).WithPageSize(10).WithSize(100, 20).Build()
 
 	// Press 'f' to open filter modal in message list
 	m := applyMessageListKey(t, model, key('f'))
 
-	if m.modal != modalFilterToggle {
-		t.Errorf("expected modalFilterToggle, got %v", m.modal)
-	}
+	assert.Equal(modalFilterToggle, m.modal)
 
 	// Space toggles "Only with attachments"
 	m, _ = applyModalKey(t, m, key(' '))
-	if !m.filters.attachmentsOnly {
-		t.Error("expected attachmentsOnly = true")
-	}
+	assert.True(m.filters.attachmentsOnly)
 
 	// Enter applies and closes
 	var cmd tea.Cmd
 	m, cmd = applyModalKey(t, m, keyEnter())
-	if m.modal != modalNone {
-		t.Errorf("expected modalNone, got %v", m.modal)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload messages")
-	}
+	assert.Equal(modalNone, m.modal)
+	assert.NotNil(cmd, "expected command to reload messages")
 }
 
 func TestOpenFilterModal(t *testing.T) {
@@ -215,12 +167,11 @@ func TestOpenFilterModal(t *testing.T) {
 
 	m.openFilterModal()
 	assertModal(t, m, modalFilterToggle)
-	if m.modalCursor != 0 {
-		t.Errorf("expected modalCursor 0, got %d", m.modalCursor)
-	}
+	assertpkg.Equal(t, 0, m.modalCursor)
 }
 
 func TestFilterToggleInDrillDown(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Simulate being in a sub-aggregate drill-down with filters initially on.
 	model := NewBuilder().WithLevel(levelDrillDown).WithPageSize(10).WithSize(100, 20).Build()
 	model.filters.attachmentsOnly = true
@@ -233,42 +184,26 @@ func TestFilterToggleInDrillDown(t *testing.T) {
 
 	// Open filter modal
 	m := applyAggregateKey(t, model, key('f'))
-	if m.modal != modalFilterToggle {
-		t.Fatalf("expected modalFilterToggle, got %v", m.modal)
-	}
+	requirepkg.Equal(t, modalFilterToggle, m.modal)
 
 	// Toggle both filters off using space/x
 	m, _ = applyModalKey(t, m, key(' ')) // cursor 0: toggle attachmentsOnly off
 	m, _ = applyModalKey(t, m, key('j')) // move to cursor 1
 	m, _ = applyModalKey(t, m, key('x')) // toggle hideDeletedFromSource off
 
-	if m.filters.attachmentsOnly {
-		t.Error("expected attachmentsOnly = false after toggle")
-	}
-	if m.filters.hideDeletedFromSource {
-		t.Error("expected hideDeletedFromSource = false after toggle")
-	}
+	assert.False(m.filters.attachmentsOnly, "after toggle")
+	assert.False(m.filters.hideDeletedFromSource, "after toggle")
 
 	// Close modal — drillFilter must be resynced
 	m, cmd := applyModalKey(t, m, keyEsc())
 
-	if m.modal != modalNone {
-		t.Errorf("expected modalNone, got %v", m.modal)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload data after Esc")
-	}
+	assert.Equal(modalNone, m.modal)
+	assert.NotNil(cmd, "expected command to reload data after Esc")
 
 	// Verify drillFilter was resynced with the updated global toggles
-	if m.drillFilter.WithAttachmentsOnly {
-		t.Error("expected drillFilter.WithAttachmentsOnly = false after resync")
-	}
-	if m.drillFilter.HideDeletedFromSource {
-		t.Error("expected drillFilter.HideDeletedFromSource = false after resync")
-	}
+	assert.False(m.drillFilter.WithAttachmentsOnly, "after resync")
+	assert.False(m.drillFilter.HideDeletedFromSource, "after resync")
 
 	// Non-toggle fields should be preserved
-	if m.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender preserved, got %q", m.drillFilter.Sender)
-	}
+	assert.Equal("alice@example.com", m.drillFilter.Sender)
 }

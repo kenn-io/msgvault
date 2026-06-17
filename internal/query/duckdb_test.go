@@ -2,15 +2,19 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/search"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // newParquetEngine creates a DuckDBEngine backed by the standard Parquet test data.
@@ -32,9 +36,7 @@ func newSQLiteEngine(t *testing.T) *DuckDBEngine {
 	t.Helper()
 	env := newTestEnv(t)
 	engine, err := NewDuckDBEngine("", "", env.DB)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	requirepkg.NoError(t, err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
@@ -44,9 +46,7 @@ func searchFast(t *testing.T, engine *DuckDBEngine, queryStr string, filter Mess
 	t.Helper()
 	q := search.Parse(queryStr)
 	results, err := engine.SearchFast(context.Background(), q, filter, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchFast(%q): %v", queryStr, err)
-	}
+	requirepkg.NoError(t, err, "SearchFast(%q)", queryStr)
 	return results
 }
 
@@ -58,7 +58,7 @@ func requireAggregateRow(t *testing.T, rows []AggregateRow, key string) Aggregat
 			return r
 		}
 	}
-	t.Fatalf("aggregate row %q not found in %d rows", key, len(rows))
+	requirepkg.FailNow(t, "aggregate row not found", "key %q not found in %d rows", key, len(rows))
 	return AggregateRow{}
 }
 
@@ -67,9 +67,7 @@ func assertSetEqual[T comparable](t *testing.T, got, want []T) {
 	t.Helper()
 	gotSet := make(map[T]bool)
 	for _, v := range got {
-		if gotSet[v] {
-			t.Errorf("duplicate element %v", v)
-		}
+		assertpkg.False(t, gotSet[v], "duplicate element %v", v)
 		gotSet[v] = true
 	}
 	wantSet := make(map[T]bool)
@@ -77,14 +75,10 @@ func assertSetEqual[T comparable](t *testing.T, got, want []T) {
 		wantSet[v] = true
 	}
 	for v := range wantSet {
-		if !gotSet[v] {
-			t.Errorf("missing expected element %v", v)
-		}
+		assertpkg.True(t, gotSet[v], "missing expected element %v", v)
 	}
 	for v := range gotSet {
-		if !wantSet[v] {
-			t.Errorf("unexpected element %v", v)
-		}
+		assertpkg.True(t, wantSet[v], "unexpected element %v", v)
 	}
 }
 
@@ -106,13 +100,9 @@ func assertSubjects(t *testing.T, messages []MessageSummary, want ...string) {
 		got[msg.Subject] = true
 	}
 	for _, s := range want {
-		if !got[s] {
-			t.Errorf("expected subject %q not found in results", s)
-		}
+		assertpkg.True(t, got[s], "expected subject %q not found in results", s)
 	}
-	if len(messages) != len(want) {
-		t.Errorf("expected %d messages, got %d", len(want), len(messages))
-	}
+	assertpkg.Len(t, messages, len(want), "messages count")
 }
 
 // buildStandardTestData creates a TestDataBuilder with the standard test data set:
@@ -132,11 +122,11 @@ func buildStandardTestData(t *testing.T) *TestDataBuilder {
 
 	// Messages
 	convAB := int64(101) // shared conversation for msg1+msg2
-	msg1 := b.AddMessage(MessageOpt{Subject: "Hello World", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000, ConversationID: convAB})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Re: Hello", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000, HasAttachments: true, ConversationID: convAB})
-	msg3 := b.AddMessage(MessageOpt{Subject: "Follow up", SentAt: makeDate(2024, 2, 1), SizeEstimate: 1500, ConversationID: 102})
-	msg4 := b.AddMessage(MessageOpt{Subject: "Question", SentAt: makeDate(2024, 2, 15), SizeEstimate: 3000, HasAttachments: true, ConversationID: 103})
-	msg5 := b.AddMessage(MessageOpt{Subject: "Final", SentAt: makeDate(2024, 3, 1), SizeEstimate: 500, ConversationID: 104})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Hello World", SentAt: makeDate(1, 15), SizeEstimate: 1000, ConversationID: convAB})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Re: Hello", SentAt: makeDate(1, 16), SizeEstimate: 2000, HasAttachments: true, ConversationID: convAB})
+	msg3 := b.AddMessage(MessageOpt{Subject: "Follow up", SentAt: makeDate(2, 1), SizeEstimate: 1500, ConversationID: 102})
+	msg4 := b.AddMessage(MessageOpt{Subject: "Question", SentAt: makeDate(2, 15), SizeEstimate: 3000, HasAttachments: true, ConversationID: 103})
+	msg5 := b.AddMessage(MessageOpt{Subject: "Final", SentAt: makeDate(3, 1), SizeEstimate: 500, ConversationID: 104})
 
 	// Recipients
 	b.AddFrom(msg1, 1, "Alice")
@@ -184,78 +174,54 @@ func buildStandardTestData(t *testing.T) *TestDataBuilder {
 // and case-insensitive search are tested in sqlite_test.go since the same
 // SQLiteEngine code handles both direct SQLite and DuckDB-delegated calls.
 func TestDuckDBEngine_SQLiteEngineReuse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Set up test SQLite database
 	env := newTestEnv(t)
 
 	// Create DuckDBEngine with sqliteDB but no Parquet (empty analytics dir)
 	// We pass empty string for analyticsDir since we're only testing the SQLite path
 	engine, err := NewDuckDBEngine("", "", env.DB)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(err, "NewDuckDBEngine")
 	defer func() { _ = engine.Close() }()
 
 	// Verify sqliteEngine was created
-	if engine.sqliteEngine == nil {
-		t.Fatal("expected sqliteEngine to be created when sqliteDB is provided")
-	}
+	require.NotNil(engine.sqliteEngine, "expected sqliteEngine to be created when sqliteDB is provided")
 
 	// Capture the sqliteEngine pointer to verify it's the same instance used
 	sharedEngine := engine.sqliteEngine
 
 	// Verify FTS cache is not yet checked
-	if sharedEngine.ftsChecked {
-		t.Error("expected ftsChecked to be false before any Search call")
-	}
+	assert.False(sharedEngine.ftsChecked, "expected ftsChecked to be false before any Search call")
 
 	ctx := context.Background()
 
 	// Test GetMessage - should use sqliteEngine (doesn't trigger FTS check)
 	msg, err := engine.GetMessage(ctx, 1)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Fatal("expected message, got nil")
-	}
-	if msg.Subject != "Hello World" {
-		t.Errorf("expected subject 'Hello World', got %q", msg.Subject)
-	}
+	require.NoError(err, "GetMessage")
+	require.NotNil(msg, "expected message")
+	assert.Equal("Hello World", msg.Subject)
 
 	// Test GetMessageBySourceID - should use same sqliteEngine
 	msg, err = engine.GetMessageBySourceID(ctx, "msg3")
-	if err != nil {
-		t.Fatalf("GetMessageBySourceID: %v", err)
-	}
-	if msg == nil {
-		t.Fatal("expected message, got nil")
-	}
-	if msg.Subject != "Follow up" {
-		t.Errorf("expected subject 'Follow up', got %q", msg.Subject)
-	}
+	require.NoError(err, "GetMessageBySourceID")
+	require.NotNil(msg, "expected message")
+	assert.Equal("Follow up", msg.Subject)
 
 	// Test Search with text terms - triggers FTS availability check
 	q := &search.Query{
 		TextTerms: []string{"Hello"},
 	}
 	results, err := engine.Search(ctx, q, 100, 0)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("expected 2 messages with 'Hello', got %d", len(results))
-	}
+	require.NoError(err, "Search")
+	assert.Len(results, 2, "expected 2 messages with 'Hello'")
 
 	// Verify FTS cache was checked on the shared engine instance
 	// This proves Search used the shared sqliteEngine, not a new instance
-	if !sharedEngine.ftsChecked {
-		t.Error("expected ftsChecked to be true after Search with text terms")
-	}
+	assert.True(sharedEngine.ftsChecked, "expected ftsChecked to be true after Search with text terms")
 
 	// Verify it's still the same instance
-	if engine.sqliteEngine != sharedEngine {
-		t.Error("sqliteEngine pointer changed; expected same instance to be reused")
-	}
+	assert.Same(sharedEngine, engine.sqliteEngine, "sqliteEngine pointer changed; expected same instance to be reused")
 }
 
 // TestDuckDBEngine_SearchFromAddrs verifies address-based search filtering
@@ -269,19 +235,13 @@ func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
 		FromAddrs: []string{"alice@example.com"},
 	}
 	results, err := engine.Search(ctx, q, 100, 0)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
+	requirepkg.NoError(t, err, "Search")
 
 	// Alice sent 3 messages in the test data
-	if len(results) != 3 {
-		t.Errorf("expected 3 messages from alice, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 3, "expected 3 messages from alice")
 
 	for _, msg := range results {
-		if msg.FromEmail != "alice@example.com" {
-			t.Errorf("expected from alice@example.com, got %s", msg.FromEmail)
-		}
+		assertpkg.Equal(t, "alice@example.com", msg.FromEmail)
 	}
 }
 
@@ -296,46 +256,36 @@ func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
 // While we cannot instrument a counter without modifying production code,
 // the combination of these checks provides confidence that reuse works:
 // - If Search created per-call engines, ftsChecked on sharedEngine would stay false
-// - The pointer check ensures engine.sqliteEngine wasn't swapped
+// - The pointer check ensures engine.sqliteEngine wasn't swapped.
 func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	engine, err := NewDuckDBEngine("", "", env.DB)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(err, "NewDuckDBEngine")
 	defer func() { _ = engine.Close() }()
 
 	// Capture the shared engine to verify cache state
 	sharedEngine := engine.sqliteEngine
-	if sharedEngine == nil {
-		t.Fatal("expected sqliteEngine to be created")
-	}
+	require.NotNil(sharedEngine, "expected sqliteEngine to be created")
 
 	ctx := context.Background()
 
 	// Verify FTS cache starts unchecked
-	if sharedEngine.ftsChecked {
-		t.Error("expected ftsChecked to be false before first Search")
-	}
+	assert.False(sharedEngine.ftsChecked, "expected ftsChecked to be false before first Search")
 
 	// First search - should trigger FTS availability check on shared engine
 	q := &search.Query{
 		TextTerms: []string{"Hello"},
 	}
 	results, err := engine.Search(ctx, q, 100, 0)
-	if err != nil {
-		t.Fatalf("Search 1: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Search 1: expected 2 messages, got %d", len(results))
-	}
+	require.NoError(err, "Search 1")
+	assert.Len(results, 2, "Search 1")
 
 	// Verify FTS cache is now set on the shared engine
 	// This proves the first Search used the shared sqliteEngine
-	if !sharedEngine.ftsChecked {
-		t.Error("expected ftsChecked to be true after first Search")
-	}
+	assert.True(sharedEngine.ftsChecked, "expected ftsChecked to be true after first Search")
 
 	// Capture the cached result
 	cachedFTSResult := sharedEngine.ftsResult
@@ -347,170 +297,124 @@ func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
 			TextTerms: []string{"Hello"},
 		}
 		results, err := engine.Search(ctx, q, 100, 0)
-		if err != nil {
-			t.Fatalf("Search %d: %v", i, err)
-		}
-		if len(results) != 2 {
-			t.Errorf("Search %d: expected 2 messages, got %d", i, len(results))
-		}
+		require.NoError(err, "Search %d", i)
+		assert.Len(results, 2, "Search %d", i)
 
 		// Verify the cache state hasn't changed
-		if !sharedEngine.ftsChecked {
-			t.Errorf("Search %d: ftsChecked became false; cache was reset", i)
-		}
-		if sharedEngine.ftsResult != cachedFTSResult {
-			t.Errorf("Search %d: ftsResult changed from %v to %v", i, cachedFTSResult, sharedEngine.ftsResult)
-		}
+		assert.True(sharedEngine.ftsChecked, "Search %d: ftsChecked became false; cache was reset", i)
+		assert.Equal(cachedFTSResult, sharedEngine.ftsResult, "Search %d: ftsResult changed", i)
 	}
 
 	// Verify it's still the exact same sqliteEngine instance
 	// This catches if DuckDBEngine.Search swapped the pointer
-	if engine.sqliteEngine != sharedEngine {
-		t.Error("sqliteEngine pointer changed during searches; expected same instance")
-	}
+	assert.Same(sharedEngine, engine.sqliteEngine, "sqliteEngine pointer changed during searches; expected same instance")
 }
 
 // TestDuckDBEngine_NoSQLiteDB verifies behavior when sqliteDB is nil.
 func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Create engine without sqliteDB
 	engine, err := NewDuckDBEngine("", "", nil)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	requirepkg.NoError(t, err, "NewDuckDBEngine")
 	defer func() { _ = engine.Close() }()
 
 	// sqliteEngine should be nil
-	if engine.sqliteEngine != nil {
-		t.Error("expected sqliteEngine to be nil when sqliteDB is nil")
-	}
+	assert.Nil(engine.sqliteEngine, "expected sqliteEngine to be nil when sqliteDB is nil")
 
 	ctx := context.Background()
 
 	// GetMessage should return error (no SQLite path configured)
 	_, err = engine.GetMessage(ctx, 1)
-	if err == nil {
-		t.Error("expected error from GetMessage without SQLite, got nil")
-	}
+	requirepkg.Error(t, err, "expected error from GetMessage without SQLite")
 
 	// GetMessageBySourceID should return error
 	_, err = engine.GetMessageBySourceID(ctx, "msg1")
-	if err == nil {
-		t.Error("expected error from GetMessageBySourceID without SQLite, got nil")
-	}
+	requirepkg.Error(t, err, "expected error from GetMessageBySourceID without SQLite")
 
 	// Search should return error
 	q := &search.Query{TextTerms: []string{"test"}}
 	_, err = engine.Search(ctx, q, 100, 0)
-	if err == nil {
-		t.Error("expected error from Search without SQLite, got nil")
-	}
+	assert.Error(err, "expected error from Search without SQLite")
 }
 
 // TestDuckDBEngine_GetMessageWithAttachments verifies attachment retrieval
 // through the shared sqliteEngine path.
 func TestDuckDBEngine_GetMessageWithAttachments(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := newSQLiteEngine(t)
 	ctx := context.Background()
 
 	// Message 2 has 2 attachments
 	msg, err := engine.GetMessage(ctx, 2)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
+	requirepkg.NoError(t, err, "GetMessage")
 
-	if len(msg.Attachments) != 2 {
-		t.Errorf("expected 2 attachments, got %d", len(msg.Attachments))
-	}
+	assert.Len(msg.Attachments, 2)
 
 	// Verify attachment details
 	found := false
 	for _, att := range msg.Attachments {
 		if att.Filename == "doc.pdf" {
 			found = true
-			if att.MimeType != "application/pdf" {
-				t.Errorf("expected mime type application/pdf, got %s", att.MimeType)
-			}
+			assert.Equal("application/pdf", att.MimeType)
 		}
 	}
-	if !found {
-		t.Error("expected to find doc.pdf attachment")
-	}
+	assert.True(found, "expected to find doc.pdf attachment")
 }
 
 // TestDuckDBEngine_DeletedMessagesExcluded verifies that deleted messages
 // are excluded when using the sqliteEngine path.
 func TestDuckDBEngine_DeletedMessagesIncluded(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Mark message 1 as deleted
 	_, err := env.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = 1")
-	if err != nil {
-		t.Fatalf("mark deleted: %v", err)
-	}
+	require.NoError(err, "mark deleted")
 
 	engine, err := NewDuckDBEngine("", "", env.DB)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()
 
 	// GetMessage should RETURN deleted message (so user can still view it)
 	msg, err := engine.GetMessage(ctx, 1)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected deleted message to be returned, got nil")
-	}
+	require.NoError(err, "GetMessage")
+	assert.NotNil(msg, "expected deleted message to be returned")
 
 	// Non-deleted message should still work
 	msg, err = engine.GetMessage(ctx, 2)
-	if err != nil {
-		t.Fatalf("GetMessage: %v", err)
-	}
-	if msg == nil {
-		t.Error("expected message 2, got nil")
-	}
+	require.NoError(err, "GetMessage")
+	assert.NotNil(msg, "expected message 2")
 }
 
 // TestDuckDBEngine_SearchHideDeleted verifies that Search (deep FTS path)
 // respects search.Query.HideDeleted via the sqliteEngine delegation.
 func TestDuckDBEngine_SearchHideDeleted(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Mark message 1 as deleted
 	_, err := env.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = 1")
-	if err != nil {
-		t.Fatalf("mark deleted: %v", err)
-	}
+	require.NoError(err, "mark deleted")
 
 	engine, err := NewDuckDBEngine("", "", env.DB)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()
 
 	// Search without HideDeleted: all 5 messages
 	all, err := engine.Search(ctx, &search.Query{}, 100, 0)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(all) != 5 {
-		t.Errorf("Search without HideDeleted: expected 5, got %d", len(all))
-	}
+	require.NoError(err, "Search")
+	assert.Len(all, 5, "Search without HideDeleted")
 
 	// Search with HideDeleted: 4 messages
 	hidden, err := engine.Search(ctx, &search.Query{HideDeleted: true}, 100, 0)
-	if err != nil {
-		t.Fatalf("Search(HideDeleted): %v", err)
-	}
-	if len(hidden) != 4 {
-		t.Errorf("Search with HideDeleted: expected 4, got %d", len(hidden))
-	}
+	require.NoError(err, "Search(HideDeleted)")
+	assert.Len(hidden, 4, "Search with HideDeleted")
 }
 
 // TestDuckDBEngine_AggregateByRecipient verifies that recipient aggregation
@@ -519,9 +423,7 @@ func TestDuckDBEngine_AggregateByRecipient(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewRecipients, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByRecipient: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByRecipient")
 
 	// Expected recipients from test data (includes cc):
 	assertAggregateCounts(t, results, map[string]int64{
@@ -537,6 +439,8 @@ func TestDuckDBEngine_AggregateByRecipient(t *testing.T) {
 // recipient key column, then shows the recipient breakdown of all matching
 // messages.
 func TestDuckDBEngine_AggregateByRecipient_SearchFiltersOnKey(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -547,53 +451,39 @@ func TestDuckDBEngine_AggregateByRecipient_SearchFiltersOnKey(t *testing.T) {
 	opts := DefaultAggregateOptions()
 	opts.SearchQuery = "bob"
 	rows, err := engine.Aggregate(ctx, ViewRecipients, opts)
-	if err != nil {
-		t.Fatalf("AggregateByRecipient (search 'bob'): %v", err)
-	}
+	require.NoError(err, "AggregateByRecipient (search 'bob')")
 	gotKeys := make(map[string]bool)
 	for _, r := range rows {
 		gotKeys[r.Key] = true
 	}
-	if !gotKeys["bob@company.org"] {
-		t.Errorf("expected bob@company.org in results, got %v", rows)
-	}
+	assert.True(gotKeys["bob@company.org"], "expected bob@company.org in results, got %v", rows)
 
 	// Search for "dan" — matches dan@other.net as recipient key (msg2)
 	// and dan as sender display name. msg2 recipients: bob, dan
 	opts.SearchQuery = "dan"
 	rows, err = engine.Aggregate(ctx, ViewRecipients, opts)
-	if err != nil {
-		t.Fatalf("AggregateByRecipient (search 'dan'): %v", err)
-	}
+	require.NoError(err, "AggregateByRecipient (search 'dan')")
 	gotKeys = make(map[string]bool)
 	for _, r := range rows {
 		gotKeys[r.Key] = true
 	}
-	if !gotKeys["dan@other.net"] {
-		t.Errorf("expected dan@other.net in results, got %v", rows)
-	}
+	assert.True(gotKeys["dan@other.net"], "expected dan@other.net in results, got %v", rows)
 
 	// Verify totals don't exceed baseline
 	baseOpts := DefaultAggregateOptions()
 	baseRows, err := engine.Aggregate(ctx, ViewRecipients, baseOpts)
-	if err != nil {
-		t.Fatalf("AggregateByRecipient (no search): %v", err)
-	}
+	require.NoError(err, "AggregateByRecipient (no search)")
 	var baseTotal, searchTotal int64
 	for _, r := range baseRows {
 		baseTotal += r.Count
 	}
 	opts.SearchQuery = "a" // matches alice, carol, dan (display names with 'a')
 	rows, err = engine.Aggregate(ctx, ViewRecipients, opts)
-	if err != nil {
-		t.Fatalf("AggregateByRecipient (search 'a'): %v", err)
-	}
+	require.NoError(err, "AggregateByRecipient (search 'a')")
 	for _, r := range rows {
 		searchTotal += r.Count
 	}
-	if searchTotal > baseTotal {
-		t.Errorf("search inflated total count: baseline=%d, withSearch=%d", baseTotal, searchTotal)
-	}
+	assert.LessOrEqual(searchTotal, baseTotal, "search inflated total count")
 }
 
 // TestDuckDBEngine_AggregateByLabel_SearchFiltersOnKey verifies that
@@ -606,16 +496,10 @@ func TestDuckDBEngine_AggregateByLabel_SearchFiltersOnKey(t *testing.T) {
 	opts := DefaultAggregateOptions()
 	opts.SearchQuery = "work"
 	rows, err := engine.Aggregate(ctx, ViewLabels, opts)
-	if err != nil {
-		t.Fatalf("AggregateByLabel (search 'work'): %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByLabel (search 'work')")
 
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 label matching 'work', got %d", len(rows))
-	}
-	if rows[0].Key != "Work" {
-		t.Errorf("expected 'Work', got %s", rows[0].Key)
-	}
+	requirepkg.Len(t, rows, 1, "expected 1 label matching 'work'")
+	assertpkg.Equal(t, "Work", rows[0].Key)
 }
 
 // TestDuckDBEngine_AggregateByDomain_SearchFiltersOnKey verifies that
@@ -628,16 +512,10 @@ func TestDuckDBEngine_AggregateByDomain_SearchFiltersOnKey(t *testing.T) {
 	opts := DefaultAggregateOptions()
 	opts.SearchQuery = "company"
 	rows, err := engine.Aggregate(ctx, ViewDomains, opts)
-	if err != nil {
-		t.Fatalf("AggregateByDomain (search 'company'): %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByDomain (search 'company')")
 
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 domain matching 'company', got %d", len(rows))
-	}
-	if rows[0].Key != "company.org" {
-		t.Errorf("expected 'company.org', got %s", rows[0].Key)
-	}
+	requirepkg.Len(t, rows, 1, "expected 1 domain matching 'company'")
+	assertpkg.Equal(t, "company.org", rows[0].Key)
 }
 
 // TestDuckDBEngine_AggregateBySender verifies sender aggregation from Parquet.
@@ -645,9 +523,7 @@ func TestDuckDBEngine_AggregateBySender(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySender: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySender")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"alice@example.com": 3,
@@ -662,9 +538,7 @@ func TestDuckDBEngine_AggregateBySenderName(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySenderName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySenderName")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"Alice": 3,
@@ -679,16 +553,12 @@ func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
 	// Filter by recipient alice, sub-aggregate by sender name
 	filter := MessageFilter{Recipient: "alice@example.com"}
 	results, err := engine.SubAggregate(ctx, filter, ViewSenderNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 
 	// Messages to alice are 4, 5 (from Bob)
-	if len(results) != 1 {
-		t.Errorf("expected 1 sender name, got %d", len(results))
-	}
-	if len(results) > 0 && results[0].Key != "Bob" {
-		t.Errorf("expected 'Bob', got %q", results[0].Key)
+	assertpkg.Len(t, results, 1, "expected 1 sender name")
+	if len(results) > 0 {
+		assertpkg.Equal(t, "Bob", results[0].Key)
 	}
 }
 
@@ -698,14 +568,132 @@ func TestDuckDBEngine_ListMessages_SenderNameFilter(t *testing.T) {
 
 	filter := MessageFilter{SenderName: "Alice"}
 	results, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages")
 
 	// Alice sent messages 1, 2, 3
-	if len(results) != 3 {
-		t.Errorf("expected 3 messages from Alice, got %d", len(results))
+	assertpkg.Len(t, results, 3, "expected 3 messages from Alice")
+}
+
+// TestDuckDBEngine_SenderEmailAndName_SameFromRow asserts the analytics
+// (DuckDB-over-Parquet) builder binds a combined Sender (email) + SenderName
+// filter to the SAME from-row, matching the SQLite store engine. The message
+// has two authors: the queried email lives on Author A's from-row and the
+// queried name on Author B's — a cross-row match must NOT match, while the
+// same-row case still does. Covers both buildFilterConditions (ListMessages)
+// and GetGmailIDsByFilter.
+func TestDuckDBEngine_SenderEmailAndName_SameFromRow(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.New(t)
+	ctx := context.Background()
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	authorA := b.AddParticipant("author-a@example.com", "example.com", "Author A")
+	authorB := b.AddParticipant("author-b@example.com", "example.com", "Author B")
+	msg := b.AddMessage(MessageOpt{Subject: "Two Authors", SentAt: makeDate(6, 10), SizeEstimate: 1000})
+	b.AddFrom(msg, authorA, "Author A")
+	b.AddFrom(msg, authorB, "Author B")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	gmailID := fmt.Sprintf("msg%d", msg)
+
+	// buildFilterConditions path (ListMessages).
+	crossRow, err := engine.ListMessages(ctx, MessageFilter{
+		Sender:     "author-a@example.com",
+		SenderName: "Author B",
+	})
+	require.NoError(err, "ListMessages cross-row")
+	for _, m := range crossRow {
+		assert.NotEqual("Two Authors", m.Subject,
+			"cross-row sender email+name must not match a multi-author message")
 	}
+
+	sameRow, err := engine.ListMessages(ctx, MessageFilter{
+		Sender:     "author-a@example.com",
+		SenderName: "Author A",
+	})
+	require.NoError(err, "ListMessages same-row")
+	assert.True(slices.ContainsFunc(sameRow, func(m MessageSummary) bool { return m.Subject == "Two Authors" }),
+		"same-row sender email+name must still match")
+
+	// GetGmailIDsByFilter path.
+	crossIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{
+		Sender:     "author-a@example.com",
+		SenderName: "Author B",
+	})
+	require.NoError(err, "GetGmailIDsByFilter cross-row")
+	assert.NotContains(crossIDs, gmailID,
+		"cross-row sender email+name must not match in GetGmailIDsByFilter")
+
+	sameIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{
+		Sender:     "author-a@example.com",
+		SenderName: "Author A",
+	})
+	require.NoError(err, "GetGmailIDsByFilter same-row")
+	assert.Contains(sameIDs, gmailID,
+		"same-row sender email+name must still match in GetGmailIDsByFilter")
+}
+
+// TestDuckDBEngine_RecipientEmailAndName_SameToRow asserts the analytics
+// (DuckDB-over-Parquet) builder binds a combined Recipient (email) +
+// RecipientName filter to the SAME to/cc/bcc row, matching the SQLite store
+// engine. The message has two recipients: the queried email lives on Recip A's
+// to-row and the queried name on Recip B's — a cross-row match must NOT match,
+// while the same-row case still does. Covers both buildFilterConditions
+// (ListMessages) and GetGmailIDsByFilter.
+func TestDuckDBEngine_RecipientEmailAndName_SameToRow(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.New(t)
+	ctx := context.Background()
+
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	recipA := b.AddParticipant("recip-a@example.com", "example.com", "Recip A")
+	recipB := b.AddParticipant("recip-b@example.com", "example.com", "Recip B")
+	msg := b.AddMessage(MessageOpt{Subject: "Two Recipients", SentAt: makeDate(6, 10), SizeEstimate: 1000})
+	b.AddTo(msg, recipA, "Recip A")
+	b.AddTo(msg, recipB, "Recip B")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	gmailID := fmt.Sprintf("msg%d", msg)
+
+	// buildFilterConditions path (ListMessages).
+	crossRow, err := engine.ListMessages(ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip B",
+	})
+	require.NoError(err, "ListMessages cross-row")
+	for _, m := range crossRow {
+		assert.NotEqual("Two Recipients", m.Subject,
+			"cross-row recipient email+name must not match a multi-recipient message")
+	}
+
+	sameRow, err := engine.ListMessages(ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip A",
+	})
+	require.NoError(err, "ListMessages same-row")
+	assert.True(slices.ContainsFunc(sameRow, func(m MessageSummary) bool { return m.Subject == "Two Recipients" }),
+		"same-row recipient email+name must still match")
+
+	// GetGmailIDsByFilter path.
+	crossIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip B",
+	})
+	require.NoError(err, "GetGmailIDsByFilter cross-row")
+	assert.NotContains(crossIDs, gmailID,
+		"cross-row recipient email+name must not match in GetGmailIDsByFilter")
+
+	sameIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{
+		Recipient:     "recip-a@example.com",
+		RecipientName: "Recip A",
+	})
+	require.NoError(err, "GetGmailIDsByFilter same-row")
+	assert.Contains(sameIDs, gmailID,
+		"same-row recipient email+name must still match in GetGmailIDsByFilter")
 }
 
 func TestDuckDBEngine_GetGmailIDsByFilter_SenderName(t *testing.T) {
@@ -714,23 +702,20 @@ func TestDuckDBEngine_GetGmailIDsByFilter_SenderName(t *testing.T) {
 
 	filter := MessageFilter{SenderName: "Alice"}
 	ids, err := engine.GetGmailIDsByFilter(ctx, filter)
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
 
-	if len(ids) != 3 {
-		t.Errorf("expected 3 gmail IDs for Alice, got %d", len(ids))
-	}
+	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs for Alice")
 }
 
 func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Build Parquet data with an empty-string and whitespace display_name
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	empty := b.AddParticipant("empty@test.com", "test.com", "")
 	spaces := b.AddParticipant("spaces@test.com", "test.com", "   ")
-	msg1 := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "World", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "World", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 	b.AddFrom(msg1, empty, "Empty")
 	b.AddFrom(msg2, spaces, "Spaces")
 	b.SetEmptyAttachments()
@@ -738,25 +723,69 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySenderName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySenderName")
 
 	// Both '' and '   ' display_name should fall back to email
-	if len(results) != 2 {
-		t.Errorf("expected 2 sender names, got %d", len(results))
+	if !assert.Len(results, 2, "expected 2 sender names") {
 		for _, r := range results {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
 	}
 
 	for _, r := range results {
-		if r.Key == "" || r.Key == "   " {
-			t.Errorf("unexpected empty/whitespace key: %q", r.Key)
-		}
+		assert.NotEmpty(r.Key, "unexpected empty key")
+		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	requireAggregateRow(t, results, "empty@test.com")
 	requireAggregateRow(t, results, "spaces@test.com")
+}
+
+// TestDuckDBEngine_AggregateBySenderName_PhoneFallback covers phone-only
+// iMessage/SMS participants (display_name and email_address empty,
+// phone_number set). The DuckDB engine reads participants.parquet, where
+// phone_number is COALESCEd to ” on export — NULLIF squashes it correctly.
+func TestDuckDBEngine_AggregateBySenderName_PhoneFallback(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	b.AddFrom(msg, phoneOnly, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "AggregateBySenderName")
+	requireAggregateRow(t, results, "+15551234567")
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{SenderName: "+15551234567"})
+	requirepkg.NoError(t, err, "ListMessages")
+	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback name")
+}
+
+// TestDuckDBEngine_AggregateBySenderName_SearchByPhone covers the search
+// path for phone-only senders. Without phone_number in the SenderNames
+// keyColumns, a phone-only participant would appear in the unfiltered
+// aggregate but disappear when the user searches for that same phone.
+func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	phoneOnly := b.AddPhoneParticipant("+15551234567", "")
+	other := b.AddParticipant("alice@test.com", "test.com", "Alice")
+	smsMsg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	b.AddFrom(smsMsg, phoneOnly, "")
+	emailMsg := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(1, 16), SizeEstimate: 1000})
+	b.AddFrom(emailMsg, other, "Alice")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "+15551234567"
+	results, err := engine.Aggregate(ctx, ViewSenderNames, opts)
+	requirepkg.NoError(t, err, "Aggregate ViewSenderNames (search by phone)")
+	requireAggregateRow(t, results, "+15551234567")
+	assertpkg.Len(t, results, 1, "phone search should isolate the phone-only sender")
 }
 
 func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
@@ -764,8 +793,8 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
 	alice := b.AddParticipant("alice@test.com", "test.com", "Alice")
-	msg1 := b.AddMessage(MessageOpt{Subject: "Has Sender", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	_ = b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Has Sender", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	_ = b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 	b.AddFrom(msg1, alice, "Alice")
 	b.SetEmptyAttachments()
 	engine := b.BuildEngine()
@@ -773,54 +802,89 @@ func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	ctx := context.Background()
 	// msg2 has no 'from' recipient, so MatchEmptySenderName should find it
 	results, err := engine.ListMessages(ctx, MessageFilter{EmptyValueTargets: map[ViewType]bool{ViewSenderNames: true}})
-	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages")
 
-	if len(results) != 1 {
-		t.Errorf("expected 1 message with empty sender name, got %d", len(results))
+	assertpkg.Len(t, results, 1, "expected 1 message with empty sender name")
+	if len(results) > 0 {
+		assertpkg.Equal(t, "No Sender", results[0].Subject)
 	}
-	if len(results) > 0 && results[0].Subject != "No Sender" {
-		t.Errorf("expected 'No Sender', got %q", results[0].Subject)
-	}
+}
+
+// TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant
+// covers the iMessage shape where message_recipients.display_name is
+// stored as the empty string (not NULL). A plain COALESCE on
+// mr.display_name lets that empty value mask the backfilled
+// participants.display_name. The fix NULLIF-trims the recipient column
+// so backfilled contact names show up in message lists.
+func TestDuckDBEngine_ListMessages_RecipientNameEmptyFallsBackToParticipant(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	// Phone-only participant with a vCard-backfilled display name.
+	alice := b.AddPhoneParticipant("+15551234567", "Alice Backfilled")
+	msg := b.AddMessage(MessageOpt{Subject: "SMS", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	// Empty recipient display_name — what import-imessage writes.
+	b.AddFrom(msg, alice, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.ListMessages(ctx, MessageFilter{})
+	requirepkg.NoError(t, err, "ListMessages")
+	requirepkg.Len(t, results, 1)
+	assertpkg.Equal(t, "Alice Backfilled", results[0].FromName,
+		"empty mr.display_name should not mask p.display_name")
+}
+
+func TestDuckDBEngine_ListMessages_PhoneBackedSMSParticipants(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSourceWithType("sms-backup", "synctech-sms")
+	sender := b.AddPhoneParticipant("+15551234567", "SMS Sender")
+	recipient := b.AddPhoneParticipant("+15557654321", "Me")
+	msg := b.AddMessage(MessageOpt{Subject: "", Snippet: "known sms snippet", SentAt: makeDate(4, 1), SizeEstimate: 17})
+	b.AddFrom(msg, sender, "")
+	b.AddTo(msg, recipient, "")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.ListMessages(ctx, MessageFilter{})
+	require.NoError(err, "ListMessages")
+	require.Len(results, 1)
+	assert.Equal("+15551234567", results[0].FromPhone, "phone-backed SMS sender phone")
+	assert.Equal("SMS Sender", results[0].FromName, "phone-backed SMS sender name")
+	require.Len(results[0].To, 1, "phone-backed SMS recipient count")
+	assert.Equal("+15557654321", results[0].To[0].Email, "phone-backed SMS recipient email")
+	assert.Equal("Me", results[0].To[0].Name, "phone-backed SMS recipient name")
 }
 
 // TestDuckDBEngine_AggregateAttachmentFields verifies attachment_count and attachment_size
 // are correctly scanned from aggregate queries (attachment_size is DOUBLE, attachment_count is INT).
 func TestDuckDBEngine_AggregateAttachmentFields(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySender: %v", err)
-	}
+	require.NoError(err, "AggregateBySender")
 
 	// Test data:
 	// alice@example.com: attachment_count=0+2+0=2, attachment_size=0+15000+0=15000
 	// bob@company.org: attachment_count=1+0=1, attachment_size=20000+0=20000
 
-	if len(results) < 2 {
-		t.Fatalf("expected at least 2 results, got %d", len(results))
-	}
+	require.GreaterOrEqual(len(results), 2, "expected at least 2 results")
 
 	alice := requireAggregateRow(t, results, "alice@example.com")
 	bob := requireAggregateRow(t, results, "bob@company.org")
 
 	// Verify alice's attachment fields
-	if alice.AttachmentCount != 2 {
-		t.Errorf("alice AttachmentCount = %d, want 2", alice.AttachmentCount)
-	}
-	if alice.AttachmentSize != 15000 {
-		t.Errorf("alice AttachmentSize = %d, want 15000", alice.AttachmentSize)
-	}
+	assert.Equal(int64(2), alice.AttachmentCount, "alice AttachmentCount")
+	assert.Equal(int64(15000), alice.AttachmentSize, "alice AttachmentSize")
 
 	// Verify bob's attachment fields
-	if bob.AttachmentCount != 1 {
-		t.Errorf("bob AttachmentCount = %d, want 1", bob.AttachmentCount)
-	}
-	if bob.AttachmentSize != 20000 {
-		t.Errorf("bob AttachmentSize = %d, want 20000", bob.AttachmentSize)
-	}
+	assert.Equal(int64(1), bob.AttachmentCount, "bob AttachmentCount")
+	assert.Equal(int64(20000), bob.AttachmentSize, "bob AttachmentSize")
 }
 
 // TestDuckDBEngine_AggregateByLabel verifies label aggregation from Parquet.
@@ -828,9 +892,7 @@ func TestDuckDBEngine_AggregateByLabel(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewLabels, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByLabel: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByLabel")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"INBOX":     5,
@@ -853,17 +915,14 @@ func TestDuckDBEngine_SubAggregateByRecipient(t *testing.T) {
 	}
 
 	results, err := engine.SubAggregate(ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 
 	// Expected recipients for alice's messages:
 	// - bob@company.org: to in msgs 1,2,3 = 3
 	// - carol@example.com: to in msg 1 = 1
 	// - dan@other.net: cc in msg 2 = 1 (THIS TESTS CC INCLUSION IN SUBAGGREGATE)
 
-	if len(results) != 3 {
-		t.Errorf("expected 3 recipients for alice's messages, got %d", len(results))
+	if !assertpkg.Len(t, results, 3, "expected 3 recipients for alice's messages") {
 		for _, r := range results {
 			t.Logf("  %s: %d", r.Key, r.Count)
 		}
@@ -871,9 +930,7 @@ func TestDuckDBEngine_SubAggregateByRecipient(t *testing.T) {
 
 	// Verify dan@other.net (cc) is included
 	dan := requireAggregateRow(t, results, "dan@other.net")
-	if dan.Count != 1 {
-		t.Errorf("expected dan@other.net count 1, got %d", dan.Count)
-	}
+	assertpkg.Equal(t, int64(1), dan.Count, "expected dan@other.net count 1")
 }
 
 // TestDuckDBEngine_AggregateByTime verifies time-based aggregation from Parquet.
@@ -885,9 +942,7 @@ func TestDuckDBEngine_AggregateByTime(t *testing.T) {
 	opts.TimeGranularity = TimeMonth
 
 	results, err := engine.Aggregate(ctx, ViewTime, opts)
-	if err != nil {
-		t.Fatalf("AggregateByTime: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByTime")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"2024-01": 2,
@@ -897,8 +952,9 @@ func TestDuckDBEngine_AggregateByTime(t *testing.T) {
 
 	// Verify YYYY-MM key format
 	for _, r := range results {
-		if len(r.Key) != 7 || r.Key[4] != '-' {
-			t.Errorf("expected YYYY-MM format, got %q", r.Key)
+		assertpkg.Len(t, r.Key, 7, "expected YYYY-MM format")
+		if len(r.Key) >= 5 {
+			assertpkg.Equal(t, byte('-'), r.Key[4], "expected YYYY-MM format")
 		}
 	}
 
@@ -953,15 +1009,11 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 			switch tt.name {
 			case "FromFilter":
 				for _, r := range results {
-					if r.FromEmail != "bob@company.org" {
-						t.Errorf("from:bob result has FromEmail=%q, want bob@company.org", r.FromEmail)
-					}
+					assertpkg.Equal(t, "bob@company.org", r.FromEmail, "from:bob result")
 				}
 			case "HasAttachment":
 				for _, r := range results {
-					if !r.HasAttachments {
-						t.Errorf("has:attachment result %q has HasAttachments=false", r.Subject)
-					}
+					assertpkg.True(t, r.HasAttachments, "has:attachment result %q has HasAttachments=false", r.Subject)
 				}
 			}
 		})
@@ -971,9 +1023,7 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 	// and that at least one result is from bob
 	t.Run("SenderTextSearch", func(t *testing.T) {
 		results := searchFast(t, engine, "bob", MessageFilter{})
-		if len(results) < 2 {
-			t.Errorf("expected at least 2 results for 'bob', got %d", len(results))
-		}
+		assertpkg.GreaterOrEqual(t, len(results), 2, "expected at least 2 results for 'bob'")
 		foundFromBob := false
 		for _, r := range results {
 			if r.FromEmail == "bob@company.org" {
@@ -981,48 +1031,36 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 				break
 			}
 		}
-		if !foundFromBob {
-			t.Error("expected at least one message from bob@company.org")
-		}
+		assertpkg.True(t, foundFromBob, "expected at least one message from bob@company.org")
 	})
 }
 
 // TestDuckDBEngine_ListMessages_DateFilter verifies that After/Before date filters
 // work with DuckDB's TIMESTAMP column (regression: VARCHAR params need CAST).
 func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
 	// Test data: msg1-3 Jan 2024, msg4 Feb 2024, msg5 Mar 2024
-	feb1 := makeDate(2024, 2, 1)
-	mar1 := makeDate(2024, 3, 1)
+	feb1 := makeDate(2, 1)
+	mar1 := makeDate(3, 1)
 
 	// After Feb 1 (>=): msg3 (Feb 1 09:00), msg4 (Feb 15), msg5 (Mar 1) = 3
 	results, err := engine.ListMessages(ctx, MessageFilter{After: &feb1})
-	if err != nil {
-		t.Fatalf("ListMessages with After: %v", err)
-	}
-	if len(results) != 3 {
-		t.Errorf("After Feb 1: expected 3 messages, got %d", len(results))
-	}
+	require.NoError(err, "ListMessages with After")
+	assert.Len(results, 3, "After Feb 1")
 
 	// Before Feb 1 (<): msg1 (Jan 15), msg2 (Jan 16) = 2
 	results, err = engine.ListMessages(ctx, MessageFilter{Before: &feb1})
-	if err != nil {
-		t.Fatalf("ListMessages with Before: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Before Feb 1: expected 2 messages, got %d", len(results))
-	}
+	require.NoError(err, "ListMessages with Before")
+	assert.Len(results, 2, "Before Feb 1")
 
 	// After Feb 1 AND Before Mar 1: msg3 (Feb 1), msg4 (Feb 15) = 2
 	results, err = engine.ListMessages(ctx, MessageFilter{After: &feb1, Before: &mar1})
-	if err != nil {
-		t.Fatalf("ListMessages with After+Before: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("Feb range: expected 2 messages, got %d", len(results))
-	}
+	require.NoError(err, "ListMessages with After+Before")
+	assert.Len(results, 2, "Feb range")
 }
 
 // TestDuckDBEngine_SearchFast_DateFilter verifies that after:/before: in search
@@ -1032,21 +1070,15 @@ func TestDuckDBEngine_SearchFast_DateFilter(t *testing.T) {
 
 	// after:2024-02-01 (>=): msg3 (Feb 1), msg4 (Feb 15), msg5 (Mar 1)
 	results := searchFast(t, engine, "after:2024-02-01", MessageFilter{})
-	if len(results) != 3 {
-		t.Errorf("after:2024-02-01: expected 3 results, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 3, "after:2024-02-01")
 
 	// before:2024-02-01 (<): msg1 (Jan 15), msg2 (Jan 16)
 	results = searchFast(t, engine, "before:2024-02-01", MessageFilter{})
-	if len(results) != 2 {
-		t.Errorf("before:2024-02-01: expected 2 results, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 2, "before:2024-02-01")
 
 	// Combined: after:2024-02-01 before:2024-03-01 -> msg3, msg4
 	results = searchFast(t, engine, "after:2024-02-01 before:2024-03-01", MessageFilter{})
-	if len(results) != 2 {
-		t.Errorf("Feb range: expected 2 results, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 2, "Feb range")
 }
 
 // TestDuckDBEngine_AggregateBySender_DateFilter verifies date filters on aggregates.
@@ -1055,14 +1087,12 @@ func TestDuckDBEngine_AggregateBySender_DateFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// After Feb 1 (>=): msg3 from alice, msg4 from bob, msg5 from bob
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
 
 	results, err := engine.Aggregate(ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("AggregateBySender with After: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySender with After")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"alice@example.com": 1,
@@ -1075,21 +1105,17 @@ func TestDuckDBEngine_SubAggregate_DateFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	filter := MessageFilter{Sender: "alice@example.com"}
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
 
 	// Alice sent msg3 (Feb 1) after Feb 1 — sub-aggregate by recipients
 	results, err := engine.SubAggregate(ctx, filter, ViewRecipients, opts)
-	if err != nil {
-		t.Fatalf("SubAggregate with After: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate with After")
 
 	// msg3 goes to bob -> 1 recipient
-	if len(results) != 1 {
-		t.Errorf("expected 1 recipient after Feb 1 for alice, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 1, "expected 1 recipient after Feb 1 for alice")
 }
 
 // TestDuckDBEngine_SearchFastCount_DateFilter verifies CAST(? AS TIMESTAMP) in SearchFastCount.
@@ -1099,14 +1125,10 @@ func TestDuckDBEngine_SearchFastCount_DateFilter(t *testing.T) {
 
 	q := search.Parse("after:2024-02-01")
 	count, err := engine.SearchFastCount(ctx, q, MessageFilter{})
-	if err != nil {
-		t.Fatalf("SearchFastCount: %v", err)
-	}
+	requirepkg.NoError(t, err, "SearchFastCount")
 
 	// msg3 (Feb 1), msg4 (Feb 15), msg5 (Mar 1) = 3
-	if count != 3 {
-		t.Errorf("SearchFastCount after:2024-02-01: expected 3, got %d", count)
-	}
+	assertpkg.Equal(t, int64(3), count, "SearchFastCount after:2024-02-01")
 }
 
 // TestDuckDBEngine_AggregateByDomain_DateFilter verifies CAST(? AS TIMESTAMP) in buildWhereClause.
@@ -1114,56 +1136,45 @@ func TestDuckDBEngine_AggregateByDomain_DateFilter(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
-	feb1 := makeDate(2024, 2, 1)
+	feb1 := makeDate(2, 1)
 	opts := DefaultAggregateOptions()
 	opts.After = &feb1
 
 	// After Feb 1: msg3 from alice (example.com), msg4+msg5 from bob (company.org)
 	results, err := engine.Aggregate(ctx, ViewDomains, opts)
-	if err != nil {
-		t.Fatalf("AggregateByDomain with After: %v", err)
-	}
-
-	if len(results) != 2 {
-		t.Errorf("expected 2 domains after Feb 1, got %d", len(results))
-	}
+	requirepkg.NoError(t, err, "AggregateByDomain with After")
+	assertpkg.Len(t, results, 2, "expected 2 domains after Feb 1")
 }
 
 // TestDuckDBEngine_ThreadCount verifies that DuckDB is initialized with the correct
 // thread count based on GOMAXPROCS, and that the setting persists (single connection).
 func TestDuckDBEngine_ThreadCount(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine, err := NewDuckDBEngine("", "", nil)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	require.NoError(err, "NewDuckDBEngine")
 	defer func() { _ = engine.Close() }()
 
 	// Query the current thread setting
 	var threads int
 	err = engine.db.QueryRow("SELECT current_setting('threads')::INT").Scan(&threads)
-	if err != nil {
-		t.Fatalf("query threads setting: %v", err)
-	}
+	require.NoError(err, "query threads setting")
 
 	expected := runtime.GOMAXPROCS(0)
-	if threads != expected {
-		t.Errorf("expected threads=%d (GOMAXPROCS), got %d", expected, threads)
-	}
+	assert.Equal(expected, threads, "expected threads to match GOMAXPROCS")
 
 	// Verify the setting persists across multiple queries (single connection pool)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var check int
 		err = engine.db.QueryRow("SELECT current_setting('threads')::INT").Scan(&check)
-		if err != nil {
-			t.Fatalf("query threads setting (iteration %d): %v", i, err)
-		}
-		if check != expected {
-			t.Errorf("iteration %d: expected threads=%d, got %d", i, expected, check)
-		}
+		require.NoError(err, "query threads setting (iteration %d)", i)
+		assert.Equal(expected, check, "iteration %d", i)
 	}
 }
 
 func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -1180,19 +1191,13 @@ func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages for conversation 101: %v", err)
-	}
+	require.NoError(err, "ListMessages for conversation 101")
 
-	if len(messages) != 2 {
-		t.Errorf("expected 2 messages in conversation 101, got %d", len(messages))
-	}
+	assert.Len(messages, 2, "messages in conversation 101")
 
 	// Verify all messages are from conversation 101
 	for _, msg := range messages {
-		if msg.ConversationID != 101 {
-			t.Errorf("expected conversation_id=101, got %d for message %d", msg.ConversationID, msg.ID)
-		}
+		assert.Equal(int64(101), msg.ConversationID, "message %d conversation_id", msg.ID)
 	}
 
 	// Filter by conversation 102 - should get 1 message
@@ -1202,17 +1207,10 @@ func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
 	}
 
 	messages2, err := engine.ListMessages(ctx, filter2)
-	if err != nil {
-		t.Fatalf("ListMessages for conversation 102: %v", err)
-	}
+	require.NoError(err, "ListMessages for conversation 102")
 
-	if len(messages2) != 1 {
-		t.Errorf("expected 1 message in conversation 102, got %d", len(messages2))
-	}
-
-	if messages2[0].Subject != "Follow up" {
-		t.Errorf("expected subject 'Follow up', got %q", messages2[0].Subject)
-	}
+	require.Len(messages2, 1, "messages in conversation 102")
+	assert.Equal("Follow up", messages2[0].Subject)
 
 	// Test chronological ordering for thread view (ascending by date)
 	filterAsc := MessageFilter{
@@ -1222,21 +1220,13 @@ func TestDuckDBEngine_ListMessages_ConversationIDFilter(t *testing.T) {
 	}
 
 	messagesAsc, err := engine.ListMessages(ctx, filterAsc)
-	if err != nil {
-		t.Fatalf("ListMessages with asc sort: %v", err)
-	}
+	require.NoError(err, "ListMessages with asc sort")
 
-	if len(messagesAsc) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messagesAsc))
-	}
+	require.Len(messagesAsc, 2)
 
 	// First message should be earlier (msg1 from Jan 15)
-	if messagesAsc[0].Subject != "Hello World" {
-		t.Errorf("expected first message to be 'Hello World', got %q", messagesAsc[0].Subject)
-	}
-	if messagesAsc[1].Subject != "Re: Hello" {
-		t.Errorf("expected second message to be 'Re: Hello', got %q", messagesAsc[1].Subject)
-	}
+	assert.Equal("Hello World", messagesAsc[0].Subject, "first message")
+	assert.Equal("Re: Hello", messagesAsc[1].Subject, "second message")
 }
 
 // TestDuckDBEngine_ListMessages_Filters is a table-driven test for all filter types.
@@ -1295,9 +1285,7 @@ func TestDuckDBEngine_ListMessages_Filters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messages, err := engine.ListMessages(ctx, tt.filter)
-			if err != nil {
-				t.Fatalf("ListMessages: %v", err)
-			}
+			requirepkg.NoError(t, err, "ListMessages")
 			assertMessageIDs(t, messages, tt.wantIDs)
 		})
 	}
@@ -1377,9 +1365,7 @@ func TestDuckDBEngine_GetGmailIDsByFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ids, err := engine.GetGmailIDsByFilter(ctx, tt.filter)
-			if err != nil {
-				t.Fatalf("GetGmailIDsByFilter: %v", err)
-			}
+			requirepkg.NoError(t, err, "GetGmailIDsByFilter")
 			assertSetEqual(t, ids, tt.wantIDs)
 		})
 	}
@@ -1400,12 +1386,12 @@ func buildEmptyBucketsTestData(t *testing.T) *TestDataBuilder {
 	nodomain := b.AddParticipant("nodomain", "", "No Domain")
 
 	// Messages
-	msg1 := b.AddMessage(MessageOpt{Subject: "Normal 1", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Normal 2", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000})
-	msg3 := b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(2024, 1, 17), SizeEstimate: 1500})
-	msg4 := b.AddMessage(MessageOpt{Subject: "No Recipients", SentAt: makeDate(2024, 1, 18), SizeEstimate: 3000})
-	msg5 := b.AddMessage(MessageOpt{Subject: "No Labels", SentAt: makeDate(2024, 1, 19), SizeEstimate: 500})
-	msg6 := b.AddMessage(MessageOpt{Subject: "Empty Domain", SentAt: makeDate(2024, 1, 20), SizeEstimate: 600})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Normal 1", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Normal 2", SentAt: makeDate(1, 16), SizeEstimate: 2000})
+	msg3 := b.AddMessage(MessageOpt{Subject: "No Sender", SentAt: makeDate(1, 17), SizeEstimate: 1500})
+	msg4 := b.AddMessage(MessageOpt{Subject: "No Recipients", SentAt: makeDate(1, 18), SizeEstimate: 3000})
+	msg5 := b.AddMessage(MessageOpt{Subject: "No Labels", SentAt: makeDate(1, 19), SizeEstimate: 500})
+	msg6 := b.AddMessage(MessageOpt{Subject: "Empty Domain", SentAt: makeDate(1, 20), SizeEstimate: 600})
 
 	// Recipients
 	b.AddFrom(msg1, alice, "Alice")
@@ -1447,20 +1433,17 @@ func TestDuckDBEngine_ListMessages_MatchEmptySender(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with MatchEmptySender: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages with MatchEmptySender")
 
 	// Only msg3 has no sender
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message with no sender, got %d", len(messages))
+	if !assertpkg.Len(t, messages, 1, "messages with no sender") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
 	}
 
-	if len(messages) > 0 && messages[0].Subject != "No Sender" {
-		t.Errorf("expected 'No Sender', got %q", messages[0].Subject)
+	if len(messages) > 0 {
+		assertpkg.Equal(t, "No Sender", messages[0].Subject)
 	}
 }
 
@@ -1475,26 +1458,24 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipient(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with MatchEmptyRecipient: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages with MatchEmptyRecipient")
 
 	// Only msg4 has no recipients
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message with no recipients, got %d", len(messages))
+	if !assertpkg.Len(t, messages, 1, "messages with no recipients") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
 	}
 
-	if len(messages) > 0 && messages[0].Subject != "No Recipients" {
-		t.Errorf("expected 'No Recipients', got %q", messages[0].Subject)
+	if len(messages) > 0 {
+		assertpkg.Equal(t, "No Recipients", messages[0].Subject)
 	}
 }
 
 // TestDuckDBEngine_ListMessages_MatchEmptyDomain verifies that MatchEmptyDomain
 // finds messages where the sender has no domain.
 func TestDuckDBEngine_ListMessages_MatchEmptyDomain(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -1503,13 +1484,10 @@ func TestDuckDBEngine_ListMessages_MatchEmptyDomain(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with MatchEmptyDomain: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages with MatchEmptyDomain")
 
 	// msg3 has no sender (so no domain), msg6 has sender with empty domain
-	if len(messages) != 2 {
-		t.Errorf("expected 2 messages with no domain, got %d", len(messages))
+	if !assert.Len(messages, 2, "messages with no domain") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
@@ -1519,12 +1497,8 @@ func TestDuckDBEngine_ListMessages_MatchEmptyDomain(t *testing.T) {
 	for _, m := range messages {
 		subjects[m.Subject] = true
 	}
-	if !subjects["No Sender"] {
-		t.Error("expected 'No Sender' in results")
-	}
-	if !subjects["Empty Domain"] {
-		t.Error("expected 'Empty Domain' in results")
-	}
+	assert.True(subjects["No Sender"], "expected 'No Sender' in results")
+	assert.True(subjects["Empty Domain"], "expected 'Empty Domain' in results")
 }
 
 // TestDuckDBEngine_ListMessages_MatchEmptyLabel verifies that MatchEmptyLabel
@@ -1538,20 +1512,17 @@ func TestDuckDBEngine_ListMessages_MatchEmptyLabel(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with MatchEmptyLabel: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages with MatchEmptyLabel")
 
 	// Only msg5 has no labels
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message with no labels, got %d", len(messages))
+	if !assertpkg.Len(t, messages, 1, "messages with no labels") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
 	}
 
-	if len(messages) > 0 && messages[0].Subject != "No Labels" {
-		t.Errorf("expected 'No Labels', got %q", messages[0].Subject)
+	if len(messages) > 0 {
+		assertpkg.Equal(t, "No Labels", messages[0].Subject)
 	}
 }
 
@@ -1569,16 +1540,12 @@ func TestDuckDBEngine_ListMessages_MatchEmptyCombined(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with Sender + MatchEmptyLabel: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages with Sender + MatchEmptyLabel")
 
-	if len(messages) != 1 {
-		t.Errorf("expected 1 message (alice with no labels), got %d", len(messages))
-	}
+	assertpkg.Len(t, messages, 1, "alice with no labels")
 
-	if len(messages) > 0 && messages[0].Subject != "No Labels" {
-		t.Errorf("expected 'No Labels', got %q", messages[0].Subject)
+	if len(messages) > 0 {
+		assertpkg.Equal(t, "No Labels", messages[0].Subject)
 	}
 }
 
@@ -1587,6 +1554,8 @@ func TestDuckDBEngine_ListMessages_MatchEmptyCombined(t *testing.T) {
 // This tests the fix for the bug where EmptyValueTarget could only hold one dimension,
 // causing the original empty constraint to be lost when drilling into a second empty bucket.
 func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -1604,13 +1573,10 @@ func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
 	}
 
 	messages, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages with multiple empty targets: %v", err)
-	}
+	require.NoError(err, "ListMessages with multiple empty targets")
 
 	// No messages should match both empty sender AND empty labels
-	if len(messages) != 0 {
-		t.Errorf("expected 0 messages matching both empty sender AND empty labels, got %d", len(messages))
+	if !assert.Empty(messages, "messages matching both empty sender AND empty labels") {
 		for _, m := range messages {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
@@ -1625,14 +1591,11 @@ func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
 	}
 
 	messages2, err := engine.ListMessages(ctx, filter2)
-	if err != nil {
-		t.Fatalf("ListMessages with empty recipients + labels: %v", err)
-	}
+	require.NoError(err, "ListMessages with empty recipients + labels")
 
 	// msg4 "No Recipients" has label INBOX, msg5 "No Labels" has recipients
 	// Neither satisfies both constraints
-	if len(messages2) != 0 {
-		t.Errorf("expected 0 messages matching both empty recipients AND empty labels, got %d", len(messages2))
+	if !assert.Empty(messages2, "messages matching both empty recipients AND empty labels") {
 		for _, m := range messages2 {
 			t.Logf("  got: id=%d subject=%q", m.ID, m.Subject)
 		}
@@ -1642,6 +1605,8 @@ func TestDuckDBEngine_ListMessages_MultipleEmptyTargets(t *testing.T) {
 // TestDuckDBEngine_SubAggregate_MultipleEmptyTargets verifies that SubAggregate
 // correctly handles multiple empty-dimension constraints when drilling down.
 func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newEmptyBucketsEngine(t)
 	ctx := context.Background()
 
@@ -1652,18 +1617,16 @@ func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
 	}
 
 	rows, err := engine.SubAggregate(ctx, filter1, ViewLabels, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate with empty sender -> labels: %v", err)
-	}
+	require.NoError(err, "SubAggregate with empty sender -> labels")
 
 	// msg3 has label INBOX, so we expect one row with key="INBOX" and count=1
-	if len(rows) != 1 {
-		t.Errorf("expected 1 label sub-aggregate row for empty sender, got %d", len(rows))
+	if !assert.Len(rows, 1, "label sub-aggregate row for empty sender") {
 		for _, r := range rows {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
-	} else if rows[0].Key != "INBOX" || rows[0].Count != 1 {
-		t.Errorf("expected INBOX with count=1, got key=%q count=%d", rows[0].Key, rows[0].Count)
+	} else {
+		assert.Equal("INBOX", rows[0].Key)
+		assert.Equal(int64(1), rows[0].Count)
 	}
 
 	// Test 2: SubAggregate with multiple empty constraints.
@@ -1677,13 +1640,10 @@ func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
 	}
 
 	rows2, err := engine.SubAggregate(ctx, filter2, ViewDomains, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate with empty sender + labels -> domains: %v", err)
-	}
+	require.NoError(err, "SubAggregate with empty sender + labels -> domains")
 
 	// No messages match both constraints, so no domain rows
-	if len(rows2) != 0 {
-		t.Errorf("expected 0 domain sub-aggregate rows for empty sender + labels, got %d", len(rows2))
+	if !assert.Empty(rows2, "domain sub-aggregate rows for empty sender + labels") {
 		for _, r := range rows2 {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
@@ -1696,18 +1656,16 @@ func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
 	}
 
 	rows3, err := engine.SubAggregate(ctx, filter3, ViewSenders, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate with empty recipients -> senders: %v", err)
-	}
+	require.NoError(err, "SubAggregate with empty recipients -> senders")
 
 	// msg4 has sender alice@example.com
-	if len(rows3) != 1 {
-		t.Errorf("expected 1 sender sub-aggregate row for empty recipients, got %d", len(rows3))
+	if !assert.Len(rows3, 1, "sender sub-aggregate row for empty recipients") {
 		for _, r := range rows3 {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
-	} else if rows3[0].Key != "alice@example.com" || rows3[0].Count != 1 {
-		t.Errorf("expected alice@example.com with count=1, got key=%q count=%d", rows3[0].Key, rows3[0].Count)
+	} else {
+		assert.Equal("alice@example.com", rows3[0].Key)
+		assert.Equal(int64(1), rows3[0].Count)
 	}
 }
 
@@ -1715,19 +1673,12 @@ func TestDuckDBEngine_SubAggregate_MultipleEmptyTargets(t *testing.T) {
 func TestDuckDBEngine_GetGmailIDsByFilter_NoDataSource(t *testing.T) {
 	// Create engine without SQLite or Parquet
 	engine, err := NewDuckDBEngine("", "", nil)
-	if err != nil {
-		t.Fatalf("NewDuckDBEngine: %v", err)
-	}
+	requirepkg.NoError(t, err, "NewDuckDBEngine")
 	defer func() { _ = engine.Close() }()
 
 	ctx := context.Background()
 	_, err = engine.GetGmailIDsByFilter(ctx, MessageFilter{Sender: "test@example.com"})
-	if err == nil {
-		t.Fatal("expected error when calling GetGmailIDsByFilter without SQLite or Parquet")
-	}
-	if !strings.Contains(err.Error(), "requires SQLite or Parquet") {
-		t.Errorf("expected 'requires SQLite or Parquet' error, got: %v", err)
-	}
+	requirepkg.ErrorContains(t, err, "requires SQLite or Parquet")
 }
 
 // TestDuckDBEngine_GetGmailIDsByFilter_NonExistent verifies empty results for non-existent values.
@@ -1748,12 +1699,8 @@ func TestDuckDBEngine_GetGmailIDsByFilter_NonExistent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ids, err := engine.GetGmailIDsByFilter(ctx, tt.filter)
-			if err != nil {
-				t.Fatalf("GetGmailIDsByFilter: %v", err)
-			}
-			if len(ids) != 0 {
-				t.Errorf("expected 0 results for non-existent filter, got %d: %v", len(ids), ids)
-			}
+			requirepkg.NoError(t, err, "GetGmailIDsByFilter")
+			assertpkg.Empty(t, ids, "results for non-existent filter")
 		})
 	}
 }
@@ -1765,9 +1712,7 @@ func TestDuckDBEngine_GetGmailIDsByFilter_EmptyFilter(t *testing.T) {
 
 	// Empty filter - should return all 5 messages
 	ids, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{})
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter with empty filter: %v", err)
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter with empty filter")
 
 	assertSetEqual(t, ids, []string{"msg1", "msg2", "msg3", "msg4", "msg5"})
 }
@@ -1788,13 +1733,9 @@ func TestDuckDBEngine_GetGmailIDsByFilter_CombinedNoMatch(t *testing.T) {
 	}
 
 	ids, err := engine.GetGmailIDsByFilter(ctx, filter)
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
 
-	if len(ids) != 0 {
-		t.Errorf("expected 0 results for bob+IMPORTANT, got %d: %v", len(ids), ids)
-	}
+	assertpkg.Empty(t, ids, "results for bob+IMPORTANT")
 }
 
 // =============================================================================
@@ -1819,9 +1760,7 @@ func TestEscapeILIKE(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := escapeILIKE(tt.input)
-			if got != tt.want {
-				t.Errorf("escapeILIKE(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "escapeILIKE(%q)", tt.input)
 		})
 	}
 }
@@ -1883,9 +1822,7 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 			where, _ := engine.buildWhereClause(opts)
 
 			for _, want := range tt.wantClauses {
-				if !strings.Contains(where, want) {
-					t.Errorf("buildWhereClause(%q) missing %q\ngot: %s", tt.searchQuery, want, where)
-				}
+				assertpkg.Contains(t, where, want, "buildWhereClause(%q)", tt.searchQuery)
 			}
 		})
 	}
@@ -1907,9 +1844,7 @@ func TestBuildWhereClause_EscapedArgs(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Errorf("expected ILIKE pattern containing '100\\%%\\_off' in args, got: %v", args)
-	}
+	assertpkg.True(t, found, "expected ILIKE pattern containing '100\\%%\\_off' in args, got: %v", args)
 }
 
 // TestBuildWhereClause_ILIKEEscape verifies that search terms are properly
@@ -1943,10 +1878,7 @@ func TestBuildWhereClause_ILIKEEscape(t *testing.T) {
 					break
 				}
 			}
-			if !found {
-				t.Errorf("term %q: expected arg %q, got %v",
-					tc.term, tc.wantArg, args)
-			}
+			assertpkg.True(t, found, "term %q: expected arg %q, got %v", tc.term, tc.wantArg, args)
 		})
 	}
 }
@@ -1990,9 +1922,7 @@ func TestAggregateBySender_WithSearchQuery(t *testing.T) {
 				Limit:       100,
 			}
 			rows, err := engine.Aggregate(ctx, ViewSenders, opts)
-			if err != nil {
-				t.Fatalf("AggregateBySender: %v", err)
-			}
+			requirepkg.NoError(t, err, "AggregateBySender")
 
 			gotSenders := make(map[string]bool)
 			for _, row := range rows {
@@ -2000,9 +1930,7 @@ func TestAggregateBySender_WithSearchQuery(t *testing.T) {
 			}
 
 			for _, want := range tt.wantSenders {
-				if !gotSenders[want] {
-					t.Errorf("expected sender %q in results, got: %v", want, rows)
-				}
+				assertpkg.True(t, gotSenders[want], "expected sender %q in results, got: %v", want, rows)
 			}
 		})
 	}
@@ -2012,6 +1940,7 @@ func TestAggregateBySender_WithSearchQuery(t *testing.T) {
 // Labels aggregate view only shows matching labels, not all labels from
 // matching messages.
 func TestAggregateByLabel_WithLabelSearch(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -2022,27 +1951,17 @@ func TestAggregateByLabel_WithLabelSearch(t *testing.T) {
 		Limit:       100,
 	}
 	rows, err := engine.Aggregate(ctx, ViewLabels, opts)
-	if err != nil {
-		t.Fatalf("Aggregate(ViewLabels, label:work): %v", err)
-	}
+	requirepkg.NoError(t, err, "Aggregate(ViewLabels, label:work)")
 
 	gotLabels := make(map[string]bool)
 	for _, row := range rows {
 		gotLabels[row.Key] = true
 	}
 
-	if !gotLabels["Work"] {
-		t.Errorf("expected 'Work' in results, got: %v", rows)
-	}
-	if gotLabels["INBOX"] {
-		t.Errorf("'INBOX' should not appear when searching label:work, got: %v", rows)
-	}
-	if gotLabels["IMPORTANT"] {
-		t.Errorf("'IMPORTANT' should not appear when searching label:work, got: %v", rows)
-	}
-	if len(rows) != 1 {
-		t.Errorf("expected 1 label row, got %d: %v", len(rows), rows)
-	}
+	assert.True(gotLabels["Work"], "expected 'Work' in results, got: %v", rows)
+	assert.False(gotLabels["INBOX"], "'INBOX' should not appear when searching label:work, got: %v", rows)
+	assert.False(gotLabels["IMPORTANT"], "'IMPORTANT' should not appear when searching label:work, got: %v", rows)
+	assert.Len(rows, 1, "expected 1 label row")
 }
 
 // TestBuildSearchConditions_EscapedWildcards verifies that buildSearchConditions
@@ -2097,9 +2016,7 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 
 			// Check WHERE clause contains expected patterns
 			for _, want := range tt.wantClauses {
-				if !strings.Contains(where, want) {
-					t.Errorf("buildSearchConditions missing %q in WHERE\ngot: %s", want, where)
-				}
+				assertpkg.Contains(t, where, want, "buildSearchConditions WHERE")
 			}
 
 			// Check args contain escaped patterns
@@ -2111,9 +2028,7 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 						break
 					}
 				}
-				if !found {
-					t.Errorf("expected escaped pattern %q in args, got: %v", wantArg, args)
-				}
+				assertpkg.True(t, found, "expected escaped pattern %q in args, got: %v", wantArg, args)
 			}
 		})
 	}
@@ -2129,17 +2044,13 @@ func TestBuildSearchConditions_UsesILIKENotRegex(t *testing.T) {
 	where := strings.Join(conditions, " AND ")
 
 	// Must use ILIKE, not regexp_matches
-	if strings.Contains(where, "regexp_matches") {
-		t.Errorf("fast search path should use ILIKE, not regexp_matches\ngot: %s", where)
-	}
-	if !strings.Contains(where, "ILIKE") {
-		t.Errorf("fast search path should contain ILIKE\ngot: %s", where)
-	}
+	assertpkg.NotContains(t, where, "regexp_matches", "fast search path should use ILIKE, not regexp_matches")
+	assertpkg.Contains(t, where, "ILIKE", "fast search path should contain ILIKE")
 
 	// Args should be ILIKE patterns (%%term%%), not regex patterns
 	for _, arg := range args {
-		if s, ok := arg.(string); ok && strings.Contains(s, "(?i)") {
-			t.Errorf("fast search args should not contain regex patterns, got: %q", s)
+		if s, ok := arg.(string); ok {
+			assertpkg.NotContains(t, s, "(?i)", "fast search args should not contain regex patterns")
 		}
 	}
 }
@@ -2152,16 +2063,12 @@ func TestBuildAggregateSearchConditions_UsesILIKENotRegex(t *testing.T) {
 	conditions, args := engine.buildAggregateSearchConditions("hello world")
 	where := strings.Join(conditions, " AND ")
 
-	if strings.Contains(where, "regexp_matches") {
-		t.Errorf("aggregate search should use ILIKE, not regexp_matches\ngot: %s", where)
-	}
-	if !strings.Contains(where, "ILIKE") {
-		t.Errorf("aggregate search should contain ILIKE\ngot: %s", where)
-	}
+	assertpkg.NotContains(t, where, "regexp_matches", "aggregate search should use ILIKE, not regexp_matches")
+	assertpkg.Contains(t, where, "ILIKE", "aggregate search should contain ILIKE")
 
 	for _, arg := range args {
-		if s, ok := arg.(string); ok && strings.Contains(s, "(?i)") {
-			t.Errorf("aggregate search args should not contain regex patterns, got: %q", s)
+		if s, ok := arg.(string); ok {
+			assertpkg.NotContains(t, s, "(?i)", "aggregate search args should not contain regex patterns")
 		}
 	}
 }
@@ -2174,9 +2081,7 @@ func TestDuckDBEngine_AggregateByRecipientName(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewRecipientNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByRecipientName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
 	assertAggregateCounts(t, results, map[string]int64{
 		"Bob":   3, // msgs 1,2,3
@@ -2193,13 +2098,10 @@ func TestDuckDBEngine_SubAggregateByRecipientName(t *testing.T) {
 	// Filter by sender alice, sub-aggregate by recipient name
 	filter := MessageFilter{Sender: "alice@example.com"}
 	results, err := engine.SubAggregate(ctx, filter, ViewRecipientNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 
 	// Alice sent msgs 1,2,3 — recipients: Bob (3), Carol (1), Dan (1 via cc)
-	if len(results) != 3 {
-		t.Errorf("expected 3 recipient names, got %d", len(results))
+	if !assertpkg.Len(t, results, 3, "recipient names") {
 		for _, r := range results {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
@@ -2212,14 +2114,10 @@ func TestDuckDBEngine_ListMessages_RecipientNameFilter(t *testing.T) {
 
 	filter := MessageFilter{RecipientName: "Bob"}
 	results, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages")
 
 	// Bob received messages 1, 2, 3
-	if len(results) != 3 {
-		t.Errorf("expected 3 messages to Bob, got %d", len(results))
-	}
+	assertpkg.Len(t, results, 3, "messages to Bob")
 }
 
 func TestDuckDBEngine_GetGmailIDsByFilter_RecipientName(t *testing.T) {
@@ -2228,17 +2126,14 @@ func TestDuckDBEngine_GetGmailIDsByFilter_RecipientName(t *testing.T) {
 
 	filter := MessageFilter{RecipientName: "Alice"}
 	ids, err := engine.GetGmailIDsByFilter(ctx, filter)
-	if err != nil {
-		t.Fatalf("GetGmailIDsByFilter: %v", err)
-	}
+	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
 
 	// Alice received msgs 4, 5
-	if len(ids) != 2 {
-		t.Errorf("expected 2 gmail IDs for Alice, got %d", len(ids))
-	}
+	assertpkg.Len(t, ids, 2, "gmail IDs for Alice")
 }
 
 func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Build Parquet data with empty-string and whitespace display_names on recipients
 	engine := createEngineFromBuilder(t, newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
@@ -2269,22 +2164,18 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 
 	ctx := context.Background()
 	results, err := engine.Aggregate(ctx, ViewRecipientNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByRecipientName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
 	// Both '' and '   ' display_name should fall back to email
-	if len(results) != 2 {
-		t.Errorf("expected 2 recipient names, got %d", len(results))
+	if !assert.Len(results, 2, "recipient names") {
 		for _, r := range results {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
 	}
 
 	for _, r := range results {
-		if r.Key == "" || r.Key == "   " {
-			t.Errorf("unexpected empty/whitespace key: %q", r.Key)
-		}
+		assert.NotEmpty(r.Key, "unexpected empty key")
+		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	requireAggregateRow(t, results, "empty@test.com")
 	requireAggregateRow(t, results, "spaces@test.com")
@@ -2319,16 +2210,12 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipientName(t *testing.T) {
 	ctx := context.Background()
 	filter := MessageFilter{EmptyValueTargets: map[ViewType]bool{ViewRecipientNames: true}}
 	results, err := engine.ListMessages(ctx, filter)
-	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
-	}
+	requirepkg.NoError(t, err, "ListMessages")
 
 	// msg2 has no to/cc recipients -> should match
-	if len(results) != 1 {
-		t.Errorf("expected 1 message with empty recipient name, got %d", len(results))
-	}
-	if len(results) > 0 && results[0].Subject != "No Recipient" {
-		t.Errorf("expected 'No Recipient', got %q", results[0].Subject)
+	assertpkg.Len(t, results, 1, "messages with empty recipient name")
+	if len(results) > 0 {
+		assertpkg.Equal(t, "No Recipient", results[0].Subject)
 	}
 }
 
@@ -2344,12 +2231,8 @@ func TestDuckDBEngine_GetTotalStats_GroupByRecipients(t *testing.T) {
 		SearchQuery: "bob",
 		GroupBy:     ViewRecipients,
 	})
-	if err != nil {
-		t.Fatalf("GetTotalStats: %v", err)
-	}
-	if stats.MessageCount != 3 {
-		t.Errorf("expected 3 messages for recipient search 'bob', got %d", stats.MessageCount)
-	}
+	requirepkg.NoError(t, err, "GetTotalStats")
+	assertpkg.Equal(t, int64(3), stats.MessageCount, "recipient search 'bob'")
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByLabels(t *testing.T) {
@@ -2364,12 +2247,8 @@ func TestDuckDBEngine_GetTotalStats_GroupByLabels(t *testing.T) {
 		SearchQuery: "work",
 		GroupBy:     ViewLabels,
 	})
-	if err != nil {
-		t.Fatalf("GetTotalStats: %v", err)
-	}
-	if stats.MessageCount != 2 {
-		t.Errorf("expected 2 messages for label search 'work', got %d", stats.MessageCount)
-	}
+	requirepkg.NoError(t, err, "GetTotalStats")
+	assertpkg.Equal(t, int64(2), stats.MessageCount, "label search 'work'")
 }
 
 func TestDuckDBEngine_GetTotalStats_GroupByDefault(t *testing.T) {
@@ -2383,12 +2262,8 @@ func TestDuckDBEngine_GetTotalStats_GroupByDefault(t *testing.T) {
 	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{
 		SearchQuery: "alice",
 	})
-	if err != nil {
-		t.Fatalf("GetTotalStats: %v", err)
-	}
-	if stats.MessageCount != 3 {
-		t.Errorf("expected 3 messages for sender search 'alice', got %d", stats.MessageCount)
-	}
+	requirepkg.NoError(t, err, "GetTotalStats")
+	assertpkg.Equal(t, int64(3), stats.MessageCount, "sender search 'alice'")
 }
 
 // TestBuildStatsSearchConditions_PlaceholderArgCount is a regression test for
@@ -2427,10 +2302,9 @@ func TestBuildStatsSearchConditions_PlaceholderArgCount(t *testing.T) {
 			conditions, args := engine.buildStatsSearchConditions(tc.query, tc.groupBy)
 			where := strings.Join(conditions, " AND ")
 			placeholders := strings.Count(where, "?")
-			if placeholders != len(args) {
-				t.Errorf("placeholder/arg mismatch for query %q (groupBy=%v): %d placeholders vs %d args\nconditions: %s\nargs: %v",
-					tc.query, tc.groupBy, placeholders, len(args), where, args)
-			}
+			assertpkg.Equal(t, len(args), placeholders,
+				"placeholder/arg mismatch for query %q (groupBy=%v)\nconditions: %s\nargs: %v",
+				tc.query, tc.groupBy, where, args)
 		})
 	}
 }
@@ -2466,10 +2340,9 @@ func TestBuildAggregateSearchConditions_PlaceholderArgCount(t *testing.T) {
 			conditions, args := engine.buildAggregateSearchConditions(tc.query, tc.keyColumns...)
 			where := strings.Join(conditions, " AND ")
 			placeholders := strings.Count(where, "?")
-			if placeholders != len(args) {
-				t.Errorf("placeholder/arg mismatch for query %q (keyColumns=%v): %d placeholders vs %d args\nconditions: %s\nargs: %v",
-					tc.query, tc.keyColumns, placeholders, len(args), where, args)
-			}
+			assertpkg.Equal(t, len(args), placeholders,
+				"placeholder/arg mismatch for query %q (keyColumns=%v)\nconditions: %s\nargs: %v",
+				tc.query, tc.keyColumns, where, args)
 		})
 	}
 }
@@ -2573,9 +2446,7 @@ func TestDuckDBEngine_Aggregate_AllViewTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rows, err := engine.Aggregate(ctx, tt.viewType, tt.opts)
-			if err != nil {
-				t.Fatalf("Aggregate(%v): %v", tt.viewType, err)
-			}
+			requirepkg.NoError(t, err, "Aggregate(%v)", tt.viewType)
 			assertAggregateCounts(t, rows, tt.wantCounts)
 		})
 	}
@@ -2615,30 +2486,23 @@ func TestDuckDBEngine_Aggregate_TimeGranularity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			opts := AggregateOptions{TimeGranularity: tt.granularity, Limit: 100}
 			rows, err := engine.Aggregate(ctx, ViewTime, opts)
-			if err != nil {
-				t.Fatalf("Aggregate(ViewTime, %v): %v", tt.granularity, err)
-			}
+			requirepkg.NoError(t, err, "Aggregate(ViewTime, %v)", tt.granularity)
 
 			formatRegex := regexp.MustCompile(tt.wantFormat)
 			gotKeys := make(map[string]bool)
 			for _, r := range rows {
-				if !formatRegex.MatchString(r.Key) {
-					t.Errorf("key %q does not match expected format %s", r.Key, tt.wantFormat)
-				}
+				assert.Regexp(formatRegex, r.Key, "key format")
 				gotKeys[r.Key] = true
 			}
 
 			for _, wantKey := range tt.wantKeys {
-				if !gotKeys[wantKey] {
-					t.Errorf("missing expected key %q in results", wantKey)
-				}
+				assert.True(gotKeys[wantKey], "missing expected key %q in results", wantKey)
 			}
 
-			if len(rows) != len(tt.wantKeys) {
-				t.Errorf("expected %d keys, got %d", len(tt.wantKeys), len(rows))
-			}
+			assert.Len(rows, len(tt.wantKeys), "key count")
 		})
 	}
 }
@@ -2745,9 +2609,7 @@ func TestDuckDBEngine_SubAggregate_AllViewTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rows, err := engine.SubAggregate(ctx, tt.filter, tt.groupBy, tt.opts)
-			if err != nil {
-				t.Fatalf("SubAggregate: %v", err)
-			}
+			requirepkg.NoError(t, err, "SubAggregate")
 			assertAggregateCounts(t, rows, tt.wantCounts)
 		})
 	}
@@ -2766,8 +2628,8 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 	nodom := b.AddParticipant("nodom@", "", "No Domain") // empty domain
 
 	// Messages
-	msg1 := b.AddMessage(MessageOpt{Subject: "From Alice", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000})
-	msg2 := b.AddMessage(MessageOpt{Subject: "From NoDomain", SentAt: makeDate(2024, 1, 16), SizeEstimate: 1000})
+	msg1 := b.AddMessage(MessageOpt{Subject: "From Alice", SentAt: makeDate(1, 15), SizeEstimate: 1000})
+	msg2 := b.AddMessage(MessageOpt{Subject: "From NoDomain", SentAt: makeDate(1, 16), SizeEstimate: 1000})
 
 	// Senders
 	b.AddFrom(msg1, alice, "Alice")
@@ -2782,22 +2644,17 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 	// Top-level aggregate should only return example.com, not empty string
 	t.Run("Aggregate_ExcludesEmpty", func(t *testing.T) {
 		rows, err := engine.Aggregate(ctx, ViewDomains, DefaultAggregateOptions())
-		if err != nil {
-			t.Fatalf("Aggregate(ViewDomains): %v", err)
-		}
+		requirepkg.NoError(t, err, "Aggregate(ViewDomains)")
 
 		// Should only have example.com
-		if len(rows) != 1 {
-			t.Errorf("expected 1 domain (empty excluded), got %d", len(rows))
+		if !assertpkg.Len(t, rows, 1, "expected 1 domain (empty excluded)") {
 			for _, r := range rows {
 				t.Logf("  key=%q count=%d", r.Key, r.Count)
 			}
 		}
 
 		for _, r := range rows {
-			if r.Key == "" {
-				t.Errorf("empty domain should be excluded from ViewDomains aggregate")
-			}
+			assertpkg.NotEmpty(t, r.Key, "empty domain should be excluded from ViewDomains aggregate")
 		}
 	})
 
@@ -2805,14 +2662,10 @@ func TestDuckDBEngine_Aggregate_DomainExcludesEmpty(t *testing.T) {
 	t.Run("SubAggregate_ExcludesEmpty", func(t *testing.T) {
 		// No filter - should still exclude empty domains
 		rows, err := engine.SubAggregate(ctx, MessageFilter{}, ViewDomains, DefaultAggregateOptions())
-		if err != nil {
-			t.Fatalf("SubAggregate(ViewDomains): %v", err)
-		}
+		requirepkg.NoError(t, err, "SubAggregate(ViewDomains)")
 
 		for _, r := range rows {
-			if r.Key == "" {
-				t.Errorf("empty domain should be excluded from ViewDomains SubAggregate")
-			}
+			assertpkg.NotEmpty(t, r.Key, "empty domain should be excluded from ViewDomains SubAggregate")
 		}
 	})
 }
@@ -2828,22 +2681,19 @@ func TestDuckDBEngine_SubAggregate_WithSearchQuery(t *testing.T) {
 	opts := AggregateOptions{SearchQuery: "bob", Limit: 100}
 
 	rows, err := engine.SubAggregate(ctx, filter, ViewRecipients, opts)
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 
 	// Search "bob" in Recipients view filters on recipient email/name
 	// Alice sent to bob (msgs 1,2,3), carol (msg 1), dan (msg 2 cc)
 	// Only bob should match
-	if len(rows) != 1 {
-		t.Errorf("expected 1 recipient matching 'bob', got %d", len(rows))
+	if !assertpkg.Len(t, rows, 1, "expected 1 recipient matching 'bob'") {
 		for _, r := range rows {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
 	}
 
-	if len(rows) > 0 && rows[0].Key != "bob@company.org" {
-		t.Errorf("expected bob@company.org, got %q", rows[0].Key)
+	if len(rows) > 0 {
+		assertpkg.Equal(t, "bob@company.org", rows[0].Key)
 	}
 }
 
@@ -2887,9 +2737,7 @@ func TestDuckDBEngine_SubAggregate_TimeGranularityInference(t *testing.T) {
 
 			// SubAggregate by senders to get message counts per sender
 			rows, err := engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
-			if err != nil {
-				t.Fatalf("SubAggregate: %v", err)
-			}
+			requirepkg.NoError(t, err, "SubAggregate")
 
 			// Sum counts across all senders
 			var totalCount int64
@@ -2897,9 +2745,8 @@ func TestDuckDBEngine_SubAggregate_TimeGranularityInference(t *testing.T) {
 				totalCount += r.Count
 			}
 
-			if totalCount != int64(tt.expectCount) {
-				t.Errorf("expected %d messages for period %q, got %d", tt.expectCount, tt.period, totalCount)
-			}
+			assertpkg.Equal(t, int64(tt.expectCount), totalCount,
+				"period %q", tt.period)
 		})
 	}
 }
@@ -2922,12 +2769,8 @@ func TestDuckDBEngine_Aggregate_InvalidViewType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := engine.Aggregate(ctx, tt.viewType, DefaultAggregateOptions())
-			if err == nil {
-				t.Fatal("expected error for invalid ViewType, got nil")
-			}
-			if !strings.Contains(err.Error(), "unsupported view type") {
-				t.Errorf("expected 'unsupported view type' error, got: %v", err)
-			}
+			requirepkg.Error(t, err, "expected error for invalid ViewType")
+			assertpkg.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }
@@ -2951,12 +2794,8 @@ func TestDuckDBEngine_SubAggregate_InvalidViewType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filter := MessageFilter{Sender: "alice@example.com"}
 			_, err := engine.SubAggregate(ctx, filter, tt.viewType, DefaultAggregateOptions())
-			if err == nil {
-				t.Fatal("expected error for invalid ViewType, got nil")
-			}
-			if !strings.Contains(err.Error(), "unsupported view type") {
-				t.Errorf("expected 'unsupported view type' error, got: %v", err)
-			}
+			requirepkg.Error(t, err, "expected error for invalid ViewType")
+			assertpkg.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }
@@ -2999,12 +2838,8 @@ func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
 
 	t.Run("ListMessages", func(t *testing.T) {
 		results, err := engine.ListMessages(ctx, MessageFilter{})
-		if err != nil {
-			t.Fatalf("ListMessages with VARCHAR columns: %v", err)
-		}
-		if len(results) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(results))
-		}
+		requirepkg.NoError(t, err, "ListMessages with VARCHAR columns")
+		requirepkg.Len(t, results, 2)
 	})
 
 	// ListMessages with a sender filter exercises the filtered_msgs CTE path
@@ -3014,70 +2849,44 @@ func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
 		results, err := engine.ListMessages(ctx, MessageFilter{
 			Sender: "alice@test.com",
 		})
-		if err != nil {
-			t.Fatalf("ListMessages with sender filter and VARCHAR columns: %v", err)
-		}
-		if len(results) != 2 {
-			t.Fatalf("expected 2 messages from alice, got %d", len(results))
-		}
+		requirepkg.NoError(t, err, "ListMessages with sender filter and VARCHAR columns")
+		requirepkg.Len(t, results, 2, "expected 2 messages from alice")
 	})
 
 	t.Run("ListMessages_RecipientFilter", func(t *testing.T) {
 		results, err := engine.ListMessages(ctx, MessageFilter{
 			Recipient: "alice@test.com",
 		})
-		if err != nil {
-			t.Fatalf("ListMessages with recipient filter and VARCHAR columns: %v", err)
-		}
+		requirepkg.NoError(t, err, "ListMessages with recipient filter and VARCHAR columns")
 		// alice is 'from', not 'to'/'cc'/'bcc', so expect 0
-		if len(results) != 0 {
-			t.Fatalf("expected 0 messages to alice as recipient, got %d", len(results))
-		}
+		requirepkg.Empty(t, results, "expected 0 messages to alice as recipient")
 	})
 
 	t.Run("SearchFast", func(t *testing.T) {
 		q := search.Parse("Hello")
 		results, err := engine.SearchFast(ctx, q, MessageFilter{}, 100, 0)
-		if err != nil {
-			t.Fatalf("SearchFast with VARCHAR columns: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(results))
-		}
-		if results[0].Subject != "Hello World" {
-			t.Fatalf("unexpected subject: %s", results[0].Subject)
-		}
+		requirepkg.NoError(t, err, "SearchFast with VARCHAR columns")
+		requirepkg.Len(t, results, 1)
+		assertpkg.Equal(t, "Hello World", results[0].Subject)
 	})
 
 	t.Run("SearchFastCount", func(t *testing.T) {
 		q := search.Parse("Hello")
 		count, err := engine.SearchFastCount(ctx, q, MessageFilter{})
-		if err != nil {
-			t.Fatalf("SearchFastCount with VARCHAR columns: %v", err)
-		}
-		if count != 1 {
-			t.Fatalf("expected count 1, got %d", count)
-		}
+		requirepkg.NoError(t, err, "SearchFastCount with VARCHAR columns")
+		assertpkg.Equal(t, int64(1), count)
 	})
 
 	t.Run("Aggregate", func(t *testing.T) {
 		results, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-		if err != nil {
-			t.Fatalf("Aggregate with VARCHAR columns: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 sender, got %d", len(results))
-		}
+		requirepkg.NoError(t, err, "Aggregate with VARCHAR columns")
+		requirepkg.Len(t, results, 1)
 	})
 
 	t.Run("GetTotalStats", func(t *testing.T) {
 		stats, err := engine.GetTotalStats(ctx, StatsOptions{})
-		if err != nil {
-			t.Fatalf("GetTotalStats with VARCHAR columns: %v", err)
-		}
-		if stats.MessageCount != 2 {
-			t.Fatalf("expected 2 messages, got %d", stats.MessageCount)
-		}
+		requirepkg.NoError(t, err, "GetTotalStats with VARCHAR columns")
+		assertpkg.Equal(t, int64(2), stats.MessageCount)
 	})
 }
 
@@ -3087,65 +2896,65 @@ func TestSearchCacheKeyFor(t *testing.T) {
 	tests := []struct {
 		name      string
 		conds1    []string
-		args1     []interface{}
+		args1     []any
 		conds2    []string
-		args2     []interface{}
+		args2     []any
 		wantEqual bool
 	}{
 		{
 			name:      "identical inputs produce same key",
 			conds1:    []string{"a = ?", "b = ?"},
-			args1:     []interface{}{"foo", 42},
+			args1:     []any{"foo", 42},
 			conds2:    []string{"a = ?", "b = ?"},
-			args2:     []interface{}{"foo", 42},
+			args2:     []any{"foo", 42},
 			wantEqual: true,
 		},
 		{
 			name:      "different conditions produce different keys",
 			conds1:    []string{"a = ?"},
-			args1:     []interface{}{"foo"},
+			args1:     []any{"foo"},
 			conds2:    []string{"b = ?"},
-			args2:     []interface{}{"foo"},
+			args2:     []any{"foo"},
 			wantEqual: false,
 		},
 		{
 			name:      "args with commas are not ambiguous",
 			conds1:    []string{"x = ?"},
-			args1:     []interface{}{"foo,bar"},
+			args1:     []any{"foo,bar"},
 			conds2:    []string{"x = ?"},
-			args2:     []interface{}{"foo", "bar"},
+			args2:     []any{"foo", "bar"},
 			wantEqual: false,
 		},
 		{
 			name:      "args with pipes are not ambiguous",
 			conds1:    []string{"a|b"},
-			args1:     []interface{}{"x"},
+			args1:     []any{"x"},
 			conds2:    []string{"a", "b"},
-			args2:     []interface{}{"x"},
+			args2:     []any{"x"},
 			wantEqual: false,
 		},
 		{
 			name:      "different arg types produce different keys",
 			conds1:    []string{"x = ?"},
-			args1:     []interface{}{"42"},
+			args1:     []any{"42"},
 			conds2:    []string{"x = ?"},
-			args2:     []interface{}{42},
+			args2:     []any{42},
 			wantEqual: false,
 		},
 		{
 			name:      "empty inputs produce same key",
 			conds1:    []string{},
-			args1:     []interface{}{},
+			args1:     []any{},
 			conds2:    []string{},
-			args2:     []interface{}{},
+			args2:     []any{},
 			wantEqual: true,
 		},
 		{
 			name:      "condition containing JSON special chars",
 			conds1:    []string{`msg.subject ILIKE ? ESCAPE '\'`},
-			args1:     []interface{}{`%"quoted"%`},
+			args1:     []any{`%"quoted"%`},
 			conds2:    []string{`msg.subject ILIKE ? ESCAPE '\'`},
-			args2:     []interface{}{`%"quoted"%`},
+			args2:     []any{`%"quoted"%`},
 			wantEqual: true,
 		},
 	}
@@ -3154,11 +2963,10 @@ func TestSearchCacheKeyFor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key1 := searchCacheKeyFor(tt.conds1, tt.args1)
 			key2 := searchCacheKeyFor(tt.conds2, tt.args2)
-			if tt.wantEqual && key1 != key2 {
-				t.Errorf("expected equal keys:\n  key1=%s\n  key2=%s", key1, key2)
-			}
-			if !tt.wantEqual && key1 == key2 {
-				t.Errorf("expected different keys but got same:\n  key=%s", key1)
+			if tt.wantEqual {
+				assertpkg.Equal(t, key1, key2, "expected equal keys")
+			} else {
+				assertpkg.NotEqual(t, key1, key2, "expected different keys")
 			}
 		})
 	}
@@ -3168,6 +2976,8 @@ func TestSearchCacheKeyFor(t *testing.T) {
 // same search reuses the cached temp table (cache hit) and returns consistent
 // count and stats across pages.
 func TestSearchFastWithStats_CacheHitSkipsRescan(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := newParquetEngine(t)
 	ctx := context.Background()
 
@@ -3176,46 +2986,28 @@ func TestSearchFastWithStats_CacheHitSkipsRescan(t *testing.T) {
 
 	// First call — cache miss, materializes temp table.
 	result1, err := engine.SearchFastWithStats(ctx, q, "Hello", filter, ViewSenders, 2, 0)
-	if err != nil {
-		t.Fatalf("first SearchFastWithStats: %v", err)
-	}
-	if result1.TotalCount <= 0 {
-		t.Fatalf("expected positive total count, got %d", result1.TotalCount)
-	}
-	if result1.Stats == nil {
-		t.Fatal("expected stats on first call")
-	}
+	require.NoError(err, "first SearchFastWithStats")
+	require.Positive(result1.TotalCount, "expected positive total count")
+	require.NotNil(result1.Stats, "expected stats on first call")
 
 	// Remember temp table seq before second call.
 	seqBefore := engine.tempTableSeq.Load()
 
 	// Second call — same conditions, different offset → cache hit.
 	result2, err := engine.SearchFastWithStats(ctx, q, "Hello", filter, ViewSenders, 2, 2)
-	if err != nil {
-		t.Fatalf("second SearchFastWithStats: %v", err)
-	}
+	require.NoError(err, "second SearchFastWithStats")
 
 	// Cache hit should NOT increment temp table seq (no new materialization).
 	seqAfter := engine.tempTableSeq.Load()
-	if seqAfter != seqBefore {
-		t.Errorf("cache hit should not create new temp table: seq went from %d to %d", seqBefore, seqAfter)
-	}
+	assert.Equal(seqBefore, seqAfter, "cache hit should not create new temp table")
 
 	// Count and stats must be identical across pages.
-	if result2.TotalCount != result1.TotalCount {
-		t.Errorf("total count mismatch: page1=%d, page2=%d", result1.TotalCount, result2.TotalCount)
-	}
-	if result2.Stats == nil {
-		t.Fatal("expected stats on cache hit")
-	}
-	if result2.Stats.MessageCount != result1.Stats.MessageCount {
-		t.Errorf("stats message count mismatch: page1=%d, page2=%d",
-			result1.Stats.MessageCount, result2.Stats.MessageCount)
-	}
-	if result2.Stats.TotalSize != result1.Stats.TotalSize {
-		t.Errorf("stats total size mismatch: page1=%d, page2=%d",
-			result1.Stats.TotalSize, result2.Stats.TotalSize)
-	}
+	assert.Equal(result1.TotalCount, result2.TotalCount, "total count mismatch across pages")
+	require.NotNil(result2.Stats, "expected stats on cache hit")
+	assert.Equal(result1.Stats.MessageCount, result2.Stats.MessageCount,
+		"stats message count mismatch")
+	assert.Equal(result1.Stats.TotalSize, result2.Stats.TotalSize,
+		"stats total size mismatch")
 }
 
 // TestSearchFastWithStats_CacheInvalidatedOnNewSearch verifies that changing
@@ -3229,23 +3021,18 @@ func TestSearchFastWithStats_CacheInvalidatedOnNewSearch(t *testing.T) {
 	// First search.
 	q1 := search.Parse("Hello")
 	result1, err := engine.SearchFastWithStats(ctx, q1, "Hello", filter, ViewSenders, 100, 0)
-	if err != nil {
-		t.Fatalf("first search: %v", err)
-	}
+	requirepkg.NoError(t, err, "first search")
 
 	seqBefore := engine.tempTableSeq.Load()
 
 	// Different search — must invalidate cache.
 	q2 := search.Parse("Meeting")
 	result2, err := engine.SearchFastWithStats(ctx, q2, "Meeting", filter, ViewSenders, 100, 0)
-	if err != nil {
-		t.Fatalf("second search: %v", err)
-	}
+	requirepkg.NoError(t, err, "second search")
 
 	seqAfter := engine.tempTableSeq.Load()
-	if seqAfter == seqBefore {
-		t.Error("new search should create a new temp table (cache invalidation)")
-	}
+	assertpkg.NotEqual(t, seqBefore, seqAfter,
+		"new search should create a new temp table (cache invalidation)")
 
 	// Results should differ (different search terms).
 	if result1.TotalCount == result2.TotalCount && result1.TotalCount > 0 {
@@ -3256,6 +3043,8 @@ func TestSearchFastWithStats_CacheInvalidatedOnNewSearch(t *testing.T) {
 // TestDuckDBEngine_HideDeletedFromSource verifies that HideDeletedFromSource
 // filters out deleted messages in aggregates, SubAggregate, search, and stats.
 func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	now := time.Now()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@gmail.com")
@@ -3263,9 +3052,9 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 	b.AddParticipant("bob@company.org", "company.org", "Bob")
 
 	// msg1: deleted, msg2+msg3: not deleted
-	msg1 := b.AddMessage(MessageOpt{Subject: "Deleted msg", SentAt: makeDate(2024, 1, 15), SizeEstimate: 1000, DeletedAt: &now})
-	msg2 := b.AddMessage(MessageOpt{Subject: "Active msg", SentAt: makeDate(2024, 1, 16), SizeEstimate: 2000})
-	msg3 := b.AddMessage(MessageOpt{Subject: "Another active", SentAt: makeDate(2024, 2, 1), SizeEstimate: 1500})
+	msg1 := b.AddMessage(MessageOpt{Subject: "Deleted msg", SentAt: makeDate(1, 15), SizeEstimate: 1000, DeletedAt: &now})
+	msg2 := b.AddMessage(MessageOpt{Subject: "Active msg", SentAt: makeDate(1, 16), SizeEstimate: 2000})
+	msg3 := b.AddMessage(MessageOpt{Subject: "Another active", SentAt: makeDate(2, 1), SizeEstimate: 1500})
 
 	b.AddFrom(msg1, 1, "Alice")
 	b.AddTo(msg1, 2, "Bob")
@@ -3285,97 +3074,59 @@ func TestDuckDBEngine_HideDeletedFromSource(t *testing.T) {
 	// Aggregate without filter: all 3 messages counted
 	opts := DefaultAggregateOptions()
 	rows, err := engine.Aggregate(ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate: %v", err)
-	}
+	require.NoError(err, "Aggregate")
 	total := int64(0)
 	for _, r := range rows {
 		total += r.Count
 	}
-	if total != 3 {
-		t.Errorf("aggregate without filter: expected 3 total, got %d", total)
-	}
+	assert.Equal(int64(3), total, "aggregate without filter")
 
 	// Aggregate with HideDeletedFromSource: only 2 messages
 	opts.HideDeletedFromSource = true
 	rows, err = engine.Aggregate(ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate(hide-deleted): %v", err)
-	}
+	require.NoError(err, "Aggregate(hide-deleted)")
 	total = 0
 	for _, r := range rows {
 		total += r.Count
 	}
-	if total != 2 {
-		t.Errorf("aggregate with hide-deleted: expected 2 total, got %d", total)
-	}
+	assert.Equal(int64(2), total, "aggregate with hide-deleted")
 
 	// SubAggregate without filter: all 3
 	filter := MessageFilter{Sender: "alice@example.com"}
 	subRows, err := engine.SubAggregate(ctx, filter, ViewLabels, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
-	if len(subRows) == 0 {
-		t.Fatal("SubAggregate returned no rows")
-	}
-	if subRows[0].Count != 2 {
-		t.Errorf("SubAggregate without filter: expected 2 for alice, got %d", subRows[0].Count)
-	}
+	require.NoError(err, "SubAggregate")
+	require.NotEmpty(subRows, "SubAggregate returned no rows")
+	assert.Equal(int64(2), subRows[0].Count, "SubAggregate without filter: expected 2 for alice")
 
 	// SubAggregate with HideDeletedFromSource: only 1 (msg1 excluded)
 	filter.HideDeletedFromSource = true
 	subRows, err = engine.SubAggregate(ctx, filter, ViewLabels, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate(hide-deleted): %v", err)
-	}
-	if len(subRows) == 0 {
-		t.Fatal("SubAggregate(hide-deleted) returned no rows")
-	}
-	if subRows[0].Count != 1 {
-		t.Errorf("SubAggregate with hide-deleted: expected 1 for alice, got %d", subRows[0].Count)
-	}
+	require.NoError(err, "SubAggregate(hide-deleted)")
+	require.NotEmpty(subRows, "SubAggregate(hide-deleted) returned no rows")
+	assert.Equal(int64(1), subRows[0].Count, "SubAggregate with hide-deleted: expected 1 for alice")
 
 	// SearchFast without filter: all 3 (search term "active" matches all subjects
 	// via case-insensitive match: "Deleted msg" doesn't match, so use broader term)
 	q := search.Parse("") // empty query matches all
 	results, err := engine.SearchFast(ctx, q, MessageFilter{}, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchFast: %v", err)
-	}
-	if len(results) != 3 {
-		t.Errorf("SearchFast without filter: expected 3, got %d", len(results))
-	}
+	require.NoError(err, "SearchFast")
+	assert.Len(results, 3, "SearchFast without filter")
 
 	// SearchFast with HideDeletedFromSource: only 2
 	results, err = engine.SearchFast(ctx, q, MessageFilter{HideDeletedFromSource: true}, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchFast(hide-deleted): %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("SearchFast with hide-deleted: expected 2, got %d", len(results))
-	}
+	require.NoError(err, "SearchFast(hide-deleted)")
+	assert.Len(results, 2, "SearchFast with hide-deleted")
 
 	// SearchFastCount consistency
 	count, err := engine.SearchFastCount(ctx, q, MessageFilter{HideDeletedFromSource: true})
-	if err != nil {
-		t.Fatalf("SearchFastCount(hide-deleted): %v", err)
-	}
-	if count != 2 {
-		t.Errorf("SearchFastCount with hide-deleted: expected 2, got %d", count)
-	}
+	require.NoError(err, "SearchFastCount(hide-deleted)")
+	assert.Equal(int64(2), count, "SearchFastCount with hide-deleted")
 
 	// GetTotalStats with HideDeletedFromSource
 	stats, err := engine.GetTotalStats(ctx, StatsOptions{HideDeletedFromSource: true})
-	if err != nil {
-		t.Fatalf("GetTotalStats(hide-deleted): %v", err)
-	}
-	if stats == nil {
-		t.Fatal("GetTotalStats returned nil")
-	}
-	if stats.MessageCount != 2 {
-		t.Errorf("GetTotalStats with hide-deleted: expected 2 messages, got %d", stats.MessageCount)
-	}
+	require.NoError(err, "GetTotalStats(hide-deleted)")
+	require.NotNil(stats, "GetTotalStats returned nil")
+	assert.Equal(int64(2), stats.MessageCount, "GetTotalStats with hide-deleted")
 }
 
 // TestDuckDBEngine_StaleParquetSchema verifies that a DuckDB engine can query
@@ -3415,57 +3166,35 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 
 	t.Run("ListMessages", func(t *testing.T) {
 		results, err := engine.ListMessages(ctx, MessageFilter{})
-		if err != nil {
-			t.Fatalf("ListMessages with stale Parquet schema: %v", err)
-		}
-		if len(results) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(results))
-		}
+		requirepkg.NoError(t, err, "ListMessages with stale Parquet schema")
+		requirepkg.Len(t, results, 2)
 	})
 
 	t.Run("SearchFast", func(t *testing.T) {
 		q := search.Parse("Stale Hello")
 		results, err := engine.SearchFast(ctx, q, MessageFilter{}, 100, 0)
-		if err != nil {
-			t.Fatalf("SearchFast with stale Parquet schema: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(results))
-		}
-		if results[0].Subject != "Stale Hello" {
-			t.Fatalf("unexpected subject: %s", results[0].Subject)
-		}
+		requirepkg.NoError(t, err, "SearchFast with stale Parquet schema")
+		requirepkg.Len(t, results, 1)
+		assertpkg.Equal(t, "Stale Hello", results[0].Subject)
 	})
 
 	t.Run("SearchFastCount", func(t *testing.T) {
 		q := search.Parse("Stale")
 		count, err := engine.SearchFastCount(ctx, q, MessageFilter{})
-		if err != nil {
-			t.Fatalf("SearchFastCount with stale Parquet schema: %v", err)
-		}
-		if count != 2 {
-			t.Fatalf("expected count 2, got %d", count)
-		}
+		requirepkg.NoError(t, err, "SearchFastCount with stale Parquet schema")
+		assertpkg.Equal(t, int64(2), count)
 	})
 
 	t.Run("Aggregate", func(t *testing.T) {
 		results, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-		if err != nil {
-			t.Fatalf("Aggregate with stale Parquet schema: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 sender, got %d", len(results))
-		}
+		requirepkg.NoError(t, err, "Aggregate with stale Parquet schema")
+		requirepkg.Len(t, results, 1)
 	})
 
 	t.Run("GetTotalStats", func(t *testing.T) {
 		stats, err := engine.GetTotalStats(ctx, StatsOptions{})
-		if err != nil {
-			t.Fatalf("GetTotalStats with stale Parquet schema: %v", err)
-		}
-		if stats.MessageCount != 2 {
-			t.Fatalf("expected 2 messages, got %d", stats.MessageCount)
-		}
+		requirepkg.NoError(t, err, "GetTotalStats with stale Parquet schema")
+		assertpkg.Equal(t, int64(2), stats.MessageCount)
 	})
 
 	// Verify that optionalCols correctly detected the missing columns.
@@ -3477,9 +3206,8 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 			{"messages", "message_type"},
 			{"conversations", "title"},
 		} {
-			if engine.hasCol(col.table, col.col) {
-				t.Errorf("expected %s.%s to be detected as missing", col.table, col.col)
-			}
+			assertpkg.False(t, engine.hasCol(col.table, col.col),
+				"expected %s.%s to be detected as missing", col.table, col.col)
 		}
 	})
 }

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Incremental performs an incremental sync using the Gmail History API.
@@ -20,7 +20,7 @@ import (
 // identifier (e.g. a Gmail and IMAP source for the same email address).
 func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary *gmail.SyncSummary, err error) {
 	if source == nil {
-		return nil, fmt.Errorf("no source provided - run full sync first")
+		return nil, errors.New("no source provided - run full sync first")
 	}
 
 	startTime := time.Now()
@@ -165,7 +165,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 						continue
 					}
 					threadID := newMsgThreads[newMsgIDs[i]]
-					insertedID, err := s.ingestMessage(ctx, source.ID, raw, threadID, labelMap)
+					insertedID, err := s.ingestMessage(source.ID, raw, threadID, labelMap)
 					if err != nil {
 						s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 						checkpoint.ErrorsCount++
@@ -178,8 +178,12 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 					summary.BytesDownloaded += int64(len(raw.Raw))
 				}
 
-				// Hook vector-search enqueue. Non-fatal on failure: missed
-				// IDs get picked up by full-rebuild.
+				// Hook vector-search enqueue. A failed enqueue is
+				// non-fatal on both backends: the message rows are
+				// already persisted, and any missed IDs are recovered by
+				// a full vector rebuild (`msgvault embed --full-rebuild`),
+				// which re-seeds every live message (pgvector and
+				// sqlitevec both provide this path).
 				if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
 					if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
 						s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
@@ -281,11 +285,16 @@ func (s *Syncer) handleLabelChange(ctx context.Context, sourceID int64, messageI
 			if err != nil {
 				return false, err
 			}
-			insertedID, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
+			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
 				return false, err
 			}
-			// Hook vector-search enqueue for the new message.
+			// Hook vector-search enqueue for the new message. A failed
+			// enqueue is non-fatal on both backends: the message row is
+			// already persisted, and any missed ID is recovered by a
+			// full vector rebuild (`msgvault embed --full-rebuild`),
+			// which re-seeds every live message (pgvector and sqlitevec
+			// both provide this path).
 			if s.embedEnqueuer != nil && insertedID > 0 {
 				if err := s.embedEnqueuer.EnqueueMessages(ctx, []int64{insertedID}); err != nil {
 					s.logger.Warn("vector enqueue failed", "ids", 1, "error", err)

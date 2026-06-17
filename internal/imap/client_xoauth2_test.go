@@ -3,9 +3,14 @@ package imap
 import (
 	"context"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestNewClient_WithTokenSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	cfg := &Config{
 		Host:       "outlook.office365.com",
 		Port:       993,
@@ -19,18 +24,10 @@ func TestNewClient_WithTokenSource(t *testing.T) {
 		return "test-token", nil
 	}
 	c := NewClient(cfg, "", WithTokenSource(ts))
-	if c.tokenSource == nil {
-		t.Fatal("tokenSource should be set")
-	}
+	require.NotNil(c.tokenSource, "tokenSource should be set")
 	// Verify the token source is callable
 	token, err := c.tokenSource(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token != "test-token" {
-		t.Errorf("token = %q, want %q", token, "test-token")
-	}
-	if !called {
-		t.Error("token source was not called")
-	}
+	require.NoError(err)
+	assert.Equal("test-token", token, "token")
+	assert.True(called, "token source was not called")
 }

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	_ "github.com/marcboeker/go-duckdb"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 const benchMessageCount = 100_000
@@ -21,11 +21,7 @@ const benchMessageCount = 100_000
 func buildBenchData(b *testing.B) *DuckDBEngine {
 	b.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "msgvault-bench-*")
-	if err != nil {
-		b.Fatalf("create temp dir: %v", err)
-	}
-	b.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := b.TempDir()
 
 	db, err := sql.Open("duckdb", "")
 	if err != nil {

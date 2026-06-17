@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.
@@ -120,7 +120,7 @@ func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 
 	if !s.opts.NoResume {
 		activeSync, err := s.store.GetActiveSync(sourceID)
-		if err != nil {
+		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check active sync: %w", err)
 		}
 		if activeSync != nil {
@@ -223,7 +223,7 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 			}
 
 			threadID := threadIDs[newIDs[i]]
-			insertedID, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
+			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
 				if errors.Is(err, errDuplicateRFC822) {
 					result.skipped++
@@ -242,7 +242,12 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 		}
 
 		// Hook vector-search enqueue after the batch-insert point.
-		// Non-fatal on failure: missed IDs get picked up by full-rebuild.
+		// A failed enqueue is non-fatal on both backends: the message
+		// rows are already persisted, and any IDs missed by a failed
+		// enqueue are recovered by a full vector rebuild
+		// (`msgvault embed --full-rebuild`), which re-seeds every live
+		// message (both pgvector and sqlitevec provide this path). So we
+		// warn and continue rather than abort the sync.
 		if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
 			if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
 				s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
@@ -647,14 +652,14 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		// Correct metadata if any attachments failed to store
 		var storedCount int
 		if err := s.store.DB().QueryRow(
-			`SELECT COUNT(*) FROM attachments WHERE message_id = ?`,
+			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
 			s.logger.Warn("failed to count stored attachments",
 				"message", messageID, "error", err)
 		} else if storedCount != len(data.attachments) {
 			if _, err := s.store.DB().Exec(
-				`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`,
+				s.store.Rebind(`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`),
 				storedCount > 0, storedCount, messageID,
 			); err != nil {
 				s.logger.Warn("failed to update attachment metadata",
@@ -689,7 +694,7 @@ var errDuplicateRFC822 = errors.New("duplicate RFC822 Message-ID")
 // ingestMessage parses and stores a single message, returning the
 // internal message ID on success. Returns (0, errDuplicateRFC822) for
 // IMAP deduplication skips.
-func (s *Syncer) ingestMessage(ctx context.Context, sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (int64, error) {
+func (s *Syncer) ingestMessage(sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (int64, error) {
 	data, err := s.parseToModel(sourceID, raw, threadID)
 	if err != nil {
 		return 0, err
@@ -835,15 +840,15 @@ func parseMsgIDList(s string) []string {
 		if open < 0 {
 			break
 		}
-		close := strings.IndexByte(s[open+1:], '>')
-		if close < 0 {
+		closeIdx := strings.IndexByte(s[open+1:], '>')
+		if closeIdx < 0 {
 			break
 		}
-		id := s[open+1 : open+1+close]
+		id := s[open+1 : open+1+closeIdx]
 		if id != "" {
 			result = append(result, id)
 		}
-		s = s[open+1+close+1:]
+		s = s[open+1+closeIdx+1:]
 	}
 	return result
 }

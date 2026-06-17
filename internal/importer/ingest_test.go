@@ -9,8 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
@@ -34,40 +36,30 @@ func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := normalizeMessageID(tt.input)
-			if !utf8.ValidString(result) {
-				t.Errorf(
-					"normalizeMessageID(%q) produced invalid UTF-8: %q",
-					tt.input, result,
-				)
-			}
+			assertpkg.True(t, utf8.ValidString(result),
+				"normalizeMessageID(%q) produced invalid UTF-8: %q",
+				tt.input, result)
 		})
 	}
 }
 
 func TestNormalizeMessageID_PreservesValidContent(t *testing.T) {
-	result := normalizeMessageID("<valid@example.com>")
-	if result != "valid@example.com" {
-		t.Errorf("got %q, want %q", result, "valid@example.com")
-	}
+	assertpkg.Equal(t, "valid@example.com", normalizeMessageID("<valid@example.com>"))
 }
 
 func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("test", "test@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 
 	// Build a message with a Message-ID containing invalid UTF-8.
 	// The From address has a display name with invalid bytes.
@@ -90,82 +82,61 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 		nil, "source-msg-1", "fakehash",
 		raw, time.Time{}, log,
 	)
-	if err != nil {
-		t.Fatalf("IngestRawMessage: %v", err)
-	}
+	require.NoError(err, "IngestRawMessage")
 
 	// Verify all participant fields are valid UTF-8
 	db := st.DB()
 	rows, err := db.Query(
 		"SELECT email_address, display_name, domain FROM participants",
 	)
-	if err != nil {
-		t.Fatalf("query participants: %v", err)
-	}
+	require.NoError(err, "query participants")
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var emailAddr string
 		var displayName sql.NullString
 		var domain string
-		if err := rows.Scan(
-			&emailAddr, &displayName, &domain,
-		); err != nil {
-			t.Fatalf("scan: %v", err)
+		require.NoError(rows.Scan(&emailAddr, &displayName, &domain))
+		assert.True(utf8.ValidString(emailAddr),
+			"invalid UTF-8 in email_address: %q", emailAddr)
+		if displayName.Valid {
+			assert.True(utf8.ValidString(displayName.String),
+				"invalid UTF-8 in display_name: %q", displayName.String)
 		}
-		if !utf8.ValidString(emailAddr) {
-			t.Errorf("invalid UTF-8 in email_address: %q", emailAddr)
-		}
-		if displayName.Valid && !utf8.ValidString(displayName.String) {
-			t.Errorf(
-				"invalid UTF-8 in display_name: %q",
-				displayName.String,
-			)
-		}
-		if !utf8.ValidString(domain) {
-			t.Errorf("invalid UTF-8 in domain: %q", domain)
-		}
+		assert.True(utf8.ValidString(domain),
+			"invalid UTF-8 in domain: %q", domain)
 	}
+	require.NoError(rows.Err(), "participants rows")
 
 	// Verify conversation source_conversation_id is valid UTF-8
 	rows2, err := db.Query(
 		"SELECT source_conversation_id FROM conversations",
 	)
-	if err != nil {
-		t.Fatalf("query conversations: %v", err)
-	}
+	require.NoError(err, "query conversations")
 	defer func() { _ = rows2.Close() }()
 
 	for rows2.Next() {
 		var srcID string
-		if err := rows2.Scan(&srcID); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		if !utf8.ValidString(srcID) {
-			t.Errorf(
-				"invalid UTF-8 in source_conversation_id: %q", srcID,
-			)
-		}
+		require.NoError(rows2.Scan(&srcID))
+		assert.True(utf8.ValidString(srcID),
+			"invalid UTF-8 in source_conversation_id: %q", srcID)
 	}
+	require.NoError(rows2.Err(), "conversations rows")
 }
 
 func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("test", "test@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 
 	// RFC 2047 Q-encoded display names that decode to invalid UTF-8.
 	// enmime decodes these successfully, producing names with raw
@@ -183,9 +154,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		nil, "source-msg-linkage", "fakehash",
 		raw, time.Time{}, slog.Default(),
 	)
-	if err != nil {
-		t.Fatalf("IngestRawMessage: %v", err)
-	}
+	require.NoError(err, "IngestRawMessage")
 
 	db := st.DB()
 
@@ -195,12 +164,8 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		`SELECT sender_id FROM messages
 		 WHERE source_message_id = ?`, "source-msg-linkage",
 	).Scan(&senderID)
-	if err != nil {
-		t.Fatalf("query sender_id: %v", err)
-	}
-	if !senderID.Valid {
-		t.Error("sender_id should be set, got NULL")
-	}
+	require.NoError(err, "query sender_id")
+	assert.True(senderID.Valid, "sender_id should be set")
 
 	// Verify message_recipients rows exist for from, to.
 	for _, rtype := range []string{"from", "to"} {
@@ -212,15 +177,8 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 			   AND mr.recipient_type = ?`,
 			"source-msg-linkage", rtype,
 		).Scan(&count)
-		if err != nil {
-			t.Fatalf("query recipients (%s): %v", rtype, err)
-		}
-		if count == 0 {
-			t.Errorf(
-				"expected at least 1 %s recipient, got 0",
-				rtype,
-			)
-		}
+		require.NoError(err, "query recipients (%s)", rtype)
+		assert.Positive(count, "expected at least 1 %s recipient", rtype)
 	}
 
 	// Verify display names are valid UTF-8 (sanitized).
@@ -228,17 +186,13 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		`SELECT display_name FROM participants
 		 WHERE display_name IS NOT NULL`,
 	)
-	if err != nil {
-		t.Fatalf("query display names: %v", err)
-	}
+	require.NoError(err, "query display names")
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		if !utf8.ValidString(name) {
-			t.Errorf("invalid UTF-8 in display_name: %q", name)
-		}
+		require.NoError(rows.Scan(&name))
+		assert.True(utf8.ValidString(name),
+			"invalid UTF-8 in display_name: %q", name)
 	}
+	require.NoError(rows.Err(), "display_name rows")
 }

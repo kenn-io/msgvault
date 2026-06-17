@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version information - set via ldflags at build time
+// Version information - set via ldflags at build time.
 var (
 	Version   = "dev"
 	Commit    = "unknown"

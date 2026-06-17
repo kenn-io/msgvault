@@ -20,10 +20,14 @@ const (
 // Generation describes an index generation — a complete corpus
 // embedding under one model+dimension.
 type Generation struct {
-	ID           GenerationID
-	Model        string
-	Dimension    int
-	Fingerprint  string // Model:Dimension
+	ID        GenerationID
+	Model     string
+	Dimension int
+	// Fingerprint is the opaque identifier supplied by the caller at
+	// CreateGeneration time (typically Config.GenerationFingerprint(),
+	// which folds the preprocessing policy into the model+dimension
+	// pair). Callers compare equality only — do not parse it.
+	Fingerprint  string
 	State        GenerationState
 	StartedAt    time.Time
 	CompletedAt  *time.Time
@@ -31,14 +35,25 @@ type Generation struct {
 	MessageCount int64
 }
 
-// Chunk is a pre-computed embedding to persist in the index. In MVP
-// there is one chunk per message; multi-chunk support (§13 future
-// work) would extend this with a chunk sequence id.
+// Chunk is a pre-computed embedding to persist in the index. A long
+// message produces multiple chunks distinguished by ChunkIndex (0-based,
+// dense, gap-free). Short messages produce exactly one chunk with
+// ChunkIndex=0, which is the legacy single-vector behavior.
+//
+// Backends key vectors by (GenerationID, MessageID, ChunkIndex). Search
+// returns at most one Hit per MessageID; if multiple chunks of the same
+// message match, the backend keeps the best-scoring chunk and discards
+// the rest. ChunkCharStart/ChunkCharEnd are 0-based offsets into the
+// preprocessed text and are stored for debugging only — search results
+// do not currently surface "which chunk matched".
 type Chunk struct {
-	MessageID     int64
-	Vector        []float32
-	SourceCharLen int
-	Truncated     bool
+	MessageID      int64
+	ChunkIndex     int
+	Vector         []float32
+	SourceCharLen  int
+	ChunkCharStart int
+	ChunkCharEnd   int
+	Truncated      bool
 }
 
 // Filter carries the structured filters pushed into both signal CTEs
@@ -57,10 +72,11 @@ type Chunk struct {
 //   - Sender/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
 //     slice is one search-token resolution (substring → matching IDs).
 //     SenderGroups is at the message level too — multiple `from`
-//     recipient rows on a single message can satisfy different tokens,
-//     and the message's sender_id is also considered for each group
-//     (legacy rows where sender_id is NULL fall back to a `from`
-//     recipient row).
+//     recipient rows on a single message can satisfy different tokens.
+//     Matching is solely against `from` recipient rows in
+//     message_recipients; messages.sender_id is intentionally NOT
+//     consulted, mirroring the canonical FTS filter in
+//     internal/store/api.go so the vector and SQLite paths agree.
 //   - SubjectSubstrings each add one `m.subject LIKE ? ESCAPE '\'`
 //     condition, ANDed together (all substrings must match).
 //   - After/Before are half-open against m.sent_at:
@@ -113,9 +129,36 @@ type Stats struct {
 
 // Backend is the minimum contract a vector store must implement.
 type Backend interface {
-	CreateGeneration(ctx context.Context, model string, dimension int) (GenerationID, error)
-	ActivateGeneration(ctx context.Context, gen GenerationID) error
-	RetireGeneration(ctx context.Context, gen GenerationID) error
+	// CreateGeneration starts (or resumes) a building generation.
+	// fingerprint is stored verbatim on the row; pass
+	// Config.GenerationFingerprint() so a later config change (model,
+	// dimension, or any preprocess toggle) trips
+	// ResolveActiveForFingerprint and forces a --full-rebuild instead
+	// of silently mixing inconsistently-prepared vectors.
+	CreateGeneration(ctx context.Context, model string, dimension int, fingerprint string) (GenerationID, error)
+
+	// ActivateGeneration atomically retires the current active generation
+	// (if any, deleting its embeddings on backends that share an index
+	// graph) and promotes gen to active. The promotion enforces, inside the
+	// same transaction as the state flip, that gen is in state='building'
+	// and — unless force is true — that gen has finished seeding
+	// (seeded_at IS NOT NULL) and has zero pending embedding rows. force
+	// bypasses the seeded/pending gate (operator `--force`); the gate stays
+	// atomic so a concurrent enqueue cannot slip a pending row in between a
+	// caller's pre-check and the flip. On a gate failure the backend returns
+	// a precise error distinguishing pending vs unseeded vs not-building.
+	ActivateGeneration(ctx context.Context, gen GenerationID, force bool) error
+
+	// RetireGeneration marks gen as retired, deleting its embeddings on
+	// backends that share an index graph (pgvector) and reaping its pending
+	// queue rows. Unless force is true, the state-flip UPDATE refuses to
+	// retire a generation in state='active', returning ErrRefuseRetireActive
+	// WITHOUT deleting anything; the guard is enforced atomically inside the
+	// retire transaction so a concurrent activation between a caller's
+	// pre-flight read and the flip cannot retire (and on pgvector delete the
+	// embeddings of) the now-serving generation. force bypasses the guard
+	// (operator `--force-active`) and retires unconditionally.
+	RetireGeneration(ctx context.Context, gen GenerationID, force bool) error
 
 	// ActiveGeneration returns the current active generation, or
 	// ErrNoActiveGeneration if none exists.
@@ -154,10 +197,13 @@ type Backend interface {
 //
 // FusedSearch returns the RRF-ordered hits, a saturation flag, and
 // any error. saturated is true when either the BM25 or the ANN
-// per-signal pool produced KPerSignal candidates — the pool hit its
-// cap, and the final result set has truncated potentially-relevant
-// hits. Callers surface this to clients as pool_saturated so the
-// user can raise KPerSignal or narrow the query.
+// per-signal pool produced MORE THAN KPerSignal candidates — each pool
+// is over-fetched by one probe row (cap KPerSignal+1) and that probe
+// slot filled, so the final result set may have truncated
+// potentially-relevant hits. (The over-fetch/probe is the implementation's
+// chosen way to detect the cap; both concrete backends use it.) Callers
+// surface this to clients as pool_saturated so the user can raise
+// KPerSignal or narrow the query.
 type FusingBackend interface {
 	Backend
 	FusedSearch(ctx context.Context, req FusedRequest) (hits []FusedHit, saturated bool, err error)
@@ -165,7 +211,14 @@ type FusingBackend interface {
 
 // FusedRequest is the parameter bundle for a single-query fused hybrid search.
 type FusedRequest struct {
-	FTSQuery     string    // pre-tokenized FTS5 MATCH expression; empty skips BM25
+	// FTSTerms are dialect-neutral, already-tokenized and
+	// punctuation-filtered search terms. An empty/nil slice skips the
+	// BM25 leg (vector-only). Each FusingBackend renders the terms via
+	// its own query dialect's BuildFTSTerm (SQLite FTS5 MATCH;
+	// PostgreSQL to_tsquery with :* prefix lexemes), so both backends
+	// prefix-match the SAME term set rather than diverging on a
+	// pre-built dialect-specific expression.
+	FTSTerms     []string
 	QueryVec     []float32 // query embedding; nil skips ANN
 	Generation   GenerationID
 	KPerSignal   int

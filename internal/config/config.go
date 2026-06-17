@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/wesm/msgvault/internal/fileutil"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // ChatConfig holds chat/LLM configuration.
@@ -62,6 +63,27 @@ type AccountSchedule struct {
 	Enabled  bool   `toml:"enabled"`  // Whether scheduled sync is active
 }
 
+type SynctechSMSConfig struct {
+	Sources []SynctechSMSSource `toml:"sources"`
+}
+
+type SynctechSMSSource struct {
+	Name               string `toml:"name"`
+	Enabled            bool   `toml:"enabled"`
+	Backend            string `toml:"backend"` // "local" or "drive"
+	Path               string `toml:"path"`
+	FolderID           string `toml:"folder_id"`
+	GoogleAccount      string `toml:"google_account"`
+	OwnerPhone         string `toml:"owner_phone"`
+	Schedule           string `toml:"schedule"`
+	IncludeSMS         bool   `toml:"include_sms"`
+	IncludeMMS         bool   `toml:"include_mms"`
+	IncludeCalls       bool   `toml:"include_calls"`
+	IncludeAttachments bool   `toml:"include_attachments"`
+	StableAfter        string `toml:"stable_after"`
+	OAuthApp           string `toml:"oauth_app"`
+}
+
 // RemoteConfig holds configuration for a remote msgvault server.
 // Used by export-token to remember the NAS/server destination.
 type RemoteConfig struct {
@@ -70,24 +92,24 @@ type RemoteConfig struct {
 	AllowInsecure bool   `toml:"allow_insecure"` // Allow HTTP (insecure) for trusted networks
 }
 
-// Config represents the msgvault configuration.
 // IdentityConfig holds the user's curated identity addresses.
 type IdentityConfig struct {
 	Addresses []string `toml:"addresses"`
 }
 
 type Config struct {
-	Data      DataConfig        `toml:"data"`
-	Log       LogConfig         `toml:"log"`
-	OAuth     OAuthConfig       `toml:"oauth"`
-	Microsoft MicrosoftConfig   `toml:"microsoft"`
-	Sync      SyncConfig        `toml:"sync"`
-	Chat      ChatConfig        `toml:"chat"`
-	Server    ServerConfig      `toml:"server"`
-	Remote    RemoteConfig      `toml:"remote"`
-	Vector    vector.Config     `toml:"vector"`
-	Identity  IdentityConfig    `toml:"identity"`
-	Accounts  []AccountSchedule `toml:"accounts"`
+	Data        DataConfig        `toml:"data"`
+	Log         LogConfig         `toml:"log"`
+	OAuth       OAuthConfig       `toml:"oauth"`
+	Microsoft   MicrosoftConfig   `toml:"microsoft"`
+	Sync        SyncConfig        `toml:"sync"`
+	Chat        ChatConfig        `toml:"chat"`
+	Server      ServerConfig      `toml:"server"`
+	Remote      RemoteConfig      `toml:"remote"`
+	Vector      vector.Config     `toml:"vector"`
+	Identity    IdentityConfig    `toml:"identity"`
+	Accounts    []AccountSchedule `toml:"accounts"`
+	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -152,7 +174,7 @@ type OAuthConfig struct {
 func (o *OAuthConfig) ClientSecretsFor(name string) (string, error) {
 	if name == "" {
 		if o.ClientSecrets == "" {
-			return "", fmt.Errorf("OAuth client secrets not configured.\n\n" +
+			return "", errors.New("OAuth client secrets not configured.\n\n" +
 				"Set [oauth] client_secrets in config.toml, or use --oauth-app <name>")
 		}
 		return o.ClientSecrets, nil
@@ -249,7 +271,8 @@ func NewDefaultConfig() *Config {
 			APIPort:  8080,
 			BindAddr: "127.0.0.1",
 		},
-		Accounts: []AccountSchedule{},
+		Accounts:    []AccountSchedule{},
+		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 	}
 	cfg.Vector.ApplyDefaults()
 	return cfg
@@ -342,8 +365,26 @@ func Load(path, homeDir string) (*Config, error) {
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	cfg.applySynctechSMSDefaults()
 
 	return cfg, nil
+}
+
+func (c *Config) applySynctechSMSDefaults() {
+	for i := range c.SynctechSMS.Sources {
+		src := &c.SynctechSMS.Sources[i]
+		if src.Backend == "" {
+			src.Backend = "local"
+		}
+		if !src.IncludeSMS && !src.IncludeMMS && !src.IncludeCalls {
+			src.IncludeSMS = true
+			src.IncludeMMS = true
+			src.IncludeCalls = true
+		}
+		if src.StableAfter == "" {
+			src.StableAfter = "10m"
+		}
+	}
 }
 
 // DatabaseDSN returns the database connection string or file path.
@@ -525,6 +566,26 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 	return nil
 }
 
+func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {
+	for _, src := range c.SynctechSMS.Sources {
+		if strings.EqualFold(src.Name, name) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+func (c *Config) ScheduledSynctechSMSSources() []SynctechSMSSource {
+	var out []SynctechSMSSource
+	for _, src := range c.SynctechSMS.Sources {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
 // MkTempDir creates a temporary directory with fallback logic for restricted
 // environments (e.g. Windows where %TEMP% may be inaccessible due to
 // permissions, antivirus, or group policy).
@@ -559,11 +620,11 @@ func MkTempDir(pattern string, preferredDirs ...string) (string, error) {
 	// Fallback: use ~/.msgvault/tmp/
 	fallbackBase := filepath.Join(DefaultHome(), "tmp")
 	if err := fileutil.SecureMkdirAll(fallbackBase, 0700); err != nil {
-		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %v)", sysErr, err)
+		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %w)", sysErr, err)
 	}
 	dir, err := os.MkdirTemp(fallbackBase, pattern)
 	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %v)", sysErr, err)
+		return "", fmt.Errorf("create temp dir: %w (fallback also failed: %w)", sysErr, err)
 	}
 	secureTempDir(dir)
 	return dir, nil

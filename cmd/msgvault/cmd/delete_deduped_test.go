@@ -1,11 +1,12 @@
 package cmd
 
 import (
-	"fmt"
-	"strings"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDeleteDeduped_NeitherFlag verifies that omitting both --batch and
@@ -18,7 +19,7 @@ func TestDeleteDeduped_NeitherFlag(t *testing.T) {
 		Use: "delete-deduped",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(batch) == 0 && !allHidden {
-				return fmt.Errorf("must specify --batch or --all-hidden")
+				return errors.New("must specify --batch or --all-hidden")
 			}
 			return nil
 		},
@@ -30,13 +31,10 @@ func TestDeleteDeduped_NeitherFlag(t *testing.T) {
 	cmd.SetArgs([]string{"delete-deduped"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when neither --batch nor --all-hidden is set, got nil")
-	}
+	require.Error(t, err, "expected error when neither --batch nor --all-hidden is set")
 	msg := err.Error()
-	if !strings.Contains(msg, "--batch") || !strings.Contains(msg, "--all-hidden") {
-		t.Errorf("error should mention both flag names; got: %q", msg)
-	}
+	assert.Contains(t, msg, "--batch", "error should mention --batch flag name")
+	assert.Contains(t, msg, "--all-hidden", "error should mention --all-hidden flag name")
 }
 
 // TestDeleteDeduped_MutualExclusion verifies that passing both --batch and
@@ -53,13 +51,10 @@ func TestDeleteDeduped_MutualExclusion(t *testing.T) {
 	cmd.SetArgs([]string{"delete-deduped", "--batch", "some-id", "--all-hidden"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when both --batch and --all-hidden are set, got nil")
-	}
+	require.Error(t, err, "expected error when both --batch and --all-hidden are set")
 	msg := err.Error()
-	if !strings.Contains(msg, "batch") || !strings.Contains(msg, "all-hidden") {
-		t.Errorf("error should mention both flag names; got: %q", msg)
-	}
+	assert.Contains(t, msg, "batch", "error should mention batch flag name")
+	assert.Contains(t, msg, "all-hidden", "error should mention all-hidden flag name")
 	_ = batch
 	_ = allHidden
 }

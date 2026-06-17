@@ -7,8 +7,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/testutil/ptr"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
 func TestSearch_Filters(t *testing.T) {
@@ -57,7 +59,7 @@ func TestSearch_Filters(t *testing.T) {
 		},
 		{
 			name:      "HasAttachment",
-			query:     &search.Query{HasAttachment: ptr.Bool(true)},
+			query:     &search.Query{HasAttachment: new(true)},
 			wantCount: 2,
 			validator: func(m MessageSummary) bool { return m.HasAttachments },
 			validDesc: "HasAttachments=true",
@@ -69,7 +71,7 @@ func TestSearch_Filters(t *testing.T) {
 		},
 		{
 			name:      "SizeFilter",
-			query:     &search.Query{LargerThan: ptr.Int64(largerThan)},
+			query:     &search.Query{LargerThan: new(largerThan)},
 			wantCount: 1,
 			validator: func(m MessageSummary) bool { return m.SizeEstimate > largerThan },
 			validDesc: "SizeEstimate>2500",
@@ -105,8 +107,8 @@ func TestSearch_CaseInsensitiveFallback(t *testing.T) {
 	q = &search.Query{TextTerms: []string{"WORLD"}}
 	results := assertSearchCount(t, env, q, 1)
 
-	if len(results) > 0 && results[0].Subject != "Hello World" {
-		t.Errorf("expected 'Hello World', got %q", results[0].Subject)
+	if len(results) > 0 {
+		assertpkg.Equal(t, "Hello World", results[0].Subject)
 	}
 }
 
@@ -128,9 +130,8 @@ func TestSearch_WithFTS(t *testing.T) {
 	q := &search.Query{TextTerms: []string{"World"}}
 	results := assertSearchCount(t, env, q, 1)
 
-	if results[0].Subject != "Hello World" {
-		t.Errorf("expected subject 'Hello World', got %s", results[0].Subject)
-	}
+	requirepkg.NotEmpty(t, results)
+	assertpkg.Equal(t, "Hello World", results[0].Subject)
 }
 
 // TestSearch_WithFTS_SpecialChars verifies that FTS5 special characters in
@@ -154,10 +155,7 @@ func TestSearch_WithFTS_SpecialChars(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			q := &search.Query{TextTerms: []string{tc.term}}
 			_, err := env.Engine.Search(env.Ctx, q, 100, 0)
-			if err != nil {
-				t.Errorf("FTS5 search for %q should not error: %v",
-					tc.term, err)
-			}
+			assertpkg.NoError(t, err, "FTS5 search for %q should not error", tc.term)
 		})
 	}
 }
@@ -165,9 +163,8 @@ func TestSearch_WithFTS_SpecialChars(t *testing.T) {
 func TestHasFTSTable(t *testing.T) {
 	env := newTestEnv(t)
 
-	if env.Engine.hasFTSTable(env.Ctx) {
-		t.Error("expected hasFTSTable to return false for test DB without FTS")
-	}
+	assertpkg.False(t, env.Engine.hasFTSTable(env.Ctx),
+		"expected hasFTSTable to return false for test DB without FTS")
 
 	_, err := env.DB.Exec(`
 		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, snippet);
@@ -178,9 +175,52 @@ func TestHasFTSTable(t *testing.T) {
 
 	engine2 := NewSQLiteEngine(env.DB)
 
-	if !engine2.hasFTSTable(env.Ctx) {
-		t.Error("expected hasFTSTable to return true after creating FTS table")
-	}
+	assertpkg.True(t, engine2.hasFTSTable(env.Ctx),
+		"expected hasFTSTable to return true after creating FTS table")
+}
+
+// ftsModuleMissingDialect simulates an fts5-less SQLite binary: the
+// messages_fts row exists in sqlite_master (HasFTSTableSQL still returns
+// >0, inherited from SQLiteQueryDialect), but the runtime liveness probe
+// fails as it would with `no such module: fts5`. We model the failure by
+// pointing the liveness SQL at a relation that does not exist, which the
+// SQLite driver rejects with an error (not sql.ErrNoRows).
+type ftsModuleMissingDialect struct {
+	SQLiteQueryDialect
+}
+
+func (ftsModuleMissingDialect) FTSLivenessSQL() string {
+	return `SELECT 1 FROM messages_fts_module_absent LIMIT 1`
+}
+
+// TestHasFTSTable_LivenessProbeFailureFallsBack pins pg-fts-sql-1: when the
+// messages_fts table is listed in sqlite_master but is not actually
+// queryable (fts5 module absent), hasFTSTable must return false so Search
+// falls back to LIKE instead of emitting a `no such module: fts5` error.
+//
+// Revert-proof: drop the dialect-aware liveness probe in hasFTSTable (trust
+// only HasFTSTableSQL's sqlite_master COUNT) and this test fails —
+// hasFTSTable returns true and Search would JOIN messages_fts and error.
+func TestHasFTSTable_LivenessProbeFailureFallsBack(t *testing.T) {
+	env := newTestEnv(t)
+	env.EnableFTS() // creates a real, queryable messages_fts table
+
+	// Sanity: with the real dialect the table is live and detected.
+	requirepkg.True(t, env.Engine.hasFTSTable(env.Ctx),
+		"baseline: real FTS table must be detected as available")
+
+	// Now build an engine whose liveness probe fails as if fts5 were absent.
+	// HasFTSTableSQL still reports the table present (it exists in
+	// sqlite_master), so only the liveness probe distinguishes the two cases.
+	brokenEngine := NewEngineWithDialect(env.DB, ftsModuleMissingDialect{})
+	assertpkg.False(t, brokenEngine.hasFTSTable(env.Ctx),
+		"FTS must be treated as unavailable when the liveness probe fails")
+
+	// And Search must still work via the LIKE fallback, not error out.
+	q := &search.Query{TextTerms: []string{"World"}}
+	results, err := brokenEngine.Search(env.Ctx, q, 100, 0)
+	assertpkg.NoError(t, err, "Search must fall back to LIKE, not surface a module error")
+	_ = results
 }
 
 func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
@@ -207,14 +247,11 @@ func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 	validCtx := context.Background()
 	secondResult := env.Engine.hasFTSTable(validCtx)
 
-	if !secondResult {
-		t.Error("hasFTSTable retry returned false, but FTS is available; error was incorrectly cached")
-	}
+	assertpkg.True(t, secondResult,
+		"hasFTSTable retry returned false, but FTS is available; error was incorrectly cached")
 
 	thirdResult := env.Engine.hasFTSTable(validCtx)
-	if !thirdResult {
-		t.Error("hasFTSTable cached result is false, expected true")
-	}
+	assertpkg.True(t, thirdResult, "hasFTSTable cached result is false, expected true")
 }
 
 func TestSearchWithDomainFilter(t *testing.T) {
@@ -222,12 +259,8 @@ func TestSearchWithDomainFilter(t *testing.T) {
 
 	q := &search.Query{FromAddrs: []string{"@example.com"}}
 	results, err := env.Engine.Search(env.Ctx, q, 1000, 0)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(results) < 3 {
-		t.Fatalf("expected at least 3 results, got %d", len(results))
-	}
+	requirepkg.NoError(t, err, "Search")
+	requirepkg.GreaterOrEqual(t, len(results), 3, "expected at least 3 results")
 	assertAllResults(t, results, "FromEmail ends with @example.com", func(m MessageSummary) bool {
 		return m.FromEmail == "" || strings.HasSuffix(m.FromEmail, "@example.com")
 	})
@@ -239,9 +272,7 @@ func TestSearchMixedExactAndDomainFilter(t *testing.T) {
 	q := &search.Query{FromAddrs: []string{"alice@example.com", "@other.com"}}
 	results := env.MustSearch(q, 100, 0)
 
-	if len(results) == 0 {
-		t.Fatal("Expected at least one result, got 0")
-	}
+	requirepkg.NotEmpty(t, results, "Expected at least one result")
 	assertAllResults(t, results, "FromEmail matches alice@example.com or @other.com", func(m MessageSummary) bool {
 		return m.FromEmail == "alice@example.com" || strings.HasSuffix(m.FromEmail, "@other.com")
 	})
@@ -282,22 +313,14 @@ func TestSearchFastCountMatchesSearch(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			results, err := env.Engine.Search(env.Ctx, tc.query, 1000, 0)
-			if err != nil {
-				t.Fatalf("Search: %v", err)
-			}
+			requirepkg.NoError(t, err, "Search")
 
 			count, err := env.Engine.SearchFastCount(env.Ctx, tc.query, MessageFilter{})
-			if err != nil {
-				t.Fatalf("SearchFastCount: %v", err)
-			}
+			requirepkg.NoError(t, err, "SearchFastCount")
 
-			if int64(len(results)) != count {
-				t.Errorf("SearchFastCount mismatch: got %d, want %d (Search returned %d results)",
-					count, len(results), len(results))
-			}
+			assertpkg.Equal(t, int64(len(results)), count, "SearchFastCount mismatch")
 		})
 	}
 }
@@ -358,7 +381,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			name:     "Attachments",
 			initial:  &search.Query{},
 			filter:   MessageFilter{WithAttachmentsOnly: true},
-			expected: &search.Query{HasAttachment: ptr.Bool(true)},
+			expected: &search.Query{HasAttachment: new(true)},
 		},
 		{
 			name:     "Domain",
@@ -385,7 +408,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 				FromAddrs:     []string{"alice@example.com", "bob@example.com", "@domain.com"},
 				ToAddrs:       []string{"carol@example.com"},
 				Labels:        []string{"starred"},
-				HasAttachment: ptr.Bool(true),
+				HasAttachment: new(true),
 				AccountIDs:    []int64{sourceID1},
 			},
 		},
@@ -394,9 +417,8 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			merged := MergeFilterIntoQuery(tc.initial, tc.filter)
-			if diff := cmp.Diff(tc.expected, merged, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("MergeFilterIntoQuery mismatch (-want +got):\n%s", diff)
-			}
+			diff := cmp.Diff(tc.expected, merged, cmpopts.EquateEmpty())
+			assertpkg.Empty(t, diff, "MergeFilterIntoQuery mismatch (-want +got):\n%s", diff)
 		})
 	}
 }
@@ -407,9 +429,8 @@ func TestMergeFilterIntoQuery_DoesNotMutateOriginal(t *testing.T) {
 
 	_ = MergeFilterIntoQuery(q, filter)
 
-	if len(q.FromAddrs) != 1 || q.FromAddrs[0] != "original@example.com" {
-		t.Errorf("Original query was mutated: FromAddrs=%v", q.FromAddrs)
-	}
+	requirepkg.Len(t, q.FromAddrs, 1, "Original query was mutated")
+	assertpkg.Equal(t, "original@example.com", q.FromAddrs[0], "Original query was mutated")
 }
 
 // TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope verifies that
@@ -422,12 +443,8 @@ func TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope(t *testing.T) {
 	filter := MessageFilter{SourceIDs: []int64{}} // non-nil, len=0
 
 	merged := MergeFilterIntoQuery(q, filter)
-	if merged.AccountIDs == nil {
-		t.Fatal("merged.AccountIDs is nil; want non-nil empty slice (match-nothing)")
-	}
-	if len(merged.AccountIDs) != 0 {
-		t.Errorf("merged.AccountIDs = %v; want empty (match-nothing)", merged.AccountIDs)
-	}
+	requirepkg.NotNil(t, merged.AccountIDs, "want non-nil empty slice (match-nothing)")
+	assertpkg.Empty(t, merged.AccountIDs, "want empty (match-nothing)")
 }
 
 // TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope verifies the
@@ -438,9 +455,7 @@ func TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope(t *testing.T) {
 	filter := MessageFilter{} // SourceIDs is nil
 
 	merged := MergeFilterIntoQuery(q, filter)
-	if len(merged.AccountIDs) != 3 {
-		t.Errorf("merged.AccountIDs = %v; want [1 2 3]", merged.AccountIDs)
-	}
+	assertpkg.Len(t, merged.AccountIDs, 3, "want [1 2 3]")
 }
 
 func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
@@ -452,19 +467,43 @@ func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
 
 	merged := MergeFilterIntoQuery(q, filter)
 
-	if len(merged.FromAddrs) != 2 {
-		t.Fatalf("Merged FromAddrs: got %d items, want 2", len(merged.FromAddrs))
-	}
+	requirepkg.Len(t, merged.FromAddrs, 2)
 
-	if len(q.FromAddrs) != 1 {
-		t.Errorf("Original query was mutated via slice aliasing: FromAddrs=%v", q.FromAddrs)
-	}
-	if q.FromAddrs[0] != "original@example.com" {
-		t.Errorf("Original FromAddrs[0] was changed: got %q, want original@example.com", q.FromAddrs[0])
+	requirepkg.Len(t, q.FromAddrs, 1, "Original query was mutated via slice aliasing")
+	assertpkg.Equal(t, "original@example.com", q.FromAddrs[0], "Original FromAddrs[0] was changed")
+}
+
+// TestSearchByDomains_HidesDeleted verifies SearchByDomains applies the
+// same live-message filter as Search/SearchFast: dedup losers (deleted_at)
+// are always hidden, and source-deleted rows (deleted_from_source_at) are
+// hidden too. Without the predicate this MCP-facing surface would surface
+// rows that every other read path suppresses.
+func TestSearchByDomains_HidesDeleted(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	all, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0)
+	require.NoError(err, "SearchByDomains baseline")
+	require.Len(all, 5, "baseline result count")
+
+	// Dedup-soft-delete one message — must always be hidden.
+	env.MarkDedupLoserByID(1)
+	// Source-delete another — also hidden by the full live-message predicate.
+	env.MarkDeletedByID(2)
+
+	results, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0)
+	require.NoError(err, "SearchByDomains after deletes")
+	assert.Len(results, 3, "after deletes")
+	for _, r := range results {
+		assert.NotEqual(int64(1), r.ID, "dedup-loser message 1 leaked into results")
+		assert.NotEqual(int64(2), r.ID, "source-deleted message 2 leaked into results")
 	}
 }
 
 func TestSearch_HideDeleted(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Mark message 1 as deleted
@@ -473,26 +512,19 @@ func TestSearch_HideDeleted(t *testing.T) {
 	// Search without HideDeleted: all messages returned
 	q := &search.Query{}
 	all := env.MustSearch(q, 100, 0)
-	if len(all) != 5 {
-		t.Errorf("Search without HideDeleted: expected 5, got %d", len(all))
-	}
+	assert.Len(all, 5, "Search without HideDeleted")
 
 	// Search with HideDeleted: deleted message excluded
 	q = &search.Query{HideDeleted: true}
 	filtered := env.MustSearch(q, 100, 0)
-	if len(filtered) != 4 {
-		t.Errorf("Search with HideDeleted: expected 4, got %d", len(filtered))
-	}
+	assert.Len(filtered, 4, "Search with HideDeleted")
 
 	// MergeFilterIntoQuery carries HideDeletedFromSource → HideDeleted
 	baseQ := &search.Query{}
 	filter := MessageFilter{HideDeletedFromSource: true}
 	merged := MergeFilterIntoQuery(baseQ, filter)
-	if !merged.HideDeleted {
-		t.Error("MergeFilterIntoQuery should set HideDeleted from HideDeletedFromSource")
-	}
+	assert.True(merged.HideDeleted,
+		"MergeFilterIntoQuery should set HideDeleted from HideDeletedFromSource")
 	results := env.MustSearch(merged, 100, 0)
-	if len(results) != 4 {
-		t.Errorf("Search via merged query: expected 4, got %d", len(results))
-	}
+	assert.Len(results, 4, "Search via merged query")
 }

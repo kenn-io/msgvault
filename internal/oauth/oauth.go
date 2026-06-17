@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,10 +17,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -117,9 +119,9 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
 	tokenFile := sanitizeEmail(email) + ".json"
 	tokenPath := filepath.Join(tokensDir, tokenFile)
 
-	addCmd := fmt.Sprintf("    msgvault add-account %s", email)
+	addCmd := "    msgvault add-account " + email
 	if oauthApp != "" {
-		addCmd += fmt.Sprintf(" --oauth-app %s", oauthApp)
+		addCmd += " --oauth-app " + oauthApp
 	}
 
 	fmt.Println()
@@ -157,7 +159,7 @@ func sanitizeEmail(email string) string {
 
 // shellQuote returns a shell-safe quoted string using single quotes.
 // Handles embedded single quotes by ending the quoted string, adding an
-// escaped single quote, and starting a new quoted string: ' -> '\”
+// escaped single quote, and starting a new quoted string: ' -> '\”.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
@@ -210,13 +212,13 @@ const (
 func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- string, errChan chan<- error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("state") != expectedState {
-			errChan <- fmt.Errorf("state mismatch: possible CSRF attack")
+			errChan <- errors.New("state mismatch: possible CSRF attack")
 			_, _ = fmt.Fprintf(w, "Error: state mismatch")
 			return
 		}
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			errChan <- fmt.Errorf("no code in callback")
+			errChan <- errors.New("no code in callback")
 			_, _ = fmt.Fprintf(w, "Error: no authorization code received")
 			return
 		}
@@ -250,7 +252,11 @@ func (m *Manager) browserFlow(
 
 	mux := http.NewServeMux()
 	mux.Handle(callbackPath, m.newCallbackHandler(state, codeChan, errChan))
-	server := &http.Server{Addr: "localhost:" + redirectPort, Handler: mux}
+	server := &http.Server{
+		Addr:              "localhost:" + redirectPort,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	go func() {
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
@@ -275,7 +281,7 @@ func (m *Manager) browserFlow(
 	if launchBrowser {
 		fmt.Printf("Opening browser for authorization...\n")
 		fmt.Printf("If browser doesn't open, visit:\n%s\n\n", authURL)
-		if err := openBrowser(authURL); err != nil {
+		if err := openBrowser(ctx, authURL); err != nil {
 			m.logger.Warn("failed to open browser", "error", err)
 		}
 	} else {
@@ -288,7 +294,11 @@ func (m *Manager) browserFlow(
 	// Wait for callback
 	select {
 	case code := <-codeChan:
-		return m.config.Exchange(ctx, code)
+		token, err := m.config.Exchange(ctx, code)
+		if err != nil {
+			return nil, fmt.Errorf("exchange authorization code: %w", err)
+		}
+		return token, nil
 	case err := <-errChan:
 		return nil, err
 	case <-ctx.Done():
@@ -367,6 +377,7 @@ func normalizeGmailAddress(email string) string {
 // re-authorization) without making an API call first.
 type tokenFile struct {
 	oauth2.Token
+
 	Scopes   []string `json:"scopes,omitempty"`
 	ClientID string   `json:"client_id,omitempty"`
 }
@@ -436,12 +447,7 @@ func (m *Manager) HasScope(email string, scope string) bool {
 	if err != nil {
 		return false
 	}
-	for _, s := range tf.Scopes {
-		if s == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tf.Scopes, scope)
 }
 
 // saveToken saves a token for the given email with the specified scopes.
@@ -579,25 +585,29 @@ func validateBrowserURL(rawURL string) error {
 // openBrowser opens the default browser to the given URL.
 // Only http and https URLs are allowed to prevent command injection
 // via dangerous URL schemes (e.g., file://, custom protocol handlers).
-func openBrowser(rawURL string) error {
+func openBrowser(ctx context.Context, rawURL string) error {
 	if err := validateBrowserURL(rawURL); err != nil {
 		return err
 	}
 
+	// rawURL is validated above; pass it directly to the OS opener.
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.CommandContext(ctx, "open", rawURL) //nolint:gosec // rawURL passed validateBrowserURL above
 	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.CommandContext(ctx, "xdg-open", rawURL) //nolint:gosec // rawURL passed validateBrowserURL above
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", rawURL) //nolint:gosec // rawURL passed validateBrowserURL above
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start browser command: %w", err)
+	}
+	return nil
 }
 
 // NewManagerWithScopes creates an OAuth manager with custom scopes.
@@ -642,10 +652,10 @@ func parseClientSecrets(data []byte, scopes []string) (*oauth2.Config, error) {
 			missingRedirects := (secrets.Installed != nil && len(secrets.Installed.RedirectURIs) == 0) ||
 				(secrets.Web != nil && len(secrets.Web.RedirectURIs) == 0)
 			if missingRedirects {
-				return nil, fmt.Errorf("OAuth client is missing redirect_uris (TV/device clients are not supported - Gmail doesn't work with device flow). Please create a 'Desktop application' or 'Web application' OAuth client in Google Cloud Console")
+				return nil, errors.New("OAuth client is missing redirect_uris (TV/device clients are not supported - Gmail doesn't work with device flow). Please create a 'Desktop application' or 'Web application' OAuth client in Google Cloud Console")
 			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("parse OAuth client secrets: %w", err)
 	}
 	return config, nil
 }
@@ -676,7 +686,7 @@ func fetchTokenProfileEmail(
 	defer cancel()
 
 	client := oauth2.NewClient(valCtx, ts)
-	req, err := http.NewRequestWithContext(valCtx, "GET", profileURL, nil)
+	req, err := http.NewRequestWithContext(valCtx, http.MethodGet, profileURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create profile request: %w", err)
 	}

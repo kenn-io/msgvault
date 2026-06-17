@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // isNotFoundError checks if an error indicates the message was already deleted.
@@ -335,7 +336,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		for ri, gmailID := range retryIDs {
 			select {
 			case <-ctx.Done():
-				remaining := append(failedIDs, retryIDs[ri:]...)
+				remaining := slices.Concat(failedIDs, retryIDs[ri:])
 				e.saveCheckpoint(manifest, path, startIndex, succeeded, len(remaining), remaining)
 				return ctx.Err()
 			default:
@@ -346,7 +347,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 			case resultSuccess:
 				succeeded++
 			case resultFatal:
-				remaining := append(failedIDs, retryIDs[ri:]...)
+				remaining := slices.Concat(failedIDs, retryIDs[ri:])
 				e.saveCheckpoint(manifest, path, startIndex, succeeded, len(remaining), remaining)
 				return fmt.Errorf("delete message: %w", delErr)
 			case resultFailed:
@@ -368,10 +369,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) error {
 		default:
 		}
 
-		end := i + batchSize
-		if end > len(manifest.GmailIDs) {
-			end = len(manifest.GmailIDs)
-		}
+		end := min(i+batchSize, len(manifest.GmailIDs))
 
 		batch := manifest.GmailIDs[i:end]
 

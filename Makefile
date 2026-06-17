@@ -6,9 +6,9 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-LDFLAGS := -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
-           -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
-           -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=$(VERSION) \
+           -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(COMMIT) \
+           -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(BUILD_DATE)
 
 LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 
@@ -17,7 +17,23 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 
-.PHONY: build build-release install clean test test-v fmt lint lint-ci tidy shootout run-shootout install-hooks bench help
+# Build tags for the PostgreSQL test lane (test-pg). Must be the full build set:
+# pgvector gates the vector-on-PG code paths (//go:build pgvector), and sqlite_vec
+# is required too because several tests are gated on BOTH tags
+# (//go:build sqlite_vec && pgvector) — the pgvector<->sqlitevec parity test
+# (internal/vector/pgvector/parity_test.go) and the PG command-wiring tests
+# (cmd/msgvault/cmd/{serve_vector_pg,embed_pg,search_vector_pg,embed_vector_pg}_test.go).
+# Omitting sqlite_vec compiles those out and the target gives false confidence.
+PG_TEST_TAGS := fts5 sqlite_vec pgvector
+
+# Keep golangci-lint results scoped to this git worktree. Its cache can contain
+# absolute source paths, so sharing the default user cache across worktrees can
+# replay diagnostics for deleted worktree paths.
+DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --git-path golangci-lint-cache)
+GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
+export GOLANGCI_LINT_CACHE
+
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench help
 
 # Build the binary (debug)
 build:
@@ -59,15 +75,16 @@ test-v:
 	go test -tags "$(BUILD_TAGS)" -v ./...
 
 # Run tests against PostgreSQL (set MSGVAULT_TEST_DB first).
-# This is scaffolded for the future functional backend; see docs/PG_STATUS.md.
 # Example: MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/db make test-pg
+#
+# CI runs the same target under .github/workflows/ci.yml's test-postgres job.
+# See docs/PG_STATUS.md for the supported feature surface.
 test-pg:
 	@if [ -z "$$MSGVAULT_TEST_DB" ]; then \
 		echo "MSGVAULT_TEST_DB must be set, e.g., postgres://user:pass@localhost:5432/db" >&2; \
 		exit 1; \
 	fi
-	@echo "PostgreSQL backend is scaffold-only; this target is expected to fail until docs/PG_STATUS.md blockers are resolved." >&2
-	go test -tags fts5 ./...
+	go test -tags "$(PG_TEST_TAGS)" ./...
 
 # Format code
 fmt:
@@ -82,12 +99,16 @@ lint:
 	golangci-lint run --fix ./...
 
 # Run linter (CI, no auto-fix)
-lint-ci:
+lint-ci: testify-helper-check
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
 	golangci-lint run ./...
+
+# Enforce testify helper usage in assertion-heavy tests
+testify-helper-check:
+	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
 # Install pre-commit hook via prek
 install-hooks:
@@ -132,7 +153,8 @@ help:
 	@echo "  test-v         - Run tests (verbose)"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
-	@echo "  lint-ci        - Run linter (CI, no auto-fix)"
+	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
+	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"

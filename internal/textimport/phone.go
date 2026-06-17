@@ -1,6 +1,7 @@
 package textimport
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -12,7 +13,7 @@ import (
 func NormalizePhone(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", fmt.Errorf("empty input")
+		return "", errors.New("empty input")
 	}
 	// Reject email addresses
 	if strings.Contains(raw, "@") {
@@ -42,17 +43,18 @@ func NormalizePhone(raw string) (string, error) {
 	}
 
 	var digits string
-	if leadingPlus {
+	switch {
+	case leadingPlus:
 		digits = "+" + justDigits
-	} else if strings.HasPrefix(justDigits, "00") {
+	case strings.HasPrefix(justDigits, "00"):
 		// International 00-prefix → replace with +
 		digits = "+" + justDigits[2:]
-	} else if len(justDigits) == 10 {
+	case len(justDigits) == 10:
 		// Assume US country code
 		digits = "+1" + justDigits
-	} else if len(justDigits) == 11 && justDigits[0] == '1' {
-		digits = "+" + justDigits
-	} else {
+	default:
+		// Everything else (incl. 11-digit US "1NNN..." and fully-qualified
+		// international without "+") is treated as already country-coded.
 		digits = "+" + justDigits
 	}
 
@@ -67,4 +69,24 @@ func NormalizePhone(raw string) (string, error) {
 	}
 
 	return digits, nil
+}
+
+type AddressKind string
+
+const (
+	AddressPhone AddressKind = "phone"
+	AddressRaw   AddressKind = "raw"
+)
+
+type AddressNormalization struct {
+	Kind  AddressKind
+	Value string
+}
+
+func NormalizeAddress(raw string) AddressNormalization {
+	phone, err := NormalizePhone(raw)
+	if err == nil && phone != "" {
+		return AddressNormalization{Kind: AddressPhone, Value: phone}
+	}
+	return AddressNormalization{Kind: AddressRaw, Value: strings.TrimSpace(raw)}
 }

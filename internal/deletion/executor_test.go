@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
-// trackingProgress records progress events for testing
+// trackingProgress records progress events for testing.
 type trackingProgress struct {
 	mu             sync.Mutex
 	startTotal     int
@@ -64,9 +65,7 @@ func NewTestContext(t *testing.T) *TestContext {
 	t.Helper()
 	tmpDir := t.TempDir()
 	mgr, err := NewManager(tmpDir)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 
 	st := testutil.NewTestStore(t)
 	mockAPI := gmail.NewDeletionMockAPI()
@@ -89,9 +88,7 @@ func NewTestContext(t *testing.T) *TestContext {
 func (c *TestContext) CreateManifest(name string, ids []string) *Manifest {
 	c.t.Helper()
 	manifest, err := c.Mgr.CreateManifest(name, ids, Filters{})
-	if err != nil {
-		c.t.Fatalf("CreateManifest(%q) error = %v", name, err)
-	}
+	requirepkg.NoError(c.t, err, "CreateManifest(%q)", name)
 	return manifest
 }
 
@@ -113,90 +110,62 @@ func (c *TestContext) ExecuteBatch(manifestID string) error {
 // AssertResult verifies the final success and failure counts.
 func (c *TestContext) AssertResult(wantSucc, wantFail int) {
 	c.t.Helper()
-	if c.Progress.finalSucc != wantSucc {
-		c.t.Errorf("finalSucc = %d, want %d", c.Progress.finalSucc, wantSucc)
-	}
-	if c.Progress.finalFail != wantFail {
-		c.t.Errorf("finalFail = %d, want %d", c.Progress.finalFail, wantFail)
-	}
+	assertpkg.Equal(c.t, wantSucc, c.Progress.finalSucc, "finalSucc")
+	assertpkg.Equal(c.t, wantFail, c.Progress.finalFail, "finalFail")
 }
 
 // AssertCompleted verifies that OnComplete was called.
 func (c *TestContext) AssertCompleted() {
 	c.t.Helper()
-	if !c.Progress.completed {
-		c.t.Error("OnComplete was not called")
-	}
+	assertpkg.True(c.t, c.Progress.completed, "OnComplete was not called")
 }
 
 // AssertNotCompleted verifies that OnComplete was not called.
 func (c *TestContext) AssertNotCompleted() {
 	c.t.Helper()
-	if c.Progress.completed {
-		c.t.Error("OnComplete was called unexpectedly")
-	}
+	assertpkg.False(c.t, c.Progress.completed, "OnComplete was called unexpectedly")
 }
 
 // AssertTrashCalls verifies the number of TrashMessage calls.
 func (c *TestContext) AssertTrashCalls(want int) {
 	c.t.Helper()
-	if len(c.MockAPI.TrashCalls) != want {
-		c.t.Errorf("TrashCalls = %d, want %d", len(c.MockAPI.TrashCalls), want)
-	}
+	assertpkg.Len(c.t, c.MockAPI.TrashCalls, want, "TrashCalls")
 }
 
 // AssertDeleteCalls verifies the number of DeleteMessage calls.
 func (c *TestContext) AssertDeleteCalls(want int) {
 	c.t.Helper()
-	if len(c.MockAPI.DeleteCalls) != want {
-		c.t.Errorf("DeleteCalls = %d, want %d", len(c.MockAPI.DeleteCalls), want)
-	}
+	assertpkg.Len(c.t, c.MockAPI.DeleteCalls, want, "DeleteCalls")
 }
 
 // AssertCompletedCount verifies the number of completed manifests.
 func (c *TestContext) AssertCompletedCount(want int) {
 	c.t.Helper()
 	completed, err := c.Mgr.ListCompleted()
-	if err != nil {
-		c.t.Fatalf("ListCompleted() error = %v", err)
-	}
-	if len(completed) != want {
-		c.t.Errorf("ListCompleted() = %d, want %d", len(completed), want)
-	}
+	requirepkg.NoError(c.t, err, "ListCompleted()")
+	assertpkg.Len(c.t, completed, want, "ListCompleted()")
 }
 
 // AssertFailedCount verifies the number of failed manifests.
 func (c *TestContext) AssertFailedCount(want int) {
 	c.t.Helper()
 	failed, err := c.Mgr.ListFailed()
-	if err != nil {
-		c.t.Fatalf("ListFailed() error = %v", err)
-	}
-	if len(failed) != want {
-		c.t.Errorf("ListFailed() = %d, want %d", len(failed), want)
-	}
+	requirepkg.NoError(c.t, err, "ListFailed()")
+	assertpkg.Len(c.t, failed, want, "ListFailed()")
 }
 
 // AssertManifestExecution verifies the persisted execution state of a manifest.
 func (c *TestContext) AssertManifestExecution(id string, wantSucc, wantFail int, wantFailedIDs ...string) {
 	c.t.Helper()
 	m, _, err := c.Mgr.GetManifest(id)
-	if err != nil {
-		c.t.Fatalf("GetManifest(%q) failed: %v", id, err)
-	}
-	if m.Execution.Succeeded != wantSucc {
-		c.t.Errorf("Persisted Succeeded = %d, want %d", m.Execution.Succeeded, wantSucc)
-	}
-	if m.Execution.Failed != wantFail {
-		c.t.Errorf("Persisted Failed = %d, want %d", m.Execution.Failed, wantFail)
-	}
+	requirepkg.NoError(c.t, err, "GetManifest(%q)", id)
+	assertpkg.Equal(c.t, wantSucc, m.Execution.Succeeded, "Persisted Succeeded")
+	assertpkg.Equal(c.t, wantFail, m.Execution.Failed, "Persisted Failed")
 	if len(m.Execution.FailedIDs) != len(wantFailedIDs) {
-		c.t.Errorf("FailedIDs count = %d, want %d", len(m.Execution.FailedIDs), len(wantFailedIDs))
+		assertpkg.Len(c.t, m.Execution.FailedIDs, len(wantFailedIDs), "FailedIDs count")
 	} else {
 		for i, id := range wantFailedIDs {
-			if m.Execution.FailedIDs[i] != id {
-				c.t.Errorf("FailedIDs[%d] = %q, want %q", i, m.Execution.FailedIDs[i], id)
-			}
+			assertpkg.Equal(c.t, id, m.Execution.FailedIDs[i], "FailedIDs[%d]", i)
 		}
 	}
 }
@@ -224,27 +193,24 @@ func (c *TestContext) SimulateBatchDeleteError() {
 // AssertBatchDeleteCalls verifies the number of BatchDeleteMessages calls.
 func (c *TestContext) AssertBatchDeleteCalls(want int) {
 	c.t.Helper()
-	if len(c.MockAPI.BatchDeleteCalls) != want {
-		c.t.Errorf("BatchDeleteCalls = %d, want %d", len(c.MockAPI.BatchDeleteCalls), want)
-	}
+	assertpkg.Len(c.t, c.MockAPI.BatchDeleteCalls, want, "BatchDeleteCalls")
 }
 
 // GetBatchDeleteCall safely retrieves a batch delete call by index.
 func (c *TestContext) GetBatchDeleteCall(index int) []string {
 	c.t.Helper()
-	if index >= len(c.MockAPI.BatchDeleteCalls) {
-		c.t.Fatalf("BatchDeleteCalls index %d out of range (len=%d)", index, len(c.MockAPI.BatchDeleteCalls))
-		return nil
-	}
+	requirepkg.Less(c.t, index, len(c.MockAPI.BatchDeleteCalls), "BatchDeleteCalls index %d out of range (len=%d)", index, len(c.MockAPI.BatchDeleteCalls))
 	return c.MockAPI.BatchDeleteCalls[index]
 }
 
 // AssertIsScopeError verifies that the error is an insufficient scope error.
 func (c *TestContext) AssertIsScopeError(err error) {
 	c.t.Helper()
-	if err == nil || !strings.Contains(err.Error(), "ACCESS_TOKEN_SCOPE_INSUFFICIENT") {
-		c.t.Errorf("error = %v, want scope insufficient error", err)
+	if err == nil {
+		assertpkg.Fail(c.t, "expected scope insufficient error", "got nil")
+		return
 	}
+	assertpkg.Contains(c.t, err.Error(), "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "want scope insufficient error")
 }
 
 // msgIDs generates sequential message IDs like "msg0", "msg1", ..., "msg(n-1)".
@@ -276,41 +242,31 @@ func trashOpts(batchSize int) *ExecuteOptions {
 
 // SimulateScopeError injects an insufficient scope error for a specific message ID.
 func (c *TestContext) SimulateScopeError(msgID string) {
-	scopeErr := fmt.Errorf("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+	scopeErr := errors.New("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
 	c.MockAPI.TrashErrors[msgID] = scopeErr
 	c.MockAPI.DeleteErrors[msgID] = scopeErr
 }
 
 // SimulateBatchScopeError sets the batch delete operation to fail with a scope error.
 func (c *TestContext) SimulateBatchScopeError() {
-	c.MockAPI.BatchDeleteError = fmt.Errorf("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+	c.MockAPI.BatchDeleteError = errors.New("googleapi: Error 403: Insufficient Permission: ACCESS_TOKEN_SCOPE_INSUFFICIENT")
 }
 
 // AssertInProgressCount verifies the number of in-progress manifests.
 func (c *TestContext) AssertInProgressCount(want int) {
 	c.t.Helper()
 	inProgress, err := c.Mgr.ListInProgress()
-	if err != nil {
-		c.t.Fatalf("ListInProgress() error = %v", err)
-	}
-	if len(inProgress) != want {
-		c.t.Errorf("ListInProgress() = %d, want %d", len(inProgress), want)
-	}
+	requirepkg.NoError(c.t, err, "ListInProgress()")
+	assertpkg.Len(c.t, inProgress, want, "ListInProgress()")
 }
 
 // AssertManifestLastProcessedIndex verifies the persisted LastProcessedIndex.
 func (c *TestContext) AssertManifestLastProcessedIndex(id string, want int) {
 	c.t.Helper()
 	m, _, err := c.Mgr.GetManifest(id)
-	if err != nil {
-		c.t.Fatalf("GetManifest(%q) failed: %v", id, err)
-	}
-	if m.Execution == nil {
-		c.t.Fatalf("manifest %q has nil Execution", id)
-	}
-	if m.Execution.LastProcessedIndex != want {
-		c.t.Errorf("LastProcessedIndex = %d, want %d", m.Execution.LastProcessedIndex, want)
-	}
+	requirepkg.NoError(c.t, err, "GetManifest(%q)", id)
+	requirepkg.NotNil(c.t, m.Execution, "manifest %q has nil Execution", id)
+	assertpkg.Equal(c.t, want, m.Execution.LastProcessedIndex, "LastProcessedIndex")
 }
 
 func TestNullProgress(t *testing.T) {
@@ -324,63 +280,45 @@ func TestNullProgress(t *testing.T) {
 func TestDefaultExecuteOptions(t *testing.T) {
 	opts := DefaultExecuteOptions()
 
-	if opts.Method != MethodTrash {
-		t.Errorf("Method = %q, want %q", opts.Method, MethodTrash)
-	}
-	if opts.BatchSize != 100 {
-		t.Errorf("BatchSize = %d, want 100", opts.BatchSize)
-	}
-	if !opts.Resume {
-		t.Error("Resume = false, want true")
-	}
+	assertpkg.Equal(t, MethodTrash, opts.Method)
+	assertpkg.Equal(t, 100, opts.BatchSize)
+	assertpkg.True(t, opts.Resume, "Resume should be true")
 }
 
 func TestNewExecutor(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr, err := NewManager(tmpDir)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 
 	store := testutil.NewTestStore(t)
 	mockAPI := gmail.NewDeletionMockAPI()
 
 	exec := NewExecutor(mgr, store, mockAPI)
-	if exec == nil {
-		t.Fatal("NewExecutor returned nil")
-	}
+	assertpkg.NotNil(t, exec, "NewExecutor returned nil")
 }
 
 func TestExecutor_WithLogger(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr, err := NewManager(tmpDir)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 	store := testutil.NewTestStore(t)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	exec := NewExecutor(mgr, store, gmail.NewDeletionMockAPI()).WithLogger(logger)
 
-	if exec.logger != logger {
-		t.Error("WithLogger did not set logger")
-	}
+	assertpkg.Same(t, logger, exec.logger, "WithLogger did not set logger")
 }
 
 func TestExecutor_WithProgress(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr, err := NewManager(tmpDir)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 	store := testutil.NewTestStore(t)
 
 	progress := &trackingProgress{}
 	exec := NewExecutor(mgr, store, gmail.NewDeletionMockAPI()).WithProgress(progress)
 
-	if exec.progress != progress {
-		t.Error("WithProgress did not set progress")
-	}
+	assertpkg.Same(t, progress, exec.progress, "WithProgress did not set progress")
 }
 
 func TestExecutor_Execute_Scenarios(t *testing.T) {
@@ -400,6 +338,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			ids:      msgIDs(3),
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertTrashCalls(3)
 				ctx.AssertCompleted()
 				ctx.AssertCompletedCount(1)
@@ -411,6 +350,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			opts:     deleteOpts(100),
 			wantSucc: 2, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertDeleteCalls(2)
 				ctx.AssertTrashCalls(0)
 			},
@@ -421,6 +361,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateTrashError("msg1") },
 			wantSucc: 2, wantFail: 1,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertCompletedCount(1)
 				ctx.AssertManifestExecution(m.ID, 2, 1, "msg1")
 			},
@@ -434,6 +375,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			},
 			wantSucc: 0, wantFail: 2,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertFailedCount(1)
 			},
 		},
@@ -443,6 +385,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			opts:     trashOpts(2),
 			wantSucc: 5, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertTrashCalls(5)
 			},
 		},
@@ -452,6 +395,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateNotFound("msg1") },
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertCompletedCount(1)
 				ctx.AssertManifestExecution(m.ID, 3, 0)
 			},
@@ -479,6 +423,7 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 1)
@@ -503,16 +448,12 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			}
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
+				requirepkg.Error(t, err, "expected error")
 				if tt.scopeError {
 					ctx.AssertIsScopeError(err)
 				}
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				requirepkg.NoError(t, err, "unexpected error")
 				ctx.AssertResult(tt.wantSucc, tt.wantFail)
 			}
 
@@ -533,9 +474,7 @@ func TestExecutor_Execute_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := ctx.Exec.Execute(execCtx, manifest.ID, nil)
-	if err != context.Canceled {
-		t.Errorf("Execute() error = %v, want context.Canceled", err)
-	}
+	requirepkg.ErrorIs(t, err, context.Canceled, "Execute() error")
 
 	ctx.AssertNotCompleted()
 
@@ -547,9 +486,7 @@ func TestExecutor_Execute_ManifestNotFound(t *testing.T) {
 	ctx := NewTestContext(t)
 
 	err := ctx.Execute("nonexistent-id")
-	if err == nil {
-		t.Error("Execute() should error for nonexistent manifest")
-	}
+	assertpkg.Error(t, err, "Execute() should error for nonexistent manifest")
 }
 
 func TestExecutor_Execute_InvalidStatus(t *testing.T) {
@@ -557,15 +494,11 @@ func TestExecutor_Execute_InvalidStatus(t *testing.T) {
 	manifest := ctx.CreateManifest("completed test", msgIDs(1))
 
 	// Execute to completion
-	if err := ctx.Execute(manifest.ID); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
+	requirepkg.NoError(t, ctx.Execute(manifest.ID), "Execute()")
 
 	// Try to execute again
 	err := ctx.Execute(manifest.ID)
-	if err == nil {
-		t.Error("Execute() should error for completed manifest")
-	}
+	assertpkg.Error(t, err, "Execute() should error for completed manifest")
 }
 
 func TestExecutor_Execute_ResumeFromInProgress(t *testing.T) {
@@ -582,13 +515,9 @@ func TestExecutor_Execute_ResumeFromInProgress(t *testing.T) {
 		Failed:             0,
 		LastProcessedIndex: 2, // Already processed msg1 and msg2
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest()")
 
-	if err := tc.ExecuteWithOpts(manifest.ID, trashOpts(100)); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.ExecuteWithOpts(manifest.ID, trashOpts(100)), "Execute()")
 
 	// Should only process msg3, msg4, msg5 (skipping msg1, msg2)
 	tc.AssertTrashCalls(3)
@@ -613,10 +542,9 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			ids:      msgIDs(3),
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
-				if len(ctx.GetBatchDeleteCall(0)) != 3 {
-					t.Errorf("BatchDeleteCalls[0] length = %d, want 3", len(ctx.GetBatchDeleteCall(0)))
-				}
+				assertpkg.Len(t, ctx.GetBatchDeleteCall(0), 3, "BatchDeleteCalls[0] length")
 				ctx.AssertCompleted()
 				ctx.AssertCompletedCount(1)
 			},
@@ -626,13 +554,10 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			ids:      msgIDs(1500),
 			wantSucc: 1500, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(2)
-				if len(ctx.GetBatchDeleteCall(0)) != 1000 {
-					t.Errorf("BatchDeleteCalls[0] length = %d, want 1000", len(ctx.GetBatchDeleteCall(0)))
-				}
-				if len(ctx.GetBatchDeleteCall(1)) != 500 {
-					t.Errorf("BatchDeleteCalls[1] length = %d, want 500", len(ctx.GetBatchDeleteCall(1)))
-				}
+				assertpkg.Len(t, ctx.GetBatchDeleteCall(0), 1000, "BatchDeleteCalls[0] length")
+				assertpkg.Len(t, ctx.GetBatchDeleteCall(1), 500, "BatchDeleteCalls[1] length")
 			},
 		},
 		{
@@ -641,6 +566,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			setup:    func(c *TestContext) { c.SimulateBatchDeleteError() },
 			wantSucc: 3, wantFail: 0,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
 				ctx.AssertDeleteCalls(3)
 			},
@@ -667,6 +593,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			},
 			wantSucc: 3, wantFail: 1,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertBatchDeleteCalls(1)
 				ctx.AssertDeleteCalls(4)
 			},
@@ -681,6 +608,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			},
 			wantSucc: 0, wantFail: 2,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				// Batch mode always marks as Completed even when all fail
 				ctx.AssertCompletedCount(1)
 				ctx.AssertFailedCount(0)
@@ -693,6 +621,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 0)
@@ -708,6 +637,7 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			wantErr:    true,
 			scopeError: true,
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
 				ctx.AssertNotCompleted()
 				ctx.AssertInProgressCount(1)
 				ctx.AssertManifestLastProcessedIndex(m.ID, 2)
@@ -727,16 +657,12 @@ func TestExecutor_ExecuteBatch_Scenarios(t *testing.T) {
 			err := ctx.ExecuteBatch(manifest.ID)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
+				requirepkg.Error(t, err, "expected error")
 				if tt.scopeError {
 					ctx.AssertIsScopeError(err)
 				}
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				requirepkg.NoError(t, err, "unexpected error")
 				ctx.AssertResult(tt.wantSucc, tt.wantFail)
 			}
 
@@ -752,14 +678,10 @@ func TestExecutor_ExecuteBatch_InvalidStatus(t *testing.T) {
 	manifest := ctx.CreateManifest("wrong status", msgIDs(1))
 
 	// Move to in_progress
-	if err := ctx.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress); err != nil {
-		t.Fatalf("MoveManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, ctx.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest()")
 
 	err := ctx.ExecuteBatch(manifest.ID)
-	if err == nil {
-		t.Error("ExecuteBatch() should error for non-pending manifest")
-	}
+	assertpkg.Error(t, err, "ExecuteBatch() should error for non-pending manifest")
 }
 
 func TestExecutor_ExecuteBatch_ContextCancelled(t *testing.T) {
@@ -772,9 +694,7 @@ func TestExecutor_ExecuteBatch_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := ctx.Exec.ExecuteBatch(execCtx, manifest.ID)
-	if err != context.Canceled {
-		t.Errorf("ExecuteBatch() error = %v, want context.Canceled", err)
-	}
+	requirepkg.ErrorIs(t, err, context.Canceled, "ExecuteBatch() error")
 
 	ctx.AssertNotCompleted()
 }
@@ -783,9 +703,7 @@ func TestExecutor_ExecuteBatch_ManifestNotFound(t *testing.T) {
 	ctx := NewTestContext(t)
 
 	err := ctx.ExecuteBatch("nonexistent-id")
-	if err == nil {
-		t.Error("ExecuteBatch() should error for nonexistent manifest")
-	}
+	assertpkg.Error(t, err, "ExecuteBatch() should error for nonexistent manifest")
 }
 
 // TestExecutor_ExecuteBatch_RetriesFailedIDs verifies that resuming a batch
@@ -805,13 +723,9 @@ func TestExecutor_ExecuteBatch_RetriesFailedIDs(t *testing.T) {
 		FailedIDs:          []string{"msg2", "msg3", "msg4"},
 		LastProcessedIndex: 5, // All processed, but 3 failed
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest()")
 
-	if err := tc.ExecuteBatch(manifest.ID); err != nil {
-		t.Fatalf("ExecuteBatch() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch()")
 
 	// The 3 previously failed IDs should be retried via individual delete
 	tc.AssertDeleteCalls(3)
@@ -837,13 +751,9 @@ func TestExecutor_ExecuteBatch_RetryPartialSuccess(t *testing.T) {
 		FailedIDs:          []string{"msg2", "msg3", "msg4"},
 		LastProcessedIndex: 5,
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest()")
 
-	if err := tc.ExecuteBatch(manifest.ID); err != nil {
-		t.Fatalf("ExecuteBatch() error = %v", err)
-	}
+	requirepkg.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch()")
 
 	// msg2, msg4 succeed on retry; msg3 still fails
 	tc.AssertResult(4, 1)
@@ -854,6 +764,8 @@ func TestExecutor_ExecuteBatch_RetryPartialSuccess(t *testing.T) {
 // a scope error during retry only preserves unattempted+failed IDs, not
 // already-succeeded ones.
 func TestExecutor_ExecuteBatch_RetryScopeErrorAfterPartialSuccess(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tc := NewTestContext(t)
 	// msg3 hits scope error; msg2 succeeds before it, msg4 is unattempted
 	tc.SimulateScopeError("msg3")
@@ -869,34 +781,20 @@ func TestExecutor_ExecuteBatch_RetryScopeErrorAfterPartialSuccess(t *testing.T) 
 		FailedIDs:          []string{"msg2", "msg3", "msg4"},
 		LastProcessedIndex: 5,
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest() error = %v", err)
-	}
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest()")
 
 	err := tc.ExecuteBatch(manifest.ID)
-	if err == nil {
-		t.Fatal("ExecuteBatch() should return error for scope error during retry")
-	}
+	require.Error(err, "ExecuteBatch() should return error for scope error during retry")
 	tc.AssertIsScopeError(err)
 
 	// msg2 succeeded before the scope error on msg3
 	// Checkpoint should have: FailedIDs = [msg3, msg4] (current + unattempted)
 	m, _, err := tc.Mgr.GetManifest(manifest.ID)
-	if err != nil {
-		t.Fatalf("GetManifest() error = %v", err)
-	}
-	if m.Execution.Succeeded != 3 { // original 2 + msg2 retry
-		t.Errorf("Succeeded = %d, want 3", m.Execution.Succeeded)
-	}
-	if m.Execution.Failed != 2 { // msg3 + msg4
-		t.Errorf("Failed = %d, want 2", m.Execution.Failed)
-	}
-	if len(m.Execution.FailedIDs) != 2 {
-		t.Fatalf("FailedIDs count = %d, want 2", len(m.Execution.FailedIDs))
-	}
-	if m.Execution.FailedIDs[0] != "msg3" || m.Execution.FailedIDs[1] != "msg4" {
-		t.Errorf("FailedIDs = %v, want [msg3, msg4]", m.Execution.FailedIDs)
-	}
+	require.NoError(err, "GetManifest()")
+	assert.Equal(3, m.Execution.Succeeded, "Succeeded (original 2 + msg2 retry)")
+	assert.Equal(2, m.Execution.Failed, "Failed (msg3 + msg4)")
+	require.Len(m.Execution.FailedIDs, 2)
+	assert.True(m.Execution.FailedIDs[0] == "msg3" && m.Execution.FailedIDs[1] == "msg4", "FailedIDs = %v, want [msg3, msg4]", m.Execution.FailedIDs)
 }
 
 // SeedMessages creates messages in the DB with source_message_id matching the
@@ -904,23 +802,18 @@ func TestExecutor_ExecuteBatch_RetryScopeErrorAfterPartialSuccess(t *testing.T) 
 func (c *TestContext) SeedMessages(gmailIDs []string) {
 	c.t.Helper()
 	source, err := c.Store.GetOrCreateSource("gmail", "test@example.com")
-	if err != nil {
-		c.t.Fatalf("GetOrCreateSource: %v", err)
-	}
+	requirepkg.NoError(c.t, err, "GetOrCreateSource")
 	convID, err := c.Store.EnsureConversation(source.ID, "thread-1", "Thread")
-	if err != nil {
-		c.t.Fatalf("EnsureConversation: %v", err)
-	}
+	requirepkg.NoError(c.t, err, "EnsureConversation")
 	for _, id := range gmailIDs {
-		if _, err := c.Store.UpsertMessage(&store.Message{
+		_, err := c.Store.UpsertMessage(&store.Message{
 			ConversationID:  convID,
 			SourceID:        source.ID,
 			SourceMessageID: id,
 			MessageType:     "email",
 			SizeEstimate:    100,
-		}); err != nil {
-			c.t.Fatalf("UpsertMessage(%s): %v", id, err)
-		}
+		})
+		requirepkg.NoError(c.t, err, "UpsertMessage(%s)", id)
 	}
 }
 
@@ -931,9 +824,7 @@ func (c *TestContext) CountDeleted() int {
 	err := c.Store.DB().QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`,
 	).Scan(&count)
-	if err != nil {
-		c.t.Fatalf("CountDeleted: %v", err)
-	}
+	requirepkg.NoError(c.t, err, "CountDeleted")
 	return count
 }
 
@@ -946,18 +837,15 @@ func TestExecutor_ExecuteBatch_MarksDBRows(t *testing.T) {
 	tc.SeedMessages(ids)
 	manifest := tc.CreateManifest("db-mark-test", ids)
 
-	if err := tc.ExecuteBatch(manifest.ID); err != nil {
-		t.Fatalf("ExecuteBatch: %v", err)
-	}
+	requirepkg.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
 
-	if got := tc.CountDeleted(); got != 5 {
-		t.Errorf("deleted count = %d, want 5", got)
-	}
+	assertpkg.Equal(t, 5, tc.CountDeleted(), "deleted count")
 }
 
 // TestExecutor_ExecuteBatch_CancelDuringRetry verifies that cancellation
 // during the retry-failed-IDs loop checkpoints unattempted retry IDs.
 func TestExecutor_ExecuteBatch_CancelDuringRetry(t *testing.T) {
+	require := requirepkg.New(t)
 	tc := NewTestContext(t)
 
 	ids := msgIDs(5)
@@ -971,9 +859,7 @@ func TestExecutor_ExecuteBatch_CancelDuringRetry(t *testing.T) {
 		FailedIDs:          ids,
 		LastProcessedIndex: 5,
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest: %v", err)
-	}
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest")
 
 	execCtx, cancel := context.WithCancel(context.Background())
 	callCount := 0
@@ -986,20 +872,14 @@ func TestExecutor_ExecuteBatch_CancelDuringRetry(t *testing.T) {
 	}
 
 	err := tc.Exec.ExecuteBatch(execCtx, manifest.ID)
-	if err != context.Canceled {
-		t.Fatalf("ExecuteBatch error = %v, want context.Canceled", err)
-	}
+	require.ErrorIs(err, context.Canceled, "ExecuteBatch error")
 
 	// Load checkpoint
 	m, _, err := tc.Mgr.GetManifest(manifest.ID)
-	if err != nil {
-		t.Fatalf("GetManifest: %v", err)
-	}
+	require.NoError(err, "GetManifest")
 
 	// The unattempted retry IDs should be preserved in the checkpoint
-	if len(m.Execution.FailedIDs) < 3 {
-		t.Errorf("FailedIDs = %d, want >= 3 (unattempted retry IDs preserved)", len(m.Execution.FailedIDs))
-	}
+	assertpkg.GreaterOrEqual(t, len(m.Execution.FailedIDs), 3, "FailedIDs (unattempted retry IDs preserved)")
 }
 
 // TestExecutor_ExecuteBatch_CancelDuringFallback verifies that cancellation
@@ -1024,23 +904,19 @@ func TestExecutor_ExecuteBatch_CancelDuringFallback(t *testing.T) {
 	}
 
 	err := tc.Exec.ExecuteBatch(execCtx, manifest.ID)
-	if err != context.Canceled {
-		t.Fatalf("ExecuteBatch error = %v, want context.Canceled", err)
-	}
+	requirepkg.ErrorIs(t, err, context.Canceled, "ExecuteBatch error")
 
 	// Should have processed some messages before cancellation
 	m, _, err := tc.Mgr.GetManifest(manifest.ID)
-	if err != nil {
-		t.Fatalf("GetManifest: %v", err)
-	}
-	if m.Execution.Succeeded < 2 {
-		t.Errorf("Succeeded = %d, want >= 2 (processed before cancel)", m.Execution.Succeeded)
-	}
+	requirepkg.NoError(t, err, "GetManifest")
+	assertpkg.GreaterOrEqual(t, m.Execution.Succeeded, 2, "Succeeded (processed before cancel)")
 }
 
 // TestExecutor_OnStartAlreadyProcessed verifies that OnStart receives the
 // correct alreadyProcessed value when resuming.
 func TestExecutor_OnStartAlreadyProcessed(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tc := NewTestContext(t)
 
 	ids := msgIDs(10)
@@ -1053,20 +929,12 @@ func TestExecutor_OnStartAlreadyProcessed(t *testing.T) {
 		Failed:             0,
 		LastProcessedIndex: 5,
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest: %v", err)
-	}
+	require.NoError(tc.Mgr.SaveManifest(manifest), "SaveManifest")
 
-	if err := tc.ExecuteBatch(manifest.ID); err != nil {
-		t.Fatalf("ExecuteBatch: %v", err)
-	}
+	require.NoError(tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
 
-	if tc.Progress.startProcessed != 5 {
-		t.Errorf("OnStart alreadyProcessed = %d, want 5", tc.Progress.startProcessed)
-	}
-	if tc.Progress.startTotal != 10 {
-		t.Errorf("OnStart total = %d, want 10", tc.Progress.startTotal)
-	}
+	assert.Equal(5, tc.Progress.startProcessed, "OnStart alreadyProcessed")
+	assert.Equal(10, tc.Progress.startTotal, "OnStart total")
 }
 
 // TestExecutor_OnStartRetryDoesNotShow100Percent verifies that when resuming
@@ -1086,18 +954,12 @@ func TestExecutor_OnStartRetryDoesNotShow100Percent(t *testing.T) {
 		FailedIDs:          []string{"msg7", "msg8", "msg9"},
 		LastProcessedIndex: 10, // all processed, but 3 failed
 	}
-	if err := tc.Mgr.SaveManifest(manifest); err != nil {
-		t.Fatalf("SaveManifest: %v", err)
-	}
+	requirepkg.NoError(t, tc.Mgr.SaveManifest(manifest), "SaveManifest")
 
-	if err := tc.ExecuteBatch(manifest.ID); err != nil {
-		t.Fatalf("ExecuteBatch: %v", err)
-	}
+	requirepkg.NoError(t, tc.ExecuteBatch(manifest.ID), "ExecuteBatch")
 
 	// Should show 7 (succeeded), not 10 (startIndex == total)
-	if tc.Progress.startProcessed != 7 {
-		t.Errorf("OnStart alreadyProcessed = %d, want 7 (succeeded, not startIndex)", tc.Progress.startProcessed)
-	}
+	assertpkg.Equal(t, 7, tc.Progress.startProcessed, "OnStart alreadyProcessed (succeeded, not startIndex)")
 }
 
 // TestNullProgress_AllMethods exercises all NullProgress methods for coverage.

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	imap "github.com/emersion/go-imap/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestClassifyLabelType(t *testing.T) {
@@ -94,12 +95,7 @@ func TestClassifyLabelType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyLabelType(tt.mailbox, tt.attrs)
-			if got != tt.want {
-				t.Errorf(
-					"classifyLabelType(%q, %v) = %q, want %q",
-					tt.mailbox, tt.attrs, got, tt.want,
-				)
-			}
+			assert.Equal(t, tt.want, got, "classifyLabelType(%q, %v)", tt.mailbox, tt.attrs)
 		})
 	}
 }

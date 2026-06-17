@@ -198,6 +198,7 @@ func verifyForeignKeys(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("foreign key check: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 
 	var violations []string
 	for rows.Next() {
@@ -211,11 +212,7 @@ func verifyForeignKeys(db *sql.DB) error {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return fmt.Errorf("iterate foreign key check: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close foreign key check rows: %w", err)
 	}
 
 	if len(violations) > 0 {

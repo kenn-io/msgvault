@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/query"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // =============================================================================
@@ -23,12 +25,10 @@ func TestStaleAsyncResponsesIgnored(t *testing.T) {
 		requestID: 3, // Old request ID
 	}
 
-	m, _ := sendMsg(t, model, staleMsg)
+	m := sendMsg(t, model, staleMsg)
 
 	// Stale response should be ignored - messages should be unchanged (empty)
-	if len(m.messages) != 0 {
-		t.Errorf("stale response should be ignored, got %d messages", len(m.messages))
-	}
+	assert.Empty(t, m.messages, "stale response should be ignored")
 
 	// Now send a valid response with current request ID
 	validMsg := messagesLoadedMsg{
@@ -36,15 +36,11 @@ func TestStaleAsyncResponsesIgnored(t *testing.T) {
 		requestID: 5, // Current request ID
 	}
 
-	m, _ = sendMsg(t, m, validMsg)
+	m = sendMsg(t, m, validMsg)
 
 	// Valid response should be processed
-	if len(m.messages) != 1 {
-		t.Errorf("valid response should be processed, got %d messages", len(m.messages))
-	}
-	if m.messages[0].Subject != "Valid" {
-		t.Errorf("expected subject 'Valid', got %s", m.messages[0].Subject)
-	}
+	require.Len(t, m.messages, 1, "valid response should be processed")
+	assert.Equal(t, "Valid", m.messages[0].Subject)
 }
 
 func TestStaleDetailResponsesIgnored(t *testing.T) {
@@ -61,12 +57,10 @@ func TestStaleDetailResponsesIgnored(t *testing.T) {
 		requestID: 8, // Old request ID
 	}
 
-	m, _ := sendMsg(t, model, staleMsg)
+	m := sendMsg(t, model, staleMsg)
 
 	// Stale response should be ignored
-	if m.messageDetail != nil {
-		t.Error("stale detail response should be ignored")
-	}
+	assert.Nil(t, m.messageDetail, "stale detail response should be ignored")
 
 	// Now send a valid response with current request ID
 	validMsg := messageDetailLoadedMsg{
@@ -74,15 +68,11 @@ func TestStaleDetailResponsesIgnored(t *testing.T) {
 		requestID: 10, // Current request ID
 	}
 
-	m, _ = sendMsg(t, m, validMsg)
+	m = sendMsg(t, m, validMsg)
 
 	// Valid response should be processed
-	if m.messageDetail == nil {
-		t.Error("valid detail response should be processed")
-	}
-	if m.messageDetail.Subject != "Valid Detail" {
-		t.Errorf("expected subject 'Valid Detail', got %s", m.messageDetail.Subject)
-	}
+	require.NotNil(t, m.messageDetail, "valid detail response should be processed")
+	assert.Equal(t, "Valid Detail", m.messageDetail.Subject)
 }
 
 // =============================================================================
@@ -95,15 +85,9 @@ func TestWindowSizeClampNegative(t *testing.T) {
 	// Simulate negative window size (can happen during terminal resize)
 	m := resizeModel(t, model, -1, -1)
 
-	if m.width < 0 {
-		t.Errorf("expected width >= 0, got %d", m.width)
-	}
-	if m.height < 0 {
-		t.Errorf("expected height >= 0, got %d", m.height)
-	}
-	if m.pageSize < 1 {
-		t.Errorf("expected pageSize >= 1, got %d", m.pageSize)
-	}
+	assert.GreaterOrEqual(t, m.width, 0)
+	assert.GreaterOrEqual(t, m.height, 0)
+	assert.GreaterOrEqual(t, m.pageSize, 1)
 }
 
 func TestDefaultLoadingWithNoData(t *testing.T) {
@@ -111,9 +95,7 @@ func TestDefaultLoadingWithNoData(t *testing.T) {
 	// The builder should preserve New()'s default loading=true.
 	model := NewBuilder().WithPageSize(10).WithSize(100, 20).Build()
 
-	if !model.loading {
-		t.Errorf("expected loading=true (New default) when no data provided, got false")
-	}
+	assert.True(t, model.loading, "expected loading=true (New default) when no data provided")
 }
 
 func TestPageSizeRawZeroAndNegative(t *testing.T) {
@@ -135,9 +117,7 @@ func TestPageSizeRawZeroAndNegative(t *testing.T) {
 				WithSize(100, 20).
 				Build()
 
-			if model.pageSize != tc.pageSize {
-				t.Errorf("expected pageSize=%d, got %d", tc.pageSize, model.pageSize)
-			}
+			assert.Equal(t, tc.pageSize, model.pageSize)
 
 			// Rendering should not panic even with unusual page sizes.
 			_ = model.View()
@@ -155,9 +135,7 @@ func TestWithPageSizeClearsRawFlag(t *testing.T) {
 		WithSize(100, 20).
 		Build()
 
-	if model.pageSize != 10 {
-		t.Errorf("expected pageSize=10 after WithPageSize cleared raw flag, got %d", model.pageSize)
-	}
+	assert.Equal(t, 10, model.pageSize, "expected pageSize after WithPageSize cleared raw flag")
 }
 
 // =============================================================================
@@ -193,12 +171,8 @@ func TestNavigateList(t *testing.T) {
 			m.cursor = tt.initCursor
 
 			handled := m.navigateList(tt.key, tt.itemCount)
-			if handled != tt.wantHandled {
-				t.Errorf("navigateList(%q, %d) handled = %v, want %v", tt.key, tt.itemCount, handled, tt.wantHandled)
-			}
-			if m.cursor != tt.wantCursor {
-				t.Errorf("navigateList(%q, %d) cursor = %d, want %d", tt.key, tt.itemCount, m.cursor, tt.wantCursor)
-			}
+			assert.Equal(t, tt.wantHandled, handled, "navigateList(%q, %d) handled", tt.key, tt.itemCount)
+			assert.Equal(t, tt.wantCursor, m.cursor, "navigateList(%q, %d) cursor", tt.key, tt.itemCount)
 		})
 	}
 }
@@ -271,15 +245,9 @@ func TestNavigateListPageDown(t *testing.T) {
 			m.scrollOffset = tt.initScrollOffset
 
 			handled := m.navigateList("pgdown", tt.itemCount)
-			if !handled {
-				t.Fatal("expected pgdown to be handled")
-			}
-			if m.cursor != tt.wantCursor {
-				t.Errorf("cursor = %d, want %d", m.cursor, tt.wantCursor)
-			}
-			if m.scrollOffset != tt.wantScrollOffset {
-				t.Errorf("scrollOffset = %d, want %d", m.scrollOffset, tt.wantScrollOffset)
-			}
+			require.True(t, handled, "expected pgdown to be handled")
+			assert.Equal(t, tt.wantCursor, m.cursor)
+			assert.Equal(t, tt.wantScrollOffset, m.scrollOffset)
 		})
 	}
 }
@@ -339,15 +307,9 @@ func TestNavigateListPageUp(t *testing.T) {
 			m.scrollOffset = tt.initScrollOffset
 
 			handled := m.navigateList("pgup", tt.itemCount)
-			if !handled {
-				t.Fatal("expected pgup to be handled")
-			}
-			if m.cursor != tt.wantCursor {
-				t.Errorf("cursor = %d, want %d", m.cursor, tt.wantCursor)
-			}
-			if m.scrollOffset != tt.wantScrollOffset {
-				t.Errorf("scrollOffset = %d, want %d", m.scrollOffset, tt.wantScrollOffset)
-			}
+			require.True(t, handled, "expected pgup to be handled")
+			assert.Equal(t, tt.wantCursor, m.cursor)
+			assert.Equal(t, tt.wantScrollOffset, m.scrollOffset)
 		})
 	}
 }
@@ -426,12 +388,8 @@ func TestThreadViewPageDown(t *testing.T) {
 
 			m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 
-			if m.threadCursor != tt.wantCursor {
-				t.Errorf("threadCursor = %d, want %d", m.threadCursor, tt.wantCursor)
-			}
-			if m.threadScrollOffset != tt.wantScrollOffset {
-				t.Errorf("threadScrollOffset = %d, want %d", m.threadScrollOffset, tt.wantScrollOffset)
-			}
+			assert.Equal(t, tt.wantCursor, m.threadCursor)
+			assert.Equal(t, tt.wantScrollOffset, m.threadScrollOffset)
 		})
 	}
 }
@@ -506,12 +464,8 @@ func TestThreadViewPageUp(t *testing.T) {
 
 			m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyPgUp})
 
-			if m.threadCursor != tt.wantCursor {
-				t.Errorf("threadCursor = %d, want %d", m.threadCursor, tt.wantCursor)
-			}
-			if m.threadScrollOffset != tt.wantScrollOffset {
-				t.Errorf("threadScrollOffset = %d, want %d", m.threadScrollOffset, tt.wantScrollOffset)
-			}
+			assert.Equal(t, tt.wantCursor, m.threadCursor)
+			assert.Equal(t, tt.wantScrollOffset, m.threadScrollOffset)
 		})
 	}
 }
@@ -532,9 +486,7 @@ func TestVisibleRows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := NewBuilder().WithPageSizeRaw(tt.pageSize).Build()
-			if got := m.visibleRows(); got != tt.want {
-				t.Errorf("visibleRows() = %d, want %d", got, tt.want)
-			}
+			assert.Equal(t, tt.want, m.visibleRows())
 		})
 	}
 }

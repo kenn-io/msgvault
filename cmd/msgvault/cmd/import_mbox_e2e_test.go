@@ -3,21 +3,23 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/importer"
-	"github.com/wesm/msgvault/internal/importer/mboxzip"
-	"github.com/wesm/msgvault/internal/mbox"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/importer/mboxzip"
+	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -83,9 +85,7 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mbox.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -98,14 +98,10 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		"--no-resume",
 		"--checkpoint-interval", "1",
 	})
-	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("import-mbox: %v", err)
-	}
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
 	var (
@@ -113,35 +109,18 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		messageCount    int
 		attachmentCount int
 	)
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount); err != nil {
-		t.Fatalf("count sources: %v", err)
-	}
-	if sourceCount != 1 {
-		t.Fatalf("sourceCount = %d, want 1", sourceCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount = %d, want 2", messageCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if attachmentCount != 1 {
-		t.Fatalf("attachmentCount = %d, want 1", attachmentCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
+	require.Equal(1, sourceCount, "sourceCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(2, messageCount, "messageCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
+	require.Equal(1, attachmentCount, "attachmentCount")
 
 	var storagePath string
-	if err := st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath); err != nil {
-		t.Fatalf("select storage_path: %v", err)
-	}
-	if storagePath == "" {
-		t.Fatalf("storage_path empty")
-	}
-	if _, err := os.Stat(filepath.Join(tmp, "attachments", filepath.FromSlash(storagePath))); err != nil {
-		t.Fatalf("attachment file missing: %v", err)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
+	require.NotEmpty(storagePath, "storage_path empty")
+	_, err = os.Stat(filepath.Join(tmp, "attachments", filepath.FromSlash(storagePath)))
+	require.NoError(err, "attachment file missing")
 }
 
 func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
@@ -177,9 +156,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	})
 
 	// Force attachment storage errors by making the attachments path a file.
-	if err := os.WriteFile(filepath.Join(tmp, "attachments"), []byte("not a dir"), 0600); err != nil {
-		t.Fatalf("write attachments sentinel: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(tmp, "attachments"), []byte("not a dir"), 0600), "write attachments sentinel")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -199,9 +176,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mbox.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -216,10 +191,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 
 	// Attachment storage failures are best-effort: the import
 	// succeeds even though the attachment file can't be written.
-	err := rootCmd.ExecuteContext(context.Background())
-	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
-	}
+	requirepkg.NoError(t, rootCmd.ExecuteContext(context.Background()), "expected success")
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
@@ -275,9 +247,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mbox.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -299,15 +269,12 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	importMboxCmd.SetContext(ctx)
 
 	err := rootCmd.ExecuteContext(ctx)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
+	requirepkg.Error(t, err, "expected error")
+	requirepkg.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
 }
 
 func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -394,81 +361,56 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	})
 
 	mboxFirstOnlyPath := filepath.Join(tmp, "first-only.mbox")
-	if err := os.WriteFile(mboxFirstOnlyPath, []byte("From alice@example.com Mon Jan 1 12:00:00 2024\n"+string(raw1)), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxFirstOnlyPath, []byte("From alice@example.com Mon Jan 1 12:00:00 2024\n"+string(raw1)), 0600), "write mbox")
 	if !strings.HasSuffix(string(raw1), "\n") {
-		if err := os.WriteFile(mboxFirstOnlyPath, append([]byte("From alice@example.com Mon Jan 1 12:00:00 2024\n"), append(raw1, '\n')...), 0600); err != nil {
-			t.Fatalf("write mbox (newline): %v", err)
-		}
+		require.NoError(os.WriteFile(mboxFirstOnlyPath, append([]byte("From alice@example.com Mon Jan 1 12:00:00 2024\n"), append(raw1, '\n')...), 0600), "write mbox (newline)")
 	}
 
 	// Pre-import the first message.
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
-	if _, err := importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
+	require.NoError(err, "open store")
+	require.NoError(st.InitSchema(), "init schema")
+	_, err = importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
 		SourceType:         "hey",
 		Identifier:         "me@hey.com",
 		NoResume:           true,
 		CheckpointInterval: 1,
-	}); err != nil {
-		t.Fatalf("pre-import: %v", err)
-	}
+	})
+	require.NoError(err, "pre-import")
 
 	// Extract the zip so we can compute a checkpoint offset within the first extracted file.
 	extracted, err := mboxzip.ResolveMboxExport(zipPath, tmp, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport: %v", err)
-	}
-	if len(extracted) != 2 {
-		t.Fatalf("len(extracted) = %d, want 2", len(extracted))
-	}
+	require.NoError(err, "resolveMboxExport")
+	require.Len(extracted, 2, "len(extracted)")
 
 	f, err := os.Open(extracted[0])
-	if err != nil {
-		t.Fatalf("open extracted: %v", err)
-	}
+	require.NoError(err, "open extracted")
 	r := mbox.NewReader(f)
 	if _, err := r.Next(); err != nil {
 		_ = f.Close()
-		t.Fatalf("read first message: %v", err)
+		require.NoError(err, "read first message")
 	}
 	offset := r.NextFromOffset()
 	_ = f.Close()
 
 	src, err := st.GetOrCreateSource("hey", "me@hey.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-mbox")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
+	require.NoError(err, "start sync")
 	cpFile := extracted[0]
 	linkPath := filepath.Join(tmp, "checkpoint-link.mbox")
 	if err := os.Symlink(extracted[0], linkPath); err == nil {
 		cpFile = linkPath
 	}
 	b, err := json.Marshal(mboxCheckpoint{File: cpFile, Offset: offset, Seq: 1})
-	if err != nil {
-		t.Fatalf("marshal checkpoint: %v", err)
-	}
+	require.NoError(err, "marshal checkpoint")
 	cp := &store.Checkpoint{
 		PageToken:         string(b),
 		MessagesProcessed: 1,
 		MessagesAdded:     1,
 	}
-	if err := st.UpdateSyncCheckpoint(syncID, cp); err != nil {
-		t.Fatalf("update checkpoint: %v", err)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
-	}
+	require.NoError(st.UpdateSyncCheckpoint(syncID, cp), "update checkpoint")
+	require.NoError(st.Close(), "close store")
 
 	// Resume import from the zip export and ensure it continues into subsequent files.
 	rootCmd.SetOut(io.Discard)
@@ -481,31 +423,20 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 		"--checkpoint-interval", "1",
 		"--no-attachments",
 	})
-	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("import-mbox resume: %v", err)
-	}
+	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox resume")
 
 	st2, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st2.Close() })
 
 	var messageCount int
-	if err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 3 {
-		t.Fatalf("messageCount = %d, want 3", messageCount)
-	}
+	require.NoError(st2.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(3, messageCount, "messageCount")
 
 	for _, subj := range []string{"One", "Two", "Three"} {
 		var c int
-		if err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c); err != nil {
-			t.Fatalf("count subject %q: %v", subj, err)
-		}
-		if c != 1 {
-			t.Fatalf("subject %q count = %d, want 1", subj, c)
-		}
+		err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
+		require.NoError(err, "count subject %q", subj)
+		assertpkg.Equal(t, 1, c, "subject %q count", subj)
 	}
 }

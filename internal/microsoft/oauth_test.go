@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -21,12 +24,12 @@ func TestTokenPath(t *testing.T) {
 	m := &Manager{tokensDir: dir}
 	path := m.TokenPath("user@example.com")
 	want := filepath.Join(dir, "microsoft_user@example.com.json")
-	if path != want {
-		t.Errorf("TokenPath = %q, want %q", path, want)
-	}
+	assertpkg.Equal(t, want, path, "TokenPath")
 }
 
 func TestSaveAndLoadToken(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 	token := &oauth2.Token{
@@ -36,34 +39,20 @@ func TestSaveAndLoadToken(t *testing.T) {
 	}
 	scopes := []string{"IMAP.AccessAsUser.All", "offline_access"}
 
-	if err := m.saveToken("user@example.com", token, scopes, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(m.saveToken("user@example.com", token, scopes, ""))
 
 	loaded, err := m.loadTokenFile("user@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.AccessToken != "access-123" {
-		t.Errorf("AccessToken = %q, want %q", loaded.AccessToken, "access-123")
-	}
-	if loaded.RefreshToken != "refresh-456" {
-		t.Errorf("RefreshToken = %q, want %q", loaded.RefreshToken, "refresh-456")
-	}
-	if len(loaded.Scopes) != 2 {
-		t.Errorf("Scopes len = %d, want 2", len(loaded.Scopes))
-	}
+	require.NoError(err)
+	assert.Equal("access-123", loaded.AccessToken, "AccessToken")
+	assert.Equal("refresh-456", loaded.RefreshToken, "RefreshToken")
+	assert.Len(loaded.Scopes, 2, "Scopes len")
 
 	// Verify file permissions (Unix only; Windows ignores POSIX bits).
 	if runtime.GOOS != "windows" {
 		path := m.TokenPath("user@example.com")
 		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0600 {
-			t.Errorf("permissions = %o, want 0600", info.Mode().Perm())
-		}
+		require.NoError(err)
+		assert.Equal(os.FileMode(0600), info.Mode().Perm(), "permissions")
 	}
 }
 
@@ -71,37 +60,25 @@ func TestHasToken(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 
-	if m.HasToken("nobody@example.com") {
-		t.Error("HasToken should be false for non-existent token")
-	}
+	assertpkg.False(t, m.HasToken("nobody@example.com"), "HasToken should be false for non-existent token")
 
 	token := &oauth2.Token{AccessToken: "test"}
-	if err := m.saveToken("user@example.com", token, nil, ""); err != nil {
-		t.Fatal(err)
-	}
-	if !m.HasToken("user@example.com") {
-		t.Error("HasToken should be true after save")
-	}
+	requirepkg.NoError(t, m.saveToken("user@example.com", token, nil, ""))
+	assertpkg.True(t, m.HasToken("user@example.com"), "HasToken should be true after save")
 }
 
 func TestDeleteToken(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 
 	token := &oauth2.Token{AccessToken: "test"}
-	if err := m.saveToken("user@example.com", token, nil, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.DeleteToken("user@example.com"); err != nil {
-		t.Fatal(err)
-	}
-	if m.HasToken("user@example.com") {
-		t.Error("HasToken should be false after delete")
-	}
+	require.NoError(m.saveToken("user@example.com", token, nil, ""))
+	require.NoError(m.DeleteToken("user@example.com"))
+	assert.False(m.HasToken("user@example.com"), "HasToken should be false after delete")
 	// Delete non-existent should not error
-	if err := m.DeleteToken("nobody@example.com"); err != nil {
-		t.Errorf("DeleteToken non-existent: %v", err)
-	}
+	assert.NoError(m.DeleteToken("nobody@example.com"), "DeleteToken non-existent")
 }
 
 func TestIsPersonalMicrosoftAccount(t *testing.T) {
@@ -129,21 +106,15 @@ func TestIsPersonalMicrosoftAccount(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := isPersonalMicrosoftAccount(tt.email)
-		if got != tt.personal {
-			t.Errorf("isPersonalMicrosoftAccount(%q) = %v, want %v", tt.email, got, tt.personal)
-		}
+		assertpkg.Equal(t, tt.personal, got, "isPersonalMicrosoftAccount(%q)", tt.email)
 	}
 }
 
 func TestScopesForEmail(t *testing.T) {
 	orgScopes := scopesForEmail("user@company.com")
-	if orgScopes[0] != ScopeIMAPOrg {
-		t.Errorf("org scope = %q, want %q", orgScopes[0], ScopeIMAPOrg)
-	}
+	assertpkg.Equal(t, ScopeIMAPOrg, orgScopes[0], "org scope")
 	personalScopes := scopesForEmail("user@hotmail.com")
-	if personalScopes[0] != ScopeIMAPPersonal {
-		t.Errorf("personal scope = %q, want %q", personalScopes[0], ScopeIMAPPersonal)
-	}
+	assertpkg.Equal(t, ScopeIMAPPersonal, personalScopes[0], "personal scope")
 }
 
 func TestSanitizeEmail(t *testing.T) {
@@ -164,9 +135,7 @@ func TestSanitizeEmail(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := sanitizeEmail(tt.input)
-		if got != tt.want {
-			t.Errorf("sanitizeEmail(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		assertpkg.Equal(t, tt.want, got, "sanitizeEmail(%q)", tt.input)
 	}
 }
 
@@ -184,20 +153,20 @@ func TestSanitizeEmail_NoPathTraversal(t *testing.T) {
 	}
 	for _, input := range inputs {
 		result := sanitizeEmail(input)
-		if strings.ContainsAny(result, "/\\") {
-			t.Errorf("sanitizeEmail(%q) = %q still contains path separator", input, result)
-		}
-		if result != filepath.Base(result) {
-			t.Errorf("sanitizeEmail(%q) = %q has directory component (filepath.Base differs)", input, result)
-		}
+		assertpkg.False(t, strings.ContainsAny(result, "/\\"),
+			"sanitizeEmail(%q) = %q still contains path separator", input, result)
+		assertpkg.Equal(t, filepath.Base(result), result,
+			"sanitizeEmail(%q) = %q has directory component (filepath.Base differs)", input, result)
 	}
 }
 
 // makeIDToken builds a minimal unsigned JWT with the given claims.
 // Used in tests with verifyIDTokenFn to bypass OIDC signature validation.
-func makeIDToken(claims map[string]any) string {
+func makeIDToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	payload, _ := json.Marshal(claims)
+	payload, err := json.Marshal(claims)
+	requirepkg.NoError(t, err, "marshal claims")
 	body := base64.RawURLEncoding.EncodeToString(payload)
 	return header + "." + body + ".fake-sig"
 }
@@ -207,11 +176,11 @@ func makeIDToken(claims map[string]any) string {
 func testVerifyFn(_ context.Context, rawIDToken string) (*idTokenClaims, error) {
 	parts := splitJWT(rawIDToken)
 	if len(parts) != 3 {
-		return nil, nil
+		return nil, errors.New("invalid test JWT: expected 3 parts")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode JWT payload: %w", err)
 	}
 	var raw struct {
 		Email             string `json:"email"`
@@ -233,7 +202,7 @@ func splitJWT(s string) []string {
 	var parts []string
 	for {
 		idx := -1
-		for i := 0; i < len(s); i++ {
+		for i := range len(s) {
 			if s[i] == '.' {
 				idx = i
 				break
@@ -250,27 +219,19 @@ func splitJWT(s string) []string {
 }
 
 func TestPeekTIDFromJWT(t *testing.T) {
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"email":              "user@example.com",
 		"preferred_username": "user@tenant.onmicrosoft.com",
 		"tid":                "some-tenant-id",
 	})
 	tid, err := peekTIDFromJWT(idToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tid != "some-tenant-id" {
-		t.Errorf("tid = %q, want %q", tid, "some-tenant-id")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "some-tenant-id", tid, "tid")
 }
 
 func TestImapScopeForTenant(t *testing.T) {
-	if got := imapScopeForTenant(MicrosoftConsumerTenantID); got != ScopeIMAPPersonal {
-		t.Errorf("consumer tenant: got %q, want %q", got, ScopeIMAPPersonal)
-	}
-	if got := imapScopeForTenant("some-org-tenant-id"); got != ScopeIMAPOrg {
-		t.Errorf("org tenant: got %q, want %q", got, ScopeIMAPOrg)
-	}
+	assertpkg.Equal(t, ScopeIMAPPersonal, imapScopeForTenant(MicrosoftConsumerTenantID), "consumer tenant")
+	assertpkg.Equal(t, ScopeIMAPOrg, imapScopeForTenant("some-org-tenant-id"), "org tenant")
 }
 
 func TestResolveTokenEmail_Match(t *testing.T) {
@@ -281,20 +242,14 @@ func TestResolveTokenEmail_Match(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"email": "user@example.com", "tid": "org-tid"})
+	idToken := makeIDToken(t, map[string]any{"email": "user@example.com", "tid": "org-tid"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
 	actual, claims, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "test-nonce")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if actual != "user@example.com" {
-		t.Errorf("actual = %q, want %q", actual, "user@example.com")
-	}
-	if claims.TenantID != "org-tid" {
-		t.Errorf("TenantID = %q, want %q", claims.TenantID, "org-tid")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "user@example.com", actual, "actual")
+	assertpkg.Equal(t, "org-tid", claims.TenantID, "TenantID")
 }
 
 func TestResolveTokenEmail_Mismatch(t *testing.T) {
@@ -304,17 +259,15 @@ func TestResolveTokenEmail_Mismatch(t *testing.T) {
 		tokensDir:       t.TempDir(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"email": "other@example.com"})
+	idToken := makeIDToken(t, map[string]any{"email": "other@example.com"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
 	_, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "test-nonce")
-	if err == nil {
-		t.Fatal("expected error for mismatch")
-	}
-	if _, ok := err.(*TokenMismatchError); !ok {
-		t.Errorf("expected *TokenMismatchError, got %T: %v", err, err)
-	}
+	requirepkg.Error(t, err, "expected error for mismatch")
+	tokenMismatchError := &TokenMismatchError{}
+	ok := errors.As(err, &tokenMismatchError)
+	assertpkg.True(t, ok, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
 func TestResolveTokenEmail_FallbackToUPN(t *testing.T) {
@@ -326,17 +279,13 @@ func TestResolveTokenEmail_FallbackToUPN(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{"preferred_username": "user@example.com"})
+	idToken := makeIDToken(t, map[string]any{"preferred_username": "user@example.com"})
 	token := (&oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 
 	actual, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "test-nonce")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if actual != "user@example.com" {
-		t.Errorf("actual = %q, want %q", actual, "user@example.com")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "user@example.com", actual, "actual")
 }
 
 func TestResolveTokenEmail_UPNDiffersFromExpected(t *testing.T) {
@@ -350,7 +299,7 @@ func TestResolveTokenEmail_UPNDiffersFromExpected(t *testing.T) {
 		logger:          slog.Default(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"preferred_username": "john.doe@company.onmicrosoft.com",
 		"tid":                "org-tenant-id",
 	})
@@ -358,15 +307,9 @@ func TestResolveTokenEmail_UPNDiffersFromExpected(t *testing.T) {
 		WithExtra(map[string]any{"id_token": idToken})
 
 	actual, claims, err := m.resolveTokenEmail(t.Context(), "john@company.com", token, "test-nonce")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if actual != "john@company.com" {
-		t.Errorf("actual = %q, want user-entered email %q", actual, "john@company.com")
-	}
-	if claims.TenantID != "org-tenant-id" {
-		t.Errorf("TenantID = %q, want %q", claims.TenantID, "org-tenant-id")
-	}
+	requirepkg.NoError(t, err, "unexpected error")
+	assertpkg.Equal(t, "john@company.com", actual, "actual should equal user-entered email")
+	assertpkg.Equal(t, "org-tenant-id", claims.TenantID, "TenantID")
 }
 
 func TestResolveTokenEmail_EmailClaimMismatchStillErrors(t *testing.T) {
@@ -378,7 +321,7 @@ func TestResolveTokenEmail_EmailClaimMismatchStillErrors(t *testing.T) {
 		tokensDir:       t.TempDir(),
 		verifyIDTokenFn: testVerifyFn,
 	}
-	idToken := makeIDToken(map[string]any{
+	idToken := makeIDToken(t, map[string]any{
 		"email":              "wrong@other.com",
 		"preferred_username": "john@company.com",
 	})
@@ -386,15 +329,15 @@ func TestResolveTokenEmail_EmailClaimMismatchStillErrors(t *testing.T) {
 		WithExtra(map[string]any{"id_token": idToken})
 
 	_, _, err := m.resolveTokenEmail(t.Context(), "john@company.com", token, "test-nonce")
-	if err == nil {
-		t.Fatal("expected TokenMismatchError when email claim is wrong")
-	}
-	if _, ok := err.(*TokenMismatchError); !ok {
-		t.Errorf("expected *TokenMismatchError, got %T: %v", err, err)
-	}
+	requirepkg.Error(t, err, "expected TokenMismatchError when email claim is wrong")
+	tokenMismatchError := &TokenMismatchError{}
+	ok := errors.As(err, &tokenMismatchError)
+	assertpkg.True(t, ok, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
 func TestAuthorize_ScopeCorrection(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Simulate: user@custom-domain.com guessed as org, but tid reveals consumer.
 	// The browser flow should be called twice: once with org scope, once with personal.
 	dir := t.TempDir()
@@ -411,21 +354,17 @@ func TestAuthorize_ScopeCorrection(t *testing.T) {
 
 	m.browserFlowFn = func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
 		callCount++
-		idToken := makeIDToken(map[string]any{
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@custom-domain.com",
 			"tid":   consumerTID,
 		})
 		switch callCount {
 		case 1:
 			// First call: should have org scope (domain-based guess).
-			if scopes[0] != ScopeIMAPOrg {
-				t.Errorf("first call scope = %q, want org scope", scopes[0])
-			}
+			assert.Equal(ScopeIMAPOrg, scopes[0], "first call scope")
 		case 2:
 			// Second call: should have personal scope (corrected via tid).
-			if scopes[0] != ScopeIMAPPersonal {
-				t.Errorf("second call scope = %q, want personal scope", scopes[0])
-			}
+			assert.Equal(ScopeIMAPPersonal, scopes[0], "second call scope")
 		}
 		tok := (&oauth2.Token{
 			AccessToken:  "access-token",
@@ -435,25 +374,20 @@ func TestAuthorize_ScopeCorrection(t *testing.T) {
 		return tok, "test-nonce", nil
 	}
 
-	if err := m.Authorize(t.Context(), "user@custom-domain.com"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(m.Authorize(t.Context(), "user@custom-domain.com"))
 
-	if callCount != 2 {
-		t.Errorf("browserFlowFn called %d times, want 2", callCount)
-	}
+	assert.Equal(2, callCount, "browserFlowFn call count")
 
 	// Verify saved scopes are personal (corrected).
 	tf, err := m.loadTokenFile("user@custom-domain.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tf.Scopes) == 0 || tf.Scopes[0] != ScopeIMAPPersonal {
-		t.Errorf("saved scopes[0] = %q, want %q", tf.Scopes[0], ScopeIMAPPersonal)
-	}
+	require.NoError(err)
+	require.NotEmpty(tf.Scopes, "saved scopes should not be empty")
+	assert.Equal(ScopeIMAPPersonal, tf.Scopes[0], "saved scopes[0]")
 }
 
 func TestAuthorize_NoScopeCorrection(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// When the domain guess matches tid, no correction should happen.
 	// user@outlook.com → guessed personal, tid confirms consumer → no correction.
 	dir := t.TempDir()
@@ -471,10 +405,8 @@ func TestAuthorize_NoScopeCorrection(t *testing.T) {
 	m.browserFlowFn = func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
 		callCount++
 		// Should already have personal scope.
-		if scopes[0] != ScopeIMAPPersonal {
-			t.Errorf("initial scope = %q, want personal scope", scopes[0])
-		}
-		idToken := makeIDToken(map[string]any{
+		assert.Equal(ScopeIMAPPersonal, scopes[0], "initial scope")
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@outlook.com",
 			"tid":   consumerTID,
 		})
@@ -486,22 +418,15 @@ func TestAuthorize_NoScopeCorrection(t *testing.T) {
 		return tok, "test-nonce", nil
 	}
 
-	if err := m.Authorize(t.Context(), "user@outlook.com"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(m.Authorize(t.Context(), "user@outlook.com"))
 
-	if callCount != 1 {
-		t.Errorf("browserFlowFn called %d times, want 1 (no correction needed)", callCount)
-	}
+	assert.Equal(1, callCount, "browserFlowFn call count (no correction needed)")
 
 	// Verify saved scopes are personal (no correction needed).
 	tf, err := m.loadTokenFile("user@outlook.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tf.Scopes) == 0 || tf.Scopes[0] != ScopeIMAPPersonal {
-		t.Errorf("saved scopes[0] = %q, want %q", tf.Scopes[0], ScopeIMAPPersonal)
-	}
+	require.NoError(err)
+	require.NotEmpty(tf.Scopes, "saved scopes should not be empty")
+	assert.Equal(ScopeIMAPPersonal, tf.Scopes[0], "saved scopes[0]")
 }
 
 func TestAuthorize_PersistsTenantID(t *testing.T) {
@@ -515,7 +440,7 @@ func TestAuthorize_PersistsTenantID(t *testing.T) {
 	}
 
 	m.browserFlowFn = func(ctx context.Context, email string, scopes []string) (*oauth2.Token, string, error) {
-		idToken := makeIDToken(map[string]any{
+		idToken := makeIDToken(t, map[string]any{
 			"email": "user@company.com",
 			"tid":   "org-tenant-123",
 		})
@@ -527,17 +452,11 @@ func TestAuthorize_PersistsTenantID(t *testing.T) {
 		return tok, "test-nonce", nil
 	}
 
-	if err := m.Authorize(t.Context(), "user@company.com"); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.Authorize(t.Context(), "user@company.com"))
 
 	tf, err := m.loadTokenFile("user@company.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tf.TenantID != "org-tenant-123" {
-		t.Errorf("TenantID = %q, want %q", tf.TenantID, "org-tenant-123")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "org-tenant-123", tf.TenantID, "TenantID")
 }
 
 func TestTokenSource_StaleScopeReturnsError(t *testing.T) {
@@ -555,17 +474,11 @@ func TestTokenSource_StaleScopeReturnsError(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@custom.com", token, []string{ScopeIMAPOrg, "offline_access"}, MicrosoftConsumerTenantID); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@custom.com", token, []string{ScopeIMAPOrg, "offline_access"}, MicrosoftConsumerTenantID))
 
 	_, err := m.TokenSource(t.Context(), "user@custom.com")
-	if err == nil {
-		t.Fatal("expected error for stale scope")
-	}
-	if !strings.Contains(err.Error(), "stale IMAP scope") {
-		t.Errorf("error = %q, want it to mention stale IMAP scope", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for stale scope")
+	assertpkg.ErrorContains(t, err, "stale IMAP scope")
 }
 
 func TestTokenSource_CorrectScopeSucceeds(t *testing.T) {
@@ -583,17 +496,11 @@ func TestTokenSource_CorrectScopeSucceeds(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID))
 
 	ts, err := m.TokenSource(t.Context(), "user@outlook.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts == nil {
-		t.Fatal("TokenSource returned nil")
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestTokenSource_NoTenantIDSkipsValidation(t *testing.T) {
@@ -611,17 +518,11 @@ func TestTokenSource_NoTenantIDSkipsValidation(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@custom.com", token, []string{ScopeIMAPOrg, "offline_access"}, ""); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@custom.com", token, []string{ScopeIMAPOrg, "offline_access"}, ""))
 
 	ts, err := m.TokenSource(t.Context(), "user@custom.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts == nil {
-		t.Fatal("TokenSource returned nil")
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestOAuthConfigWithTenant(t *testing.T) {
@@ -630,15 +531,9 @@ func TestOAuthConfigWithTenant(t *testing.T) {
 		tenantID: "common",
 	}
 	cfg := m.oauthConfigWithTenant("my-org", []string{"IMAP.AccessAsUser.All"})
-	if !strings.Contains(cfg.Endpoint.AuthURL, "my-org") {
-		t.Errorf("AuthURL = %q, want it to contain %q", cfg.Endpoint.AuthURL, "my-org")
-	}
-	if !strings.Contains(cfg.Endpoint.TokenURL, "my-org") {
-		t.Errorf("TokenURL = %q, want it to contain %q", cfg.Endpoint.TokenURL, "my-org")
-	}
-	if strings.Contains(cfg.Endpoint.AuthURL, "common") {
-		t.Errorf("AuthURL = %q, should not contain %q", cfg.Endpoint.AuthURL, "common")
-	}
+	assertpkg.Contains(t, cfg.Endpoint.AuthURL, "my-org", "AuthURL")
+	assertpkg.Contains(t, cfg.Endpoint.TokenURL, "my-org", "TokenURL")
+	assertpkg.NotContains(t, cfg.Endpoint.AuthURL, "common", "AuthURL should not contain common")
 }
 
 func TestTokenSource_PersistedTenantOverridesManager(t *testing.T) {
@@ -656,18 +551,12 @@ func TestTokenSource_PersistedTenantOverridesManager(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, "my-org-tenant"); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, "my-org-tenant"))
 
 	// TokenSource should succeed and use "my-org-tenant", not "common".
 	ts, err := m.TokenSource(t.Context(), "user@company.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts == nil {
-		t.Fatal("TokenSource returned nil")
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestTokenSource_ConcurrentAccess(t *testing.T) {
@@ -684,22 +573,16 @@ func TestTokenSource_ConcurrentAccess(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID))
 
 	fn, err := m.TokenSource(t.Context(), "user@outlook.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requirepkg.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_, _ = fn(t.Context())
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -710,40 +593,26 @@ func TestIMAPHost_PersonalAccount(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 	token := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh"}
-	if err := m.saveToken("user@hotmail.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@hotmail.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID))
 	host, err := m.IMAPHost("user@hotmail.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if host != "outlook.office.com" {
-		t.Errorf("IMAPHost = %q, want %q", host, "outlook.office.com")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "outlook.office.com", host, "IMAPHost")
 }
 
 func TestIMAPHost_OrgAccount(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 	token := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh"}
-	if err := m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, "org-tenant"); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, "org-tenant"))
 	host, err := m.IMAPHost("user@company.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if host != "outlook.office365.com" {
-		t.Errorf("IMAPHost = %q, want %q", host, "outlook.office365.com")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "outlook.office365.com", host, "IMAPHost")
 }
 
 func TestIMAPHost_NoToken(t *testing.T) {
 	m := &Manager{tokensDir: t.TempDir()}
 	_, err := m.IMAPHost("nobody@example.com")
-	if err == nil {
-		t.Fatal("expected error for missing token")
-	}
+	requirepkg.Error(t, err, "expected error for missing token")
 }
 
 // IMAPHost with no scopes saved falls back to org host (default).
@@ -751,16 +620,10 @@ func TestIMAPHost_NoScopesFallsBackToOrg(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir}
 	token := &oauth2.Token{AccessToken: "access"}
-	if err := m.saveToken("user@company.com", token, nil, "org-tenant"); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@company.com", token, nil, "org-tenant"))
 	host, err := m.IMAPHost("user@company.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if host != "outlook.office365.com" {
-		t.Errorf("IMAPHost = %q, want %q", host, "outlook.office365.com")
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, "outlook.office365.com", host, "IMAPHost")
 }
 
 // --- TokenSource edge cases ---
@@ -773,12 +636,8 @@ func TestTokenSource_MissingToken(t *testing.T) {
 		logger:    slog.Default(),
 	}
 	_, err := m.TokenSource(t.Context(), "nobody@example.com")
-	if err == nil {
-		t.Fatal("expected error for missing token")
-	}
-	if !strings.Contains(err.Error(), "no valid token") {
-		t.Errorf("error = %q, want it to mention 'no valid token'", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for missing token")
+	assertpkg.ErrorContains(t, err, "no valid token")
 }
 
 // Pre-migration tokens without scopes fall back to email-based scope detection.
@@ -791,16 +650,10 @@ func TestTokenSource_EmptyScopesFallback(t *testing.T) {
 		logger:    slog.Default(),
 	}
 	token := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer"}
-	if err := m.saveToken("user@outlook.com", token, nil, ""); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@outlook.com", token, nil, ""))
 	ts, err := m.TokenSource(t.Context(), "user@outlook.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts == nil {
-		t.Fatal("TokenSource returned nil")
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NotNil(t, ts, "TokenSource returned nil")
 }
 
 // --- Authorize edge cases ---
@@ -818,9 +671,7 @@ func TestAuthorize_BrowserFlowError(t *testing.T) {
 		return nil, "", wantErr
 	}
 	err := m.Authorize(t.Context(), "user@company.com")
-	if !errors.Is(err, wantErr) {
-		t.Errorf("Authorize error = %v, want %v", err, wantErr)
-	}
+	assertpkg.ErrorIs(t, err, wantErr, "Authorize error")
 }
 
 func TestAuthorize_ContextCancelled(t *testing.T) {
@@ -837,9 +688,7 @@ func TestAuthorize_ContextCancelled(t *testing.T) {
 		return nil, "", ctx.Err()
 	}
 	err := m.Authorize(ctx, "user@company.com")
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Authorize error = %v, want context.Canceled", err)
-	}
+	assertpkg.ErrorIs(t, err, context.Canceled, "Authorize error")
 }
 
 // Scope correction triggers a second browser flow; a TokenMismatchError on
@@ -861,19 +710,15 @@ func TestAuthorize_ScopeCorrectionMismatchOnReauth(t *testing.T) {
 		} else {
 			claimsEmail = "someone-else@other.com" // second flow authenticates wrong account
 		}
-		idToken := makeIDToken(map[string]any{"email": claimsEmail, "tid": MicrosoftConsumerTenantID})
+		idToken := makeIDToken(t, map[string]any{"email": claimsEmail, "tid": MicrosoftConsumerTenantID})
 		tok := (&oauth2.Token{AccessToken: "tok", TokenType: "Bearer"}).
 			WithExtra(map[string]any{"id_token": idToken})
 		return tok, "nonce", nil
 	}
 	err := m.Authorize(t.Context(), "user@custom-domain.com")
-	if err == nil {
-		t.Fatal("expected error when re-auth produces wrong email")
-	}
+	requirepkg.Error(t, err, "expected error when re-auth produces wrong email")
 	var mismatch *TokenMismatchError
-	if !errors.As(err, &mismatch) {
-		t.Errorf("expected *TokenMismatchError, got %T: %v", err, err)
-	}
+	assertpkg.ErrorAs(t, err, &mismatch, "expected *TokenMismatchError, got %T: %v", err, err)
 }
 
 // --- resolveTokenEmail edge cases ---
@@ -887,12 +732,8 @@ func TestResolveTokenEmail_MissingIDToken(t *testing.T) {
 	}
 	token := &oauth2.Token{AccessToken: "test", TokenType: "Bearer"} // no id_token extra
 	_, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "nonce")
-	if err == nil {
-		t.Fatal("expected error for missing id_token")
-	}
-	if !strings.Contains(err.Error(), "no id_token") {
-		t.Errorf("error = %q, want mention of 'no id_token'", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for missing id_token")
+	assertpkg.ErrorContains(t, err, "no id_token")
 }
 
 func TestResolveTokenEmail_NeitherEmailNorUPN(t *testing.T) {
@@ -903,16 +744,12 @@ func TestResolveTokenEmail_NeitherEmailNorUPN(t *testing.T) {
 		verifyIDTokenFn: testVerifyFn,
 	}
 	// ID token has only tid — no email or preferred_username.
-	idToken := makeIDToken(map[string]any{"tid": "some-tenant"})
+	idToken := makeIDToken(t, map[string]any{"tid": "some-tenant"})
 	token := (&oauth2.Token{AccessToken: "test", TokenType: "Bearer"}).
 		WithExtra(map[string]any{"id_token": idToken})
 	_, _, err := m.resolveTokenEmail(t.Context(), "user@example.com", token, "nonce")
-	if err == nil {
-		t.Fatal("expected error when neither email nor preferred_username is present")
-	}
-	if !strings.Contains(err.Error(), "preferred_username") {
-		t.Errorf("error = %q, want mention of 'preferred_username'", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error when neither email nor preferred_username is present")
+	assertpkg.ErrorContains(t, err, "preferred_username")
 }
 
 // --- TokenSource timeout ---
@@ -931,14 +768,10 @@ func TestTokenSource_RespectsCallCtxCancellation(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@outlook.com", token, []string{ScopeIMAPPersonal, "offline_access"}, MicrosoftConsumerTenantID))
 
 	fn, err := m.TokenSource(t.Context(), "user@outlook.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	requirepkg.NoError(t, err)
 
 	// Cancel the context immediately — the token source should return
 	// the cached token (not refreshed) or cancel, but must not hang.
@@ -953,6 +786,7 @@ func TestTokenSource_RespectsCallCtxCancellation(t *testing.T) {
 // --- redactAuthURL ---
 
 func TestRedactAuthURL(t *testing.T) {
+	assert := assertpkg.New(t)
 	raw := "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" +
 		"client_id=test&code_challenge=secret-challenge&code_challenge_method=S256&" +
 		"login_hint=user%40example.com&nonce=secret-nonce&" +
@@ -961,32 +795,18 @@ func TestRedactAuthURL(t *testing.T) {
 
 	redacted := redactAuthURL(raw)
 
-	if strings.Contains(redacted, "secret-challenge") {
-		t.Error("redacted URL still contains code_challenge")
-	}
-	if strings.Contains(redacted, "secret-nonce") {
-		t.Error("redacted URL still contains nonce")
-	}
-	if strings.Contains(redacted, "secret-state") {
-		t.Error("redacted URL still contains state")
-	}
+	assert.NotContains(redacted, "secret-challenge", "code_challenge should be redacted")
+	assert.NotContains(redacted, "secret-nonce", "nonce should be redacted")
+	assert.NotContains(redacted, "secret-state", "state should be redacted")
 	// Non-sensitive params should be preserved
-	if !strings.Contains(redacted, "client_id=test") {
-		t.Error("redacted URL is missing client_id")
-	}
-	if !strings.Contains(redacted, "login_hint=") {
-		t.Error("redacted URL is missing login_hint")
-	}
-	if !strings.Contains(redacted, "REDACTED") {
-		t.Error("redacted URL should contain REDACTED placeholders")
-	}
+	assert.Contains(redacted, "client_id=test", "client_id should be preserved")
+	assert.Contains(redacted, "login_hint=", "login_hint should be preserved")
+	assert.Contains(redacted, "REDACTED", "should contain REDACTED placeholders")
 }
 
 func TestRedactAuthURL_InvalidURL(t *testing.T) {
 	result := redactAuthURL("://not-a-url")
-	if result != "[invalid URL]" {
-		t.Errorf("expected [invalid URL], got %q", result)
-	}
+	assertpkg.Equal(t, "[invalid URL]", result)
 }
 
 // --- DeleteToken with revocation ---
@@ -1005,18 +825,12 @@ func TestDeleteToken_RevokesBeforeDeleting(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@example.com", token, nil, ""); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@example.com", token, nil, ""))
 
 	// DeleteToken should succeed even when revocation fails (no real
 	// Microsoft endpoint in tests). The local file should be removed.
-	if err := m.DeleteToken("user@example.com"); err != nil {
-		t.Fatalf("DeleteToken: %v", err)
-	}
-	if m.HasToken("user@example.com") {
-		t.Error("token file should be deleted after DeleteToken")
-	}
+	requirepkg.NoError(t, m.DeleteToken("user@example.com"), "DeleteToken")
+	assertpkg.False(t, m.HasToken("user@example.com"), "token file should be deleted after DeleteToken")
 }
 
 func TestDeleteToken_NoTokenFile(t *testing.T) {
@@ -1027,9 +841,7 @@ func TestDeleteToken_NoTokenFile(t *testing.T) {
 		logger:    slog.Default(),
 	}
 	// Should not error on non-existent token
-	if err := m.DeleteToken("nobody@example.com"); err != nil {
-		t.Fatalf("DeleteToken non-existent: %v", err)
-	}
+	assertpkg.NoError(t, m.DeleteToken("nobody@example.com"), "DeleteToken non-existent")
 }
 
 // --- peekTIDFromJWT edge cases ---
@@ -1052,19 +864,13 @@ func TestTokenSource_PreMigrationTokenGetsTenantBinding(t *testing.T) {
 		RefreshToken: "refresh-token",
 		TokenType:    "Bearer",
 	}
-	if err := m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, ""); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@company.com", token, []string{ScopeIMAPOrg, "offline_access"}, ""))
 
 	// TokenSource should succeed: the tenant gets bound internally.
 	// If scope validation kicked in and found a mismatch it would error.
 	ts, err := m.TokenSource(t.Context(), "user@company.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ts == nil {
-		t.Fatal("TokenSource returned nil")
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestTokenSource_SaveFailureReturnsError(t *testing.T) {
@@ -1075,53 +881,37 @@ func TestTokenSource_SaveFailureReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	m := &Manager{tokensDir: dir, logger: slog.Default()}
 	token := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer"}
-	if err := m.saveToken("user@example.com", token, nil, ""); err != nil {
-		t.Fatalf("initial save: %v", err)
-	}
+	requirepkg.NoError(t, m.saveToken("user@example.com", token, nil, ""), "initial save")
 
 	// Make tokens directory read-only so subsequent writes fail.
-	if err := os.Chmod(dir, 0500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
+	requirepkg.NoError(t, os.Chmod(dir, 0500), "chmod")
 	defer func() { _ = os.Chmod(dir, 0700) }()
 
 	err := m.saveToken("user@example.com", token, nil, "")
-	if err == nil {
-		t.Fatal("expected error when tokens dir is read-only")
-	}
+	requirepkg.Error(t, err, "expected error when tokens dir is read-only")
 }
 
 func TestPeekTIDFromJWT_TooFewParts(t *testing.T) {
 	for _, input := range []string{"onlyone", "header.payload"} {
 		_, err := peekTIDFromJWT(input)
-		if err == nil {
-			t.Errorf("peekTIDFromJWT(%q): expected error for malformed JWT", input)
-		}
+		assertpkg.Error(t, err, "peekTIDFromJWT(%q): expected error for malformed JWT", input)
 	}
 }
 
 func TestPeekTIDFromJWT_TooManyParts(t *testing.T) {
 	_, err := peekTIDFromJWT("a.b.c.d")
-	if err == nil {
-		t.Error("expected error for JWT with more than 3 parts")
-	}
+	assertpkg.Error(t, err, "expected error for JWT with more than 3 parts")
 }
 
 func TestPeekTIDFromJWT_InvalidBase64Payload(t *testing.T) {
 	_, err := peekTIDFromJWT("header.!!!not-base64!!!.sig")
-	if err == nil {
-		t.Fatal("expected error for invalid base64 payload")
-	}
+	requirepkg.Error(t, err, "expected error for invalid base64 payload")
 }
 
 func TestPeekTIDFromJWT_MissingTIDClaim(t *testing.T) {
 	// Valid JWT but payload has no "tid" field.
-	idToken := makeIDToken(map[string]any{"email": "user@example.com"})
+	idToken := makeIDToken(t, map[string]any{"email": "user@example.com"})
 	_, err := peekTIDFromJWT(idToken)
-	if err == nil {
-		t.Fatal("expected error for JWT without tid claim")
-	}
-	if !strings.Contains(err.Error(), "no tid claim") {
-		t.Errorf("error = %q, want mention of 'no tid claim'", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for JWT without tid claim")
+	assertpkg.ErrorContains(t, err, "no tid claim")
 }

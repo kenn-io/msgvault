@@ -49,5 +49,5 @@ func LiveMessagesWhere(alias string, hideDeletedFromSource bool) string {
 			alias, alias,
 		)
 	}
-	return fmt.Sprintf("%s.deleted_at IS NULL", alias)
+	return alias + ".deleted_at IS NULL"
 }

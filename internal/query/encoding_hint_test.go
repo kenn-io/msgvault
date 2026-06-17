@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsEncodingError(t *testing.T) {
@@ -20,64 +23,35 @@ func TestIsEncodingError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsEncodingError(tt.err); got != tt.want {
-				t.Errorf("IsEncodingError() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, IsEncodingError(tt.err))
 		})
 	}
 }
 
 func TestHintRepairEncoding(t *testing.T) {
 	t.Run("nil error", func(t *testing.T) {
-		if got := HintRepairEncoding(nil); got != nil {
-			t.Errorf("HintRepairEncoding(nil) = %v, want nil", got)
-		}
+		assert.NoError(t, HintRepairEncoding(nil))
 	})
 
 	t.Run("unrelated error passes through", func(t *testing.T) {
 		orig := errors.New("something else")
 		got := HintRepairEncoding(orig)
-		if got != orig {
-			t.Errorf("HintRepairEncoding should return original error unchanged, got %v", got)
-		}
+		assert.Same(t, orig, got, "HintRepairEncoding should return original error unchanged")
 	})
 
 	t.Run("encoding error gets hint", func(t *testing.T) {
 		orig := errors.New("Invalid string encoding found in Parquet file")
 		got := HintRepairEncoding(orig)
-		if got == nil {
-			t.Fatal("HintRepairEncoding returned nil")
-		}
-		msg := got.Error()
-		if want := "repair-encoding"; !containsSubstring(msg, want) {
-			t.Errorf("expected hint containing %q, got: %s", want, msg)
-		}
+		require.Error(t, got, "HintRepairEncoding returned nil")
+		assert.Contains(t, got.Error(), "repair-encoding")
 		// Original error should be preserved in the chain
-		if !errors.Is(got, orig) {
-			t.Error("wrapped error should preserve original via errors.Is")
-		}
+		assert.ErrorIs(t, got, orig, "wrapped error should preserve original via errors.Is")
 	})
 
 	t.Run("wrapped encoding error gets hint", func(t *testing.T) {
 		inner := errors.New("Invalid string encoding found in Parquet file")
 		wrapped := fmt.Errorf("aggregate query: %w", inner)
 		got := HintRepairEncoding(wrapped)
-		msg := got.Error()
-		if want := "repair-encoding"; !containsSubstring(msg, want) {
-			t.Errorf("expected hint containing %q, got: %s", want, msg)
-		}
+		assert.Contains(t, got.Error(), "repair-encoding")
 	})
-}
-
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && contains(s, sub))
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

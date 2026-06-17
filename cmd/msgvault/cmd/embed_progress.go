@@ -65,7 +65,7 @@ func (w *rateWindow) Rate() float64 {
 	}
 	var totalMsgs int
 	var totalElapsed time.Duration
-	for i := 0; i < w.count; i++ {
+	for i := range w.count {
 		totalMsgs += w.msgs[i]
 		totalElapsed += w.elapsed[i]
 	}

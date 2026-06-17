@@ -1,13 +1,14 @@
-//go:build !sqlite_vec
+//go:build !sqlite_vec && !pgvector
 
 package cmd
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // TestSetupVectorFeatures_EnabledWithoutTag verifies the untagged stub
@@ -21,17 +22,11 @@ func TestSetupVectorFeatures_EnabledWithoutTag(t *testing.T) {
 	cfg = &config.Config{}
 	cfg.Vector.Enabled = true
 
-	vf, err := setupVectorFeatures(context.Background(), nil, "")
-	if err == nil {
-		t.Fatal("setupVectorFeatures with Enabled=true but no tag = nil error, want descriptive error")
-	}
-	if vf != nil {
-		t.Errorf("vf = %+v, want nil when error is returned", vf)
-	}
+	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
+	require.Error(t, err, "setupVectorFeatures with Enabled=true but no tag")
+	assert.Nil(t, vf, "vf should be nil when error is returned")
 	msg := err.Error()
 	for _, want := range []string{"sqlite_vec", "enabled = false"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error = %q, want to contain %q", msg, want)
-		}
+		assert.Contains(t, msg, want)
 	}
 }

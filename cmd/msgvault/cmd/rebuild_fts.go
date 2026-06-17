@@ -1,12 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var rebuildFTSCmd = &cobra.Command{
@@ -57,9 +58,8 @@ MCP clients before running this command — it needs an exclusive write lock.`,
 		if err != nil {
 			fmt.Fprintln(os.Stderr)
 			if s.IsBusyError(err) {
-				return fmt.Errorf(
-					"database is busy — stop 'msgvault serve' and any MCP " +
-						"clients, then retry",
+				return errors.New("database is busy — stop 'msgvault serve' and any MCP " +
+					"clients, then retry",
 				)
 			}
 			return fmt.Errorf("rebuild FTS: %w", err)

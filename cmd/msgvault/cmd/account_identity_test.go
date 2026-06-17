@@ -6,76 +6,57 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(s.InitSchema())
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "alice@example.com", "account-identifier")
 	rows, err := s.ListAccountIdentities(src.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].Address != "alice@example.com" {
-		t.Fatalf("got %+v", rows)
-	}
-	if rows[0].SourceSignal != "account-identifier" {
-		t.Errorf("signal=%q", rows[0].SourceSignal)
-	}
+	require.NoError(err)
+	require.Len(rows, 1, "got %+v", rows)
+	require.Equal("alice@example.com", rows[0].Address, "got %+v", rows)
+	assertpkg.Equal(t, "account-identifier", rows[0].SourceSignal, "signal")
 }
 
 func TestConfirmDefaultIdentity_EmptyIdentifierIsNoOp(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(s.InitSchema())
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "", "account-identifier")
 	rows, _ := s.ListAccountIdentities(src.ID)
-	if len(rows) != 0 {
-		t.Errorf("want empty, got %+v", rows)
-	}
+	assertpkg.Empty(t, rows, "want empty, got %+v", rows)
 }
 
 func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, err)
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, s.InitSchema())
 
 	savedLogger := logger
 	defer func() { logger = savedLogger }()
-	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger = slog.New(slog.DiscardHandler)
 
 	prevDefault := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	slog.SetDefault(slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { slog.SetDefault(prevDefault) })
 
 	// sourceID 99999 does not exist; FK violation returns an error
@@ -88,35 +69,22 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 // --no-default-identity) does NOT prevent MigrateLegacyIdentityConfig from
 // writing the address.
 func TestConfirmDefaultIdentity_LegacyMigrationOverridesNoDefault(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(s.InitSchema())
 
 	_, err = s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	// Simulate --no-default-identity: do not call confirmDefaultIdentity.
 	// Then run startup migrations with a non-empty legacy address list.
-	applied, _, _, _, err := s.MigrateLegacyIdentityConfig([]string{"alice@example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !applied {
-		t.Fatal("migration did not apply")
-	}
+	applied, _, _, _, err := s.MigrateLegacyIdentityConfig([]string{"alice@example.com"}) //nolint:dogsled // 5-return migration; test needs only applied+err
+	require.NoError(err)
+	require.True(applied, "migration did not apply")
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	rows, _ := s.ListAccountIdentities(src.ID)
-	if len(rows) != 1 {
-		t.Fatalf("legacy migration should have written, got %+v", rows)
-	}
+	require.Len(rows, 1, "legacy migration should have written, got %+v", rows)
 }

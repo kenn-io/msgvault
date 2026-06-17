@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 // EmbedRunner is the subset of *embed.Worker that EmbedJob needs.
@@ -17,6 +17,9 @@ type EmbedRunner interface {
 	RunOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
 	ReclaimStale(ctx context.Context) (int, error)
 }
+
+// Compile-time check that the production worker satisfies EmbedRunner.
+var _ EmbedRunner = (*embed.Worker)(nil)
 
 // EmbedJob runs the vector-embedding worker. Each invocation prefers
 // an in-flight rebuild for the configured fingerprint over the
@@ -42,10 +45,23 @@ type EmbedJob struct {
 	// case the daemon will not auto-activate building generations.
 	VectorsDB *sql.DB
 
-	// Fingerprint is the configured "<model>:<dim>" string. When set,
-	// a building generation whose fingerprint differs is left alone
-	// (CLI is the only entry point that can resolve a mismatch). When
-	// empty, the daemon falls back to "any building generation".
+	// Rebind translates ?-placeholders to the driver's native form for
+	// queries this job issues directly against VectorsDB (pendingCount).
+	// nil is treated as the identity (used by SQLite); the PostgreSQL
+	// serve path must wire in (&store.PostgreSQLDialect{}).Rebind so the
+	// activation-gate count runs on pgx — a bare ? is rejected by the
+	// pgx driver.
+	Rebind func(string) string
+
+	// Fingerprint is the configured generation fingerprint (typically
+	// vector.Config.GenerationFingerprint() — "model:dim:preprocess").
+	// When set, a building OR active generation whose fingerprint
+	// differs is left alone: the CLI is the only entry point that can
+	// resolve a mismatch (`embeddings build --full-rebuild` or retire).
+	// When empty, the daemon falls back to "any building generation"
+	// for building gens and "the active generation as-is" for active —
+	// see pickTarget for why empty-fingerprint plus a present building
+	// is still refused.
 	Fingerprint string
 
 	// running guards against overlapping Run calls (cron fires while a
@@ -144,7 +160,9 @@ func (j *EmbedJob) Run(ctx context.Context) {
 			"gen", target, "remaining", remaining)
 		return
 	}
-	if err := j.Backend.ActivateGeneration(ctx, target); err != nil {
+	// force=false: the pendingCount==0 check above is the scheduler's gate,
+	// and the backend re-asserts it atomically inside the activation tx.
+	if err := j.Backend.ActivateGeneration(ctx, target, false); err != nil {
 		log.Warn("embed: activation failed", "gen", target, "error", err)
 		return
 	}
@@ -159,9 +177,14 @@ func (j *EmbedJob) Run(ctx context.Context) {
 //     can activate. Building takes precedence over active even when
 //     active matches, because a stranded build is the bigger problem.
 //  2. Mismatched building generation — log and bail. Resolution
-//     requires the CLI (`msgvault build-embeddings --full-rebuild` or retire),
+//     requires the CLI (`msgvault embeddings build --full-rebuild` or retire),
 //     not the daemon.
-//  3. Active generation — incremental top-up.
+//  3. Active generation whose fingerprint matches config — incremental
+//     top-up. A mismatched active fingerprint is treated the same as a
+//     mismatched building: log and bail. Topping it up would let the
+//     daemon embed new messages under the current preprocessing policy
+//     into an index whose existing vectors used a different policy,
+//     silently mixing two embedding spaces in one generation.
 //
 // The bool is false when there's nothing to do or a lookup error
 // occurred (already logged); the caller should return.
@@ -195,6 +218,11 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 	active, err := j.Backend.ActiveGeneration(ctx)
 	switch {
 	case err == nil:
+		if j.Fingerprint != "" && active.Fingerprint != j.Fingerprint {
+			log.Warn("embed: active generation fingerprint differs from config — leaving for CLI to resolve",
+				"active_fingerprint", active.Fingerprint, "config_fingerprint", j.Fingerprint)
+			return 0, false, false
+		}
 		return active.ID, false, true
 	case errors.Is(err, vector.ErrNoActiveGeneration):
 		return 0, false, false // nothing to do
@@ -207,9 +235,13 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 // pendingCount returns the number of pending_embeddings rows for gen.
 // Used by the activation gate.
 func (j *EmbedJob) pendingCount(ctx context.Context, gen vector.GenerationID) (int, error) {
+	rebind := j.Rebind
+	if rebind == nil {
+		rebind = func(q string) string { return q }
+	}
 	var n int
 	if err := j.VectorsDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n); err != nil {
+		rebind(`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`), int64(gen)).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil

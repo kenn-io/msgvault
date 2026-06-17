@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,17 +13,19 @@ import (
 	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
-// captureSlog installs a JSON handler over buf as the default
-// slog logger for the duration of a test. Returns a cleanup
-// closure that restores the previous default.
-func captureSlog(t *testing.T, level slog.Level) *bytes.Buffer {
+// captureSlog installs a JSON handler over buf as the default slog logger at
+// debug level for the duration of a test. Returns a cleanup closure that
+// restores the previous default.
+func captureSlog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(
-		&buf, &slog.HandlerOptions{Level: level},
+		&buf, &slog.HandlerOptions{Level: slog.LevelDebug},
 	)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return &buf
@@ -33,52 +35,37 @@ func captureSlog(t *testing.T, level slog.Level) *bytes.Buffer {
 func openLoggedMem(t *testing.T) *loggedDB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open mem db: %v", err)
-	}
+	requirepkg.NoError(t, err, "open mem db")
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.Exec(
+	_, err = db.Exec(
 		"CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)",
-	); err != nil {
-		t.Fatalf("create table: %v", err)
-	}
+	)
+	requirepkg.NoError(t, err, "create table")
 	return newLoggedDB(db, nil)
 }
 
 func TestLoggedDB_ExecLogsStatement(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Force full trace so every exec shows up at INFO.
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	res, err := db.Exec(
 		"INSERT INTO t (val) VALUES (?)", "hello",
 	)
-	if err != nil {
-		t.Fatalf("exec: %v", err)
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		t.Errorf("rows_affected = %d, want 1", n)
-	}
+	requirepkg.NoError(t, err, "exec")
+	n, _ := res.RowsAffected()
+	assert.Equal(int64(1), n, "rows_affected")
 
 	// Find the sql line in the captured output.
-	rec := findLogLine(t, buf, "sql")
-	if rec["kind"] != "exec" {
-		t.Errorf("kind = %v, want exec", rec["kind"])
-	}
-	if !strings.Contains(
-		rec["stmt"].(string), "INSERT INTO t",
-	) {
-		t.Errorf("stmt missing: %v", rec["stmt"])
-	}
-	if rec["rows_affected"].(float64) != 1 {
-		t.Errorf("rows_affected = %v, want 1", rec["rows_affected"])
-	}
-	if rec["nargs"].(float64) != 1 {
-		t.Errorf("nargs = %v, want 1", rec["nargs"])
-	}
+	rec := findLogLine(t, buf)
+	assert.Equal("exec", rec["kind"], "kind")
+	assert.Contains(rec["stmt"], "INSERT INTO t", "stmt")
+	assert.InDelta(float64(1), rec["rows_affected"], 1e-9, "rows_affected")
+	assert.InDelta(float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
 func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
@@ -87,74 +74,55 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"exec", "INSERT INTO t VALUES (?)", []any{"v"},
 		nil, 100*time.Millisecond,
 	)
 
 	rec := findLogLineByMsg(t, buf, "sql slow")
-	if rec == nil {
-		t.Fatalf("no sql slow line found; buf=%s",
-			buf.String())
-	}
-	if rec["level"] != "WARN" {
-		t.Errorf("level = %v, want WARN", rec["level"])
-	}
-	if rec["duration_ms"].(float64) != 100 {
-		t.Errorf("duration_ms = %v, want 100",
-			rec["duration_ms"])
-	}
+	requirepkg.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
+	assertpkg.Equal(t, "WARN", rec["level"], "level")
+	assertpkg.InDelta(t, float64(100), rec["duration_ms"], 1e-9, "duration_ms")
 }
 
 func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	_, err := db.ExecContext(
 		context.Background(), "INSERT INTO no_such_table VALUES (1)",
 	)
-	if err == nil {
-		t.Fatal("expected exec error")
-	}
-	if !errors.Is(err, err) {
-		t.Errorf("bad error shape")
-	}
+	require.Error(err, "expected exec error")
 
 	rec := findLogLineByMsg(t, buf, "sql error")
-	if rec == nil {
-		t.Fatalf("no sql error line; buf=%s", buf.String())
-	}
-	if rec["level"] != "WARN" {
-		t.Errorf("level = %v, want WARN", rec["level"])
-	}
-	if _, ok := rec["error"]; !ok {
-		t.Errorf("error attr missing: %v", rec)
-	}
+	require.NotNil(rec, "no sql error line; buf=%s", buf.String())
+	assert.Equal("WARN", rec["level"], "level")
+	_, ok := rec["error"]
+	assert.True(ok, "error attr missing: %v", rec)
 }
 
 func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('row')",
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	)
+	require.NoError(err, "seed")
 	var got string
-	if err := db.QueryRow(
+	require.NoError(db.QueryRow(
 		"SELECT val FROM t WHERE id = ?", 1,
-	).Scan(&got); err != nil {
-		t.Fatalf("queryrow: %v", err)
-	}
-	if got != "row" {
-		t.Errorf("got = %q, want row", got)
-	}
+	).Scan(&got), "queryrow")
+	assert.Equal("row", got, "got")
 
 	// Expect to see both an exec line and a queryrow line.
 	seen := map[string]bool{}
@@ -163,9 +131,7 @@ func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
 			seen[kind] = true
 		}
 	}
-	if !seen["exec"] || !seen["queryrow"] {
-		t.Errorf("missing kinds; seen=%v", seen)
-	}
+	assert.True(seen["exec"] && seen["queryrow"], "missing kinds; seen=%v", seen)
 }
 
 // TestLoggedRows_LogsAtClose verifies that the timing log line
@@ -173,45 +139,33 @@ func TestLoggedDB_QueryRowLogsButNoError(t *testing.T) {
 // return. This is the behaviour change that gives streaming queries
 // honest duration_ms numbers.
 func TestLoggedRows_LogsAtClose(t *testing.T) {
+	require := requirepkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	)
+	require.NoError(err, "seed")
 	// Reset buffer so we only see the post-Query log line(s).
 	buf.Reset()
 
 	rows, err := db.Query("SELECT val FROM t ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	if findLogLineByMsg(t, buf, "sql") != nil {
-		t.Fatalf("query log emitted before Close; want only at Close. buf=%s",
-			buf.String())
-	}
+	require.NoError(err, "query")
+	require.Nil(findLogLineByMsg(t, buf, "sql"),
+		"query log emitted before Close; want only at Close. buf=%s", buf.String())
 
 	for rows.Next() {
 		var v string
-		if err := rows.Scan(&v); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
+		require.NoError(rows.Scan(&v), "scan")
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows.Err: %v", err)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+	require.NoError(rows.Err(), "rows.Err")
+	require.NoError(rows.Close(), "close")
 
-	rec := findLogLine(t, buf, "sql")
-	if rec["kind"] != "query" {
-		t.Errorf("kind = %v, want query", rec["kind"])
-	}
+	rec := findLogLine(t, buf)
+	assertpkg.Equal(t, "query", rec["kind"], "kind")
 }
 
 // TestLoggedRows_CloseIdempotent verifies that double-Close
@@ -221,12 +175,10 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 	rows, err := db.Query("SELECT 1")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
+	requirepkg.NoError(t, err, "query")
 	for rows.Next() {
 		var n int
 		_ = rows.Scan(&n)
@@ -240,9 +192,7 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 {
-		t.Errorf("got %d query log lines, want 1", count)
-	}
+	assertpkg.Equal(t, 1, count, "query log lines")
 }
 
 // TestLoggedRows_QueryErrorLogsImmediately verifies that an
@@ -252,17 +202,13 @@ func TestLoggedRows_CloseIdempotent(t *testing.T) {
 // is returned.
 func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
 	_, err := db.Query("SELECT * FROM no_such_table")
-	if err == nil {
-		t.Fatal("expected query error")
-	}
+	requirepkg.Error(t, err, "expected query error")
 	rec := findLogLineByMsg(t, buf, "sql error")
-	if rec == nil {
-		t.Fatalf("no sql error line; buf=%s", buf.String())
-	}
+	requirepkg.NotNil(t, rec, "no sql error line; buf=%s", buf.String())
 }
 
 // TestLoggedRows_FinalizesAtEndOfScan verifies that duration_ms
@@ -273,66 +219,55 @@ func TestLoggedRows_QueryErrorLogsImmediately(t *testing.T) {
 // charged to the streaming query. The end-of-Next finalizer
 // keeps the timing honest.
 func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	)
+	require.NoError(err, "seed")
 	buf.Reset()
 
 	rows, err := db.Query("SELECT val FROM t ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
+	require.NoError(err, "query")
 	for rows.Next() {
 		var v string
-		if err := rows.Scan(&v); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
+		require.NoError(rows.Scan(&v), "scan")
 	}
 	// The log line must be emitted by the time Next returns
 	// false, before any deferred Close fires.
-	rec := findLogLine(t, buf, "sql")
-	if rec["kind"] != "query" {
-		t.Errorf("kind = %v, want query", rec["kind"])
-	}
-	durAtEndOfScan := rec["duration_ms"].(float64)
+	rec := findLogLine(t, buf)
+	assert.Equal("query", rec["kind"], "kind")
+	durAtEndOfScan, ok := rec["duration_ms"].(float64)
+	require.True(ok, "duration_ms is float64")
 
 	// Simulate caller doing unrelated work between end-of-scan
 	// and the deferred Close. The log line must not be re-emitted
 	// and the duration must already be recorded.
 	time.Sleep(50 * time.Millisecond)
-	if err := rows.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+	require.NoError(rows.Close(), "close")
 
 	count := 0
 	var lastDuration float64
 	for _, r := range decodeAll(t, buf) {
 		if r["msg"] == "sql" && r["kind"] == "query" {
 			count++
-			lastDuration = r["duration_ms"].(float64)
+			dur, ok := r["duration_ms"].(float64)
+			require.True(ok, "duration_ms is float64")
+			lastDuration = dur
 		}
 	}
-	if count != 1 {
-		t.Errorf("got %d query log lines, want exactly 1", count)
-	}
+	assert.Equal(1, count, "query log lines")
 	// Duration recorded at end-of-scan must not include the 50ms
 	// of post-iteration work — give a generous ceiling so a slow
 	// CI host doesn't flake.
-	if lastDuration != durAtEndOfScan {
-		t.Errorf("duration_ms changed after Close: %v -> %v",
-			durAtEndOfScan, lastDuration)
-	}
-	if lastDuration >= 40 {
-		t.Errorf("duration_ms %v includes post-iteration sleep; "+
-			"finalizer should run at end-of-Next", lastDuration)
-	}
+	assert.InDelta(durAtEndOfScan, lastDuration, 0, "duration_ms changed after Close")
+	assert.Less(lastDuration, float64(40),
+		"duration_ms %v includes post-iteration sleep; finalizer should run at end-of-Next", lastDuration)
 }
 
 // TestLoggedRows_EarlyExitFinalizesOnClose covers the path where
@@ -340,40 +275,29 @@ func TestLoggedRows_FinalizesAtEndOfScan(t *testing.T) {
 // The finalizer must run from Close on that path so the log line
 // is still emitted exactly once.
 func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
+	require := requirepkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	)
+	require.NoError(err, "seed")
 	buf.Reset()
 
 	rows, err := db.Query("SELECT val FROM t ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
+	require.NoError(err, "query")
 	// Read a single row and break — finalizer should not fire yet.
-	if !rows.Next() {
-		t.Fatalf("expected at least one row")
-	}
+	require.True(rows.Next(), "expected at least one row")
 	var v string
-	if err := rows.Scan(&v); err != nil {
-		t.Fatalf("scan: %v", err)
-	}
-	if findLogLineByMsg(t, buf, "sql") != nil {
-		t.Fatalf("log line emitted before Close on early-exit path")
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	rec := findLogLine(t, buf, "sql")
-	if rec["kind"] != "query" {
-		t.Errorf("kind = %v, want query", rec["kind"])
-	}
+	require.NoError(rows.Scan(&v), "scan")
+	require.Nil(findLogLineByMsg(t, buf, "sql"),
+		"log line emitted before Close on early-exit path")
+	require.NoError(rows.Close(), "close")
+	rec := findLogLine(t, buf)
+	assertpkg.Equal(t, "query", rec["kind"], "kind")
 }
 
 // TestLoggedRows_IterationErrorSurfacedOnClose verifies that a
@@ -382,21 +306,19 @@ func TestLoggedRows_EarlyExitFinalizesOnClose(t *testing.T) {
 // nil. Without checking Rows.Err(), a cancelled scan would log
 // as a successful query.
 func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
+	require := requirepkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{})
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	db := openLoggedMem(t)
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		"INSERT INTO t (val) VALUES ('a'), ('b'), ('c')",
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	)
+	require.NoError(err, "seed")
 	buf.Reset()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rows, err := db.QueryContext(ctx, "SELECT val FROM t ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
+	require.NoError(err, "query")
 	// Cancel before iterating; Next() will see the cancellation
 	// and stop, leaving the error on Rows.Err(), not Close().
 	cancel()
@@ -405,12 +327,9 @@ func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
 	_ = rows.Close()
 
 	rec := findLogLineByMsg(t, buf, "sql error")
-	if rec == nil {
-		t.Fatalf("expected sql error line for cancelled scan; buf=%s", buf.String())
-	}
-	if errStr, _ := rec["error"].(string); errStr == "" {
-		t.Errorf("error attr missing or empty: %v", rec)
-	}
+	require.NotNil(rec, "expected sql error line for cancelled scan; buf=%s", buf.String())
+	errStr, _ := rec["error"].(string)
+	assertpkg.NotEmpty(t, errStr, "error attr missing or empty: %v", rec)
 }
 
 // TestLogStmt_SlowQueryIncludesArgsShape verifies that a slow
@@ -419,10 +338,12 @@ func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
 // values can carry PII (addresses, subjects, tokens) and must
 // not be persisted in logs by default.
 func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"query", "SELECT * FROM t WHERE id = ? AND src = ?",
 		[]any{int64(42), "gmail"},
@@ -430,31 +351,18 @@ func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
 	)
 
 	rec := findLogLineByMsg(t, buf, "sql slow")
-	if rec == nil {
-		t.Fatalf("no sql slow line; buf=%s", buf.String())
-	}
+	require.NotNil(rec, "no sql slow line; buf=%s", buf.String())
 	gotShape, ok := rec["args_shape"].(string)
-	if !ok {
-		t.Fatalf("args_shape attr missing or wrong type: %v", rec["args_shape"])
-	}
+	require.True(ok, "args_shape attr missing or wrong type: %v", rec["args_shape"])
 	// Type info present.
-	if !strings.Contains(gotShape, "int64") {
-		t.Errorf("args_shape missing int64 type: %q", gotShape)
-	}
-	if !strings.Contains(gotShape, "string(len=5)") {
-		t.Errorf("args_shape missing string length: %q", gotShape)
-	}
+	assert.Contains(gotShape, "int64", "args_shape int64 type")
+	assert.Contains(gotShape, "string(len=5)", "args_shape string length")
 	// Raw values must not appear.
-	if strings.Contains(gotShape, "42") {
-		t.Errorf("args_shape leaked numeric value: %q", gotShape)
-	}
-	if strings.Contains(gotShape, "gmail") {
-		t.Errorf("args_shape leaked string value: %q", gotShape)
-	}
+	assert.NotContains(gotShape, "42", "args_shape leaked numeric value")
+	assert.NotContains(gotShape, "gmail", "args_shape leaked string value")
 	// Legacy "args" attr must not be present.
-	if _, present := rec["args"]; present {
-		t.Errorf("legacy args attr should not be set: %v", rec)
-	}
+	_, present := rec["args"]
+	assert.False(present, "legacy args attr should not be set: %v", rec)
 }
 
 // TestLogStmt_FullTraceOmitsArgs verifies that --full-trace mode
@@ -464,40 +372,32 @@ func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
 	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
 
-	buf := captureSlog(t, slog.LevelDebug)
+	buf := captureSlog(t)
 	logStmtWith(
 		"query", "SELECT * FROM t WHERE id = ?",
 		[]any{int64(42)},
 		nil, 1*time.Millisecond,
 	)
 
-	rec := findLogLine(t, buf, "sql")
-	if _, present := rec["args"]; present {
-		t.Errorf("args should not be present on info/full-trace lines: %v", rec)
-	}
-	if _, present := rec["args_shape"]; present {
-		t.Errorf("args_shape should not be present on info/full-trace lines: %v", rec)
-	}
-	if rec["nargs"].(float64) != 1 {
-		t.Errorf("nargs = %v, want 1", rec["nargs"])
-	}
+	rec := findLogLine(t, buf)
+	_, present := rec["args"]
+	assertpkg.False(t, present, "args should not be present on info/full-trace lines: %v", rec)
+	_, present = rec["args_shape"]
+	assertpkg.False(t, present, "args_shape should not be present on info/full-trace lines: %v", rec)
+	assertpkg.InDelta(t, float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
 // TestFormatArgsShape_RedactsValues ensures the shape formatter
 // emits type and length only, never raw values, even for long
 // strings that could carry sensitive content.
 func TestFormatArgsShape_RedactsValues(t *testing.T) {
+	assert := assertpkg.New(t)
 	long := strings.Repeat("x", 200)
 	got := formatArgsShape([]any{long, "secret-token", []byte("hello world"), nil, int64(42)})
-	if strings.Contains(got, "x") || strings.Contains(got, "secret-token") {
-		t.Errorf("shape leaked raw string: %q", got)
-	}
-	if strings.Contains(got, "hello world") {
-		t.Errorf("shape leaked raw bytes: %q", got)
-	}
-	if strings.Contains(got, "42") {
-		t.Errorf("shape leaked raw numeric: %q", got)
-	}
+	assert.NotContains(got, "x", "shape leaked raw string")
+	assert.NotContains(got, "secret-token", "shape leaked raw string")
+	assert.NotContains(got, "hello world", "shape leaked raw bytes")
+	assert.NotContains(got, "42", "shape leaked raw numeric")
 	for _, want := range []string{
 		"string(len=200)",
 		"string(len=12)",
@@ -505,9 +405,7 @@ func TestFormatArgsShape_RedactsValues(t *testing.T) {
 		"nil",
 		"int64",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("shape missing %q: %q", want, got)
-		}
+		assert.Contains(got, want, "shape missing %q", want)
 	}
 }
 
@@ -515,9 +413,7 @@ func TestNormalizeStmt_CollapsesWhitespace(t *testing.T) {
 	in := "SELECT\n  *\nFROM\n\tt WHERE id = ?"
 	got := normalizeStmt(in, 0)
 	want := "SELECT * FROM t WHERE id = ?"
-	if got != want {
-		t.Errorf("got %q want %q", got, want)
-	}
+	assertpkg.Equal(t, want, got)
 }
 
 func TestNormalizeStmt_TruncatesLong(t *testing.T) {
@@ -527,12 +423,8 @@ func TestNormalizeStmt_TruncatesLong(t *testing.T) {
 	in := strings.Repeat("a", 500)
 	got := normalizeStmt(in, 100)
 	const sep = " ... "
-	if !strings.Contains(got, sep) {
-		t.Errorf("missing separator: %q", got)
-	}
-	if len(got) != 100 {
-		t.Errorf("bad length: len=%d want=%d", len(got), 100)
-	}
+	assertpkg.Contains(t, got, sep, "missing separator")
+	assertpkg.Len(t, got, 100, "bad length")
 }
 
 // TestNormalizeStmt_KeepsWhereClause is the guard for the bug
@@ -549,9 +441,8 @@ func TestNormalizeStmt_KeepsWhereClause(t *testing.T) {
 		"FROM messages m JOIN sources s ON s.id = m.source_id " +
 		"WHERE m.rfc822_message_id = ? AND m.deleted_at IS NULL"
 	got := normalizeStmt(in, 300)
-	if !strings.Contains(got, "WHERE m.rfc822_message_id") {
-		t.Errorf("WHERE clause missing from truncated stmt: %q", got)
-	}
+	assertpkg.Contains(t, got, "WHERE m.rfc822_message_id",
+		"WHERE clause missing from truncated stmt")
 }
 
 // TestNormalizeStmt_TinyBudgetFallsBackToHead protects the
@@ -560,12 +451,10 @@ func TestNormalizeStmt_KeepsWhereClause(t *testing.T) {
 func TestNormalizeStmt_TinyBudgetFallsBackToHead(t *testing.T) {
 	in := strings.Repeat("a", 50)
 	got := normalizeStmt(in, 8)
-	if !strings.HasSuffix(got, "...") {
-		t.Errorf("expected trailing ellipsis on tiny budget; got %q", got)
-	}
-	if strings.Contains(got, " ... ") {
-		t.Errorf("did not expect head+tail split on tiny budget; got %q", got)
-	}
+	assertpkg.True(t, strings.HasSuffix(got, "..."),
+		"expected trailing ellipsis on tiny budget; got %q", got)
+	assertpkg.NotContains(t, got, " ... ",
+		"did not expect head+tail split on tiny budget")
 }
 
 // TestNormalizeStmt_UTF8Safe ensures truncation respects rune
@@ -576,29 +465,27 @@ func TestNormalizeStmt_UTF8Safe(t *testing.T) {
 	// any reasonable budget.
 	in := strings.Repeat("café — 漢 ", 30)
 	got := normalizeStmt(in, 50)
-	if !utf8.ValidString(got) {
-		t.Errorf("normalizeStmt returned invalid UTF-8: %q", got)
-	}
+	assertpkg.True(t, utf8.ValidString(got), "normalizeStmt returned invalid UTF-8: %q", got)
 	// Tiny-budget head-only path.
 	got2 := normalizeStmt(in, 8)
-	if !utf8.ValidString(got2) {
-		t.Errorf("tiny-budget normalizeStmt returned invalid UTF-8: %q", got2)
-	}
+	assertpkg.True(t, utf8.ValidString(got2),
+		"tiny-budget normalizeStmt returned invalid UTF-8: %q", got2)
 }
 
 // ---- test helpers ----
 
-// findLogLine returns the first record whose msg matches exactly.
+// findLogLine returns the first record whose msg is exactly "sql".
 func findLogLine(
-	t *testing.T, buf *bytes.Buffer, msg string,
+	t *testing.T, buf *bytes.Buffer,
 ) map[string]any {
 	t.Helper()
+	const msg = "sql"
 	for _, rec := range decodeAll(t, buf) {
 		if rec["msg"] == msg {
 			return rec
 		}
 	}
-	t.Fatalf("no log line with msg=%q; buf=%s", msg, buf.String())
+	requirepkg.FailNow(t, fmt.Sprintf("no log line with msg=%q; buf=%s", msg, buf.String()))
 	return nil
 }
 

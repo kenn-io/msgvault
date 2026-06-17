@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var listAccountsJSON bool
@@ -147,11 +148,11 @@ func outputAccountsTable(stats []accountStats) {
 }
 
 func outputAccountsJSON(stats []accountStats) error {
-	output := make([]map[string]interface{}, len(stats))
+	output := make([]map[string]any, len(stats))
 	for i, s := range stats {
-		entry := map[string]interface{}{
+		entry := map[string]any{
 			"id":            s.ID,
-			"email":         s.Email,
+			keyEmail:        s.Email,
 			"type":          s.Type,
 			"display_name":  s.DisplayName,
 			"message_count": s.MessageCount,
@@ -172,17 +173,17 @@ func outputAccountsJSON(stats []accountStats) error {
 // formatCount formats a number with thousand separators.
 func formatCount(n int64) string {
 	if n < 1000 {
-		return fmt.Sprintf("%d", n)
+		return strconv.FormatInt(n, 10)
 	}
 
 	// Format with commas
-	s := fmt.Sprintf("%d", n)
+	s := strconv.FormatInt(n, 10)
 	result := make([]byte, 0, len(s)+(len(s)-1)/3)
-	for i, c := range s {
+	for i := range len(s) {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			result = append(result, ',')
 		}
-		result = append(result, byte(c))
+		result = append(result, s[i]) // s is ASCII decimal digits
 	}
 	return string(result)
 }
@@ -231,5 +232,5 @@ func outputRemoteAccountsJSON(accounts []remote.AccountInfo) error {
 
 func init() {
 	rootCmd.AddCommand(listAccountsCmd)
-	listAccountsCmd.Flags().BoolVar(&listAccountsJSON, "json", false, "Output as JSON")
+	listAccountsCmd.Flags().BoolVar(&listAccountsJSON, flagJSON, false, "Output as JSON")
 }

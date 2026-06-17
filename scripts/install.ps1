@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$repo = 'wesm/msgvault'
+$repo = 'kenn-io/msgvault'
 $binaryName = 'msgvault.exe'
 
 function Write-Info($msg) { Write-Host $msg -ForegroundColor Green }
@@ -64,14 +64,117 @@ function Invoke-WebRequestCompat {
     }
 }
 
-function Get-LatestVersion {
-    $url = "https://api.github.com/repos/$repo/releases/latest"
+function Get-FinalUrl {
+    # Returns the URL that ultimately responded to a request, after any
+    # redirects were followed. The property differs by PowerShell edition:
+    # Windows PowerShell 5.x exposes HttpWebResponse.ResponseUri, while
+    # PowerShell 7+ exposes HttpResponseMessage.RequestMessage.RequestUri.
+    param($Response)
     try {
-        $response = Invoke-WebRequestCompat -Uri $url
-        return $response.tag_name
+        if ($Response.BaseResponse.ResponseUri) {
+            return $Response.BaseResponse.ResponseUri.AbsoluteUri
+        }
+    } catch {}
+    try {
+        if ($Response.BaseResponse.RequestMessage.RequestUri) {
+            return $Response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+        }
+    } catch {}
+    return $null
+}
+
+function Get-LatestVersion {
+    # Resolve the latest release tag by following the /releases/latest
+    # 302 redirect to /releases/tag/<version> and reading the final URL.
+    # Using the HTML endpoint (not api.github.com) avoids the 60 req/hr
+    # per-IP rate limit, so users behind shared NAT / VPN don't get 403.
+    #
+    # We let Invoke-WebRequest follow the redirect rather than inspecting
+    # the Location header with MaximumRedirection=0: in Windows PowerShell
+    # 5.x that throws a System.InvalidOperationException (not a WebException
+    # with a usable .Response), which broke the install. A HEAD request
+    # follows the redirect without downloading the release page body.
+    $url = "https://github.com/$repo/releases/latest"
+
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
+
+    $params = @{
+        Uri = $url
+        Method = 'Head'
+        ErrorAction = 'Stop'
+    }
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $params.UseBasicParsing = $true
+    }
+
+    $finalUrl = $null
+    try {
+        $response = Invoke-WebRequest @params
+        $finalUrl = Get-FinalUrl $response
     } catch {
         throw "Failed to fetch latest version: $_"
     }
+
+    if (-not $finalUrl) {
+        throw "Failed to fetch latest version: could not resolve release URL from $url"
+    }
+    if ($finalUrl -notmatch '/releases/tag/([^/]+)/?$') {
+        throw "Failed to fetch latest version: unexpected release URL $finalUrl"
+    }
+    return $Matches[1]
+}
+
+function Test-ReleaseAsset {
+    # Returns $true when the given release asset URL exists (HTTP 2xx),
+    # following the redirect to the storage backend. Used to detect
+    # whether a native build is published for the detected architecture.
+    param([string]$Url)
+
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
+
+    $params = @{
+        Uri = $Url
+        Method = 'Head'
+        ErrorAction = 'Stop'
+    }
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $params.UseBasicParsing = $true
+    }
+
+    try {
+        $response = Invoke-WebRequest @params
+        return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300)
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-ReleaseArch {
+    # Returns the release arch to install for the detected CPU arch.
+    # Prefers a native build, but falls back to amd64 on arm64 because
+    # Windows on ARM transparently runs x64 binaries under emulation and
+    # no native windows/arm64 asset is published for every release.
+    # Returns $null when no usable asset exists.
+    param([string]$DetectedArch, [string]$Version)
+
+    $candidates = @($DetectedArch)
+    if ($DetectedArch -eq 'arm64') {
+        $candidates += 'amd64'
+    }
+
+    $versionNum = $Version.TrimStart('v')
+    foreach ($candidate in $candidates) {
+        $name = "msgvault_${versionNum}_windows_${candidate}.zip"
+        $url = "https://github.com/$repo/releases/download/$Version/$name"
+        if (Test-ReleaseAsset $url) {
+            return $candidate
+        }
+    }
+    return $null
 }
 
 function Get-InstallDir {
@@ -120,6 +223,17 @@ function Install-Msgvault {
 
     $version = Get-LatestVersion
     Write-Info "Latest version: $version"
+
+    $resolvedArch = Resolve-ReleaseArch -DetectedArch $arch -Version $version
+    if (-not $resolvedArch) {
+        Write-Err "Error: No Windows release asset found for $version (detected windows/$arch)."
+        Write-Err "See https://github.com/$repo for build-from-source instructions."
+        exit 1
+    }
+    if ($resolvedArch -ne $arch) {
+        Write-Warn "No native windows/$arch build for $version; installing windows/$resolvedArch (runs under emulation)."
+        $arch = $resolvedArch
+    }
 
     $versionNum = $version.TrimStart('v')
     $archiveName = "msgvault_${versionNum}_windows_${arch}.zip"

@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var listSendersCmd = &cobra.Command{
@@ -42,7 +42,7 @@ Examples:
 		}
 
 		// Create query engine
-		engine := query.NewSQLiteEngine(s.DB())
+		engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 		// Execute aggregation
 		results, err := engine.Aggregate(cmd.Context(), query.ViewSenders, opts)

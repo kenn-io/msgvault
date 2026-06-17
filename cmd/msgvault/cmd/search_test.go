@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"io"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // captureStdout redirects os.Stdout to a pipe and returns a function
@@ -21,9 +23,7 @@ func captureStdout(t *testing.T) func() string {
 	t.Helper()
 	origStdout := os.Stdout
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create pipe: %v", err)
-	}
+	requirepkg.NoError(t, err, "create pipe")
 	os.Stdout = w
 
 	// Drain the read side concurrently so writers never block.
@@ -42,9 +42,7 @@ func captureStdout(t *testing.T) func() string {
 		os.Stdout = origStdout
 		res := <-ch
 		_ = r.Close()
-		if res.err != nil {
-			t.Fatalf("read captured stdout: %v", res.err)
-		}
+		requirepkg.NoError(t, res.err, "read captured stdout")
 		return string(res.data)
 	}
 }
@@ -64,6 +62,37 @@ func resetSearchFlags() {
 	searchCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 }
 
+func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  query.MessageSummary
+		want string
+	}{
+		{
+			name: "email first",
+			msg:  query.MessageSummary{FromEmail: "alice@example.com", FromName: "Alice", FromPhone: "+15551234567"},
+			want: "alice@example.com",
+		},
+		{
+			name: "display name fallback",
+			msg:  query.MessageSummary{FromName: "Alice", FromPhone: "+15551234567"},
+			want: "Alice",
+		},
+		{
+			name: "phone fallback",
+			msg:  query.MessageSummary{FromPhone: "+15551234567"},
+			want: "+15551234567",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := summaryFromDisplay(tt.msg)
+			requirepkg.Equal(t, tt.want, got, "summaryFromDisplay()")
+		})
+	}
+}
+
 func TestSearchCmd_AccountFlagRejectsRemoteMode(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg; resetSearchFlags() }()
@@ -76,61 +105,43 @@ func TestSearchCmd_AccountFlagRejectsRemoteMode(t *testing.T) {
 	root.SetArgs([]string{"search", "--account", "a@b.com", "hello"})
 
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error when --account used in remote mode")
-	}
-	if !strings.Contains(err.Error(), "not supported in remote mode") {
-		t.Errorf("error = %q, want 'not supported in remote mode'", err)
-	}
+	requirepkg.Error(t, err, "expected error when --account used in remote mode")
+	assertpkg.ErrorContains(t, err, "not supported in remote mode")
 }
 
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	// Seed two accounts with one message each.
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("create source 1: %v", err)
-	}
+	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
-	if err != nil {
-		t.Fatalf("create source 2: %v", err)
-	}
+	require.NoError(err, "create source 2")
 	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
-	if err != nil {
-		t.Fatalf("create conv 1: %v", err)
-	}
+	require.NoError(err, "create conv 1")
 	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
-	if err != nil {
-		t.Fatalf("create conv 2: %v", err)
-	}
+	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
 		SourceMessageID: "m1", MessageType: "email",
 		Subject:      sql.NullString{String: "Alice msg", Valid: true},
 		SizeEstimate: 100,
 	})
-	if err != nil {
-		t.Fatalf("insert msg 1: %v", err)
-	}
+	require.NoError(err, "insert msg 1")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src2.ID, ConversationID: conv2,
 		SourceMessageID: "m2", MessageType: "email",
 		Subject:      sql.NullString{String: "Bob msg", Valid: true},
 		SizeEstimate: 200,
 	})
-	if err != nil {
-		t.Fatalf("insert msg 2: %v", err)
-	}
+	require.NoError(err, "insert msg 2")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -152,16 +163,10 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 
 	err = root.Execute()
 	out := done()
-	if err != nil {
-		t.Fatalf("account-only search failed: %v", err)
-	}
+	require.NoError(err, "account-only search failed")
 
-	if !strings.Contains(out, "Alice msg") {
-		t.Errorf("expected Alice's message in output, got: %s", out)
-	}
-	if strings.Contains(out, "Bob msg") {
-		t.Errorf("Bob's message should be filtered out, got: %s", out)
-	}
+	assert.Contains(out, "Alice msg", "expected Alice's message in output")
+	assert.NotContains(out, "Bob msg", "Bob's message should be filtered out")
 }
 
 func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
@@ -180,45 +185,29 @@ func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
 	root.SetArgs([]string{"search", "before:not-a-date"})
 
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for invalid query")
-	}
-	if !strings.Contains(err.Error(), "empty search query") {
-		t.Errorf(
-			"error = %q, want 'empty search query' (not a DB error)",
-			err,
-		)
-	}
+	requirepkg.Error(t, err, "expected error for invalid query")
+	assertpkg.ErrorContains(t, err, "empty search query", "want 'empty search query' (not a DB error)")
 }
 
 func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
+	require.NoError(err, "create source")
 	conv, err := s.EnsureConversation(src.ID, "c1", "")
-	if err != nil {
-		t.Fatalf("create conv: %v", err)
-	}
+	require.NoError(err, "create conv")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
 		SourceMessageID: "m1", MessageType: "email",
 		Subject:      sql.NullString{String: "test msg", Valid: true},
 		SizeEstimate: 100,
 	})
-	if err != nil {
-		t.Fatalf("insert msg: %v", err)
-	}
+	require.NoError(err, "insert msg")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -238,9 +227,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	})
 	err = root.Execute()
 	_ = done()
-	if err != nil {
-		t.Fatalf("first search failed: %v", err)
-	}
+	require.NoError(err, "first search failed")
 
 	// Second invocation: search WITHOUT --account.
 	// Must not carry over the previous account filter.
@@ -253,15 +240,9 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	})
 	err = root2.Execute()
 	out := done()
-	if err != nil {
-		t.Fatalf("second search failed: %v", err)
-	}
-	if !strings.Contains(out, "test msg") {
-		t.Errorf(
-			"second search should find msg without account filter: %s",
-			out,
-		)
-	}
+	require.NoError(err, "second search failed")
+	assertpkg.Contains(t, out, "test msg",
+		"second search should find msg without account filter")
 }
 
 func TestSearchCmd_NoQueryNoAccount(t *testing.T) {
@@ -275,63 +256,46 @@ func TestSearchCmd_NoQueryNoAccount(t *testing.T) {
 	root.SetArgs([]string{"search"})
 
 	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for search with no query and no --account")
-	}
-	if !strings.Contains(err.Error(), "provide a search query") {
-		t.Errorf("error = %q, want 'provide a search query'", err)
-	}
+	requirepkg.Error(t, err, "expected error for search with no query and no --account")
+	assertpkg.ErrorContains(t, err, "provide a search query")
 }
 
 // TestSearchCmd_CollectionFlagScopesResults seeds two accounts and one
 // collection containing only the first, then runs FTS search with
 // --collection. Only the first account's message must come back.
 func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("create source 1: %v", err)
-	}
+	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
-	if err != nil {
-		t.Fatalf("create source 2: %v", err)
-	}
+	require.NoError(err, "create source 2")
 	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
-	if err != nil {
-		t.Fatalf("create conv 1: %v", err)
-	}
+	require.NoError(err, "create conv 1")
 	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
-	if err != nil {
-		t.Fatalf("create conv 2: %v", err)
-	}
-	if _, err := s.UpsertMessage(&store.Message{
+	require.NoError(err, "create conv 2")
+	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
 		SourceMessageID: "m1", MessageType: "email",
 		Subject:      sql.NullString{String: "Alice msg", Valid: true},
 		SizeEstimate: 100,
-	}); err != nil {
-		t.Fatalf("insert msg 1: %v", err)
-	}
-	if _, err := s.UpsertMessage(&store.Message{
+	})
+	require.NoError(err, "insert msg 1")
+	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src2.ID, ConversationID: conv2,
 		SourceMessageID: "m2", MessageType: "email",
 		Subject:      sql.NullString{String: "Bob msg", Valid: true},
 		SizeEstimate: 200,
-	}); err != nil {
-		t.Fatalf("insert msg 2: %v", err)
-	}
-	if _, err := s.CreateCollection("alice-only", "", []int64{src1.ID}); err != nil {
-		t.Fatalf("create collection: %v", err)
-	}
+	})
+	require.NoError(err, "insert msg 2")
+	_, err = s.CreateCollection("alice-only", "", []int64{src1.ID})
+	require.NoError(err, "create collection")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -350,29 +314,20 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	})
 	err = root.Execute()
 	out := done()
-	if err != nil {
-		t.Fatalf("collection-only search failed: %v", err)
-	}
-	if !strings.Contains(out, "Alice msg") {
-		t.Errorf("expected Alice's message in output, got: %s", out)
-	}
-	if strings.Contains(out, "Bob msg") {
-		t.Errorf("Bob's message must be filtered out, got: %s", out)
-	}
+	require.NoError(err, "collection-only search failed")
+	assert.Contains(out, "Alice msg", "expected Alice's message in output")
+	assert.NotContains(out, "Bob msg", "Bob's message must be filtered out")
 }
 
 // TestSearchCmd_CollectionFlagUnknown returns a clear error when the
 // named collection does not exist.
 func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -388,12 +343,8 @@ func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
 		"search", "--collection", "does-not-exist", "anything",
 	})
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error for unknown collection")
-	}
-	if !strings.Contains(err.Error(), "no collection") {
-		t.Errorf("error = %q, want substring 'no collection'", err)
-	}
+	require.Error(err, "expected error for unknown collection")
+	assertpkg.ErrorContains(t, err, "no collection")
 }
 
 // TestSearchCmd_VectorOrHybridRequireQueryText rejects empty-query
@@ -415,12 +366,8 @@ func TestSearchCmd_VectorOrHybridRequireQueryText(t *testing.T) {
 				"--account", "alice@example.com",
 			})
 			err := root.Execute()
-			if err == nil {
-				t.Fatalf("expected error for queryless --mode=%s", mode)
-			}
-			if !strings.Contains(err.Error(), "requires query text") {
-				t.Errorf("error = %q, want substring 'requires query text'", err)
-			}
+			requirepkg.Error(t, err, "expected error for queryless --mode=%s", mode)
+			assertpkg.ErrorContains(t, err, "requires query text")
 		})
 	}
 }
@@ -444,12 +391,8 @@ func TestSearchCmd_VectorOrHybridRejectFilterOnlyQuery(t *testing.T) {
 				"search", "--mode", mode, "from:alice",
 			})
 			err := root.Execute()
-			if err == nil {
-				t.Fatalf("expected error for filter-only --mode=%s query", mode)
-			}
-			if !strings.Contains(err.Error(), "free-text terms") {
-				t.Errorf("error = %q, want substring 'free-text terms'", err)
-			}
+			requirepkg.Error(t, err, "expected error for filter-only --mode=%s query", mode)
+			assertpkg.ErrorContains(t, err, "free-text terms")
 		})
 	}
 }
@@ -466,13 +409,10 @@ func TestSearchCmd_MutualExclusion(t *testing.T) {
 	cmd.SetArgs([]string{"search", "--account", "alpha@example.com", "--collection", "work"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when both --account and --collection are set, got nil")
-	}
+	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	if !strings.Contains(msg, "account") || !strings.Contains(msg, "collection") {
-		t.Errorf("error should mention both flag names; got: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
+	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }

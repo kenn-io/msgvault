@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
 )
 
 func TestIsSQLiteError_ValueForm(t *testing.T) {
@@ -19,13 +20,11 @@ func TestIsSQLiteError_ValueForm(t *testing.T) {
 	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
 
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
-	if !isSQLiteError(wrappedErr, "constraint failed") {
-		t.Errorf("isSQLiteError should match constraint error, got: %v", sqliteErr.Error())
-	}
+	assertpkg.True(t, isSQLiteError(wrappedErr, "constraint failed"),
+		"isSQLiteError should match constraint error, got: %v", sqliteErr.Error())
 
-	if isSQLiteError(wrappedErr, "no such table") {
-		t.Error("isSQLiteError should not match unrelated substring")
-	}
+	assertpkg.False(t, isSQLiteError(wrappedErr, "no such table"),
+		"isSQLiteError should not match unrelated substring")
 }
 
 func TestIsSQLiteError_PointerForm(t *testing.T) {
@@ -39,18 +38,16 @@ func TestIsSQLiteError_PointerForm(t *testing.T) {
 	wrappedErr := fmt.Errorf("insert failed: %w", sqliteErr)
 
 	// sqlite3.Error.Error() returns the code description, e.g. "constraint failed"
-	if !isSQLiteError(wrappedErr, "constraint failed") {
-		t.Errorf("isSQLiteError should match constraint error via pointer, got: %v", sqliteErr.Error())
-	}
+	assertpkg.True(t, isSQLiteError(wrappedErr, "constraint failed"),
+		"isSQLiteError should match constraint error via pointer, got: %v", sqliteErr.Error())
 
-	if isSQLiteError(wrappedErr, "no such table") {
-		t.Error("isSQLiteError should not match unrelated substring via pointer")
-	}
+	assertpkg.False(t, isSQLiteError(wrappedErr, "no such table"),
+		"isSQLiteError should not match unrelated substring via pointer")
 }
 
 func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
 	// Create a typed nil *sqlite3.Error (interface value non-nil, underlying pointer nil)
-	var sqliteErr *sqlite3.Error = nil
+	var sqliteErr *sqlite3.Error
 
 	// Wrap in an interface to create a typed nil scenario
 	// errors.As can succeed with typed nil in certain edge cases
@@ -58,54 +55,39 @@ func TestIsSQLiteError_TypedNilPointer(t *testing.T) {
 
 	// This should not panic - the nil guard should protect us
 	result := isSQLiteError(wrappedErr, "any")
-	if result {
-		t.Error("isSQLiteError should return false for typed nil pointer")
-	}
+	assertpkg.False(t, result, "isSQLiteError should return false for typed nil pointer")
 }
 
 func TestIsSQLiteError_NonSQLiteError(t *testing.T) {
 	plainErr := errors.New("some other error")
 
-	if isSQLiteError(plainErr, "error") {
-		t.Error("isSQLiteError should return false for non-sqlite errors")
-	}
+	assertpkg.False(t, isSQLiteError(plainErr, "error"), "isSQLiteError should return false for non-sqlite errors")
 }
 
 func TestIsSQLiteError_NilError(t *testing.T) {
-	if isSQLiteError(nil, "anything") {
-		t.Error("isSQLiteError should return false for nil error")
-	}
+	assertpkg.False(t, isSQLiteError(nil, "anything"), "isSQLiteError should return false for nil error")
 }
 
 func TestSQLiteDialect_IsBusyError(t *testing.T) {
+	assert := assertpkg.New(t)
 	d := &SQLiteDialect{}
 
 	busy := sqlite3.Error{Code: sqlite3.ErrBusy}
-	if !d.IsBusyError(fmt.Errorf("wrapped: %w", busy)) {
-		t.Error("IsBusyError should match SQLITE_BUSY")
-	}
+	assert.True(d.IsBusyError(fmt.Errorf("wrapped: %w", busy)), "IsBusyError should match SQLITE_BUSY")
 
 	locked := sqlite3.Error{Code: sqlite3.ErrLocked}
-	if !d.IsBusyError(fmt.Errorf("wrapped: %w", locked)) {
-		t.Error("IsBusyError should match SQLITE_LOCKED")
-	}
+	assert.True(d.IsBusyError(fmt.Errorf("wrapped: %w", locked)), "IsBusyError should match SQLITE_LOCKED")
 
 	constraint := sqlite3.Error{Code: sqlite3.ErrConstraint}
-	if d.IsBusyError(fmt.Errorf("wrapped: %w", constraint)) {
-		t.Error("IsBusyError should not match non-busy sqlite errors")
-	}
+	assert.False(d.IsBusyError(fmt.Errorf("wrapped: %w", constraint)), "IsBusyError should not match non-busy sqlite errors")
 
-	if d.IsBusyError(errors.New("plain error")) {
-		t.Error("IsBusyError should not match non-sqlite errors")
-	}
+	assert.False(d.IsBusyError(errors.New("plain error")), "IsBusyError should not match non-sqlite errors")
 
-	if d.IsBusyError(nil) {
-		t.Error("IsBusyError should not match nil")
-	}
+	assert.False(d.IsBusyError(nil), "IsBusyError should not match nil")
 }
 
 // typedNilError is a helper type that implements error and allows
-// errors.As to extract a typed nil *sqlite3.Error
+// errors.As to extract a typed nil *sqlite3.Error.
 type typedNilError struct {
 	err *sqlite3.Error
 }

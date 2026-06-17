@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -13,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Importer handles importing WhatsApp messages from a decrypted msgstore.db
@@ -148,18 +150,18 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 
 		imp.progress.OnChatStart(chat.RawString, chatTitle(chat), 0)
 
-		// For direct chats: add the remote participant.
+		// For direct chats: add the remote participant. Skip non-phone JIDs
+		// (e.g. lid:..., broadcast) — normalizePhone returns "" for those.
 		if !isGroupChat(chat) && chat.User != "" {
-			phone := normalizePhone(chat.User, chat.Server)
-			if phone == "" {
-				// Non-phone JID (e.g., lid:..., broadcast) — skip.
-			} else if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
-				summary.Errors++
-				imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
-			} else {
-				summary.Participants++
-				_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
-				_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+			if phone := normalizePhone(chat.User, chat.Server); phone != "" {
+				if participantID, err := imp.store.EnsureParticipantByPhone(phone, "", "whatsapp"); err != nil {
+					summary.Errors++
+					imp.progress.OnError(fmt.Errorf("ensure participant %s: %w", phone, err))
+				} else {
+					summary.Participants++
+					_ = imp.store.EnsureConversationParticipant(conversationID, participantID, "member")
+					_ = imp.store.EnsureConversationParticipant(conversationID, selfParticipantID, "member")
+				}
 			}
 		}
 
@@ -398,13 +400,16 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 						// (a previous import with --media-dir may have created them).
 						var existingCount int
 						_ = imp.store.DB().QueryRow(
-							"SELECT COUNT(*) FROM attachments WHERE message_id = ?",
+							imp.store.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"),
 							messageID,
 						).Scan(&existingCount)
 						if existingCount == 0 {
+							// has_attachments is BOOLEAN on PG; bind a Go
+							// bool through the rebind layer so the driver
+							// emits the right literal for each backend.
 							_, _ = imp.store.DB().Exec(
-								"UPDATE messages SET has_attachments = 0, attachment_count = 0 WHERE id = ?",
-								messageID)
+								imp.store.Rebind("UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?"),
+								false, 0, messageID)
 						}
 					}
 
@@ -429,7 +434,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 				// Handle reactions.
 				if reactions, ok := reactionMap[waMsg.RowID]; ok {
 					for _, r := range reactions {
-						reactionType, reactionValue := mapReaction(r)
+						reactionValue := mapReaction(r)
 						if reactionValue == "" {
 							continue
 						}
@@ -464,7 +469,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 						}
 
 						createdAt := time.Unix(r.Timestamp/1000, 0)
-						if err := imp.store.UpsertReaction(messageID, reactorID, reactionType, reactionValue, createdAt); err != nil {
+						if err := imp.store.UpsertReaction(messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("upsert reaction: %w", err))
 						} else {
@@ -597,7 +602,7 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 	if _, err := io.Copy(h, io.LimitReader(f, maxSize+1)); err != nil {
 		return "", ""
 	}
-	contentHash := fmt.Sprintf("%x", h.Sum(nil))
+	contentHash := hex.EncodeToString(h.Sum(nil))
 
 	// Content-addressed storage: <attachmentsDir>/<hash[:2]>/<hash>
 	// The storage_path stored in DB is the relative portion: <hash[:2]>/<hash>
@@ -656,10 +661,10 @@ func (imp *Importer) updateAttachmentMetadata(messageID int64, contentHash, medi
 		durationMS = sql.NullInt64{Int64: media.MediaDuration.Int64 * 1000, Valid: true}
 	}
 
-	_, _ = imp.store.DB().Exec(`
+	_, _ = imp.store.DB().Exec(imp.store.Rebind(`
 		UPDATE attachments SET media_type = ?, width = ?, height = ?, duration_ms = ?
 		WHERE message_id = ? AND (content_hash = ? OR content_hash IS NULL)
-	`, mediaType, width, height, durationMS, messageID, contentHash)
+	`), mediaType, width, height, durationMS, messageID, contentHash)
 }
 
 // lookupMessageByKeyID looks up a previously imported message by its WhatsApp key_id.
@@ -667,7 +672,7 @@ func (imp *Importer) updateAttachmentMetadata(messageID int64, contentHash, medi
 func (imp *Importer) lookupMessageByKeyID(sourceID int64, keyID string) (int64, error) {
 	var msgID int64
 	err := imp.store.DB().QueryRow(
-		`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+		imp.store.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, keyID,
 	).Scan(&msgID)
 	if err == sql.ErrNoRows {
@@ -678,9 +683,9 @@ func (imp *Importer) lookupMessageByKeyID(sourceID int64, keyID string) (int64, 
 
 // setReplyTo sets the reply_to_message_id on a message.
 func (imp *Importer) setReplyTo(messageID, replyToID int64) {
-	_, _ = imp.store.DB().Exec(`
+	_, _ = imp.store.DB().Exec(imp.store.Rebind(`
 		UPDATE messages SET reply_to_message_id = ? WHERE id = ?
-	`, replyToID, messageID)
+	`), replyToID, messageID)
 }
 
 // verifyWhatsAppDB checks that the database looks like a WhatsApp msgstore.db.
@@ -695,7 +700,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'message' table not found")
+		return errors.New("not a valid WhatsApp database: 'message' table not found")
 	}
 
 	// Check for the 'jid' table.
@@ -707,7 +712,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'jid' table not found")
+		return errors.New("not a valid WhatsApp database: 'jid' table not found")
 	}
 
 	// Check for the 'chat' table.
@@ -719,7 +724,7 @@ func verifyWhatsAppDB(db *sql.DB) error {
 		return fmt.Errorf("check whatsapp db: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("not a valid WhatsApp database: 'chat' table not found")
+		return errors.New("not a valid WhatsApp database: 'chat' table not found")
 	}
 
 	return nil

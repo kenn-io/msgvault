@@ -13,13 +13,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/scheduler"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // MessageStore defines the store operations the API needs.
@@ -30,6 +30,15 @@ type MessageStore interface {
 	GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 	SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error)
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
+}
+
+// SourceStatusStore defines the source/sync read operations used by the
+// source status endpoint.
+type SourceStatusStore interface {
+	ListSources(sourceType string) ([]*store.Source, error)
+	GetActiveSync(sourceID int64) (*store.SyncRun, error)
+	GetLatestSync(sourceID int64) (*store.SyncRun, error)
+	GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error)
 }
 
 // StoreStats is an alias for store.Stats — single source of truth.
@@ -181,6 +190,7 @@ func (s *Server) setupRouter() chi.Router {
 		// Accounts and sync
 		r.Get("/accounts", s.handleListAccounts)
 		r.Post("/accounts", s.handleAddAccount)
+		r.Get("/sources/status", s.handleSourceStatus)
 		r.Post("/sync/{account}", s.handleTriggerSync)
 
 		// Scheduler status
@@ -280,7 +290,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			// Also check X-API-Key header
-			authHeader = r.Header.Get("X-API-Key")
+			authHeader = r.Header.Get("X-Api-Key")
 		}
 
 		// Strip "Bearer " prefix if present

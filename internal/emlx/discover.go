@@ -67,7 +67,7 @@ func DiscoverMailboxes(rootDir string) ([]Mailbox, error) {
 	var mailboxes []Mailbox
 	err = filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip errors
+			return nil //nolint:nilerr // skip unreadable entries; partial discovery beats abort
 		}
 		if !d.IsDir() {
 			return nil
@@ -85,7 +85,7 @@ func DiscoverMailboxes(rootDir string) ([]Mailbox, error) {
 
 		msgDir, files, listErr := listEmlxFiles(path)
 		if listErr != nil || len(files) == 0 {
-			return nil
+			return nil //nolint:nilerr // unreadable mailbox is the same as empty for discovery
 		}
 
 		label := LabelFromPath(abs, path)

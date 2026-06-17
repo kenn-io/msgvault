@@ -1,0 +1,22 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Eve Mixer"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Eve Mixer",
+      "timestamp_ms": 1600000060000,
+      "content": "Mixed reply",
+      "type": "Generic"
+    },
+    {
+      "sender_name": "Test User",
+      "timestamp_ms": 1600000000000,
+      "content": "Mixed hello",
+      "type": "Generic"
+    }
+  ],
+  "title": "Eve Mixer",
+  "thread_path": "inbox/eve_MIX"
+}

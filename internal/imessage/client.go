@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const defaultPageSize = 500
@@ -121,7 +121,7 @@ func (c *Client) detectTimestampFormat() error {
 // the date filters, for progress reporting.
 func (c *Client) CountFilteredMessages(ctx context.Context) int64 {
 	sqlQuery := "SELECT COUNT(*) FROM message WHERE 1=1"
-	var args []interface{}
+	var args []any
 
 	if !c.afterDate.IsZero() {
 		appleTS := timeToAppleTimestamp(c.afterDate, c.useNanoseconds)
@@ -270,7 +270,7 @@ func (c *Client) fetchPage(
 		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
 		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
 		WHERE m.ROWID > ?`
-	args := []interface{}{afterROWID}
+	args := []any{afterROWID}
 
 	if !c.afterDate.IsZero() {
 		appleTS := timeToAppleTimestamp(c.afterDate, c.useNanoseconds)
@@ -557,6 +557,9 @@ func (c *Client) getChatParticipantIDs(
 			pids = append(pids, pid)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat participants", "error", err)
+	}
 	return pids
 }
 
@@ -567,7 +570,7 @@ func (c *Client) writeMessageRaw(
 	msg *messageRow,
 	body string,
 ) error {
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"rowid":           msg.ROWID,
 		"guid":            msg.GUID,
 		"date":            msg.Date,
@@ -660,7 +663,7 @@ func (c *Client) ensureConversation(
 		title = c.buildGroupTitle(ctx, s, convID)
 		if title != "" {
 			_, _ = s.DB().Exec(
-				"UPDATE conversations SET title = ? WHERE id = ?",
+				s.Rebind("UPDATE conversations SET title = ? WHERE id = ?"),
 				title, convID,
 			)
 		}
@@ -676,16 +679,18 @@ func (c *Client) buildGroupTitle(
 ) string {
 	// Get total non-self participant count
 	var totalCount int
-	_ = s.DB().QueryRowContext(ctx, `
+	_ = s.DB().QueryRowContext(ctx, s.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
 		  AND COALESCE(p.email_address, '') != 'me@imessage.local'
 		  AND COALESCE(p.display_name, '') != 'Me'
-	`, convID).Scan(&totalCount)
+	`), convID).Scan(&totalCount)
 
-	// Get first few names for display
-	rows, err := s.DB().QueryContext(ctx, `
+	// Get first few names for display. The literal '?' in COALESCE is
+	// inside single quotes, so Rebind (which only converts ? outside
+	// quoted strings) leaves it intact.
+	rows, err := s.DB().QueryContext(ctx, s.Rebind(`
 		SELECT COALESCE(
 			NULLIF(p.display_name, ''),
 			NULLIF(p.phone_number, ''),
@@ -699,7 +704,7 @@ func (c *Client) buildGroupTitle(
 		  AND COALESCE(p.display_name, '') != 'Me'
 		ORDER BY p.id
 		LIMIT 3
-	`, convID)
+	`), convID)
 	if err != nil {
 		return ""
 	}
@@ -712,6 +717,9 @@ func (c *Client) buildGroupTitle(
 			continue
 		}
 		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat title names", "error", err)
 	}
 	if len(names) == 0 {
 		return ""
@@ -761,6 +769,9 @@ func (c *Client) linkChatParticipants(
 		}
 		_ = s.EnsureConversationParticipant(convID, pid, "member")
 	}
+	if err := rows.Err(); err != nil {
+		c.logger.Warn("iterate chat handles", "chat_id", chatROWID, "error", err)
+	}
 }
 
 // resolveParticipant resolves a handle ID to a participant ID in the
@@ -778,7 +789,10 @@ func (c *Client) resolveParticipant(
 		if pid, ok := phoneCache[phone]; ok {
 			return pid, nil
 		}
-		pid, err := s.EnsureParticipantByPhone(phone, phone, "imessage")
+		// Pass empty displayName: chat.db has no contact names, only handles.
+		// Leaving display_name NULL lets later imports (Gmail, Google Voice,
+		// WhatsApp --contacts, or import-contacts) populate the real name.
+		pid, err := s.EnsureParticipantByPhone(phone, "", "imessage")
 		if err != nil {
 			return 0, fmt.Errorf("ensure participant by phone %s: %w", phone, err)
 		}

@@ -11,7 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mime"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestStoreAttachmentFile_ExistingFileHashMismatch_ReturnsError(t *testing.T) {
@@ -24,12 +26,8 @@ func TestStoreAttachmentFile_ExistingFileHashMismatch_ReturnsError(t *testing.T)
 	// Create a corrupt file at the expected content-addressed path: correct size,
 	// wrong contents.
 	fullPath := filepath.Join(tmp, hash[:2], hash)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(fullPath, []byte("jello"), 0600); err != nil { // same size as "hello"
-		t.Fatalf("write corrupt file: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0700), "mkdir")
+	requirepkg.NoError(t, os.WriteFile(fullPath, []byte("jello"), 0600), "write corrupt file") // same size as "hello"
 
 	att := &mime.Attachment{
 		Filename:    "a.txt",
@@ -39,12 +37,7 @@ func TestStoreAttachmentFile_ExistingFileHashMismatch_ReturnsError(t *testing.T)
 		Content:     content,
 	}
 	_, err := StoreAttachmentFile(tmp, att)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "hash") {
-		t.Fatalf("expected hash mismatch error, got %v", err)
-	}
+	requirepkg.ErrorContains(t, err, "hash", "expected hash mismatch error")
 }
 
 func TestStoreAttachmentFile_ProvidedContentHashMismatch_ReturnsError(t *testing.T) {
@@ -65,22 +58,16 @@ func TestStoreAttachmentFile_ProvidedContentHashMismatch_ReturnsError(t *testing
 		Content:     content,
 	}
 	_, err := StoreAttachmentFile(tmp, att)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "mismatch") {
-		t.Fatalf("expected mismatch error, got %v", err)
-	}
+	requirepkg.ErrorContains(t, err, "mismatch", "expected mismatch error")
 
-	if _, err := os.Stat(filepath.Join(tmp, badHash[:2], badHash)); !os.IsNotExist(err) {
-		t.Fatalf("unexpected file at provided hash path: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, hash[:2], hash)); !os.IsNotExist(err) {
-		t.Fatalf("unexpected file at computed hash path: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(tmp, badHash[:2], badHash))
+	assertpkg.True(t, os.IsNotExist(err), "unexpected file at provided hash path: %v", err)
+	_, err = os.Stat(filepath.Join(tmp, hash[:2], hash))
+	assertpkg.True(t, os.IsNotExist(err), "unexpected file at computed hash path: %v", err)
 }
 
 func TestStoreAttachmentFile_ProvidedContentHashUppercase_AcceptedAndCanonicalized(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	content := []byte("hello")
@@ -96,23 +83,17 @@ func TestStoreAttachmentFile_ProvidedContentHashUppercase_AcceptedAndCanonicaliz
 		Content:     content,
 	}
 	gotStoragePath, err := StoreAttachmentFile(tmp, att)
-	if err != nil {
-		t.Fatalf("StoreAttachmentFile: %v", err)
-	}
+	require.NoError(err, "StoreAttachmentFile")
 
 	wantStoragePath := path.Join(hash[:2], hash)
-	if gotStoragePath != wantStoragePath {
-		t.Fatalf("storage path mismatch: got %q, want %q", gotStoragePath, wantStoragePath)
-	}
-	if att.ContentHash != hash {
-		t.Fatalf("ContentHash not canonicalized: got %q, want %q", att.ContentHash, hash)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, hash[:2], hash)); err != nil {
-		t.Fatalf("attachment file missing: %v", err)
-	}
+	require.Equal(wantStoragePath, gotStoragePath, "storage path mismatch")
+	require.Equal(hash, att.ContentHash, "ContentHash not canonicalized")
+	_, err = os.Stat(filepath.Join(tmp, hash[:2], hash))
+	require.NoError(err, "attachment file missing")
 }
 
 func TestStoreAttachmentFile_ConcurrentWriters_SameHash_NoError(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	content := bytes.Repeat([]byte("a"), 1<<20) // 1 MiB
@@ -126,7 +107,7 @@ func TestStoreAttachmentFile_ConcurrentWriters_SameHash_NoError(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			<-start
@@ -149,27 +130,19 @@ func TestStoreAttachmentFile_ConcurrentWriters_SameHash_NoError(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
-		if err := <-errCh; err != nil {
-			t.Fatalf("store: %v", err)
-		}
+	for range n {
+		require.NoError(<-errCh, "store")
 	}
 
 	wantStoragePath := path.Join(hash[:2], hash)
-	for i := 0; i < n; i++ {
-		if got := <-pathCh; got != wantStoragePath {
-			t.Fatalf("storage path mismatch: got %q, want %q", got, wantStoragePath)
-		}
+	for range n {
+		require.Equal(wantStoragePath, <-pathCh, "storage path mismatch")
 	}
 
 	fullPath := filepath.Join(tmp, hash[:2], hash)
 	b, err := os.ReadFile(fullPath)
-	if err != nil {
-		t.Fatalf("read stored file: %v", err)
-	}
+	require.NoError(err, "read stored file")
 	gotSum := sha256.Sum256(b)
 	gotHash := hex.EncodeToString(gotSum[:])
-	if gotHash != hash {
-		t.Fatalf("stored file hash mismatch: got %q, want %q", gotHash, hash)
-	}
+	require.Equal(hash, gotHash, "stored file hash mismatch")
 }

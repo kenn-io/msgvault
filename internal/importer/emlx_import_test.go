@@ -3,38 +3,32 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 // mkEmlx creates an .emlx file with the given MIME bytes.
 func mkEmlx(t *testing.T, dir, name string, raw []byte) {
 	t.Helper()
 	data := fmt.Sprintf("%d\n%s", len(raw), raw)
-	if err := os.WriteFile(
-		filepath.Join(dir, name), []byte(data), 0600,
-	); err != nil {
-		t.Fatalf("write emlx: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0600), "write emlx")
 }
 
 // mkMailboxDir creates an Apple Mail mailbox directory with .emlx files.
-func mkMailboxDir(
-	t *testing.T, base string, emlxFiles map[string][]byte,
-) {
+func mkMailboxDir(t *testing.T, base string, emlxFiles map[string][]byte) {
 	t.Helper()
 	msgDir := filepath.Join(base, "Messages")
-	if err := os.MkdirAll(msgDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
 	for name, raw := range emlxFiles {
 		mkEmlx(t, msgDir, name, raw)
 	}
@@ -45,17 +39,14 @@ func openTestStore(t *testing.T) (*store.Store, string) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	requirepkg.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	requirepkg.NoError(t, st.InitSchema(), "init schema")
 	return st, tmp
 }
 
 func TestImportEmlxDir_SingleMailbox(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -92,52 +83,29 @@ func TestImportEmlxDir_SingleMailbox(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
-	if summary.MessagesAdded != 2 {
-		t.Fatalf("MessagesAdded = %d, want 2", summary.MessagesAdded)
-	}
-	if summary.MailboxesImported != 1 {
-		t.Fatalf(
-			"MailboxesImported = %d, want 1",
-			summary.MailboxesImported,
-		)
-	}
+	require.NoError(err, "ImportEmlxDir")
+	require.Equal(int64(2), summary.MessagesAdded, "MessagesAdded")
+	require.Equal(1, summary.MailboxesImported, "MailboxesImported")
 
 	var msgCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&msgCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if msgCount != 2 {
-		t.Fatalf("msgCount = %d, want 2", msgCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	require.NoError(err, "count messages")
+	require.Equal(2, msgCount, "msgCount")
 
 	// Verify labels were created and assigned.
 	var labelCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM labels WHERE name = 'Test'`,
-	).Scan(&labelCount); err != nil {
-		t.Fatalf("count labels: %v", err)
-	}
-	if labelCount != 1 {
-		t.Fatalf("labelCount = %d, want 1", labelCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM labels WHERE name = 'Test'`).Scan(&labelCount)
+	require.NoError(err, "count labels")
+	require.Equal(1, labelCount, "labelCount")
 
 	var msgLabelCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_labels`,
-	).Scan(&msgLabelCount); err != nil {
-		t.Fatalf("count message_labels: %v", err)
-	}
-	if msgLabelCount != 2 {
-		t.Fatalf("msgLabelCount = %d, want 2", msgLabelCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&msgLabelCount)
+	require.NoError(err, "count message_labels")
+	require.Equal(2, msgLabelCount, "msgLabelCount")
 }
 
 func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -164,25 +132,16 @@ func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir")
 
 	// Only one message should be created (dedup by content hash).
-	if summary.MessagesAdded != 1 {
-		t.Fatalf("MessagesAdded = %d, want 1", summary.MessagesAdded)
-	}
+	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
 
 	// But it should have labels from both mailboxes.
 	var msgCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&msgCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if msgCount != 1 {
-		t.Fatalf("msgCount = %d, want 1", msgCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	require.NoError(err, "count messages")
+	require.Equal(1, msgCount, "msgCount")
 
 	var labelNames []string
 	rows, err := st.DB().Query(`
@@ -191,30 +150,16 @@ func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
 		JOIN messages m ON m.id = ml.message_id
 		ORDER BY l.name
 	`)
-	if err != nil {
-		t.Fatalf("query labels: %v", err)
-	}
+	require.NoError(err, "query labels")
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatalf("scan label: %v", err)
-		}
+		require.NoError(rows.Scan(&name), "scan label")
 		labelNames = append(labelNames, name)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows error: %v", err)
-	}
+	require.NoError(rows.Err(), "rows error")
 
-	if len(labelNames) != 2 {
-		t.Fatalf("labels = %v, want 2 labels", labelNames)
-	}
-	if labelNames[0] != "Archive" || labelNames[1] != "Inbox" {
-		t.Fatalf(
-			"labels = %v, want [Archive, Inbox]",
-			labelNames,
-		)
-	}
+	require.Equal([]string{"Archive", "Inbox"}, labelNames)
 }
 
 func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
@@ -222,11 +167,7 @@ func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
 
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Empty.mbox")
-	if err := os.MkdirAll(
-		filepath.Join(mboxDir, "Messages"), 0700,
-	); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -234,26 +175,18 @@ func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
-	if summary.MessagesProcessed != 0 {
-		t.Fatalf(
-			"MessagesProcessed = %d, want 0",
-			summary.MessagesProcessed,
-		)
-	}
+	requirepkg.NoError(t, err, "ImportEmlxDir")
+	requirepkg.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
 }
 
 func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Mailboxes", "Bad.mbox")
 	msgDir := filepath.Join(mboxDir, "Messages")
-	if err := os.MkdirAll(msgDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(os.MkdirAll(msgDir, 0700), "mkdir")
 
 	// Create a valid emlx.
 	raw := email.NewMessage().
@@ -265,11 +198,8 @@ func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
 	mkEmlx(t, msgDir, "1.emlx", raw)
 
 	// Create an invalid emlx.
-	if err := os.WriteFile(
-		filepath.Join(msgDir, "2.emlx"), []byte("not-valid"), 0600,
-	); err != nil {
-		t.Fatalf("write bad emlx: %v", err)
-	}
+	require.NoError(os.WriteFile(filepath.Join(msgDir, "2.emlx"), []byte("not-valid"), 0600),
+		"write bad emlx")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -278,20 +208,15 @@ func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir")
 
 	// The valid message should still be imported.
-	if summary.MessagesAdded != 1 {
-		t.Fatalf("MessagesAdded = %d, want 1", summary.MessagesAdded)
-	}
-	if summary.Errors == 0 {
-		t.Fatalf("expected errors > 0")
-	}
+	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
+	assertpkg.NotZero(t, summary.Errors, "expected errors > 0")
 }
 
 func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -321,9 +246,7 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir (first): %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir (first)")
 
 	// Second import: resume should skip already-imported messages.
 	summary2, err := ImportEmlxDir(
@@ -333,27 +256,15 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir (resume): %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir (resume)")
 
 	// Already-imported messages should be skipped.
-	if summary2.MessagesAdded != 0 {
-		t.Fatalf(
-			"MessagesAdded (resume) = %d, want 0",
-			summary2.MessagesAdded,
-		)
-	}
+	require.Equal(int64(0), summary2.MessagesAdded, "MessagesAdded (resume)")
 
 	var msgCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&msgCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if msgCount != 2 {
-		t.Fatalf("msgCount = %d, want 2", msgCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	require.NoError(err, "count messages")
+	require.Equal(2, msgCount, "msgCount")
 }
 
 func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
@@ -362,9 +273,7 @@ func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Mailboxes", "Test.mbox")
 	msgDir := filepath.Join(mboxDir, "Messages")
-	if err := os.MkdirAll(msgDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -383,22 +292,16 @@ func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
+	requirepkg.NoError(t, err, "ImportEmlxDir")
 	// Only the non-partial file should be imported.
-	if summary.MessagesAdded != 1 {
-		t.Fatalf("MessagesAdded = %d, want 1", summary.MessagesAdded)
-	}
+	requirepkg.Equal(t, int64(1), summary.MessagesAdded, "MessagesAdded")
 }
 
 func TestImportEmlxDir_NoMailboxes(t *testing.T) {
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(root, 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -406,12 +309,8 @@ func TestImportEmlxDir_NoMailboxes(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
-	if summary.MailboxesTotal != 0 {
-		t.Fatalf("MailboxesTotal = %d, want 0", summary.MailboxesTotal)
-	}
+	requirepkg.NoError(t, err, "ImportEmlxDir")
+	requirepkg.Equal(t, 0, summary.MailboxesTotal, "MailboxesTotal")
 }
 
 func TestImportEmlxDir_OversizedFileRejected(t *testing.T) {
@@ -435,15 +334,9 @@ func TestImportEmlxDir_OversizedFileRejected(t *testing.T) {
 			MaxMessageBytes:    10, // Tiny limit to trigger rejection.
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
-	if summary.MessagesAdded != 0 {
-		t.Fatalf("MessagesAdded = %d, want 0", summary.MessagesAdded)
-	}
-	if summary.Errors == 0 {
-		t.Fatalf("expected errors > 0 for oversized file")
-	}
+	requirepkg.NoError(t, err, "ImportEmlxDir")
+	requirepkg.Equal(t, int64(0), summary.MessagesAdded, "MessagesAdded")
+	assertpkg.NotZero(t, summary.Errors, "expected errors > 0 for oversized file")
 }
 
 func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
@@ -468,24 +361,20 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
+	requirepkg.NoError(t, err, "ImportEmlxDir")
 
 	// Sync run should still be in "running" state (not completed),
 	// so resume can pick it up.
 	var status string
-	if err := st.DB().QueryRow(
+	err = st.DB().QueryRow(
 		`SELECT status FROM sync_runs ORDER BY started_at DESC LIMIT 1`,
-	).Scan(&status); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusRunning {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusRunning)
-	}
+	).Scan(&status)
+	requirepkg.NoError(t, err, "select sync")
+	requirepkg.Equal(t, store.SyncStatusRunning, status)
 }
 
 func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -513,37 +402,24 @@ func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir")
 
-	if summary.MessagesAdded != 1 {
-		t.Fatalf("MessagesAdded = %d, want 1", summary.MessagesAdded)
-	}
+	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
 
 	var msgCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&msgCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if msgCount != 1 {
-		t.Fatalf("msgCount = %d, want 1", msgCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	require.NoError(err, "count messages")
+	require.Equal(1, msgCount, "msgCount")
 
 	// Only one label mapping (Inbox), not duplicated.
 	var mlCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_labels`,
-	).Scan(&mlCount); err != nil {
-		t.Fatalf("count message_labels: %v", err)
-	}
-	if mlCount != 1 {
-		t.Fatalf("message_labels count = %d, want 1", mlCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&mlCount)
+	require.NoError(err, "count message_labels")
+	require.Equal(1, mlCount, "message_labels count")
 }
 
 func TestImportEmlxDir_Idempotent(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -562,9 +438,7 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir (first): %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir (first)")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -572,26 +446,19 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir (second): %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir (second)")
 
-	if summary.MessagesAdded != 0 {
-		t.Fatalf("MessagesAdded = %d, want 0", summary.MessagesAdded)
-	}
+	require.Equal(int64(0), summary.MessagesAdded, "MessagesAdded")
 
 	var msgCount int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&msgCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if msgCount != 1 {
-		t.Fatalf("msgCount = %d, want 1", msgCount)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	require.NoError(err, "count messages")
+	require.Equal(1, msgCount, "msgCount")
 }
 
 func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -606,27 +473,19 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 	mkMailboxDir(t, mboxDir, map[string][]byte{"1.emlx": raw})
 
 	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("abs root: %v", err)
-	}
+	require.NoError(err, "abs root")
 
 	// Seed checkpoint with correct root but a different mailbox path
 	// at index 0, simulating the mailbox tree changing between runs.
 	src, err := st.GetOrCreateSource("apple-mail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-emlx")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
-	if err := saveEmlxCheckpoint(
+	require.NoError(err, "start sync")
+	require.NoError(saveEmlxCheckpoint(
 		st, syncID, absRoot, 0,
 		"/old/path/to/OtherMailbox.mbox", "",
 		&store.Checkpoint{},
-	); err != nil {
-		t.Fatalf("save checkpoint: %v", err)
-	}
+	), "save checkpoint")
 
 	_, err = ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -635,22 +494,13 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err == nil {
-		t.Fatalf("expected error for mailbox path mismatch")
-	}
-	if !strings.Contains(err.Error(), "--no-resume") {
-		t.Fatalf(
-			"error should mention --no-resume, got: %v", err,
-		)
-	}
-	if !strings.Contains(err.Error(), "changed") {
-		t.Fatalf(
-			"error should mention 'changed', got: %v", err,
-		)
-	}
+	require.Error(err, "expected error for mailbox path mismatch")
+	require.ErrorContains(err, "--no-resume")
+	assert.ErrorContains(err, "changed")
 }
 
 func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -664,29 +514,22 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 	mkMailboxDir(t, mboxDir, map[string][]byte{"1.emlx": raw})
 
 	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("abs root: %v", err)
-	}
+	require.NoError(err, "abs root")
 
 	// Seed checkpoint with MailboxIndex = -1 (corrupted data).
 	src, err := st.GetOrCreateSource("apple-mail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-emlx")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
-	cpJSON, _ := json.Marshal(emlxCheckpoint{
+	require.NoError(err, "start sync")
+	cpJSON, err := json.Marshal(emlxCheckpoint{
 		RootDir:      absRoot,
 		MailboxIndex: -1,
 		LastFile:     "",
 	})
-	if err := st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+	require.NoError(err, "marshal checkpoint")
+	require.NoError(st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 		PageToken: string(cpJSON),
-	}); err != nil {
-		t.Fatalf("save checkpoint: %v", err)
-	}
+	}), "save checkpoint")
 
 	_, err = ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -694,20 +537,13 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 			NoResume:   false,
 		},
 	)
-	if err == nil {
-		t.Fatalf("expected error for negative index")
-	}
-	if !strings.Contains(err.Error(), "out of range") {
-		t.Fatalf("error should mention out of range, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--no-resume") {
-		t.Fatalf(
-			"error should mention --no-resume, got: %v", err,
-		)
-	}
+	require.Error(err, "expected error for negative index")
+	require.ErrorContains(err, "out of range")
+	require.ErrorContains(err, "--no-resume")
 }
 
 func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -718,22 +554,14 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 
 	// Seed an active (running) sync with a checkpoint pointing to root A.
 	src, err := st.GetOrCreateSource("apple-mail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-emlx")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
+	require.NoError(err, "start sync")
 	absRootA, err := filepath.Abs(filepath.Join(tmp, "MailA"))
-	if err != nil {
-		t.Fatalf("abs root A: %v", err)
-	}
-	if err := saveEmlxCheckpoint(
+	require.NoError(err, "abs root A")
+	require.NoError(saveEmlxCheckpoint(
 		st, syncID, absRootA, 0, "", "", &store.Checkpoint{},
-	); err != nil {
-		t.Fatalf("save checkpoint: %v", err)
-	}
+	), "save checkpoint")
 
 	// Create a mailbox at root B.
 	rootB := filepath.Join(tmp, "MailB")
@@ -748,17 +576,12 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err == nil {
-		t.Fatalf("expected error for root mismatch")
-	}
-	if !strings.Contains(err.Error(), "--no-resume") {
-		t.Fatalf(
-			"error should mention --no-resume, got: %v", err,
-		)
-	}
+	require.Error(err, "expected error for root mismatch")
+	assertpkg.ErrorContains(t, err, "--no-resume")
 }
 
 func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
+	require := requirepkg.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -793,7 +616,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	) error {
 		calls++
 		if calls == 2 {
-			return fmt.Errorf("injected failure")
+			return errors.New("injected failure")
 		}
 		return IngestRawMessage(
 			ctx, s, sourceID, identifier, attachmentsDir,
@@ -810,36 +633,23 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 			IngestFunc:         injectFn,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir: %v", err)
-	}
-	if !summary.HardErrors {
-		t.Fatalf("expected HardErrors=true")
-	}
+	require.NoError(err, "ImportEmlxDir")
+	require.True(summary.HardErrors, "expected HardErrors=true")
 	// msg1 and msg3 should be ingested; msg2 failed.
-	if summary.MessagesAdded != 2 {
-		t.Fatalf("MessagesAdded = %d, want 2", summary.MessagesAdded)
-	}
+	require.Equal(int64(2), summary.MessagesAdded, "MessagesAdded")
 
 	// Verify the checkpoint cursor stayed at msg1 (did not advance
 	// past the failed msg2).
 	var cursor string
-	if err := st.DB().QueryRow(
+	err = st.DB().QueryRow(
 		`SELECT cursor_before FROM sync_runs
 		 ORDER BY started_at DESC LIMIT 1`,
-	).Scan(&cursor); err != nil {
-		t.Fatalf("select cursor: %v", err)
-	}
+	).Scan(&cursor)
+	require.NoError(err, "select cursor")
 	var cp emlxCheckpoint
-	if err := json.Unmarshal([]byte(cursor), &cp); err != nil {
-		t.Fatalf("unmarshal checkpoint: %v", err)
-	}
-	if filepath.Base(cp.LastFile) != "1.emlx" {
-		t.Fatalf(
-			"checkpoint LastFile = %q, want basename %q (should not advance past failed msg2)",
-			cp.LastFile, "1.emlx",
-		)
-	}
+	require.NoError(json.Unmarshal([]byte(cursor), &cp), "unmarshal checkpoint")
+	require.Equal("1.emlx", filepath.Base(cp.LastFile),
+		"checkpoint LastFile should not advance past failed msg2; got %q", cp.LastFile)
 
 	// Resume should retry msg2 and succeed (no injected failure this time).
 	summary2, err := ImportEmlxDir(
@@ -849,24 +659,12 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	if err != nil {
-		t.Fatalf("ImportEmlxDir (resume): %v", err)
-	}
+	require.NoError(err, "ImportEmlxDir (resume)")
 	// msg2 should now be added; msg1 and msg3 already exist.
-	if summary2.MessagesAdded != 1 {
-		t.Fatalf(
-			"MessagesAdded (resume) = %d, want 1",
-			summary2.MessagesAdded,
-		)
-	}
+	require.Equal(int64(1), summary2.MessagesAdded, "MessagesAdded (resume)")
 
 	var total int
-	if err := st.DB().QueryRow(
-		`SELECT COUNT(*) FROM messages`,
-	).Scan(&total); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if total != 3 {
-		t.Fatalf("total messages = %d, want 3", total)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&total)
+	require.NoError(err, "count messages")
+	require.Equal(3, total, "total messages")
 }

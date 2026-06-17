@@ -3,12 +3,13 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // seedAttachmentFile creates a file under attachmentsDir at relPath and returns
@@ -16,12 +17,8 @@ import (
 func seedAttachmentFile(t *testing.T, attachmentsDir, relPath, content string) string {
 	t.Helper()
 	absPath := filepath.Join(attachmentsDir, relPath)
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(absPath), err)
-	}
-	if err := os.WriteFile(absPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", absPath, err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(filepath.Dir(absPath), 0o755), "mkdir %s", filepath.Dir(absPath))
+	requirepkg.NoError(t, os.WriteFile(absPath, []byte(content), 0o600), "write %s", absPath)
 	return absPath
 }
 
@@ -34,39 +31,28 @@ func seedMessageWithAttachment(
 ) {
 	t.Helper()
 	src, err := s.GetOrCreateSource("gmail", email)
-	if err != nil {
-		t.Fatalf("GetOrCreateSource(%s): %v", email, err)
-	}
+	requirepkg.NoError(t, err, "GetOrCreateSource(%s)", email)
 	convID, err := s.EnsureConversation(src.ID, threadKey, "Thread")
-	if err != nil {
-		t.Fatalf("EnsureConversation: %v", err)
-	}
+	requirepkg.NoError(t, err, "EnsureConversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: msgKey,
 		MessageType:     "email",
 	})
-	if err != nil {
-		t.Fatalf("UpsertMessage: %v", err)
-	}
-	if err := s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
-		storagePath, contentHash, 0); err != nil {
-		t.Fatalf("UpsertAttachment: %v", err)
-	}
+	requirepkg.NoError(t, err, "UpsertMessage")
+	requirepkg.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
 func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"aa/hashA", "hashA")
@@ -84,26 +70,20 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	root := newTestRootCmd()
 	root.AddCommand(newRemoveAccountCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Errorf("expected attachment file deleted, err = %v", err)
-	}
+	_, err = os.Stat(filePath)
+	assertpkg.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
 }
 
 func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	// Both accounts reference the same content_hash/storage_path.
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
@@ -125,37 +105,29 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	root := newTestRootCmd()
 	root.AddCommand(newRemoveAccountCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(filePath); err != nil {
-		t.Errorf("shared attachment file should be preserved, err = %v", err)
-	}
+	_, err = os.Stat(filePath)
+	assertpkg.NoError(t, err, "shared attachment file should be preserved")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"cc/hashA", "hashA")
 	// Simulate a concurrent sync on an unrelated source.
 	otherSrc, err := s.GetOrCreateSource("gmail", "bob@example.com")
-	if err != nil {
-		t.Fatalf("create other source: %v", err)
-	}
-	if _, err := s.StartSync(otherSrc.ID, "full"); err != nil {
-		t.Fatalf("StartSync: %v", err)
-	}
+	require.NoError(err, "create other source")
+	_, err = s.StartSync(otherSrc.ID, "full")
+	require.NoError(err, "StartSync")
 	_ = s.Close()
 
 	filePath := seedAttachmentFile(t, attachmentsDir, "cc/hashA", "content-a")
@@ -170,34 +142,20 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	root := newTestRootCmd()
 	root.AddCommand(newRemoveAccountCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
 	// File should remain because an active sync on another source blocks deletion.
-	if _, err := os.Stat(filePath); err != nil {
-		t.Errorf(
-			"attachment file should be preserved while another sync is active, err = %v",
-			err,
-		)
-	}
+	_, err = os.Stat(filePath)
+	require.NoError(err, "attachment file should be preserved while another sync is active")
 
 	// DB cleanup still runs — account is gone.
 	s2, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
+	require.NoError(err, "reopen store")
 	defer func() { _ = s2.Close() }()
-	if err := s2.InitSchema(); err != nil {
-		t.Fatalf("reinit schema: %v", err)
-	}
+	require.NoError(s2.InitSchema(), "reinit schema")
 	src, err := s2.GetSourceByIdentifier("alice@example.com")
-	if err != nil {
-		t.Fatalf("GetSourceByIdentifier: %v", err)
-	}
-	if src != nil {
-		t.Error("source should have been removed from DB despite skipped file deletion")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assert.Nil(src, "source should have been removed from DB despite skipped file deletion")
 }
 
 // Regression test: if the account being removed has its own active sync,
@@ -206,31 +164,23 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 // though the sync worker may still be writing attachment files. The
 // pre-RemoveSource check must catch this and skip file deletion.
 func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"dd/hashA", "hashA")
 	aliceSrc, err := s.GetSourceByIdentifier("alice@example.com")
-	if err != nil {
-		t.Fatalf("GetSourceByIdentifier: %v", err)
-	}
-	if aliceSrc == nil {
-		t.Fatal("expected alice source to exist")
-	}
+	require.NoError(err, "GetSourceByIdentifier")
+	require.NotNil(aliceSrc, "expected alice source to exist")
 	// Active sync on the account being removed — this is the row that
 	// RemoveSource cascades away.
-	if _, err := s.StartSync(aliceSrc.ID, "full"); err != nil {
-		t.Fatalf("StartSync: %v", err)
-	}
+	_, err = s.StartSync(aliceSrc.ID, "full")
+	require.NoError(err, "StartSync")
 	_ = s.Close()
 
 	filePath := seedAttachmentFile(t, attachmentsDir, "dd/hashA", "content-a")
@@ -247,39 +197,25 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	// --yes bypasses the initial GetActiveSync guard so we exercise the
 	// later file-deletion path.
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(filePath); err != nil {
-		t.Errorf(
-			"attachment file should be preserved when the removed account "+
-				"has an active sync, err = %v",
-			err,
-		)
-	}
+	_, err = os.Stat(filePath)
+	assertpkg.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
 }
 
 func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
-	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
-		t.Fatalf("mkdir attachments: %v", err)
-	}
+	require.NoError(os.MkdirAll(attachmentsDir, 0o755), "mkdir attachments")
 
 	// Create a file outside the attachments directory that MUST NOT be deleted.
 	outsidePath := filepath.Join(tmpDir, "escape.txt")
-	if err := os.WriteFile(outsidePath, []byte("do not delete"), 0o600); err != nil {
-		t.Fatalf("write outside file: %v", err)
-	}
+	require.NoError(os.WriteFile(outsidePath, []byte("do not delete"), 0o600), "write outside file")
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	// Craft a storage_path that escapes the attachments directory.
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
@@ -296,16 +232,10 @@ func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
 	root := newTestRootCmd()
 	root.AddCommand(newRemoveAccountCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(outsidePath); err != nil {
-		t.Errorf(
-			"file outside attachments dir must not be deleted, err = %v",
-			err,
-		)
-	}
+	_, err = os.Stat(outsidePath)
+	assertpkg.NoError(t, err, "file outside attachments dir must not be deleted")
 }
 
 func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
@@ -313,23 +243,17 @@ func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
 	root.AddCommand(newRemoveAccountCmd())
 	root.SetArgs([]string{"remove-account"})
 
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for missing email arg")
-	}
+	requirepkg.Error(t, root.Execute(), "expected error for missing email arg")
 }
 
 func TestRemoveAccountCmd_NotFound(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -347,30 +271,21 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 	})
 
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error for unknown email")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error = %q, want 'not found'", err.Error())
-	}
+	require.Error(err, "expected error for unknown email")
+	assertpkg.ErrorContains(t, err, "not found")
 }
 
 func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("gmail", "test@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
+	require.NoError(err, "create source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -387,52 +302,35 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 		"remove-account", "test@example.com", "--yes",
 	})
 
-	err = root.Execute()
-	if err != nil {
-		t.Fatalf("remove-account --yes: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account --yes")
 
 	// Verify account is gone
 	s, err = store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
+	require.NoError(err, "reopen store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("reinit schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "reinit schema")
 
 	src, err := s.GetSourceByIdentifier("test@example.com")
-	if err != nil {
-		t.Fatalf("GetSourceByIdentifier: %v", err)
-	}
-	if src != nil {
-		t.Error("account should be removed after --yes")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assertpkg.Nil(t, src, "account should be removed after --yes")
 }
 
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	t *testing.T,
 ) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("gmail", "dup@example.com")
-	if err != nil {
-		t.Fatalf("create gmail source: %v", err)
-	}
+	require.NoError(err, "create gmail source")
 	_, err = s.GetOrCreateSource("mbox", "dup@example.com")
-	if err != nil {
-		t.Fatalf("create mbox source: %v", err)
-	}
+	require.NoError(err, "create mbox source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -451,12 +349,8 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	})
 
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error for ambiguous identifier")
-	}
-	if !strings.Contains(err.Error(), "multiple accounts") {
-		t.Errorf("error = %q, want 'multiple accounts'", err.Error())
-	}
+	require.Error(err, "expected error for ambiguous identifier")
+	require.ErrorContains(err, "multiple accounts")
 
 	// With --type should succeed
 	root2 := newTestRootCmd()
@@ -466,62 +360,37 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 		"--yes", "--type", "mbox",
 	})
 
-	err = root2.Execute()
-	if err != nil {
-		t.Fatalf("remove-account --type mbox: %v", err)
-	}
+	require.NoError(root2.Execute(), "remove-account --type mbox")
 
 	// Verify only mbox source was removed
 	s, err = store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
+	require.NoError(err, "reopen store")
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("reinit schema: %v", err)
-	}
+	require.NoError(s.InitSchema(), "reinit schema")
 
 	sources, err := s.GetSourcesByIdentifier("dup@example.com")
-	if err != nil {
-		t.Fatalf("GetSourcesByIdentifier: %v", err)
-	}
-	if len(sources) != 1 {
-		t.Fatalf("got %d sources, want 1", len(sources))
-	}
-	if sources[0].SourceType != "gmail" {
-		t.Errorf(
-			"remaining source type = %q, want gmail",
-			sources[0].SourceType,
-		)
-	}
+	require.NoError(err, "GetSourcesByIdentifier")
+	require.Len(sources, 1)
+	assert.Equal("gmail", sources[0].SourceType, "remaining source type")
 }
 
 func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
-	if err := os.MkdirAll(tokensDir, 0700); err != nil {
-		t.Fatalf("mkdir tokens: %v", err)
-	}
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	_, err = s.GetOrCreateSource("gmail", "tok@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
+	require.NoError(err, "create source")
 	_ = s.Close()
 
 	// Create a fake token file
 	tokenPath := oauth.TokenFilePath(tokensDir, "tok@example.com")
-	if err := os.WriteFile(tokenPath, []byte(`{}`), 0600); err != nil {
-		t.Fatalf("write token: %v", err)
-	}
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write token")
 
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
@@ -537,42 +406,29 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 		"remove-account", "tok@example.com", "--yes",
 	})
 
-	err = root.Execute()
-	if err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
-		t.Error("token file should be removed for gmail source")
-	}
+	_, err = os.Stat(tokenPath)
+	assertpkg.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
-	if err := os.MkdirAll(tokensDir, 0700); err != nil {
-		t.Fatalf("mkdir tokens: %v", err)
-	}
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	_, err = s.GetOrCreateSource("mbox", "imp@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
+	require.NoError(err, "create source")
 	_ = s.Close()
 
 	// Create a token file that should NOT be removed
 	tokenPath := oauth.TokenFilePath(tokensDir, "imp@example.com")
-	if err := os.WriteFile(tokenPath, []byte(`{}`), 0600); err != nil {
-		t.Fatalf("write token: %v", err)
-	}
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write token")
 
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
@@ -588,71 +444,47 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 		"remove-account", "imp@example.com", "--yes",
 	})
 
-	err = root.Execute()
-	if err != nil {
-		t.Fatalf("remove-account: %v", err)
-	}
+	require.NoError(root.Execute(), "remove-account")
 
-	if _, err := os.Stat(tokenPath); os.IsNotExist(err) {
-		t.Error("token file should NOT be removed for non-gmail source")
-	}
+	_, err = os.Stat(tokenPath)
+	assertpkg.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
 }
 
 func TestResolveSource_IMAPDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	// Create an IMAP source whose identifier is a URL, display_name is the email.
 	src, err := s.GetOrCreateSource("imap", "imaps://user%40outlook.com@outlook.office365.com:993")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
-	if err := s.UpdateSourceDisplayName(src.ID, "user@outlook.com"); err != nil {
-		t.Fatalf("set display name: %v", err)
-	}
+	require.NoError(err, "create source")
+	require.NoError(s.UpdateSourceDisplayName(src.ID, "user@outlook.com"), "set display name")
 	_ = s.Close()
 
 	s2, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
-	if err := s2.InitSchema(); err != nil {
-		t.Fatalf("reinit schema: %v", err)
-	}
+	require.NoError(err, "reopen store")
+	require.NoError(s2.InitSchema(), "reinit schema")
 	defer func() { _ = s2.Close() }()
 
 	found, err := resolveSource(s2, "user@outlook.com", "")
-	if err != nil {
-		t.Fatalf("resolveSource by display name: %v", err)
-	}
-	if found.Identifier != "imaps://user%40outlook.com@outlook.office365.com:993" {
-		t.Errorf("got identifier %q, want IMAP URL", found.Identifier)
-	}
+	require.NoError(err, "resolveSource by display name")
+	assertpkg.Equal(t, "imaps://user%40outlook.com@outlook.office365.com:993", found.Identifier, "identifier should be IMAP URL")
 }
 
 func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 	_, err = s.GetOrCreateSource("gmail", "eof@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
+	require.NoError(err, "create source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -665,9 +497,7 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 
 	// Replace stdin with a closed pipe to simulate EOF
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create pipe: %v", err)
-	}
+	require.NoError(err, "create pipe")
 	_ = w.Close()
 
 	origStdin := os.Stdin
@@ -683,10 +513,6 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 	root.SetArgs([]string{"remove-account", "eof@example.com"})
 
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error when stdin is closed")
-	}
-	if !strings.Contains(err.Error(), "use --yes") {
-		t.Errorf("error = %q, want 'use --yes'", err.Error())
-	}
+	require.Error(err, "expected error when stdin is closed")
+	assertpkg.ErrorContains(t, err, "use --yes")
 }

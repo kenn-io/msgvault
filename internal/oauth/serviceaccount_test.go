@@ -9,21 +9,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func writeServiceAccountKey(t *testing.T, path string, perm os.FileMode) {
 	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
+	require.NoError(t, err, "GenerateKey")
 	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
-	}
+	require.NoError(t, err, "MarshalPKCS8PrivateKey")
 	pemKey := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
 		Bytes: der,
@@ -38,16 +36,10 @@ func writeServiceAccountKey(t *testing.T, path string, perm os.FileMode) {
 		"client_id":      "123456789",
 		"token_uri":      "https://oauth2.googleapis.com/token",
 	})
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(path, data, perm); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, err, "Marshal")
+	require.NoError(t, os.WriteFile(path, data, perm), "WriteFile")
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(path, perm); err != nil {
-			t.Fatalf("Chmod: %v", err)
-		}
+		require.NoError(t, os.Chmod(path, perm), "Chmod")
 	}
 }
 
@@ -60,21 +52,16 @@ func TestNewServiceAccountManagerRejectsInsecureKeyPermissions(t *testing.T) {
 	writeServiceAccountKey(t, path, 0644)
 
 	_, err := NewServiceAccountManager(path, Scopes)
-	if err == nil {
-		t.Fatal("expected insecure permission error")
-	}
-	if !strings.Contains(err.Error(), "service account key permissions") {
-		t.Fatalf("error = %v, want service account key permissions", err)
-	}
+	require.Error(t, err, "expected insecure permission error")
+	assert.ErrorContains(t, err, "service account key permissions")
 }
 
 func TestNewServiceAccountManagerAcceptsOwnerOnlyKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service-account.json")
 	writeServiceAccountKey(t, path, 0600)
 
-	if _, err := NewServiceAccountManager(path, Scopes); err != nil {
-		t.Fatalf("NewServiceAccountManager: %v", err)
-	}
+	_, err := NewServiceAccountManager(path, Scopes)
+	require.NoError(t, err, "NewServiceAccountManager")
 }
 
 func TestNewServiceAccountManagerRejectsEmptyScopes(t *testing.T) {
@@ -82,25 +69,15 @@ func TestNewServiceAccountManagerRejectsEmptyScopes(t *testing.T) {
 	writeServiceAccountKey(t, path, 0600)
 
 	_, err := NewServiceAccountManager(path, nil)
-	if err == nil {
-		t.Fatal("expected empty scopes error")
-	}
-	if !strings.Contains(err.Error(), "at least one scope") {
-		t.Fatalf("error = %v, want at least one scope", err)
-	}
+	require.Error(t, err, "expected empty scopes error")
+	assert.ErrorContains(t, err, "at least one scope")
 }
 
 func TestNewServiceAccountManagerRejectsMalformedJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service-account.json")
-	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("not json"), 0600), "WriteFile")
 
 	_, err := NewServiceAccountManager(path, Scopes)
-	if err == nil {
-		t.Fatal("expected parse error")
-	}
-	if !strings.Contains(err.Error(), "parse service account key") {
-		t.Fatalf("error = %v, want parse service account key", err)
-	}
+	require.Error(t, err, "expected parse error")
+	assert.ErrorContains(t, err, "parse service account key")
 }

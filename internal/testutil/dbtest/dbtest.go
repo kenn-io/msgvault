@@ -10,11 +10,9 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"github.com/stretchr/testify/require"
 )
-
-// StrPtr returns a pointer to a string (useful for optional fields in test opts).
-func StrPtr(s string) *string { return &s }
 
 // TestDB wraps a *sql.DB with auto-increment counters and builder helpers
 // for seeding test data.
@@ -30,30 +28,25 @@ type TestDB struct {
 // NewTestDB creates an in-memory SQLite database with the production schema loaded.
 // schemaPath is the path to schema.sql (e.g. "../store/schema.sql" from the caller's package).
 // The FTS table is dropped so tests start without it by default.
-func NewTestDB(t testing.TB, schemaPath string) *TestDB {
-	t.Helper()
+func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
+	tb.Helper()
 
 	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(tb, err, "open db")
+	tb.Cleanup(func() { _ = db.Close() })
 
 	schema, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("read schema.sql: %v", err)
-	}
+	require.NoError(tb, err, "read schema.sql")
 
-	if _, err := db.Exec(string(schema)); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
+	_, err = db.Exec(string(schema))
+	require.NoError(tb, err, "create schema")
 
 	// Drop FTS table so non-FTS tests start clean.
 	_, _ = db.Exec(`DROP TABLE IF EXISTS messages_fts`)
 
 	return &TestDB{
 		DB:                db,
-		T:                 t,
+		T:                 tb,
 		nextParticipantID: 100,
 		nextMessageID:     100,
 	}
@@ -133,9 +126,8 @@ func (tdb *TestDB) SeedStandardDataSet() {
 			(3, 4, 'report.xlsx', 'application/xlsx', 20000, 'hash3', 'ef/hash3');
 	`
 
-	if _, err := tdb.DB.Exec(testData); err != nil {
-		tdb.T.Fatalf("SeedStandardDataSet: %v", err)
-	}
+	_, err := tdb.DB.Exec(testData)
+	require.NoError(tdb.T, err, "SeedStandardDataSet")
 }
 
 // MustLookupParticipant returns the ID of the participant with the given email,
@@ -144,9 +136,7 @@ func (tdb *TestDB) MustLookupParticipant(email string) int64 {
 	tdb.T.Helper()
 	var id int64
 	err := tdb.DB.QueryRow("SELECT id FROM participants WHERE email_address = ?", email).Scan(&id)
-	if err != nil {
-		tdb.T.Fatalf("MustLookupParticipant(%q): %v", email, err)
-	}
+	require.NoErrorf(tdb.T, err, "MustLookupParticipant(%q)", email)
 	return id
 }
 
@@ -177,9 +167,7 @@ func (tdb *TestDB) AddSource(opts SourceOpts) int64 {
 		`INSERT INTO sources (source_type, identifier, display_name) VALUES (?, ?, ?)`,
 		opts.Type, opts.Identifier, opts.DisplayName,
 	)
-	if err != nil {
-		tdb.T.Fatalf("AddSource: %v", err)
-	}
+	require.NoError(tdb.T, err, "AddSource")
 	id, _ := res.LastInsertId()
 	return id
 }
@@ -205,9 +193,7 @@ func (tdb *TestDB) AddConversation(opts ConversationOpts) int64 {
 		`INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title) VALUES (?, ?, 'email_thread', ?)`,
 		opts.SourceID, sourceConvID, opts.Title,
 	)
-	if err != nil {
-		tdb.T.Fatalf("AddConversation: %v", err)
-	}
+	require.NoError(tdb.T, err, "AddConversation")
 	id, _ := res.LastInsertId()
 	return id
 }
@@ -223,9 +209,7 @@ type LabelOpts struct {
 // AddLabel inserts a label and returns its ID.
 func (tdb *TestDB) AddLabel(opts LabelOpts) int64 {
 	tdb.T.Helper()
-	if opts.Name == "" {
-		tdb.T.Fatalf("AddLabel: Name is required")
-	}
+	require.NotEmpty(tdb.T, opts.Name, "AddLabel: Name is required")
 	if opts.SourceID == 0 {
 		opts.SourceID = 1
 	}
@@ -239,9 +223,7 @@ func (tdb *TestDB) AddLabel(opts LabelOpts) int64 {
 		`INSERT INTO labels (source_id, source_label_id, name, label_type) VALUES (?, ?, ?, ?)`,
 		opts.SourceID, opts.SourceLabelID, opts.Name, opts.Type,
 	)
-	if err != nil {
-		tdb.T.Fatalf("AddLabel: %v", err)
-	}
+	require.NoError(tdb.T, err, "AddLabel")
 	id, _ := res.LastInsertId()
 	return id
 }
@@ -253,15 +235,14 @@ func (tdb *TestDB) AddMessageLabel(messageID, labelID int64) {
 		`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`,
 		messageID, labelID,
 	)
-	if err != nil {
-		tdb.T.Fatalf("AddMessageLabel: %v", err)
-	}
+	require.NoError(tdb.T, err, "AddMessageLabel")
 }
 
 // ParticipantOpts configures a participant to insert.
 type ParticipantOpts struct {
-	Email       *string // nil = NULL; use StrPtr("x") for a value
+	Email       *string // nil = NULL; use new("x") for a value
 	DisplayName *string // nil = NULL
+	Phone       *string // nil = NULL; E.164 format when set
 	Domain      string
 }
 
@@ -271,23 +252,26 @@ func (tdb *TestDB) AddParticipant(opts ParticipantOpts) int64 {
 	id := tdb.nextParticipantID
 	tdb.nextParticipantID++
 
-	var displayName interface{}
+	var displayName any
 	if opts.DisplayName != nil {
 		displayName = *opts.DisplayName
 	}
 
-	var email interface{}
+	var email any
 	if opts.Email != nil {
 		email = *opts.Email
 	}
 
-	_, err := tdb.DB.Exec(
-		`INSERT INTO participants (id, email_address, display_name, domain) VALUES (?, ?, ?, ?)`,
-		id, email, displayName, opts.Domain,
-	)
-	if err != nil {
-		tdb.T.Fatalf("AddParticipant: %v", err)
+	var phone any
+	if opts.Phone != nil {
+		phone = *opts.Phone
 	}
+
+	_, err := tdb.DB.Exec(
+		`INSERT INTO participants (id, email_address, display_name, phone_number, domain) VALUES (?, ?, ?, ?, ?)`,
+		id, email, displayName, phone, opts.Domain,
+	)
+	require.NoError(tdb.T, err, "AddParticipant")
 	return id
 }
 
@@ -334,40 +318,34 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	if srcID == 0 {
 		// Look up the conversation's source_id to stay consistent.
 		// Fall back to 1 if the conversation doesn't exist yet (e.g. FK checks off).
-		if err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&srcID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				srcID = 1
-			} else {
-				tdb.T.Fatalf("AddMessage: lookup source_id for conversation %d: %v", convID, err)
-			}
+		err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&srcID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			srcID = 1
+		case err != nil:
+			require.NoErrorf(tdb.T, err, "AddMessage: lookup source_id for conversation %d", convID)
 		}
 	} else {
 		// Verify the provided SourceID matches the conversation's source_id.
 		var convSourceID int64
-		if err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&convSourceID); err != nil {
-			tdb.T.Fatalf("AddMessage: lookup source_id for conversation %d: %v", convID, err)
-		}
-		if convSourceID != srcID {
-			tdb.T.Fatalf("AddMessage: SourceID %d does not match conversation %d source_id %d", srcID, convID, convSourceID)
-		}
+		err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&convSourceID)
+		require.NoErrorf(tdb.T, err, "AddMessage: lookup source_id for conversation %d", convID)
+		require.Equalf(tdb.T, srcID, convSourceID,
+			"AddMessage: SourceID %d does not match conversation %d source_id %d", srcID, convID, convSourceID)
 	}
 
 	_, err := tdb.DB.Exec(
 		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments) VALUES (?, ?, ?, ?, 'email', ?, ?, 'test', ?, ?)`,
 		id, convID, srcID, sourceMessageID, sentAt, opts.Subject, size, opts.HasAttachments,
 	)
-	if err != nil {
-		tdb.T.Fatalf("AddMessage: %v", err)
-	}
+	require.NoError(tdb.T, err, "AddMessage")
 
 	if opts.FromID != 0 {
 		_, err = tdb.DB.Exec(
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`,
 			id, opts.FromID,
 		)
-		if err != nil {
-			tdb.T.Fatalf("AddMessage from recipient: %v", err)
-		}
+		require.NoError(tdb.T, err, "AddMessage from recipient")
 	}
 
 	for _, toID := range opts.ToIDs {
@@ -375,9 +353,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'to')`,
 			id, toID,
 		)
-		if err != nil {
-			tdb.T.Fatalf("AddMessage to recipient: %v", err)
-		}
+		require.NoError(tdb.T, err, "AddMessage to recipient")
 	}
 
 	for _, ccID := range opts.CcIDs {
@@ -385,9 +361,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'cc')`,
 			id, ccID,
 		)
-		if err != nil {
-			tdb.T.Fatalf("AddMessage cc recipient: %v", err)
-		}
+		require.NoError(tdb.T, err, "AddMessage cc recipient")
 	}
 
 	for _, bccID := range opts.BccIDs {
@@ -395,9 +369,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'bcc')`,
 			id, bccID,
 		)
-		if err != nil {
-			tdb.T.Fatalf("AddMessage bcc recipient: %v", err)
-		}
+		require.NoError(tdb.T, err, "AddMessage bcc recipient")
 	}
 
 	return id
@@ -425,25 +397,28 @@ func (tdb *TestDB) EnableFTS() {
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 	`)
-	if err != nil {
-		tdb.T.Fatalf("populate FTS: %v", err)
-	}
+	require.NoError(tdb.T, err, "populate FTS")
 }
 
 // MarkDeletedByID marks a message as deleted by its internal ID.
 func (tdb *TestDB) MarkDeletedByID(id int64) {
 	tdb.T.Helper()
 	_, err := tdb.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = ?", id)
-	if err != nil {
-		tdb.T.Fatalf("mark deleted by id %d: %v", id, err)
-	}
+	require.NoErrorf(tdb.T, err, "mark deleted by id %d", id)
+}
+
+// MarkDedupLoserByID sets deleted_at on a message, mirroring what
+// store.Deduplicate does to soft-delete the losing duplicate row.
+// User-facing read paths must always exclude these.
+func (tdb *TestDB) MarkDedupLoserByID(id int64) {
+	tdb.T.Helper()
+	_, err := tdb.DB.Exec("UPDATE messages SET deleted_at = datetime('now') WHERE id = ?", id)
+	require.NoErrorf(tdb.T, err, "mark dedup loser by id %d", id)
 }
 
 // MarkDeletedBySourceID marks a message as deleted by its source message ID.
 func (tdb *TestDB) MarkDeletedBySourceID(sourceID string) {
 	tdb.T.Helper()
 	_, err := tdb.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE source_message_id = ?", sourceID)
-	if err != nil {
-		tdb.T.Fatalf("mark deleted by source id %s: %v", sourceID, err)
-	}
+	require.NoErrorf(tdb.T, err, "mark deleted by source id %s", sourceID)
 }

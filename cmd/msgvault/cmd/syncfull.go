@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,12 +12,12 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/gmail"
-	imaplib "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/microsoft"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/gmail"
+	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/sync"
 	"golang.org/x/oauth2"
 )
 
@@ -51,16 +52,16 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if syncLimit < 0 {
-			return fmt.Errorf("--limit must be a non-negative number")
+			return usageErr(cmd, errors.New("--limit must be a non-negative number"))
 		}
 		if syncAfter != "" {
 			if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
-				return fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err)
+				return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
 			}
 		}
 		if syncBefore != "" {
 			if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
-				return fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err)
+				return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
 			}
 		}
 
@@ -94,7 +95,7 @@ Examples:
 				return fmt.Errorf("look up source: %w", err)
 			}
 			for _, src := range allMatches {
-				if src.SourceType == "gmail" || src.SourceType == "imap" {
+				if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
 					sources = append(sources, src)
 				}
 			}
@@ -104,7 +105,7 @@ Examples:
 					return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
 				}
 				// Not in DB yet - assume Gmail (legacy behaviour)
-				sources = []*store.Source{{SourceType: "gmail", Identifier: args[0]}}
+				sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
 			}
 		} else {
 			// Sync all configured sources
@@ -113,11 +114,11 @@ Examples:
 				return fmt.Errorf("list sources: %w", err)
 			}
 			if len(allSources) == 0 {
-				return fmt.Errorf("no accounts configured - run 'add-account' or 'add-imap' first")
+				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
 			}
 			for _, src := range allSources {
 				switch src.SourceType {
-				case "gmail":
+				case sourceTypeGmail:
 					if !cfg.OAuth.HasAnyConfig() {
 						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
 						continue
@@ -135,7 +136,7 @@ Examples:
 							continue
 						}
 					}
-				case "imap":
+				case sourceTypeIMAP:
 					skipMsg, parseErr := imapSkipReason(src)
 					if parseErr != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
@@ -155,7 +156,7 @@ Examples:
 				if len(syncErrors) > 0 {
 					return fmt.Errorf("%s", syncErrors[0])
 				}
-				return fmt.Errorf("no accounts are ready to sync")
+				return errors.New("no accounts are ready to sync")
 			}
 		}
 
@@ -174,7 +175,7 @@ Examples:
 
 		// Open vector backend (optional) so newly-ingested messages
 		// are enqueued for embedding.
-		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 		if err != nil {
 			return fmt.Errorf("vector features: %w", err)
 		}
@@ -192,7 +193,7 @@ Examples:
 			}
 
 			// Ensure credentials are available before syncing Gmail sources.
-			if src.SourceType == "gmail" || src.SourceType == "" {
+			if src.SourceType == sourceTypeGmail || src.SourceType == "" {
 				appName := sourceOAuthApp(src)
 				if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
 					if _, err := getOAuthMgr(appName); err != nil {
@@ -233,7 +234,7 @@ Examples:
 // access.
 func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string) (gmail.API, error) {
 	switch src.SourceType {
-	case "gmail", "":
+	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
 		var tokenSource oauth2.TokenSource
 
@@ -269,7 +270,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 			gmail.WithRateLimiter(rateLimiter),
 		), nil
 
-	case "imap":
+	case sourceTypeIMAP:
 		if !src.SyncConfig.Valid || src.SyncConfig.String == "" {
 			return nil, fmt.Errorf("IMAP source %s has no config (run 'add-imap' first)", src.Identifier)
 		}
@@ -303,7 +304,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 		switch imapCfg.EffectiveAuthMethod() {
 		case imaplib.AuthXOAuth2:
 			if cfg.Microsoft.ClientID == "" {
-				return nil, fmt.Errorf("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
+				return nil, errors.New("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
 			}
 			msMgr := microsoft.NewManager(
 				cfg.Microsoft.ClientID,
@@ -340,7 +341,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// Build query from flags (Gmail only; IMAP date filters are
 	// handled via WithDateFilter on the client).
 	query := buildSyncQuery()
-	if query != "" && src.SourceType == "imap" {
+	if query != "" && src.SourceType == sourceTypeIMAP {
 		// --after/--before are handled natively by IMAP SEARCH;
 		// only warn about --query which has no IMAP equivalent.
 		if syncQuery != "" {
@@ -362,7 +363,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// resume is unreliable because additions or deletions shift
 	// the offsets. Already-imported messages are efficiently
 	// skipped via MessageExistsWithRawBatch.
-	if src.SourceType == "imap" {
+	if src.SourceType == sourceTypeIMAP {
 		opts.NoResume = true
 	}
 
@@ -381,7 +382,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		displayID = src.DisplayName.String
 	}
 	fmt.Printf("Starting full sync for %s\n", displayID)
-	if query != "" && src.SourceType != "imap" {
+	if query != "" && src.SourceType != sourceTypeIMAP {
 		fmt.Printf("Query: %s\n", query)
 	}
 	fmt.Println()
@@ -434,22 +435,24 @@ func buildSyncQuery() string {
 	parts := []string{}
 
 	if syncAfter != "" {
-		parts = append(parts, fmt.Sprintf("after:%s", syncAfter))
+		parts = append(parts, "after:"+syncAfter)
 	}
 	if syncBefore != "" {
-		parts = append(parts, fmt.Sprintf("before:%s", syncBefore))
+		parts = append(parts, "before:"+syncBefore)
 	}
 	if syncQuery != "" {
 		parts = append(parts, syncQuery)
 	}
 
 	result := ""
+	var resultSb447 strings.Builder
 	for i, p := range parts {
 		if i > 0 {
-			result += " "
+			resultSb447.WriteString(" ")
 		}
-		result += p
+		resultSb447.WriteString(p)
 	}
+	result += resultSb447.String()
 	return result
 }
 
@@ -512,7 +515,7 @@ func (p *CLIProgress) printProgress() {
 	// Format latest message date if available
 	dateStr := ""
 	if !p.latestDate.IsZero() {
-		dateStr = fmt.Sprintf(" | Latest: %s", p.latestDate.Format("Jan 2006"))
+		dateStr = " | Latest: " + p.latestDate.Format("Jan 2006")
 	}
 
 	fmt.Printf("\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
@@ -531,10 +534,8 @@ func (p *CLIProgress) OnError(err error) {
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
+	m := (d % time.Hour) / time.Minute
+	s := (d % time.Minute) / time.Second
 
 	if h > 0 {
 		return fmt.Sprintf("%dh %dm", h, m)

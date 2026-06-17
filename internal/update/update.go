@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,31 +19,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/mod/semver"
 )
 
 const (
-	githubAPIURL     = "https://api.github.com/repos/wesm/msgvault/releases/latest"
-	cacheFileName    = "update_check.json"
-	cacheDuration    = 1 * time.Hour
-	devCacheDuration = 15 * time.Minute
+	// githubLatestReleaseURL is the HTML endpoint that 302-redirects to
+	// /releases/tag/<tag>. Unlike api.github.com it is not rate-limited
+	// at 60 req/hr per IP for unauthenticated callers.
+	githubLatestReleaseURL    = "https://github.com/kenn-io/msgvault/releases/latest"
+	githubReleaseDownloadBase = "https://github.com/kenn-io/msgvault/releases/download"
+	updateUserAgent           = "msgvault-update"
+	cacheFileName             = "update_check.json"
+	cacheDuration             = 1 * time.Hour
+	devCacheDuration          = 15 * time.Minute
 )
-
-// Release represents a GitHub release.
-type Release struct {
-	TagName string  `json:"tag_name"`
-	Body    string  `json:"body"`
-	Assets  []Asset `json:"assets"`
-}
-
-// Asset represents a release asset.
-type Asset struct {
-	Name               string `json:"name"`
-	Size               int64  `json:"size"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
 
 // UpdateInfo contains information about an available update.
 type UpdateInfo struct {
@@ -52,20 +45,6 @@ type UpdateInfo struct {
 	Size           int64
 	Checksum       string
 	IsDevBuild     bool
-}
-
-// findAssets locates the platform-specific binary and checksums file from release assets.
-func findAssets(assets []Asset, assetName string) (asset *Asset, checksumsAsset *Asset) {
-	for i := range assets {
-		a := &assets[i]
-		if a.Name == assetName {
-			asset = a
-		}
-		if a.Name == "SHA256SUMS" || a.Name == "checksums.txt" {
-			checksumsAsset = a
-		}
-	}
-	return asset, checksumsAsset
 }
 
 // cachedCheck stores the last update check result.
@@ -86,17 +65,17 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 		}
 	}
 
-	release, err := fetchLatestRelease()
+	tag, err := resolveLatestTag(githubLatestReleaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("check for updates: %w", err)
 	}
 
-	saveCache(release.TagName)
+	saveCache(tag)
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := strings.TrimPrefix(tag, "v")
 
 	if !isDevBuild && !isNewer(latestVersion, cleanVersion) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // (nil, nil) signals "already up to date"; callers treat a nil UpdateInfo as success, not an error
 	}
 
 	ext := ".tar.gz"
@@ -104,25 +83,25 @@ func CheckForUpdate(currentVersion string, forceCheck bool) (*UpdateInfo, error)
 		ext = ".zip"
 	}
 	assetName := fmt.Sprintf("msgvault_%s_%s_%s%s", latestVersion, runtime.GOOS, runtime.GOARCH, ext)
-	asset, checksumsAsset := findAssets(release.Assets, assetName)
-	if asset == nil {
-		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
+	downloadURL := fmt.Sprintf("%s/%s/%s", githubReleaseDownloadBase, tag, assetName)
+	checksumsURL := fmt.Sprintf("%s/%s/SHA256SUMS", githubReleaseDownloadBase, tag)
+
+	// HEAD the asset to confirm it exists for this platform. The previous
+	// API-based code returned "no release asset" up front; now that we
+	// construct the URL ourselves, we have to verify it resolves.
+	size, err := fetchContentLength(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("no release asset for %s/%s: %w", runtime.GOOS, runtime.GOARCH, err)
 	}
 
-	var checksum string
-	if checksumsAsset != nil {
-		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
-	}
-	if checksum == "" {
-		checksum = extractChecksum(release.Body, assetName)
-	}
+	checksum, _ := fetchChecksumFromFile(checksumsURL, assetName)
 
 	return &UpdateInfo{
 		CurrentVersion: currentVersion,
-		LatestVersion:  release.TagName,
-		DownloadURL:    asset.BrowserDownloadURL,
-		AssetName:      asset.Name,
-		Size:           asset.Size,
+		LatestVersion:  tag,
+		DownloadURL:    downloadURL,
+		AssetName:      assetName,
+		Size:           size,
 		Checksum:       checksum,
 		IsDevBuild:     isDevBuild,
 	}, nil
@@ -176,10 +155,10 @@ func hashFile(path string) (string, error) {
 // avoiding redundant I/O when the caller already computed the hash (e.g. during download).
 func installFromArchiveTo(archivePath, expectedChecksum, dstPath string, precomputedChecksum ...string) error {
 	if expectedChecksum == "" {
-		return fmt.Errorf("empty checksum - refusing to install unverified binary")
+		return errors.New("empty checksum - refusing to install unverified binary")
 	}
 
-	checksum := ""
+	var checksum string
 	if len(precomputedChecksum) > 0 && precomputedChecksum[0] != "" {
 		checksum = precomputedChecksum[0]
 	} else {
@@ -280,7 +259,7 @@ func installBinaryTo(srcPath, dstPath string) error {
 		return fmt.Errorf("install: %w", err)
 	}
 
-	if err := os.Chmod(dstPath, 0755); err != nil {
+	if err := os.Chmod(dstPath, 0755); err != nil { //nolint:gosec // installed binary needs the executable bit
 		return fmt.Errorf("chmod: %w", err)
 	}
 
@@ -296,35 +275,81 @@ func getCacheDir() string {
 	return config.DefaultHome()
 }
 
-func fetchLatestRelease() (*Release, error) {
-	req, err := http.NewRequest("GET", githubAPIURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "msgvault-update")
+// resolveLatestTag follows the /releases/latest 302 redirect to
+// /releases/tag/<tag> and returns the tag. Using the HTML endpoint
+// avoids api.github.com's 60-req/hr unauthenticated rate limit.
+func resolveLatestTag(url string) (string, error) {
+	client := newUpdateHTTPClient(func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+	defer client.CloseIdleConnections()
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", updateUserAgent)
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return "", fmt.Errorf("expected redirect from %s, got %s", url, resp.Status)
+	}
+
+	loc, err := resp.Location()
+	if err != nil {
+		return "", fmt.Errorf("read Location header: %w", err)
+	}
+
+	const marker = "/releases/tag/"
+	idx := strings.Index(loc.Path, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("unexpected redirect target %q", loc.String())
+	}
+	tag := loc.Path[idx+len(marker):]
+	if tag == "" {
+		return "", fmt.Errorf("empty tag in redirect target %q", loc.String())
+	}
+	return tag, nil
+}
+
+// fetchContentLength does a HEAD request and returns the Content-Length
+// of the eventual asset (following redirects to the S3 backend).
+// Returns 0 if the size can't be determined; callers degrade gracefully.
+func fetchContentLength(url string) (int64, error) {
+	client := newUpdateHTTPClient(nil)
+	defer client.CloseIdleConnections()
+
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", updateUserAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %s", resp.Status)
+		return 0, fmt.Errorf("HEAD %s returned %s", url, resp.Status)
 	}
-
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+	if resp.ContentLength < 0 {
+		return 0, nil
 	}
-
-	return &release, nil
+	return resp.ContentLength, nil
 }
 
 func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded, total int64)) (string, error) {
-	resp, err := http.Get(url) //nolint:gosec
+	client := newUpdateDownloadHTTPClient()
+	defer client.CloseIdleConnections()
+
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -386,18 +411,18 @@ func extractTarGz(archivePath, destDir string) error {
 
 	gzr, err := gzip.NewReader(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("open gzip reader: %w", err)
 	}
 	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("read tar header: %w", err)
 		}
 
 		target, err := sanitizeTarPath(absDestDir, header.Name)
@@ -423,12 +448,12 @@ func extractTarGz(archivePath, destDir string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(outFile, tr); err != nil {
+			if _, err := io.Copy(outFile, tr); err != nil { //nolint:gosec // extracting our own checksum-verified release archive
 				_ = outFile.Close()
 				return err
 			}
 			_ = outFile.Close()
-			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil {
+			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil { //nolint:gosec // tar header mode from our own release archive
 				return err
 			}
 		}
@@ -440,17 +465,17 @@ func extractTarGz(archivePath, destDir string) error {
 // sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal.
 func sanitizeTarPath(destDir, name string) (string, error) {
 	if strings.HasPrefix(name, "/") {
-		return "", fmt.Errorf("absolute path not allowed")
+		return "", errors.New("absolute path not allowed")
 	}
 
 	cleanName := filepath.Clean(name)
 
 	if filepath.IsAbs(cleanName) {
-		return "", fmt.Errorf("absolute path not allowed")
+		return "", errors.New("absolute path not allowed")
 	}
 
 	if strings.HasPrefix(cleanName, "..") || strings.Contains(cleanName, string(filepath.Separator)+"..") {
-		return "", fmt.Errorf("path traversal not allowed")
+		return "", errors.New("path traversal not allowed")
 	}
 
 	target := filepath.Join(destDir, cleanName)
@@ -464,7 +489,7 @@ func sanitizeTarPath(destDir, name string) (string, error) {
 		return "", err
 	}
 	if !strings.HasPrefix(absTarget, absDestDir+string(filepath.Separator)) && absTarget != absDestDir {
-		return "", fmt.Errorf("path escapes destination directory")
+		return "", errors.New("path escapes destination directory")
 	}
 
 	return target, nil
@@ -482,7 +507,7 @@ func extractZip(archivePath, destDir string) error {
 
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open zip archive: %w", err)
 	}
 	defer func() { _ = r.Close() }()
 
@@ -505,7 +530,7 @@ func extractZip(archivePath, destDir string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			return err
+			return fmt.Errorf("open zip entry %q: %w", f.Name, err)
 		}
 
 		outFile, err := os.Create(target)
@@ -514,7 +539,7 @@ func extractZip(archivePath, destDir string) error {
 			return err
 		}
 
-		_, copyErr := io.Copy(outFile, rc)
+		_, copyErr := io.Copy(outFile, rc) //nolint:gosec // extracting our own checksum-verified release archive
 		closeErr := outFile.Close()
 		_ = rc.Close()
 		if copyErr != nil {
@@ -549,8 +574,10 @@ func copyFile(src, dst string) error {
 }
 
 func fetchChecksumFromFile(url, assetName string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url) //nolint:gosec
+	client := newUpdateHTTPClient(nil)
+	defer client.CloseIdleConnections()
+
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -566,6 +593,35 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 	}
 
 	return extractChecksum(string(body), assetName), nil
+}
+
+func newUpdateHTTPClient(checkRedirect func(*http.Request, []*http.Request) error) *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     newUpdateHTTPTransport(),
+		CheckRedirect: checkRedirect,
+	}
+}
+
+func newUpdateDownloadHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: newUpdateHTTPTransport(),
+	}
+}
+
+func newUpdateHTTPTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 func extractChecksum(releaseBody, assetName string) string {
@@ -647,8 +703,8 @@ func saveCache(version string) {
 		return
 	}
 	cachePath := filepath.Join(getCacheDir(), cacheFileName)
-	os.MkdirAll(filepath.Dir(cachePath), 0755)      //nolint:errcheck
-	fileutil.SecureWriteFile(cachePath, data, 0600) //nolint:errcheck
+	os.MkdirAll(filepath.Dir(cachePath), 0755)      //nolint:errcheck,gosec
+	fileutil.SecureWriteFile(cachePath, data, 0600) //nolint:errcheck,gosec
 }
 
 // extractBaseSemver extracts the base semver from a version string.
@@ -666,7 +722,7 @@ func extractBaseSemver(v string) string {
 	return v
 }
 
-// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty
+// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty.
 var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
 
 // isDevBuildVersion returns true if the version is a dev build.

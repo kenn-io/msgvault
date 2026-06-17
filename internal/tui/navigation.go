@@ -3,7 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // viewLevel represents the current navigation depth.
@@ -236,10 +236,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 			m.cursor = 0
 		}
 		// Clamp scroll so cursor stays visible and we don't scroll past the end
-		maxScroll := itemCount - m.visibleRows()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(itemCount-m.visibleRows(), 0)
 		if m.scrollOffset > maxScroll {
 			m.scrollOffset = maxScroll
 		}
@@ -249,10 +246,7 @@ func (m *Model) navigateList(key string, itemCount int) bool {
 		m.scrollOffset = 0
 		return true
 	case "end", "G":
-		m.cursor = itemCount - 1
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
+		m.cursor = max(itemCount-1, 0)
 		changed = true
 	default:
 		return false

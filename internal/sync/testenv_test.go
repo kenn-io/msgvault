@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const testEmail = "test@example.com"
@@ -23,29 +24,17 @@ type TestEnv struct {
 	Context context.Context
 }
 
-func newTestEnv(t *testing.T, opt ...*Options) *TestEnv {
+func newTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
 
-	if len(opt) > 1 {
-		t.Fatalf("newTestEnv: at most one *Options allowed, got %d", len(opt))
-	}
-
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(t, st.InitSchema(), "init schema")
 
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{
@@ -54,15 +43,10 @@ func newTestEnv(t *testing.T, opt ...*Options) *TestEnv {
 		HistoryID:     1000,
 	}
 
-	var o *Options
-	if len(opt) > 0 {
-		o = opt[0]
-	}
-
 	return &TestEnv{
 		Store:   st,
 		Mock:    mock,
-		Syncer:  New(mock, st, o),
+		Syncer:  New(mock, st, nil),
 		TmpDir:  tmpDir,
 		Context: context.Background(),
 	}
@@ -73,12 +57,8 @@ func newTestEnv(t *testing.T, opt ...*Options) *TestEnv {
 func (e *TestEnv) CreateSourceWithHistory(t *testing.T, historyID string) *store.Source {
 	t.Helper()
 	source, err := e.Store.GetOrCreateSource("gmail", e.Mock.Profile.EmailAddress)
-	if err != nil {
-		t.Fatalf("GetOrCreateSource: %v", err)
-	}
-	if err := e.Store.UpdateSourceSyncCursor(source.ID, historyID); err != nil {
-		t.Fatalf("UpdateSourceSyncCursor: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateSource")
+	require.NoError(t, e.Store.UpdateSourceSyncCursor(source.ID, historyID), "UpdateSourceSyncCursor")
 	source.SyncCursor = sql.NullString{String: historyID, Valid: true}
 	return source
 }
@@ -87,9 +67,7 @@ func (e *TestEnv) CreateSourceWithHistory(t *testing.T, historyID string) *store
 func (e *TestEnv) CreateSource(t *testing.T) *store.Source {
 	t.Helper()
 	source, err := e.Store.GetOrCreateSource("gmail", e.Mock.Profile.EmailAddress)
-	if err != nil {
-		t.Fatalf("GetOrCreateSource: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateSource")
 	return source
 }
 
@@ -121,9 +99,7 @@ func seedMessages(env *TestEnv, total int64, historyID uint64, msgs ...string) {
 func runFullSync(t *testing.T, env *TestEnv) *gmail.SyncSummary {
 	t.Helper()
 	summary, err := env.Syncer.Full(env.Context, testEmail)
-	if err != nil {
-		t.Fatalf("full sync: %v", err)
-	}
+	require.NoError(t, err, "full sync")
 	return summary
 }
 
@@ -132,13 +108,9 @@ func runFullSync(t *testing.T, env *TestEnv) *gmail.SyncSummary {
 func runIncrementalSync(t *testing.T, env *TestEnv) *gmail.SyncSummary {
 	t.Helper()
 	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	if err != nil {
-		t.Fatalf("look up source for incremental sync: %v", err)
-	}
+	require.NoError(t, err, "look up source for incremental sync")
 	summary, err := env.Syncer.Incremental(env.Context, source)
-	if err != nil {
-		t.Fatalf("incremental sync: %v", err)
-	}
+	require.NoError(t, err, "incremental sync")
 	return summary
 }
 
@@ -150,24 +122,21 @@ type WantSummary struct {
 	Found   *int64
 }
 
-// intPtr returns a pointer to an int64 value for use in WantSummary.
-func intPtr(v int64) *int64 { return &v }
-
 // assertSummary checks SyncSummary fields against expected values.
 // Only non-nil fields in want are checked.
 func assertSummary(t *testing.T, s *gmail.SyncSummary, want WantSummary) {
 	t.Helper()
-	if want.Added != nil && s.MessagesAdded != *want.Added {
-		t.Errorf("expected %d messages added, got %d", *want.Added, s.MessagesAdded)
+	if want.Added != nil {
+		assert.Equal(t, *want.Added, s.MessagesAdded, "messages added")
 	}
-	if want.Errors != nil && s.Errors != *want.Errors {
-		t.Errorf("expected %d errors, got %d", *want.Errors, s.Errors)
+	if want.Errors != nil {
+		assert.Equal(t, *want.Errors, s.Errors, "errors")
 	}
-	if want.Skipped != nil && s.MessagesSkipped != *want.Skipped {
-		t.Errorf("expected %d messages skipped, got %d", *want.Skipped, s.MessagesSkipped)
+	if want.Skipped != nil {
+		assert.Equal(t, *want.Skipped, s.MessagesSkipped, "messages skipped")
 	}
-	if want.Found != nil && s.MessagesFound != *want.Found {
-		t.Errorf("expected %d messages found, got %d", *want.Found, s.MessagesFound)
+	if want.Found != nil {
+		assert.Equal(t, *want.Found, s.MessagesFound, "messages found")
 	}
 }
 
@@ -175,9 +144,7 @@ func assertSummary(t *testing.T, s *gmail.SyncSummary, want WantSummary) {
 func mustStats(t *testing.T, st *store.Store) *store.Stats {
 	t.Helper()
 	stats, err := st.GetStats()
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	require.NoError(t, err, "GetStats")
 	return stats
 }
 
@@ -185,41 +152,35 @@ func mustStats(t *testing.T, st *store.Store) *store.Stats {
 // Pass -1 to skip checking a particular call count.
 func assertMockCalls(t *testing.T, env *TestEnv, profile, labels, messages int) {
 	t.Helper()
-	if profile >= 0 && env.Mock.ProfileCalls != profile {
-		t.Errorf("profile calls: got %d, want %d", env.Mock.ProfileCalls, profile)
+	if profile >= 0 {
+		assert.Equal(t, profile, env.Mock.ProfileCalls, "profile calls")
 	}
-	if labels >= 0 && env.Mock.LabelsCalls != labels {
-		t.Errorf("labels calls: got %d, want %d", env.Mock.LabelsCalls, labels)
+	if labels >= 0 {
+		assert.Equal(t, labels, env.Mock.LabelsCalls, "labels calls")
 	}
-	if messages >= 0 && len(env.Mock.GetMessageCalls) != messages {
-		t.Errorf("message fetches: got %d, want %d", len(env.Mock.GetMessageCalls), messages)
+	if messages >= 0 {
+		assert.Len(t, env.Mock.GetMessageCalls, messages, "message fetches")
 	}
 }
 
 // assertListMessagesCalls verifies the number of ListMessages API calls (pagination).
 func assertListMessagesCalls(t *testing.T, env *TestEnv, want int) {
 	t.Helper()
-	if env.Mock.ListMessagesCalls != want {
-		t.Errorf("ListMessages calls: got %d, want %d", env.Mock.ListMessagesCalls, want)
-	}
+	assert.Equal(t, want, env.Mock.ListMessagesCalls, "ListMessages calls")
 }
 
 // assertMessageCount checks the message count in the store.
 func assertMessageCount(t *testing.T, st *store.Store, want int64) {
 	t.Helper()
 	stats := mustStats(t, st)
-	if stats.MessageCount != want {
-		t.Errorf("expected %d messages in db, got %d", want, stats.MessageCount)
-	}
+	assert.Equal(t, want, stats.MessageCount, "messages in db")
 }
 
 // assertAttachmentCount checks the attachment count in the store.
 func assertAttachmentCount(t *testing.T, st *store.Store, want int64) {
 	t.Helper()
 	stats := mustStats(t, st)
-	if stats.AttachmentCount != want {
-		t.Errorf("expected %d attachments in db, got %d", want, stats.AttachmentCount)
-	}
+	assert.Equal(t, want, stats.AttachmentCount, "attachments in db")
 }
 
 // withAttachmentsDir creates a syncer with an attachments directory and returns the dir path.
@@ -234,96 +195,60 @@ func withAttachmentsDir(t *testing.T, env *TestEnv) string {
 func assertRecipientCount(t *testing.T, st *store.Store, sourceMessageID, recipType string, want int) {
 	t.Helper()
 	count, err := st.InspectRecipientCount(sourceMessageID, recipType)
-	if err != nil {
-		t.Fatalf("InspectRecipientCount(%s, %s): %v", sourceMessageID, recipType, err)
-	}
-	if count != want {
-		t.Errorf("expected %d %s recipients for %s, got %d", want, recipType, sourceMessageID, count)
-	}
+	require.NoError(t, err, "InspectRecipientCount(%s, %s)", sourceMessageID, recipType)
+	assert.Equal(t, want, count, "%s recipients for %s", recipType, sourceMessageID)
 }
 
 // assertDisplayName checks the display name for a recipient of a message.
 func assertDisplayName(t *testing.T, st *store.Store, sourceMessageID, recipType, email, want string) {
 	t.Helper()
 	displayName, err := st.InspectDisplayName(sourceMessageID, recipType, email)
-	if err != nil {
-		t.Fatalf("InspectDisplayName(%s, %s, %s): %v", sourceMessageID, recipType, email, err)
-	}
-	if displayName != want {
-		t.Errorf("expected display name %q for %s/%s/%s, got %q", want, sourceMessageID, recipType, email, displayName)
-	}
+	require.NoError(t, err, "InspectDisplayName(%s, %s, %s)", sourceMessageID, recipType, email)
+	assert.Equal(t, want, displayName, "display name for %s/%s/%s", sourceMessageID, recipType, email)
 }
 
 // assertDeletedFromSource checks whether a message has deleted_from_source_at set.
 func assertDeletedFromSource(t *testing.T, st *store.Store, sourceMessageID string, wantDeleted bool) {
 	t.Helper()
 	deleted, err := st.InspectDeletedFromSource(sourceMessageID)
-	if err != nil {
-		t.Fatalf("InspectDeletedFromSource(%s): %v", sourceMessageID, err)
-	}
-	if wantDeleted && !deleted {
-		t.Errorf("%s should have deleted_from_source_at set", sourceMessageID)
-	}
-	if !wantDeleted && deleted {
-		t.Errorf("%s should NOT have deleted_from_source_at set", sourceMessageID)
-	}
+	require.NoError(t, err, "InspectDeletedFromSource(%s)", sourceMessageID)
+	assert.Equal(t, wantDeleted, deleted, "deleted_from_source_at for %s", sourceMessageID)
 }
 
 // assertBodyContains checks that a message's body_text contains the given substring.
 func assertBodyContains(t *testing.T, st *store.Store, sourceMessageID, substr string) {
 	t.Helper()
 	bodyText, err := st.InspectBodyText(sourceMessageID)
-	if err != nil {
-		t.Fatalf("InspectBodyText(%s): %v", sourceMessageID, err)
-	}
-	if !strings.Contains(bodyText, substr) {
-		t.Errorf("expected body of %s to contain %q, got: %s", sourceMessageID, substr, bodyText)
-	}
+	require.NoError(t, err, "InspectBodyText(%s)", sourceMessageID)
+	assert.Contains(t, bodyText, substr, "body of %s", sourceMessageID)
 }
 
 // assertRawDataExists checks that raw MIME data exists for a message.
 func assertRawDataExists(t *testing.T, st *store.Store, sourceMessageID string) {
 	t.Helper()
 	exists, err := st.InspectRawDataExists(sourceMessageID)
-	if err != nil {
-		t.Fatalf("InspectRawDataExists(%s): %v", sourceMessageID, err)
-	}
-	if !exists {
-		t.Errorf("expected raw MIME data to be preserved for %s", sourceMessageID)
-	}
+	require.NoError(t, err, "InspectRawDataExists(%s)", sourceMessageID)
+	assert.True(t, exists, "expected raw MIME data to be preserved for %s", sourceMessageID)
 }
 
 // assertThreadSourceID checks the source_conversation_id for a message's thread.
 func assertThreadSourceID(t *testing.T, st *store.Store, sourceMessageID, wantThreadID string) {
 	t.Helper()
 	threadSourceID, err := st.InspectThreadSourceID(sourceMessageID)
-	if err != nil {
-		t.Fatalf("InspectThreadSourceID(%s): %v", sourceMessageID, err)
-	}
-	if threadSourceID != wantThreadID {
-		t.Errorf("expected thread source_conversation_id = %q for %s, got %q", wantThreadID, sourceMessageID, threadSourceID)
-	}
+	require.NoError(t, err, "InspectThreadSourceID(%s)", sourceMessageID)
+	assert.Equal(t, wantThreadID, threadSourceID, "thread source_conversation_id for %s", sourceMessageID)
 }
 
 // assertDateFallback checks that sent_at equals internal_date and contains expected substrings.
 func assertDateFallback(t *testing.T, st *store.Store, sourceMessageID, wantDatePart, wantTimePart string) {
 	t.Helper()
 	sentAt, internalDate, err := st.InspectMessageDates(sourceMessageID)
-	if err != nil {
-		t.Fatalf("InspectMessageDates(%s): %v", sourceMessageID, err)
-	}
-	if sentAt == "" {
-		t.Errorf("%s: sent_at should not be empty", sourceMessageID)
-	}
-	if internalDate == "" {
-		t.Errorf("%s: internal_date should not be empty", sourceMessageID)
-	}
-	if sentAt != internalDate {
-		t.Errorf("%s: sent_at (%q) should equal internal_date (%q)", sourceMessageID, sentAt, internalDate)
-	}
-	if !strings.Contains(sentAt, wantDatePart) || !strings.Contains(sentAt, wantTimePart) {
-		t.Errorf("%s: sent_at = %q, expected to contain %s %s", sourceMessageID, sentAt, wantDatePart, wantTimePart)
-	}
+	require.NoError(t, err, "InspectMessageDates(%s)", sourceMessageID)
+	assert.NotEmpty(t, sentAt, "%s: sent_at should not be empty", sourceMessageID)
+	assert.NotEmpty(t, internalDate, "%s: internal_date should not be empty", sourceMessageID)
+	assert.Equal(t, internalDate, sentAt, "%s: sent_at should equal internal_date", sourceMessageID)
+	assert.Contains(t, sentAt, wantDatePart, "%s: sent_at should contain date part", sourceMessageID)
+	assert.Contains(t, sentAt, wantTimePart, "%s: sent_at should contain time part", sourceMessageID)
 }
 
 // assertMessageHasLabel checks that a message has a specific label (by source_label_id).
@@ -336,12 +261,8 @@ func assertMessageHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourc
 		JOIN labels l ON ml.label_id = l.id
 		WHERE m.source_message_id = ? AND l.source_label_id = ?
 	`, sourceMessageID, sourceLabelID).Scan(&count)
-	if err != nil {
-		t.Fatalf("assertMessageHasLabel(%s, %s): %v", sourceMessageID, sourceLabelID, err)
-	}
-	if count == 0 {
-		t.Errorf("message %s should have label %s", sourceMessageID, sourceLabelID)
-	}
+	require.NoError(t, err, "assertMessageHasLabel(%s, %s)", sourceMessageID, sourceLabelID)
+	assert.NotZero(t, count, "message %s should have label %s", sourceMessageID, sourceLabelID)
 }
 
 // assertMessageNotHasLabel checks that a message does NOT have a specific label.
@@ -354,12 +275,8 @@ func assertMessageNotHasLabel(t *testing.T, st *store.Store, sourceMessageID, so
 		JOIN labels l ON ml.label_id = l.id
 		WHERE m.source_message_id = ? AND l.source_label_id = ?
 	`, sourceMessageID, sourceLabelID).Scan(&count)
-	if err != nil {
-		t.Fatalf("assertMessageNotHasLabel(%s, %s): %v", sourceMessageID, sourceLabelID, err)
-	}
-	if count != 0 {
-		t.Errorf("message %s should NOT have label %s", sourceMessageID, sourceLabelID)
-	}
+	require.NoError(t, err, "assertMessageNotHasLabel(%s, %s)", sourceMessageID, sourceLabelID)
+	assert.Zero(t, count, "message %s should NOT have label %s", sourceMessageID, sourceLabelID)
 }
 
 // History event builders — construct gmail.HistoryRecord values succinctly.
@@ -436,8 +353,6 @@ func countFiles(t *testing.T, dir string) int {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("WalkDir(%s): %v", dir, err)
-	}
+	require.NoError(t, err, "WalkDir(%s)", dir)
 	return count
 }

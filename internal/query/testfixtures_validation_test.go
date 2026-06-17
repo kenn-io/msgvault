@@ -5,19 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil/tbmock"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/tbmock"
 )
 
 func TestAddLabel_ValidName(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	id := b.AddLabel("INBOX")
-	if id != 1 {
-		t.Errorf("expected label ID 1, got %d", id)
-	}
+	assertpkg.Equal(t, int64(1), id)
 	id2 := b.AddLabel("SENT")
-	if id2 != 2 {
-		t.Errorf("expected label ID 2, got %d", id2)
-	}
+	assertpkg.Equal(t, int64(2), id2)
 }
 
 func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
@@ -27,9 +25,7 @@ func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
 		Subject:  "test",
 		SourceID: 99, // explicit, so no sources needed
 	})
-	if id != 1 {
-		t.Errorf("expected message ID 1, got %d", id)
-	}
+	assertpkg.Equal(t, int64(1), id)
 }
 
 func TestTestDataBuilder_ValidationFailures(t *testing.T) {
@@ -58,41 +54,31 @@ func TestTestDataBuilder_ValidationFailures(t *testing.T) {
 				b := NewTestDataBuilder(mtb)
 				tc.fn(b)
 			})
-			if !mtb.Failed() {
-				t.Error("expected builder to fail")
-			}
+			assertpkg.True(t, mtb.Failed(), "expected builder to fail")
 		})
 	}
 }
 
 func TestAddMessage_UsesFirstSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("a@test.com")
 	b.AddSource("b@test.com") // Add a second source to ensure first is selected
 	msgID := b.AddMessage(MessageOpt{Subject: "test"})
-	if msgID != 1 {
-		t.Errorf("expected message ID 1, got %d", msgID)
-	}
+	assert.Equal(int64(1), msgID)
 
 	// Verify the message uses the first source ID (not the second)
-	if len(b.messages) != 1 {
-		t.Fatalf("expected 1 message in builder, got %d", len(b.messages))
-	}
-	if b.messages[0].SourceID != srcID {
-		t.Errorf("expected message to use first source ID %d, got %d", srcID, b.messages[0].SourceID)
-	}
+	require.Len(b.messages, 1, "messages in builder")
+	assert.Equal(srcID, b.messages[0].SourceID, "message should use first source ID")
 
 	// Also verify through the engine that the data is correctly built
 	engine := b.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
 	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
-	if err != nil {
-		t.Fatalf("GetTotalStats: %v", err)
-	}
-	if stats.MessageCount != 1 {
-		t.Errorf("expected 1 message, got %d", stats.MessageCount)
-	}
+	require.NoError(err, "GetTotalStats")
+	assert.Equal(int64(1), stats.MessageCount)
 }
 
 func TestAddAttachment_SetsHasAttachments(t *testing.T) {
@@ -100,15 +86,11 @@ func TestAddAttachment_SetsHasAttachments(t *testing.T) {
 	b.AddSource("a@test.com")
 	msgID := b.AddMessage(MessageOpt{Subject: "with attachment"})
 
-	if b.messages[0].HasAttachments {
-		t.Error("HasAttachments should be false before AddAttachment")
-	}
+	assertpkg.False(t, b.messages[0].HasAttachments, "HasAttachments should be false before AddAttachment")
 
 	b.AddAttachment(msgID, 1024, "file.txt")
 
-	if !b.messages[0].HasAttachments {
-		t.Error("HasAttachments should be true after AddAttachment")
-	}
+	assertpkg.True(t, b.messages[0].HasAttachments, "HasAttachments should be true after AddAttachment")
 }
 
 func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
@@ -125,10 +107,6 @@ func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
 
 	// Should be able to query without errors.
 	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
-	if err != nil {
-		t.Fatalf("GetTotalStats: %v", err)
-	}
-	if stats.MessageCount != 1 {
-		t.Errorf("expected 1 message, got %d", stats.MessageCount)
-	}
+	requirepkg.NoError(t, err, "GetTotalStats")
+	assertpkg.Equal(t, int64(1), stats.MessageCount)
 }

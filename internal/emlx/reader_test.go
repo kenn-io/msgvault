@@ -6,9 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestParse_ValidEmlxWithPlist(t *testing.T) {
+	require := requirepkg.New(t)
 	mime := "From: alice@example.com\r\nSubject: Hello\r\n\r\nBody\r\n"
 	plist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -26,29 +30,15 @@ func TestParse_ValidEmlxWithPlist(t *testing.T) {
 	data := fmt.Sprintf("%d\n%s%s", len(mime), mime, plist)
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if string(msg.Raw) != mime {
-		t.Fatalf("Raw = %q, want %q", msg.Raw, mime)
-	}
+	require.NoError(err, "Parse")
+	require.Equal(mime, string(msg.Raw))
 
 	// date-sent 252460800 seconds from Apple epoch (2001-01-01)
 	// = 2009-01-01 00:00:00 UTC
 	wantDate := time.Date(2009, 1, 1, 0, 0, 0, 0, time.UTC)
-	if !msg.PlistDate.Equal(wantDate) {
-		t.Fatalf("PlistDate = %v, want %v", msg.PlistDate, wantDate)
-	}
-	if msg.Flags != 8590195713 {
-		t.Fatalf("Flags = %d, want 8590195713", msg.Flags)
-	}
-	if msg.OrigMailbox != "imap://user@example.com/INBOX" {
-		t.Fatalf(
-			"OrigMailbox = %q, want %q",
-			msg.OrigMailbox,
-			"imap://user@example.com/INBOX",
-		)
-	}
+	require.True(msg.PlistDate.Equal(wantDate), "PlistDate = %v, want %v", msg.PlistDate, wantDate)
+	require.Equal(8590195713, msg.Flags)
+	require.Equal("imap://user@example.com/INBOX", msg.OrigMailbox)
 }
 
 func TestParse_ValidEmlxNoPlist(t *testing.T) {
@@ -56,68 +46,48 @@ func TestParse_ValidEmlxNoPlist(t *testing.T) {
 	data := fmt.Sprintf("%d\n%s", len(mime), mime)
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if string(msg.Raw) != mime {
-		t.Fatalf("Raw = %q, want %q", msg.Raw, mime)
-	}
-	if !msg.PlistDate.IsZero() {
-		t.Fatalf("PlistDate = %v, want zero", msg.PlistDate)
-	}
+	requirepkg.NoError(t, err, "Parse")
+	requirepkg.Equal(t, mime, string(msg.Raw))
+	requirepkg.True(t, msg.PlistDate.IsZero(), "PlistDate = %v, want zero", msg.PlistDate)
 }
 
 func TestParse_ByteCountMismatch(t *testing.T) {
 	// Byte count is larger than available data.
 	data := "9999\nshort"
 	_, err := Parse([]byte(data))
-	if err == nil {
-		t.Fatalf("expected error for byte count mismatch")
-	}
+	requirepkg.Error(t, err, "expected error for byte count mismatch")
 }
 
 func TestParse_NonNumericByteCount(t *testing.T) {
 	data := "abc\nFrom: test\r\n\r\n"
 	_, err := Parse([]byte(data))
-	if err == nil {
-		t.Fatalf("expected error for non-numeric byte count")
-	}
+	requirepkg.Error(t, err, "expected error for non-numeric byte count")
 }
 
 func TestParse_ZeroByteCount(t *testing.T) {
 	plist := `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict></dict></plist>`
-	data := fmt.Sprintf("0\n%s", plist)
+	data := "0\n" + plist
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if len(msg.Raw) != 0 {
-		t.Fatalf("Raw length = %d, want 0", len(msg.Raw))
-	}
+	requirepkg.NoError(t, err, "Parse")
+	requirepkg.Empty(t, msg.Raw)
 }
 
 func TestParse_EmptyFile(t *testing.T) {
 	_, err := Parse([]byte{})
-	if err == nil {
-		t.Fatalf("expected error for empty file")
-	}
+	requirepkg.Error(t, err, "expected error for empty file")
 }
 
 func TestParse_NoNewline(t *testing.T) {
 	_, err := Parse([]byte("42"))
-	if err == nil {
-		t.Fatalf("expected error for missing newline")
-	}
+	requirepkg.Error(t, err, "expected error for missing newline")
 }
 
 func TestParse_NegativeByteCount(t *testing.T) {
 	data := "-1\nstuff"
 	_, err := Parse([]byte(data))
-	if err == nil {
-		t.Fatalf("expected error for negative byte count")
-	}
+	requirepkg.Error(t, err, "expected error for negative byte count")
 }
 
 func TestParse_PlistWithIntegerDateSent(t *testing.T) {
@@ -132,13 +102,9 @@ func TestParse_PlistWithIntegerDateSent(t *testing.T) {
 	data := fmt.Sprintf("%d\n%s%s", len(mime), mime, plist)
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
+	requirepkg.NoError(t, err, "Parse")
 	wantDate := time.Date(2009, 1, 1, 0, 0, 0, 0, time.UTC)
-	if !msg.PlistDate.Equal(wantDate) {
-		t.Fatalf("PlistDate = %v, want %v", msg.PlistDate, wantDate)
-	}
+	requirepkg.True(t, msg.PlistDate.Equal(wantDate), "PlistDate = %v, want %v", msg.PlistDate, wantDate)
 }
 
 func TestParse_MalformedPlist(t *testing.T) {
@@ -147,15 +113,9 @@ func TestParse_MalformedPlist(t *testing.T) {
 	data := fmt.Sprintf("%d\n%sNOT XML AT ALL", len(mime), mime)
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v (should succeed with best-effort plist)", err)
-	}
-	if string(msg.Raw) != mime {
-		t.Fatalf("Raw mismatch")
-	}
-	if !msg.PlistDate.IsZero() {
-		t.Fatalf("PlistDate should be zero for malformed plist")
-	}
+	requirepkg.NoError(t, err, "should succeed with best-effort plist")
+	assertpkg.Equal(t, mime, string(msg.Raw))
+	assertpkg.True(t, msg.PlistDate.IsZero(), "PlistDate should be zero for malformed plist")
 }
 
 func TestParseFile(t *testing.T) {
@@ -164,33 +124,23 @@ func TestParseFile(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "1234.emlx")
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(path, []byte(data), 0600), "write")
 
 	msg, err := ParseFile(path)
-	if err != nil {
-		t.Fatalf("ParseFile: %v", err)
-	}
-	if string(msg.Raw) != mime {
-		t.Fatalf("Raw = %q, want %q", msg.Raw, mime)
-	}
+	requirepkg.NoError(t, err, "ParseFile")
+	requirepkg.Equal(t, mime, string(msg.Raw))
 }
 
 func TestParseFile_NotFound(t *testing.T) {
 	_, err := ParseFile("/nonexistent/12345.emlx")
-	if err == nil {
-		t.Fatalf("expected error for missing file")
-	}
+	requirepkg.Error(t, err, "expected error for missing file")
 }
 
 func TestParse_ExtremeByteCount(t *testing.T) {
 	// A declared byte count near MaxInt64 must return an error, not panic.
 	data := "9223372036854775807\nshort"
 	_, err := Parse([]byte(data))
-	if err == nil {
-		t.Fatalf("expected error for extreme byte count")
-	}
+	requirepkg.Error(t, err, "expected error for extreme byte count")
 }
 
 func TestParse_WhitespaceAroundByteCount(t *testing.T) {
@@ -199,10 +149,6 @@ func TestParse_WhitespaceAroundByteCount(t *testing.T) {
 	data := fmt.Sprintf("  %d  \n%s", len(mime), mime)
 
 	msg, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if string(msg.Raw) != mime {
-		t.Fatalf("Raw = %q, want %q", msg.Raw, mime)
-	}
+	requirepkg.NoError(t, err, "Parse")
+	requirepkg.Equal(t, mime, string(msg.Raw))
 }

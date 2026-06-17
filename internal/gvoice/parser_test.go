@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestParseVCF(t *testing.T) {
@@ -17,15 +20,9 @@ TEL;TYPE=CELL:+15753222266
 END:VCARD
 `
 	phones, err := parseVCF([]byte(vcf))
-	if err != nil {
-		t.Fatalf("parseVCF() error: %v", err)
-	}
-	if phones.GoogleVoice != "+17026083638" {
-		t.Errorf("GoogleVoice = %q, want +17026083638", phones.GoogleVoice)
-	}
-	if phones.Cell != "+15753222266" {
-		t.Errorf("Cell = %q, want +15753222266", phones.Cell)
-	}
+	requirepkg.NoError(t, err, "parseVCF")
+	assertpkg.Equal(t, "+17026083638", phones.GoogleVoice)
+	assertpkg.Equal(t, "+15753222266", phones.Cell)
 }
 
 func TestParseVCF_MissingGV(t *testing.T) {
@@ -35,9 +32,7 @@ TEL;TYPE=CELL:+15551234567
 END:VCARD
 `
 	_, err := parseVCF([]byte(vcf))
-	if err == nil {
-		t.Fatal("expected error for missing GV number")
-	}
+	requirepkg.Error(t, err, "expected error for missing GV number")
 }
 
 func TestClassifyFile(t *testing.T) {
@@ -107,22 +102,16 @@ func TestClassifyFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.filename, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			name, ft, err := classifyFile(tt.filename)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
+				require.Error(err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if name != tt.wantName {
-				t.Errorf("name = %q, want %q", name, tt.wantName)
-			}
-			if ft != tt.wantType {
-				t.Errorf("type = %v, want %v", ft, tt.wantType)
-			}
+			require.NoError(err)
+			assert.Equal(tt.wantName, name, "name")
+			assert.Equal(tt.wantType, ft, "type")
 		})
 	}
 }
@@ -142,52 +131,32 @@ const sampleTextHTML = `<?xml version="1.0" ?>
 </div></div></body></html>`
 
 func TestParseTextHTML(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	messages, groupPar, err := parseTextHTML(strings.NewReader(sampleTextHTML))
-	if err != nil {
-		t.Fatalf("parseTextHTML() error: %v", err)
-	}
+	require.NoError(err, "parseTextHTML")
 
-	if len(groupPar) != 0 {
-		t.Errorf("expected no group participants, got %v", groupPar)
-	}
+	assert.Empty(groupPar, "expected no group participants")
 
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
+	require.Len(messages, 2, "expected 2 messages")
 
 	// First message: from Keith
 	m0 := messages[0]
-	if m0.SenderPhone != "+12023065386" {
-		t.Errorf("m0.SenderPhone = %q, want +12023065386", m0.SenderPhone)
-	}
-	if m0.SenderName != "Keith Stern" {
-		t.Errorf("m0.SenderName = %q, want Keith Stern", m0.SenderName)
-	}
-	if m0.IsMe {
-		t.Error("m0.IsMe should be false")
-	}
-	if !strings.Contains(m0.Body, "Cara says") {
-		t.Errorf("m0.Body = %q, want to contain 'Cara says'", m0.Body)
-	}
+	assert.Equal("+12023065386", m0.SenderPhone)
+	assert.Equal("Keith Stern", m0.SenderName)
+	assert.False(m0.IsMe, "m0.IsMe should be false")
+	assert.Contains(m0.Body, "Cara says")
 	// HTML entity should be decoded
-	if !strings.Contains(m0.Body, "you're") {
-		t.Errorf("m0.Body = %q, expected HTML entities to be decoded", m0.Body)
-	}
+	assert.Contains(m0.Body, "you're", "expected HTML entities to be decoded")
 
 	// Timestamp
 	expectedTime := time.Date(2020, 2, 3, 17, 37, 45, 632000000, time.UTC)
-	if !m0.Timestamp.Equal(expectedTime) {
-		t.Errorf("m0.Timestamp = %v, want %v", m0.Timestamp, expectedTime)
-	}
+	assert.True(m0.Timestamp.Equal(expectedTime), "m0.Timestamp = %v, want %v", m0.Timestamp, expectedTime)
 
 	// Second message: from Me
 	m1 := messages[1]
-	if !m1.IsMe {
-		t.Error("m1.IsMe should be true")
-	}
-	if m1.SenderName != "Me" {
-		t.Errorf("m1.SenderName = %q, want Me", m1.SenderName)
-	}
+	assert.True(m1.IsMe, "m1.IsMe should be true")
+	assert.Equal("Me", m1.SenderName)
 }
 
 const sampleGroupHTML = `<?xml version="1.0" ?>
@@ -204,29 +173,19 @@ const sampleGroupHTML = `<?xml version="1.0" ?>
 </div></div></body></html>`
 
 func TestParseTextHTML_Group(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	messages, groupPar, err := parseTextHTML(strings.NewReader(sampleGroupHTML))
-	if err != nil {
-		t.Fatalf("parseTextHTML() error: %v", err)
-	}
+	require.NoError(err, "parseTextHTML")
 
-	if len(groupPar) != 2 {
-		t.Fatalf("expected 2 group participants, got %d", len(groupPar))
-	}
-	if groupPar[0] != "+12022712272" {
-		t.Errorf("groupPar[0] = %q, want +12022712272", groupPar[0])
-	}
-	if groupPar[1] != "+12023065386" {
-		t.Errorf("groupPar[1] = %q, want +12023065386", groupPar[1])
-	}
+	require.Len(groupPar, 2, "expected 2 group participants")
+	assert.Equal("+12022712272", groupPar[0])
+	assert.Equal("+12023065386", groupPar[1])
 
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
+	require.Len(messages, 2, "expected 2 messages")
 
 	// Trailing <br> should be stripped
-	if strings.HasSuffix(messages[0].Body, "\n") {
-		t.Errorf("body should not end with newline: %q", messages[0].Body)
-	}
+	assert.False(strings.HasSuffix(messages[0].Body, "\n"), "body should not end with newline: %q", messages[0].Body)
 }
 
 const sampleMMS = `<?xml version="1.0" ?>
@@ -239,26 +198,18 @@ const sampleMMS = `<?xml version="1.0" ?>
 <div><a class="video" href="Group Conversation - 2020-02-05T17_16_14Z-7-1">Video attachment</a></div></div></div></body></html>`
 
 func TestParseTextHTML_MMS(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	messages, _, err := parseTextHTML(strings.NewReader(sampleMMS))
-	if err != nil {
-		t.Fatalf("parseTextHTML() error: %v", err)
-	}
+	require.NoError(err, "parseTextHTML")
 
-	if len(messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(messages))
-	}
+	require.Len(messages, 1, "expected 1 message")
 
-	if len(messages[0].Attachments) != 1 {
-		t.Fatalf("expected 1 attachment, got %d", len(messages[0].Attachments))
-	}
+	require.Len(messages[0].Attachments, 1, "expected 1 attachment")
 
 	att := messages[0].Attachments[0]
-	if att.MediaType != "video" {
-		t.Errorf("attachment MediaType = %q, want video", att.MediaType)
-	}
-	if att.HrefInHTML != "Group Conversation - 2020-02-05T17_16_14Z-7-1" {
-		t.Errorf("attachment HrefInHTML = %q", att.HrefInHTML)
-	}
+	assert.Equal("video", att.MediaType)
+	assert.Equal("Group Conversation - 2020-02-05T17_16_14Z-7-1", att.HrefInHTML)
 }
 
 const sampleReceivedCallHTML = `<?xml version="1.0" ?>
@@ -279,28 +230,17 @@ Keith Stern</span>
 </div></body></html>`
 
 func TestParseCallHTML_Received(t *testing.T) {
+	assert := assertpkg.New(t)
 	record, err := parseCallHTML(strings.NewReader(sampleReceivedCallHTML))
-	if err != nil {
-		t.Fatalf("parseCallHTML() error: %v", err)
-	}
+	requirepkg.NoError(t, err, "parseCallHTML")
 
-	if record.CallType != fileTypeReceived {
-		t.Errorf("CallType = %v, want received", record.CallType)
-	}
-	if record.Phone != "+12023065386" {
-		t.Errorf("Phone = %q, want +12023065386", record.Phone)
-	}
-	if record.Name != "Keith Stern" {
-		t.Errorf("Name = %q, want Keith Stern", record.Name)
-	}
-	if record.Duration != "PT1M23S" {
-		t.Errorf("Duration = %q, want PT1M23S", record.Duration)
-	}
+	assert.Equal(fileTypeReceived, record.CallType)
+	assert.Equal("+12023065386", record.Phone)
+	assert.Equal("Keith Stern", record.Name)
+	assert.Equal("PT1M23S", record.Duration)
 
 	expectedTime := time.Date(2020, 2, 5, 23, 26, 28, 0, time.UTC)
-	if !record.Timestamp.Equal(expectedTime) {
-		t.Errorf("Timestamp = %v, want %v", record.Timestamp, expectedTime)
-	}
+	assert.True(record.Timestamp.Equal(expectedTime), "Timestamp = %v, want %v", record.Timestamp, expectedTime)
 }
 
 const samplePlacedCallHTML = `<?xml version="1.0" ?>
@@ -322,16 +262,10 @@ Kicy Motley</span>
 
 func TestParseCallHTML_Placed(t *testing.T) {
 	record, err := parseCallHTML(strings.NewReader(samplePlacedCallHTML))
-	if err != nil {
-		t.Fatalf("parseCallHTML() error: %v", err)
-	}
+	requirepkg.NoError(t, err, "parseCallHTML")
 
-	if record.CallType != fileTypePlaced {
-		t.Errorf("CallType = %v, want placed", record.CallType)
-	}
-	if record.Phone != "+17188096446" {
-		t.Errorf("Phone = %q, want +17188096446", record.Phone)
-	}
+	assertpkg.Equal(t, fileTypePlaced, record.CallType)
+	assertpkg.Equal(t, "+17188096446", record.Phone)
 }
 
 func TestComputeMessageID(t *testing.T) {
@@ -339,15 +273,9 @@ func TestComputeMessageID(t *testing.T) {
 	id2 := computeMessageID("+12023065386", "2020-02-03T11:37:45Z", "Hello")
 	id3 := computeMessageID("+12023065386", "2020-02-03T11:37:45Z", "Goodbye")
 
-	if id1 != id2 {
-		t.Error("same inputs should produce same ID")
-	}
-	if id1 == id3 {
-		t.Error("different inputs should produce different IDs")
-	}
-	if len(id1) != 16 {
-		t.Errorf("ID length = %d, want 16", len(id1))
-	}
+	assertpkg.Equal(t, id1, id2, "same inputs should produce same ID")
+	assertpkg.NotEqual(t, id1, id3, "different inputs should produce different IDs")
+	assertpkg.Len(t, id1, 16)
 }
 
 func TestFormatDuration(t *testing.T) {
@@ -365,48 +293,34 @@ func TestFormatDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := formatDuration(tt.input)
-			if got != tt.want {
-				t.Errorf("formatDuration(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "formatDuration(%q)", tt.input)
 		})
 	}
 }
 
 func TestComputeThreadID(t *testing.T) {
 	// 1:1 text uses other party's phone
-	tid := computeThreadID("+15553334444", fileTypeText, "+12023065386", nil)
-	if tid != "+12023065386" {
-		t.Errorf("1:1 threadID = %q, want +12023065386", tid)
-	}
+	tid := computeThreadID(fileTypeText, "+12023065386", nil)
+	assertpkg.Equal(t, "+12023065386", tid, "1:1 threadID")
 
 	// Group uses sorted participants
-	tid = computeThreadID("+15553334444", fileTypeGroup, "", []string{"+12023065386", "+12022712272"})
-	if tid != "group:+12022712272,+12023065386" {
-		t.Errorf("group threadID = %q, want group:+12022712272,+12023065386", tid)
-	}
+	tid = computeThreadID(fileTypeGroup, "", []string{"+12023065386", "+12022712272"})
+	assertpkg.Equal(t, "group:+12022712272,+12023065386", tid, "group threadID")
 
 	// Call uses calls: prefix
-	tid = computeThreadID("+15553334444", fileTypeReceived, "+12023065386", nil)
-	if tid != "calls:+12023065386" {
-		t.Errorf("call threadID = %q, want calls:+12023065386", tid)
-	}
+	tid = computeThreadID(fileTypeReceived, "+12023065386", nil)
+	assertpkg.Equal(t, "calls:+12023065386", tid, "call threadID")
 }
 
 func TestSnippet(t *testing.T) {
 	long := strings.Repeat("a", 200)
-	s := snippet(long, 100)
-	if len(s) != 100 {
-		t.Errorf("snippet length = %d, want 100", len(s))
-	}
+	s := snippet(long)
+	assertpkg.Len(t, s, 100)
 
-	s = snippet("short", 100)
-	if s != "short" {
-		t.Errorf("snippet = %q, want short", s)
-	}
+	s = snippet("short")
+	assertpkg.Equal(t, "short", s)
 
 	// Whitespace normalization
-	s = snippet("  hello   world  ", 100)
-	if s != "hello world" {
-		t.Errorf("snippet = %q, want 'hello world'", s)
-	}
+	s = snippet("  hello   world  ")
+	assertpkg.Equal(t, "hello world", s)
 }

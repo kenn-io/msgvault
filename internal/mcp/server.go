@@ -10,9 +10,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // Tool name constants.
@@ -140,7 +140,10 @@ func Serve(ctx context.Context, engine query.Engine, attachmentsDir, dataDir str
 func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 	s := newMCPServer(opts)
 	stdio := server.NewStdioServer(s)
-	return stdio.Listen(ctx, os.Stdin, os.Stdout)
+	if err := stdio.Listen(ctx, os.Stdin, os.Stdout); err != nil {
+		return fmt.Errorf("serve MCP over stdio: %w", err)
+	}
+	return nil
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over

@@ -22,20 +22,22 @@ type waChat struct {
 }
 
 // waMessage represents a message from the WhatsApp message table.
+// JSON tags are required because importer.go marshals this struct to
+// store the raw representation in message_raw for re-parsing.
 type waMessage struct {
-	RowID           int64          // message._id
-	ChatRowID       int64          // message.chat_row_id
-	FromMe          int            // message.from_me (0=received, 1=sent)
-	KeyID           string         // message.key_id (unique message ID)
-	SenderJIDRowID  sql.NullInt64  // message.sender_jid_row_id → jid._id
-	SenderRawString sql.NullString // jid.raw_string of sender
-	SenderUser      sql.NullString // jid.user of sender
-	SenderServer    sql.NullString // jid.server of sender
-	Timestamp       int64          // message.timestamp (ms since epoch)
-	MessageType     int            // message.message_type
-	TextData        sql.NullString // message.text_data
-	Status          int            // message.status
-	Starred         int            // message.starred
+	RowID           int64          `json:"row_id"`            // message._id
+	ChatRowID       int64          `json:"chat_row_id"`       // message.chat_row_id
+	FromMe          int            `json:"from_me"`           // message.from_me (0=received, 1=sent)
+	KeyID           string         `json:"key_id"`            // message.key_id (unique message ID)
+	SenderJIDRowID  sql.NullInt64  `json:"sender_jid_row_id"` // message.sender_jid_row_id → jid._id
+	SenderRawString sql.NullString `json:"sender_raw_string"` // jid.raw_string of sender
+	SenderUser      sql.NullString `json:"sender_user"`       // jid.user of sender
+	SenderServer    sql.NullString `json:"sender_server"`     // jid.server of sender
+	Timestamp       int64          `json:"timestamp"`         // message.timestamp (ms since epoch)
+	MessageType     int            `json:"message_type"`      // message.message_type
+	TextData        sql.NullString `json:"text_data"`         // message.text_data
+	Status          int            `json:"status"`            // message.status
+	Starred         int            `json:"starred"`           // message.starred
 }
 
 // waMedia represents media metadata from the message_media table.

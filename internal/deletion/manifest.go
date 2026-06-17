@@ -7,11 +7,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 // Status represents the state of a deletion batch.
@@ -338,12 +339,7 @@ func (m *Manager) SaveManifest(manifest *Manifest) error {
 
 // isPersistedStatus returns true if the status has a known on-disk directory.
 func isPersistedStatus(s Status) bool {
-	for _, ps := range persistedStatuses {
-		if s == ps {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(persistedStatuses, s)
 }
 
 // MoveManifest moves a manifest from one status directory to another.

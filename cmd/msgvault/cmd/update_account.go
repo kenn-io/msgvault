@@ -1,10 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var updateDisplayName string
@@ -24,7 +25,7 @@ Examples:
 		email := args[0]
 
 		if updateDisplayName == "" {
-			return fmt.Errorf("nothing to update: use --display-name to set a display name")
+			return usageErr(cmd, errors.New("nothing to update: use --display-name to set a display name"))
 		}
 
 		dbPath := cfg.DatabaseDSN()
@@ -42,11 +43,11 @@ Examples:
 		}
 
 		source, err := s.GetSourceByIdentifier(email)
+		if errors.Is(err, store.ErrSourceNotFound) {
+			return fmt.Errorf("account not found: %s", email)
+		}
 		if err != nil {
 			return fmt.Errorf("get account: %w", err)
-		}
-		if source == nil {
-			return fmt.Errorf("account not found: %s", email)
 		}
 
 		if err := s.UpdateSourceDisplayName(source.ID, updateDisplayName); err != nil {

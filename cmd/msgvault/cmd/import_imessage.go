@@ -11,16 +11,18 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/imessage"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/imessage"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 var (
-	importImessageDBPath string
-	importImessageBefore string
-	importImessageAfter  string
-	importImessageLimit  int
-	importImessageMe     string
+	importImessageDBPath   string
+	importImessageBefore   string
+	importImessageAfter    string
+	importImessageLimit    int
+	importImessageMe       string
+	importImessageContacts string
 )
 
 var importImessageCmd = &cobra.Command{
@@ -38,11 +40,17 @@ Date filters:
   --after 2024-01-01     Only messages on or after this date
   --before 2024-12-31    Only messages before this date
 
+Contact names:
+  chat.db only stores phone/email handles, not contact names. Pass
+  --contacts /path/to/contacts.vcf to backfill display names from a
+  vCard export (e.g. macOS Contacts.app → File → Export → Export vCard).
+
 Examples:
   msgvault import-imessage
   msgvault import-imessage --after 2024-01-01
   msgvault import-imessage --limit 100
-  msgvault import-imessage --db-path /path/to/chat.db`,
+  msgvault import-imessage --db-path /path/to/chat.db
+  msgvault import-imessage --contacts ~/contacts.vcf`,
 	RunE: runImportImessage,
 }
 
@@ -110,15 +118,132 @@ func runImportImessage(cmd *cobra.Command, _ []string) error {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
-			rebuildCacheAfterWrite(cfg.DatabaseDSN())
+			finishImessageImport(s)
 			return nil
 		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
 	printImessageSummary(summary, startTime)
-	rebuildCacheAfterWrite(cfg.DatabaseDSN())
+	finishImessageImport(s)
 	return nil
+}
+
+// finishImessageImport runs the post-import name backfill, refreshes
+// generated chat titles, and triggers an analytics cache rebuild that picks up
+// the participant/conversation changes (the default staleness check only
+// notices new/deleted messages, not title or display_name updates).
+func finishImessageImport(s *store.Store) {
+	mutated := false
+
+	if importImessageContacts != "" {
+		if applyImessageContacts(s, importImessageContacts) {
+			mutated = true
+		}
+	}
+
+	if retitleImessageChats(s) {
+		mutated = true
+	}
+
+	dbPath := cfg.DatabaseDSN()
+	if mutated {
+		// Title/display_name updates aren't visible to the message-id-keyed
+		// staleness check, so the standard rebuildCacheAfterWrite would skip.
+		// Force a full rebuild so conversations.parquet and
+		// participants.parquet are re-exported and the TUI sees the new names.
+		if _, err := buildCache(dbPath, cfg.AnalyticsDir(), true); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: cache rebuild failed: %v\n", err)
+			fmt.Fprintf(os.Stderr,
+				"Run 'msgvault build-cache --full-rebuild' to retry.\n")
+		}
+		return
+	}
+
+	rebuildCacheAfterWrite(dbPath)
+}
+
+func retitleImessageChats(s *store.Store) bool {
+	n, err := s.RetitleImessageChats()
+	if err != nil {
+		fmt.Printf("\nWarning: could not refresh iMessage chat titles: %v\n", err)
+		return false
+	}
+	if n > 0 {
+		fmt.Printf("iMessage chat titles refreshed: %d\n", n)
+		return true
+	}
+	return false
+}
+
+// applyImessageContacts loads a vCard file and backfills display_name
+// for participants matched by phone or email. Only updates participants
+// that already exist (created during message import) and whose name is
+// currently empty — first-writer-wins from earlier sources is preserved.
+// Returns true if any participant was updated.
+func applyImessageContacts(s *store.Store, vcfPath string) bool {
+	contacts, err := vcard.ParseFile(vcfPath)
+	if err != nil {
+		fmt.Printf("\nWarning: could not read contacts %s: %v\n", vcfPath, err)
+		return false
+	}
+
+	var phoneMatches, emailMatches int
+	var phoneErrors, emailErrors int
+	var firstPhoneErr, firstEmailErr error
+	for _, c := range contacts {
+		if c.FullName == "" {
+			continue
+		}
+		for _, phone := range c.Phones {
+			// Use the iMessage-scoped variant so legacy participants
+			// whose display_name was poisoned with the raw phone string
+			// (older import-imessage runs) get cleared and replaced.
+			updated, err := s.UpdateImessageParticipantDisplayNameByPhone(phone, c.FullName)
+			if err != nil {
+				if firstPhoneErr == nil {
+					firstPhoneErr = err
+				}
+				phoneErrors++
+				continue
+			}
+			if updated {
+				phoneMatches++
+			}
+		}
+		for _, email := range c.Emails {
+			updated, err := s.UpdateParticipantDisplayNameByEmail(email, c.FullName)
+			if err != nil {
+				if firstEmailErr == nil {
+					firstEmailErr = err
+				}
+				emailErrors++
+				continue
+			}
+			if updated {
+				emailMatches++
+			}
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Contacts applied:")
+	fmt.Printf("  Source:           %s (%d entries)\n", vcfPath, len(contacts))
+	fmt.Printf("  Names backfilled: %d by phone, %d by email\n",
+		phoneMatches, emailMatches)
+	if phoneErrors > 0 || emailErrors > 0 {
+		fmt.Fprintf(os.Stderr,
+			"Warning: %d phone update(s) and %d email update(s) failed.\n",
+			phoneErrors, emailErrors)
+		if firstPhoneErr != nil {
+			fmt.Fprintf(os.Stderr, "  First phone error: %v\n", firstPhoneErr)
+		}
+		if firstEmailErr != nil {
+			fmt.Fprintf(os.Stderr, "  First email error: %v\n", firstEmailErr)
+		}
+	}
+	return phoneMatches > 0 || emailMatches > 0
 }
 
 func openStoreAndInit() (*store.Store, error) {
@@ -298,6 +423,10 @@ func init() {
 	importImessageCmd.Flags().StringVar(
 		&importImessageMe, "me", "",
 		"your phone/email for recipient tracking (default: source identifier 'local')",
+	)
+	importImessageCmd.Flags().StringVar(
+		&importImessageContacts, "contacts", "",
+		"path to .vcf file used to backfill participant display names by phone/email",
 	)
 	rootCmd.AddCommand(importImessageCmd)
 }

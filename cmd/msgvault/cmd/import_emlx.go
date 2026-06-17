@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +12,9 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/applemail"
-	"github.com/wesm/msgvault/internal/importer"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/applemail"
+	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -59,8 +60,7 @@ Examples:
   # Legacy two-arg form (deprecated, still works)
   msgvault import-emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID
 `,
-	Args:         cobra.MaximumNArgs(2),
-	SilenceUsage: true,
+	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Use a local copy so we don't mutate the package-global
 		// flag variable (which persists across Execute() calls).
@@ -69,9 +69,7 @@ Examples:
 		// Legacy two-arg form: import-emlx <identifier> <mail-dir>
 		if len(args) == 2 {
 			if identifier != "" {
-				return fmt.Errorf(
-					"cannot use --identifier with two positional arguments",
-				)
+				return errors.New("cannot use --identifier with two positional arguments")
 			}
 			identifier = args[0]
 			args = args[1:]
@@ -81,9 +79,7 @@ Examples:
 		// accidentally importing the entire ~/Library/Mail tree
 		// under one identifier.
 		if identifier != "" && len(args) == 0 {
-			return fmt.Errorf(
-				"--identifier requires a positional mail-dir argument",
-			)
+			return errors.New("--identifier requires a positional mail-dir argument")
 		}
 
 		// Determine mail directory.
@@ -228,7 +224,7 @@ func importSingleAccount(
 		}
 	}
 
-	printImportSummary(cmd, ctx, *summary)
+	printImportSummary(ctx, cmd, *summary)
 	return importResultError(ctx, *summary)
 }
 
@@ -368,7 +364,7 @@ func importAutoAccounts(
 			}
 		}
 
-		printImportSummary(cmd, ctx, *summary)
+		printImportSummary(ctx, cmd, *summary)
 		_, _ = fmt.Fprintln(out)
 
 		// Accumulate totals.
@@ -417,7 +413,7 @@ func importResultError(ctx context.Context, summary importer.EmlxImportSummary) 
 	return nil
 }
 
-func printImportSummary(cmd *cobra.Command, ctx context.Context, summary importer.EmlxImportSummary) {
+func printImportSummary(ctx context.Context, cmd *cobra.Command, summary importer.EmlxImportSummary) {
 	out := cmd.OutOrStdout()
 
 	if ctx.Err() != nil {

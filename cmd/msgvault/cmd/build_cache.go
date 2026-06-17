@@ -1,23 +1,26 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
+	_ "github.com/mattn/go-sqlite3"     // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var fullRebuild bool
@@ -65,6 +68,13 @@ Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dbPath := cfg.DatabaseDSN()
 		analyticsDir := cfg.AnalyticsDir()
+
+		// The Parquet cache is a SQLite → DuckDB ETL; feeding a
+		// postgres:// DSN to the SQLite driver inside buildCache
+		// fails immediately with a confusing driver error.
+		if store.IsPostgresURL(dbPath) {
+			return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+		}
 
 		// Check database exists
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -156,7 +166,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
 	if err := sqliteDB.QueryRow(maxIDQuery).Scan(&maxMessageID); err != nil {
 		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("get max message id: %w; close sqlite: %v", err, closeErr)
+			return nil, fmt.Errorf("get max message id: %w; close sqlite: %w", err, closeErr)
 		}
 		return nil, fmt.Errorf("get max message id: %w", err)
 	}
@@ -166,7 +176,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		WHERE type = 'table' AND name = 'sync_runs'
 	`).Scan(&hasSyncRunsTable); err != nil {
 		if closeErr := sqliteDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("check sync_runs table: %w; close sqlite: %v", err, closeErr)
+			return nil, fmt.Errorf("check sync_runs table: %w; close sqlite: %w", err, closeErr)
 		}
 		return nil, fmt.Errorf("check sync_runs table: %w", err)
 	}
@@ -176,7 +186,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			WHERE status = 'completed' AND completed_at IS NOT NULL
 		`).Scan(&lastCompletedSyncRunID); err != nil {
 			if closeErr := sqliteDB.Close(); closeErr != nil {
-				return nil, fmt.Errorf("get last completed sync run id: %w; close sqlite: %v", err, closeErr)
+				return nil, fmt.Errorf("get last completed sync run id: %w; close sqlite: %w", err, closeErr)
 			}
 			return nil, fmt.Errorf("get last completed sync run id: %w", err)
 		}
@@ -278,7 +288,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
 	// 1. Export messages (partitioned by year)
-	messagesDir := filepath.Join(analyticsDir, "messages")
+	messagesDir := filepath.Join(analyticsDir, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
 	writeMode := "OVERWRITE_OR_IGNORE"
@@ -286,7 +296,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		writeMode = "APPEND"
 	}
 
-	if err := runExport("messages", fmt.Sprintf(`
+	if err := runExport(tableMessages, fmt.Sprintf(`
 	COPY (
 		SELECT
 			m.id,
@@ -361,13 +371,13 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 4. Export attachments
-	attachmentsDir := filepath.Join(analyticsDir, "attachments")
+	attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
 	escapedAttachmentsDir := strings.ReplaceAll(attachmentsDir, "'", "''")
 	attachmentsFilter := ""
 	if !fullRebuild && lastMessageID > 0 {
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
-	if err := runExport("attachments", fmt.Sprintf(`
+	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
 		SELECT
 			message_id,
@@ -383,9 +393,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 5. Export participants
-	participantsDir := filepath.Join(analyticsDir, "participants")
+	participantsDir := filepath.Join(analyticsDir, tableParticipants)
 	escapedParticipantsDir := strings.ReplaceAll(participantsDir, "'", "''")
-	if err := runExport("participants", fmt.Sprintf(`
+	if err := runExport(tableParticipants, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -403,9 +413,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 6. Export labels
-	labelsDir := filepath.Join(analyticsDir, "labels")
+	labelsDir := filepath.Join(analyticsDir, tableLabels)
 	escapedLabelsDir := strings.ReplaceAll(labelsDir, "'", "''")
-	if err := runExport("labels", fmt.Sprintf(`
+	if err := runExport(tableLabels, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -438,9 +448,9 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	// 8. Export conversations (for Gmail thread IDs)
-	conversationsDir := filepath.Join(analyticsDir, "conversations")
+	conversationsDir := filepath.Join(analyticsDir, tableConversations)
 	escapedConversationsDir := strings.ReplaceAll(conversationsDir, "'", "''")
-	if err := runExport("conversations", fmt.Sprintf(`
+	if err := runExport(tableConversations, fmt.Sprintf(`
 	COPY (
 		SELECT
 			id,
@@ -487,7 +497,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := os.WriteFile(stateFile, stateData, 0644); err != nil {
+	if err := os.WriteFile(stateFile, stateData, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save sync state: %v\n", err)
 	}
 
@@ -512,7 +522,7 @@ func missingRequiredParquet(analyticsDir string) bool {
 			return true
 		}
 		// For messages, also check hive-partitioned layout (messages/year=*/*.parquet)
-		if dir == "messages" {
+		if dir == tableMessages {
 			if deep, _ := filepath.Glob(filepath.Join(analyticsDir, dir, "*", "*.parquet")); len(deep) > 0 {
 				return true
 			}
@@ -528,7 +538,7 @@ var cacheStatsCmd = &cobra.Command{
 	Long:    `Display statistics about the analytics cache, including row counts and file sizes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		analyticsDir := cfg.AnalyticsDir()
-		messagesDir := filepath.Join(analyticsDir, "messages")
+		messagesDir := filepath.Join(analyticsDir, tableMessages)
 
 		// Check if directory exists and contains parquet files
 		if _, err := os.Stat(messagesDir); os.IsNotExist(err) {
@@ -606,7 +616,7 @@ var cacheStatsCmd = &cobra.Command{
 		}
 
 		// Get attachment stats separately
-		attachmentsDir := filepath.Join(analyticsDir, "attachments")
+		attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
 		var attachmentSize int64
 		if _, err := os.Stat(attachmentsDir); err == nil {
 			attachSQL := fmt.Sprintf(`
@@ -688,15 +698,15 @@ func setupSQLiteSource(duckDB *sql.DB, dbPath string) (cleanup func(), err error
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{"messages", "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
+		{tableMessages, "SELECT id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type FROM messages WHERE sent_at IS NOT NULL",
 			"types={'sent_at': 'TIMESTAMP', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP'}"},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name FROM message_recipients", ""},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels", ""},
-		{"attachments", "SELECT message_id, size, filename FROM attachments", ""},
-		{"participants", "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
-		{"labels", "SELECT id, name FROM labels", ""},
+		{tableAttachments, "SELECT message_id, size, filename FROM attachments", ""},
+		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number FROM participants", ""},
+		{tableLabels, "SELECT id, name FROM labels", ""},
 		{"sources", "SELECT id, identifier, source_type FROM sources", ""},
-		{"conversations", "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
+		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations", ""},
 	}
 
 	for _, t := range tables {
@@ -767,7 +777,7 @@ func exportToCSV(db *sql.DB, query string, dest string) error {
 	}
 
 	values := make([]sql.NullString, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range values {
 		ptrs[i] = &values[i]
 	}
@@ -817,6 +827,100 @@ func rebuildCacheAfterWrite(dbPath string) {
 	}
 	if !result.Skipped {
 		logger.Info("cache rebuilt", "exported", result.ExportedCount)
+	}
+}
+
+// buildCacheSubprocess runs `msgvault build-cache` as a child process
+// instead of calling buildCache in-process.
+//
+// The daemon (`serve`) holds a long-lived go-sqlite3 connection to the
+// SQLite database for its entire lifetime. buildCache, in turn, uses
+// DuckDB's sqlite_scanner extension, which statically links its OWN copy
+// of the SQLite library and ATTACHes the same database file. Two
+// independent SQLite library instances in one process do not share the
+// unix VFS's in-process POSIX advisory-lock and WAL-index bookkeeping, so
+// when DuckDB's copy opens/closes the WAL it can drop the daemon's
+// advisory locks and leave the on-disk -wal/-shm inconsistent with the
+// daemon's in-memory WAL-index. After that, every newly-opened go-sqlite3
+// connection in the process fails with "disk I/O error: no such file or
+// directory" until the daemon restarts (see issue #379).
+//
+// Running build-cache in a fresh process keeps DuckDB's SQLite copy out of
+// the daemon's address space entirely, so the daemon's own connections are
+// never affected.
+//
+// Global flags that affect config resolution (--config, --home, --local)
+// are forwarded so the child loads identical configuration. --no-log-file
+// keeps the child from writing to the daemon's log file; its output is
+// captured and surfaced on failure instead.
+func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate msgvault executable: %w", err)
+	}
+
+	// Serialize with each other so parallel per-account syncs in the
+	// daemon don't spawn concurrent cache builds racing on shared files.
+	buildCacheMu.Lock()
+	defer buildCacheMu.Unlock()
+
+	args := globalConfigFlagArgs()
+	args = append(args, "--no-log-file", "build-cache")
+	if fullRebuild {
+		args = append(args, "--full-rebuild")
+	}
+
+	// exe is this binary (os.Executable) and args are our own fixed
+	// subcommand plus operator-controlled config flags, not untrusted input.
+	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("build-cache subprocess: %w; output: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// globalConfigFlagArgs reconstructs the persistent flags that affect
+// configuration resolution so a child process loads the same config as
+// the running one.
+func globalConfigFlagArgs() []string {
+	var args []string
+	if cfgFile != "" {
+		args = append(args, "--config", cfgFile)
+	}
+	if homeDir != "" {
+		args = append(args, "--home", homeDir)
+	}
+	if useLocal {
+		args = append(args, "--local")
+	}
+	return args
+}
+
+// rebuildCacheAfterScheduledSync rebuilds the Parquet cache if it is stale
+// after a scheduled sync. The cache is SQLite-only, so it is skipped on
+// PostgreSQL DSNs. The build runs in a subprocess (see buildCacheSubprocess)
+// to keep DuckDB's bundled SQLite library out of a long-lived daemon's
+// address space (issue #379).
+func rebuildCacheAfterScheduledSync(ctx context.Context, identifier string) {
+	dbPath := cfg.DatabaseDSN()
+	if store.IsPostgresURL(dbPath) {
+		return
+	}
+	analyticsDir := cfg.AnalyticsDir()
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if !staleness.NeedsBuild {
+		return
+	}
+	logger.Info("rebuilding cache after sync",
+		"identifier", identifier, "reason", staleness.Reason,
+		"full_rebuild", staleness.FullRebuild)
+	if err := buildCacheSubprocess(ctx, staleness.FullRebuild); err != nil {
+		logger.Error("cache build failed", "error", err)
+		// Don't fail the sync for cache build errors.
+	} else {
+		logger.Info("cache build completed")
 	}
 }
 

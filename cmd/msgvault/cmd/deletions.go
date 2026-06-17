@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var listDeletionsCmd = &cobra.Command{
@@ -126,7 +126,7 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cancelAll && len(args) > 0 {
-			return fmt.Errorf("cannot use --all with a batch ID argument")
+			return usageErr(cmd, errors.New("cannot use --all with a batch ID argument"))
 		}
 
 		deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
@@ -162,7 +162,7 @@ Examples:
 			}
 			if count == 0 {
 				if len(listErrors) > 0 {
-					return fmt.Errorf("could not list batches to cancel")
+					return errors.New("could not list batches to cancel")
 				}
 				fmt.Println("No pending or in-progress batches to cancel.")
 			} else {
@@ -196,7 +196,7 @@ Examples:
 				fmt.Println("  (none)")
 			}
 			fmt.Println()
-			return fmt.Errorf("provide a batch ID or use --all")
+			return usageErr(cmd, errors.New("provide a batch ID or use --all"))
 		}
 
 		batchID := args[0]
@@ -415,11 +415,11 @@ Examples:
 			}
 
 			if len(accounts) == 0 {
-				return fmt.Errorf("no account in deletion manifest - use --account flag")
+				return usageErr(cmd, errors.New("no account in deletion manifest - use --account flag"))
 			} else if len(accounts) == 1 {
 				account = accounts[0]
 			} else {
-				return fmt.Errorf("multiple accounts in pending batches (%v) - use --account flag to specify which account", accounts)
+				return usageErr(cmd, fmt.Errorf("multiple accounts in pending batches (%v) - use --account flag to specify which account", accounts))
 			}
 		} else {
 			// Resolve the user-supplied value to a source.
@@ -431,7 +431,7 @@ Examples:
 			}
 			var syncable []*store.Source
 			for _, c := range resolved {
-				if c.SourceType == "gmail" || c.SourceType == "imap" {
+				if c.SourceType == sourceTypeGmail || c.SourceType == sourceTypeIMAP {
 					syncable = append(syncable, c)
 				}
 			}
@@ -478,7 +478,7 @@ Examples:
 		}
 		var src *store.Source
 		for _, candidate := range sources {
-			if candidate.SourceType == "gmail" || candidate.SourceType == "imap" {
+			if candidate.SourceType == sourceTypeGmail || candidate.SourceType == sourceTypeIMAP {
 				src = candidate
 				break
 			}
@@ -492,7 +492,7 @@ Examples:
 		// Service-account flows get scopes via the JWT assertion (no stored
 		// token), so the scope-escalation prompt only applies to browser OAuth.
 		var clientSecretsPath string
-		if src.SourceType == "gmail" {
+		if src.SourceType == sourceTypeGmail {
 			if !cfg.OAuth.HasAnyConfig() {
 				return errOAuthNotConfigured()
 			}
@@ -589,7 +589,7 @@ Examples:
 				}
 
 				// Check if this is a scope error - offer to re-authorize (Gmail only)
-				if src.SourceType == "gmail" && isInsufficientScopeError(execErr) {
+				if src.SourceType == sourceTypeGmail && isInsufficientScopeError(execErr) {
 					if cfg.OAuth.ServiceAccountKeyFor(sourceOAuthApp(src)) != "" {
 						return fmt.Errorf(
 							"service account lacks required Gmail deletion scope for %s: "+
@@ -690,7 +690,7 @@ func (p *CLIDeletionProgress) OnProgress(processed, succeeded, failed int) {
 	if failed > 0 {
 		status += fmt.Sprintf("  (%d failed)", failed)
 	}
-	status += fmt.Sprintf("  %s", eta)
+	status += "  " + eta
 	if p.tty {
 		fmt.Printf("\r\033[K%s", status)
 	} else {
@@ -699,10 +699,7 @@ func (p *CLIDeletionProgress) OnProgress(processed, succeeded, failed int) {
 }
 
 func (p *CLIDeletionProgress) progressBar(pct float64, width int) string {
-	filled := int(pct / 100 * float64(width))
-	if filled > width {
-		filled = width
-	}
+	filled := min(int(pct/100*float64(width)), width)
 	bar := make([]byte, width)
 	for i := range bar {
 		if i < filled {
@@ -727,19 +724,19 @@ func (p *CLIDeletionProgress) OnComplete(succeeded, failed int) {
 	}
 }
 
-// Helper functions
-func truncate(s string, max int) string {
-	if len(s) <= max {
+// Helper functions.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
-func limitManifests(manifests []*deletion.Manifest, max int) []*deletion.Manifest {
-	if len(manifests) <= max {
+func limitManifests(manifests []*deletion.Manifest, maxN int) []*deletion.Manifest {
+	if len(manifests) <= maxN {
 		return manifests
 	}
-	return manifests[:max]
+	return manifests[:maxN]
 }
 
 // errUserCanceled is returned when the user declines scope escalation.

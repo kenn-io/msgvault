@@ -1,12 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // runStartupMigrations pulls legacy identity addresses from the global config
@@ -117,7 +118,7 @@ func OpenStore() (MessageStore, error) {
 // Unlike OpenStore, this always attempts remote connection.
 func OpenRemoteStore() (RemoteStore, error) {
 	if cfg.Remote.URL == "" {
-		return nil, fmt.Errorf("remote server not configured\n\n" +
+		return nil, errors.New("remote server not configured\n\n" +
 			"Configure in ~/.msgvault/config.toml:\n" +
 			"  [remote]\n" +
 			"  url = \"http://nas:8080\"\n" +

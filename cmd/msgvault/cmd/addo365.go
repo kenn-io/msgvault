@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/microsoft"
-	"github.com/wesm/msgvault/internal/store"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -34,7 +35,7 @@ Examples:
 		email := args[0]
 
 		if cfg.Microsoft.ClientID == "" {
-			return fmt.Errorf("microsoft OAuth not configured\n\n" +
+			return errors.New("microsoft OAuth not configured\n\n" +
 				"Add to your config.toml:\n\n" +
 				"  [microsoft]\n" +
 				"  client_id = \"your-azure-app-client-id\"\n\n" +
@@ -103,7 +104,7 @@ Examples:
 			return fmt.Errorf("look up existing source: %w", err)
 		}
 		for _, src := range existing {
-			if src.SourceType == "imap" && isMicrosoftIMAPSource(src, email) {
+			if src.SourceType == sourceTypeIMAP && isMicrosoftIMAPSource(src, email) {
 				source = src
 				break
 			}
@@ -114,7 +115,7 @@ Examples:
 				return fmt.Errorf("update source identifier: %w", err)
 			}
 		} else {
-			source, err = s.GetOrCreateSource("imap", identifier)
+			source, err = s.GetOrCreateSource(sourceTypeIMAP, identifier)
 			if err != nil {
 				return fmt.Errorf("create source: %w", err)
 			}

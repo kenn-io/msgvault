@@ -45,8 +45,13 @@ func hasColumn(db *sql.DB, table, column string) bool {
 					cols[name] = true
 				}
 			}
+			err = rows.Err()
 		}
-		columnCache[key] = cols
+		// Only cache a fully-read column set; on query or iteration error
+		// re-probe next time rather than memoizing a partial result.
+		if err == nil {
+			columnCache[key] = cols
+		}
 	}
 	return cols[column]
 }
@@ -167,14 +172,11 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 	// Process in chunks to stay within SQLite's parameter limit.
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -203,26 +205,35 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fetch media: %w", err)
 		}
-
-		for rows.Next() {
-			var m waMedia
-			if err := rows.Scan(
-				&m.MessageRowID, &m.MimeType, &m.MediaCaption,
-				&m.FileSize, &m.FilePath, &m.Width, &m.Height,
-				&m.MediaDuration,
-			); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan media: %w", err)
-			}
-			result[m.MessageRowID] = m
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := scanMediaChunk(rows, result); err != nil {
 			return nil, err
 		}
 	}
 
 	return result, nil
+}
+
+// scanMediaChunk scans one media query's rows into result and closes the rows.
+// Taking ownership of a single *sql.Rows here keeps the deferred Close scoped
+// to one query so it cannot leak across the caller's chunk loop.
+func scanMediaChunk(rows *sql.Rows, result map[int64]waMedia) error {
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var m waMedia
+		if err := rows.Scan(
+			&m.MessageRowID, &m.MimeType, &m.MediaCaption,
+			&m.FileSize, &m.FilePath, &m.Width, &m.Height,
+			&m.MediaDuration,
+		); err != nil {
+			return fmt.Errorf("scan media: %w", err)
+		}
+		result[m.MessageRowID] = m
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate media: %w", err)
+	}
+	return nil
 }
 
 // fetchReactions returns reactions for a batch of message row IDs.
@@ -236,14 +247,11 @@ func fetchReactions(db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, 
 
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -278,25 +286,32 @@ func fetchReactions(db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, 
 			return nil, fmt.Errorf("fetch reactions: %w", err)
 		}
 
-		for rows.Next() {
-			var r waReaction
-			if err := rows.Scan(
-				&r.MessageRowID, &r.SenderJIDRowID,
-				&r.SenderRawString, &r.SenderUser, &r.SenderServer,
-				&r.ReactionValue, &r.Timestamp,
-			); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan reaction: %w", err)
-			}
-			result[r.MessageRowID] = append(result[r.MessageRowID], r)
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := scanReactionChunk(rows, result); err != nil {
 			return nil, err
 		}
 	}
 
 	return result, nil
+}
+
+// scanReactionChunk scans one reaction query's rows into result and closes the
+// rows. Owning a single *sql.Rows here scopes the deferred Close to one query
+// so it cannot leak across the caller's chunk loop.
+func scanReactionChunk(rows *sql.Rows, result map[int64][]waReaction) error {
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var r waReaction
+		if err := rows.Scan(
+			&r.MessageRowID, &r.SenderJIDRowID,
+			&r.SenderRawString, &r.SenderUser, &r.SenderServer,
+			&r.ReactionValue, &r.Timestamp,
+		); err != nil {
+			return fmt.Errorf("scan reaction: %w", err)
+		}
+		result[r.MessageRowID] = append(result[r.MessageRowID], r)
+	}
+	return rows.Err()
 }
 
 // fetchGroupParticipants returns all participants of a group chat.
@@ -345,14 +360,11 @@ func fetchQuotedMessages(db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted,
 
 	const chunkSize = 500
 	for i := 0; i < len(messageRowIDs); i += chunkSize {
-		end := i + chunkSize
-		if end > len(messageRowIDs) {
-			end = len(messageRowIDs)
-		}
+		end := min(i+chunkSize, len(messageRowIDs))
 		chunk := messageRowIDs[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, len(chunk))
+		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			placeholders[j] = "?"
 			args[j] = id
@@ -376,21 +388,28 @@ func fetchQuotedMessages(db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted,
 			return nil, fmt.Errorf("fetch quoted messages: %w", err)
 		}
 
-		for rows.Next() {
-			var q waQuoted
-			if err := rows.Scan(&q.MessageRowID, &q.QuotedKeyID); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan quoted message: %w", err)
-			}
-			result[q.MessageRowID] = q
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := scanQuotedChunk(rows, result); err != nil {
 			return nil, err
 		}
 	}
 
 	return result, nil
+}
+
+// scanQuotedChunk scans one quoted-message query's rows into result and closes
+// the rows. Owning a single *sql.Rows here scopes the deferred Close to one
+// query so it cannot leak across the caller's chunk loop.
+func scanQuotedChunk(rows *sql.Rows, result map[int64]waQuoted) error {
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var q waQuoted
+		if err := rows.Scan(&q.MessageRowID, &q.QuotedKeyID); err != nil {
+			return fmt.Errorf("scan quoted message: %w", err)
+		}
+		result[q.MessageRowID] = q
+	}
+	return rows.Err()
 }
 
 // fetchLidMap reads the WhatsApp jid_map table to build a mapping from

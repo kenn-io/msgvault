@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 // ConfirmMode selects the prompt and validation for confirmDestructive.
@@ -62,9 +65,7 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 			if err := scanner.Err(); err != nil {
 				return false, fmt.Errorf("read confirmation: %w", err)
 			}
-			return false, fmt.Errorf(
-				"no confirmation input (stdin closed); --all-hidden cannot be skipped with --yes",
-			)
+			return false, errors.New("no confirmation input (stdin closed); --all-hidden cannot be skipped with --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		return answer == "y" || answer == "yes", nil
@@ -84,4 +85,16 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 	default:
 		return false, fmt.Errorf("unknown ConfirmMode: %d", mode)
 	}
+}
+
+// confirmEmbed reads a y/N answer from the command input. Default is no.
+func confirmEmbed(cmd *cobra.Command, prompt string) bool {
+	_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt+"[y/N]: ")
+	r := bufio.NewReader(cmd.InOrStdin())
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes"
 }

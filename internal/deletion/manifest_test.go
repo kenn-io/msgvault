@@ -11,15 +11,15 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // testManager creates a Manager in a temp directory for testing.
 func testManager(t *testing.T) *Manager {
 	t.Helper()
 	mgr, err := NewManager(filepath.Join(t.TempDir(), "deletions"))
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 	return mgr
 }
 
@@ -33,9 +33,7 @@ func newTestManifest(t *testing.T, desc string, ids ...string) *Manifest {
 func createTestManifest(t *testing.T, mgr *Manager, desc string) *Manifest {
 	t.Helper()
 	m, err := mgr.CreateManifest(desc, []string{"a", "b"}, Filters{})
-	if err != nil {
-		t.Fatalf("CreateManifest(%q) error = %v", desc, err)
-	}
+	requirepkg.NoError(t, err, "CreateManifest(%q)", desc)
 	return m
 }
 
@@ -108,9 +106,8 @@ func AssertManifestEqual(t *testing.T, got, want *Manifest) {
 		cmpopts.IgnoreFields(Manifest{}, "CreatedAt"),
 		cmpopts.IgnoreFields(Execution{}, "StartedAt", "CompletedAt"),
 	}
-	if diff := cmp.Diff(want, got, opts...); diff != "" {
-		t.Errorf("Manifest mismatch (-want +got):\n%s", diff)
-	}
+	diff := cmp.Diff(want, got, opts...)
+	assertpkg.Empty(t, diff, "Manifest mismatch (-want +got):\n%s", diff)
 }
 
 // AssertManifestInState verifies that a manifest file exists in the expected state directory.
@@ -129,21 +126,18 @@ func AssertManifestInState(t *testing.T, mgr *Manager, id string, state Status) 
 	case StatusCancelled:
 		dir = mgr.dirForStatus(StatusCancelled)
 	default:
-		t.Fatalf("unknown state %q", state)
+		requirepkg.Failf(t, "unknown state", "%q", state)
 	}
 	path := filepath.Join(dir, id+".json")
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("manifest %q not found in %s directory: %v", id, state, err)
-	}
+	_, err := os.Stat(path)
+	assertpkg.NoError(t, err, "manifest %q not found in %s directory", id, state)
 }
 
 // assertSummaryContains checks that summary contains all specified substrings.
 func assertSummaryContains(t *testing.T, summary string, parts ...string) {
 	t.Helper()
 	for _, part := range parts {
-		if !strings.Contains(summary, part) {
-			t.Errorf("summary missing %q", part)
-		}
+		assertpkg.Contains(t, summary, part, "summary missing %q", part)
 	}
 }
 
@@ -151,9 +145,7 @@ func assertSummaryContains(t *testing.T, summary string, parts ...string) {
 func assertSummaryNotContains(t *testing.T, summary string, parts ...string) {
 	t.Helper()
 	for _, part := range parts {
-		if strings.Contains(summary, part) {
-			t.Errorf("summary should not contain %q", part)
-		}
+		assertpkg.NotContains(t, summary, part, "summary should not contain %q", part)
 	}
 }
 
@@ -161,20 +153,14 @@ func assertSummaryNotContains(t *testing.T, summary string, parts ...string) {
 func assertListCount(t *testing.T, listFn func() ([]*Manifest, error), want int) {
 	t.Helper()
 	got, err := listFn()
-	if err != nil {
-		t.Fatalf("list error = %v", err)
-	}
-	if len(got) != want {
-		t.Fatalf("list returned %d manifests, want %d", len(got), want)
-	}
+	requirepkg.NoError(t, err, "list error")
+	requirepkg.Len(t, got, want, "list returned %d manifests, want %d", len(got), want)
 }
 
 // writeFile is a test helper that writes content to path, failing the test on error.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile(%s) error = %v", path, err)
-	}
+	requirepkg.NoError(t, os.WriteFile(path, []byte(content), 0644), "WriteFile(%s)", path)
 }
 
 func TestSanitizeForFilename(t *testing.T) {
@@ -193,10 +179,7 @@ func TestSanitizeForFilename(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := sanitizeForFilename(tc.input)
-		if got != tc.want {
-			t.Errorf("sanitizeForFilename(%q) = %q, want %q", tc.input, got, tc.want)
-		}
+		assertpkg.Equal(t, tc.want, sanitizeForFilename(tc.input), "sanitizeForFilename(%q)", tc.input)
 	}
 }
 
@@ -210,31 +193,26 @@ func TestGenerateID(t *testing.T) {
 			name: "basic ID generation",
 			desc: "test batch",
 			validate: func(t *testing.T, id string) {
-				if id == "" {
-					t.Error("generateID returned empty string")
-				}
+				t.Helper()
+				assertpkg.NotEmpty(t, id, "generateID returned empty string")
 				parts := strings.SplitN(id, "-", 3)
-				if len(parts) < 2 {
-					t.Errorf("expected timestamp-description format, got %q", id)
-				}
+				assertpkg.GreaterOrEqual(t, len(parts), 2, "expected timestamp-description format, got %q", id)
 			},
 		},
 		{
 			name: "long description truncated",
 			desc: "this is a very long description that exceeds twenty characters",
 			validate: func(t *testing.T, id string) {
-				if len(id) > 40 {
-					t.Errorf("ID too long: %d chars (%q)", len(id), id)
-				}
+				t.Helper()
+				assertpkg.LessOrEqual(t, len(id), 40, "ID too long: %d chars (%q)", len(id), id)
 			},
 		},
 		{
 			name: "empty description uses batch",
 			desc: "",
 			validate: func(t *testing.T, id string) {
-				if !strings.HasSuffix(id, "-batch") {
-					t.Errorf("expected -batch suffix, got %q", id)
-				}
+				t.Helper()
+				assertpkg.True(t, strings.HasSuffix(id, "-batch"), "expected -batch suffix, got %q", id)
 			},
 		},
 	}
@@ -248,30 +226,17 @@ func TestGenerateID(t *testing.T) {
 }
 
 func TestNewManifest(t *testing.T) {
+	assert := assertpkg.New(t)
 	gmailIDs := []string{"msg1", "msg2", "msg3"}
 	m := NewManifest("test deletion", gmailIDs)
 
-	if m.Version != 1 {
-		t.Errorf("Version = %d, want 1", m.Version)
-	}
-	if m.ID == "" {
-		t.Error("ID is empty")
-	}
-	if m.Description != "test deletion" {
-		t.Errorf("Description = %q, want %q", m.Description, "test deletion")
-	}
-	if len(m.GmailIDs) != 3 {
-		t.Errorf("GmailIDs length = %d, want 3", len(m.GmailIDs))
-	}
-	if m.Status != StatusPending {
-		t.Errorf("Status = %q, want %q", m.Status, StatusPending)
-	}
-	if m.CreatedBy != "cli" {
-		t.Errorf("CreatedBy = %q, want %q", m.CreatedBy, "cli")
-	}
-	if m.CreatedAt.IsZero() {
-		t.Error("CreatedAt is zero")
-	}
+	assert.Equal(1, m.Version)
+	assert.NotEmpty(m.ID, "ID is empty")
+	assert.Equal("test deletion", m.Description)
+	assert.Len(m.GmailIDs, 3)
+	assert.Equal(StatusPending, m.Status)
+	assert.Equal("cli", m.CreatedBy)
+	assert.False(m.CreatedAt.IsZero(), "CreatedAt is zero")
 }
 
 func TestManifest_SaveAndLoad(t *testing.T) {
@@ -286,15 +251,11 @@ func TestManifest_SaveAndLoad(t *testing.T) {
 		}).
 		Build()
 
-	if err := m.Save(path); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	requirepkg.NoError(t, m.Save(path), "Save()")
 
 	// Load and verify
 	loaded, err := LoadManifest(path)
-	if err != nil {
-		t.Fatalf("LoadManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "LoadManifest()")
 
 	AssertManifestEqual(t, loaded, m)
 }
@@ -304,21 +265,16 @@ func TestManifest_Save_CreatesDirectories(t *testing.T) {
 	path := filepath.Join(tmpDir, "subdir", "nested", "manifest.json")
 
 	m := BuildManifest(t, "nested test", "id1").Build()
-	if err := m.Save(path); err != nil {
-		t.Fatalf("Save() with nested path error = %v", err)
-	}
+	requirepkg.NoError(t, m.Save(path), "Save() with nested path")
 
 	// Verify file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Error("File was not created")
-	}
+	_, err := os.Stat(path)
+	assertpkg.False(t, os.IsNotExist(err), "File was not created")
 }
 
 func TestLoadManifest_NotFound(t *testing.T) {
 	_, err := LoadManifest("/nonexistent/path/manifest.json")
-	if err == nil {
-		t.Error("LoadManifest() should error for nonexistent file")
-	}
+	assertpkg.Error(t, err, "LoadManifest() should error for nonexistent file")
 }
 
 func TestLoadManifest_InvalidJSON(t *testing.T) {
@@ -327,9 +283,7 @@ func TestLoadManifest_InvalidJSON(t *testing.T) {
 	writeFile(t, path, "not valid json")
 
 	_, err := LoadManifest(path)
-	if err == nil {
-		t.Error("LoadManifest() should error for invalid JSON")
-	}
+	assertpkg.Error(t, err, "LoadManifest() should error for invalid JSON")
 }
 
 func TestManifest_FormatSummary(t *testing.T) {
@@ -342,6 +296,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "basic summary",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "format test", "id1", "id2", "id3").
 					WithSummary(3, 5*1024*1024, [2]string{"2024-01-01", "2024-01-31"}, []SenderCount{
 						{Sender: "alice@example.com", Count: 2},
@@ -353,6 +308,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "with execution",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				now := time.Now()
 				return BuildManifest(t, "exec test", "id1").
 					WithExecution(MethodTrash, 10, 2, &now).Build()
@@ -362,6 +318,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "empty date range",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "empty date test", "id1").
 					WithSummary(1, 1024, [2]string{"", ""}, nil).Build()
 			},
@@ -370,6 +327,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "nil summary",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "no summary test").WithoutSummary().Build()
 			},
 			wantContains:    []string{"Messages: 2"},
@@ -378,8 +336,9 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "many top senders truncated to 10",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				topSenders := make([]SenderCount, 15)
-				for i := 0; i < 15; i++ {
+				for i := range 15 {
 					topSenders[i] = SenderCount{
 						Sender: "sender" + string(rune('a'+i)) + "@example.com",
 						Count:  100 - i,
@@ -394,6 +353,7 @@ func TestManifest_FormatSummary(t *testing.T) {
 		{
 			name: "execution without completed time",
 			setupManifest: func(t *testing.T) *Manifest {
+				t.Helper()
 				return BuildManifest(t, "no completed test", "id1").
 					WithExecution(MethodDelete, 5, 0, nil).Build()
 			},
@@ -416,74 +376,56 @@ func TestManifest_FormatSummary(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	baseDir := filepath.Join(tmpDir, "deletions")
 
 	mgr, err := NewManager(baseDir)
-	if err != nil {
-		t.Fatalf("NewManager() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "NewManager()")
 
 	// Verify all directories were created
 	expectedDirs := []string{"pending", "in_progress", "completed", "failed", "cancelled"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(baseDir, d)
-		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			t.Errorf("Directory %s was not created", d)
-		}
+		info, err := os.Stat(path)
+		assert.True(err == nil && info.IsDir(), "Directory %s was not created", d)
 	}
 
 	// Verify directory getters
-	if mgr.PendingDir() != filepath.Join(baseDir, "pending") {
-		t.Errorf("PendingDir() = %q", mgr.PendingDir())
-	}
-	if mgr.InProgressDir() != filepath.Join(baseDir, "in_progress") {
-		t.Errorf("InProgressDir() = %q", mgr.InProgressDir())
-	}
-	if mgr.CompletedDir() != filepath.Join(baseDir, "completed") {
-		t.Errorf("CompletedDir() = %q", mgr.CompletedDir())
-	}
-	if mgr.FailedDir() != filepath.Join(baseDir, "failed") {
-		t.Errorf("FailedDir() = %q", mgr.FailedDir())
-	}
+	assert.Equal(filepath.Join(baseDir, "pending"), mgr.PendingDir())
+	assert.Equal(filepath.Join(baseDir, "in_progress"), mgr.InProgressDir())
+	assert.Equal(filepath.Join(baseDir, "completed"), mgr.CompletedDir())
+	assert.Equal(filepath.Join(baseDir, "failed"), mgr.FailedDir())
 }
 
 func TestManager_CreateAndListManifests(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mgr := testManager(t)
 
 	// Create manifests
 	m1, err := mgr.CreateManifest("first batch", []string{"a", "b"}, Filters{Senders: []string{"alice@example.com"}})
-	if err != nil {
-		t.Fatalf("CreateManifest() error = %v", err)
-	}
+	require.NoError(err, "CreateManifest()")
 
 	m2 := createTestManifest(t, mgr, "second batch")
 
 	// List pending should return both
 	assertListCount(t, mgr.ListPending, 2)
 	pending, err := mgr.ListPending()
-	if err != nil {
-		t.Fatalf("ListPending() error = %v", err)
-	}
+	require.NoError(err, "ListPending()")
 
 	// Verify both manifests are present
 	ids := make(map[string]bool)
 	for _, m := range pending {
 		ids[m.ID] = true
 	}
-	if !ids[m1.ID] {
-		t.Errorf("ListPending() missing manifest %q", m1.ID)
-	}
-	if !ids[m2.ID] {
-		t.Errorf("ListPending() missing manifest %q", m2.ID)
-	}
+	assert.True(ids[m1.ID], "ListPending() missing manifest %q", m1.ID)
+	assert.True(ids[m2.ID], "ListPending() missing manifest %q", m2.ID)
 
 	// Verify ordering: list should be sorted by CreatedAt (newest first)
-	if !slices.IsSortedFunc(pending, func(a, b *Manifest) int {
+	assert.True(slices.IsSortedFunc(pending, func(a, b *Manifest) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
-	}) {
-		t.Error("ListPending() not sorted newest-first")
-	}
+	}), "ListPending() not sorted newest-first")
 }
 
 func TestManager_GetManifest(t *testing.T) {
@@ -494,25 +436,17 @@ func TestManager_GetManifest(t *testing.T) {
 
 	// Get it back
 	loaded, path, err := mgr.GetManifest(m.ID)
-	if err != nil {
-		t.Fatalf("GetManifest() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "GetManifest()")
 	AssertManifestEqual(t, loaded, m)
-	if path == "" {
-		t.Error("GetManifest() returned empty path")
-	}
+	assertpkg.NotEmpty(t, path, "GetManifest() returned empty path")
 }
 
 func TestManager_GetManifest_NotFound(t *testing.T) {
 	mgr := testManager(t)
 
 	_, _, err := mgr.GetManifest("nonexistent-id")
-	if err == nil {
-		t.Error("GetManifest() should error for nonexistent manifest")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("GetManifest() error = %v, want 'not found' error", err)
-	}
+	requirepkg.Error(t, err, "GetManifest() should error for nonexistent manifest")
+	assertpkg.Contains(t, err.Error(), "not found")
 }
 
 func TestManager_Transitions(t *testing.T) {
@@ -547,9 +481,7 @@ func TestManager_Transitions(t *testing.T) {
 				}
 			}
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("MoveManifest() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assertpkg.Equal(t, tc.wantErr, err != nil, "MoveManifest() error = %v, wantErr %v", err, tc.wantErr)
 			if !tc.wantErr {
 				last := tc.chain[len(tc.chain)-1]
 				AssertManifestInState(t, mgr, m.ID, last[1])
@@ -565,81 +497,63 @@ func TestManager_Transitions(t *testing.T) {
 }
 
 func TestManager_CancelManifest(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mgr := testManager(t)
 
 	manifest := createTestManifest(t, mgr, "cancel test")
 
 	// Cancel it
-	if err := mgr.CancelManifest(manifest.ID); err != nil {
-		t.Fatalf("CancelManifest() error = %v", err)
-	}
+	require.NoError(mgr.CancelManifest(manifest.ID), "CancelManifest()")
 
 	baseDir := filepath.Dir(mgr.PendingDir())
 
 	// File should now exist at cancelled/<id>.json with Status=cancelled.
 	cancelledPath := filepath.Join(baseDir, "cancelled", manifest.ID+".json")
-	if _, err := os.Stat(cancelledPath); err != nil {
-		t.Fatalf("expected cancelled manifest at %s: %v", cancelledPath, err)
-	}
+	_, err := os.Stat(cancelledPath)
+	require.NoError(err, "expected cancelled manifest at %s", cancelledPath)
 	loaded, err := LoadManifest(cancelledPath)
-	if err != nil {
-		t.Fatalf("load cancelled manifest: %v", err)
-	}
-	if loaded.Status != StatusCancelled {
-		t.Errorf("loaded.Status = %q, want %q", loaded.Status, StatusCancelled)
-	}
+	require.NoError(err, "load cancelled manifest")
+	assert.Equal(StatusCancelled, loaded.Status)
 	// File should be absent from pending/.
 	pendingPath := filepath.Join(baseDir, "pending", manifest.ID+".json")
-	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
-		t.Errorf("expected pending manifest gone, got err=%v", err)
-	}
+	_, err = os.Stat(pendingPath)
+	assert.True(os.IsNotExist(err), "expected pending manifest gone, got err=%v", err)
 }
 
 func TestManager_CancelManifest_InProgress(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mgr := testManager(t)
 	manifest := createTestManifest(t, mgr, "cancel in-progress")
 
 	// Move to in_progress
-	if err := mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress); err != nil {
-		t.Fatalf("MoveManifest() error = %v", err)
-	}
+	require.NoError(mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest()")
 
 	// Cancel it
-	if err := mgr.CancelManifest(manifest.ID); err != nil {
-		t.Fatalf("CancelManifest() error = %v", err)
-	}
+	require.NoError(mgr.CancelManifest(manifest.ID), "CancelManifest()")
 
 	baseDir := filepath.Dir(mgr.PendingDir())
 
 	// File should now exist at cancelled/<id>.json with Status=cancelled.
 	cancelledPath := filepath.Join(baseDir, "cancelled", manifest.ID+".json")
-	if _, err := os.Stat(cancelledPath); err != nil {
-		t.Fatalf("expected cancelled manifest at %s: %v", cancelledPath, err)
-	}
+	_, err := os.Stat(cancelledPath)
+	require.NoError(err, "expected cancelled manifest at %s", cancelledPath)
 	loaded, err := LoadManifest(cancelledPath)
-	if err != nil {
-		t.Fatalf("load cancelled manifest: %v", err)
-	}
-	if loaded.Status != StatusCancelled {
-		t.Errorf("loaded.Status = %q, want %q", loaded.Status, StatusCancelled)
-	}
+	require.NoError(err, "load cancelled manifest")
+	assert.Equal(StatusCancelled, loaded.Status)
 	// File should be absent from in_progress/.
 	inProgressPath := filepath.Join(baseDir, "in_progress", manifest.ID+".json")
-	if _, err := os.Stat(inProgressPath); !os.IsNotExist(err) {
-		t.Errorf("expected in_progress manifest gone, got err=%v", err)
-	}
+	_, err = os.Stat(inProgressPath)
+	assert.True(os.IsNotExist(err), "expected in_progress manifest gone, got err=%v", err)
 }
 
 func TestManager_CancelManifest_NotFound(t *testing.T) {
 	mgr := testManager(t)
 
 	err := mgr.CancelManifest("nonexistent-id")
-	if err == nil {
-		t.Error("CancelManifest() should error for nonexistent manifest")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error = %v, want 'not found' error", err)
-	}
+	requirepkg.Error(t, err, "CancelManifest() should error for nonexistent manifest")
+	assertpkg.Contains(t, err.Error(), "not found")
 }
 
 func TestManager_SaveManifest(t *testing.T) {
@@ -651,18 +565,12 @@ func TestManager_SaveManifest(t *testing.T) {
 		m := NewManifest("status-"+string(status), []string{"a"})
 		m.Status = status
 
-		if err := mgr.SaveManifest(m); err != nil {
-			t.Fatalf("SaveManifest(%s) error = %v", status, err)
-		}
+		requirepkg.NoError(t, mgr.SaveManifest(m), "SaveManifest(%s)", status)
 
 		// Verify it can be found
 		loaded, _, err := mgr.GetManifest(m.ID)
-		if err != nil {
-			t.Fatalf("GetManifest(%s) after SaveManifest error = %v", status, err)
-		}
-		if loaded.Status != status {
-			t.Errorf("Status = %q, want %q", loaded.Status, status)
-		}
+		requirepkg.NoError(t, err, "GetManifest(%s) after SaveManifest", status)
+		assertpkg.Equal(t, status, loaded.Status)
 	}
 }
 
@@ -680,55 +588,39 @@ func TestManager_ListManifests_SkipsInvalidFiles(t *testing.T) {
 
 	// Add a directory
 	dirPath := filepath.Join(mgr.PendingDir(), "subdir.json")
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		t.Fatalf("MkdirAll(subdir.json) error = %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(dirPath, 0755), "MkdirAll(subdir.json)")
 
 	// ListPending should only return the valid manifest
 	assertListCount(t, mgr.ListPending, 1)
 }
 
 func TestStatus_Values(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Verify status constants
-	if StatusPending != "pending" {
-		t.Errorf("StatusPending = %q", StatusPending)
-	}
-	if StatusInProgress != "in_progress" {
-		t.Errorf("StatusInProgress = %q", StatusInProgress)
-	}
-	if StatusCompleted != "completed" {
-		t.Errorf("StatusCompleted = %q", StatusCompleted)
-	}
-	if StatusFailed != "failed" {
-		t.Errorf("StatusFailed = %q", StatusFailed)
-	}
-	if StatusCancelled != "cancelled" {
-		t.Errorf("StatusCancelled = %q", StatusCancelled)
-	}
+	assert.Equal(StatusPending, Status("pending"))
+	assert.Equal(StatusInProgress, Status("in_progress"))
+	assert.Equal(StatusCompleted, Status("completed"))
+	assert.Equal(StatusFailed, Status("failed"))
+	assert.Equal(StatusCancelled, Status("cancelled"))
 }
 
 func TestMethod_Values(t *testing.T) {
-	if MethodTrash != "trash" {
-		t.Errorf("MethodTrash = %q", MethodTrash)
-	}
-	if MethodDelete != "delete" {
-		t.Errorf("MethodDelete = %q", MethodDelete)
-	}
+	assertpkg.Equal(t, MethodTrash, Method("trash"))
+	assertpkg.Equal(t, MethodDelete, Method("delete"))
 }
 
 // TestStatusDirMap verifies that statusDirMap contains all persisted statuses
 // and maps them to the expected directory names.
 func TestStatusDirMap(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Verify all persistedStatuses have entries in statusDirMap
 	for _, status := range persistedStatuses {
 		dirName, ok := statusDirMap[status]
 		if !ok {
-			t.Errorf("persistedStatus %q missing from statusDirMap", status)
+			assert.Fail("missing from statusDirMap", "persistedStatus %q missing", status)
 			continue
 		}
-		if dirName == "" {
-			t.Errorf("statusDirMap[%q] is empty", status)
-		}
+		assert.NotEmpty(dirName, "statusDirMap[%q] is empty", status)
 	}
 
 	// Verify expected mappings
@@ -742,12 +634,10 @@ func TestStatusDirMap(t *testing.T) {
 	for status, wantDir := range expectedMappings {
 		gotDir, ok := statusDirMap[status]
 		if !ok {
-			t.Errorf("statusDirMap missing entry for %q", status)
+			assert.Fail("missing from statusDirMap", "statusDirMap missing entry for %q", status)
 			continue
 		}
-		if gotDir != wantDir {
-			t.Errorf("statusDirMap[%q] = %q, want %q", status, gotDir, wantDir)
-		}
+		assert.Equal(wantDir, gotDir, "statusDirMap[%q]", status)
 	}
 }
 
@@ -770,9 +660,7 @@ func TestDirForStatus(t *testing.T) {
 		t.Run(string(tc.status), func(t *testing.T) {
 			got := mgr.dirForStatus(tc.status)
 			wantSuffix := string(filepath.Separator) + tc.wantDir
-			if !strings.HasSuffix(got, wantSuffix) {
-				t.Errorf("dirForStatus(%q) = %q, want suffix %q", tc.status, got, wantSuffix)
-			}
+			assertpkg.True(t, strings.HasSuffix(got, wantSuffix), "dirForStatus(%q) = %q, want suffix %q", tc.status, got, wantSuffix)
 		})
 	}
 }
@@ -789,49 +677,24 @@ func TestPersistedStatusesComplete(t *testing.T) {
 	}
 
 	for _, status := range requiredStatuses {
-		found := false
-		for _, ps := range persistedStatuses {
-			if ps == status {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Status %q should be in persistedStatuses but is not", status)
-		}
+		assertpkg.Contains(t, persistedStatuses, status, "Status %q should be in persistedStatuses but is not", status)
 	}
 
 	// StatusCancelled MUST be in persistedStatuses; cancelled manifests
 	// are persisted on disk for audit (per spec § Manifest format).
-	found := false
-	for _, ps := range persistedStatuses {
-		if ps == StatusCancelled {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("StatusCancelled missing from persistedStatuses; cancelled manifests must persist on disk")
-	}
+	assertpkg.Contains(t, persistedStatuses, StatusCancelled, "StatusCancelled missing from persistedStatuses; cancelled manifests must persist on disk")
 }
 
 func TestManager_ListCancelled(t *testing.T) {
+	require := requirepkg.New(t)
 	mgr := testManager(t)
 
 	manifest := createTestManifest(t, mgr, "test cancel")
-	if err := mgr.CancelManifest(manifest.ID); err != nil {
-		t.Fatalf("CancelManifest: %v", err)
-	}
+	require.NoError(mgr.CancelManifest(manifest.ID), "CancelManifest")
 	got, err := mgr.ListCancelled()
-	if err != nil {
-		t.Fatalf("ListCancelled: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("ListCancelled returned %d manifests, want 1", len(got))
-	}
-	if got[0].ID != manifest.ID {
-		t.Errorf("got ID %q, want %q", got[0].ID, manifest.ID)
-	}
+	require.NoError(err, "ListCancelled")
+	require.Len(got, 1)
+	assertpkg.Equal(t, manifest.ID, got[0].ID)
 }
 
 // TestManager_SaveManifest_UnknownStatus tests saving with an unknown status.
@@ -842,18 +705,12 @@ func TestManager_SaveManifest_UnknownStatus(t *testing.T) {
 	m.Status = "invalid_status" // Unknown status
 
 	// Should still save (to pending dir by default)
-	if err := mgr.SaveManifest(m); err != nil {
-		t.Fatalf("SaveManifest() with unknown status error = %v", err)
-	}
+	requirepkg.NoError(t, mgr.SaveManifest(m), "SaveManifest() with unknown status")
 
 	// Should be findable (saved to pending by default)
 	loaded, _, err := mgr.GetManifest(m.ID)
-	if err != nil {
-		t.Fatalf("GetManifest() error = %v", err)
-	}
-	if loaded.Status != "invalid_status" {
-		t.Errorf("Status = %q, want %q", loaded.Status, "invalid_status")
-	}
+	requirepkg.NoError(t, err, "GetManifest()")
+	assertpkg.Equal(t, Status("invalid_status"), loaded.Status)
 }
 
 // TestManager_ListManifests_NonexistentDir tests listing from a nonexistent directory.
@@ -861,9 +718,7 @@ func TestManager_ListManifests_NonexistentDir(t *testing.T) {
 	mgr := testManager(t)
 
 	// Remove the pending directory
-	if err := os.RemoveAll(mgr.PendingDir()); err != nil {
-		t.Fatalf("RemoveAll() error = %v", err)
-	}
+	requirepkg.NoError(t, os.RemoveAll(mgr.PendingDir()), "RemoveAll()")
 
 	// ListPending should return empty (not error) for nonexistent dir
 	assertListCount(t, mgr.ListPending, 0)
@@ -876,22 +731,14 @@ func TestManifest_Save_FilePermissions(t *testing.T) {
 	path := filepath.Join(tmpDir, "permission-test.json")
 
 	m := newTestManifest(t, "permission test", "msg1", "msg2")
-	if err := m.Save(path); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	requirepkg.NoError(t, m.Save(path), "Save()")
 
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "Stat()")
 
 	// File should have 0600 permissions (owner read/write only)
 	// Windows does not support Unix permissions.
 	if runtime.GOOS != "windows" {
-		got := info.Mode().Perm()
-		want := os.FileMode(0600)
-		if got != want {
-			t.Errorf("file permissions = %04o, want %04o", got, want)
-		}
+		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "file permissions")
 	}
 }

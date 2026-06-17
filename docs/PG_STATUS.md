@@ -1,118 +1,116 @@
-# PostgreSQL Backend Status
+# PostgreSQL Backend Implementation Status
 
-This document tracks the state of PostgreSQL backend support in msgvault.
+This is a repository-local engineering tracker for PostgreSQL backend work. It
+is intentionally not user documentation. Public technical docs belong in the
+docs website:
 
-## Summary
+- PostgreSQL setup and operations: `msgvault-docs/src/content/docs/architecture/postgresql.mdx`
+- Backend ranking behavior: `msgvault-docs/src/content/docs/architecture/search-ranking.mdx`
+- TUI keybindings: `msgvault-docs/src/content/docs/usage/tui.mdx`
 
-PR1 (tag `pr1-dialect-extraction`) extracted all SQLite-specific behavior
-behind a `Dialect` interface. Zero functional change; SQLite is still the
-default and only production-ready backend.
+## Current State
 
-PR2 (tag `pr2-postgresql-dialect`) adds **foundational scaffolding** for
-PostgreSQL support:
+The PostgreSQL path is functionally implemented for the core archive workflow:
 
-- `PostgreSQLDialect` implementing the `Dialect` interface
-- `pgx` driver wired into `store.Open()` for `postgres://` URLs
-- `schema_pg.sql` with tsvector FTS column and GIN index
-- `PostgreSQLEngine` scaffold parallel to `SQLiteEngine`
-- Dual-backend test harness via `MSGVAULT_TEST_DB`
-- Unit tests for dialect string methods
+- Schema initialization against PostgreSQL with native types and legacy column
+  migrations.
+- Store-layer CRUD, sync state, FTS, attachment metadata, deletion metadata, and
+  source removal paths.
+- Dialect-aware query engine for aggregate, search, and message-detail paths.
+- TUI, HTTP API, MCP, `serve`, `search`, and `embeddings` command wiring.
+- pgvector backend for semantic and hybrid search.
+- Portable embedding queue, enqueuer, and worker loop.
+- Live PostgreSQL and pgvector CI lanes.
 
-**PostgreSQL is NOT functionally usable yet.** The work below must complete
-before a PostgreSQL connection can successfully insert a single row.
+SQLite remains the default backend. PostgreSQL is opt-in via
+`[data].database_url`.
 
-## What Works
+## Implemented In This PR
 
-- `PostgreSQLDialect.Rebind()` correctly converts `?` → `$1, $2, ...`
-  (including quoted-string safety)
-- `PostgreSQLDialect.Now()`, `InsertOrIgnore()` (complete + prefix),
-  `InsertOrIgnoreSuffix()`, `FTSSearchClause()`, `UpdateOrIgnore()`
-- `PostgreSQLDialect` error-code classification (23505, 42701, 42P01)
-- `Open("postgres://...")` establishes a connection with pool settings
-- `OpenReadOnly` for PostgreSQL enforces `default_transaction_read_only=on`
-  via pgx `RuntimeParams` (set on every pooled connection at startup)
-- Unit tests for dialect string methods pass without a live Postgres
-- SQLite regression: all existing tests pass unmodified
+- PostgreSQL query/store fixes needed after the initial dialect extraction.
+- pgvector backend under `internal/vector/pgvector/`.
+- Runtime vector backend selection from the archive DSN.
+- PostgreSQL embedding queue and worker support using rebinding and
+  PostgreSQL-safe claim semantics.
+- Native pgvector fused search through `vector.FusingBackend`.
+- Tests for PostgreSQL deletion execution, attachment lifecycle, search
+  filters, pagination, FTS, queue/worker behavior, and pgvector generation
+  lifecycle.
+- CI lanes for live PostgreSQL and pgvector coverage.
 
-## Follow-Up Work (Required for PostgreSQL to Actually Work)
+## Remaining Implementation Work
 
-### Blockers (schema will not load, no row can be inserted)
+These are real follow-ups, not blockers for the current branch:
 
-1. **Schema type translation**: `schema.sql` uses SQLite-specific types
-   (`DATETIME`, `BLOB`) and `INTEGER PRIMARY KEY` which is not
-   auto-incrementing in PostgreSQL. Options:
-   - Create a dedicated `schema_pg.sql` with PostgreSQL-native DDL
-     (`TIMESTAMPTZ`, `BYTEA`, `BIGINT GENERATED ALWAYS AS IDENTITY`)
-   - Parameterize the shared schema via dialect type mappings
-   - Translate at load time
+1. **SQLite to PostgreSQL migration.** There is no command to copy an existing
+   SQLite archive into PostgreSQL. A migrator must handle identity columns with
+   `OVERRIDING SYSTEM VALUE`, reset sequences with `setval()`, and rebuild FTS
+   and embedding indexes rather than blindly copying derived state.
 
-2. **Thread `Rebind()` through all queries**: Most `s.db.Exec` / `QueryRow`
-   calls in the store layer still pass raw `?` placeholders. pgx rejects
-   these. Affected files: `messages.go`, `sync.go`, `sources.go`,
-   `sources_oauthapp.go`, `api.go`. (`inspect.go` already uses `Rebind()`.)
+2. **PostgreSQL aggregate acceleration.** SQLite archives use DuckDB over
+   Parquet for fast TUI aggregates. PostgreSQL archives currently use live SQL
+   through the dialect-aware query engine. Large archives need a benchmarked
+   plan, likely materialized views, cached aggregates, or a PostgreSQL-side
+   equivalent to the Parquet projection.
 
-3. **`queryInChunks` / `insertInChunks` bypass the dialect**: These
-   helpers in `store.go` hardcode `?` placeholders. They need to accept
-   (or be wrapped by) a rebinder.
+3. **Scale validation.** Live PostgreSQL tests use small corpora. Before
+   recommending PostgreSQL as the primary backend for 1M+ message archives, run
+   a seeded large-corpus benchmark and capture `EXPLAIN ANALYZE` for fused
+   hybrid search and common TUI aggregate queries.
 
-4. **`LastInsertId()` is not supported by pgx**: Call sites in
-   `messages.go` (EnsureConversation, EnsureParticipant, etc.) and
-   `sync.go` (StartSync, GetOrCreateSource) must be rewritten to use
-   `RETURNING id` (the pattern already exists in `upsertMessageWith`).
+4. **TextEngine parity.** Features exposed only through `query.TextEngine`
+   remain SQLite-only. Either implement PostgreSQL equivalents or keep those UI
+   paths explicitly gated off for PostgreSQL.
 
-5. **Mixed placeholder styles in search**: `api.go:SearchMessages` now
-   builds queries with `$1` from `FTSSearchClause` but still appends
-   `LIMIT ? OFFSET ?`. Must pick one style consistently.
+5. **Subset export on PostgreSQL.** `CopySubset` still targets a SQLite
+   destination. PostgreSQL callers should continue to gate this off until a
+   backend-aware export path exists.
 
-### Issues (correctness/behavior differences)
+6. **Deletion manifest source scoping.** Deletion updates match Gmail message
+   IDs by `source_message_id` without carrying `source_id` per item in the
+   manifest. A correct fix needs a manifest schema/version change so multi-source
+   deletion batches can scope each remote ID precisely.
 
-6. **`FTSBackfillBatchSQL` INNER vs LEFT JOIN**: PostgreSQL version uses
-   inner join on `message_bodies`; SQLite uses LEFT JOIN. Messages with
-   no body row are not indexed on PostgreSQL.
+7. **FTS storage layout.** PostgreSQL stores `search_fts` inline on `messages`.
+   This works, but bulk FTS updates rewrite message rows and can create GIN/MVCC
+   bloat. A future schema can move FTS into a side table if write amplification
+   becomes an issue.
 
-7. **(Resolved)** `statement_timeout` now uses pgx `RuntimeParams`, so the
-   setting applies during startup for every pooled connection.
+8. **FTS grammar parity.** SQLite FTS5, PostgreSQL FTS, and PostgreSQL hybrid
+   search do not parse every query the same way. The most visible difference is
+   prefix matching in PostgreSQL FTS versus PostgreSQL hybrid search.
 
-8. **(Resolved)** `openPostgresReadOnly` now sets
-   `default_transaction_read_only=on` via pgx `RuntimeParams`, so the
-   parameter is applied during the startup packet of every pooled
-   connection rather than once via `db.Exec("SET …")`.
+9. **Vector metric parity.** sqlite-vec uses L2 distance today while pgvector
+   uses cosine distance. Unit-normalized embeddings rank the same, but full
+   parity would require switching sqlite-vec tables to cosine and rebuilding
+   existing vector indexes.
 
-9. **`GetStats` calls `os.Stat(s.dbPath)`**: For PostgreSQL, `dbPath` is
-   a URL, not a file. `DatabaseSize` silently reports 0. Either skip
-   or query `pg_database_size(current_database())`.
+10. **Direct TUI-on-PostgreSQL smoke coverage.** PostgreSQL coverage currently
+    exercises the query engine that the TUI depends on. A thin Bubble Tea smoke
+    test against PostgreSQL would reduce integration risk.
 
-10. **`PostgreSQLEngine` returns `ErrNotImplemented` for most methods**:
-    TUI/MCP/HTTP API will not work against PG. Aggregate, Search,
-    SearchFast, GetGmailIDsByFilter, ListMessages all need parameterized
-    query builders (currently SQLite-specific: `strftime`, FTS5 MATCH).
+## What Should Stay In This Repository
 
-11. **FTS weight differences**: PostgreSQL applies `setweight('A')` to
-    subject and `'B'` to sender. SQLite FTS5 has no weighting. Ranking
-    results will differ between backends.
+Keep implementation-adjacent material here:
 
-12. **`PostgreSQLEngine` is not constructed anywhere**: TUI/API/MCP
-    still build `SQLiteEngine` unconditionally.
+- Current backend status and follow-up list in this file.
+- PostgreSQL schema and migration code under `internal/store/`.
+- pgvector schema and backend notes under `internal/vector/pgvector/`.
+- Build-tag and CI notes in `Makefile`, `.github/workflows/`, and inline test
+  comments.
+- Test commands and contributor workflow in `CLAUDE.md` and `AGENTS.md`.
 
-## Running Tests Against PostgreSQL
+Keep user-facing setup, operational guidance, ranking explanations, and TUI
+reference material in the docs website. Do not add new public docs pages under
+this repo's `docs/` directory unless they are explicitly codebase-internal.
 
-Once blockers above are resolved:
+## Test Commands
 
 ```bash
-# Start a PostgreSQL instance, then:
-export MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/msgvault_test
 make test
+MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/msgvault_test make test-pg
+go test -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 ```
 
-Each test creates and drops its own schema (`msgvault_test_<hex>`) for
-isolation. The `testutil.NewTestStore()` helper detects the env var and
-routes accordingly. If `MSGVAULT_TEST_DB` is unset, SQLite is used (default).
-
-## Why Ship Scaffolding?
-
-The `Dialect` abstraction + scaffolded PostgreSQL implementation lets the
-remaining work proceed incrementally without further disrupting the
-SQLite path. The interface design has been validated end-to-end
-(SQLiteDialect produces identical SQL; unit tests confirm PostgreSQLDialect
-generates valid PostgreSQL SQL). Future PRs can tackle the follow-up work
-file-by-file.
+`make test-pg` requires a live PostgreSQL database. pgvector-tagged tests require
+a PostgreSQL instance with the `vector` extension installed.

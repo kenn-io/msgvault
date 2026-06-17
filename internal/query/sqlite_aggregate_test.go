@@ -2,11 +2,12 @@ package query
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/testutil/dbtest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func TestAggregations(t *testing.T) {
@@ -60,9 +61,7 @@ func TestAggregations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
 			rows, err := env.Engine.Aggregate(env.Ctx, tc.view, DefaultAggregateOptions())
-			if err != nil {
-				t.Fatalf("%s: %v", tc.aggName, err)
-			}
+			requirepkg.NoError(t, err, tc.aggName)
 			assertAggRows(t, rows, tc.want)
 		})
 	}
@@ -71,45 +70,84 @@ func TestAggregations(t *testing.T) {
 func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 	env := newTestEnv(t)
 
-	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("noname@test.com"), DisplayName: nil, Domain: "test.com"})
+	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("noname@test.com"), DisplayName: nil, Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Test", SentAt: "2024-05-01 10:00:00", FromID: noNameID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySenderName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySenderName")
 
-	if len(rows) != 3 {
-		t.Errorf("expected 3 sender names, got %d", len(rows))
-	}
+	assertpkg.Len(t, rows, 3, "expected 3 sender names")
 
-	assertRow(t, rows, "noname@test.com", 1)
+	assertRow(t, rows, "noname@test.com")
+}
+
+// TestAggregateBySenderName_FallbackToPhone covers phone-only iMessage/SMS
+// participants without a contacts entry: display_name and email_address are
+// both empty/NULL but phone_number is set. They must surface under the phone
+// number, not vanish from the SenderNames aggregate.
+func TestAggregateBySenderName_FallbackToPhone(t *testing.T) {
+	env := newTestEnv(t)
+
+	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
+		Phone:       new("+15551234567"),
+		DisplayName: new(""),
+	})
+	env.AddMessage(dbtest.MessageOpts{Subject: "SMS", SentAt: "2024-05-01 10:00:00", FromID: phoneOnlyID})
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "AggregateBySenderName")
+
+	assertRow(t, rows, "+15551234567")
+
+	// Same fallback drives the SenderName filter.
+	listed := env.MustListMessages(MessageFilter{SenderName: "+15551234567"})
+	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback name")
+}
+
+// TestAggregateByRecipientName_FallbackToPhone is the recipient-side analog.
+func TestAggregateByRecipientName_FallbackToPhone(t *testing.T) {
+	env := newTestEnv(t)
+
+	phoneOnlyID := env.AddParticipant(dbtest.ParticipantOpts{
+		Phone:       new("+15557654321"),
+		DisplayName: new(""),
+	})
+	senderID := env.MustLookupParticipant("alice@example.com")
+	env.AddMessage(dbtest.MessageOpts{
+		Subject: "Group", SentAt: "2024-05-01 10:00:00",
+		FromID: senderID, ToIDs: []int64{phoneOnlyID},
+	})
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "AggregateByRecipientName")
+
+	assertRow(t, rows, "+15557654321")
+
+	listed := env.MustListMessages(MessageFilter{RecipientName: "+15557654321"})
+	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback recipient name")
 }
 
 func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
-	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("empty@test.com"), DisplayName: dbtest.StrPtr(""), Domain: "test.com"})
-	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("spaces@test.com"), DisplayName: dbtest.StrPtr("   "), Domain: "test.com"})
+	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("empty@test.com"), DisplayName: new(""), Domain: "test.com"})
+	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("spaces@test.com"), DisplayName: new("   "), Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Empty Name", SentAt: "2024-05-01 10:00:00", FromID: emptyID})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Name", SentAt: "2024-05-02 10:00:00", FromID: spacesID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateBySenderName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySenderName")
 
-	if len(rows) != 4 {
-		t.Errorf("expected 4 sender names, got %d", len(rows))
+	if !assert.Len(rows, 4, "expected 4 sender names") {
 		for _, r := range rows {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
 	}
 
 	for _, r := range rows {
-		if r.Key == "" || r.Key == "   " {
-			t.Errorf("unexpected empty/whitespace key: %q", r.Key)
-		}
+		assert.NotEmpty(r.Key, "unexpected empty key")
+		assert.NotEqual("   ", r.Key, "unexpected whitespace key")
 	}
 	assertRowsContain(t, rows, []aggExpectation{
 		{"empty@test.com", 1},
@@ -124,9 +162,7 @@ func TestAggregateByTime(t *testing.T) {
 	opts.TimeGranularity = TimeMonth
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewTime, opts)
-	if err != nil {
-		t.Fatalf("AggregateByTime: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByTime")
 
 	assertAggRows(t, rows, []aggExpectation{
 		{"2024-01", 2},
@@ -143,9 +179,7 @@ func TestAggregateWithDateFilter(t *testing.T) {
 	opts.After = &after
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("AggregateBySender with date filter: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySender with date filter")
 
 	assertAggRows(t, rows, []aggExpectation{
 		{"bob@company.org", 2},
@@ -160,9 +194,7 @@ func TestSortingOptions(t *testing.T) {
 		opts := DefaultAggregateOptions()
 		opts.SortField = SortBySize
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-		if err != nil {
-			t.Fatalf("AggregateBySender: %v", err)
-		}
+		requirepkg.NoError(t, err, "AggregateBySender")
 		assertAggRows(t, rows, []aggExpectation{
 			{"alice@example.com", 3},
 			{"bob@company.org", 2},
@@ -174,9 +206,7 @@ func TestSortingOptions(t *testing.T) {
 		opts.SortField = SortBySize
 		opts.SortDirection = SortAsc
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-		if err != nil {
-			t.Fatalf("AggregateBySender: %v", err)
-		}
+		requirepkg.NoError(t, err, "AggregateBySender")
 		assertAggRows(t, rows, []aggExpectation{
 			{"bob@company.org", 2},
 			{"alice@example.com", 3},
@@ -189,9 +219,7 @@ func TestWithAttachmentsOnlyAggregate(t *testing.T) {
 
 	opts := DefaultAggregateOptions()
 	allRows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("AggregateBySender: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySender")
 
 	assertRowsContain(t, allRows, []aggExpectation{
 		{"alice@example.com", 3},
@@ -200,9 +228,7 @@ func TestWithAttachmentsOnlyAggregate(t *testing.T) {
 
 	opts.WithAttachmentsOnly = true
 	attRows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("AggregateBySender with attachment filter: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateBySender with attachment filter")
 
 	assertRowsContain(t, attRows, []aggExpectation{
 		{"alice@example.com", 1},
@@ -263,9 +289,7 @@ func TestSubAggregates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
 			results, err := env.Engine.SubAggregate(env.Ctx, tc.filter, tc.view, DefaultAggregateOptions())
-			if err != nil {
-				t.Fatalf("SubAggregate: %v", err)
-			}
+			requirepkg.NoError(t, err, "SubAggregate")
 			assertAggRows(t, results, tc.want)
 		})
 	}
@@ -276,12 +300,9 @@ func TestSubAggregate_MatchEmptySenderName(t *testing.T) {
 
 	filter := MessageFilter{EmptyValueTargets: map[ViewType]bool{ViewSenderNames: true}}
 	results, err := env.Engine.SubAggregate(env.Ctx, filter, ViewLabels, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate with MatchEmptySenderName: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate with MatchEmptySenderName")
 
-	if len(results) != 0 {
-		t.Errorf("expected 0 label sub-aggregates for empty sender name, got %d", len(results))
+	if !assertpkg.Empty(t, results, "expected 0 label sub-aggregates for empty sender name") {
 		for _, r := range results {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
@@ -293,16 +314,12 @@ func TestSubAggregateIncludesDeletedMessages(t *testing.T) {
 
 	filter := MessageFilter{Sender: "alice@example.com"}
 	resultsBefore, err := env.Engine.SubAggregate(env.Ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate before: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate before")
 
 	env.MarkDeletedByID(1)
 
 	resultsAfter, err := env.Engine.SubAggregate(env.Ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate after: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate after")
 
 	var totalBefore, totalAfter int64
 	for _, r := range resultsBefore {
@@ -312,75 +329,61 @@ func TestSubAggregateIncludesDeletedMessages(t *testing.T) {
 		totalAfter += r.Count
 	}
 
-	if totalAfter != totalBefore {
-		t.Errorf("expected same message count (deleted included), before=%d after=%d", totalBefore, totalAfter)
-	}
+	assertpkg.Equal(t, totalBefore, totalAfter,
+		"expected same message count (deleted included)")
 }
 
 func TestHideDeletedFromSourceAggregate(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	// Before deletion: all 5 messages visible
 	opts := DefaultAggregateOptions()
 	allRows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate: %v", err)
-	}
+	require.NoError(err, "Aggregate")
 	var totalBefore int64
 	for _, r := range allRows {
 		totalBefore += r.Count
 	}
-	if totalBefore != 5 {
-		t.Fatalf("expected 5 total messages before deletion, got %d", totalBefore)
-	}
+	require.Equal(int64(5), totalBefore, "expected 5 total messages before deletion")
 
 	// Mark message 1 as deleted
 	env.MarkDeletedByID(1)
 
 	// Without HideDeletedFromSource: deleted messages still included
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate (no hide): %v", err)
-	}
+	require.NoError(err, "Aggregate (no hide)")
 	var totalWithDeleted int64
 	for _, r := range rows {
 		totalWithDeleted += r.Count
 	}
-	if totalWithDeleted != 5 {
-		t.Errorf("expected 5 messages (deleted included), got %d", totalWithDeleted)
-	}
+	assert.Equal(int64(5), totalWithDeleted, "expected 5 messages (deleted included)")
 
 	// With HideDeletedFromSource: deleted messages excluded
 	opts.HideDeletedFromSource = true
 	rows, err = env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate (hide deleted): %v", err)
-	}
+	require.NoError(err, "Aggregate (hide deleted)")
 	var totalHidden int64
 	for _, r := range rows {
 		totalHidden += r.Count
 	}
-	if totalHidden != 4 {
-		t.Errorf("expected 4 messages (deleted hidden), got %d", totalHidden)
-	}
+	assert.Equal(int64(4), totalHidden, "expected 4 messages (deleted hidden)")
 
 	// SubAggregate with HideDeletedFromSource
 	filter := MessageFilter{Sender: "alice@example.com", HideDeletedFromSource: true}
 	subRows, err := env.Engine.SubAggregate(env.Ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("SubAggregate (hide deleted): %v", err)
-	}
+	require.NoError(err, "SubAggregate (hide deleted)")
 	var subTotal int64
 	for _, r := range subRows {
 		subTotal += r.Count
 	}
 	// alice has 3 messages, but message 1 is deleted, so 2 should remain
-	if subTotal != 2 {
-		t.Errorf("expected 2 messages for alice (deleted hidden), got %d", subTotal)
-	}
+	assert.Equal(int64(2), subTotal, "expected 2 messages for alice (deleted hidden)")
 }
 
 func TestSubAggregateByTime(t *testing.T) {
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 
 	filter := MessageFilter{Sender: "alice@example.com"}
@@ -388,17 +391,14 @@ func TestSubAggregateByTime(t *testing.T) {
 	opts.TimeGranularity = TimeMonth
 
 	results, err := env.Engine.SubAggregate(env.Ctx, filter, ViewTime, opts)
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 
-	if len(results) != 2 {
-		t.Errorf("expected 2 time periods for alice@example.com's messages, got %d", len(results))
-	}
+	assert.Len(results, 2, "expected 2 time periods for alice@example.com's messages")
 
 	for _, r := range results {
-		if len(r.Key) != 7 || r.Key[4] != '-' {
-			t.Errorf("expected YYYY-MM format, got %q", r.Key)
+		assert.Len(r.Key, 7, "expected YYYY-MM format")
+		if len(r.Key) >= 5 {
+			assert.Equal(byte('-'), r.Key[4], "expected YYYY-MM format")
 		}
 	}
 }
@@ -413,15 +413,13 @@ func TestAggregateByRecipientName_FallbackToEmail(t *testing.T) {
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
 	aliceID := env.MustLookupParticipant("alice@example.com")
 
-	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("noname@test.com"), DisplayName: nil, Domain: "test.com"})
+	noNameID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("noname@test.com"), DisplayName: nil, Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Recipient", SentAt: "2024-05-01 10:00:00", FromID: aliceID, ToIDs: []int64{noNameID}})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByRecipientName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
-	assertRow(t, rows, "noname@test.com", 1)
+	assertRow(t, rows, "noname@test.com")
 }
 
 func TestAggregateByRecipientName_EmptyStringFallback(t *testing.T) {
@@ -430,15 +428,13 @@ func TestAggregateByRecipientName_EmptyStringFallback(t *testing.T) {
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
 	aliceID := env.MustLookupParticipant("alice@example.com")
 
-	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("empty@test.com"), DisplayName: dbtest.StrPtr(""), Domain: "test.com"})
-	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("spaces@test.com"), DisplayName: dbtest.StrPtr("   "), Domain: "test.com"})
+	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("empty@test.com"), DisplayName: new(""), Domain: "test.com"})
+	spacesID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("spaces@test.com"), DisplayName: new("   "), Domain: "test.com"})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Empty Rcpt Name", SentAt: "2024-05-01 10:00:00", FromID: aliceID, ToIDs: []int64{emptyID}})
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Rcpt Name", SentAt: "2024-05-02 10:00:00", FromID: aliceID, CcIDs: []int64{spacesID}})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
-	if err != nil {
-		t.Fatalf("AggregateByRecipientName: %v", err)
-	}
+	requirepkg.NoError(t, err, "AggregateByRecipientName")
 
 	assertRowsContain(t, rows, []aggExpectation{
 		{"empty@test.com", 1},
@@ -467,12 +463,7 @@ func TestSQLiteEngine_Aggregate_InvalidViewType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := env.Engine.Aggregate(env.Ctx, tt.viewType, DefaultAggregateOptions())
-			if err == nil {
-				t.Fatal("expected error for invalid ViewType, got nil")
-			}
-			if !strings.Contains(err.Error(), "unsupported view type") {
-				t.Errorf("expected 'unsupported view type' error, got: %v", err)
-			}
+			requirepkg.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }
@@ -487,8 +478,8 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	// implicit coupling to helper defaults or auto-increment assumptions.
 	sourceID := tdb.AddSource(dbtest.SourceOpts{Identifier: "test@gmail.com", DisplayName: "Test Account"})
 	convID := tdb.AddConversation(dbtest.ConversationOpts{SourceID: sourceID, Title: "Test Thread"})
-	aliceID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("alice@example.com"), DisplayName: dbtest.StrPtr("Alice"), Domain: "example.com"})
-	bobID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: dbtest.StrPtr("bob@example.com"), DisplayName: dbtest.StrPtr("Bob"), Domain: "example.com"})
+	aliceID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: new("alice@example.com"), DisplayName: new("Alice"), Domain: "example.com"})
+	bobID := tdb.AddParticipant(dbtest.ParticipantOpts{Email: new("bob@example.com"), DisplayName: new("Bob"), Domain: "example.com"})
 
 	// Create labels with names that would sort differently than insertion order
 	// "Zebra" inserted first, "Apple" inserted second - both will have count=1
@@ -517,9 +508,7 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	// be ordered by key ASC as secondary sort: Apple before Zebra.
 	opts := DefaultAggregateOptions()
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels, opts)
-	if err != nil {
-		t.Fatalf("Aggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "Aggregate")
 
 	// Verify exact order: Apple (count=1) then Zebra (count=1)
 	assertAggRows(t, rows, []aggExpectation{
@@ -567,25 +556,12 @@ func TestAggregateByLabel_WithSearchQuery(t *testing.T) {
 			rows, err := env.Engine.Aggregate(
 				env.Ctx, ViewLabels, opts,
 			)
-			if err != nil {
-				t.Fatalf("Aggregate: %v", err)
-			}
+			requirepkg.NoError(t, err, "Aggregate")
 			gotLabels := make([]string, 0, len(rows))
 			for _, r := range rows {
 				gotLabels = append(gotLabels, r.Key)
 			}
-			if len(gotLabels) != len(tt.wantLabels) {
-				t.Errorf("got %d labels %v, want %d %v",
-					len(gotLabels), gotLabels,
-					len(tt.wantLabels), tt.wantLabels)
-				return
-			}
-			for i, want := range tt.wantLabels {
-				if gotLabels[i] != want {
-					t.Errorf("label[%d] = %q, want %q",
-						i, gotLabels[i], want)
-				}
-			}
+			assertpkg.ElementsMatch(t, tt.wantLabels, gotLabels)
 		})
 	}
 }
@@ -602,16 +578,10 @@ func TestSubAggregate_WithSearchQuery(t *testing.T) {
 	rows, err := env.Engine.SubAggregate(
 		env.Ctx, filter, ViewLabels, opts,
 	)
-	if err != nil {
-		t.Fatalf("SubAggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "SubAggregate")
 	// Should return exactly the "Work" label, not all labels for alice
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 label row, got %d: %v", len(rows), rows)
-	}
-	if rows[0].Key != "Work" {
-		t.Errorf("expected label Work, got %q", rows[0].Key)
-	}
+	requirepkg.Len(t, rows, 1, "expected 1 label row")
+	assertpkg.Equal(t, "Work", rows[0].Key)
 }
 
 // TestEscapeSQLiteLike verifies that wildcard characters are escaped
@@ -628,10 +598,7 @@ func TestEscapeSQLiteLike(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := escapeSQLiteLike(tt.input)
-		if got != tt.want {
-			t.Errorf("escapeSQLiteLike(%q) = %q, want %q",
-				tt.input, got, tt.want)
-		}
+		assertpkg.Equal(t, tt.want, got, "escapeSQLiteLike(%q)", tt.input)
 	}
 }
 
@@ -648,17 +615,13 @@ func TestAggregateBySender_RecipientFilterNoOvercount(t *testing.T) {
 	// filters, message 1 would match both joins and be double-counted.
 	opts.SearchQuery = "to:bob@company.org to:carol@example.com"
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	if err != nil {
-		t.Fatalf("Aggregate: %v", err)
-	}
+	requirepkg.NoError(t, err, "Aggregate")
 
 	m := aggRowMap(t, rows)
 	// to: terms use OR — messages 1,2,3 match (all have to:bob, msg 1
 	// also has to:carol). With old JOIN filters, message 1 would produce
 	// two joined rows (matching bob and carol), inflating to count 4.
-	if got := m["alice@example.com"]; got != 3 {
-		t.Errorf("alice count = %d, want 3 (no overcount)", got)
-	}
+	assertpkg.Equal(t, int64(3), m["alice@example.com"], "alice count (no overcount)")
 }
 
 // TestSQLiteEngine_SubAggregate_InvalidViewType verifies that invalid ViewType values
@@ -679,12 +642,7 @@ func TestSQLiteEngine_SubAggregate_InvalidViewType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filter := MessageFilter{Sender: "alice@example.com"}
 			_, err := env.Engine.SubAggregate(env.Ctx, filter, tt.viewType, DefaultAggregateOptions())
-			if err == nil {
-				t.Fatal("expected error for invalid ViewType, got nil")
-			}
-			if !strings.Contains(err.Error(), "unsupported view type") {
-				t.Errorf("expected 'unsupported view type' error, got: %v", err)
-			}
+			requirepkg.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }

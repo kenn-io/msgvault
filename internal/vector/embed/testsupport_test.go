@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 // openVectorsDBWithPending opens a fresh vectors.db with one generation
@@ -19,30 +22,22 @@ import (
 func openVectorsDBWithPending(t *testing.T, n int) *sql.DB {
 	t.Helper()
 	ctx := context.Background()
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		t.Fatalf("RegisterExtension: %v", err)
-	}
+	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db, err := sql.Open(sqlitevec.DriverName(), path)
-	if err != nil {
-		t.Fatalf("open vectors.db: %v", err)
-	}
+	require.NoError(t, err, "open vectors.db")
 	t.Cleanup(func() { _ = db.Close() })
-	if err := sqlitevec.Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
+	require.NoError(t, sqlitevec.Migrate(ctx, db, 768), "Migrate")
 
-	if _, err := db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
         INSERT INTO index_generations (id, model, dimension, fingerprint, started_at, state)
-        VALUES (1, 'm', 768, 'm:768', 0, 'building')`); err != nil {
-		t.Fatalf("insert generation: %v", err)
-	}
+        VALUES (1, 'm', 768, 'm:768', 0, 'building')`)
+	require.NoError(t, err, "insert generation")
 	for i := 1; i <= n; i++ {
-		if _, err := db.ExecContext(ctx,
+		_, err := db.ExecContext(ctx,
 			`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES (1, ?, 0)`,
-			i); err != nil {
-			t.Fatalf("insert pending: %v", err)
-		}
+			i)
+		require.NoError(t, err, "insert pending")
 	}
 	return db
 }
@@ -52,11 +47,10 @@ func openVectorsDBWithPending(t *testing.T, n int) *sql.DB {
 func countAvailable(t *testing.T, db *sql.DB, gen int64) int {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(
+	err := db.QueryRow(
 		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND claimed_at IS NULL`,
-		gen).Scan(&n); err != nil {
-		t.Fatalf("countAvailable: %v", err)
-	}
+		gen).Scan(&n)
+	require.NoError(t, err, "countAvailable")
 	return n
 }
 
@@ -79,13 +73,9 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		t.Fatalf("RegisterExtension: %v", err)
-	}
+	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
-	if err != nil {
-		t.Fatalf("open main: %v", err)
-	}
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = mainDB.Close() })
 
 	schema := `
@@ -100,18 +90,15 @@ CREATE TABLE message_bodies (
     body_text TEXT,
     body_html TEXT
 );`
-	if _, err := mainDB.Exec(schema); err != nil {
-		t.Fatalf("schema: %v", err)
-	}
+	_, err = mainDB.Exec(schema)
+	require.NoError(t, err, "schema")
 	for i := 1; i <= n; i++ {
-		if _, err := mainDB.Exec(
-			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i)); err != nil {
-			t.Fatalf("insert message: %v", err)
-		}
-		if _, err := mainDB.Exec(
-			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i)); err != nil {
-			t.Fatalf("insert body: %v", err)
-		}
+		_, err := mainDB.Exec(
+			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
+		require.NoError(t, err, "insert message")
+		_, err = mainDB.Exec(
+			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
+		require.NoError(t, err, "insert body")
 	}
 
 	vecPath := filepath.Join(dir, "vectors.db")
@@ -121,22 +108,16 @@ CREATE TABLE message_bodies (
 		Dimension: 4,
 		MainDB:    mainDB,
 	})
-	if err != nil {
-		t.Fatalf("sqlitevec.Open: %v", err)
-	}
+	require.NoError(t, err, "sqlitevec.Open")
 	t.Cleanup(func() { _ = b.Close() })
 
-	gid, err := b.CreateGeneration(ctx, "fake", 4)
-	if err != nil {
-		t.Fatalf("CreateGeneration: %v", err)
-	}
+	gid, err := b.CreateGeneration(ctx, "fake", 4, "")
+	require.NoError(t, err, "CreateGeneration")
 
 	// The worker needs a *sql.DB for its VectorsDB field. Open a second
 	// handle to vectors.db (SQLite handles concurrent file opens).
 	vecDB, err := sql.Open(sqlitevec.DriverName(), vecPath)
-	if err != nil {
-		t.Fatalf("open vectors.db handle: %v", err)
-	}
+	require.NoError(t, err, "open vectors.db handle")
 	t.Cleanup(func() { _ = vecDB.Close() })
 
 	fc := &fakeEmbeddingClient{dim: 4}
@@ -154,18 +135,12 @@ CREATE TABLE message_bodies (
 func openVectorsDBForEnqueue(t *testing.T) *sql.DB {
 	t.Helper()
 	ctx := context.Background()
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		t.Fatalf("RegisterExtension: %v", err)
-	}
+	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db, err := sql.Open(sqlitevec.DriverName(), path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	require.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
-	if err := sqlitevec.Migrate(ctx, db, 768); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
+	require.NoError(t, sqlitevec.Migrate(ctx, db, 768), "Migrate")
 	return db
 }
 
@@ -173,24 +148,20 @@ func openVectorsDBForEnqueue(t *testing.T) *sql.DB {
 // state. id is used verbatim (not auto-increment).
 func insertGenerationStatic(t *testing.T, db *sql.DB, id int64, state string) {
 	t.Helper()
-	if _, err := db.Exec(
+	_, err := db.Exec(
 		`INSERT INTO index_generations (id, model, dimension, fingerprint, started_at, state)
-         VALUES (?, 'm', 768, 'm:768', 0, ?)`, id, state); err != nil {
-		t.Fatalf("insert generation %d: %v", id, err)
-	}
+         VALUES (?, 'm', 768, 'm:768', 0, ?)`, id, state)
+	require.NoError(t, err, "insert generation %d", id)
 }
 
 // assertPending asserts the number of pending rows for gen.
 func assertPending(t *testing.T, db *sql.DB, gen int64, want int) {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gen).Scan(&n); err != nil {
-		t.Fatalf("count pending (gen=%d): %v", gen, err)
-	}
-	if n != want {
-		t.Errorf("pending for gen %d = %d, want %d", gen, n, want)
-	}
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gen).Scan(&n)
+	require.NoError(t, err, "count pending (gen=%d)", gen)
+	assert.Equal(t, want, n, "pending for gen %d", gen)
 }
 
 // fakeEmbeddingClient returns a deterministic vector per input; tests

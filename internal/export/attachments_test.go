@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/testutil"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // createAttachmentFile creates a file in the content-addressed storage layout
@@ -20,16 +21,13 @@ func createAttachmentFile(t *testing.T, root string, content []byte) string {
 	t.Helper()
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
 	dir := filepath.Join(root, hash[:2])
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, hash), content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(dir, 0o755))
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(dir, hash), content, 0o644))
 	return hash
 }
 
 func TestFormatExportResult_WriteErrorWithCount(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Test that WriteError flag causes failure message even when Count > 0
 	stats := ExportStats{
 		Count:      5,
@@ -42,21 +40,17 @@ func TestFormatExportResult_WriteErrorWithCount(t *testing.T) {
 	result := FormatExportResult(stats)
 
 	// Should report failure, not success
-	if !strings.Contains(result, "Export failed due to write errors") {
-		t.Errorf("expected failure message, got: %s", result)
-	}
-	if !strings.Contains(result, "Zip file removed") {
-		t.Errorf("expected 'Zip file removed', got: %s", result)
-	}
-	if strings.Contains(result, "Exported 5 attachment") {
-		t.Errorf("should not report success count when WriteError is true, got: %s", result)
-	}
-	if strings.Contains(result, "Saved to:") {
-		t.Errorf("should not show 'Saved to:' when WriteError is true, got: %s", result)
-	}
+	assert.Contains(result, "Export failed due to write errors", "expected failure message")
+	assert.Contains(result, "Zip file removed", "expected 'Zip file removed'")
+	assert.NotContains(result, "Exported 5 attachment",
+		"should not report success count when WriteError is true")
+	assert.NotContains(result, "Saved to:",
+		"should not show 'Saved to:' when WriteError is true")
 }
 
 func TestPathTraversalInContentHash(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// This test verifies that malicious content hashes with path traversal
 	// sequences are rejected and cannot be used to read arbitrary files.
 
@@ -64,15 +58,11 @@ func TestPathTraversalInContentHash(t *testing.T) {
 	secretDir := t.TempDir()
 	secretFile := filepath.Join(secretDir, "secret.txt")
 	secretContent := []byte("TOP SECRET DATA")
-	if err := os.WriteFile(secretFile, secretContent, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(secretFile, secretContent, 0o644))
 
 	// Create attachments directory (subdirectory to enable traversal)
 	attachDir := filepath.Join(t.TempDir(), "attachments")
-	if err := os.MkdirAll(attachDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.MkdirAll(attachDir, 0o755))
 
 	// Craft a malicious content hash that would traverse to the secret file
 	// The path construction is: root/<hash[:2]>/<hash>
@@ -88,9 +78,7 @@ func TestPathTraversalInContentHash(t *testing.T) {
 	stats := Attachments(zipPath, attachDir, inputs)
 
 	// The export should fail - path traversal should be detected and rejected
-	if stats.Count > 0 {
-		t.Errorf("path traversal attack succeeded: exported %d files", stats.Count)
-	}
+	assert.Zero(stats.Count, "path traversal attack succeeded: exported %d files", stats.Count)
 
 	// Should report an error about the invalid content hash
 	found := false
@@ -100,9 +88,7 @@ func TestPathTraversalInContentHash(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Errorf("expected 'invalid content hash' error, got errors: %v", stats.Errors)
-	}
+	assert.True(found, "expected 'invalid content hash' error, got errors: %v", stats.Errors)
 }
 
 func TestContentHashValidation(t *testing.T) {
@@ -128,8 +114,10 @@ func TestContentHashValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateContentHash(tt.hash)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateContentHash(%q) error = %v, wantErr %v", tt.hash, err, tt.wantErr)
+			if tt.wantErr {
+				assertpkg.Error(t, err, "ValidateContentHash(%q)", tt.hash)
+			} else {
+				assertpkg.NoError(t, err, "ValidateContentHash(%q)", tt.hash)
 			}
 		})
 	}
@@ -146,6 +134,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "single file exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("hello world"))
 				return []query.AttachmentInfo{{Filename: "greeting.txt", ContentHash: hash}}
 			},
@@ -155,6 +144,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "multiple files exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("file one"))
 				h2 := createAttachmentFile(t, attachDir, []byte("file two"))
 				return []query.AttachmentInfo{
@@ -185,6 +175,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "mix of valid and invalid",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("good"))
 				return []query.AttachmentInfo{
 					{Filename: "bad.txt", ContentHash: ""},
@@ -198,6 +189,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "duplicate filenames get deduped within batch",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("content A"))
 				h2 := createAttachmentFile(t, attachDir, []byte("content B"))
 				return []query.AttachmentInfo{
@@ -211,6 +203,7 @@ func TestAttachmentsToDir(t *testing.T) {
 		{
 			name: "empty filename falls back to content hash",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("no name"))
 				return []query.AttachmentInfo{{Filename: "", ContentHash: hash}}
 			},
@@ -226,18 +219,16 @@ func TestAttachmentsToDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			attachDir := t.TempDir()
 			outputDir := t.TempDir()
 
 			inputs := tt.setup(t, attachDir)
 			result := AttachmentsToDir(outputDir, attachDir, inputs)
 
-			if got := len(result.Files); got != tt.wantFiles {
-				t.Fatalf("got %d files, want %d; errors: %v", got, tt.wantFiles, result.Errors)
-			}
-			if got := len(result.Errors); got != tt.wantErrors {
-				t.Fatalf("got %d errors, want %d; errors: %v", got, tt.wantErrors, result.Errors)
-			}
+			require.Len(result.Files, tt.wantFiles, "files; errors: %v", result.Errors)
+			require.Len(result.Errors, tt.wantErrors, "errors: %v", result.Errors)
 
 			// Verify expected filenames
 			for i, wantName := range tt.wantNames {
@@ -245,21 +236,14 @@ func TestAttachmentsToDir(t *testing.T) {
 					break
 				}
 				gotName := filepath.Base(result.Files[i].Path)
-				if gotName != wantName {
-					t.Errorf("file[%d] name = %q, want %q", i, gotName, wantName)
-				}
+				assert.Equal(wantName, gotName, "file[%d] name", i)
 			}
 
 			// Verify all exported files exist on disk and have correct content size
 			for _, f := range result.Files {
 				info, err := os.Stat(f.Path)
-				if err != nil {
-					t.Errorf("exported file %s does not exist: %v", f.Path, err)
-					continue
-				}
-				if info.Size() != f.Size {
-					t.Errorf("file %s size = %d, want %d", f.Path, info.Size(), f.Size)
-				}
+				require.NoError(err, "exported file %s does not exist", f.Path)
+				assert.Equal(f.Size, info.Size(), "file %s size", f.Path)
 			}
 		})
 	}
@@ -273,50 +257,38 @@ func TestAttachmentsToDir_FilePermissions(t *testing.T) {
 	inputs := []query.AttachmentInfo{{Filename: "doc.pdf", ContentHash: hash}}
 
 	result := AttachmentsToDir(outputDir, attachDir, inputs)
-	if len(result.Files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(result.Files))
-	}
+	requirepkg.Len(t, result.Files, 1, "expected 1 file")
 
 	// Windows does not support Unix permissions.
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(result.Files[0].Path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if perm := info.Mode().Perm(); perm != 0600 {
-			t.Errorf("file permissions = %o, want 0600", perm)
-		}
+		requirepkg.NoError(t, err)
+		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "file permissions")
 	}
 }
 
 func TestAttachmentsToDir_DiskConflict(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Pre-existing file on disk should trigger _1 suffix
 	attachDir := t.TempDir()
 	outputDir := t.TempDir()
 
 	// Create a pre-existing file
-	if err := os.WriteFile(filepath.Join(outputDir, "report.pdf"), []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(filepath.Join(outputDir, "report.pdf"), []byte("old"), 0644))
 
 	hash := createAttachmentFile(t, attachDir, []byte("new content"))
 	inputs := []query.AttachmentInfo{{Filename: "report.pdf", ContentHash: hash}}
 
 	result := AttachmentsToDir(outputDir, attachDir, inputs)
-	if len(result.Files) != 1 {
-		t.Fatalf("expected 1 file, got %d; errors: %v", len(result.Files), result.Errors)
-	}
+	require.Len(result.Files, 1, "expected 1 file; errors: %v", result.Errors)
 
 	gotName := filepath.Base(result.Files[0].Path)
-	if gotName != "report_1.pdf" {
-		t.Errorf("expected report_1.pdf, got %s", gotName)
-	}
+	assert.Equal("report_1.pdf", gotName)
 
 	// Verify original file is untouched
 	orig, _ := os.ReadFile(filepath.Join(outputDir, "report.pdf"))
-	if string(orig) != "old" {
-		t.Error("original file was overwritten")
-	}
+	assert.Equal("old", string(orig), "original file was overwritten")
 }
 
 func TestCreateExclusiveFile(t *testing.T) {
@@ -325,71 +297,46 @@ func TestCreateExclusiveFile(t *testing.T) {
 	t.Run("new file", func(t *testing.T) {
 		p := filepath.Join(dir, "new.txt")
 		f, path, err := CreateExclusiveFile(p, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, err)
 		_ = f.Close()
-		if path != p {
-			t.Errorf("path = %q, want %q", path, p)
-		}
+		assertpkg.Equal(t, p, path, "path")
 		// Windows does not support Unix permissions.
 		if runtime.GOOS != "windows" {
 			info, _ := os.Stat(path)
-			if perm := info.Mode().Perm(); perm != 0600 {
-				t.Errorf("permissions = %o, want 0600", perm)
-			}
+			assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "permissions")
 		}
 	})
 
 	t.Run("conflict appends suffix", func(t *testing.T) {
 		p := filepath.Join(dir, "existing.txt")
-		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.WriteFile(p, []byte("x"), 0644))
 
 		f, path, err := CreateExclusiveFile(p, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, err)
 		_ = f.Close()
-		if filepath.Base(path) != "existing_1.txt" {
-			t.Errorf("path = %q, want existing_1.txt", filepath.Base(path))
-		}
+		assertpkg.Equal(t, "existing_1.txt", filepath.Base(path), "path")
 	})
 
 	t.Run("multiple conflicts", func(t *testing.T) {
+		require := requirepkg.New(t)
 		p := filepath.Join(dir, "multi.txt")
-		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "multi_1.txt"), []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(os.WriteFile(p, []byte("x"), 0644))
+		require.NoError(os.WriteFile(filepath.Join(dir, "multi_1.txt"), []byte("x"), 0644))
 
 		f, path, err := CreateExclusiveFile(p, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(err)
 		_ = f.Close()
-		if filepath.Base(path) != "multi_2.txt" {
-			t.Errorf("path = %q, want multi_2.txt", filepath.Base(path))
-		}
+		assertpkg.Equal(t, "multi_2.txt", filepath.Base(path), "path")
 	})
 
 	t.Run("no extension", func(t *testing.T) {
 		p := filepath.Join(dir, "noext")
-		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, os.WriteFile(p, []byte("x"), 0644))
 
 		f, path, err := CreateExclusiveFile(p, 0644)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requirepkg.NoError(t, err)
 		_ = f.Close()
-		if filepath.Base(path) != "noext_1" {
-			t.Errorf("path = %q, want noext_1", filepath.Base(path))
-		}
+		assertpkg.Equal(t, "noext_1", filepath.Base(path), "path")
 	})
 }
 
@@ -447,8 +394,10 @@ func TestValidateOutputPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateOutputPath(tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateOutputPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			if tt.wantErr {
+				assertpkg.Error(t, err, "ValidateOutputPath(%q)", tt.path)
+			} else {
+				assertpkg.NoError(t, err, "ValidateOutputPath(%q)", tt.path)
 			}
 		})
 	}
@@ -465,6 +414,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "valid file is exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("hello world"))
 				return []query.AttachmentInfo{{Filename: "greeting.txt", ContentHash: hash}}
 			},
@@ -475,6 +425,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "multiple valid files exported",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				h1 := createAttachmentFile(t, attachDir, []byte("file one"))
 				h2 := createAttachmentFile(t, attachDir, []byte("file two"))
 				return []query.AttachmentInfo{
@@ -524,6 +475,7 @@ func TestAttachments(t *testing.T) {
 		{
 			name: "mix of valid and invalid attachments",
 			setup: func(t *testing.T, attachDir string) []query.AttachmentInfo {
+				t.Helper()
 				hash := createAttachmentFile(t, attachDir, []byte("good content"))
 				return []query.AttachmentInfo{
 					{Filename: "bad.txt", ContentHash: ""},
@@ -538,25 +490,25 @@ func TestAttachments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			attachDir := t.TempDir()
 			zipPath := filepath.Join(t.TempDir(), "test.zip")
 
 			inputs := tt.setup(t, attachDir)
 			stats := Attachments(zipPath, attachDir, inputs)
 
-			if stats.Count != tt.wantCount {
-				t.Fatalf("Attachments() count = %d, want %d", stats.Count, tt.wantCount)
-			}
+			require.Equal(tt.wantCount, stats.Count, "Attachments() count")
 
 			formatted := FormatExportResult(stats)
-			testutil.AssertContainsAll(t, formatted, tt.wantSubstrings)
+			for _, sub := range tt.wantSubstrings {
+				assert.Contains(formatted, sub)
+			}
 
 			// Verify exported files exist in the zip
 			if len(tt.wantFiles) > 0 {
 				zr, err := zip.OpenReader(zipPath)
-				if err != nil {
-					t.Fatalf("failed to open zip: %v", err)
-				}
+				require.NoError(err, "failed to open zip")
 				defer func() { _ = zr.Close() }()
 
 				zipEntries := make(map[string]bool)
@@ -564,9 +516,8 @@ func TestAttachments(t *testing.T) {
 					zipEntries[f.Name] = true
 				}
 				for _, want := range tt.wantFiles {
-					if !zipEntries[want] {
-						t.Errorf("expected file %q in zip, got entries: %v", want, zipEntries)
-					}
+					assert.True(zipEntries[want],
+						"expected file %q in zip, got entries: %v", want, zipEntries)
 				}
 			}
 		})

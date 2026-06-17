@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // Gmail API error reason constants for tests.
@@ -217,13 +220,12 @@ func TestDecodeBase64URL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := decodeBase64URL(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeBase64URL() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				assertpkg.Error(t, err, "decodeBase64URL()")
 				return
 			}
-			if !tt.wantErr && string(got) != string(tt.want) {
-				t.Errorf("decodeBase64URL() = %v, want %v", got, tt.want)
-			}
+			requirepkg.NoError(t, err, "decodeBase64URL()")
+			assertpkg.Equal(t, string(tt.want), string(got), "decodeBase64URL()")
 		})
 	}
 }
@@ -278,9 +280,8 @@ func TestIsRateLimitError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isRateLimitError(tt.body); got != tt.want {
-				t.Errorf("isRateLimitError() = %v, want %v", got, tt.want)
-			}
+			got := isRateLimitError(tt.body)
+			assertpkg.Equal(t, tt.want, got, "isRateLimitError()")
 		})
 	}
 }
@@ -322,6 +323,7 @@ func (h *testLogHandler) getRecords() []logRecord {
 }
 
 func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Set up a test HTTP server that returns different responses per message ID.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -365,21 +367,13 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 
 	ctx := context.Background()
 	results, err := client.GetMessagesRawBatch(ctx, []string{"msg_ok", "msg_404", "msg_err"})
-	if err != nil {
-		t.Fatalf("GetMessagesRawBatch() error = %v", err)
-	}
+	requirepkg.NoError(t, err, "GetMessagesRawBatch()")
 
 	// msg_ok should succeed
-	if results[0] == nil {
-		t.Error("expected msg_ok to return a result, got nil")
-	}
+	assert.NotNil(results[0], "expected msg_ok to return a result")
 	// msg_404 and msg_err should be nil (errors logged, not returned)
-	if results[1] != nil {
-		t.Error("expected msg_404 to return nil (logged), got non-nil")
-	}
-	if results[2] != nil {
-		t.Error("expected msg_err to return nil (logged), got non-nil")
-	}
+	assert.Nil(results[1], "expected msg_404 to return nil (logged)")
+	assert.Nil(results[2], "expected msg_err to return nil (logged)")
 
 	// Check log levels per message ID.
 	// msg_404 must produce ONLY a debug log (no warn), and msg_err must produce ONLY a warn log.
@@ -392,20 +386,16 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 		case id == "msg_404" && r.Level == slog.LevelDebug && r.Message == "message deleted before fetch":
 			foundDebug404 = true
 		case id == "msg_404" && r.Level == slog.LevelWarn:
-			t.Errorf("msg_404 should not produce a warn log, got: %q", r.Message)
+			assert.Failf("unexpected warn log", "msg_404 should not produce a warn log, got: %q", r.Message)
 		case id == "msg_err" && r.Level == slog.LevelWarn && r.Message == "failed to fetch message":
 			foundWarnErr = true
 		case id == "msg_err" && r.Level == slog.LevelDebug:
-			t.Errorf("msg_err should not produce a debug log, got: %q", r.Message)
+			assert.Failf("unexpected debug log", "msg_err should not produce a debug log, got: %q", r.Message)
 		}
 	}
 
-	if !foundDebug404 {
-		t.Errorf("expected debug log for msg_404 with message %q, got records: %v", "message deleted before fetch", records)
-	}
-	if !foundWarnErr {
-		t.Errorf("expected warn log for msg_err with message %q, got records: %v", "failed to fetch message", records)
-	}
+	assert.True(foundDebug404, "expected debug log for msg_404 with message %q, got records: %v", "message deleted before fetch", records)
+	assert.True(foundWarnErr, "expected warn log for msg_err with message %q, got records: %v", "failed to fetch message", records)
 }
 
 // rewriteTransport rewrites requests from the Gmail API baseURL to a test server URL.

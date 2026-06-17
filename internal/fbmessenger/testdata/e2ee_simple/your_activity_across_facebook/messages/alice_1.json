@@ -1,0 +1,44 @@
+{
+  "participants": ["Test User", "Alice Example"],
+  "threadName": "Alice Example",
+  "messages": [
+    {
+      "senderName": "Test User",
+      "text": "Hello",
+      "timestamp": 1600000000000,
+      "type": "Generic",
+      "isUnsent": false,
+      "media": [],
+      "reactions": []
+    },
+    {
+      "senderName": "Alice Example",
+      "text": "caf\u00c3\u00a9 time?",
+      "timestamp": 1600000060000,
+      "type": "Generic",
+      "isUnsent": false,
+      "media": [],
+      "reactions": [
+        {"actor": "Test User", "reaction": "\u00e2\u009d\u00a4"}
+      ]
+    },
+    {
+      "senderName": "Test User",
+      "text": "See you soon",
+      "timestamp": 1600000120000,
+      "type": "Generic",
+      "isUnsent": false,
+      "media": [],
+      "reactions": []
+    },
+    {
+      "senderName": "Test User",
+      "text": "oops",
+      "timestamp": 1600000180000,
+      "type": "Generic",
+      "isUnsent": true,
+      "media": [],
+      "reactions": []
+    }
+  ]
+}

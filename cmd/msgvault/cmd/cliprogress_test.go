@@ -3,30 +3,24 @@ package cmd
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCLIProgress_OnLatestDateBeforeOnStart(t *testing.T) {
 	p := &CLIProgress{}
 	p.OnLatestDate(time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC))
 
-	if p.startTime.IsZero() {
-		t.Fatal("startTime should be initialized when OnLatestDate is called before OnStart")
-	}
-	if time.Since(p.startTime) > time.Second {
-		t.Fatalf("startTime should be recent, got %v ago", time.Since(p.startTime))
-	}
+	require.False(t, p.startTime.IsZero(), "startTime should be initialized when OnLatestDate is called before OnStart")
+	require.LessOrEqual(t, time.Since(p.startTime), time.Second, "startTime should be recent")
 }
 
 func TestCLIProgress_OnProgressBeforeOnStart(t *testing.T) {
 	p := &CLIProgress{}
 	p.OnProgress(10, 5, 3)
 
-	if p.startTime.IsZero() {
-		t.Fatal("startTime should be initialized when OnProgress is called before OnStart")
-	}
-	if time.Since(p.startTime) > time.Second {
-		t.Fatalf("startTime should be recent, got %v ago", time.Since(p.startTime))
-	}
+	require.False(t, p.startTime.IsZero(), "startTime should be initialized when OnProgress is called before OnStart")
+	require.LessOrEqual(t, time.Since(p.startTime), time.Second, "startTime should be recent")
 }
 
 func TestCLIProgress_OnStartResetsForReuse(t *testing.T) {
@@ -37,7 +31,5 @@ func TestCLIProgress_OnStartResetsForReuse(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	p.OnStart(200)
 
-	if !p.startTime.After(first) {
-		t.Fatal("OnStart should reset startTime on subsequent calls")
-	}
+	require.True(t, p.startTime.After(first), "OnStart should reset startTime on subsequent calls")
 }

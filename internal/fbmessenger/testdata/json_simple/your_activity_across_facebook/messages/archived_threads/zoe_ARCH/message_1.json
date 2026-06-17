@@ -1,0 +1,16 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Zoe Archive"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Zoe Archive",
+      "timestamp_ms": 1500000000000,
+      "content": "Old message in archive",
+      "type": "Generic"
+    }
+  ],
+  "title": "Zoe Archive",
+  "thread_path": "archived_threads/zoe_ARCH"
+}

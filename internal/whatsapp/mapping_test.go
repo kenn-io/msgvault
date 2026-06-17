@@ -2,7 +2,11 @@ package whatsapp
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestNormalizePhone(t *testing.T) {
@@ -19,9 +23,7 @@ func TestNormalizePhone(t *testing.T) {
 
 	for _, tt := range tests {
 		got := normalizePhone(tt.user, tt.server)
-		if got != tt.want {
-			t.Errorf("normalizePhone(%q, %q) = %q, want %q", tt.user, tt.server, got, tt.want)
-		}
+		assertpkg.Equal(t, tt.want, got, "normalizePhone(%q, %q)", tt.user, tt.server)
 	}
 }
 
@@ -45,37 +47,25 @@ func TestMapMediaType(t *testing.T) {
 
 	for _, tt := range tests {
 		got := mapMediaType(tt.waType)
-		if got != tt.want {
-			t.Errorf("mapMediaType(%d) = %q, want %q", tt.waType, got, tt.want)
-		}
+		assertpkg.Equal(t, tt.want, got, "mapMediaType(%d)", tt.waType)
 	}
 }
 
 func TestIsMediaType(t *testing.T) {
-	if !isMediaType(1) {
-		t.Error("isMediaType(1) should be true (image)")
-	}
-	if isMediaType(0) {
-		t.Error("isMediaType(0) should be false (text)")
-	}
-	if isMediaType(7) {
-		t.Error("isMediaType(7) should be false (system)")
-	}
+	assertpkg.True(t, isMediaType(1), "isMediaType(1) should be true (image)")
+	assertpkg.False(t, isMediaType(0), "isMediaType(0) should be false (text)")
+	assertpkg.False(t, isMediaType(7), "isMediaType(7) should be false (system)")
 }
 
 func TestIsSkippedType(t *testing.T) {
 	skipped := []int{7, 9, 10, 15, 64, 66, 99, 11}
 	for _, typ := range skipped {
-		if !isSkippedType(typ) {
-			t.Errorf("isSkippedType(%d) should be true", typ)
-		}
+		assertpkg.True(t, isSkippedType(typ), "isSkippedType(%d) should be true", typ)
 	}
 
 	notSkipped := []int{0, 1, 2, 3, 4, 5, 13, 90}
 	for _, typ := range notSkipped {
-		if isSkippedType(typ) {
-			t.Errorf("isSkippedType(%d) should be false", typ)
-		}
+		assertpkg.False(t, isSkippedType(typ), "isSkippedType(%d) should be false", typ)
 	}
 }
 
@@ -110,29 +100,22 @@ func TestIsGroupChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isGroupChat(tt.chat)
-			if got != tt.want {
-				t.Errorf("isGroupChat() = %v, want %v", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "isGroupChat()")
 		})
 	}
 }
 
 func TestMapConversation(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Direct chat.
 	direct := waChat{
 		RawString: "447700900000@s.whatsapp.net",
 		GroupType: 0,
 	}
 	id, typ, title := mapConversation(direct)
-	if id != "447700900000@s.whatsapp.net" {
-		t.Errorf("direct chat sourceConvID = %q, want %q", id, "447700900000@s.whatsapp.net")
-	}
-	if typ != "direct_chat" {
-		t.Errorf("direct chat convType = %q, want %q", typ, "direct_chat")
-	}
-	if title != "" {
-		t.Errorf("direct chat title = %q, want empty", title)
-	}
+	assert.Equal("447700900000@s.whatsapp.net", id, "direct chat sourceConvID")
+	assert.Equal("direct_chat", typ, "direct chat convType")
+	assert.Empty(title, "direct chat title")
 
 	// Group chat.
 	group := waChat{
@@ -142,15 +125,9 @@ func TestMapConversation(t *testing.T) {
 		Subject:   sql.NullString{String: "Family Group", Valid: true},
 	}
 	id, typ, title = mapConversation(group)
-	if id != "120363001234567890@g.us" {
-		t.Errorf("group chat sourceConvID = %q", id)
-	}
-	if typ != "group_chat" {
-		t.Errorf("group chat convType = %q, want %q", typ, "group_chat")
-	}
-	if title != "Family Group" {
-		t.Errorf("group chat title = %q, want %q", title, "Family Group")
-	}
+	assert.Equal("120363001234567890@g.us", id, "group chat sourceConvID")
+	assert.Equal("group_chat", typ, "group chat convType")
+	assert.Equal("Family Group", title, "group chat title")
 
 	// Group with group_type=0 but g.us server (e.g. WhatsApp Community sub-groups).
 	community := waChat{
@@ -160,15 +137,12 @@ func TestMapConversation(t *testing.T) {
 		Subject:   sql.NullString{String: "AI Impact", Valid: true},
 	}
 	_, typ, title = mapConversation(community)
-	if typ != "group_chat" {
-		t.Errorf("g.us with group_type=0: convType = %q, want %q", typ, "group_chat")
-	}
-	if title != "AI Impact" {
-		t.Errorf("g.us with group_type=0: title = %q, want %q", title, "AI Impact")
-	}
+	assert.Equal("group_chat", typ, "g.us with group_type=0: convType")
+	assert.Equal("AI Impact", title, "g.us with group_type=0: title")
 }
 
 func TestMapMessage(t *testing.T) {
+	assert := assertpkg.New(t)
 	msg := waMessage{
 		RowID:       42,
 		ChatRowID:   1,
@@ -182,56 +156,35 @@ func TestMapMessage(t *testing.T) {
 	senderID := sql.NullInt64{Int64: 99, Valid: true}
 	result := mapMessage(msg, 10, 20, senderID)
 
-	if result.ConversationID != 10 {
-		t.Errorf("ConversationID = %d, want 10", result.ConversationID)
-	}
-	if result.SourceID != 20 {
-		t.Errorf("SourceID = %d, want 20", result.SourceID)
-	}
-	if result.SourceMessageID != "ABC123" {
-		t.Errorf("SourceMessageID = %q, want %q", result.SourceMessageID, "ABC123")
-	}
-	if result.MessageType != "whatsapp" {
-		t.Errorf("MessageType = %q, want %q", result.MessageType, "whatsapp")
-	}
-	if !result.IsFromMe {
-		t.Error("IsFromMe should be true")
-	}
-	if !result.SentAt.Valid {
-		t.Error("SentAt should be valid")
-	}
-	if result.SentAt.Time.Unix() != 1700000000 {
-		t.Errorf("SentAt Unix = %d, want 1700000000", result.SentAt.Time.Unix())
-	}
-	if !result.Snippet.Valid || result.Snippet.String != "Hello world" {
-		t.Errorf("Snippet = %v, want 'Hello world'", result.Snippet)
-	}
-	if result.HasAttachments {
-		t.Error("HasAttachments should be false for text message")
-	}
+	assert.Equal(int64(10), result.ConversationID)
+	assert.Equal(int64(20), result.SourceID)
+	assert.Equal("ABC123", result.SourceMessageID)
+	assert.Equal("whatsapp", result.MessageType)
+	assert.True(result.IsFromMe, "IsFromMe should be true")
+	assert.True(result.SentAt.Valid, "SentAt should be valid")
+	assert.Equal(int64(1700000000), result.SentAt.Time.Unix(), "SentAt Unix")
+	assert.True(result.Snippet.Valid, "Snippet valid")
+	assert.Equal("Hello world", result.Snippet.String, "Snippet")
+	assert.False(result.HasAttachments, "HasAttachments should be false for text message")
 }
 
 func TestMapMessageSnippetTruncation(t *testing.T) {
 	// Create a message with text longer than 100 characters.
-	longText := ""
-	for i := 0; i < 150; i++ {
-		longText += "x"
+	var longText strings.Builder
+	for range 150 {
+		longText.WriteString("x")
 	}
 
 	msg := waMessage{
 		KeyID:       "LONG1",
 		Timestamp:   1700000000000,
 		MessageType: 0,
-		TextData:    sql.NullString{String: longText, Valid: true},
+		TextData:    sql.NullString{String: longText.String(), Valid: true},
 	}
 
 	result := mapMessage(msg, 1, 1, sql.NullInt64{})
-	if !result.Snippet.Valid {
-		t.Fatal("Snippet should be valid")
-	}
-	if len([]rune(result.Snippet.String)) != 100 {
-		t.Errorf("Snippet rune count = %d, want 100", len([]rune(result.Snippet.String)))
-	}
+	requirepkg.True(t, result.Snippet.Valid, "Snippet should be valid")
+	assertpkg.Len(t, []rune(result.Snippet.String), 100, "Snippet rune count")
 }
 
 func TestMapGroupRole(t *testing.T) {
@@ -247,9 +200,7 @@ func TestMapGroupRole(t *testing.T) {
 
 	for _, tt := range tests {
 		got := mapGroupRole(tt.admin)
-		if got != tt.want {
-			t.Errorf("mapGroupRole(%d) = %q, want %q", tt.admin, got, tt.want)
-		}
+		assertpkg.Equal(t, tt.want, got, "mapGroupRole(%d)", tt.admin)
 	}
 }
 
@@ -257,22 +208,16 @@ func TestMapReaction(t *testing.T) {
 	r := waReaction{
 		ReactionValue: sql.NullString{String: "❤️", Valid: true},
 	}
-	typ, val := mapReaction(r)
-	if typ != "emoji" {
-		t.Errorf("reaction type = %q, want %q", typ, "emoji")
-	}
-	if val != "❤️" {
-		t.Errorf("reaction value = %q, want %q", val, "❤️")
-	}
+	val := mapReaction(r)
+	assertpkg.Equal(t, "emoji", reactionTypeEmoji, "reaction type")
+	assertpkg.Equal(t, "❤️", val, "reaction value")
 
 	// Empty reaction.
 	empty := waReaction{
 		ReactionValue: sql.NullString{},
 	}
-	_, val = mapReaction(empty)
-	if val != "" {
-		t.Errorf("empty reaction value = %q, want empty", val)
-	}
+	val = mapReaction(empty)
+	assertpkg.Empty(t, val, "empty reaction value")
 }
 
 func TestResolveLidSender(t *testing.T) {
@@ -316,9 +261,7 @@ func TestResolveLidSender(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveLidSender(tt.jidRowID, tt.server, lidMap)
-			if got != tt.want {
-				t.Errorf("resolveLidSender() = %q, want %q", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "resolveLidSender()")
 		})
 	}
 }
@@ -331,9 +274,7 @@ func TestChatTitle(t *testing.T) {
 		Server:    "g.us",
 		RawString: "120363001234567890@g.us",
 	}
-	if chatTitle(group) != "Work Chat" {
-		t.Errorf("chatTitle(group) = %q, want %q", chatTitle(group), "Work Chat")
-	}
+	assertpkg.Equal(t, "Work Chat", chatTitle(group), "chatTitle(group)")
 
 	// Direct chat.
 	direct := waChat{
@@ -341,7 +282,5 @@ func TestChatTitle(t *testing.T) {
 		Server:    "s.whatsapp.net",
 		RawString: "447700900000@s.whatsapp.net",
 	}
-	if chatTitle(direct) != "+447700900000" {
-		t.Errorf("chatTitle(direct) = %q, want %q", chatTitle(direct), "+447700900000")
-	}
+	assertpkg.Equal(t, "+447700900000", chatTitle(direct), "chatTitle(direct)")
 }

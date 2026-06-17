@@ -1,0 +1,24 @@
+{
+  "participants": ["Test User", "Alice Example", "Bob Builder"],
+  "threadName": "Weekend crew",
+  "messages": [
+    {
+      "senderName": "Alice Example",
+      "text": "Plans?",
+      "timestamp": 1600000000000,
+      "type": "Generic",
+      "isUnsent": false,
+      "media": [],
+      "reactions": []
+    },
+    {
+      "senderName": "Bob Builder",
+      "text": "",
+      "timestamp": 1600000060000,
+      "type": "Generic",
+      "isUnsent": false,
+      "media": [{"uri": "./media/photo.jpg"}],
+      "reactions": []
+    }
+  ]
+}

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // validateRelativePath checks that name is a relative path that stays within dir.
@@ -51,17 +54,11 @@ func validateRelativePath(dir, name string) error {
 func WriteFile(t *testing.T, dir, name string, content []byte) string {
 	t.Helper()
 
-	if err := validateRelativePath(dir, name); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, validateRelativePath(dir, name), "WriteFile")
 
 	path := filepath.Join(dir, filepath.Clean(name))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("create dir: %v", err)
-	}
-	if err := os.WriteFile(path, content, 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755), "create dir")
+	require.NoError(t, os.WriteFile(path, content, 0644), "write file") //nolint:gosec // shared test-fixture writer; 0644 fixtures are not a real-world threat
 	return path
 }
 
@@ -70,9 +67,7 @@ func ReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file %s: %v", path, err)
-	}
+	require.NoErrorf(t, err, "read file %s", path)
 	return content
 }
 
@@ -81,18 +76,15 @@ func AssertFileContent(t *testing.T, path string, expected string) {
 	t.Helper()
 
 	content := ReadFile(t, path)
-	if string(content) != expected {
-		t.Errorf("file content mismatch\nexpected: %q\ngot:      %q", expected, content)
-	}
+	assert.Equalf(t, expected, string(content), "file content mismatch")
 }
 
 // MustExist fails the test if the path does not exist or cannot be accessed.
 func MustExist(t *testing.T, path string) {
 	t.Helper()
 
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected %s to exist: %v", path, err)
-	}
+	_, err := os.Stat(path)
+	require.NoErrorf(t, err, "expected %s to exist", path)
 }
 
 // MustNotExist fails the test if the path exists or if there's an error
@@ -101,12 +93,8 @@ func MustNotExist(t *testing.T, path string) {
 	t.Helper()
 
 	_, err := os.Stat(path)
-	if err == nil {
-		t.Fatalf("expected %s to not exist", path)
-	}
-	if !os.IsNotExist(err) {
-		t.Fatalf("unexpected error checking %s: %v", path, err)
-	}
+	require.Errorf(t, err, "expected %s to not exist", path)
+	require.Truef(t, os.IsNotExist(err), "unexpected error checking %s: %v", path, err)
 }
 
 // WriteAndVerifyFile writes content to a file, asserts it exists, and verifies

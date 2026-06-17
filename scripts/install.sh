@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="wesm/msgvault"
+REPO="kenn-io/msgvault"
 BINARY_NAME="msgvault"
 
 # Colors
@@ -60,12 +60,25 @@ download() {
 
 # Get latest release version
 get_latest_version() {
-    local url="https://api.github.com/repos/${REPO}/releases/latest"
+    # Use the HTML /releases/latest endpoint, which 302-redirects to
+    # /releases/tag/<version>. Unlike api.github.com it is not rate-limited
+    # at 60 req/hr per IP, so users behind shared NAT / VPN don't get 403.
+    local url="https://github.com/${REPO}/releases/latest"
+    local final_url=""
     if command -v curl &>/dev/null; then
-        curl -fsSL "$url" | grep '"tag_name"' | head -1 | cut -d'"' -f4
+        final_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url") || return 1
     elif command -v wget &>/dev/null; then
-        wget -qO- "$url" | grep '"tag_name"' | head -1 | cut -d'"' -f4
+        final_url=$(wget --spider -S "$url" 2>&1 \
+            | awk 'tolower($1)=="location:" {print $2}' \
+            | tail -1 \
+            | tr -d '\r\n') || return 1
+    else
+        return 1
     fi
+    case "$final_url" in
+        */releases/tag/*) echo "${final_url##*/releases/tag/}" ;;
+        *) return 1 ;;
+    esac
 }
 
 # Verify checksum

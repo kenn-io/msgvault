@@ -209,9 +209,9 @@ func (p *Parser) Parse(queryStr string) *Query {
 			continue
 		}
 
-		if idx := strings.Index(token, ":"); idx != -1 {
-			op := strings.ToLower(token[:idx])
-			value := unquote(token[idx+1:])
+		if before, after, ok := strings.Cut(token, ":"); ok {
+			op := strings.ToLower(before)
+			value := unquote(after)
 
 			if handler, ok := operators[op]; ok {
 				handler(q, value, now)

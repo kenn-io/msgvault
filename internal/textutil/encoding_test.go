@@ -3,14 +3,17 @@ package textutil
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/traditionalchinese"
 
-	"github.com/wesm/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestEnsureUTF8_AlreadyValid(t *testing.T) {
@@ -31,10 +34,8 @@ func TestEnsureUTF8_AlreadyValid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := EnsureUTF8(string(tt.input))
-			if result != tt.expected {
-				t.Errorf("got %q, want %q", result, tt.expected)
-			}
-			testutil.AssertValidUTF8(t, result)
+			assertpkg.Equal(t, tt.expected, result)
+			assertpkg.True(t, utf8.ValidString(result), "result is not valid UTF-8: %q", result)
 		})
 	}
 }
@@ -57,10 +58,8 @@ func TestEnsureUTF8_Windows1252(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := EnsureUTF8(string(tt.input))
-			if result != tt.expected {
-				t.Errorf("got %q, want %q", result, tt.expected)
-			}
-			testutil.AssertValidUTF8(t, result)
+			assertpkg.Equal(t, tt.expected, result)
+			assertpkg.True(t, utf8.ValidString(result), "result is not valid UTF-8: %q", result)
 		})
 	}
 }
@@ -82,10 +81,8 @@ func TestEnsureUTF8_Latin1(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := EnsureUTF8(string(tt.input))
-			if result != tt.expected {
-				t.Errorf("got %q, want %q", result, tt.expected)
-			}
-			testutil.AssertValidUTF8(t, result)
+			assertpkg.Equal(t, tt.expected, result)
+			assertpkg.True(t, utf8.ValidString(result), "result is not valid UTF-8: %q", result)
 		})
 	}
 }
@@ -116,20 +113,16 @@ func TestEnsureUTF8_AsianEncodings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			result := EnsureUTF8(string(tt.input))
-			testutil.AssertValidUTF8(t, result)
-			if result == "" {
-				t.Error("result is empty")
-			}
+			assert.True(utf8.ValidString(result), "result is not valid UTF-8: %q", result)
+			assert.NotEmpty(result, "result is empty")
 			// Verify no replacement characters (indicates failed decode)
-			if strings.ContainsRune(result, '\ufffd') {
-				t.Errorf("result contains replacement character, suggesting decode failure: %q", result)
-			}
+			assert.False(strings.ContainsRune(result, '\ufffd'),
+				"result contains replacement character, suggesting decode failure: %q", result)
 			// Verify correctness: output must contain expected substrings
 			for _, substr := range tt.expectedContains {
-				if !strings.Contains(result, substr) {
-					t.Errorf("result missing expected substring %q, got: %q", substr, result)
-				}
+				assert.Containsf(result, substr, "result missing expected substring")
 			}
 		})
 	}
@@ -155,8 +148,10 @@ func TestEnsureUTF8_MixedContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := EnsureUTF8(string(tt.input))
-			testutil.AssertValidUTF8(t, result)
-			testutil.AssertContainsAll(t, result, tt.contains)
+			assertpkg.True(t, utf8.ValidString(result), "result is not valid UTF-8: %q", result)
+			for _, sub := range tt.contains {
+				assertpkg.Contains(t, result, sub)
+			}
 		})
 	}
 }
@@ -176,10 +171,8 @@ func TestSanitizeUTF8(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := SanitizeUTF8(tt.input)
-			if result != tt.expected {
-				t.Errorf("SanitizeUTF8(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-			testutil.AssertValidUTF8(t, result)
+			assertpkg.Equalf(t, tt.expected, result, "SanitizeUTF8(%q)", tt.input)
+			assertpkg.True(t, utf8.ValidString(result), "result is not valid UTF-8: %q", result)
 		})
 	}
 }
@@ -214,25 +207,22 @@ func TestGetEncodingByName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.charset, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			enc := GetEncodingByName(tt.charset)
 			if tt.wantNil {
-				if enc != nil {
-					t.Errorf("GetEncodingByName(%q) = %v, want nil", tt.charset, enc)
-				}
+				assert.Nilf(enc, "GetEncodingByName(%q)", tt.charset)
 				return
 			}
-			if enc == nil {
-				t.Fatalf("GetEncodingByName(%q) = nil, want encoding", tt.charset)
-			}
+			require.NotNilf(enc, "GetEncodingByName(%q) = nil, want encoding", tt.charset)
 			// Verify encoding identity by decoding a characteristic byte
 			if tt.verifyByte != 0 {
 				decoded, err := enc.NewDecoder().Bytes([]byte{tt.verifyByte})
-				if err != nil {
-					t.Fatalf("decode failed: %v", err)
-				}
+				require.NoError(err, "decode failed")
 				got := []rune(string(decoded))
-				if len(got) != 1 || got[0] != tt.wantRune {
-					t.Errorf("decoding 0x%02x: got %q, want %q", tt.verifyByte, string(got), string(tt.wantRune))
+				if assert.Lenf(got, 1, "decoding 0x%02x: got %q, want %q", tt.verifyByte, string(got), string(tt.wantRune)) {
+					assert.Equalf(tt.wantRune, got[0],
+						"decoding 0x%02x: got %q, want %q", tt.verifyByte, string(got), string(tt.wantRune))
 				}
 			}
 		})
@@ -256,16 +246,10 @@ func TestGetEncodingByName_DecodesCorrectly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encoding := GetEncodingByName(tt.charset)
-			if encoding == nil {
-				t.Fatalf("GetEncodingByName(%q) returned nil", tt.charset)
-			}
+			requirepkg.NotNilf(t, encoding, "GetEncodingByName(%q) returned nil", tt.charset)
 			decoded, err := encoding.NewDecoder().Bytes(tt.input)
-			if err != nil {
-				t.Fatalf("decode failed: %v", err)
-			}
-			if string(decoded) != tt.expected {
-				t.Errorf("decoded %q, want %q", string(decoded), tt.expected)
-			}
+			requirepkg.NoError(t, err, "decode failed")
+			assertpkg.Equal(t, tt.expected, string(decoded))
 		})
 	}
 }
@@ -287,24 +271,19 @@ func TestGetEncodingByName_MatchesExpectedEncodings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.charset, func(t *testing.T) {
+			require := requirepkg.New(t)
 			enc := GetEncodingByName(tt.charset)
 			expected := GetEncodingByName(tt.wantName)
-			if enc == nil || expected == nil {
-				t.Fatalf("encoding is nil")
-			}
+			require.NotNil(enc, "encoding is nil")
+			require.NotNil(expected, "expected encoding is nil")
 			// Verify they decode the same way
 			testBytes := []byte{0x80, 0x92, 0xe9, 0xf1}
 			got, err := enc.NewDecoder().Bytes(testBytes)
-			if err != nil {
-				t.Fatalf("decoder error for %q: %v", tt.charset, err)
-			}
+			require.NoErrorf(err, "decoder error for %q", tt.charset)
 			want, err := expected.NewDecoder().Bytes(testBytes)
-			if err != nil {
-				t.Fatalf("decoder error for %q: %v", tt.wantName, err)
-			}
-			if string(got) != string(want) {
-				t.Errorf("%q and %q decode differently: %q vs %q", tt.charset, tt.wantName, got, want)
-			}
+			require.NoErrorf(err, "decoder error for %q", tt.wantName)
+			assertpkg.Equalf(t, string(want), string(got),
+				"%q and %q decode differently", tt.charset, tt.wantName)
 		})
 	}
 }
@@ -358,16 +337,10 @@ func TestEncodingIdentity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			enc := GetEncodingByName(tt.charset)
-			if enc == nil {
-				t.Fatalf("GetEncodingByName(%q) returned nil", tt.charset)
-			}
+			requirepkg.NotNilf(t, enc, "GetEncodingByName(%q) returned nil", tt.charset)
 			decoded, err := enc.NewDecoder().Bytes(tt.input)
-			if err != nil {
-				t.Fatalf("decode error: %v", err)
-			}
-			if string(decoded) != tt.expected {
-				t.Errorf("decoded %q, want %q", string(decoded), tt.expected)
-			}
+			requirepkg.NoError(t, err, "decode error")
+			assertpkg.Equal(t, tt.expected, string(decoded))
 		})
 	}
 }
@@ -417,23 +390,16 @@ func TestGetEncodingByName_ReturnsCorrectType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.charset, func(t *testing.T) {
+			require := requirepkg.New(t)
 			enc := GetEncodingByName(tt.charset)
-			if enc == nil {
-				t.Fatalf("GetEncodingByName(%q) returned nil", tt.charset)
-			}
+			require.NotNilf(enc, "GetEncodingByName(%q) returned nil", tt.charset)
 			for i, input := range tt.inputs {
 				got, err := enc.NewDecoder().Bytes(input)
-				if err != nil {
-					t.Fatalf("decoder error on input[%d] %x: %v", i, input, err)
-				}
+				require.NoErrorf(err, "decoder error on input[%d] %x", i, input)
 				want, err := tt.expected.NewDecoder().Bytes(input)
-				if err != nil {
-					t.Fatalf("expected decoder error on input[%d] %x: %v", i, input, err)
-				}
-				if string(got) != string(want) {
-					t.Errorf("GetEncodingByName(%q) decodes input[%d] %x as %q, expected encoding decodes as %q",
-						tt.charset, i, input, got, want)
-				}
+				require.NoErrorf(err, "expected decoder error on input[%d] %x", i, input)
+				assertpkg.Equalf(t, string(want), string(got),
+					"GetEncodingByName(%q) decodes input[%d] %x differently", tt.charset, i, input)
 			}
 		})
 	}
@@ -463,9 +429,7 @@ func TestTruncateRunes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := TruncateRunes(tt.input, tt.maxRunes)
-			if result != tt.expected {
-				t.Errorf("TruncateRunes(%q, %d) = %q, want %q", tt.input, tt.maxRunes, result, tt.expected)
-			}
+			assertpkg.Equalf(t, tt.expected, result, "TruncateRunes(%q, %d)", tt.input, tt.maxRunes)
 		})
 	}
 }
@@ -494,9 +458,7 @@ func TestFirstLine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := FirstLine(tt.input)
-			if result != tt.expected {
-				t.Errorf("FirstLine(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
+			assertpkg.Equalf(t, tt.expected, result, "FirstLine(%q)", tt.input)
 		})
 	}
 }
@@ -528,9 +490,7 @@ func TestSanitizeTerminal(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := SanitizeTerminal(tt.input)
-			if got != tt.want {
-				t.Errorf("SanitizeTerminal(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assertpkg.Equalf(t, tt.want, got, "SanitizeTerminal(%q)", tt.input)
 		})
 	}
 }

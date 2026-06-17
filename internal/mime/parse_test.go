@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/jhillyerd/enmime"
-	testemail "github.com/wesm/msgvault/internal/testutil/email"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 // emailOptions is an alias for testemail.Options for local convenience.
@@ -20,9 +22,7 @@ func makeRawEmail(opts emailOptions) []byte {
 func mustParse(t *testing.T, raw []byte) *Message {
 	t.Helper()
 	msg, err := Parse(raw)
-	if err != nil {
-		t.Fatalf("Parse() failed: %v", err)
-	}
+	requirepkg.NoError(t, err, "Parse() failed")
 	return msg
 }
 
@@ -32,28 +32,15 @@ func parseEmail(t *testing.T, opts emailOptions) *Message {
 	return mustParse(t, makeRawEmail(opts))
 }
 
-// assertSubject checks that msg.Subject equals want.
-func assertSubject(t *testing.T, msg *Message, want string) {
-	t.Helper()
-	if msg.Subject != want {
-		t.Errorf("Subject = %q, want %q", msg.Subject, want)
-	}
-}
-
 // assertAddress checks that got has exactly wantLen elements and got[idx] has the expected email and (optionally) domain.
 func assertAddress(t *testing.T, got []Address, wantLen, idx int, wantEmail, wantDomain string) {
 	t.Helper()
-	if len(got) != wantLen {
-		t.Fatalf("Address slice length = %d, want %d", len(got), wantLen)
-	}
-	if idx < 0 || idx >= len(got) {
-		t.Fatalf("idx %d out of bounds for slice of length %d", idx, len(got))
-	}
-	if got[idx].Email != wantEmail {
-		t.Errorf("Address[%d].Email = %q, want %q", idx, got[idx].Email, wantEmail)
-	}
-	if wantDomain != "" && got[idx].Domain != wantDomain {
-		t.Errorf("Address[%d].Domain = %q, want %q", idx, got[idx].Domain, wantDomain)
+	requirepkg.Len(t, got, wantLen, "Address slice length")
+	requirepkg.GreaterOrEqual(t, idx, 0, "idx %d out of bounds for slice of length %d", idx, len(got))
+	requirepkg.Less(t, idx, len(got), "idx %d out of bounds for slice of length %d", idx, len(got))
+	assertpkg.Equal(t, wantEmail, got[idx].Email, "Address[%d].Email", idx)
+	if wantDomain != "" {
+		assertpkg.Equal(t, wantDomain, got[idx].Domain, "Address[%d].Domain", idx)
 	}
 }
 
@@ -73,9 +60,7 @@ func TestExtractDomain(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.email, func(t *testing.T) {
 			got := extractDomain(tc.email)
-			if got != tc.domain {
-				t.Errorf("extractDomain(%q) = %q, want %q", tc.email, got, tc.domain)
-			}
+			assertpkg.Equal(t, tc.domain, got, "extractDomain(%q)", tc.email)
 		})
 	}
 }
@@ -95,7 +80,7 @@ func TestParseReferences(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
 			got := parseReferences(tc.input)
-			testemail.AssertStringSliceEqual(t, got, tc.want, "parseReferences("+tc.input+")")
+			assertpkg.Equal(t, tc.want, got, "parseReferences(%q)", tc.input)
 		})
 	}
 }
@@ -137,9 +122,7 @@ func TestHasNumericOffset(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
 			got := hasNumericOffset(tc.input)
-			if got != tc.want {
-				t.Errorf("hasNumericOffset(%q) = %v, want %v", tc.input, got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, got, "hasNumericOffset(%q)", tc.input)
 		})
 	}
 }
@@ -155,9 +138,7 @@ func TestToUTC(t *testing.T) {
 
 		// Should be 22:04:05 UTC (15:04:05 + 7 hours)
 		want := time.Date(2006, 1, 2, 22, 4, 5, 0, time.UTC)
-		if !got.Equal(want) {
-			t.Errorf("toUTC() with numeric offset = %v, want %v", got, want)
-		}
+		assertpkg.True(t, got.Equal(want), "toUTC() with numeric offset = %v, want %v", got, want)
 	})
 
 	// Test with named timezone: should keep same time values but mark as UTC
@@ -170,12 +151,8 @@ func TestToUTC(t *testing.T) {
 
 		// Should be 15:04:05 UTC (same wall-clock time, different instant)
 		want := time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC)
-		if !got.Equal(want) {
-			t.Errorf("toUTC() with named timezone = %v, want %v", got, want)
-		}
-		if got.Location() != time.UTC {
-			t.Errorf("toUTC() location = %v, want UTC", got.Location())
-		}
+		assertpkg.True(t, got.Equal(want), "toUTC() with named timezone = %v, want %v", got, want)
+		assertpkg.Equal(t, time.UTC, got.Location(), "toUTC() location")
 	})
 }
 
@@ -241,22 +218,14 @@ func TestParseDate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseDate(tc.input)
-			if err != nil {
-				t.Fatalf("parseDate(%q) unexpected error: %v", tc.input, err)
-			}
+			assert := assertpkg.New(t)
+			got := parseDate(tc.input)
 			if tc.want.IsZero() {
-				if !got.IsZero() {
-					t.Errorf("parseDate(%q) = %v, want zero time", tc.input, got)
-				}
+				assert.True(got.IsZero(), "parseDate(%q) = %v, want zero time", tc.input, got)
 				return
 			}
-			if !got.Equal(tc.want) {
-				t.Errorf("parseDate(%q) = %v, want %v", tc.input, got, tc.want)
-			}
-			if got.Location() != time.UTC {
-				t.Errorf("parseDate(%q) location = %v, want UTC", tc.input, got.Location())
-			}
+			assert.True(got.Equal(tc.want), "parseDate(%q) = %v, want %v", tc.input, got, tc.want)
+			assert.Equal(time.UTC, got.Location(), "parseDate(%q) location", tc.input)
 		})
 	}
 }
@@ -322,9 +291,7 @@ func TestStripHTML(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := StripHTML(tc.input)
-			if got != tc.want {
-				t.Errorf("StripHTML() = %q, want %q", got, tc.want)
-			}
+			assertpkg.Equal(t, tc.want, got, "StripHTML()")
 		})
 	}
 }
@@ -332,21 +299,15 @@ func TestStripHTML(t *testing.T) {
 func TestMessage_GetBodyText(t *testing.T) {
 	// Prefers plain text
 	msg := &Message{BodyText: "plain", BodyHTML: "<p>html</p>"}
-	if got := msg.GetBodyText(); got != "plain" {
-		t.Errorf("GetBodyText() = %q, want %q", got, "plain")
-	}
+	assertpkg.Equal(t, "plain", msg.GetBodyText())
 
 	// Falls back to HTML
 	msg = &Message{BodyHTML: "<p>html only</p>"}
-	if got := msg.GetBodyText(); got != "html only" {
-		t.Errorf("GetBodyText() = %q, want %q", got, "html only")
-	}
+	assertpkg.Equal(t, "html only", msg.GetBodyText())
 
 	// Empty
 	msg = &Message{}
-	if got := msg.GetBodyText(); got != "" {
-		t.Errorf("GetBodyText() = %q, want empty", got)
-	}
+	assertpkg.Empty(t, msg.GetBodyText())
 }
 
 func TestMessage_GetFirstFrom(t *testing.T) {
@@ -358,16 +319,12 @@ func TestMessage_GetFirstFrom(t *testing.T) {
 	}
 
 	got := msg.GetFirstFrom()
-	if got.Email != "alice@example.com" {
-		t.Errorf("GetFirstFrom() = %v, want alice@example.com", got)
-	}
+	assertpkg.Equal(t, "alice@example.com", got.Email)
 
 	// Empty
 	msg = &Message{}
 	got = msg.GetFirstFrom()
-	if got.Email != "" {
-		t.Errorf("GetFirstFrom() on empty = %v, want empty", got)
-	}
+	assertpkg.Empty(t, got.Email)
 }
 
 // TestParse_MinimalMessage tests our Parse wrapper with a minimal valid message.
@@ -382,11 +339,9 @@ func TestParse_MinimalMessage(t *testing.T) {
 
 	assertAddress(t, msg.From, 1, 0, "sender@example.com", "example.com")
 	assertAddress(t, msg.To, 1, 0, "recipient@example.com", "")
-	assertSubject(t, msg, "Test")
+	assertpkg.Equal(t, "Test", msg.Subject)
 
-	if msg.BodyText != "Body text" {
-		t.Errorf("BodyText = %q, want %q", msg.BodyText, "Body text")
-	}
+	assertpkg.Equal(t, "Body text", msg.BodyText)
 }
 
 // TestParse_InvalidCharset verifies enmime handles malformed charsets gracefully.
@@ -399,7 +354,7 @@ func TestParse_InvalidCharset(t *testing.T) {
 	})
 
 	// Should still be able to access subject and addresses
-	assertSubject(t, msg, "Test")
+	assertpkg.Equal(t, "Test", msg.Subject)
 
 	// Body might be garbled or empty, but should not crash
 	t.Logf("Body text with invalid charset: %q", msg.BodyText)
@@ -416,13 +371,11 @@ func TestParse_Latin1Charset(t *testing.T) {
 
 	// enmime should convert Latin-1 to UTF-8
 	// é in Latin-1 is 0xe9, in UTF-8 it's 0xc3 0xa9
-	if msg.BodyText != "Café au lait" {
-		t.Errorf("BodyText = %q, want %q", msg.BodyText, "Café au lait")
-	}
+	assertpkg.Equal(t, "Café au lait", msg.BodyText)
 }
 
 // TestParse_RFC2822GroupAddress verifies RFC 2822 group address syntax is handled.
-// Group syntax: "group-name: addr1, addr2, ...;"
+// Group syntax: "group-name: addr1, addr2, ...;".
 func TestParse_RFC2822GroupAddress(t *testing.T) {
 	// Message with undisclosed-recipients group (common in BCC scenarios)
 	msg := parseEmail(t, emailOptions{
@@ -430,12 +383,10 @@ func TestParse_RFC2822GroupAddress(t *testing.T) {
 		Body: "Body",
 	})
 
-	assertSubject(t, msg, "Test")
+	assertpkg.Equal(t, "Test", msg.Subject)
 
 	// Group with no members should result in empty To list
-	if len(msg.To) != 0 {
-		t.Errorf("To = %v, want empty slice for undisclosed-recipients group", msg.To)
-	}
+	assertpkg.Empty(t, msg.To, "To should be empty for undisclosed-recipients group")
 }
 
 // TestParse_RFC2822GroupAddressWithMembers verifies group with actual addresses.
@@ -445,7 +396,7 @@ func TestParse_RFC2822GroupAddressWithMembers(t *testing.T) {
 		Body: "Body",
 	})
 
-	assertSubject(t, msg, "Test")
+	assertpkg.Equal(t, "Test", msg.Subject)
 
 	// Verify enmime flattens the group into individual recipients
 	wantEmails := []string{"alice@example.com", "bob@example.com"}
@@ -453,7 +404,7 @@ func TestParse_RFC2822GroupAddressWithMembers(t *testing.T) {
 	for i, addr := range msg.To {
 		gotEmails[i] = addr.Email
 	}
-	testemail.AssertStringSliceEqual(t, gotEmails, wantEmails, "Group Members")
+	assertpkg.Equal(t, wantEmails, gotEmails, "Group Members")
 }
 
 // TestIsBodyPart_ContentTypeWithParams tests that Content-Type with charset
@@ -498,9 +449,7 @@ func TestIsBodyPart_ContentTypeWithParams(t *testing.T) {
 				Disposition: tt.disposition,
 			}
 			got := isBodyPart(part)
-			if got != tt.wantIsBody {
-				t.Errorf("isBodyPart() = %v, want %v", got, tt.wantIsBody)
-			}
+			assertpkg.Equal(t, tt.wantIsBody, got)
 		})
 	}
 }

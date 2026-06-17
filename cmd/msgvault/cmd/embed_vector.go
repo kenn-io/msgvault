@@ -1,61 +1,90 @@
-//go:build sqlite_vec
+//go:build sqlite_vec || pgvector
 
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/sqlitevec"
+	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/pgvector"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
-func runEmbed(ctx context.Context) error {
+func runEmbed(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := sqlitevec.RegisterExtension(); err != nil {
-		return fmt.Errorf("register sqlite-vec: %w", err)
+	var (
+		backend   vector.Backend
+		vectorsDB *sql.DB
+		closeFn   func() error
+		rebind    func(string) string
+	)
+	if s.IsPostgreSQL() {
+		// pgvector embeddings live in the same Postgres database as
+		// messages — no separate vectors.db. The queue/worker layer is
+		// dialect-aware via rebind, so the build pipeline runs directly
+		// against pgx.
+		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			DB:            s.DB(),
+			Dimension:     cfg.Vector.Embeddings.Dimension,
+			SkipExtension: cfg.Vector.SkipExtensionCreate,
+		})
+		if err != nil {
+			return fmt.Errorf("open pgvector backend: %w", err)
+		}
+		backend = pgb
+		vectorsDB = pgb.DB()
+		closeFn = pgb.Close
+		rebind = (&store.PostgreSQLDialect{}).Rebind
+	} else {
+		if err := sqlitevec.RegisterExtension(); err != nil {
+			return fmt.Errorf("register sqlite-vec: %w", err)
+		}
+		vecPath := cfg.Vector.DBPath
+		if vecPath == "" {
+			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+		}
+		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			Path:      vecPath,
+			MainPath:  cfg.DatabaseDSN(),
+			Dimension: cfg.Vector.Embeddings.Dimension,
+			MainDB:    s.DB(),
+		})
+		if err != nil {
+			return fmt.Errorf("open vectors.db: %w", err)
+		}
+		backend = sb
+		vectorsDB = sb.DB()
+		closeFn = sb.Close
 	}
-
-	vecPath := cfg.Vector.DBPath
-	if vecPath == "" {
-		vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
-	}
-	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecPath,
-		MainPath:  cfg.DatabaseDSN(),
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    s.DB(),
-	})
-	if err != nil {
-		return fmt.Errorf("open vectors.db: %w", err)
-	}
-	defer func() { _ = backend.Close() }()
+	defer func() { _ = closeFn() }()
 
 	gen, rebuildInProgress, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
 		FullRebuild: embedFullRebuild,
 		Model:       cfg.Vector.Embeddings.Model,
 		Dimension:   cfg.Vector.Embeddings.Dimension,
-		Fingerprint: cfg.Vector.Embeddings.Fingerprint(),
+		Fingerprint: cfg.Vector.GenerationFingerprint(),
 		Confirm: func() bool {
 			return embedYes ||
-				confirmEmbed("Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
+				confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
 		},
-		Stderr: os.Stderr,
+		Stderr: errOut,
 	})
 	if err != nil {
 		return err
@@ -69,39 +98,44 @@ func runEmbed(ctx context.Context) error {
 		Timeout:    cfg.Vector.Embeddings.Timeout,
 		MaxRetries: cfg.Vector.Embeddings.MaxRetries,
 	})
-	totalPending, err := pendingCount(ctx, backend.DB(), gen)
+	totalPending, err := pendingCount(ctx, vectorsDB, rebind, gen)
 	if err != nil {
 		return fmt.Errorf("count pending: %w", err)
 	}
 
 	worker := embed.NewWorker(embed.WorkerDeps{
 		Backend:   backend,
-		VectorsDB: backend.DB(),
+		VectorsDB: vectorsDB,
 		MainDB:    s.DB(),
 		Client:    client,
 		Preprocess: embed.PreprocessConfig{
-			StripQuotes:     cfg.Vector.Preprocess.StripQuotesEnabled(),
-			StripSignatures: cfg.Vector.Preprocess.StripSignaturesEnabled(),
+			StripQuotes:        cfg.Vector.Preprocess.StripQuotesEnabled(),
+			StripSignatures:    cfg.Vector.Preprocess.StripSignaturesEnabled(),
+			StripHTML:          cfg.Vector.Preprocess.StripHTMLEnabled(),
+			StripBase64:        cfg.Vector.Preprocess.StripBase64Enabled(),
+			StripURLTracking:   cfg.Vector.Preprocess.StripURLTrackingEnabled(),
+			CollapseWhitespace: cfg.Vector.Preprocess.CollapseWhitespaceEnabled(),
 		},
 		MaxInputChars:   cfg.Vector.Embeddings.MaxInputChars,
 		BatchSize:       cfg.Vector.Embeddings.BatchSize,
 		EmbedTimeout:    cfg.Vector.Embeddings.Timeout,
 		EmbedMaxRetries: cfg.Vector.Embeddings.MaxRetries,
+		Rebind:          rebind,
 		TotalPending:    totalPending,
-		Progress:        newProgressPrinter(os.Stderr, totalPending, cfg.Vector.Embeddings.ETAWindow),
+		Progress:        newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 	})
 
 	if n, err := worker.ReclaimStale(ctx); err != nil {
 		return fmt.Errorf("reclaim stale: %w", err)
 	} else if n > 0 {
-		fmt.Fprintf(os.Stderr, "Reclaimed %d stale claims.\n", n)
+		_, _ = fmt.Fprintf(errOut, "Reclaimed %d stale claims.\n", n)
 	}
 
 	res, err := worker.RunOnce(ctx, gen)
 	if err != nil {
 		return fmt.Errorf("embed run: %w", err)
 	}
-	fmt.Printf("Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
+	_, _ = fmt.Fprintf(out, "Claimed: %d, succeeded: %d, failed: %d, truncated: %d\n",
 		res.Claimed, res.Succeeded, res.Failed, res.Truncated)
 
 	// Activation is a function of the generation's final state, not
@@ -109,18 +143,20 @@ func runEmbed(ctx context.Context) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		remaining, err := pendingCount(ctx, backend.DB(), gen)
+		remaining, err := pendingCount(ctx, vectorsDB, rebind, gen)
 		if err != nil {
 			return fmt.Errorf("count pending: %w", err)
 		}
 		if remaining == 0 {
-			if err := backend.ActivateGeneration(ctx, gen); err != nil {
+			// force=false: we already gated on remaining==0 above, and the
+			// backend re-asserts the seeded/no-pending gate atomically.
+			if err := backend.ActivateGeneration(ctx, gen, false); err != nil {
 				return fmt.Errorf("activate generation: %w", err)
 			}
-			fmt.Printf("Generation %d activated.\n", gen)
+			_, _ = fmt.Fprintf(out, "Generation %d activated.\n", gen)
 		} else {
-			fmt.Fprintf(os.Stderr,
-				"Generation %d still has %d pending rows; run `msgvault build-embeddings` again to finish, then it will activate automatically.\n",
+			_, _ = fmt.Fprintf(errOut,
+				"Generation %d still has %d pending rows; run `msgvault embeddings resume` again to finish, then it will activate automatically.\n",
 				gen, remaining)
 		}
 	}
@@ -138,7 +174,7 @@ type embedGenerationOpts struct {
 	// Confirm is only called when FullRebuild is true. Returns
 	// true if the user agreed to proceed.
 	Confirm func() bool
-	Stderr  *os.File
+	Stderr  io.Writer
 }
 
 // pickEmbedGeneration resolves which generation this embed run
@@ -168,14 +204,14 @@ type embedGenerationOpts struct {
 func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embedGenerationOpts) (vector.GenerationID, bool, error) {
 	if opts.FullRebuild {
 		if opts.Confirm != nil && !opts.Confirm() {
-			return 0, false, fmt.Errorf("aborted")
+			return 0, false, errors.New("aborted")
 		}
-		gen, err := backend.CreateGeneration(ctx, opts.Model, opts.Dimension)
+		gen, err := backend.CreateGeneration(ctx, opts.Model, opts.Dimension, opts.Fingerprint)
 		if err != nil {
 			return 0, false, fmt.Errorf("create generation: %w", err)
 		}
-		_, _ = fmt.Fprintf(opts.Stderr, "Building generation %d (%s:%d).\n",
-			gen, opts.Model, opts.Dimension)
+		_, _ = fmt.Fprintf(opts.Stderr, "Building generation %d (%s).\n",
+			gen, opts.Fingerprint)
 		return gen, true, nil
 	}
 
@@ -183,7 +219,7 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 	//
 	//  1. A matching in-flight rebuild gets drained even if an
 	//     (older / stale) active generation also exists — otherwise
-	//     `msgvault build-embeddings` would top up the active index forever and
+	//     `msgvault embeddings build` would top up the active index forever and
 	//     leave the new build stranded in `building`.
 	//
 	//  2. A mismatched in-flight rebuild is rejected immediately,
@@ -244,10 +280,16 @@ func pickEmbedGeneration(ctx context.Context, backend vector.Backend, opts embed
 	}
 }
 
-func pendingCount(ctx context.Context, db *sql.DB, gen vector.GenerationID) (int, error) {
+// pendingCount counts queue rows for gen. rebind translates the
+// ?-placeholder to the driver's native form; nil is treated as the
+// identity so the SQLite path is unchanged.
+func pendingCount(ctx context.Context, db *sql.DB, rebind func(string) string, gen vector.GenerationID) (int, error) {
+	if rebind == nil {
+		rebind = func(q string) string { return q }
+	}
 	var n int
 	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n); err != nil {
+		rebind(`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`), int64(gen)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("query pending: %w", err)
 	}
 	return n, nil
@@ -288,17 +330,14 @@ func newProgressPrinterWithMinInterval(w io.Writer, total int, windowSize int, m
 		usPerChar := float64(p.BatchElapsed.Microseconds()) / float64(max1(p.BatchChars))
 
 		if total > 0 && windowedRate > 0 {
-			remaining := total - p.Done
-			if remaining < 0 {
-				remaining = 0
-			}
+			remaining := max(total-p.Done, 0)
 			eta := time.Duration(float64(remaining)/windowedRate) * time.Second
 			pct := 100 * float64(p.Done) / float64(total)
-			fmt.Fprintf(w,
+			_, _ = fmt.Fprintf(w,
 				"progress: %d/%d (%.1f%%) — %.0f msg/s (last %d), %.1f ms/msg, %.2f µs/char, ETA %s\n",
 				p.Done, total, pct, windowedRate, samples, msPerMsg, usPerChar, formatETA(eta))
 		} else {
-			fmt.Fprintf(w,
+			_, _ = fmt.Fprintf(w,
 				"progress: %d embedded — %.0f msg/s (last %d), %.1f ms/msg, %.2f µs/char\n",
 				p.Done, windowedRate, samples, msPerMsg, usPerChar)
 		}
@@ -330,16 +369,4 @@ func formatETA(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%ds", s)
 	}
-}
-
-// confirmEmbed reads a y/N answer from stdin. Default is no.
-func confirmEmbed(prompt string) bool {
-	fmt.Fprint(os.Stderr, prompt+"[y/N]: ")
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y" || line == "yes"
 }

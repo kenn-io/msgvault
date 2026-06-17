@@ -1,10 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -24,10 +25,10 @@ Use --local to force local database.`,
 
 		if IsRemoteMode() {
 			if statsAccount != "" {
-				return fmt.Errorf("--account is not supported in remote mode")
+				return usageErr(cmd, errors.New("--account is not supported in remote mode"))
 			}
 			if statsCollection != "" {
-				return fmt.Errorf("--collection is not supported in remote mode")
+				return usageErr(cmd, errors.New("--collection is not supported in remote mode"))
 			}
 		}
 
@@ -74,10 +75,10 @@ Use --local to force local database.`,
 				return fmt.Errorf("get stats: %w", err)
 			}
 			logger.Info("stats",
-				"messages", dbStats.MessageCount,
+				tableMessages, dbStats.MessageCount,
 				"threads", dbStats.ThreadCount,
-				"attachments", dbStats.AttachmentCount,
-				"labels", dbStats.LabelCount,
+				tableAttachments, dbStats.AttachmentCount,
+				tableLabels, dbStats.LabelCount,
 				"accounts", dbStats.SourceCount,
 				"db_bytes", dbStats.DatabaseSize,
 			)
@@ -122,10 +123,10 @@ Use --local to force local database.`,
 			return fmt.Errorf("get stats: %w", err)
 		}
 		logger.Info("stats",
-			"messages", dbStats.MessageCount,
+			tableMessages, dbStats.MessageCount,
 			"threads", dbStats.ThreadCount,
-			"attachments", dbStats.AttachmentCount,
-			"labels", dbStats.LabelCount,
+			tableAttachments, dbStats.AttachmentCount,
+			tableLabels, dbStats.LabelCount,
 			"accounts", dbStats.SourceCount,
 			"db_bytes", dbStats.DatabaseSize,
 		)

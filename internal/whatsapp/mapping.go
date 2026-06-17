@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // isGroupChat returns true if the chat represents a group conversation.
@@ -176,12 +176,17 @@ func resolveLidSender(jidRowID sql.NullInt64, server string, lidMap map[int64]wa
 	return normalizePhone(mapping.PhoneUser, mapping.PhoneServer)
 }
 
-// mapReaction maps a WhatsApp reaction to reaction_type and reaction_value.
-func mapReaction(r waReaction) (reactionType, reactionValue string) {
+// reactionTypeEmoji is the only reaction_type WhatsApp exports; every
+// reaction is an emoji.
+const reactionTypeEmoji = "emoji"
+
+// mapReaction returns the reaction_value for a WhatsApp reaction. The
+// reaction_type is always reactionTypeEmoji, so callers supply it directly.
+func mapReaction(r waReaction) (reactionValue string) {
 	if r.ReactionValue.Valid && r.ReactionValue.String != "" {
-		return "emoji", r.ReactionValue.String
+		return r.ReactionValue.String
 	}
-	return "emoji", ""
+	return ""
 }
 
 // mapGroupRole maps a WhatsApp admin level to a conversation participant role.

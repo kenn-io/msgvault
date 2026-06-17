@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"testing"
 
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/store"
+	"github.com/stretchr/testify/assert"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestIsMicrosoftIMAPSource(t *testing.T) {
@@ -96,9 +97,7 @@ func TestIsMicrosoftIMAPSource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isMicrosoftIMAPSource(tt.src, tt.email)
-			if got != tt.want {
-				t.Errorf("isMicrosoftIMAPSource() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "isMicrosoftIMAPSource()")
 		})
 	}
 }

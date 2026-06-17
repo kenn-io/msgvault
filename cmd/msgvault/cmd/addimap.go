@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +11,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	imapclient "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/store"
+	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // passwordMethod describes how to read the password.
@@ -82,13 +83,13 @@ Examples:
   msgvault add-imap --host mail.example.com --username user@example.com --no-tls`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if imapHost == "" {
-			return fmt.Errorf("--host is required")
+			return usageErr(cmd, errors.New("--host is required"))
 		}
 		if imapUsername == "" {
-			return fmt.Errorf("--username is required")
+			return usageErr(cmd, errors.New("--username is required"))
 		}
 		if imapNoTLS && imapSTARTTLS {
-			return fmt.Errorf("--no-tls and --starttls are mutually exclusive")
+			return usageErr(cmd, errors.New("--no-tls and --starttls are mutually exclusive"))
 		}
 
 		// Build IMAP config
@@ -119,7 +120,7 @@ Examples:
 			case passwordInteractive:
 				password, err = readPasswordInteractive(prompt, promptOut)
 			case passwordNoPrompt:
-				return fmt.Errorf("cannot read password: no terminal available for prompt (try piping the password via stdin or setting MSGVAULT_IMAP_PASSWORD)")
+				return errors.New("cannot read password: no terminal available for prompt (try piping the password via stdin or setting MSGVAULT_IMAP_PASSWORD)")
 			case passwordPipe:
 				password, err = readPasswordFromPipe(os.Stdin)
 			}
@@ -161,7 +162,7 @@ Examples:
 		}
 
 		// Create source record
-		source, err := s.GetOrCreateSource("imap", identifier)
+		source, err := s.GetOrCreateSource(sourceTypeIMAP, identifier)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
@@ -208,11 +209,11 @@ func readPasswordFromPipe(r io.Reader) (string, error) {
 		if err := scanner.Err(); err != nil {
 			return "", fmt.Errorf("read password: %w", err)
 		}
-		return "", fmt.Errorf("password is required")
+		return "", errors.New("password is required")
 	}
 	password := strings.TrimRight(scanner.Text(), "\r\n")
 	if strings.TrimSpace(password) == "" {
-		return "", fmt.Errorf("password is required")
+		return "", errors.New("password is required")
 	}
 	return password, nil
 }
@@ -233,7 +234,7 @@ func readPasswordInteractive(prompt string, output io.Writer) (string, error) {
 		return "", fmt.Errorf("read password: %w", err)
 	}
 	if strings.TrimSpace(password) == "" {
-		return "", fmt.Errorf("password is required")
+		return "", errors.New("password is required")
 	}
 	return password, nil
 }

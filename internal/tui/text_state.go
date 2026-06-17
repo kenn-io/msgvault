@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/wesm/msgvault/internal/query"
+import "go.kenn.io/msgvault/internal/query"
 
 // tuiMode represents the top-level mode: Email or Texts.
 type tuiMode int

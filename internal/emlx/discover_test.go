@@ -4,66 +4,59 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
+
+// testMailboxGUID is the synthetic mailbox GUID used by the V10 fixtures.
+const testMailboxGUID = "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 
 // mkMailbox creates a mock legacy Apple Mail mailbox structure
 // with a direct Messages/ subdirectory.
 func mkMailbox(t *testing.T, base string, emlxFiles ...string) {
 	t.Helper()
 	msgDir := filepath.Join(base, "Messages")
-	if err := os.MkdirAll(msgDir, 0700); err != nil {
-		t.Fatalf("mkdir %q: %v", msgDir, err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
 	for _, name := range emlxFiles {
 		data := "10\nFrom: x\r\n\r\n"
 		path := filepath.Join(msgDir, name)
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatalf("write %q: %v", path, err)
-		}
+		requirepkg.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
 	}
 }
 
 // mkV10Mailbox creates a modern V10-style mailbox structure
 // with <GUID>/Data/Messages/ layout.
 func mkV10Mailbox(
-	t *testing.T, base, guid string, emlxFiles ...string,
+	t *testing.T, base string, emlxFiles ...string,
 ) {
 	t.Helper()
-	msgDir := filepath.Join(base, guid, "Data", "Messages")
-	if err := os.MkdirAll(msgDir, 0700); err != nil {
-		t.Fatalf("mkdir %q: %v", msgDir, err)
-	}
+	msgDir := filepath.Join(base, testMailboxGUID, "Data", "Messages")
+	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
 	for _, name := range emlxFiles {
 		data := "10\nFrom: x\r\n\r\n"
 		path := filepath.Join(msgDir, name)
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatalf("write %q: %v", path, err)
-		}
+		requirepkg.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
 	}
 }
 
 func TestDiscoverMailboxes_SingleMailbox(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "INBOX.mbox")
 	mkMailbox(t, mboxDir, "1.emlx", "2.emlx")
 
 	// Pass the .mbox directory itself.
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
-	if mailboxes[0].Label != "INBOX" {
-		t.Fatalf("Label = %q, want %q", mailboxes[0].Label, "INBOX")
-	}
-	if len(mailboxes[0].Files) != 2 {
-		t.Fatalf("Files = %d, want 2", len(mailboxes[0].Files))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	require.Equal("INBOX", mailboxes[0].Label)
+	require.Len(mailboxes[0].Files, 2)
 }
 
 func TestDiscoverMailboxes_RecursiveWalk(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	root := t.TempDir()
 	mail := filepath.Join(root, "Mail")
 
@@ -73,12 +66,8 @@ func TestDiscoverMailboxes_RecursiveWalk(t *testing.T) {
 	mkMailbox(t, filepath.Join(mail, "POP-wesmckinn@pop.gmail.com", "Sent Messages.mbox"), "1.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mail)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 4 {
-		t.Fatalf("got %d mailboxes, want 4", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 4)
 
 	labels := make(map[string]int)
 	for _, mb := range mailboxes {
@@ -96,16 +85,10 @@ func TestDiscoverMailboxes_RecursiveWalk(t *testing.T) {
 	}
 	for _, tc := range tests {
 		n, ok := labels[tc.label]
-		if !ok {
-			t.Errorf("missing label %q (have: %v)", tc.label, labels)
+		if !assert.True(ok, "missing label %q (have: %v)", tc.label, labels) {
 			continue
 		}
-		if n != tc.wantFiles {
-			t.Errorf(
-				"label %q: files = %d, want %d",
-				tc.label, n, tc.wantFiles,
-			)
-		}
+		assert.Equal(tc.wantFiles, n, "label %q files", tc.label)
 	}
 }
 
@@ -113,57 +96,38 @@ func TestDiscoverMailboxes_EmptyMailbox(t *testing.T) {
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Empty.mbox")
 	// Create Messages/ but no .emlx files.
-	if err := os.MkdirAll(
-		filepath.Join(mboxDir, "Messages"), 0700,
-	); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
 
 	mailboxes, err := DiscoverMailboxes(root)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 0 {
-		t.Fatalf("got %d mailboxes, want 0", len(mailboxes))
-	}
+	requirepkg.NoError(t, err, "DiscoverMailboxes")
+	requirepkg.Empty(t, mailboxes)
 }
 
 func TestDiscoverMailboxes_PartialEmlxSkipped(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
 	mkMailbox(t, mboxDir, "1.emlx", "2.partial.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
-	if len(mailboxes[0].Files) != 1 {
-		t.Fatalf("Files = %d, want 1 (partial should be skipped)",
-			len(mailboxes[0].Files))
-	}
-	if filepath.Base(mailboxes[0].Files[0]) != "1.emlx" {
-		t.Fatalf("Files[0] basename = %q, want %q",
-			filepath.Base(mailboxes[0].Files[0]), "1.emlx")
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	require.Len(mailboxes[0].Files, 1, "partial should be skipped")
+	require.Equal("1.emlx", filepath.Base(mailboxes[0].Files[0]))
 }
 
 func TestDiscoverMailboxes_NotADirectory(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "notdir")
-	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(file, []byte("x"), 0600), "write")
 
 	_, err := DiscoverMailboxes(file)
-	if err == nil {
-		t.Fatalf("expected error for non-directory")
-	}
+	requirepkg.Error(t, err, "expected error for non-directory")
 }
 
 func TestDiscoverMailboxes_NestedMbox(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	root := t.TempDir()
 	mail := filepath.Join(root, "Mail")
 
@@ -173,23 +137,15 @@ func TestDiscoverMailboxes_NestedMbox(t *testing.T) {
 	mkMailbox(t, filepath.Join(mail, "Parent.mbox", "Child.mbox"), "1.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mail)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 2 {
-		t.Fatalf("got %d mailboxes, want 2", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 2)
 
 	labels := make(map[string]bool)
 	for _, mb := range mailboxes {
 		labels[mb.Label] = true
 	}
-	if !labels["Parent"] {
-		t.Errorf("missing Parent label, have: %v", labels)
-	}
-	if !labels["Parent/Child"] {
-		t.Errorf("missing Parent/Child label, have: %v", labels)
-	}
+	assert.True(labels["Parent"], "missing Parent label, have: %v", labels)
+	assert.True(labels["Parent/Child"], "missing Parent/Child label, have: %v", labels)
 }
 
 func TestLabelFromPath(t *testing.T) {
@@ -237,72 +193,58 @@ func TestLabelFromPath(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := LabelFromPath(tc.root, tc.path)
-		if got != tc.want {
-			t.Errorf(
-				"LabelFromPath(%q, %q) = %q, want %q",
-				tc.root, tc.path, got, tc.want,
-			)
-		}
+		assertpkg.Equal(t, tc.want, got, "LabelFromPath(%q, %q)", tc.root, tc.path)
 	}
 }
 
 func TestDiscoverMailboxes_FilesSorted(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
 	mkMailbox(t, mboxDir, "300.emlx", "10.emlx", "2.emlx", "1.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
 
 	wantNames := []string{"1.emlx", "10.emlx", "2.emlx", "300.emlx"}
 	files := mailboxes[0].Files
-	if len(files) != len(wantNames) {
-		t.Fatalf("files count = %d, want %d", len(files), len(wantNames))
-	}
+	require.Len(files, len(wantNames))
 	for i := range wantNames {
-		got := filepath.Base(files[i])
-		if got != wantNames[i] {
-			t.Fatalf("files[%d] basename = %q, want %q", i, got, wantNames[i])
-		}
+		require.Equal(wantNames[i], filepath.Base(files[i]), "files[%d] basename", i)
 	}
 }
 
 func TestDiscoverMailboxes_V10Layout(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	root := t.TempDir()
 	v10 := filepath.Join(root, "V10")
 	acctGUID := "13C9A646-EE0A-4698-B5A2-E07FFBDDEED3"
-	mboxGUID := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	acctDir := filepath.Join(v10, acctGUID)
 
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "INBOX.mbox"),
-		mboxGUID, "1.emlx", "2.emlx", "3.emlx",
+		"1.emlx", "2.emlx", "3.emlx",
 	)
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "Sent Messages.mbox"),
-		mboxGUID, "10.emlx",
+		"10.emlx",
 	)
 	mkV10Mailbox(t,
 		filepath.Join(acctDir, "Junk.mbox"),
-		mboxGUID, "27.emlx", "28.emlx",
+		"27.emlx", "28.emlx",
 	)
 
 	mailboxes, err := DiscoverMailboxes(v10)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
+	require.NoError(err, "DiscoverMailboxes")
 	if len(mailboxes) != 3 {
 		for _, mb := range mailboxes {
 			t.Logf("  label=%q path=%q files=%d",
 				mb.Label, mb.Path, len(mb.Files))
 		}
-		t.Fatalf("got %d mailboxes, want 3", len(mailboxes))
 	}
+	require.Len(mailboxes, 3)
 
 	labels := make(map[string]int)
 	for _, mb := range mailboxes {
@@ -319,109 +261,69 @@ func TestDiscoverMailboxes_V10Layout(t *testing.T) {
 	}
 	for _, tc := range tests {
 		n, ok := labels[tc.label]
-		if !ok {
-			t.Errorf("missing label %q (have: %v)",
-				tc.label, labels)
+		if !assert.True(ok, "missing label %q (have: %v)", tc.label, labels) {
 			continue
 		}
-		if n != tc.wantFiles {
-			t.Errorf("label %q: files = %d, want %d",
-				tc.label, n, tc.wantFiles)
-		}
+		assert.Equal(tc.wantFiles, n, "label %q files", tc.label)
 	}
 }
 
 func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
-	mkV10Mailbox(t, mboxDir, guid, "1.emlx", "2.emlx")
+	mkV10Mailbox(t, mboxDir, "1.emlx", "2.emlx")
 
 	// Point directly at the .mbox directory.
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
-	if mailboxes[0].Label != "INBOX" {
-		t.Errorf("Label = %q, want %q",
-			mailboxes[0].Label, "INBOX")
-	}
-	if len(mailboxes[0].Files) != 2 {
-		t.Errorf("Files = %d, want 2",
-			len(mailboxes[0].Files))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	assert.Equal("INBOX", mailboxes[0].Label)
+	assert.Len(mailboxes[0].Files, 2)
 
 	// MsgDir should point to the GUID/Data/Messages path.
 	wantSuffix := filepath.Join(guid, "Data", "Messages")
-	if !filepath.IsAbs(mailboxes[0].MsgDir) {
-		t.Errorf("MsgDir not absolute: %q", mailboxes[0].MsgDir)
-	}
+	assert.True(filepath.IsAbs(mailboxes[0].MsgDir), "MsgDir not absolute: %q", mailboxes[0].MsgDir)
 	rel, _ := filepath.Rel(mboxDir, mailboxes[0].MsgDir)
-	if rel != wantSuffix {
-		t.Errorf("MsgDir relative = %q, want %q",
-			rel, wantSuffix)
-	}
+	assert.Equal(wantSuffix, rel, "MsgDir relative")
 }
 
 func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
-	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "Test.mbox")
-	mkV10Mailbox(t, mboxDir, guid,
+	mkV10Mailbox(t, mboxDir,
 		"1.emlx", "2.partial.emlx",
 	)
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
-	if len(mailboxes[0].Files) != 1 {
-		t.Fatalf("Files = %d, want 1", len(mailboxes[0].Files))
-	}
-	if filepath.Base(mailboxes[0].Files[0]) != "1.emlx" {
-		t.Errorf("Files[0] basename = %q, want %q",
-			filepath.Base(mailboxes[0].Files[0]), "1.emlx")
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	require.Len(mailboxes[0].Files, 1)
+	assertpkg.Equal(t, "1.emlx", filepath.Base(mailboxes[0].Files[0]))
 }
 
 func TestDiscoverMailboxes_MixedLegacyAndV10(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
 
 	// Create empty legacy Messages/ alongside populated V10 path.
-	if err := os.MkdirAll(
-		filepath.Join(mboxDir, "Messages"), 0700,
-	); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	mkV10Mailbox(t, mboxDir, guid, "1.emlx", "2.emlx")
+	require.NoError(os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
+	mkV10Mailbox(t, mboxDir, "1.emlx", "2.emlx")
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
-	if len(mailboxes[0].Files) != 2 {
-		t.Fatalf("Files = %d, want 2 (should use V10 path)",
-			len(mailboxes[0].Files))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	require.Len(mailboxes[0].Files, 2, "should use V10 path")
 
 	// MsgDir should point to the V10 path, not the empty legacy one.
 	wantSuffix := filepath.Join(guid, "Data", "Messages")
 	rel, _ := filepath.Rel(mboxDir, mailboxes[0].MsgDir)
-	if rel != wantSuffix {
-		t.Errorf("MsgDir relative = %q, want %q",
-			rel, wantSuffix)
-	}
+	assertpkg.Equal(t, wantSuffix, rel, "MsgDir relative")
 }
 
 // mkV10PartitionedMailbox creates a V10 mailbox with .emlx files in
@@ -439,13 +341,9 @@ func mkV10PartitionedMailbox(t *testing.T, base, guid string) {
 
 	writeEmlxFile := func(dir, name string) {
 		t.Helper()
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatalf("mkdir %q: %v", dir, err)
-		}
+		requirepkg.NoError(t, os.MkdirAll(dir, 0700), "mkdir %q", dir)
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600); err != nil {
-			t.Fatalf("write %q: %v", path, err)
-		}
+		requirepkg.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
 	}
 
 	writeEmlxFile(filepath.Join(dataDir, "Messages"), "1.emlx")
@@ -454,37 +352,28 @@ func mkV10PartitionedMailbox(t *testing.T, base, guid string) {
 }
 
 func TestDiscoverMailboxes_V10Partitioned(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
 	mkV10PartitionedMailbox(t, mboxDir, guid)
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
 
 	mb := mailboxes[0]
-	if mb.Label != "INBOX" {
-		t.Errorf("Label = %q, want %q", mb.Label, "INBOX")
-	}
+	assert.Equal("INBOX", mb.Label)
 
 	// Should find all 3 files: 1 top-level + 2 from partitions.
-	if len(mb.Files) != 3 {
-		t.Fatalf("Files = %v (len %d), want 3 files", mb.Files, len(mb.Files))
-	}
+	require.Len(mb.Files, 3, "want 3 files, got %v", mb.Files)
 
 	// Verify all paths are absolute and point to existing files.
 	for _, path := range mb.Files {
-		if !filepath.IsAbs(path) {
-			t.Errorf("expected absolute path, got %q", path)
-		}
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("stat %q: %v", path, err)
-		}
+		assert.True(filepath.IsAbs(path), "expected absolute path, got %q", path)
+		_, err := os.Stat(path)
+		require.NoError(err, "stat %q", path)
 	}
 
 	// Verify expected basenames are present.
@@ -493,13 +382,12 @@ func TestDiscoverMailboxes_V10Partitioned(t *testing.T) {
 		baseNames[filepath.Base(f)] = true
 	}
 	for _, want := range []string{"1.emlx", "123.emlx", "456.emlx"} {
-		if !baseNames[want] {
-			t.Errorf("missing file %q in Files", want)
-		}
+		assert.True(baseNames[want], "missing file %q in Files", want)
 	}
 }
 
 func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
@@ -507,39 +395,26 @@ func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
 	// Create the primary Messages/ dir but leave it empty.
 	// (Tests the case where Messages/ exists but is empty.)
 	primaryMsg := filepath.Join(mboxDir, guid, "Data", "Messages")
-	if err := os.MkdirAll(primaryMsg, 0700); err != nil {
-		t.Fatalf("mkdir %q: %v", primaryMsg, err)
-	}
+	require.NoError(os.MkdirAll(primaryMsg, 0700), "mkdir %q", primaryMsg)
 
 	// Place files only in partition dirs.
 	partDir := filepath.Join(mboxDir, guid, "Data", "3", "Messages")
-	if err := os.MkdirAll(partDir, 0700); err != nil {
-		t.Fatalf("mkdir %q: %v", partDir, err)
-	}
+	require.NoError(os.MkdirAll(partDir, 0700), "mkdir %q", partDir)
 	for _, name := range []string{"100.emlx", "200.emlx"} {
 		path := filepath.Join(partDir, name)
-		if err := os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600); err != nil {
-			t.Fatalf("write %q: %v", path, err)
-		}
+		require.NoError(os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
 	}
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1 (partitioned-only mailbox should be detected)", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1, "partitioned-only mailbox should be detected")
 
 	mb := mailboxes[0]
-	if len(mb.Files) != 2 {
-		t.Fatalf("Files = %v (len %d), want 2", mb.Files, len(mb.Files))
-	}
+	require.Len(mb.Files, 2, "got files %v", mb.Files)
 
 	for _, path := range mb.Files {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("stat %q: %v", path, err)
-		}
+		_, err := os.Stat(path)
+		assertpkg.NoError(t, err, "stat %q", path)
 	}
 }
 
@@ -547,6 +422,7 @@ func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
 // Data/Messages/ does not exist at all — only numeric partition dirs.
 // This matches real Apple Mail behavior for large mailboxes.
 func TestDiscoverMailboxes_V10NoTopLevelMessages(t *testing.T) {
+	require := requirepkg.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "Sent Messages.mbox")
@@ -556,9 +432,7 @@ func TestDiscoverMailboxes_V10NoTopLevelMessages(t *testing.T) {
 		filepath.Join(mboxDir, guid, "Data", "9", "9", "Messages"),
 		filepath.Join(mboxDir, guid, "Data", "0", "0", "1", "Messages"),
 	} {
-		if err := os.MkdirAll(partPath, 0700); err != nil {
-			t.Fatalf("mkdir %q: %v", partPath, err)
-		}
+		require.NoError(os.MkdirAll(partPath, 0700), "mkdir %q", partPath)
 	}
 	testFiles := map[string]string{
 		"500.emlx": filepath.Join(mboxDir, guid, "Data", "9", "9", "Messages"),
@@ -567,28 +441,19 @@ func TestDiscoverMailboxes_V10NoTopLevelMessages(t *testing.T) {
 	}
 	for name, dir := range testFiles {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600); err != nil {
-			t.Fatalf("write %q: %v", path, err)
-		}
+		require.NoError(os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
 	}
 
 	mailboxes, err := DiscoverMailboxes(mboxDir)
-	if err != nil {
-		t.Fatalf("DiscoverMailboxes: %v", err)
-	}
-	if len(mailboxes) != 1 {
-		t.Fatalf("got %d mailboxes, want 1 (no Data/Messages/ dir)", len(mailboxes))
-	}
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1, "no Data/Messages/ dir")
 
 	mb := mailboxes[0]
-	if len(mb.Files) != 3 {
-		t.Fatalf("Files = %v, want 3", mb.Files)
-	}
+	require.Len(mb.Files, 3, "got files %v", mb.Files)
 
 	for _, path := range mb.Files {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("stat %q: %v", path, err)
-		}
+		_, err := os.Stat(path)
+		assertpkg.NoError(t, err, "stat %q", path)
 	}
 }
 
@@ -607,9 +472,6 @@ func TestIsUUID(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := IsUUID(tc.input)
-		if got != tc.want {
-			t.Errorf("IsUUID(%q) = %v, want %v",
-				tc.input, got, tc.want)
-		}
+		assertpkg.Equal(t, tc.want, got, "IsUUID(%q)", tc.input)
 	}
 }

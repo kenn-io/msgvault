@@ -7,12 +7,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestBuildHandler_WritesToFileAndStderr(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dir := t.TempDir()
 	var stderr bytes.Buffer
 	fixed := time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC)
@@ -23,48 +27,28 @@ func TestBuildHandler_WritesToFileAndStderr(t *testing.T) {
 		Stderr:      &stderr,
 		Now:         func() time.Time { return fixed },
 	})
-	if err != nil {
-		t.Fatalf("BuildHandler: %v", err)
-	}
+	require.NoError(err, "BuildHandler")
 	defer res.Close()
 
 	logger := slog.New(res.Handler)
 	logger.Info("hello", "key", "value")
 
 	// Stderr got a text record.
-	if !strings.Contains(stderr.String(), "hello") {
-		t.Errorf("stderr missing msg: %q", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "run_id="+res.RunID) {
-		t.Errorf("stderr missing run_id")
-	}
+	assert.Contains(stderr.String(), "hello", "stderr missing msg")
+	assert.Contains(stderr.String(), "run_id="+res.RunID, "stderr missing run_id")
 
 	// Log file path uses today's UTC date.
 	want := filepath.Join(dir, "msgvault-2026-04-11.log")
-	if res.FilePath != want {
-		t.Errorf("FilePath = %q, want %q", res.FilePath, want)
-	}
+	assert.Equal(want, res.FilePath)
 
 	// File got a JSON record.
 	data, err := os.ReadFile(res.FilePath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
-	}
+	require.NoError(err, "read log file")
 	var rec map[string]any
-	if err := json.Unmarshal(
-		bytes.TrimSpace(data), &rec,
-	); err != nil {
-		t.Fatalf("log file is not JSON: %v\n%s", err, data)
-	}
-	if rec["msg"] != "hello" {
-		t.Errorf("msg = %v, want hello", rec["msg"])
-	}
-	if rec["run_id"] != res.RunID {
-		t.Errorf("run_id = %v, want %s", rec["run_id"], res.RunID)
-	}
-	if rec["level"] != "INFO" {
-		t.Errorf("level = %v, want INFO", rec["level"])
-	}
+	require.NoError(json.Unmarshal(bytes.TrimSpace(data), &rec), "log file is not JSON: %s", data)
+	assert.Equal("hello", rec["msg"])
+	assert.Equal(res.RunID, rec["run_id"])
+	assert.Equal("INFO", rec["level"])
 }
 
 func TestBuildHandler_FileDisabledKeepsStderr(t *testing.T) {
@@ -74,18 +58,12 @@ func TestBuildHandler_FileDisabledKeepsStderr(t *testing.T) {
 		LevelString:  "info",
 		Stderr:       &stderr,
 	})
-	if err != nil {
-		t.Fatalf("BuildHandler: %v", err)
-	}
+	requirepkg.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	if res.FilePath != "" {
-		t.Errorf("FilePath = %q, want empty", res.FilePath)
-	}
+	assertpkg.Empty(t, res.FilePath)
 	slog.New(res.Handler).Info("no-file")
-	if !strings.Contains(stderr.String(), "no-file") {
-		t.Errorf("stderr missing msg: %q", stderr.String())
-	}
+	assertpkg.Contains(t, stderr.String(), "no-file", "stderr missing msg")
 }
 
 func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
@@ -97,30 +75,24 @@ func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
 		LevelOverride: &debug,
 		Stderr:        &stderr,
 	})
-	if err != nil {
-		t.Fatalf("BuildHandler: %v", err)
-	}
+	requirepkg.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	if res.Level != slog.LevelDebug {
-		t.Errorf("Level = %v, want Debug", res.Level)
-	}
+	assertpkg.Equal(t, slog.LevelDebug, res.Level)
 	logger := slog.New(res.Handler)
 	logger.Debug("dbg-line")
-	if !strings.Contains(stderr.String(), "dbg-line") {
-		t.Errorf("debug line missing: %q", stderr.String())
-	}
+	assertpkg.Contains(t, stderr.String(), "dbg-line", "debug line missing")
 }
 
 func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "msgvault-2026-04-11.log")
 	// Seed a "big" file so BuildHandler will rotate it.
-	if err := os.WriteFile(
+	require.NoError(os.WriteFile(
 		path, bytes.Repeat([]byte("x"), 200), 0o600,
-	); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	), "seed")
 
 	res, err := BuildHandler(Options{
 		LogsDir:      dir,
@@ -132,22 +104,15 @@ func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
 			return time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
 		},
 	})
-	if err != nil {
-		t.Fatalf("BuildHandler: %v", err)
-	}
+	require.NoError(err, "BuildHandler")
 	defer res.Close()
 
 	// Old file must now live at .1; new file is path itself.
-	if _, err := os.Stat(path + ".1"); err != nil {
-		t.Errorf("rotated sibling missing: %v", err)
-	}
+	_, err = os.Stat(path + ".1")
+	require.NoError(err, "rotated sibling missing")
 	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("current log missing: %v", err)
-	}
-	if fi.Size() >= 200 {
-		t.Errorf("new log should start empty or small, size=%d", fi.Size())
-	}
+	require.NoError(err, "current log missing")
+	assert.Less(fi.Size(), int64(200), "new log should start empty or small")
 }
 
 func TestParseLevel(t *testing.T) {
@@ -162,13 +127,12 @@ func TestParseLevel(t *testing.T) {
 		"garbage": slog.LevelInfo,
 	}
 	for in, want := range cases {
-		if got := parseLevel(in); got != want {
-			t.Errorf("parseLevel(%q) = %v, want %v", in, got, want)
-		}
+		assertpkg.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
 	}
 }
 
 func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
+	assert := assertpkg.New(t)
 	var textBuf, jsonBuf bytes.Buffer
 	textH := slog.NewTextHandler(&textBuf, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
@@ -185,22 +149,11 @@ func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 	logger.Warn("warned")
 
 	// Text handler ignores debug, JSON handler keeps it.
-	if strings.Contains(textBuf.String(), "dbg") {
-		t.Errorf("text handler should not have debug, got %q",
-			textBuf.String())
-	}
-	if !strings.Contains(jsonBuf.String(), "dbg") {
-		t.Errorf("json handler missing debug, got %q", jsonBuf.String())
-	}
+	assert.NotContains(textBuf.String(), "dbg", "text handler should not have debug")
+	assert.Contains(jsonBuf.String(), "dbg", "json handler missing debug")
 	// Both handlers must see the Warn.
-	if !strings.Contains(textBuf.String(), "warned") {
-		t.Errorf("text handler missing warn: %q", textBuf.String())
-	}
-	if !strings.Contains(jsonBuf.String(), "warned") {
-		t.Errorf("json handler missing warn: %q", jsonBuf.String())
-	}
+	assert.Contains(textBuf.String(), "warned", "text handler missing warn")
+	assert.Contains(jsonBuf.String(), "warned", "json handler missing warn")
 	// Attr fan-out should include run_id in both.
-	if !strings.Contains(jsonBuf.String(), "abc123") {
-		t.Errorf("json handler lost run_id: %q", jsonBuf.String())
-	}
+	assert.Contains(jsonBuf.String(), "abc123", "json handler lost run_id")
 }

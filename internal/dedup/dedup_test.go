@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/dedup"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/dedup"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func addMessage(
@@ -25,7 +26,7 @@ func addMessage(
 	convID, err := st.EnsureConversation(
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
-	testutil.MustNoErr(t, err, "EnsureConversation")
+	requirepkg.NoError(t, err, "EnsureConversation")
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -37,7 +38,7 @@ func addMessage(
 		IsFromMe:     fromMe,
 		SizeEstimate: 1000,
 	})
-	testutil.MustNoErr(t, err, "UpsertMessage")
+	requirepkg.NoError(t, err, "UpsertMessage")
 	return id
 }
 
@@ -47,14 +48,13 @@ func assertSoftDeleted(
 	t.Helper()
 	var deletedAt sql.NullTime
 	err := st.DB().QueryRow(
-		"SELECT deleted_at FROM messages WHERE id = ?", msgID,
+		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
-	testutil.MustNoErr(t, err, "query deleted_at")
-	if wantDeleted && !deletedAt.Valid {
-		t.Errorf("message %d: deleted_at should be set", msgID)
-	}
-	if !wantDeleted && deletedAt.Valid {
-		t.Errorf("message %d: deleted_at should be NULL", msgID)
+	requirepkg.NoError(t, err, "query deleted_at")
+	if wantDeleted {
+		assertpkg.True(t, deletedAt.Valid, "message %d: deleted_at should be set", msgID)
+	} else {
+		assertpkg.False(t, deletedAt.Valid, "message %d: deleted_at should be NULL", msgID)
 	}
 }
 
@@ -66,20 +66,22 @@ func linkLabel(
 ) {
 	t.Helper()
 	lid, err := st.EnsureLabel(sourceID, sourceLabelID, name, typ)
-	testutil.MustNoErr(t, err, "EnsureLabel "+sourceLabelID)
-	testutil.MustNoErr(t,
+	requirepkg.NoError(t, err, "EnsureLabel "+sourceLabelID)
+	requirepkg.NoError(t,
 		st.LinkMessageLabel(msgID, lid),
 		"LinkMessageLabel "+sourceLabelID,
 	)
 }
 
 func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
 
 	mbox, err := st.GetOrCreateSource("mbox", "test@example.com-mbox")
-	testutil.MustNoErr(t, err, "GetOrCreateSource mbox")
+	require.NoError(err, "GetOrCreateSource mbox")
 
 	idGmail := addMessage(t, st, gmail, "gmail-1", "rfc-union", false)
 	idMbox := addMessage(t, st, mbox, "mbox-1", "rfc-union", false)
@@ -94,27 +96,19 @@ func TestEngine_Scan_UnionsLabelsOnSurvivor(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 1 {
-		t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-	}
-	if report.DuplicateMessages != 1 {
-		t.Fatalf("prune count = %d, want 1", report.DuplicateMessages)
-	}
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
+	require.Equal(1, report.DuplicateMessages, "prune count")
 
 	group := report.Groups[0]
 	survivor := group.Messages[group.Survivor]
-	if survivor.ID != idGmail {
-		t.Errorf("survivor = %d, want %d (gmail)", survivor.ID, idGmail)
-	}
+	assert.Equal(idGmail, survivor.ID, "survivor (gmail)")
 
 	summary, err := eng.Execute(
 		context.Background(), report, "batch-union",
 	)
-	testutil.MustNoErr(t, err, "Execute")
-	if summary.GroupsMerged != 1 {
-		t.Errorf("groupsMerged = %d, want 1", summary.GroupsMerged)
-	}
+	require.NoError(err, "Execute")
+	assert.Equal(1, summary.GroupsMerged, "groupsMerged")
 
 	f.AssertLabelCount(idGmail, 3)
 	assertSoftDeleted(t, st, idMbox, true)
@@ -137,17 +131,15 @@ func TestEngine_Scan_RejectsEmptyAccountSourceIDs(t *testing.T) {
 				AccountSourceIDs: tc.ids,
 			}, nil)
 			_, err := eng.Scan(context.Background())
-			if err == nil {
-				t.Fatal("expected error for empty AccountSourceIDs")
-			}
-			if !strings.Contains(err.Error(), "AccountSourceIDs must be non-empty") {
-				t.Errorf("unexpected error: %v", err)
-			}
+			requirepkg.Error(t, err, "expected error for empty AccountSourceIDs")
+			assertpkg.ErrorContains(t, err, "AccountSourceIDs must be non-empty")
 		})
 	}
 }
 
 func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -164,23 +156,18 @@ func TestEngine_SurvivorFavorsSentCopy(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 1 {
-		t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-	}
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
 
 	group := report.Groups[0]
 	survivor := group.Messages[group.Survivor]
-	if survivor.ID != idSent {
-		t.Errorf("survivor = %d, want sent copy %d",
-			survivor.ID, idSent)
-	}
-	if !survivor.IsSentCopy() {
-		t.Errorf("survivor should be a sent copy")
-	}
+	assert.Equal(idSent, survivor.ID, "survivor (sent copy)")
+	assert.True(survivor.IsSentCopy(), "survivor should be a sent copy")
 }
 
 func TestEngine_DefaultConfig_NeverStagesRemote(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -196,37 +183,33 @@ func TestEngine_DefaultConfig_NeverStagesRemote(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
+	require.NoError(err, "Scan")
 	summary, err := eng.Execute(
 		context.Background(), report, "batch-default",
 	)
-	testutil.MustNoErr(t, err, "Execute")
+	require.NoError(err, "Execute")
 
-	if summary.MessagesRemoved != 1 {
-		t.Errorf("messagesRemoved = %d, want 1", summary.MessagesRemoved)
-	}
-	if len(summary.StagedManifests) != 0 {
-		t.Errorf("stagedManifests = %d, want 0", len(summary.StagedManifests))
-	}
+	assert.Equal(1, summary.MessagesRemoved, "messagesRemoved")
+	assert.Empty(summary.StagedManifests, "stagedManifests")
 
 	mgr, err := deletion.NewManager(deletionsDir)
-	testutil.MustNoErr(t, err, "NewManager")
+	require.NoError(err, "NewManager")
 	pending, err := mgr.ListPending()
-	testutil.MustNoErr(t, err, "ListPending")
-	if len(pending) != 0 {
-		t.Errorf("pending manifests = %d, want 0", len(pending))
-	}
+	require.NoError(err, "ListPending")
+	assert.Empty(pending, "pending manifests")
 }
 
 func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
 
 	otherGmail, err := st.GetOrCreateSource("gmail", "other@example.com")
-	testutil.MustNoErr(t, err, "GetOrCreateSource otherGmail")
+	require.NoError(err, "GetOrCreateSource otherGmail")
 	mbox, err := st.GetOrCreateSource("mbox", "local.mbox")
-	testutil.MustNoErr(t, err, "GetOrCreateSource mbox")
+	require.NoError(err, "GetOrCreateSource mbox")
 
 	idWinner := addMessage(t, st, gmail, "g-1", "rfc-opt", false)
 	idLoser := addMessage(t, st, gmail, "g-2", "rfc-opt", false)
@@ -242,55 +225,37 @@ func TestEngine_OptIn_StagesOnlyWithinSameSourceID(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
+	require.NoError(err, "Scan")
 	summary, err := eng.Execute(
 		context.Background(), report, "batch-opt",
 	)
-	testutil.MustNoErr(t, err, "Execute")
+	require.NoError(err, "Execute")
 
-	if summary.MessagesRemoved != 3 {
-		t.Errorf("messagesRemoved = %d, want 3", summary.MessagesRemoved)
-	}
+	assert.Equal(3, summary.MessagesRemoved, "messagesRemoved")
 	assertSoftDeleted(t, st, idWinner, false)
 	assertSoftDeleted(t, st, idLoser, true)
 	assertSoftDeleted(t, st, idOther, true)
 	assertSoftDeleted(t, st, idMbox, true)
 
-	if len(summary.StagedManifests) != 1 {
-		t.Fatalf("stagedManifests = %d, want 1", len(summary.StagedManifests))
-	}
+	require.Len(summary.StagedManifests, 1, "stagedManifests")
 	sm := summary.StagedManifests[0]
-	if sm.Account != "test@example.com" {
-		t.Errorf("staged account = %q, want test@example.com", sm.Account)
-	}
-	if sm.MessageCount != 1 {
-		t.Errorf("staged count = %d, want 1", sm.MessageCount)
-	}
+	assert.Equal("test@example.com", sm.Account, "staged account")
+	assert.Equal(1, sm.MessageCount, "staged count")
 
 	mgr, err := deletion.NewManager(deletionsDir)
-	testutil.MustNoErr(t, err, "NewManager")
+	require.NoError(err, "NewManager")
 	pending, err := mgr.ListPending()
-	testutil.MustNoErr(t, err, "ListPending")
-	if len(pending) != 1 {
-		t.Fatalf("pending = %d, want 1", len(pending))
-	}
-	if len(pending[0].GmailIDs) != 1 || pending[0].GmailIDs[0] != "g-2" {
-		t.Errorf("manifest GmailIDs = %v, want [g-2]", pending[0].GmailIDs)
-	}
+	require.NoError(err, "ListPending")
+	require.Len(pending, 1, "pending")
+	assert.Equal([]string{"g-2"}, pending[0].GmailIDs, "manifest GmailIDs")
 
 	restored, stillExec, err := eng.Undo("batch-opt")
-	testutil.MustNoErr(t, err, "Undo")
-	if restored != 3 {
-		t.Errorf("restored = %d, want 3", restored)
-	}
-	if len(stillExec) != 0 {
-		t.Errorf("stillExec = %v, want empty", stillExec)
-	}
+	require.NoError(err, "Undo")
+	assert.Equal(int64(3), restored, "restored")
+	assert.Empty(stillExec, "stillExec")
 	pending, err = mgr.ListPending()
-	testutil.MustNoErr(t, err, "ListPending after undo")
-	if len(pending) != 0 {
-		t.Errorf("pending after undo = %d, want 0", len(pending))
-	}
+	require.NoError(err, "ListPending after undo")
+	assert.Empty(pending, "pending after undo")
 }
 
 func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
@@ -299,7 +264,7 @@ func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
 	alice := f.Source
 
 	bob, err := st.GetOrCreateSource("gmail", "bob@example.com")
-	testutil.MustNoErr(t, err, "GetOrCreateSource bob")
+	requirepkg.NoError(t, err, "GetOrCreateSource bob")
 
 	addMessage(t, st, alice, "a-1", "rfc-cross", true)
 	addMessage(t, st, bob, "b-1", "rfc-cross", false)
@@ -309,28 +274,26 @@ func TestEngine_ScopedToSingleSource_IgnoresCrossAccount(t *testing.T) {
 		Account:          "test@example.com",
 	}, nil)
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 0 {
-		t.Errorf("cross-account dedup happened: groups = %d",
-			report.DuplicateGroups)
-	}
+	requirepkg.NoError(t, err, "Scan")
+	assertpkg.Equal(t, 0, report.DuplicateGroups, "cross-account dedup happened")
 }
 
 func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
 
 	mbox, err := st.GetOrCreateSource("mbox", "test@example.com-mbox")
-	testutil.MustNoErr(t, err, "GetOrCreateSource mbox")
+	require.NoError(err, "GetOrCreateSource mbox")
 
 	id1 := addMessage(t, st, gmail, "hash-1", "", false)
 	id2 := addMessage(t, st, mbox, "hash-2", "", false)
 
 	raw1 := []byte("Received: from mx1.google.com\r\nDelivered-To: one@example.com\r\nX-Gmail-Labels: INBOX\r\nFrom: sender@example.com\r\nSubject: Meeting tomorrow\r\nDate: Mon, 1 Jan 2024 12:00:00 +0000\r\n\r\nLet's meet tomorrow at 3pm.")
 	raw2 := []byte("Received: from mx2.google.com\r\nDelivered-To: two@example.com\r\nX-Gmail-Labels: SENT\r\nAuthentication-Results: spf=pass\r\nFrom: sender@example.com\r\nSubject: Meeting tomorrow\r\nDate: Mon, 1 Jan 2024 12:00:00 +0000\r\n\r\nLet's meet tomorrow at 3pm.")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(id1, raw1), "UpsertMessageRaw id1")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(id2, raw2), "UpsertMessageRaw id2")
+	require.NoError(st.UpsertMessageRaw(id1, raw1), "UpsertMessageRaw id1")
+	require.NoError(st.UpsertMessageRaw(id2, raw2), "UpsertMessageRaw id2")
 
 	eng := dedup.NewEngine(st, dedup.Config{
 		AccountSourceIDs:    []int64{gmail.ID, mbox.ID},
@@ -339,16 +302,10 @@ func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 1 {
-		t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-	}
-	if report.ContentHashGroups != 1 {
-		t.Fatalf("contentHashGroups = %d, want 1", report.ContentHashGroups)
-	}
-	if got := report.Groups[0].KeyType; got != "normalized-hash" {
-		t.Fatalf("keyType = %q, want normalized-hash", got)
-	}
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
+	require.Equal(1, report.ContentHashGroups, "contentHashGroups")
+	require.Equal("normalized-hash", report.Groups[0].KeyType, "keyType")
 }
 
 // TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved verifies the
@@ -361,6 +318,8 @@ func TestEngine_ContentHashFallbackFindsNormalizedDuplicates(t *testing.T) {
 // The correct behaviour is to skip that content-hash group entirely —
 // total losers must equal 2 (one per MID group), never 3.
 func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -386,10 +345,10 @@ func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
 				"Body that is identical across all four copies.",
 		)
 	}
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com", "a1@example.com", "INBOX")), "raw A1")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com", "a2@example.com", "SENT")), "raw A2")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idB1, makeRaw("mx3.google.com", "b1@example.com", "INBOX")), "raw B1")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idB2, makeRaw("mx4.google.com", "b2@example.com", "SENT")), "raw B2")
+	require.NoError(st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com", "a1@example.com", "INBOX")), "raw A1")
+	require.NoError(st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com", "a2@example.com", "SENT")), "raw A2")
+	require.NoError(st.UpsertMessageRaw(idB1, makeRaw("mx3.google.com", "b1@example.com", "INBOX")), "raw B1")
+	require.NoError(st.UpsertMessageRaw(idB2, makeRaw("mx4.google.com", "b2@example.com", "SENT")), "raw B2")
 
 	eng := dedup.NewEngine(st, dedup.Config{
 		AccountSourceIDs:    []int64{gmail.ID},
@@ -398,21 +357,15 @@ func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
+	require.NoError(err, "Scan")
 
 	// Two MID groups, no content-hash group (the group with two MID
 	// survivors must be skipped, not appended).
-	if report.DuplicateGroups != 2 {
-		t.Errorf("DuplicateGroups = %d, want 2", report.DuplicateGroups)
-	}
-	if report.ContentHashGroups != 0 {
-		t.Errorf("ContentHashGroups = %d, want 0 (MID-survivor group must be skipped)", report.ContentHashGroups)
-	}
+	assert.Equal(2, report.DuplicateGroups, "DuplicateGroups")
+	assert.Equal(0, report.ContentHashGroups, "ContentHashGroups (MID-survivor group must be skipped)")
 	// One loser per MID group; the buggy code yields 3 by demoting one
 	// Message-ID survivor.
-	if report.DuplicateMessages != 2 {
-		t.Errorf("DuplicateMessages = %d, want 2 (one loser per MID group)", report.DuplicateMessages)
-	}
+	assert.Equal(2, report.DuplicateMessages, "DuplicateMessages (one loser per MID group)")
 }
 
 // TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup verifies that the
@@ -427,6 +380,8 @@ func TestEngine_ContentHash_TwoMessageIDSurvivors_BothPreserved(t *testing.T) {
 // otherwise be forced in over the sent orphan; the new skip rule prevents
 // that.
 func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
@@ -448,9 +403,9 @@ func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
 				"Identical body across all three copies.",
 		)
 	}
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com")), "raw a1")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com")), "raw a2")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(idOrphan, makeRaw("mx3.google.com")), "raw orphan")
+	require.NoError(st.UpsertMessageRaw(idA1, makeRaw("mx1.google.com")), "raw a1")
+	require.NoError(st.UpsertMessageRaw(idA2, makeRaw("mx2.google.com")), "raw a2")
+	require.NoError(st.UpsertMessageRaw(idOrphan, makeRaw("mx3.google.com")), "raw orphan")
 
 	eng := dedup.NewEngine(st, dedup.Config{
 		AccountSourceIDs:    []int64{gmail.ID},
@@ -459,51 +414,40 @@ func TestEngine_ContentHash_MIDSurvivorAndSentOrphan_SkipsGroup(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
+	require.NoError(err, "Scan")
 
 	// Expect exactly one duplicate group (the MID group). The content-hash
 	// group must be skipped to preserve the sent-copy eligibility filter.
-	if report.DuplicateGroups != 1 {
-		t.Fatalf("DuplicateGroups = %d, want 1 (only the MID group)", report.DuplicateGroups)
-	}
-	if report.ContentHashGroups != 0 {
-		t.Errorf("ContentHashGroups = %d, want 0 (sent-orphan collision must be skipped)", report.ContentHashGroups)
-	}
+	require.Equal(1, report.DuplicateGroups, "DuplicateGroups (only the MID group)")
+	assert.Equal(0, report.ContentHashGroups, "ContentHashGroups (sent-orphan collision must be skipped)")
 	// One loser from the MID group; the sent orphan stays live.
-	if report.DuplicateMessages != 1 {
-		t.Errorf("DuplicateMessages = %d, want 1 (one MID loser; orphan untouched)", report.DuplicateMessages)
-	}
+	assert.Equal(1, report.DuplicateMessages, "DuplicateMessages (one MID loser; orphan untouched)")
 
 	// Per the spec audit recommendation, pin that the orphan did not leak
 	// into the surviving MID group's Messages slice. The MID group must
 	// contain only the two MID-sharing rows.
 	mid := report.Groups[0]
-	if mid.KeyType != "message-id" {
-		t.Fatalf("Groups[0].KeyType = %q, want \"message-id\"", mid.KeyType)
-	}
-	if len(mid.Messages) != 2 {
-		t.Fatalf("MID group Messages len = %d, want 2", len(mid.Messages))
-	}
+	require.Equal("message-id", mid.KeyType, "Groups[0].KeyType")
+	require.Len(mid.Messages, 2, "MID group Messages len")
 	for _, m := range mid.Messages {
-		if m.ID == idOrphan {
-			t.Errorf("sent orphan id=%d leaked into MID group Messages — must stay out", idOrphan)
-		}
+		assert.NotEqual(idOrphan, m.ID, "sent orphan id=%d leaked into MID group Messages — must stay out", idOrphan)
 	}
 }
 
 func TestEngine_ContentHashFallbackDisabledByDefault(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	gmail := f.Source
 
 	mbox, err := st.GetOrCreateSource("mbox", "test@example.com-mbox")
-	testutil.MustNoErr(t, err, "GetOrCreateSource mbox")
+	require.NoError(err, "GetOrCreateSource mbox")
 
 	id1 := addMessage(t, st, gmail, "hash-off-1", "", false)
 	id2 := addMessage(t, st, mbox, "hash-off-2", "", false)
 	raw := []byte("Subject: No Message-ID\r\n\r\nIdentical body")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(id1, raw), "UpsertMessageRaw id1")
-	testutil.MustNoErr(t, st.UpsertMessageRaw(id2, raw), "UpsertMessageRaw id2")
+	require.NoError(st.UpsertMessageRaw(id1, raw), "UpsertMessageRaw id1")
+	require.NoError(st.UpsertMessageRaw(id2, raw), "UpsertMessageRaw id2")
 
 	eng := dedup.NewEngine(st, dedup.Config{
 		AccountSourceIDs: []int64{gmail.ID, mbox.ID},
@@ -511,10 +455,8 @@ func TestEngine_ContentHashFallbackDisabledByDefault(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 0 {
-		t.Fatalf("groups = %d, want 0", report.DuplicateGroups)
-	}
+	require.NoError(err, "Scan")
+	require.Equal(0, report.DuplicateGroups, "groups")
 }
 
 func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
@@ -524,12 +466,11 @@ func TestEngine_FormatMethodology_MentionsSentPolicy(t *testing.T) {
 		AccountSourceIDs: []int64{f.Source.ID},
 	}, nil)
 	out := eng.FormatMethodology()
-	if !strings.Contains(
+	assertpkg.Contains(t,
 		strings.ToLower(out),
 		"never merges messages across different",
-	) {
-		t.Errorf("methodology missing cross-account guarantee")
-	}
+		"methodology missing cross-account guarantee",
+	)
 }
 
 // TestEngine_FormatMethodology_SingleMemberCollection asserts that a
@@ -547,26 +488,23 @@ func TestEngine_FormatMethodology_SingleMemberCollection(t *testing.T) {
 	}, nil)
 	out := eng.FormatMethodology()
 	lower := strings.ToLower(out)
-	if strings.Contains(lower, "cross-account dedup\n  is enabled") {
-		t.Errorf("single-member collection should not advertise cross-account dedup; got:\n%s", out)
-	}
-	if strings.Contains(lower, "intentionally merges messages") {
-		t.Errorf("single-member collection should not describe intentional cross-account merging; got:\n%s", out)
-	}
-	if !strings.Contains(lower, "never merges messages across different") {
-		t.Errorf("single-member collection should fall to the same-account guarantee; got:\n%s", out)
-	}
+	assertpkg.NotContains(t, lower, "cross-account dedup\n  is enabled",
+		"single-member collection should not advertise cross-account dedup; got:\n%s", out)
+	assertpkg.NotContains(t, lower, "intentionally merges messages",
+		"single-member collection should not describe intentional cross-account merging; got:\n%s", out)
+	assertpkg.Contains(t, lower, "never merges messages across different",
+		"single-member collection should fall to the same-account guarantee; got:\n%s", out)
 }
 
 func TestEngine_SurvivorTiebreakers(t *testing.T) {
 	t.Run("raw MIME wins over no raw MIME", func(t *testing.T) {
+		require := requirepkg.New(t)
 		f := storetest.New(t)
 		st := f.Store
 
 		idNoRaw := addMessage(t, st, f.Source, "no-raw", "rfc-raw-tie", false)
 		idHasRaw := addMessage(t, st, f.Source, "has-raw", "rfc-raw-tie", false)
-		testutil.MustNoErr(t,
-			st.UpsertMessageRaw(idHasRaw, []byte("Subject: test\r\n\r\nBody")),
+		require.NoError(st.UpsertMessageRaw(idHasRaw, []byte("Subject: test\r\n\r\nBody")),
 			"UpsertMessageRaw",
 		)
 
@@ -575,14 +513,10 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 			Account:          "test",
 		}, nil)
 		report, err := eng.Scan(context.Background())
-		testutil.MustNoErr(t, err, "Scan")
-		if report.DuplicateGroups != 1 {
-			t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-		}
+		require.NoError(err, "Scan")
+		require.Equal(1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		if survivor.ID != idHasRaw {
-			t.Errorf("survivor = %d, want %d (has raw)", survivor.ID, idHasRaw)
-		}
+		assertpkg.Equal(t, idHasRaw, survivor.ID, "survivor (has raw)")
 		_ = idNoRaw
 	})
 
@@ -606,14 +540,10 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 			Account:          "test",
 		}, nil)
 		report, err := eng.Scan(context.Background())
-		testutil.MustNoErr(t, err, "Scan")
-		if report.DuplicateGroups != 1 {
-			t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-		}
+		requirepkg.NoError(t, err, "Scan")
+		requirepkg.Equal(t, 1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		if survivor.ID != idMany {
-			t.Errorf("survivor = %d, want %d (more labels)", survivor.ID, idMany)
-		}
+		assertpkg.Equal(t, idMany, survivor.ID, "survivor (more labels)")
 	})
 
 	t.Run("lower ID wins as final tiebreaker", func(t *testing.T) {
@@ -628,14 +558,10 @@ func TestEngine_SurvivorTiebreakers(t *testing.T) {
 			Account:          "test",
 		}, nil)
 		report, err := eng.Scan(context.Background())
-		testutil.MustNoErr(t, err, "Scan")
-		if report.DuplicateGroups != 1 {
-			t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-		}
+		requirepkg.NoError(t, err, "Scan")
+		requirepkg.Equal(t, 1, report.DuplicateGroups, "groups")
 		survivor := report.Groups[0].Messages[report.Groups[0].Survivor]
-		if survivor.ID != idFirst {
-			t.Errorf("survivor = %d, want %d (lower ID)", survivor.ID, idFirst)
-		}
+		assertpkg.Equal(t, idFirst, survivor.ID, "survivor (lower ID)")
 	})
 }
 
@@ -651,7 +577,7 @@ func addMessageWithFrom(
 	convID, err := st.EnsureConversation(
 		source.ID, "thread-"+srcMsgID, "Subject",
 	)
-	testutil.MustNoErr(t, err, "EnsureConversation")
+	requirepkg.NoError(t, err, "EnsureConversation")
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        source.ID,
@@ -663,11 +589,11 @@ func addMessageWithFrom(
 		IsFromMe:     false, // no is_from_me so MatchedIdentity is the deciding signal
 		SizeEstimate: 1000,
 	})
-	testutil.MustNoErr(t, err, "UpsertMessage")
+	requirepkg.NoError(t, err, "UpsertMessage")
 	if fromEmail != "" {
 		pid, pErr := st.EnsureParticipant(fromEmail, "", "")
-		testutil.MustNoErr(t, pErr, "EnsureParticipant")
-		testutil.MustNoErr(t,
+		requirepkg.NoError(t, pErr, "EnsureParticipant")
+		requirepkg.NoError(t,
 			st.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{""}),
 			"ReplaceMessageRecipients",
 		)
@@ -678,19 +604,20 @@ func addMessageWithFrom(
 // TestEngine_PerSourceIdentity verifies that identity matching is per-source:
 // an address confirmed only for source A does not count as "me" in source B.
 func TestEngine_PerSourceIdentity(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	sourceA := f.Source // already created by storetest.New
 
 	sourceB, err := st.GetOrCreateSource("mbox", "bob@example.com-mbox")
-	testutil.MustNoErr(t, err, "GetOrCreateSource sourceB")
+	require.NoError(err, "GetOrCreateSource sourceB")
 
 	const me = "me@personal.com"
 	const rfc = "rfc-identity-perscource"
 
 	// Add me@personal.com as confirmed identity only for source A.
-	testutil.MustNoErr(t,
-		st.AddAccountIdentity(sourceA.ID, me, "test"),
+	require.NoError(st.AddAccountIdentity(sourceA.ID, me, "test"),
 		"AddAccountIdentity sourceA",
 	)
 
@@ -711,10 +638,8 @@ func TestEngine_PerSourceIdentity(t *testing.T) {
 	}, nil)
 
 	report, err := eng.Scan(context.Background())
-	testutil.MustNoErr(t, err, "Scan")
-	if report.DuplicateGroups != 1 {
-		t.Fatalf("groups = %d, want 1", report.DuplicateGroups)
-	}
+	require.NoError(err, "Scan")
+	require.Equal(1, report.DuplicateGroups, "groups")
 
 	group := report.Groups[0]
 	// Find the message structs for each source.
@@ -728,17 +653,12 @@ func TestEngine_PerSourceIdentity(t *testing.T) {
 		}
 	}
 
-	if !msgA.MatchedIdentity {
-		t.Errorf("source A copy: MatchedIdentity = false, want true")
-	}
-	if msgB.MatchedIdentity {
-		t.Errorf("source B copy: MatchedIdentity = true, want false (identity not confirmed for source B)")
-	}
+	assert.True(msgA.MatchedIdentity, "source A copy: MatchedIdentity")
+	assert.False(msgB.MatchedIdentity, "source B copy: MatchedIdentity (identity not confirmed for source B)")
 
 	// Survivor should be the source A copy because it is the sent copy.
 	survivor := group.Messages[group.Survivor]
-	if survivor.ID != idA {
-		t.Errorf("survivor = %d (%s), want %d (source A, matched identity)",
-			survivor.ID, survivor.SourceIdentifier, idA)
-	}
+	assert.Equal(idA, survivor.ID,
+		"survivor (%s), want source A, matched identity",
+		survivor.SourceIdentifier)
 }

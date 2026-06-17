@@ -3,16 +3,17 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
-	imaplib "github.com/wesm/msgvault/internal/imap"
-	"github.com/wesm/msgvault/internal/microsoft"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func newRemoveAccountCmd() *cobra.Command {
@@ -82,7 +83,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	}
 
 	activeSync, err := s.GetActiveSync(source.ID)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return fmt.Errorf("check active sync: %w", err)
 	}
 	if activeSync != nil && !yes {
@@ -108,9 +109,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			if err := scanner.Err(); err != nil {
 				return fmt.Errorf("read confirmation: %w", err)
 			}
-			return fmt.Errorf(
-				"no confirmation input (stdin closed); use --yes",
-			)
+			return errors.New("no confirmation input (stdin closed); use --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		if answer != "y" && answer != "yes" {
@@ -154,7 +153,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 
 	// Remove credentials for the source type.
 	switch source.SourceType {
-	case "gmail":
+	case sourceTypeGmail:
 		tokenPath := oauth.TokenFilePath(
 			cfg.TokensDir(), source.Identifier,
 		)
@@ -164,7 +163,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 				tokenPath, err,
 			)
 		}
-	case "imap":
+	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {
 			imapCfg, parseErr := imaplib.ConfigFromJSON(source.SyncConfig.String)
 			if parseErr == nil {

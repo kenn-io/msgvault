@@ -4,32 +4,35 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/textimport"
+	"go.kenn.io/msgvault/internal/textimport"
 	"golang.org/x/net/html"
 )
 
 // Filename classification patterns.
 var (
-	// "{Name} - Text - {Timestamp}.html"
+	// "{Name} - Text - {Timestamp}.html".
 	reText = regexp.MustCompile(`^(.+) - Text - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "{Name} - Received - {Timestamp}.html"
+	// "{Name} - Received - {Timestamp}.html".
 	reReceived = regexp.MustCompile(`^(.+) - Received - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "{Name} - Placed - {Timestamp}.html"
+	// "{Name} - Placed - {Timestamp}.html".
 	rePlaced = regexp.MustCompile(`^(.+) - Placed - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "{Name} - Missed - {Timestamp}.html"
+	// "{Name} - Missed - {Timestamp}.html".
 	reMissed = regexp.MustCompile(`^(.+) - Missed - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "{Name} - Voicemail - {Timestamp}.html"
+	// "{Name} - Voicemail - {Timestamp}.html".
 	reVoicemail = regexp.MustCompile(`^(.+) - Voicemail - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "Group Conversation - {Timestamp}.html"
+	// "Group Conversation - {Timestamp}.html".
 	reGroup = regexp.MustCompile(`^Group Conversation - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
-	// "{Name} - {Timestamp}.html" (call files without explicit type — classify from HTML title)
+	// "{Name} - {Timestamp}.html" (call files without explicit type — classify from HTML title).
 	reNameOnly = regexp.MustCompile(`^(.+) - (\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}Z?)\.html$`)
 )
 
@@ -44,7 +47,7 @@ func classifyFile(filename string) (name string, ft fileType, err error) {
 	// Skip known non-message files
 	base := filename
 	if strings.EqualFold(base, "Bills.html") {
-		return "", 0, fmt.Errorf("skipping Bills.html")
+		return "", 0, errors.New("skipping Bills.html")
 	}
 
 	if m := reText.FindStringSubmatch(base); m != nil {
@@ -104,8 +107,7 @@ func parseVCF(data []byte) (ownerPhones, error) {
 			itemLabels[prefix] = value
 		}
 
-		if strings.HasPrefix(line, "TEL;TYPE=CELL:") {
-			raw := strings.TrimPrefix(line, "TEL;TYPE=CELL:")
+		if raw, ok := strings.CutPrefix(line, "TEL;TYPE=CELL:"); ok {
 			if p, err := textimport.NormalizePhone(raw); err == nil {
 				phones.Cell = p
 			}
@@ -125,7 +127,7 @@ func parseVCF(data []byte) (ownerPhones, error) {
 	}
 
 	if phones.GoogleVoice == "" {
-		return phones, fmt.Errorf("google Voice number not found in VCF")
+		return phones, errors.New("google Voice number not found in VCF")
 	}
 
 	return phones, scanner.Err()
@@ -149,8 +151,7 @@ func parseTextHTML(r io.Reader) ([]textMessage, []string, error) {
 			walkNodes(n, func(link *html.Node) bool {
 				if link.Type == html.ElementNode && link.Data == "a" && hasClass(link, "tel") {
 					href := getAttr(link, "href")
-					if strings.HasPrefix(href, "tel:") {
-						raw := strings.TrimPrefix(href, "tel:")
+					if raw, ok := strings.CutPrefix(href, "tel:"); ok {
 						if p, err := textimport.NormalizePhone(raw); err == nil {
 							groupParticipants = append(groupParticipants, p)
 						}
@@ -201,8 +202,7 @@ func parseMessageDiv(div *html.Node) textMessage {
 		case n.Data == "a" && hasClass(n, "tel"):
 			// Sender phone
 			href := getAttr(n, "href")
-			if strings.HasPrefix(href, "tel:") {
-				raw := strings.TrimPrefix(href, "tel:")
+			if raw, ok := strings.CutPrefix(href, "tel:"); ok {
 				if p, err := textimport.NormalizePhone(raw); err == nil {
 					msg.SenderPhone = p
 				}
@@ -308,8 +308,7 @@ func parseCallHTML(r io.Reader) (*callRecord, error) {
 					walkNodes(child, func(link *html.Node) bool {
 						if link.Type == html.ElementNode && link.Data == "a" && hasClass(link, "tel") {
 							href := getAttr(link, "href")
-							if strings.HasPrefix(href, "tel:") {
-								raw := strings.TrimPrefix(href, "tel:")
+							if raw, ok := strings.CutPrefix(href, "tel:"); ok {
 								if p, err := textimport.NormalizePhone(raw); err == nil {
 									record.Phone = p
 								}
@@ -371,18 +370,22 @@ func parseCallHTML(r io.Reader) (*callRecord, error) {
 	})
 
 	if record.Phone == "" && record.Timestamp.IsZero() {
-		return nil, fmt.Errorf("failed to parse call record")
+		return nil, errors.New("failed to parse call record")
 	}
 
 	return record, nil
 }
 
-// snippet returns the first n characters of s, suitable for message preview.
-func snippet(s string, maxLen int) string {
+// snippetMaxLen bounds the message-preview length produced by snippet.
+const snippetMaxLen = 100
+
+// snippet returns the first snippetMaxLen characters of s, suitable for
+// message preview.
+func snippet(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	runes := []rune(s)
-	if len(runes) > maxLen {
-		return string(runes[:maxLen])
+	if len(runes) > snippetMaxLen {
+		return string(runes[:snippetMaxLen])
 	}
 	return s
 }
@@ -390,14 +393,14 @@ func snippet(s string, maxLen int) string {
 // computeMessageID computes a deterministic 16-char hex ID from the given parts.
 func computeMessageID(parts ...string) string {
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
-	return fmt.Sprintf("%x", h[:8])
+	return hex.EncodeToString(h[:8])
 }
 
 // computeThreadID computes the conversation thread ID for a set of participant phones.
 // For 1:1 texts, uses the other party's normalized phone.
 // For group texts, uses "group:" + sorted(all participant phones).
 // For calls, uses "calls:" + normalizedPhone.
-func computeThreadID(ownerCell string, ft fileType, contactPhone string, groupParticipants []string) string {
+func computeThreadID(ft fileType, contactPhone string, groupParticipants []string) string {
 	switch ft {
 	case fileTypeGroup:
 		phones := make([]string, len(groupParticipants))
@@ -428,12 +431,8 @@ func walkNodes(n *html.Node, fn func(*html.Node) bool) {
 // hasClass checks if an HTML element has the given class.
 func hasClass(n *html.Node, class string) bool {
 	for _, a := range n.Attr {
-		if a.Key == "class" {
-			for _, c := range strings.Fields(a.Val) {
-				if c == class {
-					return true
-				}
-			}
+		if a.Key == "class" && slices.Contains(strings.Fields(a.Val), class) {
+			return true
 		}
 	}
 	return false

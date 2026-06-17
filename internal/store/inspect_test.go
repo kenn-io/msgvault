@@ -2,11 +2,12 @@ package store_test
 
 import (
 	"database/sql"
-	"errors"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // TestInspectMessage_NotFound verifies that InspectMessage returns sql.ErrNoRows
@@ -15,35 +16,29 @@ func TestInspectMessage_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	_, err := st.InspectMessage("nonexistent-msg-id")
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("InspectMessage(nonexistent) error = %v, want sql.ErrNoRows", err)
-	}
+	assertpkg.ErrorIs(t, err, sql.ErrNoRows, "InspectMessage(nonexistent)")
 }
 
 // TestInspectMessage_BasicFields verifies that InspectMessage returns correct
 // basic fields for a message.
 func TestInspectMessage_BasicFields(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	// Create a message with a specific source_message_id
 	f.CreateMessage("inspect-test-msg")
 
 	insp, err := f.Store.InspectMessage("inspect-test-msg")
-	testutil.MustNoErr(t, err, "InspectMessage")
+	require.NoError(err, "InspectMessage")
 
-	if insp == nil {
-		t.Fatal("InspectMessage returned nil inspection")
-	}
+	require.NotNil(insp, "InspectMessage returned nil inspection")
 
 	// Thread source ID should be populated from the default thread
-	if insp.ThreadSourceID != "default-thread" {
-		t.Errorf("ThreadSourceID = %q, want %q", insp.ThreadSourceID, "default-thread")
-	}
+	assert.Equal("default-thread", insp.ThreadSourceID)
 
 	// RawDataExists should be false since we didn't add raw data
-	if insp.RawDataExists {
-		t.Error("RawDataExists should be false when no raw data exists")
-	}
+	assert.False(insp.RawDataExists, "RawDataExists should be false when no raw data exists")
 }
 
 // TestInspectMessage_WithRawData verifies that InspectMessage correctly detects
@@ -56,14 +51,12 @@ func TestInspectMessage_WithRawData(t *testing.T) {
 	// Add raw data
 	rawData := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 	err := f.Store.UpsertMessageRaw(msgID, rawData)
-	testutil.MustNoErr(t, err, "UpsertMessageRaw")
+	requirepkg.NoError(t, err, "UpsertMessageRaw")
 
 	insp, err := f.Store.InspectMessage("inspect-raw-test-msg")
-	testutil.MustNoErr(t, err, "InspectMessage")
+	requirepkg.NoError(t, err, "InspectMessage")
 
-	if !insp.RawDataExists {
-		t.Error("RawDataExists should be true when raw data exists")
-	}
+	assertpkg.True(t, insp.RawDataExists, "RawDataExists should be true when raw data exists")
 }
 
 // TestInspectMessage_DBError verifies that InspectMessage returns DB errors
@@ -77,13 +70,11 @@ func TestInspectMessage_DBError(t *testing.T) {
 
 	// Drop the message_raw table to cause a DB error during the raw check
 	_, err := f.Store.DB().Exec("DROP TABLE message_raw")
-	testutil.MustNoErr(t, err, "DROP TABLE message_raw")
+	requirepkg.NoError(t, err, "DROP TABLE message_raw")
 
 	// InspectMessage should now return an error when checking raw data existence
 	_, err = f.Store.InspectMessage("inspect-db-error-msg")
-	if err == nil {
-		t.Error("InspectMessage should return error when message_raw table is missing")
-	}
+	assertpkg.Error(t, err, "InspectMessage should return error when message_raw table is missing")
 }
 
 // TestInspectRawDataExists_NotFound verifies that InspectRawDataExists returns
@@ -94,11 +85,9 @@ func TestInspectRawDataExists_NotFound(t *testing.T) {
 	f.CreateMessage("raw-exists-not-found-msg")
 
 	exists, err := f.Store.InspectRawDataExists("raw-exists-not-found-msg")
-	testutil.MustNoErr(t, err, "InspectRawDataExists")
+	requirepkg.NoError(t, err, "InspectRawDataExists")
 
-	if exists {
-		t.Error("InspectRawDataExists should return false when no raw data exists")
-	}
+	assertpkg.False(t, exists, "InspectRawDataExists should return false when no raw data exists")
 }
 
 // TestInspectRawDataExists_Found verifies that InspectRawDataExists returns
@@ -110,14 +99,12 @@ func TestInspectRawDataExists_Found(t *testing.T) {
 
 	rawData := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nBody")
 	err := f.Store.UpsertMessageRaw(msgID, rawData)
-	testutil.MustNoErr(t, err, "UpsertMessageRaw")
+	requirepkg.NoError(t, err, "UpsertMessageRaw")
 
 	exists, err := f.Store.InspectRawDataExists("raw-exists-found-msg")
-	testutil.MustNoErr(t, err, "InspectRawDataExists")
+	requirepkg.NoError(t, err, "InspectRawDataExists")
 
-	if !exists {
-		t.Error("InspectRawDataExists should return true when raw data exists")
-	}
+	assertpkg.True(t, exists, "InspectRawDataExists should return true when raw data exists")
 }
 
 // TestInspectRawDataExists_DBError verifies that InspectRawDataExists returns
@@ -129,12 +116,10 @@ func TestInspectRawDataExists_DBError(t *testing.T) {
 
 	// Drop the message_raw table to cause a DB error
 	_, err := f.Store.DB().Exec("DROP TABLE message_raw")
-	testutil.MustNoErr(t, err, "DROP TABLE message_raw")
+	requirepkg.NoError(t, err, "DROP TABLE message_raw")
 
 	_, err = f.Store.InspectRawDataExists("raw-exists-db-error-msg")
-	if err == nil {
-		t.Error("InspectRawDataExists should return error when message_raw table is missing")
-	}
+	assertpkg.Error(t, err, "InspectRawDataExists should return error when message_raw table is missing")
 }
 
 // TestInspectRawDataExists_MessageNotFound verifies that InspectRawDataExists
@@ -144,16 +129,16 @@ func TestInspectRawDataExists_MessageNotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	exists, err := st.InspectRawDataExists("nonexistent-msg")
-	testutil.MustNoErr(t, err, "InspectRawDataExists(nonexistent)")
+	requirepkg.NoError(t, err, "InspectRawDataExists(nonexistent)")
 
-	if exists {
-		t.Error("InspectRawDataExists should return false for nonexistent message")
-	}
+	assertpkg.False(t, exists, "InspectRawDataExists should return false for nonexistent message")
 }
 
 // TestInspectMessage_RecipientCounts verifies that InspectMessage correctly
 // counts recipients by type.
 func TestInspectMessage_RecipientCounts(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("inspect-recipients-msg")
@@ -164,20 +149,16 @@ func TestInspectMessage_RecipientCounts(t *testing.T) {
 	pid3 := f.EnsureParticipant("carol@example.com", "Carol", "example.com")
 
 	err := f.Store.ReplaceMessageRecipients(msgID, "from", []int64{pid1}, []string{"Alice"})
-	testutil.MustNoErr(t, err, "ReplaceMessageRecipients(from)")
+	require.NoError(err, "ReplaceMessageRecipients(from)")
 
 	err = f.Store.ReplaceMessageRecipients(msgID, "to", []int64{pid2, pid3}, []string{"Bob", "Carol"})
-	testutil.MustNoErr(t, err, "ReplaceMessageRecipients(to)")
+	require.NoError(err, "ReplaceMessageRecipients(to)")
 
 	insp, err := f.Store.InspectMessage("inspect-recipients-msg")
-	testutil.MustNoErr(t, err, "InspectMessage")
+	require.NoError(err, "InspectMessage")
 
-	if insp.RecipientCounts["from"] != 1 {
-		t.Errorf("RecipientCounts[from] = %d, want 1", insp.RecipientCounts["from"])
-	}
-	if insp.RecipientCounts["to"] != 2 {
-		t.Errorf("RecipientCounts[to] = %d, want 2", insp.RecipientCounts["to"])
-	}
+	assert.Equal(1, insp.RecipientCounts["from"], "RecipientCounts[from]")
+	assert.Equal(2, insp.RecipientCounts["to"], "RecipientCounts[to]")
 }
 
 // TestInspectMessage_RecipientDisplayNames verifies that InspectMessage correctly
@@ -189,13 +170,11 @@ func TestInspectMessage_RecipientDisplayNames(t *testing.T) {
 
 	pid := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	err := f.Store.ReplaceMessageRecipients(msgID, "from", []int64{pid}, []string{"Custom Display Name"})
-	testutil.MustNoErr(t, err, "ReplaceMessageRecipients")
+	requirepkg.NoError(t, err, "ReplaceMessageRecipients")
 
 	insp, err := f.Store.InspectMessage("inspect-display-names-msg")
-	testutil.MustNoErr(t, err, "InspectMessage")
+	requirepkg.NoError(t, err, "InspectMessage")
 
 	key := "from:sender@example.com"
-	if insp.RecipientDisplayName[key] != "Custom Display Name" {
-		t.Errorf("RecipientDisplayName[%s] = %q, want %q", key, insp.RecipientDisplayName[key], "Custom Display Name")
-	}
+	assertpkg.Equal(t, "Custom Display Name", insp.RecipientDisplayName[key], "RecipientDisplayName[%s]", key)
 }

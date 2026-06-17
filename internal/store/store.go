@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,17 @@ import (
 
 //go:embed schema.sql schema_sqlite.sql schema_pg.sql
 var schemaFS embed.FS
+
+// HNSWEfSearch is the per-connection value applied to pgvector's
+// hnsw.ef_search GUC (via RuntimeParams in postgresConnConfig). It must
+// be >= the largest inner ANN LIMIT the vector backend issues so the
+// HNSW index does not throttle the over-fetch below k. The fused ANN
+// path's inner LIMIT is (KPerSignal+1)*fusedANNChunksPerMessage ≈ 808 at
+// the default KPerSignal=100; 1000 covers that worst case with headroom
+// while keeping per-query latency bounded. The candidate-widening loop in
+// the pgvector backend can grow the inner LIMIT beyond this for
+// pathological multi-chunk corpora; in that regime recall is best-effort.
+const HNSWEfSearch = 1000
 
 // Store provides database operations for msgvault.
 //
@@ -37,7 +49,13 @@ type Store struct {
 	closeCleanup  func()
 }
 
-const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL&_foreign_keys=ON"
+// synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
+// (NORMAL only protects against process crashes). msgvault is commonly run as a
+// laptop daemon (`msgvault serve`) where sleep/wake, forced reboots, and OOM kills
+// give many opportunities to leave a torn page on disk; the write volume is tiny
+// so the durability cost is negligible. fullfsync is macOS-only (F_FULLFSYNC
+// fcntl) and a no-op on other platforms.
+const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
 
 // isSQLiteError checks if err is a sqlite3.Error with a message containing substr.
 // This is more robust than strings.Contains on err.Error() because it first
@@ -58,23 +76,47 @@ func isSQLiteError(err error, substr string) bool {
 	return false
 }
 
-// isPostgresURL returns true if the path looks like a PostgreSQL connection URL.
-func isPostgresURL(dbPath string) bool {
+// IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
+// Exported so cmd-side helpers can decide whether to skip SQLite-only code
+// paths (e.g., the Parquet analytics cache) without first opening a Store.
+func IsPostgresURL(dbPath string) bool {
 	return strings.HasPrefix(dbPath, "postgresql://") || strings.HasPrefix(dbPath, "postgres://")
 }
+
+// testSQLiteParams configures SQLite for ephemeral test databases: WAL mode
+// for concurrency parity with production, but synchronous=OFF (no fsync per
+// commit). Test DBs live in t.TempDir() and are discarded at test exit, so
+// durability against OS crashes is irrelevant — and on slow-fsync platforms
+// like Windows CI runners, the production FULL setting can push bulk-import
+// tests past their timing tripwires.
+const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON"
 
 // Open opens or creates the database at the given path.
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
 // Otherwise, opens a SQLite database at the file path.
 func Open(dbPath string) (*Store, error) {
-	if isPostgresURL(dbPath) {
+	if IsPostgresURL(dbPath) {
 		return openPostgres(dbPath)
 	}
-	return openSQLite(dbPath)
+	return openSQLite(dbPath, defaultSQLiteParams)
 }
 
-// openSQLite opens a SQLite database at the given file path.
-func openSQLite(dbPath string) (*Store, error) {
+// OpenForTest opens or creates a database tuned for test use: ephemeral,
+// fast, with durability disabled. PostgreSQL URLs go through the normal
+// connection path (durability is a server-side concern there).
+//
+// Not for production use — a process crash mid-test can leave a corrupt
+// database, which is fine because tests recreate it from scratch.
+func OpenForTest(dbPath string) (*Store, error) {
+	if IsPostgresURL(dbPath) {
+		return openPostgres(dbPath)
+	}
+	return openSQLite(dbPath, testSQLiteParams)
+}
+
+// openSQLite opens a SQLite database at the given file path with the
+// supplied DSN parameters appended.
+func openSQLite(dbPath, params string) (*Store, error) {
 	// Ensure directory exists (skip for in-memory databases)
 	if dbPath != ":memory:" && !strings.Contains(dbPath, ":memory:") {
 		dir := filepath.Dir(dbPath)
@@ -83,13 +125,13 @@ func openSQLite(dbPath string) (*Store, error) {
 		}
 	}
 
-	dsn := dbPath + defaultSQLiteParams
+	dsn := dbPath + params
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -125,7 +167,7 @@ func openPostgres(dbURL string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -156,7 +198,7 @@ func openPostgres(dbURL string) (*Store, error) {
 // same database concurrently. Does not create the database, run migrations,
 // or checkpoint WAL on close.
 func OpenReadOnly(dbPath string) (*Store, error) {
-	if isPostgresURL(dbPath) {
+	if IsPostgresURL(dbPath) {
 		return openPostgresReadOnly(dbPath)
 	}
 
@@ -177,7 +219,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database (read-only): %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
@@ -216,7 +258,7 @@ func openPostgresReadOnly(dbURL string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		cleanup()
 		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
@@ -255,6 +297,18 @@ func postgresConnConfig(dbURL string, readOnly bool) (*pgx.ConnConfig, error) {
 		connConfig.RuntimeParams = map[string]string{}
 	}
 	connConfig.RuntimeParams["statement_timeout"] = "30s"
+	// Raise pgvector's HNSW ef_search so the vector backend's over-fetch
+	// (inner ORDER BY <=> LIMIT) is not silently capped at the pgvector
+	// default of 40. The fused ANN path issues the largest inner LIMIT —
+	// (KPerSignal+1)*fusedANNChunksPerMessage, ≈808 at the default
+	// KPerSignal=100 — and Search over-fetches k*annOverFetchFactor; with
+	// ef_search=40 the HNSW index would return at most ~40 candidates and
+	// short-return below k on multi-chunk corpora. Sizing ef_search to
+	// HNSWEfSearch keeps the over-fetch design intact. Setting a GUC is not
+	// a data write, so this is safe even under default_transaction_read_only.
+	// Larger values raise per-query latency, so it is sized to the worst-case
+	// inner LIMIT for the default config rather than unboundedly.
+	connConfig.RuntimeParams["hnsw.ef_search"] = strconv.Itoa(HNSWEfSearch)
 	if readOnly {
 		connConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	}
@@ -275,6 +329,16 @@ func openPostgresDB(dbURL string, readOnly bool) (*sql.DB, func(), error) {
 		return nil, nil, fmt.Errorf("open PostgreSQL: %w", err)
 	}
 	return db, cleanup, nil
+}
+
+// OpenPostgresDB opens a raw *sql.DB handle for the given PostgreSQL URL using
+// the same connection config (statement_timeout, runtime params) as Store.Open.
+// The returned cleanup func must be called when the handle is no longer needed.
+// Use this for lightweight consumers that only need the *sql.DB handle without
+// the full Store wrapper (e.g. embeddings metadata queries that live in the
+// same PG database as messages but do not need store-level operations).
+func OpenPostgresDB(dbURL string) (*sql.DB, func(), error) {
+	return openPostgresDB(dbURL, false)
 }
 
 // Close checkpoints the WAL (unless read-only) and closes the database.
@@ -310,6 +374,13 @@ func (s *Store) DB() *sql.DB {
 	return s.db.DB
 }
 
+// IsPostgreSQL reports whether this store is backed by PostgreSQL.
+// Engine factories use this to choose between the SQLite and PostgreSQL
+// query paths.
+func (s *Store) IsPostgreSQL() bool {
+	return s.dialect.DriverName() == "pgx"
+}
+
 // WithExclusiveLock executes fn while holding an exclusive write lock on the
 // database. In WAL mode this blocks concurrent writers (e.g. StartSync) while
 // allowing reads (e.g. IsAttachmentPathReferenced) to proceed. Use this to
@@ -317,6 +388,14 @@ func (s *Store) DB() *sql.DB {
 // ingestion. The context controls both lock acquisition and the lifetime of
 // the underlying connection; cancelling it aborts a pending BEGIN EXCLUSIVE
 // and rolls back any held transaction.
+//
+// fn must NOT write through the store. The EXCLUSIVE lock is held on a
+// dedicated connection (conn below), while every store write goes to the
+// pool — a *different* connection. On PostgreSQL the EXCLUSIVE lock conflicts
+// with the ROW EXCLUSIVE lock any INSERT/UPDATE/DELETE acquires, so a write
+// issued from fn would block on the pool waiting for a lock this same call is
+// holding, deadlocking until statement_timeout cancels it. fn is for reads
+// (ACCESS SHARE, which EXCLUSIVE permits) plus filesystem work only.
 func (s *Store) WithExclusiveLock(ctx context.Context, fn func() error) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -324,7 +403,7 @@ func (s *Store) WithExclusiveLock(ctx context.Context, fn func() error) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
 		return fmt.Errorf("begin exclusive: %w", err)
 	}
 
@@ -386,6 +465,55 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 	return nil
 }
 
+// runMaintenance runs fn inside a single transaction with the per-statement
+// execution timeout disabled (finding S1). It is the one chokepoint for
+// maintenance operations whose cost scales with archive size — cascade source
+// deletes, FTS clear/backfill rewrites, GIN index builds, the attachment-dedup
+// unique-index migration — which would otherwise be cancelled by the pool-wide
+// 30s statement_timeout (postgresConnConfig) with SQLSTATE 57014 on a large
+// archive.
+//
+// On PostgreSQL the first statement issued on the transaction is
+// `SET LOCAL statement_timeout = 0`; SET LOCAL auto-resets at COMMIT/ROLLBACK,
+// so the disabled timeout is scoped to this transaction and can never leak to
+// another pooled connection. On SQLite MaintenanceTimeoutResetSQL is "" so no
+// reset statement runs, and fn simply executes inside an ordinary transaction —
+// SQLite has no statement_timeout, so behavior is unchanged. The reset and all
+// of fn's statements run on the SAME tx (one connection), which is required for
+// SET LOCAL to take effect.
+//
+// fn receives a *loggedTx, so its Exec/Query calls are Rebind-translated
+// (? → $N on PG) just like withTx. The reset statement itself has no
+// placeholders, so Rebind is a no-op on it.
+func (s *Store) runMaintenance(ctx context.Context, fn func(ctx context.Context, tx *loggedTx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin maintenance tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+		if _, err := tx.ExecContext(ctx, reset); err != nil {
+			return fmt.Errorf("disable maintenance statement timeout: %w", err)
+		}
+	}
+
+	if err := fn(ctx, tx); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit maintenance tx: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // queryInChunks executes a parameterized IN-query in chunks to stay within
 // SQLite's parameter limit. queryTemplate must contain a single %s placeholder
 // for the comma-separated "?" list. The prefix args are prepended before each
@@ -398,17 +526,14 @@ type chunkQuerier interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []interface{}, queryTemplate string, fn func(*loggedRows) error) error {
+func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
-		end := i + chunkSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, 0, len(prefixArgs)+len(chunk))
+		args := make([]any, 0, len(prefixArgs)+len(chunk))
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"
@@ -451,20 +576,14 @@ type chunkInsert struct {
 // parameter limit (999). valueBuilder generates the VALUES placeholders and
 // args for each chunk of row indices. Rebinding to the dialect's placeholder
 // form happens inside tx.Exec (loggedTx wraps the dialect's Rebind).
-func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end int) ([]string, []interface{})) error {
+func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end int) ([]string, []any)) error {
 	// SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999
 	// Leave some margin for safety
 	const maxParams = 900
-	chunkSize := maxParams / c.valuesPerRow
-	if chunkSize < 1 {
-		chunkSize = 1
-	}
+	chunkSize := max(maxParams/c.valuesPerRow, 1)
 
 	for i := 0; i < c.totalRows; i += chunkSize {
-		end := i + chunkSize
-		if end > c.totalRows {
-			end = c.totalRows
-		}
+		end := min(i+chunkSize, c.totalRows)
 
 		values, args := valueBuilder(i, end)
 		query := c.prefix + strings.Join(values, ",") + c.suffix
@@ -479,17 +598,14 @@ func insertInChunks(tx *loggedTx, c chunkInsert, valueBuilder func(start, end in
 // to stay within SQLite's parameter limit. queryTemplate must contain a single %s
 // placeholder for the comma-separated "?" list. The prefix args are prepended before
 // each chunk's args (e.g., a message_id filter).
-func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []interface{}, queryTemplate string) error {
+func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string) error {
 	const chunkSize = 500
 	for i := 0; i < len(ids); i += chunkSize {
-		end := i + chunkSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(i+chunkSize, len(ids))
 		chunk := ids[i:end]
 
 		placeholders := make([]string, len(chunk))
-		args := make([]interface{}, 0, len(prefixArgs)+len(chunk))
+		args := make([]any, 0, len(prefixArgs)+len(chunk))
 		args = append(args, prefixArgs...)
 		for j, id := range chunk {
 			placeholders[j] = "?"
@@ -555,31 +671,70 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Legacy databases may hold duplicate (message_id, content_hash)
+	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
+	// Dedupe before creating the partial unique index that enforces
+	// idempotency going forward. Both steps are idempotent.
+	//
+	// Both run under runMaintenance: on a large archive the dedupe DELETE
+	// and the unique-index build over the full attachments table exceed the
+	// pool-wide 30s statement_timeout, so the maintenance escape hatch
+	// disables it for this transaction (finding S1). They share one tx so
+	// the index is built against the just-deduped table. No-op timeout reset
+	// on SQLite.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
+			return fmt.Errorf("dedupe attachments: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+			    ON attachments(message_id, content_hash)
+			    WHERE content_hash IS NOT NULL AND content_hash != ''
+		`); err != nil {
+			return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Legacy databases may have idx_participants_phone as a non-unique
+	// partial index (it was created that way before the schema flipped
+	// to UNIQUE). `CREATE UNIQUE INDEX IF NOT EXISTS` in schema.sql
+	// silently leaves the non-unique index in place, so
+	// EnsureParticipantByPhone's ON CONFLICT (phone_number) finds no
+	// matching unique constraint on upgraded DBs. Run a one-shot
+	// migration that dedupes phone rows, drops the index, and
+	// recreates it as UNIQUE.
+	if err := s.ensureParticipantsPhoneUniqueIndex(); err != nil {
+		return fmt.Errorf("ensure idx_participants_phone unique: %w", err)
+	}
+
 	// Migrations: add columns for databases created before these features.
-	// The dialect determines whether a "duplicate column" error is benign.
-	for _, m := range []struct {
-		sql  string
-		desc string
-	}{
-		{`ALTER TABLE sources ADD COLUMN sync_config JSON`, "sync_config"},
-		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
-		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
-		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
-		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},
-		{`ALTER TABLE messages ADD COLUMN sender_id INTEGER REFERENCES participants(id)`, "sender_id"},
-		{`ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`, "message_type"},
-		{`ALTER TABLE messages ADD COLUMN attachment_count INTEGER DEFAULT 0`, "attachment_count"},
-		{`ALTER TABLE messages ADD COLUMN deleted_from_source_at DATETIME`, "deleted_from_source_at"},
-		{`ALTER TABLE messages ADD COLUMN deleted_at DATETIME`, "deleted_at"},
-		{`ALTER TABLE messages ADD COLUMN delete_batch_id TEXT`, "delete_batch_id"},
-		{`ALTER TABLE conversations ADD COLUMN title TEXT`, "title"},
-		{`ALTER TABLE conversations ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'email_thread'`, "conversation_type"},
-	} {
-		if _, err := s.db.Exec(m.sql); err != nil {
+	// The dialect determines the list. Both backends return ADD COLUMN
+	// migrations for DBs created before later columns were introduced:
+	// SQLite emits ALTER TABLE ADD COLUMN, PostgreSQL emits the equivalent
+	// ALTER TABLE ADD COLUMN IF NOT EXISTS list (including search_fts).
+	for _, m := range s.dialect.LegacyColumnMigrations() {
+		if _, err := s.db.Exec(m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
-				return fmt.Errorf("migrate schema (%s): %w", m.desc, err)
+				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
 			}
 		}
+	}
+
+	// Create FTS indexes that depend on columns just added by the legacy
+	// migrations (PostgreSQL's GIN index on messages.search_fts). No-op on
+	// SQLite. Must run after the migration loop above. [cr2-10]
+	//
+	// Run under runMaintenance: the GIN build over a populated messages
+	// table can exceed the pool-wide 30s statement_timeout on a large
+	// archive, so the maintenance hatch disables it for this tx (finding
+	// S1). No-op timeout reset on SQLite.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.EnsureFTSIndex(tx)
+	}); err != nil {
+		return fmt.Errorf("ensure FTS index: %w", err)
 	}
 
 	// Load the optional FTS schema, if the dialect keeps one separate.
@@ -608,6 +763,24 @@ func (s *Store) InitSchema() error {
 	}
 
 	return nil
+}
+
+// dedupeAttachmentsBeforeUniqueIndex removes duplicate
+// (message_id, content_hash) rows from attachments so the partial
+// unique index idx_attachments_msg_content_hash can be created. Pre-fix
+// UpsertAttachment used a SELECT-then-INSERT pattern that could create
+// duplicates under concurrency; this cleans them up once. Idempotent.
+func (s *Store) dedupeAttachmentsBeforeUniqueIndex(ctx context.Context, tx *loggedTx) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM attachments
+		WHERE content_hash IS NOT NULL AND content_hash != ''
+		  AND id NOT IN (
+			SELECT MIN(id) FROM attachments
+			WHERE content_hash IS NOT NULL AND content_hash != ''
+			GROUP BY message_id, content_hash
+		  )
+	`)
+	return err
 }
 
 // NeedsFTSBackfill reports whether the FTS index needs to be populated.
@@ -762,9 +935,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 		}
 	}
 
-	// DatabaseSize is always the global file size; scoped stats cannot decompose it.
-	if info, err := os.Stat(s.dbPath); err == nil {
-		stats.DatabaseSize = info.Size()
+	// DatabaseSize: file size for SQLite, pg_database_size() for PostgreSQL.
+	if size, err := s.dialect.DatabaseSize(s.db.DB, s.dbPath); err == nil {
+		stats.DatabaseSize = size
 	}
 
 	return stats, nil

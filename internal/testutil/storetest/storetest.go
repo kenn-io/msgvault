@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 var globalCounter atomic.Int64
@@ -30,9 +32,9 @@ func New(t *testing.T) *Fixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
-	testutil.MustNoErr(t, err, "setup: GetOrCreateSource")
+	require.NoError(t, err, "setup: GetOrCreateSource")
 	convID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
-	testutil.MustNoErr(t, err, "setup: EnsureConversation")
+	require.NoError(t, err, "setup: EnsureConversation")
 	return &Fixture{T: t, Store: st, Source: source, ConvID: convID}
 }
 
@@ -46,7 +48,7 @@ func (f *Fixture) CreateMessage(sourceMessageID string) int64 {
 		MessageType:     "email",
 		SizeEstimate:    1000,
 	})
-	testutil.MustNoErr(f.T, err, "CreateMessage")
+	require.NoError(f.T, err, "CreateMessage")
 	return id
 }
 
@@ -54,7 +56,7 @@ func (f *Fixture) CreateMessage(sourceMessageID string) int64 {
 func (f *Fixture) CreateMessages(count int) []int64 {
 	f.T.Helper()
 	ids := make([]int64, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ids = append(ids, f.CreateMessage(fmt.Sprintf("msg-%d", i)))
 	}
 	return ids
@@ -65,14 +67,10 @@ func (f *Fixture) EnsureLabels(labels map[string]string, typ string) map[string]
 	f.T.Helper()
 	result := make(map[string]int64, len(labels))
 	for sourceLabelID, name := range labels {
-		if name == "" {
-			f.T.Fatalf("EnsureLabels: label name is required (sourceLabelID=%q)", sourceLabelID)
-		}
-		if sourceLabelID == "" {
-			f.T.Fatalf("EnsureLabels: sourceLabelID is required")
-		}
+		require.NotEmptyf(f.T, name, "EnsureLabels: label name is required (sourceLabelID=%q)", sourceLabelID)
+		require.NotEmpty(f.T, sourceLabelID, "EnsureLabels: sourceLabelID is required")
 		lid, err := f.Store.EnsureLabel(f.Source.ID, sourceLabelID, name, typ)
-		testutil.MustNoErr(f.T, err, "EnsureLabel "+sourceLabelID)
+		require.NoError(f.T, err, "EnsureLabel "+sourceLabelID)
 		result[sourceLabelID] = lid
 	}
 	return result
@@ -82,7 +80,7 @@ func (f *Fixture) EnsureLabels(labels map[string]string, typ string) map[string]
 func (f *Fixture) EnsureParticipant(email, name, domain string) int64 {
 	f.T.Helper()
 	pid, err := f.Store.EnsureParticipant(email, name, domain)
-	testutil.MustNoErr(f.T, err, "EnsureParticipant "+email)
+	require.NoError(f.T, err, "EnsureParticipant "+email)
 	return pid
 }
 
@@ -90,10 +88,8 @@ func (f *Fixture) EnsureParticipant(email, name, domain string) int64 {
 func (f *Fixture) StartSync() int64 {
 	f.T.Helper()
 	syncID, err := f.Store.StartSync(f.Source.ID, "full")
-	testutil.MustNoErr(f.T, err, "StartSync")
-	if syncID == 0 {
-		f.T.Fatal("sync ID should be non-zero")
-	}
+	require.NoError(f.T, err, "StartSync")
+	require.NotZero(f.T, syncID, "sync ID should be non-zero")
 	return syncID
 }
 
@@ -110,10 +106,10 @@ type MessageFields struct {
 func (f *Fixture) GetMessageFields(msgID int64) MessageFields {
 	f.T.Helper()
 	var mf MessageFields
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT subject, snippet, has_attachments FROM messages WHERE id = ?"), msgID,
 	).Scan(&mf.Subject, &mf.Snippet, &mf.HasAttachments)
-	testutil.MustNoErr(f.T, err, "GetMessageFields")
+	require.NoError(f.T, err, "GetMessageFields")
 	return mf
 }
 
@@ -121,10 +117,10 @@ func (f *Fixture) GetMessageFields(msgID int64) MessageFields {
 func (f *Fixture) GetMessageBody(msgID int64) (sql.NullString, sql.NullString) {
 	f.T.Helper()
 	var bodyText, bodyHTML sql.NullString
-	err := f.Store.DB().QueryRow(
-		"SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", msgID,
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
+		f.Store.Rebind("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?"), msgID,
 	).Scan(&bodyText, &bodyHTML)
-	testutil.MustNoErr(f.T, err, "GetMessageBody")
+	require.NoError(f.T, err, "GetMessageBody")
 	return bodyText, bodyHTML
 }
 
@@ -134,7 +130,7 @@ func (f *Fixture) GetSyncRun(syncID int64) (status, errorMsg string) {
 	err := f.Store.DB().QueryRow(
 		f.Store.Rebind("SELECT status, error_message FROM sync_runs WHERE id = ?"), syncID,
 	).Scan(&status, &errorMsg)
-	testutil.MustNoErr(f.T, err, "GetSyncRun")
+	require.NoError(f.T, err, "GetSyncRun")
 	return status, errorMsg
 }
 
@@ -145,7 +141,7 @@ func (f *Fixture) GetSingleLabelID(msgID int64) int64 {
 	err := f.Store.DB().QueryRow(
 		f.Store.Rebind("SELECT label_id FROM message_labels WHERE message_id = ?"), msgID,
 	).Scan(&labelID)
-	testutil.MustNoErr(f.T, err, "GetSingleLabelID")
+	require.NoError(f.T, err, "GetSingleLabelID")
 	return labelID
 }
 
@@ -156,7 +152,7 @@ func (f *Fixture) GetSingleRecipientID(msgID int64, typ string) int64 {
 	err := f.Store.DB().QueryRow(
 		f.Store.Rebind("SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = ?"), msgID, typ,
 	).Scan(&pid)
-	testutil.MustNoErr(f.T, err, "GetSingleRecipientID")
+	require.NoError(f.T, err, "GetSingleRecipientID")
 	return pid
 }
 
@@ -167,10 +163,8 @@ func (f *Fixture) AssertLabelCount(msgID int64, want int) {
 	f.T.Helper()
 	var count int
 	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ?"), msgID).Scan(&count)
-	testutil.MustNoErr(f.T, err, "count message_labels")
-	if count != want {
-		f.T.Errorf("message_labels count = %d, want %d", count, want)
-	}
+	require.NoError(f.T, err, "count message_labels")
+	assert.Equal(f.T, want, count, "message_labels count")
 }
 
 // AssertMessageHasLabel asserts that a message is linked to a specific label ID.
@@ -181,10 +175,8 @@ func (f *Fixture) AssertMessageHasLabel(msgID, labelID int64) {
 		f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?"),
 		msgID, labelID,
 	).Scan(&count)
-	testutil.MustNoErr(f.T, err, "check message_labels")
-	if count != 1 {
-		f.T.Errorf("message %d should have label %d, but count=%d", msgID, labelID, count)
-	}
+	require.NoError(f.T, err, "check message_labels")
+	assert.Equalf(f.T, 1, count, "message %d should have label %d", msgID, labelID)
 }
 
 // AssertRecipientCount asserts the number of recipients of a given type for a message.
@@ -192,10 +184,8 @@ func (f *Fixture) AssertRecipientCount(msgID int64, typ string, want int) {
 	f.T.Helper()
 	var count int
 	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = ?"), msgID, typ).Scan(&count)
-	testutil.MustNoErr(f.T, err, "count message_recipients")
-	if count != want {
-		f.T.Errorf("message_recipients(%s) count = %d, want %d", typ, count, want)
-	}
+	require.NoError(f.T, err, "count message_recipients")
+	assert.Equalf(f.T, want, count, "message_recipients(%s) count", typ)
 }
 
 // AssertMessageDeleted asserts that a message has been marked as deleted.
@@ -203,10 +193,8 @@ func (f *Fixture) AssertMessageDeleted(msgID int64) {
 	f.T.Helper()
 	var deletedAt sql.NullTime
 	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
-	testutil.MustNoErr(f.T, err, "check deleted_from_source_at")
-	if !deletedAt.Valid {
-		f.T.Error("deleted_from_source_at should be set")
-	}
+	require.NoError(f.T, err, "check deleted_from_source_at")
+	assert.True(f.T, deletedAt.Valid, "deleted_from_source_at should be set")
 }
 
 // AssertMessageNotDeleted asserts that a message has NOT been marked as deleted.
@@ -214,36 +202,26 @@ func (f *Fixture) AssertMessageNotDeleted(msgID int64) {
 	f.T.Helper()
 	var deletedAt sql.NullTime
 	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
-	testutil.MustNoErr(f.T, err, "check deleted_from_source_at")
-	if deletedAt.Valid {
-		f.T.Error("deleted_from_source_at should be NULL")
-	}
+	require.NoError(f.T, err, "check deleted_from_source_at")
+	assert.False(f.T, deletedAt.Valid, "deleted_from_source_at should be NULL")
 }
 
 // AssertActiveSync asserts there is an active sync with the given ID and status.
 func (f *Fixture) AssertActiveSync(wantID int64, wantStatus string) {
 	f.T.Helper()
 	active, err := f.Store.GetActiveSync(f.Source.ID)
-	testutil.MustNoErr(f.T, err, "GetActiveSync")
-	if active == nil {
-		f.T.Fatal("expected active sync, got nil")
-	}
-	if active.ID != wantID {
-		f.T.Errorf("active sync ID = %d, want %d", active.ID, wantID)
-	}
-	if active.Status != wantStatus {
-		f.T.Errorf("active sync status = %q, want %q", active.Status, wantStatus)
-	}
+	require.NoError(f.T, err, "GetActiveSync")
+	require.NotNil(f.T, active, "expected active sync, got nil")
+	assert.Equal(f.T, wantID, active.ID, "active sync ID")
+	assert.Equal(f.T, wantStatus, active.Status, "active sync status")
 }
 
 // AssertNoActiveSync asserts there is no active sync for the fixture's source.
 func (f *Fixture) AssertNoActiveSync() {
 	f.T.Helper()
 	active, err := f.Store.GetActiveSync(f.Source.ID)
-	testutil.MustNoErr(f.T, err, "GetActiveSync")
-	if active != nil {
-		f.T.Errorf("expected no active sync, got %+v", active)
-	}
+	require.ErrorIs(f.T, err, store.ErrSyncRunNotFound, "GetActiveSync")
+	assert.Nilf(f.T, active, "expected no active sync, got %+v", active)
 }
 
 // --- MessageBuilder ---
@@ -342,6 +320,6 @@ func (b *MessageBuilder) Create(t *testing.T, st *store.Store) int64 {
 	t.Helper()
 	m := b.msg
 	id, err := st.UpsertMessage(&m)
-	testutil.MustNoErr(t, err, "MessageBuilder.Create")
+	require.NoError(t, err, "MessageBuilder.Create")
 	return id
 }

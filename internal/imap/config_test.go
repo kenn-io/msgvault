@@ -1,6 +1,11 @@
 package imap
 
-import "testing"
+import (
+	"testing"
+
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+)
 
 func TestIdentifier(t *testing.T) {
 	tests := []struct {
@@ -47,9 +52,7 @@ func TestIdentifier(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.cfg.Identifier()
-			if got != tt.want {
-				t.Errorf("Identifier() = %q, want %q", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "Identifier()")
 		})
 	}
 }
@@ -75,9 +78,7 @@ func TestAddr_IPv6(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.cfg.Addr()
-			if got != tt.want {
-				t.Errorf("Addr() = %q, want %q", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "Addr()")
 		})
 	}
 }
@@ -91,12 +92,8 @@ func TestIdentifier_STARTTLSDistinctFromPlaintext(t *testing.T) {
 		Host: "mail.example.com", Port: 143,
 		Username: "user@example.com",
 	}
-	if starttls.Identifier() == plain.Identifier() {
-		t.Errorf(
-			"STARTTLS and plaintext should have distinct identifiers; both = %q",
-			starttls.Identifier(),
-		)
-	}
+	assertpkg.NotEqual(t, plain.Identifier(), starttls.Identifier(),
+		"STARTTLS and plaintext should have distinct identifiers")
 }
 
 func TestParseIdentifier_RoundTrip(t *testing.T) {
@@ -119,60 +116,37 @@ func TestParseIdentifier_RoundTrip(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			id := tt.cfg.Identifier()
 			parsed, err := ParseIdentifier(id)
-			if err != nil {
-				t.Fatalf("ParseIdentifier(%q): %v", id, err)
-			}
-			if parsed.Host != tt.cfg.Host {
-				t.Errorf("Host = %q, want %q", parsed.Host, tt.cfg.Host)
-			}
-			if parsed.Port != tt.cfg.Port {
-				t.Errorf("Port = %d, want %d", parsed.Port, tt.cfg.Port)
-			}
-			if parsed.TLS != tt.cfg.TLS {
-				t.Errorf("TLS = %v, want %v", parsed.TLS, tt.cfg.TLS)
-			}
-			if parsed.STARTTLS != tt.cfg.STARTTLS {
-				t.Errorf("STARTTLS = %v, want %v", parsed.STARTTLS, tt.cfg.STARTTLS)
-			}
-			if parsed.Username != tt.cfg.Username {
-				t.Errorf("Username = %q, want %q", parsed.Username, tt.cfg.Username)
-			}
+			requirepkg.NoError(t, err, "ParseIdentifier(%q)", id)
+			assert.Equal(tt.cfg.Host, parsed.Host, "Host")
+			assert.Equal(tt.cfg.Port, parsed.Port, "Port")
+			assert.Equal(tt.cfg.TLS, parsed.TLS, "TLS")
+			assert.Equal(tt.cfg.STARTTLS, parsed.STARTTLS, "STARTTLS")
+			assert.Equal(tt.cfg.Username, parsed.Username, "Username")
 		})
 	}
 }
 
 func TestParseIdentifier_InvalidScheme(t *testing.T) {
 	_, err := ParseIdentifier("pop3://user@host:110")
-	if err == nil {
-		t.Error("expected error for unsupported scheme")
-	}
+	assertpkg.Error(t, err, "expected error for unsupported scheme")
 }
 
 func TestConfigAuthMethod_DefaultsToPassword(t *testing.T) {
 	// Existing JSON without auth_method should default to password
 	cfg, err := ConfigFromJSON(`{"host":"imap.example.com","port":993,"tls":true,"username":"user"}`)
-	if err != nil {
-		t.Fatal(err)
+	requirepkg.NoError(t, err)
+	if cfg.AuthMethod != "" {
+		assertpkg.Equal(t, AuthPassword, cfg.AuthMethod, "AuthMethod should be empty or %q", AuthPassword)
 	}
-	if cfg.AuthMethod != "" && cfg.AuthMethod != AuthPassword {
-		t.Errorf("AuthMethod = %q, want empty or %q", cfg.AuthMethod, AuthPassword)
-	}
-	if cfg.EffectiveAuthMethod() != AuthPassword {
-		t.Errorf("EffectiveAuthMethod() = %q, want %q", cfg.EffectiveAuthMethod(), AuthPassword)
-	}
+	assertpkg.Equal(t, AuthPassword, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
 }
 
 func TestConfigAuthMethod_XOAuth2(t *testing.T) {
 	cfg, err := ConfigFromJSON(`{"host":"outlook.office365.com","port":993,"tls":true,"username":"user@company.com","auth_method":"xoauth2"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.AuthMethod != AuthXOAuth2 {
-		t.Errorf("AuthMethod = %q, want %q", cfg.AuthMethod, AuthXOAuth2)
-	}
-	if cfg.EffectiveAuthMethod() != AuthXOAuth2 {
-		t.Errorf("EffectiveAuthMethod() = %q, want %q", cfg.EffectiveAuthMethod(), AuthXOAuth2)
-	}
+	requirepkg.NoError(t, err)
+	assertpkg.Equal(t, AuthXOAuth2, cfg.AuthMethod, "AuthMethod")
+	assertpkg.Equal(t, AuthXOAuth2, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
 }

@@ -62,6 +62,7 @@ make lint                     # Run linter
 ./msgvault stats                                      # Show archive stats
 
 # Apple Mail import
+./msgvault import-messenger --me you@facebook.messenger ~/facebook-dyi   # Import Facebook Messenger DYI
 ./msgvault import-emlx                                # Auto-discover accounts
 ./msgvault import-emlx ~/Library/Mail                 # Explicit mail directory
 ./msgvault import-emlx --account me@gmail.com         # Specific account(s)
@@ -135,17 +136,16 @@ Core tables:
 Schema files in `internal/store/`:
 - `schema.sql` - Core schema (SQLite; shared structure)
 - `schema_sqlite.sql` - SQLite FTS5 virtual table
-- `schema_pg.sql` - PostgreSQL tsvector column + GIN index (opt-in, scaffold)
+- `schema_pg.sql` - PostgreSQL-native schema with tsvector column + GIN index
 
-**Database backend**: SQLite is the default. PostgreSQL support is
-scaffolded behind a `Dialect` interface (`internal/store/dialect.go`);
-see `docs/PG_STATUS.md` for the current state and follow-up
-work required to make PostgreSQL functional end-to-end.
+**Database backend**: SQLite is the default. PostgreSQL is opt-in via
+`[data].database_url` and runs through the same store/query interfaces.
+See `docs/PG_STATUS.md` for the current implementation state and
+follow-up work.
 
-**Test env**: `MSGVAULT_TEST_DB=postgres://...` is scaffolded for the future
-PostgreSQL store test suite (`make test-pg`). Until the blockers in
-`docs/PG_STATUS.md` are resolved, PostgreSQL tests are expected to fail before
-schema initialization completes.
+**Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
+tests (`make test-pg`). pgvector tests require a PostgreSQL instance
+with the `vector` extension and the `pgvector` build tag.
 
 ## Parquet Analytics
 
@@ -196,9 +196,44 @@ The TUI automatically builds/updates the Parquet cache on launch when new messag
 
 Sync is **read-only** - no modifications to Gmail.
 
+## Test Data
+
+Never use real people's names, email addresses, or identifiers in test fixtures. Use obviously synthetic names: `alice`, `bob`, `Test User`, `user@example.com`. Before committing test data, verify no real PII is present.
+
 ## Go Development
 
 After making any Go code changes, always run `go fmt ./...` and `go vet ./...` before committing. Stage ALL resulting changes, including formatting-only files.
+
+## Testing
+
+All Go tests use [testify](https://github.com/stretchr/testify) for assertions. Do NOT introduce new `t.Errorf`/`t.Fatalf`/`t.Fatal`/`t.Error` patterns — use `assert.X` or `require.X` instead.
+
+**Mapping rule:**
+- `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.
+- `assert.X` — continues after failure (replaces what was `t.Errorf` / `t.Error`). Use for independent value checks where reporting multiple failures helps debugging.
+
+**Argument order:** testify equality functions take `(want, got)`, the opposite of Go stdlib convention. Always pass the expected value first: `assert.Equal(t, want, got)`.
+
+**Imports:**
+
+```go
+import (
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+```
+
+**Common conversions:**
+
+| Stdlib | Testify |
+|--------|---------|
+| `if err != nil { t.Fatalf(...) }` | `require.NoError(t, err)` |
+| `if err != nil { t.Errorf(...) }` | `assert.NoError(t, err)` |
+| `if got != want { t.Errorf(...) }` | `assert.Equal(t, want, got)` |
+| `if !cond { t.Errorf(...) }` | `assert.True(t, cond)` |
+| `if len(s) != n { t.Errorf(...) }` | `assert.Len(t, s, n)` |
+
+**Custom helpers:** `internal/testutil` does NOT provide assertion wrappers — call testify directly. The non-assertion helpers (`MakeSet`, `NewTestStore`, builders, fixtures) are kept and may still be used.
 
 ## Git Workflow
 
@@ -213,7 +248,7 @@ automatically:
 ```bash
 make install-hooks             # Install pre-commit hook via prek
 make test                      # Run tests (SQLite default)
-make test-pg                   # PostgreSQL scaffold check; expected to fail until PG_STATUS blockers are fixed
+make test-pg                   # Run PostgreSQL-backed tests with MSGVAULT_TEST_DB set
 make fmt                       # Format code (go fmt)
 make lint                      # Run linter (auto-fix)
 make lint-ci                   # Run linter (CI, no auto-fix)

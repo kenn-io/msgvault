@@ -15,13 +15,15 @@ type FatalSentinel struct{ Msg string }
 // while intercepting all fail/skip methods via a panic sentinel.
 type MockTB struct {
 	testing.TB // delegate to a real TB for methods we don't override
-	failed     bool
-	FatalMsg   string
+
+	failed   bool
+	FatalMsg string
 }
 
 // NewMockTB creates a new MockTB wrapping a real testing.TB.
-func NewMockTB(t testing.TB) *MockTB {
-	return &MockTB{TB: t}
+func NewMockTB(tb testing.TB) *MockTB {
+	tb.Helper()
+	return &MockTB{TB: tb}
 }
 
 // Failed returns whether a fatal/skip method was called.

@@ -2,12 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/query"
+	"github.com/stretchr/testify/assert"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestSelectionToggle(t *testing.T) {
@@ -75,7 +75,7 @@ func TestSelectionClearedOnViewSwitch(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	assertSelectionCount(t, model, 1)
 
 	// Switch view with Tab
@@ -90,7 +90,7 @@ func TestSelectionClearedOnShiftTab(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 
 	// Switch view with Shift+Tab
 	model = applyAggregateKey(t, model, keyShiftTab())
@@ -103,7 +103,7 @@ func TestClearSelection(t *testing.T) {
 		WithRows(makeRow("alice@example.com", 10)).
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	assertSelectionCount(t, model, 1)
 
 	// Clear with 'x'
@@ -118,7 +118,7 @@ func TestStageForDeletionWithAggregateSelection(t *testing.T) {
 		WithGmailIDs("msg1", "msg2").
 		Build()
 
-	model = selectRow(t, model, 0)
+	model = selectRow(t, model)
 	model, _ = sendKey(t, model, key('D'))
 
 	assertModal(t, model, modalDeleteConfirm)
@@ -175,19 +175,17 @@ func TestStageForDeletion(t *testing.T) {
 			}
 
 			model := b.Build()
-			model = selectRow(t, model, 0)
+			model = selectRow(t, model)
 
 			newModel, _ := model.stageForDeletion()
-			model = newModel.(Model)
+			model = asModel(t, newModel)
 
 			assertPendingManifest(t, model, tc.expectedAccount)
 			assertModal(t, model, modalDeleteConfirm)
 
 			if tc.checkViewWarning {
 				view := model.View()
-				if !strings.Contains(view, "Account not set") {
-					t.Errorf("expected 'Account not set' warning in delete confirm modal, view:\n%s", view)
-				}
+				assert.Contains(t, view, "Account not set", "expected warning in delete confirm modal")
 			}
 		})
 	}
@@ -238,9 +236,7 @@ func TestSelectionCount(t *testing.T) {
 		},
 	}
 
-	if model.selectionCount() != 5 {
-		t.Errorf("expected SelectionCount() = 5, got %d", model.selectionCount())
-	}
+	assert.Equal(t, 5, model.selectionCount())
 }
 
 func TestHasSelection(t *testing.T) {
@@ -251,20 +247,14 @@ func TestHasSelection(t *testing.T) {
 		},
 	}
 
-	if model.hasSelection() {
-		t.Error("expected HasSelection() = false for empty selection")
-	}
+	assert.False(t, model.hasSelection(), "expected false for empty selection")
 
 	model.selection.aggregateKeys["test"] = true
-	if !model.hasSelection() {
-		t.Error("expected HasSelection() = true with aggregate selection")
-	}
+	assert.True(t, model.hasSelection(), "with aggregate selection")
 
 	model.selection.aggregateKeys = make(map[string]bool)
 	model.selection.messageIDs[1] = true
-	if !model.hasSelection() {
-		t.Error("expected HasSelection() = true with message selection")
-	}
+	assert.True(t, model.hasSelection(), "with message selection")
 }
 
 func TestDKeyAutoSelectsCurrentRow(t *testing.T) {
@@ -333,19 +323,15 @@ func TestToggleAggregateSelection(t *testing.T) {
 	m.cursor = 0
 
 	m.toggleAggregateSelection()
-	if !m.selection.aggregateKeys["alice@example.com"] {
-		t.Error("expected alice to be selected")
-	}
+	assert.True(t, m.selection.aggregateKeys["alice@example.com"], "expected alice to be selected")
 
 	m.toggleAggregateSelection()
-	if m.selection.aggregateKeys["alice@example.com"] {
-		t.Error("expected alice to be deselected")
-	}
+	assert.False(t, m.selection.aggregateKeys["alice@example.com"], "expected alice to be deselected")
 }
 
 func TestSelectVisibleAggregates(t *testing.T) {
 	rows := make([]query.AggregateRow, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		rows = append(rows, query.AggregateRow{Key: fmt.Sprintf("user%d", i)})
 	}
 	m := NewBuilder().WithRows(rows...).Build()
@@ -355,14 +341,10 @@ func TestSelectVisibleAggregates(t *testing.T) {
 	m.selectVisibleAggregates()
 
 	for i := 2; i < 5; i++ {
-		key := fmt.Sprintf("user%d", i)
-		if !m.selection.aggregateKeys[key] {
-			t.Errorf("expected %s to be selected", key)
-		}
+		k := fmt.Sprintf("user%d", i)
+		assert.True(t, m.selection.aggregateKeys[k], "expected %s to be selected", k)
 	}
-	if m.selection.aggregateKeys["user0"] {
-		t.Error("user0 should not be selected")
-	}
+	assert.False(t, m.selection.aggregateKeys["user0"], "user0 should not be selected")
 }
 
 func TestSelectVisibleAggregates_OffsetBeyondRows(t *testing.T) {
@@ -372,9 +354,7 @@ func TestSelectVisibleAggregates_OffsetBeyondRows(t *testing.T) {
 
 	m.selectVisibleAggregates()
 
-	if len(m.selection.aggregateKeys) != 0 {
-		t.Error("expected no selections when scrollOffset > len(rows)")
-	}
+	assert.Empty(t, m.selection.aggregateKeys, "expected no selections when scrollOffset > len(rows)")
 }
 
 func TestClearAllSelections(t *testing.T) {
@@ -384,7 +364,6 @@ func TestClearAllSelections(t *testing.T) {
 
 	m.clearAllSelections()
 
-	if len(m.selection.aggregateKeys) != 0 || len(m.selection.messageIDs) != 0 {
-		t.Error("expected all selections to be cleared")
-	}
+	assert.Empty(t, m.selection.aggregateKeys, "aggregateKeys should be cleared")
+	assert.Empty(t, m.selection.messageIDs, "messageIDs should be cleared")
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,12 +16,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
-	"github.com/wesm/msgvault/internal/remote"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // stubEmbedder is an EmbeddingClient placeholder for tests where the
@@ -80,30 +83,24 @@ func newTestServerWithMockStore(t *testing.T) (*Server, *mockStore) {
 }
 
 func TestHandleStats(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assert.Equal(http.StatusOK, w.Code, "status")
 
 	bodyBytes := w.Body.Bytes()
 
 	var resp StatsResponse
-	if err := json.Unmarshal(bodyBytes, &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(json.Unmarshal(bodyBytes, &resp), "failed to decode response")
 
-	if resp.TotalMessages != 10 {
-		t.Errorf("total_messages = %d, want 10", resp.TotalMessages)
-	}
-	if resp.TotalAccounts != 1 {
-		t.Errorf("total_accounts = %d, want 1", resp.TotalAccounts)
-	}
+	assert.Equal(int64(10), resp.TotalMessages, "total_messages")
+	assert.Equal(int64(1), resp.TotalAccounts, "total_accounts")
 
 	// No backend wired → vector_search field must be ABSENT, not
 	// null. Re-decode into raw RawMessage so we distinguish the two:
@@ -111,133 +108,191 @@ func TestHandleStats(t *testing.T) {
 	// any encoder bug that emits `"vector_search": null` would still
 	// leave resp.VectorSearch == nil.
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
-		t.Fatalf("decode raw: %v", err)
-	}
-	if _, exists := raw["vector_search"]; exists {
-		t.Errorf("vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
-	}
+	require.NoError(json.Unmarshal(bodyBytes, &raw), "decode raw")
+	_, exists := raw["vector_search"]
+	assert.False(exists, "vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
 }
 
 func TestHandleListMessages(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assert.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages, ok := resp["messages"].([]interface{})
-	if !ok {
-		t.Fatal("expected messages array in response")
-	}
-
-	if len(messages) == 0 {
-		t.Error("expected at least 1 message")
-	}
+	messages, ok := resp["messages"].([]any)
+	require.True(ok, "expected messages array in response")
+	assert.NotEmpty(messages, "expected at least 1 message")
 
 	// Check first message structure
-	msg := messages[0].(map[string]interface{})
-	if msg["subject"] != "Test Subject" {
-		t.Errorf("subject = %v, want 'Test Subject'", msg["subject"])
-	}
+	msg, ok := messages[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
+	assert.Equal("Test Subject", msg["subject"], "subject")
 
 	// Verify RFC3339 time format
-	sentAt := msg["sent_at"].(string)
-	if _, err := time.Parse(time.RFC3339, sentAt); err != nil {
-		t.Errorf("sent_at %q is not RFC3339: %v", sentAt, err)
-	}
+	sentAt, ok := msg["sent_at"].(string)
+	require.True(ok, "sent_at is string")
+	_, err := time.Parse(time.RFC3339, sentAt)
+	assert.NoError(err, "sent_at %q is not RFC3339", sentAt)
 }
 
 func TestHandleListMessagesPagination(t *testing.T) {
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages?page=1&page_size=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?page=1&page_size=10", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assert.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	var resp map[string]any
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp["page"] != float64(1) {
-		t.Errorf("page = %v, want 1", resp["page"])
-	}
-	if resp["page_size"] != float64(10) {
-		t.Errorf("page_size = %v, want 10", resp["page_size"])
-	}
+	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
+	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
+}
+
+func TestHandleSourceStatus(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	sched := newMockScheduler()
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+
+	gmail, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource gmail")
+	require.NoError(st.UpdateSourceDisplayName(gmail.ID, "Alice"), "UpdateSourceDisplayName")
+	require.NoError(st.UpdateSourceSyncCursor(gmail.ID, "history-1"), "UpdateSourceSyncCursor")
+
+	completedID, err := st.StartSync(gmail.ID, "full")
+	require.NoError(err, "StartSync completed")
+	require.NoError(st.UpdateSyncCheckpoint(completedID, &store.Checkpoint{
+		PageToken:         "page-1",
+		MessagesProcessed: 10,
+		MessagesAdded:     8,
+		MessagesUpdated:   2,
+	}), "UpdateSyncCheckpoint")
+	require.NoError(st.CompleteSync(completedID, "history-2"), "CompleteSync")
+
+	runningID, err := st.StartSync(gmail.ID, "incremental")
+	require.NoError(err, "StartSync running")
+
+	_, err = st.GetOrCreateSource("imap", "imaps://mail.example.com/alice")
+	require.NoError(err, "GetOrCreateSource imap")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+
+	got := resp.Sources[0]
+	assert.Equal(gmail.ID, got.ID, "ID")
+	assert.Equal("gmail", got.SourceType, "SourceType")
+	assert.Equal("alice@example.com", got.Identifier, "Identifier")
+	require.NotNil(got.DisplayName, "DisplayName")
+	assert.Equal("Alice", *got.DisplayName, "DisplayName")
+	require.NotNil(got.LastSyncAt, "LastSyncAt")
+	assert.NotEmpty(*got.LastSyncAt, "LastSyncAt")
+	assert.NotEmpty(got.UpdatedAt, "UpdatedAt")
+
+	require.NotNil(got.ActiveSync, "ActiveSync")
+	assert.Equal(runningID, got.ActiveSync.ID, "ActiveSync.ID")
+	assert.Equal(store.SyncStatusRunning, got.ActiveSync.Status, "ActiveSync.Status")
+
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(runningID, got.LatestSync.ID, "LatestSync.ID")
+
+	require.NotNil(got.LastSuccessfulSync, "LastSuccessfulSync")
+	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
+	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
+	assert.Equal(int64(10), got.LastSuccessfulSync.MessagesProcessed, "LastSuccessfulSync.MessagesProcessed")
+	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
+}
+
+func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	source, err := st.GetOrCreateSource("gmail", "empty@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+	assert.Equal(source.ID, resp.Sources[0].ID, "ID")
+	assert.Nil(resp.Sources[0].ActiveSync, "ActiveSync")
+	assert.Nil(resp.Sources[0].LatestSync, "LatestSync")
+	assert.Nil(resp.Sources[0].LastSuccessfulSync, "LastSuccessfulSync")
 }
 
 func TestHandleGetMessage(t *testing.T) {
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assert.Equal(http.StatusOK, w.Code, "status")
 
 	var resp MessageDetail
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.ID != 1 {
-		t.Errorf("id = %d, want 1", resp.ID)
-	}
-	if resp.Subject != "Test Subject" {
-		t.Errorf("subject = %q, want 'Test Subject'", resp.Subject)
-	}
-	if resp.Body != "This is the full message body text." {
-		t.Errorf("body = %q, want 'This is the full message body text.'", resp.Body)
-	}
+	assert.Equal(int64(1), resp.ID, "id")
+	assert.Equal("Test Subject", resp.Subject, "subject")
+	assert.Equal("This is the full message body text.", resp.Body, "body")
 }
 
 func TestHandleGetMessageNotFound(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/99999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/99999", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
+	assertpkg.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestHandleGetMessageInvalidID(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 }
 
 func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: {
@@ -254,33 +309,19 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode: %v", err)
-	}
-	if resp["body"] != "plain fallback" {
-		t.Errorf("body = %q, want %q", resp["body"], "plain fallback")
-	}
-	if resp["body_html"] != "<p>Hello</p>" {
-		t.Errorf("body_html = %q, want %q", resp["body_html"], "<p>Hello</p>")
-	}
-	if resp["subject"] != "HTML Email" {
-		t.Errorf("subject = %q, want %q", resp["subject"], "HTML Email")
-	}
-	if resp["from"] != "Sender <sender@example.com>" {
-		t.Errorf("from = %q, want %q", resp["from"], "Sender <sender@example.com>")
-	}
-	if _, ok := resp["deleted_at"]; ok {
-		t.Errorf("deleted_at should be omitted for live message, got %v", resp["deleted_at"])
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
+	assert.Equal("plain fallback", resp["body"], "body")
+	assert.Equal("<p>Hello</p>", resp["body_html"], "body_html")
+	assert.Equal("HTML Email", resp["subject"], "subject")
+	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
+	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
 }
 
 // TestHandleGetMessage_EngineDeletedAt verifies the engine path surfaces
@@ -302,57 +343,43 @@ func TestHandleGetMessage_EngineDeletedAt(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/42", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode: %v", err)
-	}
+	var resp map[string]any
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	want := deletedAt.Format(time.RFC3339)
-	if got := resp["deleted_at"]; got != want {
-		t.Errorf("deleted_at = %v, want %q", got, want)
-	}
+	assertpkg.Equal(t, want, resp["deleted_at"], "deleted_at")
 }
 
 func TestHandleSearchMissingQuery(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 }
 
 func TestHandleSearch(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=Test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=Test", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp SearchResult
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.Query != "Test" {
-		t.Errorf("query = %q, want 'Test'", resp.Query)
-	}
+	assertpkg.Equal(t, "Test", resp.Query, "query")
 }
 
 func TestHandleTriggerSync(t *testing.T) {
@@ -368,14 +395,12 @@ func TestHandleTriggerSync(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/test@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/test@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusAccepted {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusAccepted, w.Body.String())
-	}
+	assertpkg.Equal(t, http.StatusAccepted, w.Code, "status (body: %s)", w.Body.String())
 }
 
 func TestHandleTriggerSyncNotFound(t *testing.T) {
@@ -386,14 +411,12 @@ func TestHandleTriggerSyncNotFound(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/unknown@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/unknown@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
+	assertpkg.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestHandleTriggerSyncConflict(t *testing.T) {
@@ -409,39 +432,33 @@ func TestHandleTriggerSyncConflict(t *testing.T) {
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/sync/test@gmail.com", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/test@gmail.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
-	}
+	assertpkg.Equal(t, http.StatusConflict, w.Code, "status")
 }
 
 func TestErrorResponseShape(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
 	// Test with invalid ID to get a 400 error
-	req := httptest.NewRequest("GET", "/api/v1/messages/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
 	var resp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode error response")
 
-	if resp.Error == "" {
-		t.Error("expected error code in response")
-	}
-	if resp.Message == "" {
-		t.Error("expected error message in response")
-	}
+	assertpkg.NotEmpty(t, resp.Error, "expected error code in response")
+	assertpkg.NotEmpty(t, resp.Message, "expected error message in response")
 }
 
 func TestMessageSummaryNilSlices(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	store := &mockStore{
 		messages: []APIMessage{
 			{
@@ -460,145 +477,117 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, store, sched, testLogger())
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
 	// Verify nil slices become empty arrays, not null
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages := resp["messages"].([]interface{})
-	msg := messages[0].(map[string]interface{})
+	messages, ok := resp["messages"].([]any)
+	require.True(ok, "messages is []any")
+	msg, ok := messages[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
 
 	// "to" should be an empty array, not null
-	to, ok := msg["to"].([]interface{})
-	if !ok {
-		t.Fatalf("expected 'to' to be an array, got %T", msg["to"])
-	}
-	if len(to) != 0 {
-		t.Errorf("expected empty 'to' array, got %v", to)
-	}
+	to, ok := msg["to"].([]any)
+	require.True(ok, "expected 'to' to be an array, got %T", msg["to"])
+	assert.Empty(to, "expected empty 'to' array")
 
-	labels, ok := msg["labels"].([]interface{})
-	if !ok {
-		t.Fatalf("expected 'labels' to be an array, got %T", msg["labels"])
-	}
-	if len(labels) != 0 {
-		t.Errorf("expected empty 'labels' array, got %v", labels)
-	}
+	labels, ok := msg["labels"].([]any)
+	require.True(ok, "expected 'labels' to be an array, got %T", msg["labels"])
+	assert.Empty(labels, "expected empty 'labels' array")
 }
 
 func TestMessageSummaryCcBccInResponse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, ms := newTestServerWithMockStore(t)
 	ms.messages[0].Cc = []string{"cc1@example.com", "cc2@example.com"}
 	ms.messages[0].Bcc = []string{"bcc@example.com"}
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	require.Equal(http.StatusOK, w.Code, "status")
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	msg := resp["messages"].([]interface{})[0].(map[string]interface{})
+	msgs, ok := resp["messages"].([]any)
+	require.True(ok, "messages is []any")
+	msg, ok := msgs[0].(map[string]any)
+	require.True(ok, "message is map[string]any")
 
-	ccRaw, ok := msg["cc"].([]interface{})
-	if !ok {
-		t.Fatalf("expected 'cc' array, got %T", msg["cc"])
-	}
+	ccRaw, ok := msg["cc"].([]any)
+	require.True(ok, "expected 'cc' array, got %T", msg["cc"])
 	var gotCc []string
 	for _, v := range ccRaw {
-		gotCc = append(gotCc, v.(string))
+		s, ok := v.(string)
+		require.True(ok, "cc element is string, got %T", v)
+		gotCc = append(gotCc, s)
 	}
 	slices.Sort(gotCc)
 	wantCc := []string{"cc1@example.com", "cc2@example.com"}
-	if !slices.Equal(gotCc, wantCc) {
-		t.Errorf("cc = %v, want %v", gotCc, wantCc)
-	}
+	assert.Equal(wantCc, gotCc, "cc")
 
-	bcc, ok := msg["bcc"].([]interface{})
-	if !ok {
-		t.Fatalf("expected 'bcc' array, got %T", msg["bcc"])
-	}
-	if len(bcc) != 1 || bcc[0] != "bcc@example.com" {
-		t.Errorf("bcc = %v, want [bcc@example.com]", bcc)
-	}
+	bcc, ok := msg["bcc"].([]any)
+	require.True(ok, "expected 'bcc' array, got %T", msg["bcc"])
+	require.Len(bcc, 1, "bcc")
+	assert.Equal("bcc@example.com", bcc[0], "bcc[0]")
 }
 
 func TestMessageSummaryCcBccOmittedWhenEmpty(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	// Parse raw JSON to check field presence
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &raw), "decode")
 
 	var messages []json.RawMessage
-	if err := json.Unmarshal(raw["messages"], &messages); err != nil {
-		t.Fatalf("decode messages: %v", err)
-	}
+	require.NoError(json.Unmarshal(raw["messages"], &messages), "decode messages")
 
 	var msg map[string]json.RawMessage
-	if err := json.Unmarshal(messages[0], &msg); err != nil {
-		t.Fatalf("decode message: %v", err)
-	}
+	require.NoError(json.Unmarshal(messages[0], &msg), "decode message")
 
-	if _, exists := msg["cc"]; exists {
-		t.Error("expected 'cc' to be omitted from JSON when empty")
-	}
-	if _, exists := msg["bcc"]; exists {
-		t.Error("expected 'bcc' to be omitted from JSON when empty")
-	}
+	assert.NotContains(msg, "cc", "expected 'cc' to be omitted from JSON when empty")
+	assert.NotContains(msg, "bcc", "expected 'bcc' to be omitted from JSON when empty")
 }
 
 func TestGetMessageCcBccInResponse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, ms := newTestServerWithMockStore(t)
 	ms.messages[0].Cc = []string{"cc@example.com"}
 	ms.messages[0].Bcc = []string{"bcc@example.com"}
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	require.Equal(http.StatusOK, w.Code, "status")
 
 	var resp MessageDetail
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	if len(resp.Cc) != 1 || resp.Cc[0] != "cc@example.com" {
-		t.Errorf("cc = %v, want [cc@example.com]", resp.Cc)
-	}
-	if len(resp.Bcc) != 1 || resp.Bcc[0] != "bcc@example.com" {
-		t.Errorf("bcc = %v, want [bcc@example.com]", resp.Bcc)
-	}
+	require.Len(resp.Cc, 1, "cc")
+	assert.Equal("cc@example.com", resp.Cc[0], "cc[0]")
+	require.Len(resp.Bcc, 1, "bcc")
+	assert.Equal("bcc@example.com", resp.Bcc[0], "bcc[0]")
 }
 
 func TestHandleUploadToken(t *testing.T) {
 	// Create temp directory for tokens
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -614,29 +603,23 @@ func TestHandleUploadToken(t *testing.T) {
 		"expiry": "2024-12-31T23:59:59Z"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
-	}
+	assertpkg.Equal(t, http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
 
 	// Verify token file was created
 	tokenPath := filepath.Join(tmpDir, "tokens", "test@gmail.com.json")
-	if _, err := os.Stat(tokenPath); os.IsNotExist(err) {
-		t.Errorf("token file was not created at %s", tokenPath)
-	}
+	_, statErr := os.Stat(tokenPath)
+	assertpkg.False(t, os.IsNotExist(statErr), "token file was not created at %s", tokenPath)
 }
 
 func TestHandleUploadToken_PreservesClientID(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -652,40 +635,30 @@ func TestHandleUploadToken_PreservesClientID(t *testing.T) {
 		"client_id": "myapp.apps.googleusercontent.com"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
-	}
+	require.Equal(http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
 
 	// Read back the saved token and verify client_id was preserved
 	tokenPath := filepath.Join(tmpDir, "tokens", "test@gmail.com.json")
 	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		t.Fatalf("read token file: %v", err)
-	}
+	require.NoError(err, "read token file")
 
 	var saved struct {
 		ClientID string `json:"client_id"`
 	}
-	if err := json.Unmarshal(data, &saved); err != nil {
-		t.Fatalf("unmarshal saved token: %v", err)
-	}
-	if saved.ClientID != "myapp.apps.googleusercontent.com" {
-		t.Errorf("client_id = %q, want myapp.apps.googleusercontent.com", saved.ClientID)
-	}
+	require.NoError(json.Unmarshal(data, &saved), "unmarshal saved token")
+	assertpkg.Equal(t, "myapp.apps.googleusercontent.com", saved.ClientID, "client_id")
 }
 
 func TestHandleUploadTokenInvalidJSON(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -694,31 +667,23 @@ func TestHandleUploadTokenInvalidJSON(t *testing.T) {
 	sched := newMockScheduler()
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader("not valid json"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader("not valid json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assert.Equal(http.StatusBadRequest, w.Code, "status")
 
 	var resp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if resp.Error != "invalid_json" {
-		t.Errorf("error = %q, want 'invalid_json'", resp.Error)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode error response")
+	assert.Equal("invalid_json", resp.Error, "error")
 }
 
 func TestHandleUploadTokenMissingRefreshToken(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-tokens-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
@@ -733,23 +698,17 @@ func TestHandleUploadTokenMissingRefreshToken(t *testing.T) {
 		"token_type": "Bearer"
 	}`
 
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/test@gmail.com", strings.NewReader(tokenJSON))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assert.Equal(http.StatusBadRequest, w.Code, "status")
 
 	var resp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if resp.Error != "invalid_token" {
-		t.Errorf("error = %q, want 'invalid_token'", resp.Error)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode error response")
+	assert.Equal("invalid_token", resp.Error, "error")
 }
 
 func TestHandleUploadTokenInvalidEmail(t *testing.T) {
@@ -772,15 +731,13 @@ func TestHandleUploadTokenInvalidEmail(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/v1/auth/token/"+tc.email, strings.NewReader(tokenJSON))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/"+tc.email, strings.NewReader(tokenJSON))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want %d for email %q", w.Code, http.StatusBadRequest, tc.email)
-			}
+			assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status for email %q", tc.email)
 		})
 	}
 }
@@ -793,23 +750,19 @@ func TestHandleUploadTokenMissingEmail(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	// Request without email in path - should 404 since route doesn't match
-	req := httptest.NewRequest("POST", "/api/v1/auth/token/", strings.NewReader("{}"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/", strings.NewReader("{}"))
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
 	// Chi router will 404 on missing path parameter
-	if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 404 or 400", w.Code)
-	}
+	assertpkg.Contains(t, []int{http.StatusNotFound, http.StatusBadRequest}, w.Code, "status = %d, want 404 or 400", w.Code)
 }
 
 func TestHandleAddAccount(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "msgvault-test-config-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
 		Server:  config.ServerConfig{APIPort: 8080},
@@ -819,28 +772,21 @@ func TestHandleAddAccount(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "new@gmail.com", "schedule": "0 3 * * *"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusCreated, w.Body.String())
-	}
+	require.Equal(http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
 
 	// Verify account was added to config
-	if len(cfg.Accounts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(cfg.Accounts))
-	}
-	if cfg.Accounts[0].Email != "new@gmail.com" {
-		t.Errorf("email = %q, want 'new@gmail.com'", cfg.Accounts[0].Email)
-	}
+	require.Len(cfg.Accounts, 1, "expected 1 account")
+	assert.Equal("new@gmail.com", cfg.Accounts[0].Email, "email")
 
 	// Verify scheduler was notified
-	if len(sched.addedAccts) != 1 || sched.addedAccts[0] != "new@gmail.com" {
-		t.Errorf("scheduler.AddAccount not called, addedAccts = %v", sched.addedAccts)
-	}
+	require.Len(sched.addedAccts, 1, "scheduler.AddAccount not called, addedAccts = %v", sched.addedAccts)
+	assert.Equal("new@gmail.com", sched.addedAccts[0], "scheduler.AddAccount account")
 }
 
 func TestHandleAddAccountDuplicate(t *testing.T) {
@@ -854,23 +800,17 @@ func TestHandleAddAccountDuplicate(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "existing@gmail.com"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "exists" {
-		t.Errorf("status = %q, want 'exists'", resp["status"])
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assertpkg.Equal(t, "exists", resp["status"], "status")
 }
 
 func TestHandleAddAccountInvalidCron(t *testing.T) {
@@ -881,23 +821,17 @@ func TestHandleAddAccountInvalidCron(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "new@gmail.com", "schedule": "not a cron"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusBadRequest, w.Body.String())
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Error != "invalid_schedule" {
-		t.Errorf("error = %q, want 'invalid_schedule'", resp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assertpkg.Equal(t, "invalid_schedule", resp.Error, "error")
 }
 
 func TestHandleAddAccountInvalidEmail(t *testing.T) {
@@ -919,14 +853,12 @@ func TestHandleAddAccountInvalidEmail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(tt.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != tt.code {
-				t.Errorf("status = %d, want %d", w.Code, tt.code)
-			}
+			assertpkg.Equal(t, tt.code, w.Code, "status")
 		})
 	}
 }
@@ -934,9 +866,7 @@ func TestHandleAddAccountInvalidEmail(t *testing.T) {
 func TestHandleAddAccountSaveFailure(t *testing.T) {
 	// Point HomeDir to a file (not a directory) so Save() fails
 	tmpFile := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(tmpFile, []byte("x"), 0600); err != nil {
-		t.Fatalf("create blocker file: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0600), "create blocker file")
 
 	cfg := &config.Config{
 		Server:  config.ServerConfig{APIPort: 8080},
@@ -946,20 +876,16 @@ func TestHandleAddAccountSaveFailure(t *testing.T) {
 	srv := NewServer(cfg, nil, sched, testLogger())
 
 	body := `{"email": "fail@gmail.com", "schedule": "0 2 * * *"}`
-	req := httptest.NewRequest("POST", "/api/v1/accounts", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-	}
+	assertpkg.Equal(t, http.StatusInternalServerError, w.Code, "status")
 
 	// In-memory state should be rolled back
-	if len(cfg.Accounts) != 0 {
-		t.Errorf("cfg.Accounts has %d entries, want 0 (rollback failed)", len(cfg.Accounts))
-	}
+	assertpkg.Empty(t, cfg.Accounts, "cfg.Accounts has %d entries, want 0 (rollback failed)", len(cfg.Accounts))
 }
 
 func TestSanitizeTokenPath(t *testing.T) {
@@ -985,20 +911,15 @@ func TestSanitizeTokenPath(t *testing.T) {
 			// Result must be within tokensDir (path traversal prevention)
 			cleanResult := filepath.Clean(result)
 			cleanTokensDir := filepath.Clean(tokensDir)
-			if !strings.HasPrefix(cleanResult, cleanTokensDir+string(os.PathSeparator)) {
-				t.Errorf("path %q escapes tokensDir %q", result, tokensDir)
-			}
+			assertpkg.True(t, strings.HasPrefix(cleanResult, cleanTokensDir+string(os.PathSeparator)),
+				"path %q escapes tokensDir %q", result, tokensDir)
 
 			// Result must end with .json
-			if !strings.HasSuffix(result, ".json") {
-				t.Errorf("path %q doesn't end with .json", result)
-			}
+			assertpkg.True(t, strings.HasSuffix(result, ".json"), "path %q doesn't end with .json", result)
 
 			// Result must not contain path separators in the filename
 			base := filepath.Base(result)
-			if strings.ContainsAny(base, "/\\") {
-				t.Errorf("filename %q contains path separators", base)
-			}
+			assertpkg.False(t, strings.ContainsAny(base, "/\\"), "filename %q contains path separators", base)
 		})
 	}
 }
@@ -1049,6 +970,8 @@ func newTestServerWithEngine(t *testing.T, engine *querytest.MockEngine) *Server
 }
 
 func TestHandleAggregates(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := &querytest.MockEngine{
 		AggregateRows: []query.AggregateRow{
 			{Key: "alice@example.com", Count: 100, TotalSize: 50000, AttachmentSize: 10000, AttachmentCount: 5},
@@ -1057,29 +980,19 @@ func TestHandleAggregates(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=senders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp AggregateResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.ViewType != "senders" {
-		t.Errorf("view_type = %q, want 'senders'", resp.ViewType)
-	}
-	if len(resp.Rows) != 2 {
-		t.Errorf("rows count = %d, want 2", len(resp.Rows))
-	}
-	if resp.Rows[0].Key != "alice@example.com" {
-		t.Errorf("first row key = %q, want 'alice@example.com'", resp.Rows[0].Key)
-	}
+	assert.Equal("senders", resp.ViewType, "view_type")
+	require.Len(resp.Rows, 2, "rows count")
+	assert.Equal("alice@example.com", resp.Rows[0].Key, "first row key")
 }
 
 func TestHandleAggregatesNoEngine(t *testing.T) {
@@ -1096,31 +1009,28 @@ func TestHandleAggregatesNoEngine(t *testing.T) {
 		Logger:    testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=senders", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
-	}
+	assertpkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status")
 }
 
 func TestHandleAggregatesInvalidViewType(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates?view_type=invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 }
 
 func TestHandleSubAggregates(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := &querytest.MockEngine{
 		AggregateRows: []query.AggregateRow{
 			{Key: "INBOX", Count: 80, TotalSize: 40000},
@@ -1129,68 +1039,62 @@ func TestHandleSubAggregates(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/aggregates/sub?view_type=labels&sender=alice@example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/aggregates/sub?view_type=labels&sender=alice@example.com", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp AggregateResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.ViewType != "labels" {
-		t.Errorf("view_type = %q, want 'labels'", resp.ViewType)
-	}
-	if len(resp.Rows) != 2 {
-		t.Errorf("rows count = %d, want 2", len(resp.Rows))
-	}
+	assert.Equal("labels", resp.ViewType, "view_type")
+	assert.Len(resp.Rows, 2, "rows count")
 }
 
 func TestHandleFilteredMessages(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		ListResults: []query.MessageSummary{
-			{
+		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+			gotFilter = filter
+			return []query.MessageSummary{{
 				ID:             1,
 				Subject:        "Test Email",
+				MessageType:    "sms",
 				FromEmail:      "alice@example.com",
 				SentAt:         time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
 				Labels:         []string{"INBOX"},
 				HasAttachments: false,
 				SizeEstimate:   1024,
-			},
+			}}, nil
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?sender=alice@example.com&limit=100", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?sender=alice@example.com&message_type=sms&limit=100", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	messages, ok := resp["messages"].([]interface{})
-	if !ok {
-		t.Fatal("expected messages array in response")
-	}
-	if len(messages) != 1 {
-		t.Errorf("messages count = %d, want 1", len(messages))
-	}
+	messages, ok := resp["messages"].([]any)
+	require.True(ok, "expected messages array in response")
+	assert.Len(messages, 1, "messages count")
+	require.Equal("sms", gotFilter.MessageType, "message_type filter")
+	msg, ok := messages[0].(map[string]any)
+	require.True(ok, "message row = %#v, want object", messages[0])
+	require.Equal("sms", msg["message_type"], "response message_type")
 }
 
 func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
+	require := requirepkg.New(t)
 	deletedAt := time.Date(2026, 3, 18, 15, 0, 0, 0, time.UTC)
 	engine := &querytest.MockEngine{
 		ListResults: []query.MessageSummary{
@@ -1205,36 +1109,100 @@ func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/filter?limit=100", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?limit=100", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	messages, ok := resp["messages"].([]any)
-	if !ok || len(messages) != 1 {
-		t.Fatalf("messages = %#v, want single message", resp["messages"])
-	}
+	require.True(ok, "messages = %#v, want array", resp["messages"])
+	require.Len(messages, 1, "messages count")
 
 	message, ok := messages[0].(map[string]any)
-	if !ok {
-		t.Fatalf("message = %#v, want object", messages[0])
-	}
+	require.True(ok, "message = %#v, want object", messages[0])
 
-	if got := message["deleted_at"]; got != deletedAt.Format(time.RFC3339) {
-		t.Fatalf("deleted_at = %#v, want %q", got, deletedAt.Format(time.RFC3339))
+	require.Equal(deletedAt.Format(time.RFC3339), message["deleted_at"], "deleted_at")
+}
+
+func TestHandleFilteredMessagesFormatsPhoneBackedSMSParticipants(t *testing.T) {
+	require := requirepkg.New(t)
+	engine := &querytest.MockEngine{
+		ListResults: []query.MessageSummary{
+			{
+				ID:          1,
+				Subject:     "",
+				MessageType: "sms",
+				FromName:    "SMS Sender",
+				FromPhone:   "+15551234567",
+				To:          []query.Address{{Email: "+15557654321", Name: "Me"}},
+				SentAt:      time.Date(2024, 4, 1, 8, 0, 0, 0, time.UTC),
+				Snippet:     "known sms snippet",
+			},
+		},
 	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?message_type=sms&limit=1", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+
+	var resp struct {
+		Messages []MessageSummary `json:"messages"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Messages, 1, "messages count")
+	require.Equal("SMS Sender <+15551234567>", resp.Messages[0].From, "from")
+	require.Len(resp.Messages[0].To, 1, "to")
+	require.Equal("Me <+15557654321>", resp.Messages[0].To[0], "to[0]")
+}
+
+func TestHandleFilteredMessagesFallsBackToContactNameWhenAddressMissing(t *testing.T) {
+	require := requirepkg.New(t)
+	engine := &querytest.MockEngine{
+		ListResults: []query.MessageSummary{
+			{
+				ID:          1,
+				Subject:     "",
+				MessageType: "sms",
+				FromName:    "ShortCode Alerts",
+				// No email or phone — e.g. a short-code sender stored only via
+				// participant_identifiers. Without the fallback the From
+				// field would render empty.
+				To:      []query.Address{{Name: "Me"}},
+				SentAt:  time.Date(2024, 4, 1, 8, 0, 0, 0, time.UTC),
+				Snippet: "your code is 123456",
+			},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/filter?message_type=sms&limit=1", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+
+	var resp struct {
+		Messages []MessageSummary `json:"messages"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Messages, 1, "messages count")
+	require.Equal("ShortCode Alerts", resp.Messages[0].From, "from")
+	require.Len(resp.Messages[0].To, 1, "to")
+	require.Equal("Me", resp.Messages[0].To[0], "to[0]")
 }
 
 func TestHandleTotalStats(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := &querytest.MockEngine{
 		Stats: &query.TotalStats{
 			MessageCount:    1000,
@@ -1247,29 +1215,22 @@ func TestHandleTotalStats(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/stats/total", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats/total", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp TotalStatsResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.MessageCount != 1000 {
-		t.Errorf("message_count = %d, want 1000", resp.MessageCount)
-	}
-	if resp.TotalSize != 5000000 {
-		t.Errorf("total_size = %d, want 5000000", resp.TotalSize)
-	}
+	assert.Equal(int64(1000), resp.MessageCount, "message_count")
+	assert.Equal(int64(5000000), resp.TotalSize, "total_size")
 }
 
 func TestHandleFastSearch(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := &querytest.MockEngine{
 		SearchFastResults: []query.MessageSummary{
 			{
@@ -1286,62 +1247,73 @@ func TestHandleFastSearch(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast?q=invoice", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=invoice", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp SearchFastResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp.Query != "invoice" {
-		t.Errorf("query = %q, want 'invoice'", resp.Query)
-	}
-	if len(resp.Messages) != 1 {
-		t.Errorf("messages count = %d, want 1", len(resp.Messages))
-	}
+	assert.Equal("invoice", resp.Query, "query")
+	assert.Len(resp.Messages, 1, "messages count")
 }
 
 func TestHandleFastSearchMissingQuery(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 }
 
 func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/fast?q=test&view_type=invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/fast?q=test&view_type=invalid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 
 	var errResp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 
-	if errResp["error"] != "invalid_view_type" {
-		t.Errorf("error = %q, want 'invalid_view_type'", errResp["error"])
+	assertpkg.Equal(t, "invalid_view_type", errResp["error"], "error")
+}
+
+// TestSearchRejectsMessageTypeFilter guards against silently dropping
+// the message_type filter. MergeFilterIntoQuery does not propagate
+// MessageType, so accepting it in fast/deep search would let
+// /search/fast?q=hello&message_type=sms return unscoped results. Reject
+// until the search pipeline gains a message_type predicate.
+func TestSearchRejectsMessageTypeFilter(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/search/fast?q=hello&message_type=sms",
+		"/api/v1/search/deep?q=hello&message_type=sms",
+	} {
+		t.Run(path, func(t *testing.T) {
+			engine := &querytest.MockEngine{}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+			var errResp map[string]string
+			requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode error")
+			requirepkg.Equal(t, "unsupported_filter", errResp["error"], "error")
+		})
 	}
 }
 
@@ -1358,42 +1330,35 @@ func TestHandleDeepSearch(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/deep?q=agenda", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=agenda", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	assertpkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	var resp map[string]any
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
-	if resp["query"] != "agenda" {
-		t.Errorf("query = %v, want 'agenda'", resp["query"])
-	}
+	assertpkg.Equal(t, "agenda", resp["query"], "query")
 }
 
 func TestHandleDeepSearchMissingQuery(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/search/deep", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status")
 }
 
 // mockSQLQueryEngine wraps MockEngine and adds SQLQuerier support.
 type mockSQLQueryEngine struct {
 	querytest.MockEngine
+
 	queryResult *query.QueryResult
 	queryErr    error
 }
@@ -1403,6 +1368,8 @@ func (m *mockSQLQueryEngine) QuerySQL(_ context.Context, _ string) (*query.Query
 }
 
 func TestHandleQuery(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	engine := &mockSQLQueryEngine{
 		queryResult: &query.QueryResult{
 			Columns:  []string{"from_email"},
@@ -1421,53 +1388,40 @@ func TestHandleQuery(t *testing.T) {
 	})
 
 	body := `{"sql": "SELECT from_email FROM v_senders LIMIT 1"}`
-	req := httptest.NewRequest("POST", "/api/v1/query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var result query.QueryResult
-	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&result), "failed to decode response")
 
-	if result.RowCount != 1 {
-		t.Errorf("row_count = %d, want 1", result.RowCount)
-	}
-	if len(result.Columns) != 1 || result.Columns[0] != "from_email" {
-		t.Errorf("columns = %v, want [from_email]", result.Columns)
-	}
+	assert.Equal(1, result.RowCount, "row_count")
+	require.Len(result.Columns, 1, "columns")
+	assert.Equal("from_email", result.Columns[0], "columns[0]")
 }
 
 func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
 	// mode=fts (or unset) should still return the legacy SearchResult shape.
-	req := httptest.NewRequest("GET", "/api/v1/search?q=Test&mode=fts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=Test&mode=fts", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp SearchResult
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if resp.Query != "Test" {
-		t.Errorf("query = %q, want 'Test'", resp.Query)
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	assert.Equal("Test", resp.Query, "query")
 	// Legacy shape exposes page + page_size; hybrid shape would not.
-	if resp.Page == 0 {
-		t.Errorf("expected page field in FTS response, got 0")
-	}
+	assert.NotZero(resp.Page, "expected page field in FTS response")
 }
 
 func TestHandleSearch_HybridModeNotConfigured(t *testing.T) {
@@ -1475,23 +1429,16 @@ func TestHandleSearch_HybridModeNotConfigured(t *testing.T) {
 	// the server must return 503 for any vector/hybrid query.
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d, body: %s",
-			w.Code, http.StatusServiceUnavailable, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Error != "vector_not_enabled" {
-		t.Errorf("error = %q, want 'vector_not_enabled'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	assertpkg.Equal(t, "vector_not_enabled", errResp.Error, "error")
 }
 
 // newHybridServerForErrorTest constructs an API server with a real
@@ -1527,20 +1474,14 @@ func TestHandleSearch_HybridErrIndexBuilding(t *testing.T) {
 	backend := &fakeVectorBackend{building: building}
 	srv := newHybridServerForErrorTest(t, backend)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=anything&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=anything&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if errResp.Error != "index_building" {
-		t.Errorf("error = %q, want 'index_building'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assertpkg.Equal(t, "index_building", errResp.Error, "error")
 }
 
 // TestHandleSearch_HybridErrNotEnabled regression-guards the API's
@@ -1551,20 +1492,14 @@ func TestHandleSearch_HybridErrNotEnabled(t *testing.T) {
 	backend := &fakeVectorBackend{} // no active, no building
 	srv := newHybridServerForErrorTest(t, backend)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=anything&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=anything&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if errResp.Error != "vector_not_enabled" {
-		t.Errorf("error = %q, want 'vector_not_enabled'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assertpkg.Equal(t, "vector_not_enabled", errResp.Error, "error")
 }
 
 // realEmbedder returns a deterministic single vector per input. Used
@@ -1630,20 +1565,15 @@ func TestHandleSearch_HybridEmbeddingTimeoutFiresChi(t *testing.T) {
 		RequestTimeout: 100 * time.Millisecond,
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=meeting&mode=hybrid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=meeting&mode=hybrid", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if errResp.Error != "embedding_timeout" {
-		t.Errorf("error = %q, want 'embedding_timeout' (chi may have preempted with a bare 504)", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assertpkg.Equal(t, "embedding_timeout", errResp.Error,
+		"error (chi may have preempted with a bare 504)")
 }
 
 // TestHandleSearch_HybridFilterOnlyReturnsBadRequest regression-guards
@@ -1672,21 +1602,15 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET",
+	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/search?q=from:alice@example.com&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if errResp.Error != "missing_free_text" {
-		t.Errorf("error = %q, want 'missing_free_text'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	assertpkg.Equal(t, "missing_free_text", errResp.Error, "error")
 }
 
 // TestHandleSearch_HybridResponseItemShape regression-guards the
@@ -1696,6 +1620,8 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 // Catches regressions where the embedded type or omitempty rules
 // drift away from MessageSummary.
 func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	deletedAt := time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
 		messages: []APIMessage{{
@@ -1731,28 +1657,20 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=quarterly&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=quarterly&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	// Decode into a raw map so we can verify field names (snake-case
 	// keys) and that no unexpected wrapper is present.
 	var resp struct {
-		Mode    string                   `json:"mode"`
-		Results []map[string]interface{} `json:"results"`
+		Mode    string           `json:"mode"`
+		Results []map[string]any `json:"results"`
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Mode != "vector" {
-		t.Errorf("mode = %q, want 'vector'", resp.Mode)
-	}
-	if len(resp.Results) != 1 {
-		t.Fatalf("results len = %d, want 1", len(resp.Results))
-	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal("vector", resp.Mode, "mode")
+	require.Len(resp.Results, 1, "results len")
 	got := resp.Results[0]
 	// Required MessageSummary fields. Score must be ABSENT (no explain=1).
 	wantKeys := []string{
@@ -1761,23 +1679,16 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 		"has_attachments", "size_bytes",
 	}
 	for _, k := range wantKeys {
-		if _, ok := got[k]; !ok {
-			t.Errorf("missing key %q in hybrid result item, got keys: %v", k, mapKeys(got))
-		}
+		assert.Contains(got, k, "missing key %q in hybrid result item, got keys: %v", k, mapKeys(got))
 	}
-	if _, ok := got["score"]; ok {
-		t.Errorf("'score' key present without explain=1, got %v", got["score"])
-	}
+	assert.NotContains(got, "score", "'score' key present without explain=1, got %v", got["score"])
 	// Spot-check a couple of values to make sure it's the same message.
-	if id, _ := got["id"].(float64); int64(id) != 42 {
-		t.Errorf("id = %v, want 42", got["id"])
-	}
-	if subj, _ := got["subject"].(string); subj != "Quarterly Plan" {
-		t.Errorf("subject = %v, want 'Quarterly Plan'", got["subject"])
-	}
-	if hasA, _ := got["has_attachments"].(bool); !hasA {
-		t.Errorf("has_attachments = %v, want true", got["has_attachments"])
-	}
+	id, _ := got["id"].(float64)
+	assert.Equal(int64(42), int64(id), "id")
+	subj, _ := got["subject"].(string)
+	assert.Equal("Quarterly Plan", subj, "subject")
+	hasA, _ := got["has_attachments"].(bool)
+	assert.True(hasA, "has_attachments")
 }
 
 // TestHandleSearch_HybridUsesBulkHydration regresses the N+1 bug
@@ -1786,6 +1697,8 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 // roughly 7 queries per hit). Hybrid search must instead make a
 // single GetMessagesSummariesByIDs call carrying every hit's id.
 func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	store := &mockStore{
 		messages: []APIMessage{
 			{ID: 1, Subject: "first", From: "a@x", Snippet: "..."},
@@ -1815,28 +1728,17 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	if got := store.getMessageCalls.Load(); got != 0 {
-		t.Errorf("GetMessage call count = %d, want 0 (must use bulk hydration, not per-hit)", got)
-	}
-	if got := store.getSummariesByIDsCalls.Load(); got != 1 {
-		t.Errorf("GetMessagesSummariesByIDs call count = %d, want 1 (single bulk lookup)", got)
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal(int32(0), store.getMessageCalls.Load(),
+		"GetMessage call count, want 0 (must use bulk hydration, not per-hit)")
+	assert.Equal(int32(1), store.getSummariesByIDsCalls.Load(),
+		"GetMessagesSummariesByIDs call count, want 1 (single bulk lookup)")
 	wantIDs := []int64{1, 2, 3}
-	if len(store.getSummariesByIDsLastIDs) != len(wantIDs) {
-		t.Fatalf("getSummariesByIDs last ids = %v, want %v", store.getSummariesByIDsLastIDs, wantIDs)
-	}
-	for i, want := range wantIDs {
-		if store.getSummariesByIDsLastIDs[i] != want {
-			t.Errorf("getSummariesByIDs last ids[%d] = %d, want %d", i, store.getSummariesByIDsLastIDs[i], want)
-		}
-	}
+	require.Equal(wantIDs, store.getSummariesByIDsLastIDs, "getSummariesByIDs last ids")
 }
 
 // TestHandleSearch_HybridPoolSaturatedAlwaysEmitted regression-guards
@@ -1846,6 +1748,7 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 // silently drop the field for false values — clients that read
 // "pool not saturated" as a positive signal would break.
 func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
+	require := requirepkg.New(t)
 	store := &mockStore{}
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
@@ -1866,29 +1769,21 @@ func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		Logger:       testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=hello&mode=vector", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("decode raw: %v", err)
-	}
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &raw), "decode raw")
 	val, exists := raw["pool_saturated"]
-	if !exists {
-		t.Fatalf("pool_saturated key missing from successful response; want present (raw=%s)", w.Body.String())
-	}
-	if string(val) != "false" {
-		t.Errorf("pool_saturated = %s, want false", string(val))
-	}
+	require.True(exists, "pool_saturated key missing from successful response; want present (raw=%s)", w.Body.String())
+	assertpkg.Equal(t, "false", string(val), "pool_saturated")
 }
 
 // mapKeys returns the keys of a map[string]interface{} for use in
 // assertion error messages.
-func mapKeys(m map[string]interface{}) []string {
+func mapKeys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -1900,45 +1795,31 @@ func mapKeys(m map[string]interface{}) []string {
 func TestHandleSearch_HybridModePaginationUnsupported(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=vector&page=2", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=vector&page=2", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body: %s",
-			w.Code, http.StatusBadRequest, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Error != "pagination_unsupported" {
-		t.Errorf("error = %q, want 'pagination_unsupported'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	assertpkg.Equal(t, "pagination_unsupported", errResp.Error, "error")
 }
 
 func TestHandleSearch_UnknownMode(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", "/api/v1/search?q=test&mode=bogus", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=bogus", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body: %s",
-			w.Code, http.StatusBadRequest, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Error != "invalid_mode" {
-		t.Errorf("error = %q, want 'invalid_mode'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	assertpkg.Equal(t, "invalid_mode", errResp.Error, "error")
 }
 
 func TestHandleQuery_SQLiteEngine503(t *testing.T) {
@@ -1954,24 +1835,17 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 	})
 
 	body := `{"sql": "SELECT 1"}`
-	req := httptest.NewRequest("POST", "/api/v1/query", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d, body: %s",
-			w.Code, http.StatusServiceUnavailable, w.Body.String())
-	}
+	assertpkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-	if errResp.Error != "engine_unavailable" {
-		t.Errorf("error = %q, want 'engine_unavailable'", errResp.Error)
-	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	assertpkg.Equal(t, "engine_unavailable", errResp.Error, "error")
 }
 
 // fakeVectorBackend is a test stub implementing vector.Backend. Tests
@@ -1985,13 +1859,13 @@ type fakeVectorBackend struct {
 	searchErr  error
 }
 
-func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int) (vector.GenerationID, error) {
+func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
-func (f *fakeVectorBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID) error {
+func (f *fakeVectorBackend) ActivateGeneration(_ context.Context, _ vector.GenerationID, _ bool) error {
 	return errors.New("not implemented")
 }
-func (f *fakeVectorBackend) RetireGeneration(_ context.Context, _ vector.GenerationID) error {
+func (f *fakeVectorBackend) RetireGeneration(_ context.Context, _ vector.GenerationID, _ bool) error {
 	return errors.New("not implemented")
 }
 func (f *fakeVectorBackend) ActiveGeneration(_ context.Context) (vector.Generation, error) {
@@ -2029,26 +1903,23 @@ func TestHandleStats_VectorDisabled(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 	// newTestServerWithMockStore uses NewServer (no Backend), so backend == nil.
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	// Parse raw JSON to verify "vector_search" is absent entirely.
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if _, exists := raw["vector_search"]; exists {
-		t.Error("expected 'vector_search' to be absent from JSON when backend is nil")
-	}
+	requirepkg.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode")
+	assertpkg.NotContains(t, raw, "vector_search",
+		"expected 'vector_search' to be absent from JSON when backend is nil")
 }
 
 func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
 			ID:          5,
@@ -2079,59 +1950,34 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 		Logger:    testLogger(),
 	})
 
-	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 
-	vs, ok := resp["vector_search"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected 'vector_search' object, got %T: %v", resp["vector_search"], resp["vector_search"])
-	}
+	vs, ok := resp["vector_search"].(map[string]any)
+	require.True(ok, "expected 'vector_search' object, got %T: %v", resp["vector_search"], resp["vector_search"])
 
-	if got := vs["enabled"]; got != true {
-		t.Errorf("enabled = %v, want true", got)
-	}
-	if got := vs["pending_embeddings_total"]; got != float64(7) {
-		t.Errorf("pending_embeddings_total = %v, want 7", got)
-	}
+	assert.Equal(true, vs["enabled"], "enabled")
+	assert.InDelta(float64(7), vs["pending_embeddings_total"], 1e-9, "pending_embeddings_total")
 
-	active, ok := vs["active_generation"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
-	}
+	active, ok := vs["active_generation"].(map[string]any)
+	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])
 
-	if got := active["message_count"]; got != float64(100) {
-		t.Errorf("message_count = %v, want 100", got)
-	}
-	if got := active["model"]; got != "nomic-embed" {
-		t.Errorf("model = %v, want 'nomic-embed'", got)
-	}
-	if got := active["id"]; got != float64(5) {
-		t.Errorf("id = %v, want 5", got)
-	}
-	if got := active["dimension"]; got != float64(768) {
-		t.Errorf("dimension = %v, want 768", got)
-	}
-	if got := active["fingerprint"]; got != "nomic-embed:768" {
-		t.Errorf("fingerprint = %v, want 'nomic-embed:768'", got)
-	}
-	if got := active["state"]; got != "active" {
-		t.Errorf("state = %v, want 'active'", got)
-	}
+	assert.InDelta(float64(100), active["message_count"], 1e-9, "message_count")
+	assert.Equal("nomic-embed", active["model"], "model")
+	assert.InDelta(float64(5), active["id"], 1e-9, "id")
+	assert.InDelta(float64(768), active["dimension"], 1e-9, "dimension")
+	assert.Equal("nomic-embed:768", active["fingerprint"], "fingerprint")
+	assert.Equal("active", active["state"], "state")
 
-	if _, exists := vs["building_generation"]; exists {
-		t.Error("expected 'building_generation' to be absent when there is no building generation")
-	}
+	assert.NotContains(vs, "building_generation",
+		"expected 'building_generation' to be absent when there is no building generation")
 }
 
 // inlineURL builds the inline endpoint URL for a given message ID and CID,
@@ -2171,6 +2017,7 @@ func rawMIMEWithInlineImage(cid, contentType string, body []byte) []byte {
 }
 
 func TestHandleMessageInline_ImagePNG(t *testing.T) {
+	assert := assertpkg.New(t)
 	imgData := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
 	raw := rawMIMEWithInlineImage("logo@example", "image/png", imgData)
 
@@ -2179,28 +2026,17 @@ func TestHandleMessageInline_ImagePNG(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
-		t.Errorf("Content-Type = %q, want image/png", ct)
-	}
-	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "private") {
-		t.Errorf("Cache-Control = %q, should contain 'private'", cc)
-	}
-	if cc := w.Header().Get("Cache-Control"); strings.Contains(cc, "public") {
-		t.Errorf("Cache-Control = %q, must not contain 'public'", cc)
-	}
-	if cd := w.Header().Get("Content-Disposition"); cd != "inline" {
-		t.Errorf("Content-Disposition = %q, want 'inline'", cd)
-	}
-	if !bytes.Equal(w.Body.Bytes(), imgData) {
-		t.Errorf("response body = %x, want %x", w.Body.Bytes(), imgData)
-	}
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal("image/png", w.Header().Get("Content-Type"), "Content-Type")
+	cc := w.Header().Get("Cache-Control")
+	assert.Contains(cc, "private", "Cache-Control should contain 'private'")
+	assert.NotContains(cc, "public", "Cache-Control must not contain 'public'")
+	assert.Equal("inline", w.Header().Get("Content-Disposition"), "Content-Disposition")
+	assert.Equal(imgData, w.Body.Bytes(), "response body")
 }
 
 // TestHandleMessageInline_NonInlineSkipped ensures that a part with a matching
@@ -2215,13 +2051,11 @@ func TestHandleMessageInline_NonInlineSkipped(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d for non-inline attachment", w.Code, http.StatusNotFound)
-	}
+	assertpkg.Equal(t, http.StatusNotFound, w.Code, "status for non-inline attachment")
 }
 
 func TestHandleMessageInline_RejectsXHTML(t *testing.T) {
@@ -2232,13 +2066,11 @@ func TestHandleMessageInline_RejectsXHTML(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "evil@nasty"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "evil@nasty"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("status = %d, want %d for application/xhtml+xml inline part", w.Code, http.StatusUnsupportedMediaType)
-	}
+	assertpkg.Equal(t, http.StatusUnsupportedMediaType, w.Code, "status for application/xhtml+xml inline part")
 }
 
 func TestHandleMessageInline_RejectsSVG(t *testing.T) {
@@ -2249,13 +2081,11 @@ func TestHandleMessageInline_RejectsSVG(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "vuln@svg"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "vuln@svg"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("status = %d, want %d for image/svg+xml inline part", w.Code, http.StatusUnsupportedMediaType)
-	}
+	assertpkg.Equal(t, http.StatusUnsupportedMediaType, w.Code, "status for image/svg+xml inline part")
 }
 
 func TestHandleMessageInline_CIDNotFound(t *testing.T) {
@@ -2266,25 +2096,21 @@ func TestHandleMessageInline_CIDNotFound(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "nonexistent@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "nonexistent@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
+	assertpkg.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestHandleMessageInline_NoEngine(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
 
-	req := httptest.NewRequest("GET", inlineURL(1, "any@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, "any@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
-	}
+	assertpkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status")
 }
 
 func TestHandleMessageInline_MessageNotFound(t *testing.T) {
@@ -2293,13 +2119,11 @@ func TestHandleMessageInline_MessageNotFound(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(999, "any@cid"), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(999, "any@cid"), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
+	assertpkg.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 // TestHandleMessageInline_CIDWithSlash verifies that Content-IDs containing
@@ -2314,16 +2138,12 @@ func TestHandleMessageInline_CIDWithSlash(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", inlineURL(1, cid), nil)
+	req := httptest.NewRequest(http.MethodGet, inlineURL(1, cid), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	if !bytes.Equal(w.Body.Bytes(), imgData) {
-		t.Errorf("response body = %x, want %x", w.Body.Bytes(), imgData)
-	}
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertpkg.Equal(t, imgData, w.Body.Bytes(), "response body")
 }
 
 // TestHandleMessageInline_MissingCID verifies that a request without the
@@ -2334,13 +2154,11 @@ func TestHandleMessageInline_MissingCID(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1/inline", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1/inline", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d for missing cid", w.Code, http.StatusBadRequest)
-	}
+	assertpkg.Equal(t, http.StatusBadRequest, w.Code, "status for missing cid")
 }
 
 // TestHandleMessageInline_UnsupportedEngine verifies that engines which
@@ -2363,13 +2181,11 @@ func TestHandleMessageInline_UnsupportedEngine(t *testing.T) {
 			}
 			srv := newTestServerWithEngine(t, engine)
 
-			req := httptest.NewRequest("GET", inlineURL(1, "logo@example"), nil)
+			req := httptest.NewRequest(http.MethodGet, inlineURL(1, "logo@example"), nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 
-			if w.Code != http.StatusNotImplemented {
-				t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
-			}
+			assertpkg.Equal(t, http.StatusNotImplemented, w.Code, "status")
 		})
 	}
 }
@@ -2386,18 +2202,12 @@ func TestHandleGetMessage_EngineUnsupportedFallsBackToStore(t *testing.T) {
 	}
 	srv := newTestServerWithEngine(t, engine)
 
-	req := httptest.NewRequest("GET", "/api/v1/messages/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	var resp map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["subject"] != "Test Subject" {
-		t.Errorf("subject = %q, want %q (store path response)", resp["subject"], "Test Subject")
-	}
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp map[string]any
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assertpkg.Equal(t, "Test Subject", resp["subject"], "subject (store path response)")
 }

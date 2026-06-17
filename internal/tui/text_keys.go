@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // handleTextKeyPress dispatches key events when in Texts mode.
@@ -62,10 +62,10 @@ func (m Model) handleTextListKeys(
 		m.loading = true
 		return m, m.loadTextData()
 
-	case "enter":
+	case keyNameEnter:
 		return m.textDrillDown()
 
-	case "esc", "backspace":
+	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
 	case "s":
@@ -132,7 +132,7 @@ func (m Model) handleTextTimelineKeys(
 		m.searchInput.Focus()
 		return m, nil
 
-	case "esc", "backspace":
+	case keyNameEsc, "backspace":
 		return m.textGoBack()
 
 	case "j", "down":
@@ -166,10 +166,7 @@ func (m Model) handleTextTimelineKeys(
 		if m.textState.cursor < 0 {
 			m.textState.cursor = 0
 		}
-		maxScroll := itemCount - m.visibleRows()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(itemCount-m.visibleRows(), 0)
 		if m.textState.scrollOffset > maxScroll {
 			m.textState.scrollOffset = maxScroll
 		}
@@ -181,10 +178,7 @@ func (m Model) handleTextTimelineKeys(
 		return m, nil
 
 	case "end", "G":
-		maxIdx := m.textRowCount() - 1
-		if maxIdx < 0 {
-			maxIdx = 0
-		}
+		maxIdx := max(m.textRowCount()-1, 0)
 		m.textState.cursor = maxIdx
 		return m, nil
 	}
@@ -197,7 +191,7 @@ func (m Model) handleTextInlineSearchKeys(
 	msg tea.KeyMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "enter":
+	case keyNameEnter:
 		m.exitInlineSearchMode()
 		queryStr := m.searchInput.Value()
 		if queryStr == "" {
@@ -259,7 +253,7 @@ func (m Model) handleTextInlineSearchKeys(
 		m.loading = true
 		return m, m.loadTextSearch(queryStr)
 
-	case "esc":
+	case keyNameEsc:
 		m.exitInlineSearchMode()
 		m.searchInput.SetValue("")
 		return m, nil
@@ -303,10 +297,7 @@ func (m *Model) cycleTextViewType(forward bool) {
 // textMoveCursor moves the cursor by delta and adjusts scroll offset.
 func (m *Model) textMoveCursor(delta int) {
 	m.textState.cursor += delta
-	maxIdx := m.textRowCount() - 1
-	if maxIdx < 0 {
-		maxIdx = 0
-	}
+	maxIdx := max(m.textRowCount()-1, 0)
 	if m.textState.cursor < 0 {
 		m.textState.cursor = 0
 	}
@@ -367,10 +358,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 		if m.textState.cursor < 0 {
 			m.textState.cursor = 0
 		}
-		maxScroll := itemCount - m.visibleRows()
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll := max(itemCount-m.visibleRows(), 0)
 		if m.textState.scrollOffset > maxScroll {
 			m.textState.scrollOffset = maxScroll
 		}
@@ -380,10 +368,7 @@ func (m *Model) navigateTextList(key string, itemCount int) bool {
 		m.textState.scrollOffset = 0
 		return true
 	case "end", "G":
-		maxIdx := itemCount - 1
-		if maxIdx < 0 {
-			maxIdx = 0
-		}
+		maxIdx := max(itemCount-1, 0)
 		m.textState.cursor = maxIdx
 		m.textState.scrollOffset = calculateScrollOffset(
 			m.textState.cursor,
@@ -482,12 +467,17 @@ func (m Model) textDrillDown() (tea.Model, tea.Cmd) {
 			m.textState.filter.SourceType = row.Key
 		case query.TextViewLabels:
 			m.textState.filter.Label = row.Key
+		case query.TextViewConversations, query.TextViewTime, query.TextViewTypeCount:
+			// Not an aggregate drill source.
 		}
 		m.textState.level = textLevelDrillConversations
 		m.textState.cursor = 0
 		m.textState.scrollOffset = 0
 		m.loading = true
 		return m, m.loadTextConversations()
+
+	case textLevelTimeline:
+		// Drill-down doesn't fire from the timeline level (no children).
 	}
 	return m, nil
 }

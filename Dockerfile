@@ -1,6 +1,6 @@
 # Build stage
 # Pin by digest for reproducibility; update periodically
-FROM golang:1.25-bookworm@sha256:29e59af995c51a5bf63d072eca973b918e0e7af4db0e4667aa73f1b8da1a6d8c AS builder
+FROM golang:1.26-bookworm@sha256:5d2b868674b57c9e48cdd39e891acce4196b6926ca6d11e9c270a8f85106203d AS builder
 
 # Install build dependencies for CGO (SQLite, DuckDB)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -23,14 +23,14 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-# Note: Module path must match go.mod (github.com/wesm/msgvault)
+# Note: Module path must match go.mod (go.kenn.io/msgvault)
 RUN CGO_ENABLED=1 go build \
     -tags fts5 \
     -trimpath \
     -ldflags="-s -w \
-        -X github.com/wesm/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
-        -X github.com/wesm/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} \
-        -X github.com/wesm/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE}" \
+        -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
+        -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} \
+        -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE}" \
     -o /msgvault \
     ./cmd/msgvault
 

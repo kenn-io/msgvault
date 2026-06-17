@@ -145,16 +145,16 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 
 		// Handle specific error codes
 		switch resp.StatusCode {
-		case 429: // Rate limited
+		case http.StatusTooManyRequests: // Rate limited
 			// Log at Debug level since rate limiting is expected during high-volume syncs
 			// and the retry logic handles it automatically
 			c.logger.Debug("rate limited, backing off 30s", "path", path, "attempt", attempt)
 			// Throttle the rate limiter to back off
 			c.rateLimiter.Throttle(30 * time.Second)
-			lastErr = fmt.Errorf("rate limited (429)")
+			lastErr = errors.New("rate limited (429)")
 			continue
 
-		case 403: // Could be rate limit or permission error
+		case http.StatusForbidden: // Could be rate limit or permission error
 			// Gmail returns 403 for quota exceeded with "rateLimitExceeded" reason
 			if isRateLimitError(respBody) {
 				// Log at Debug level since quota throttling is expected during high-volume syncs
@@ -162,21 +162,21 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 				c.logger.Debug("quota exceeded, backing off 60s", "path", path, "attempt", attempt)
 				// Throttle the rate limiter - quota errors need longer backoff
 				c.rateLimiter.Throttle(60 * time.Second)
-				lastErr = fmt.Errorf("quota exceeded (403)")
+				lastErr = errors.New("quota exceeded (403)")
 				continue // Retry with backoff
 			}
 			// Actual permission error - don't retry
 			return nil, fmt.Errorf("forbidden (403): %s", string(respBody))
 
-		case 500, 502, 503, 504: // Server errors
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout: // Server errors
 			lastErr = fmt.Errorf("server error (%d)", resp.StatusCode)
 			continue
 
-		case 401: // Unauthorized - token might be expired
+		case http.StatusUnauthorized: // Unauthorized - token might be expired
 			// oauth2.Client should auto-refresh, but if it fails, don't retry
-			return nil, fmt.Errorf("unauthorized (401): token may be invalid")
+			return nil, errors.New("unauthorized (401): token may be invalid")
 
-		case 404: // Not found
+		case http.StatusNotFound: // Not found
 			return nil, &NotFoundError{Path: path}
 
 		default: // Other client errors - don't retry
@@ -196,8 +196,9 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 		base = maxBackoff
 	}
 
-	// Full jitter: random value between 0 and base
-	jittered := rand.Float64() * base
+	// Full jitter: random value between 0 and base. math/rand is fine here —
+	// the jitter is only for retry-backoff spread, not authentication.
+	jittered := rand.Float64() * base //nolint:gosec // not security-sensitive
 	return time.Duration(jittered * float64(time.Second))
 }
 
@@ -207,7 +208,7 @@ type NotFoundError struct {
 }
 
 func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("not found: %s", e.Path)
+	return "not found: " + e.Path
 }
 
 // Gmail API JSON response types (unexported, used only for JSON unmarshaling).
@@ -261,10 +262,18 @@ type rawMessageResponse struct {
 func decodeBase64URL(s string) ([]byte, error) {
 	if strings.ContainsRune(s, '=') {
 		// Input has padding - use URLEncoding which validates padding correctness
-		return base64.URLEncoding.DecodeString(s)
+		decoded, err := base64.URLEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("decode padded base64url: %w", err)
+		}
+		return decoded, nil
 	}
 	// No padding - use RawURLEncoding for unpadded base64url
-	return base64.RawURLEncoding.DecodeString(s)
+	decoded, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("decode unpadded base64url: %w", err)
+	}
+	return decoded, nil
 }
 
 type historyMessageChange struct {
@@ -432,8 +441,6 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 	g, ctx := errgroup.WithContext(ctx)
 
 	for i, id := range messageIDs {
-		i, id := i, id // Capture for goroutine
-
 		g.Go(func() error {
 			// Acquire semaphore
 			select {
@@ -463,7 +470,7 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 	}
 
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch messages concurrently: %w", err)
 	}
 
 	return results, nil

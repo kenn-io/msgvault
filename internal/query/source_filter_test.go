@@ -2,6 +2,8 @@ package query
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestAppendSourceFilter(t *testing.T) {
@@ -94,18 +96,10 @@ func TestAppendSourceFilter(t *testing.T) {
 			conditions, args := appendSourceFilter(
 				nil, nil, tt.prefix, tt.singleID, tt.multiIDs,
 			)
-			if len(conditions) != tt.wantConditions {
-				t.Errorf("conditions = %d, want %d: %v",
-					len(conditions), tt.wantConditions, conditions)
-			}
-			if len(args) != tt.wantArgs {
-				t.Errorf("args = %d, want %d", len(args), tt.wantArgs)
-			}
+			assert.Len(t, conditions, tt.wantConditions, "conditions")
+			assert.Len(t, args, tt.wantArgs, "args")
 			if tt.wantCondition != "" && len(conditions) > 0 {
-				if conditions[0] != tt.wantCondition {
-					t.Errorf("condition = %q, want %q",
-						conditions[0], tt.wantCondition)
-				}
+				assert.Equal(t, tt.wantCondition, conditions[0])
 			}
 		})
 	}

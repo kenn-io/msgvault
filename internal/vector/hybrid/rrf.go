@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // Fuse combines two ranked lists via Reciprocal Rank Fusion.

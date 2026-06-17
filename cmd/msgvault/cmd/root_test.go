@@ -12,23 +12,21 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/oauth"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/oauth"
 	extOAuth2 "golang.org/x/oauth2"
 )
 
 func TestErrOAuthNotConfigured(t *testing.T) {
+	assert := assertpkg.New(t)
 	err := errOAuthNotConfigured()
-
-	if err == nil {
-		t.Fatal("errOAuthNotConfigured() = nil, want error")
-	}
+	requirepkg.Error(t, err, "errOAuthNotConfigured()")
 
 	msg := err.Error()
 
 	// Should contain the main message
-	if !strings.Contains(msg, "OAuth client secrets not configured") {
-		t.Errorf("error message missing 'not configured': %q", msg)
-	}
+	assert.Contains(msg, "OAuth client secrets not configured", "missing 'not configured'")
 
 	// Should contain either:
 	// 1. A "Found OAuth credentials" hint (if client_secret*.json exists on this machine)
@@ -36,14 +34,11 @@ func TestErrOAuthNotConfigured(t *testing.T) {
 	hasFoundHint := strings.Contains(msg, "Found OAuth credentials at:")
 	hasSetupURL := strings.Contains(msg, "https://msgvault.io/guides/oauth-setup/")
 
-	if !hasFoundHint && !hasSetupURL {
-		t.Errorf("error message missing both 'Found OAuth credentials' hint and setup URL: %q", msg)
-	}
+	assert.True(hasFoundHint || hasSetupURL,
+		"error message missing both 'Found OAuth credentials' hint and setup URL: %q", msg)
 
 	// Should contain config file instructions (either "config.toml" or "<config file>" placeholder)
-	if !strings.Contains(msg, "config") {
-		t.Errorf("error message missing config reference: %q", msg)
-	}
+	assert.Contains(msg, "config", "error message missing config reference")
 }
 
 func TestWrapOAuthError_NotExist(t *testing.T) {
@@ -54,14 +49,9 @@ func TestWrapOAuthError_NotExist(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should contain accessible message (not "not found" anymore)
-	if !strings.Contains(msg, "not accessible") {
-		t.Errorf("error message missing 'not accessible': %q", msg)
-	}
-
+	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
 	// Should contain setup hint
-	if !strings.Contains(msg, "https://msgvault.io/guides/oauth-setup/") {
-		t.Errorf("error message missing setup URL: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
 }
 
 func TestWrapOAuthError_Permission(t *testing.T) {
@@ -72,14 +62,9 @@ func TestWrapOAuthError_Permission(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should contain accessible message
-	if !strings.Contains(msg, "not accessible") {
-		t.Errorf("error message missing 'not accessible': %q", msg)
-	}
-
+	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
 	// Should contain setup hint
-	if !strings.Contains(msg, "https://msgvault.io/guides/oauth-setup/") {
-		t.Errorf("error message missing setup URL: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
 }
 
 func TestWrapOAuthError_OtherError(t *testing.T) {
@@ -88,9 +73,7 @@ func TestWrapOAuthError_OtherError(t *testing.T) {
 	wrapped := wrapOAuthError(originalErr)
 
 	// Should return the original error unchanged
-	if wrapped != originalErr {
-		t.Errorf("wrapOAuthError() changed unrelated error: got %v, want %v", wrapped, originalErr)
-	}
+	assertpkg.Equal(t, originalErr, wrapped, "wrapOAuthError() changed unrelated error")
 }
 
 func TestWrapOAuthError_NestedNotExist(t *testing.T) {
@@ -103,9 +86,7 @@ func TestWrapOAuthError_NestedNotExist(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should detect the nested os.ErrNotExist and wrap appropriately
-	if !strings.Contains(msg, "not accessible") {
-		t.Errorf("failed to detect nested os.ErrNotExist: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "not accessible", "failed to detect nested os.ErrNotExist")
 }
 
 // newTestRootCmd creates a fresh root command for testing, avoiding mutation
@@ -120,6 +101,8 @@ func newTestRootCmd() *cobra.Command {
 // TestExecuteContext_CancellationPropagates verifies that context cancellation
 // from ExecuteContext propagates to command handlers.
 func TestExecuteContext_CancellationPropagates(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Track whether context was cancelled
 	var contextWasCancelled atomic.Bool
 
@@ -165,7 +148,7 @@ func TestExecuteContext_CancellationPropagates(t *testing.T) {
 	case <-handlerStarted:
 		// Handler is now waiting on ctx.Done()
 	case <-time.After(2 * time.Second):
-		t.Fatal("command handler did not start in time")
+		require.Fail("command handler did not start in time")
 	}
 
 	// Cancel the context (simulates SIGINT/SIGTERM)
@@ -174,17 +157,13 @@ func TestExecuteContext_CancellationPropagates(t *testing.T) {
 	// Wait for execution to complete
 	select {
 	case err := <-done:
-		if err != context.Canceled {
-			t.Errorf("expected context.Canceled error, got: %v", err)
-		}
+		require.ErrorIs(err, context.Canceled, "expected context.Canceled error")
 	case <-time.After(2 * time.Second):
-		t.Fatal("ExecuteContext did not return after context cancellation")
+		require.Fail("ExecuteContext did not return after context cancellation")
 	}
 
 	// Verify the command observed the cancellation
-	if !contextWasCancelled.Load() {
-		t.Error("command did not observe context cancellation")
-	}
+	assert.True(contextWasCancelled.Load(), "command did not observe context cancellation")
 }
 
 // TestExecute_UsesBackgroundContext verifies Execute() works with background context.
@@ -207,15 +186,13 @@ func TestExecute_UsesBackgroundContext(t *testing.T) {
 
 	testRoot.SetArgs([]string{"test-execute"})
 	err := testRoot.Execute()
-	if err != nil {
-		t.Fatalf("Execute() returned error: %v", err)
-	}
+	requirepkg.NoError(t, err, "Execute()")
 
 	select {
 	case <-completed:
 		// Success
 	case <-time.After(time.Second):
-		t.Fatal("command did not complete")
+		requirepkg.Fail(t, "command did not complete")
 	}
 }
 
@@ -255,17 +232,11 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 
 	testRoot.SetArgs([]string{"test-ctx"})
 	err := ExecuteContext(ctx)
-	if err != nil {
-		t.Fatalf("ExecuteContext returned unexpected error: %v", err)
-	}
+	requirepkg.NoError(t, err, "ExecuteContext")
 
 	// Verify the context was propagated
-	if receivedCtx == nil {
-		t.Fatal("command did not receive context")
-	}
-	if got := receivedCtx.Value(testKey); got != testValue {
-		t.Errorf("context value mismatch: got %v, want %v", got, testValue)
-	}
+	requirepkg.NotNil(t, receivedCtx, "command did not receive context")
+	assertpkg.Equal(t, testValue, receivedCtx.Value(testKey), "context value")
 }
 
 // TestExecute_UsesBackgroundContextInHandler verifies Execute provides background context to handlers.
@@ -273,6 +244,8 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 // NOTE: This test modifies the package-level rootCmd variable and must NOT use t.Parallel().
 // Running this test in parallel with other tests that access rootCmd would cause data races.
 func TestExecute_UsesBackgroundContextInHandler(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Save and restore global rootCmd to avoid state leakage between tests.
 	// This pattern requires sequential test execution - do not add t.Parallel().
 	savedRootCmd := rootCmd
@@ -298,24 +271,19 @@ func TestExecute_UsesBackgroundContextInHandler(t *testing.T) {
 
 	testRoot.SetArgs([]string{"test-bg-ctx"})
 	err := Execute()
-	if err != nil {
-		t.Fatalf("Execute returned unexpected error: %v", err)
-	}
+	require.NoError(err, "Execute")
 
 	// Verify the command received a non-nil context (should be background context)
-	if receivedCtx == nil {
-		t.Fatal("command did not receive context")
-	}
+	require.NotNil(receivedCtx, "command did not receive context")
 
 	// Background context should not have any deadline
-	if deadline, ok := receivedCtx.Deadline(); ok {
-		t.Errorf("expected no deadline from background context, got %v", deadline)
-	}
+	deadline, ok := receivedCtx.Deadline()
+	assert.False(ok, "expected no deadline from background context, got %v", deadline)
 
 	// Background context should not be cancelled
 	select {
 	case <-receivedCtx.Done():
-		t.Error("background context should not be done")
+		assert.Fail("background context should not be done")
 	default:
 		// Expected: context is not done
 	}
@@ -379,9 +347,7 @@ func TestIsAuthInvalidError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isAuthInvalidError(tt.err)
-			if got != tt.want {
-				t.Errorf("isAuthInvalidError() = %v, want %v", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "isAuthInvalidError()")
 		})
 	}
 }
@@ -545,36 +511,24 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			ctx := context.Background()
 			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
+				require.Error(err)
+				if tt.errContains != "" {
+					require.ErrorContains(err, tt.errContains)
 				}
-				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
-					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
-				}
-				if ts != nil {
-					t.Error("expected nil token source on error")
-				}
+				assert.Nil(ts, "expected nil token source on error")
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if ts == nil {
-					t.Fatal("expected non-nil token source")
-				}
+				require.NoError(err)
+				assert.NotNil(ts, "expected non-nil token source")
 			}
 
-			if tt.mock.authorizeCount != tt.wantAuthorize {
-				t.Errorf("Authorize called %d times, want %d",
-					tt.mock.authorizeCount, tt.wantAuthorize)
-			}
-			if tt.mock.authorizeManualCount != tt.wantAuthorizeManual {
-				t.Errorf("AuthorizeManual called %d times, want %d",
-					tt.mock.authorizeManualCount, tt.wantAuthorizeManual)
-			}
+			assert.Equal(tt.wantAuthorize, tt.mock.authorizeCount, "Authorize call count")
+			assert.Equal(tt.wantAuthorizeManual, tt.mock.authorizeManualCount, "AuthorizeManual call count")
 		})
 	}
 
@@ -595,20 +549,15 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		requirepkg.Error(t, err)
 		msg := err.Error()
 		for _, want := range []string{"remove-account", "add-account", "primary address"} {
-			if !strings.Contains(msg, want) {
-				t.Errorf("error message missing %q: %q", want, msg)
-			}
+			assertpkg.Contains(t, msg, want, "error message missing %q", want)
 		}
 		// Confirm the underlying TokenMismatchError is preserved.
 		var mismatchErr *oauth.TokenMismatchError
-		if !errors.As(err, &mismatchErr) {
-			t.Errorf("expected error to wrap *oauth.TokenMismatchError, got %T: %v", err, err)
-		}
+		assertpkg.ErrorAs(t, err, &mismatchErr,
+			"expected error to wrap *oauth.TokenMismatchError, got %T: %v", err, err)
 	})
 
 	// Additional assertion for non-interactive case: verify the error
@@ -621,11 +570,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			hasTokenVal: true,
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false)
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if !strings.Contains(err.Error(), "interactive terminal") {
-			t.Errorf("error should mention 'interactive terminal': %q", err.Error())
-		}
+		requirepkg.Error(t, err)
+		assertpkg.ErrorContains(t, err, "interactive terminal")
 	})
 }

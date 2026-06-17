@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/query"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 // =============================================================================
@@ -15,18 +17,14 @@ import (
 func TestModel_Init_ReturnsNonNilCmd(t *testing.T) {
 	model := NewBuilder().Build()
 	cmd := model.Init()
-	if cmd == nil {
-		t.Error("Init returned nil command, expected batch command for initial data loading")
-	}
+	assertpkg.NotNil(t, cmd, "Init returned nil command, expected batch command for initial data loading")
 }
 
 func TestModel_Init_SetsLoadingState(t *testing.T) {
 	// A fresh model via New() starts with loading=true
 	engine := newMockEngine(MockConfig{})
 	model := New(engine, Options{DataDir: "/tmp/test", Version: "test123"})
-	if !model.loading {
-		t.Error("expected loading=true for fresh model")
-	}
+	assertpkg.True(t, model.loading, "expected loading=true for fresh model")
 }
 
 // =============================================================================
@@ -34,33 +32,18 @@ func TestModel_Init_SetsLoadingState(t *testing.T) {
 // =============================================================================
 
 func TestNew_SetsDefaults(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := newMockEngine(MockConfig{})
 	model := New(engine, Options{DataDir: "/tmp/test", Version: "v1.0"})
 
-	if model.version != "v1.0" {
-		t.Errorf("expected version v1.0, got %s", model.version)
-	}
-	if model.aggregateLimit != defaultAggregateLimit {
-		t.Errorf("expected aggregateLimit %d, got %d", defaultAggregateLimit, model.aggregateLimit)
-	}
-	if model.threadMessageLimit != defaultThreadMessageLimit {
-		t.Errorf("expected threadMessageLimit %d, got %d", defaultThreadMessageLimit, model.threadMessageLimit)
-	}
-	if model.pageSize != 20 {
-		t.Errorf("expected default pageSize 20, got %d", model.pageSize)
-	}
-	if model.level != levelAggregates {
-		t.Errorf("expected initial level levelAggregates, got %v", model.level)
-	}
-	if model.viewType != query.ViewSenders {
-		t.Errorf("expected initial viewType ViewSenders, got %v", model.viewType)
-	}
-	if model.sortField != query.SortByCount {
-		t.Errorf("expected initial sortField SortByCount, got %v", model.sortField)
-	}
-	if model.sortDirection != query.SortDesc {
-		t.Errorf("expected initial sortDirection SortDesc, got %v", model.sortDirection)
-	}
+	assert.Equal("v1.0", model.version)
+	assert.Equal(defaultAggregateLimit, model.aggregateLimit)
+	assert.Equal(defaultThreadMessageLimit, model.threadMessageLimit)
+	assert.Equal(20, model.pageSize)
+	assert.Equal(levelAggregates, model.level)
+	assert.Equal(query.ViewSenders, model.viewType)
+	assert.Equal(query.SortByCount, model.sortField)
+	assert.Equal(query.SortDesc, model.sortDirection)
 }
 
 func TestNew_OverridesLimits(t *testing.T) {
@@ -72,12 +55,8 @@ func TestNew_OverridesLimits(t *testing.T) {
 		ThreadMessageLimit: 50,
 	})
 
-	if model.aggregateLimit != 100 {
-		t.Errorf("expected aggregateLimit 100, got %d", model.aggregateLimit)
-	}
-	if model.threadMessageLimit != 50 {
-		t.Errorf("expected threadMessageLimit 50, got %d", model.threadMessageLimit)
-	}
+	assertpkg.Equal(t, 100, model.aggregateLimit)
+	assertpkg.Equal(t, 50, model.threadMessageLimit)
 }
 
 // =============================================================================
@@ -90,22 +69,16 @@ func TestModel_Update_DataLoaded_TransitionsFromLoading(t *testing.T) {
 
 	msg := dataLoadedMsg{rows: rows, requestID: model.aggregateRequestID}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after data load")
-	}
-	if len(m.rows) != 1 {
-		t.Errorf("expected 1 row, got %d", len(m.rows))
-	}
-	if m.rows[0].Key != "test@example.com" {
-		t.Errorf("expected key test@example.com, got %s", m.rows[0].Key)
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after data load")
+	requirepkg.Len(t, m.rows, 1)
+	assertpkg.Equal(t, "test@example.com", m.rows[0].Key)
 }
 
 func TestModel_Update_DataLoaded_ResetsCursor(t *testing.T) {
 	model := NewBuilder().
-		WithRows(makeRows(10)...).
+		WithRows(makeRows()...).
 		WithLoading(true).
 		Build()
 	model.cursor = 5
@@ -114,39 +87,29 @@ func TestModel_Update_DataLoaded_ResetsCursor(t *testing.T) {
 	newRows := []query.AggregateRow{{Key: "new@example.com", Count: 1}}
 	msg := dataLoadedMsg{rows: newRows, requestID: model.aggregateRequestID}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.cursor != 0 {
-		t.Errorf("expected cursor=0 after data load, got %d", m.cursor)
-	}
-	if m.scrollOffset != 0 {
-		t.Errorf("expected scrollOffset=0 after data load, got %d", m.scrollOffset)
-	}
+	assertpkg.Equal(t, 0, m.cursor, "expected cursor=0 after data load")
+	assertpkg.Equal(t, 0, m.scrollOffset, "expected scrollOffset=0 after data load")
 }
 
 func TestModel_Update_DataLoaded_PreservesPositionWhenRestoring(t *testing.T) {
 	model := NewBuilder().
-		WithRows(makeRows(10)...).
+		WithRows(makeRows()...).
 		WithLoading(true).
 		Build()
 	model.cursor = 5
 	model.scrollOffset = 3
 	model.restorePosition = true
 
-	newRows := makeRows(10)
+	newRows := makeRows()
 	msg := dataLoadedMsg{rows: newRows, requestID: model.aggregateRequestID}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.cursor != 5 {
-		t.Errorf("expected cursor=5 (preserved), got %d", m.cursor)
-	}
-	if m.scrollOffset != 3 {
-		t.Errorf("expected scrollOffset=3 (preserved), got %d", m.scrollOffset)
-	}
-	if m.restorePosition {
-		t.Error("expected restorePosition to be cleared after use")
-	}
+	assertpkg.Equal(t, 5, m.cursor, "expected cursor preserved")
+	assertpkg.Equal(t, 3, m.scrollOffset, "expected scrollOffset preserved")
+	assertpkg.False(t, m.restorePosition, "expected restorePosition to be cleared after use")
 }
 
 func TestModel_Update_DataLoaded_IgnoresStaleResponse(t *testing.T) {
@@ -159,15 +122,11 @@ func TestModel_Update_DataLoaded_IgnoresStaleResponse(t *testing.T) {
 		requestID: 3, // Old request ID
 	}
 	updatedModel, _ := model.Update(staleMsg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Should still be loading, no data set
-	if !m.loading {
-		t.Error("expected loading=true (stale response should be ignored)")
-	}
-	if len(m.rows) != 0 {
-		t.Errorf("expected no rows (stale response), got %d", len(m.rows))
-	}
+	assertpkg.True(t, m.loading, "expected loading=true (stale response should be ignored)")
+	assertpkg.Empty(t, m.rows, "expected no rows (stale response)")
 }
 
 func TestModel_Update_DataLoaded_ClearsTransitionBuffer(t *testing.T) {
@@ -179,11 +138,9 @@ func TestModel_Update_DataLoaded_ClearsTransitionBuffer(t *testing.T) {
 		requestID: model.aggregateRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.transitionBuffer != "" {
-		t.Error("expected transitionBuffer to be cleared after data load")
-	}
+	assertpkg.Empty(t, m.transitionBuffer, "expected transitionBuffer to be cleared after data load")
 }
 
 // =============================================================================
@@ -198,17 +155,11 @@ func TestModel_Update_DataLoaded_HandlesError(t *testing.T) {
 		requestID: model.aggregateRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after error")
-	}
-	if m.err == nil {
-		t.Error("expected err to be set")
-	}
-	if m.err.Error() != "database connection failed" {
-		t.Errorf("unexpected error message: %v", m.err)
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after error")
+	requirepkg.Error(t, m.err)
+	assertpkg.Equal(t, "database connection failed", m.err.Error())
 }
 
 func TestModel_Update_StatsLoaded_HandlesError(t *testing.T) {
@@ -217,12 +168,10 @@ func TestModel_Update_StatsLoaded_HandlesError(t *testing.T) {
 
 	msg := statsLoadedMsg{err: errors.New("stats query failed")}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Stats should remain unchanged on error
-	if m.stats != originalStats {
-		t.Error("stats should not change on error")
-	}
+	assertpkg.Same(t, originalStats, m.stats, "stats should not change on error")
 }
 
 func TestModel_Update_AccountsLoaded_HandlesError(t *testing.T) {
@@ -230,12 +179,10 @@ func TestModel_Update_AccountsLoaded_HandlesError(t *testing.T) {
 
 	msg := accountsLoadedMsg{err: errors.New("accounts query failed")}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Accounts should remain empty on error
-	if len(m.accounts) != 0 {
-		t.Errorf("expected no accounts on error, got %d", len(m.accounts))
-	}
+	assertpkg.Empty(t, m.accounts, "expected no accounts on error")
 }
 
 func TestModel_Update_MessagesLoaded_HandlesError(t *testing.T) {
@@ -249,14 +196,10 @@ func TestModel_Update_MessagesLoaded_HandlesError(t *testing.T) {
 		requestID: model.loadRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after error")
-	}
-	if m.err == nil {
-		t.Error("expected err to be set")
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after error")
+	requirepkg.Error(t, m.err)
 }
 
 func TestModel_Update_SearchResults_HandlesError(t *testing.T) {
@@ -271,14 +214,10 @@ func TestModel_Update_SearchResults_HandlesError(t *testing.T) {
 		requestID: 1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after search error")
-	}
-	if m.err == nil {
-		t.Error("expected err to be set after search error")
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after search error")
+	requirepkg.Error(t, m.err, "expected err to be set after search error")
 }
 
 // =============================================================================
@@ -286,6 +225,7 @@ func TestModel_Update_SearchResults_HandlesError(t *testing.T) {
 // =============================================================================
 
 func TestModel_Update_SearchResults_ReplacesMessages(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(makeMessages(5)...).
 		WithLevel(levelMessageList).
@@ -303,23 +243,13 @@ func TestModel_Update_SearchResults_ReplacesMessages(t *testing.T) {
 		append:     false, // Replace mode
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if len(m.messages) != 10 {
-		t.Errorf("expected 10 messages, got %d", len(m.messages))
-	}
-	if m.cursor != 0 {
-		t.Errorf("expected cursor=0 after replace, got %d", m.cursor)
-	}
-	if m.scrollOffset != 0 {
-		t.Errorf("expected scrollOffset=0 after replace, got %d", m.scrollOffset)
-	}
-	if m.searchTotalCount != 100 {
-		t.Errorf("expected searchTotalCount=100, got %d", m.searchTotalCount)
-	}
-	if m.searchOffset != 10 {
-		t.Errorf("expected searchOffset=10, got %d", m.searchOffset)
-	}
+	assert.Len(m.messages, 10)
+	assert.Equal(0, m.cursor, "expected cursor=0 after replace")
+	assert.Equal(0, m.scrollOffset, "expected scrollOffset=0 after replace")
+	assert.Equal(int64(100), m.searchTotalCount)
+	assert.Equal(10, m.searchOffset)
 }
 
 func TestModel_Update_SearchResults_AppendsMessages(t *testing.T) {
@@ -349,18 +279,12 @@ func TestModel_Update_SearchResults_AppendsMessages(t *testing.T) {
 		append:     true, // Append mode
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if len(m.messages) != 20 {
-		t.Errorf("expected 20 messages (10+10), got %d", len(m.messages))
-	}
+	assertpkg.Len(t, m.messages, 20, "expected 20 messages (10+10)")
 	// Cursor and scroll should NOT reset on append
-	if m.cursor != 5 {
-		t.Errorf("expected cursor=5 (preserved on append), got %d", m.cursor)
-	}
-	if m.searchOffset != 20 {
-		t.Errorf("expected searchOffset=20 after append, got %d", m.searchOffset)
-	}
+	assertpkg.Equal(t, 5, m.cursor, "expected cursor=5 (preserved on append)")
+	assertpkg.Equal(t, 20, m.searchOffset, "expected searchOffset=20 after append")
 }
 
 func TestModel_Update_SearchResults_SetsContextStats(t *testing.T) {
@@ -377,14 +301,10 @@ func TestModel_Update_SearchResults_SetsContextStats(t *testing.T) {
 		append:     false,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set")
-	}
-	if m.contextStats.MessageCount != 50 {
-		t.Errorf("expected contextStats.MessageCount=50, got %d", m.contextStats.MessageCount)
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set")
+	assertpkg.Equal(t, int64(50), m.contextStats.MessageCount)
 }
 
 func TestModel_Update_SearchResults_IgnoresStaleResponse(t *testing.T) {
@@ -399,14 +319,10 @@ func TestModel_Update_SearchResults_IgnoresStaleResponse(t *testing.T) {
 		requestID: 3, // Old request ID
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.loading {
-		t.Error("expected loading=true (stale response should be ignored)")
-	}
-	if len(m.messages) != 0 {
-		t.Errorf("expected no messages (stale response), got %d", len(m.messages))
-	}
+	assertpkg.True(t, m.loading, "expected loading=true (stale response should be ignored)")
+	assertpkg.Empty(t, m.messages, "expected no messages (stale response)")
 }
 
 // =============================================================================
@@ -418,14 +334,10 @@ func TestModel_Update_WindowSize_UpdatesDimensions(t *testing.T) {
 
 	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.width != 120 {
-		t.Errorf("expected width=120, got %d", m.width)
-	}
-	if m.height != 40 {
-		t.Errorf("expected height=40, got %d", m.height)
-	}
+	assertpkg.Equal(t, 120, m.width)
+	assertpkg.Equal(t, 40, m.height)
 }
 
 func TestModel_Update_WindowSize_RecalculatesPageSize(t *testing.T) {
@@ -433,12 +345,10 @@ func TestModel_Update_WindowSize_RecalculatesPageSize(t *testing.T) {
 
 	msg := tea.WindowSizeMsg{Width: 100, Height: 50}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	expectedPageSize := 50 - headerFooterLines
-	if m.pageSize != expectedPageSize {
-		t.Errorf("expected pageSize=%d, got %d", expectedPageSize, m.pageSize)
-	}
+	assertpkg.Equal(t, expectedPageSize, m.pageSize)
 }
 
 func TestModel_Update_WindowSize_ClampsNegativeDimensions(t *testing.T) {
@@ -446,14 +356,10 @@ func TestModel_Update_WindowSize_ClampsNegativeDimensions(t *testing.T) {
 
 	msg := tea.WindowSizeMsg{Width: -10, Height: -5}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.width < 0 {
-		t.Errorf("expected width >= 0, got %d", m.width)
-	}
-	if m.height < 0 {
-		t.Errorf("expected height >= 0, got %d", m.height)
-	}
+	assertpkg.GreaterOrEqual(t, m.width, 0)
+	assertpkg.GreaterOrEqual(t, m.height, 0)
 }
 
 func TestModel_Update_WindowSize_ClearsTransitionBuffer(t *testing.T) {
@@ -462,11 +368,9 @@ func TestModel_Update_WindowSize_ClearsTransitionBuffer(t *testing.T) {
 
 	msg := tea.WindowSizeMsg{Width: 100, Height: 50}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.transitionBuffer != "" {
-		t.Error("expected transitionBuffer to be cleared on resize")
-	}
+	assertpkg.Empty(t, m.transitionBuffer, "expected transitionBuffer to be cleared on resize")
 }
 
 // =============================================================================
@@ -479,14 +383,10 @@ func TestModel_Update_StatsLoaded_SetsStats(t *testing.T) {
 
 	msg := statsLoadedMsg{stats: stats}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.stats != stats {
-		t.Error("expected stats to be set")
-	}
-	if m.stats.MessageCount != 1000 {
-		t.Errorf("expected MessageCount=1000, got %d", m.stats.MessageCount)
-	}
+	assertpkg.Same(t, stats, m.stats, "expected stats to be set")
+	assertpkg.Equal(t, int64(1000), m.stats.MessageCount)
 }
 
 func TestModel_Update_AccountsLoaded_SetsAccounts(t *testing.T) {
@@ -498,14 +398,10 @@ func TestModel_Update_AccountsLoaded_SetsAccounts(t *testing.T) {
 
 	msg := accountsLoadedMsg{accounts: accounts}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if len(m.accounts) != 2 {
-		t.Errorf("expected 2 accounts, got %d", len(m.accounts))
-	}
-	if m.accounts[0].Identifier != "user1@gmail.com" {
-		t.Errorf("expected first account user1@gmail.com, got %s", m.accounts[0].Identifier)
-	}
+	requirepkg.Len(t, m.accounts, 2)
+	assertpkg.Equal(t, "user1@gmail.com", m.accounts[0].Identifier)
 }
 
 // =============================================================================
@@ -524,14 +420,10 @@ func TestModel_Update_MessagesLoaded_SetsMessages(t *testing.T) {
 		requestID: model.loadRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after messages loaded")
-	}
-	if len(m.messages) != 5 {
-		t.Errorf("expected 5 messages, got %d", len(m.messages))
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after messages loaded")
+	assertpkg.Len(t, m.messages, 5)
 }
 
 func TestModel_Update_MessagesLoaded_IgnoresStaleResponse(t *testing.T) {
@@ -546,11 +438,9 @@ func TestModel_Update_MessagesLoaded_IgnoresStaleResponse(t *testing.T) {
 		requestID: 3, // Stale
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.loading {
-		t.Error("expected loading=true (stale response)")
-	}
+	assertpkg.True(t, m.loading, "expected loading=true (stale response)")
 }
 
 // =============================================================================
@@ -558,6 +448,7 @@ func TestModel_Update_MessagesLoaded_IgnoresStaleResponse(t *testing.T) {
 // =============================================================================
 
 func TestModel_Update_MessageDetailLoaded_SetsDetail(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithLevel(levelMessageDetail).
 		WithLoading(true).
@@ -575,20 +466,12 @@ func TestModel_Update_MessageDetailLoaded_SetsDetail(t *testing.T) {
 		requestID: model.detailRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after detail loaded")
-	}
-	if m.messageDetail == nil {
-		t.Fatal("expected messageDetail to be set")
-	}
-	if m.messageDetail.Subject != "Test Subject" {
-		t.Errorf("expected subject 'Test Subject', got '%s'", m.messageDetail.Subject)
-	}
-	if m.detailScroll != 0 {
-		t.Errorf("expected detailScroll=0, got %d", m.detailScroll)
-	}
+	assert.False(m.loading, "expected loading=false after detail loaded")
+	requirepkg.NotNil(t, m.messageDetail, "expected messageDetail to be set")
+	assert.Equal("Test Subject", m.messageDetail.Subject)
+	assert.Equal(0, m.detailScroll)
 }
 
 func TestModel_Update_MessageDetailLoaded_IgnoresStaleResponse(t *testing.T) {
@@ -604,14 +487,10 @@ func TestModel_Update_MessageDetailLoaded_IgnoresStaleResponse(t *testing.T) {
 		requestID: 3, // Stale
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.loading {
-		t.Error("expected loading=true (stale response)")
-	}
-	if m.messageDetail != nil {
-		t.Error("expected messageDetail to remain nil")
-	}
+	assertpkg.True(t, m.loading, "expected loading=true (stale response)")
+	assertpkg.Nil(t, m.messageDetail, "expected messageDetail to remain nil")
 }
 
 // =============================================================================
@@ -623,14 +502,10 @@ func TestModel_Update_UpdateCheck_SetsVersion(t *testing.T) {
 
 	msg := updateCheckMsg{version: "v2.0.0", isDevBuild: false}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.updateAvailable != "v2.0.0" {
-		t.Errorf("expected updateAvailable='v2.0.0', got '%s'", m.updateAvailable)
-	}
-	if m.updateIsDevBuild {
-		t.Error("expected updateIsDevBuild=false")
-	}
+	assertpkg.Equal(t, "v2.0.0", m.updateAvailable)
+	assertpkg.False(t, m.updateIsDevBuild)
 }
 
 func TestModel_Update_UpdateCheck_SetsDevBuild(t *testing.T) {
@@ -638,11 +513,9 @@ func TestModel_Update_UpdateCheck_SetsDevBuild(t *testing.T) {
 
 	msg := updateCheckMsg{version: "", isDevBuild: true}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.updateIsDevBuild {
-		t.Error("expected updateIsDevBuild=true")
-	}
+	assertpkg.True(t, m.updateIsDevBuild)
 }
 
 // =============================================================================
@@ -660,14 +533,10 @@ func TestModel_Update_DataLoaded_SetsContextStatsWhenSearchActive(t *testing.T) 
 		requestID:     model.aggregateRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set when search is active")
-	}
-	if m.contextStats.MessageCount != 50 {
-		t.Errorf("expected contextStats.MessageCount=50, got %d", m.contextStats.MessageCount)
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set when search is active")
+	assertpkg.Equal(t, int64(50), m.contextStats.MessageCount)
 }
 
 func TestModel_Update_DataLoaded_ClearsContextStatsAtTopLevelWithoutSearch(t *testing.T) {
@@ -681,11 +550,9 @@ func TestModel_Update_DataLoaded_ClearsContextStatsAtTopLevelWithoutSearch(t *te
 		requestID: model.aggregateRequestID,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.contextStats != nil {
-		t.Error("expected contextStats to be cleared at top level without search")
-	}
+	assertpkg.Nil(t, m.contextStats, "expected contextStats to be cleared at top level without search")
 }
 
 // =============================================================================
@@ -693,6 +560,7 @@ func TestModel_Update_DataLoaded_ClearsContextStatsAtTopLevelWithoutSearch(t *te
 // =============================================================================
 
 func TestModel_Update_ThreadMessagesLoaded_SetsMessages(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithLevel(levelThreadView).
 		WithLoading(true).
@@ -707,27 +575,15 @@ func TestModel_Update_ThreadMessagesLoaded_SetsMessages(t *testing.T) {
 		requestID:      1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after thread messages loaded")
-	}
-	if len(m.threadMessages) != 5 {
-		t.Errorf("expected 5 thread messages, got %d", len(m.threadMessages))
-	}
-	if m.threadConversationID != 42 {
-		t.Errorf("expected conversationID=42, got %d", m.threadConversationID)
-	}
-	if m.threadTruncated {
-		t.Error("expected threadTruncated=false")
-	}
+	assert.False(m.loading, "expected loading=false after thread messages loaded")
+	assert.Len(m.threadMessages, 5)
+	assert.Equal(int64(42), m.threadConversationID)
+	assert.False(m.threadTruncated)
 	// Should reset cursor/scroll
-	if m.threadCursor != 0 {
-		t.Errorf("expected threadCursor=0, got %d", m.threadCursor)
-	}
-	if m.threadScrollOffset != 0 {
-		t.Errorf("expected threadScrollOffset=0, got %d", m.threadScrollOffset)
-	}
+	assert.Equal(0, m.threadCursor)
+	assert.Equal(0, m.threadScrollOffset)
 }
 
 func TestModel_Update_ThreadMessagesLoaded_IgnoresStaleResponse(t *testing.T) {
@@ -743,14 +599,10 @@ func TestModel_Update_ThreadMessagesLoaded_IgnoresStaleResponse(t *testing.T) {
 		requestID:      3, // Stale
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.loading {
-		t.Error("expected loading=true (stale response should be ignored)")
-	}
-	if len(m.threadMessages) != 0 {
-		t.Errorf("expected no thread messages (stale response), got %d", len(m.threadMessages))
-	}
+	assertpkg.True(t, m.loading, "expected loading=true (stale response should be ignored)")
+	assertpkg.Empty(t, m.threadMessages, "expected no thread messages (stale response)")
 }
 
 func TestModel_Update_ThreadMessagesLoaded_ClearsTransitionBuffer(t *testing.T) {
@@ -767,11 +619,9 @@ func TestModel_Update_ThreadMessagesLoaded_ClearsTransitionBuffer(t *testing.T) 
 		requestID:      1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.transitionBuffer != "" {
-		t.Error("expected transitionBuffer to be cleared after thread messages load")
-	}
+	assertpkg.Empty(t, m.transitionBuffer, "expected transitionBuffer to be cleared after thread messages load")
 }
 
 func TestModel_Update_ThreadMessagesLoaded_ResetsCursorAndScroll(t *testing.T) {
@@ -790,14 +640,10 @@ func TestModel_Update_ThreadMessagesLoaded_ResetsCursorAndScroll(t *testing.T) {
 		requestID:      1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.threadCursor != 0 {
-		t.Errorf("expected threadCursor=0 after load, got %d", m.threadCursor)
-	}
-	if m.threadScrollOffset != 0 {
-		t.Errorf("expected threadScrollOffset=0 after load, got %d", m.threadScrollOffset)
-	}
+	assertpkg.Equal(t, 0, m.threadCursor)
+	assertpkg.Equal(t, 0, m.threadScrollOffset)
 }
 
 func TestModel_Update_ThreadMessagesLoaded_HandlesError(t *testing.T) {
@@ -812,17 +658,11 @@ func TestModel_Update_ThreadMessagesLoaded_HandlesError(t *testing.T) {
 		requestID: 1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if m.loading {
-		t.Error("expected loading=false after error")
-	}
-	if m.err == nil {
-		t.Error("expected err to be set")
-	}
-	if m.err.Error() != "thread load failed" {
-		t.Errorf("unexpected error message: %v", m.err)
-	}
+	assertpkg.False(t, m.loading, "expected loading=false after error")
+	requirepkg.Error(t, m.err)
+	assertpkg.Equal(t, "thread load failed", m.err.Error())
 }
 
 func TestModel_Update_ThreadMessagesLoaded_SetsTruncatedFlag(t *testing.T) {
@@ -839,11 +679,9 @@ func TestModel_Update_ThreadMessagesLoaded_SetsTruncatedFlag(t *testing.T) {
 		requestID:      1,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
-	if !m.threadTruncated {
-		t.Error("expected threadTruncated=true when more messages exist")
-	}
+	assertpkg.True(t, m.threadTruncated, "expected threadTruncated=true when more messages exist")
 }
 
 // =============================================================================
@@ -851,6 +689,7 @@ func TestModel_Update_ThreadMessagesLoaded_SetsTruncatedFlag(t *testing.T) {
 // =============================================================================
 
 func TestModel_Update_WindowSize_RecalculatesDetailSearchMatches(t *testing.T) {
+	assert := assertpkg.New(t)
 	// Create a message detail with multi-line body that wrapping will affect
 	detail := &query.MessageDetail{
 		ID:       1,
@@ -876,39 +715,26 @@ func TestModel_Update_WindowSize_RecalculatesDetailSearchMatches(t *testing.T) {
 	// Resize the window - this should trigger re-wrapping and match recomputation
 	msg := tea.WindowSizeMsg{Width: 60, Height: 30}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Verify dimensions updated
-	if m.width != 60 {
-		t.Errorf("expected width=60, got %d", m.width)
-	}
-	if m.height != 30 {
-		t.Errorf("expected height=30, got %d", m.height)
-	}
+	assert.Equal(60, m.width)
+	assert.Equal(30, m.height)
 
 	// Verify search matches were recomputed (the function should have been called)
 	// The match count may differ due to different wrapping
-	if m.detailSearchQuery != "searchterm" {
-		t.Error("detailSearchQuery should be preserved")
-	}
+	assert.Equal("searchterm", m.detailSearchQuery, "detailSearchQuery should be preserved")
 
 	// Match index should be clamped to valid range
 	if len(m.detailSearchMatches) > 0 {
-		if m.detailSearchMatchIndex >= len(m.detailSearchMatches) {
-			t.Errorf("detailSearchMatchIndex %d should be < match count %d",
-				m.detailSearchMatchIndex, len(m.detailSearchMatches))
-		}
+		assert.Less(m.detailSearchMatchIndex, len(m.detailSearchMatches),
+			"detailSearchMatchIndex should be < match count")
 	} else {
-		if m.detailSearchMatchIndex != 0 {
-			t.Errorf("expected detailSearchMatchIndex=0 when no matches, got %d",
-				m.detailSearchMatchIndex)
-		}
+		assert.Equal(0, m.detailSearchMatchIndex, "expected detailSearchMatchIndex=0 when no matches")
 	}
 
 	// Original match count check to ensure the test is meaningful
-	if originalMatchCount == 0 {
-		t.Error("test setup error: expected at least one match in original search")
-	}
+	assert.NotZero(originalMatchCount, "test setup error: expected at least one match in original search")
 }
 
 func TestModel_Update_WindowSize_ClampsMatchIndexWhenMatchesDecrease(t *testing.T) {
@@ -939,12 +765,12 @@ func TestModel_Update_WindowSize_ClampsMatchIndexWhenMatchesDecrease(t *testing.
 	// Resize - should preserve valid match index or clamp it
 	msg := tea.WindowSizeMsg{Width: 80, Height: 35}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Match index should never exceed matches length
-	if len(m.detailSearchMatches) > 0 && m.detailSearchMatchIndex >= len(m.detailSearchMatches) {
-		t.Errorf("detailSearchMatchIndex %d exceeds match count %d",
-			m.detailSearchMatchIndex, len(m.detailSearchMatches))
+	if len(m.detailSearchMatches) > 0 {
+		assertpkg.Less(t, m.detailSearchMatchIndex, len(m.detailSearchMatches),
+			"detailSearchMatchIndex exceeds match count")
 	}
 }
 
@@ -970,12 +796,11 @@ func TestModel_Update_WindowSize_NoMatchesAfterResize(t *testing.T) {
 	// Resize
 	msg := tea.WindowSizeMsg{Width: 80, Height: 35}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// When no matches, index should be 0
-	if len(m.detailSearchMatches) == 0 && m.detailSearchMatchIndex != 0 {
-		t.Errorf("expected detailSearchMatchIndex=0 when no matches, got %d",
-			m.detailSearchMatchIndex)
+	if len(m.detailSearchMatches) == 0 {
+		assertpkg.Equal(t, 0, m.detailSearchMatchIndex, "expected detailSearchMatchIndex=0 when no matches")
 	}
 }
 
@@ -1008,20 +833,14 @@ func TestModel_Update_SearchResults_AppendsUpdatesContextStatsWhenTotalUnknown(t
 		append:     true,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Total messages should be 15 (10 + 5)
-	if len(m.messages) != 15 {
-		t.Errorf("expected 15 messages, got %d", len(m.messages))
-	}
+	assertpkg.Len(t, m.messages, 15)
 
 	// contextStats.MessageCount should be updated to reflect loaded count
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set")
-	}
-	if m.contextStats.MessageCount != 15 {
-		t.Errorf("expected contextStats.MessageCount=15, got %d", m.contextStats.MessageCount)
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set")
+	assertpkg.Equal(t, int64(15), m.contextStats.MessageCount)
 }
 
 func TestModel_Update_SearchResults_AppendDoesNotUpdateContextStatsWhenTotalKnown(t *testing.T) {
@@ -1048,15 +867,11 @@ func TestModel_Update_SearchResults_AppendDoesNotUpdateContextStatsWhenTotalKnow
 		append:     true,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// contextStats.MessageCount should remain at known total (100), not loaded count (15)
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set")
-	}
-	if m.contextStats.MessageCount != 100 {
-		t.Errorf("expected contextStats.MessageCount=100 (known total), got %d", m.contextStats.MessageCount)
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set")
+	assertpkg.Equal(t, int64(100), m.contextStats.MessageCount, "expected known total")
 }
 
 func TestModel_Update_SearchResults_AppendWithNilContextStats(t *testing.T) {
@@ -1083,16 +898,12 @@ func TestModel_Update_SearchResults_AppendWithNilContextStats(t *testing.T) {
 		append:     true,
 	}
 	updatedModel, _ := model.Update(msg)
-	m := updatedModel.(Model)
+	m := asModel(t, updatedModel)
 
 	// Messages should be appended
-	if len(m.messages) != 15 {
-		t.Errorf("expected 15 messages, got %d", len(m.messages))
-	}
+	assertpkg.Len(t, m.messages, 15)
 
 	// contextStats should remain nil when unknown total and no pre-existing contextStats
 	// (the code only updates MessageCount when contextStats != nil)
-	if m.contextStats != nil {
-		t.Error("expected contextStats to remain nil when not pre-existing")
-	}
+	assertpkg.Nil(t, m.contextStats, "expected contextStats to remain nil when not pre-existing")
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 // createTestAccountsDB creates a temporary Accounts4.sqlite with the
@@ -16,9 +18,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 
 	dbPath := filepath.Join(t.TempDir(), "Accounts4.sqlite")
 	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatalf("create test db: %v", err)
-	}
+	requirepkg.NoError(t, err, "create test db")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
@@ -30,9 +30,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 			ZPARENTACCOUNT INTEGER
 		)
 	`)
-	if err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
+	requirepkg.NoError(t, err, "create schema")
 
 	for _, a := range accounts {
 		_, err := db.Exec(
@@ -40,9 +38,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 			 VALUES (?, ?, ?, ?, ?)`,
 			a.pk, a.identifier, a.username, a.description, a.parentAccount,
 		)
-		if err != nil {
-			t.Fatalf("insert account: %v", err)
-		}
+		requirepkg.NoError(t, err, "insert account")
 	}
 
 	return dbPath
@@ -56,14 +52,9 @@ type testAccount struct {
 	parentAccount *int
 }
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
-
 func mustMkdirAll(t *testing.T, path string) {
 	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir %q: %v", path, err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(path, 0o755), "mkdir %q", path)
 }
 
 func TestResolveAccounts(t *testing.T) {
@@ -77,14 +68,14 @@ func TestResolveAccounts(t *testing.T) {
 	// - PK 7: iCloud parent (has email, description "iCloud")
 	// - PK 8: IMAP child of iCloud with empty-string fields (not NULL)
 	accounts := []testAccount{
-		{pk: 1, identifier: "google-parent-id", username: strPtr("user@gmail.com"), description: strPtr("Google"), parentAccount: nil},
-		{pk: 2, identifier: "13C9A646-1234-5678-9ABC-E07FFBDDEED3", username: nil, description: nil, parentAccount: intPtr(1)},
-		{pk: 3, identifier: "yahoo-parent-id", username: strPtr("user@yahoo.com"), description: strPtr("Yahoo!"), parentAccount: nil},
-		{pk: 4, identifier: "AABBCCDD-1111-2222-3333-445566778899", username: nil, description: nil, parentAccount: intPtr(3)},
-		{pk: 5, identifier: "EXCHANGE1-AAAA-BBBB-CCCC-DDDDEEEEEEEE", username: strPtr("user@exchange.com"), description: strPtr("Exchange"), parentAccount: nil},
-		{pk: 6, identifier: "LOCALONLY-0000-0000-0000-000000000000", username: nil, description: strPtr("On My Mac"), parentAccount: nil},
-		{pk: 7, identifier: "icloud-parent-id", username: strPtr("user@icloud.com"), description: strPtr("iCloud"), parentAccount: nil},
-		{pk: 8, identifier: "ICLOUDCH-1111-2222-3333-444455556666", username: strPtr(""), description: strPtr(""), parentAccount: intPtr(7)},
+		{pk: 1, identifier: "google-parent-id", username: new("user@gmail.com"), description: new("Google"), parentAccount: nil},
+		{pk: 2, identifier: "13C9A646-1234-5678-9ABC-E07FFBDDEED3", username: nil, description: nil, parentAccount: new(1)},
+		{pk: 3, identifier: "yahoo-parent-id", username: new("user@yahoo.com"), description: new("Yahoo!"), parentAccount: nil},
+		{pk: 4, identifier: "AABBCCDD-1111-2222-3333-445566778899", username: nil, description: nil, parentAccount: new(3)},
+		{pk: 5, identifier: "EXCHANGE1-AAAA-BBBB-CCCC-DDDDEEEEEEEE", username: new("user@exchange.com"), description: new("Exchange"), parentAccount: nil},
+		{pk: 6, identifier: "LOCALONLY-0000-0000-0000-000000000000", username: nil, description: new("On My Mac"), parentAccount: nil},
+		{pk: 7, identifier: "icloud-parent-id", username: new("user@icloud.com"), description: new("iCloud"), parentAccount: nil},
+		{pk: 8, identifier: "ICLOUDCH-1111-2222-3333-444455556666", username: new(""), description: new(""), parentAccount: new(7)},
 	}
 
 	dbPath := createTestAccountsDB(t, accounts)
@@ -176,24 +167,18 @@ func TestResolveAccounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			result, err := ResolveAccounts(dbPath, tt.guids)
-			if err != nil {
-				t.Fatalf("ResolveAccounts: %v", err)
-			}
+			requirepkg.NoError(t, err, "ResolveAccounts")
 
-			if len(result) != tt.wantLen {
-				t.Errorf("got %d results, want %d", len(result), tt.wantLen)
-			}
+			assert.Len(result, tt.wantLen)
 
 			for guid, wantEmail := range tt.wantEmail {
 				info, ok := result[guid]
-				if !ok {
-					t.Errorf("GUID %s not found in result", guid)
+				if !assert.True(ok, "GUID %s not found in result", guid) {
 					continue
 				}
-				if info.Email != wantEmail {
-					t.Errorf("GUID %s: email = %q, want %q", guid, info.Email, wantEmail)
-				}
+				assert.Equal(wantEmail, info.Email, "GUID %s email", guid)
 			}
 
 			for guid, wantDesc := range tt.wantDesc {
@@ -201,15 +186,12 @@ func TestResolveAccounts(t *testing.T) {
 				if !ok {
 					continue // already reported above
 				}
-				if info.Description != wantDesc {
-					t.Errorf("GUID %s: description = %q, want %q", guid, info.Description, wantDesc)
-				}
+				assert.Equal(wantDesc, info.Description, "GUID %s description", guid)
 			}
 
 			for _, guid := range tt.wantMissing {
-				if _, ok := result[guid]; ok {
-					t.Errorf("GUID %s should not be in result", guid)
-				}
+				_, ok := result[guid]
+				assert.False(ok, "GUID %s should not be in result", guid)
 			}
 		})
 	}
@@ -217,9 +199,7 @@ func TestResolveAccounts(t *testing.T) {
 
 func TestResolveAccounts_BadPath(t *testing.T) {
 	_, err := ResolveAccounts("/nonexistent/path/Accounts4.sqlite", []string{"some-guid"})
-	if err == nil {
-		t.Fatal("expected error for bad DB path")
-	}
+	requirepkg.Error(t, err, "expected error for bad DB path")
 }
 
 func TestAccountInfo_Identifier(t *testing.T) {
@@ -242,14 +222,14 @@ func TestAccountInfo_Identifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.info.Identifier(); got != tt.want {
-				t.Errorf("Identifier() = %q, want %q", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, tt.info.Identifier())
 		})
 	}
 }
 
 func TestDiscoverV10Accounts(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Create a fake Mail directory with V10 layout.
 	mailDir := t.TempDir()
 	v10Dir := filepath.Join(mailDir, "V10")
@@ -257,34 +237,24 @@ func TestDiscoverV10Accounts(t *testing.T) {
 	guid2 := "AABBCCDD-1111-2222-3333-445566778899"
 
 	// Create UUID dirs under V10.
-	if err := os.MkdirAll(filepath.Join(v10Dir, guid1), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(v10Dir, guid2), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.MkdirAll(filepath.Join(v10Dir, guid1), 0o755))
+	require.NoError(os.MkdirAll(filepath.Join(v10Dir, guid2), 0o755))
 	// Also create a non-UUID dir that should be ignored.
-	if err := os.MkdirAll(filepath.Join(v10Dir, "MailData"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.MkdirAll(filepath.Join(v10Dir, "MailData"), 0o755))
 
 	// Create accounts DB with these GUIDs.
 	accounts := []testAccount{
-		{pk: 1, identifier: "google-parent", username: strPtr("user@gmail.com"), description: strPtr("Google"), parentAccount: nil},
-		{pk: 2, identifier: guid1, username: nil, description: nil, parentAccount: intPtr(1)},
-		{pk: 3, identifier: "yahoo-parent", username: strPtr("user@yahoo.com"), description: strPtr("Yahoo!"), parentAccount: nil},
-		{pk: 4, identifier: guid2, username: nil, description: nil, parentAccount: intPtr(3)},
+		{pk: 1, identifier: "google-parent", username: new("user@gmail.com"), description: new("Google"), parentAccount: nil},
+		{pk: 2, identifier: guid1, username: nil, description: nil, parentAccount: new(1)},
+		{pk: 3, identifier: "yahoo-parent", username: new("user@yahoo.com"), description: new("Yahoo!"), parentAccount: nil},
+		{pk: 4, identifier: guid2, username: nil, description: nil, parentAccount: new(3)},
 	}
 	dbPath := createTestAccountsDB(t, accounts)
 
 	result, err := DiscoverV10Accounts(mailDir, dbPath, nil)
-	if err != nil {
-		t.Fatalf("DiscoverV10Accounts: %v", err)
-	}
+	require.NoError(err, "DiscoverV10Accounts")
 
-	if len(result) != 2 {
-		t.Fatalf("got %d accounts, want 2", len(result))
-	}
+	require.Len(result, 2)
 
 	// Check both accounts resolved.
 	byGUID := make(map[string]AccountInfo)
@@ -292,16 +262,12 @@ func TestDiscoverV10Accounts(t *testing.T) {
 		byGUID[a.GUID] = a
 	}
 
-	if info, ok := byGUID[guid1]; !ok {
-		t.Errorf("GUID %s not found", guid1)
-	} else if info.Email != "user@gmail.com" {
-		t.Errorf("GUID %s: email = %q, want %q", guid1, info.Email, "user@gmail.com")
+	if info, ok := byGUID[guid1]; assert.True(ok, "GUID %s not found", guid1) {
+		assert.Equal("user@gmail.com", info.Email, "GUID %s email", guid1)
 	}
 
-	if info, ok := byGUID[guid2]; !ok {
-		t.Errorf("GUID %s not found", guid2)
-	} else if info.Email != "user@yahoo.com" {
-		t.Errorf("GUID %s: email = %q, want %q", guid2, info.Email, "user@yahoo.com")
+	if info, ok := byGUID[guid2]; assert.True(ok, "GUID %s not found", guid2) {
+		assert.Equal("user@yahoo.com", info.Email, "GUID %s email", guid2)
 	}
 }
 
@@ -376,24 +342,9 @@ func TestFindV10GUIDs(t *testing.T) {
 			tt.setup(t, mailDir)
 
 			guids, err := findV10GUIDs(mailDir)
-			if err != nil {
-				t.Fatalf("findV10GUIDs: %v", err)
-			}
+			requirepkg.NoError(t, err, "findV10GUIDs")
 
-			if len(guids) != len(tt.wantGUIDs) {
-				t.Fatalf("got %d GUIDs %v, want %d %v",
-					len(guids), guids, len(tt.wantGUIDs), tt.wantGUIDs)
-			}
-
-			got := make(map[string]bool)
-			for _, g := range guids {
-				got[g] = true
-			}
-			for _, want := range tt.wantGUIDs {
-				if !got[want] {
-					t.Errorf("missing GUID %s in result %v", want, guids)
-				}
-			}
+			assertpkg.ElementsMatch(t, tt.wantGUIDs, guids)
 		})
 	}
 }
@@ -403,9 +354,7 @@ func writeTestEmlx(t *testing.T, dir, name string) {
 	t.Helper()
 	mustMkdirAll(t, dir)
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0o600); err != nil {
-		t.Fatalf("write %q: %v", path, err)
-	}
+	requirepkg.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0o600), "write %q", path)
 }
 
 func TestV10AccountDir_PrefersPopulated(t *testing.T) {
@@ -422,14 +371,10 @@ func TestV10AccountDir_PrefersPopulated(t *testing.T) {
 	)
 
 	got, err := V10AccountDir(mailDir, guid)
-	if err != nil {
-		t.Fatalf("V10AccountDir: %v", err)
-	}
+	requirepkg.NoError(t, err, "V10AccountDir")
 
 	want := filepath.Join(mailDir, "V9", guid)
-	if got != want {
-		t.Errorf("got %q, want %q (should prefer populated V9 over empty V10)", got, want)
-	}
+	assertpkg.Equal(t, want, got, "should prefer populated V9 over empty V10")
 }
 
 func TestV10AccountDir_NewestPopulatedWins(t *testing.T) {
@@ -447,12 +392,8 @@ func TestV10AccountDir_NewestPopulatedWins(t *testing.T) {
 	)
 
 	got, err := V10AccountDir(mailDir, guid)
-	if err != nil {
-		t.Fatalf("V10AccountDir: %v", err)
-	}
+	requirepkg.NoError(t, err, "V10AccountDir")
 
 	want := filepath.Join(mailDir, "V10", guid)
-	if got != want {
-		t.Errorf("got %q, want %q (newest populated should win)", got, want)
-	}
+	assertpkg.Equal(t, want, got, "newest populated should win")
 }

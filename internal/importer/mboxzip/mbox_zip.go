@@ -9,14 +9,15 @@ import (
 	"hash/crc32"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var ErrExtractLimitExceeded = errors.New("zip extraction limit exceeded")
@@ -144,7 +145,7 @@ func zipMboxCacheKey(zipPath string) (string, error) {
 		})
 	}
 	if len(entries) == 0 {
-		return "", fmt.Errorf("zip contains no .mbox or .mbx files")
+		return "", errors.New("zip contains no .mbox or .mbx files")
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
@@ -283,7 +284,7 @@ func ExtractMboxFromZipWithLimits(zipPath, destDir string, limits ExtractLimits,
 		if copyErr != nil {
 			_ = os.Remove(outPath)
 			if errors.Is(copyErr, ErrExtractLimitExceeded) {
-				return nil, fmt.Errorf("%w: extract %q: %v", ErrExtractLimitExceeded, zf.Name, copyErr)
+				return nil, fmt.Errorf("%w: extract %q: %w", ErrExtractLimitExceeded, zf.Name, copyErr)
 			}
 			return nil, fmt.Errorf("extract %q: %w", zf.Name, copyErr)
 		}
@@ -301,7 +302,7 @@ func ExtractMboxFromZipWithLimits(zipPath, destDir string, limits ExtractLimits,
 	}
 
 	if len(outFiles) == 0 {
-		return nil, fmt.Errorf("zip contains no .mbox or .mbx files")
+		return nil, errors.New("zip contains no .mbox or .mbx files")
 	}
 
 	sort.Strings(outFiles)
@@ -394,7 +395,7 @@ func validateExtractedMboxCache(zipPath, destDir string, limits ExtractLimits) (
 		return nil, err
 	}
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("zip contains no .mbox or .mbx files")
+		return nil, errors.New("zip contains no .mbox or .mbx files")
 	}
 
 	expectedSet := make(map[string]expectedMboxFile, len(expected))
@@ -552,6 +553,9 @@ func expectedMboxFilesFromZip(zipPath, destDir string, limits ExtractLimits) ([]
 		if err != nil {
 			return nil, fmt.Errorf("invalid extracted path for %q: %w", zf.Name, err)
 		}
+		if zf.UncompressedSize64 > math.MaxInt64 {
+			return nil, fmt.Errorf("zip entry %q has implausible size %d", zf.Name, zf.UncompressedSize64)
+		}
 		expected = append(expected, expectedMboxFile{
 			Path:      outPath,
 			Size:      int64(zf.UncompressedSize64),
@@ -619,13 +623,13 @@ func safeJoinUnderDir(dir, name string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes destination dir")
+		return "", errors.New("path escapes destination dir")
 	}
 	return outPath, nil
 }
 
-func CopyWithLimit(dst io.Writer, src io.Reader, max int64) (int64, error) {
-	if max <= 0 {
+func CopyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
+	if limit <= 0 {
 		n, err := io.Copy(dst, src)
 		return n, err
 	}
@@ -635,12 +639,12 @@ func CopyWithLimit(dst io.Writer, src io.Reader, max int64) (int64, error) {
 	var n int64
 	buf := make([]byte, 32*1024)
 	for {
-		if n == max {
+		if n == limit {
 			// Peek one byte to determine whether there's more data.
 			var one [1]byte
 			nr, er := src.Read(one[:])
 			if nr > 0 {
-				return n, fmt.Errorf("%w: limit %d bytes", ErrExtractLimitExceeded, max)
+				return n, fmt.Errorf("%w: limit %d bytes", ErrExtractLimitExceeded, limit)
 			}
 			if er == io.EOF {
 				return n, nil
@@ -652,7 +656,7 @@ func CopyWithLimit(dst io.Writer, src io.Reader, max int64) (int64, error) {
 		}
 
 		toRead := len(buf)
-		rem := max - n
+		rem := limit - n
 		if rem < int64(toRead) {
 			toRead = int(rem)
 		}

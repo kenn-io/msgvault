@@ -1,0 +1,16 @@
+{
+  "participants": [
+    {"name": "Test User"},
+    {"name": "Dave Multi"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Dave Multi",
+      "timestamp_ms": 1700000120000,
+      "content": "Message C (from file 2)",
+      "type": "Generic"
+    }
+  ],
+  "title": "Dave Multi",
+  "thread_path": "inbox/dave_MULTI"
+}

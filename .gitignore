@@ -45,3 +45,6 @@ result
 
 # Claude Code
 .claude/
+
+# Testify migration coverage baseline
+.testify-coverage/

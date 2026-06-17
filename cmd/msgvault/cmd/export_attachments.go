@@ -7,9 +7,9 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var exportAttachmentsOutput string
@@ -49,7 +49,7 @@ func runExportAttachments(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 	// Resolve message ID — try numeric first, fallback to Gmail ID
 	var msg *query.MessageDetail

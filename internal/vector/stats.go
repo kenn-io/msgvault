@@ -77,7 +77,7 @@ type Progress struct {
 // or BuildingGeneration is joined into the returned error.
 func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 	if b == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // disabled backend -> no stats, not an error
 	}
 	out := &StatsView{Enabled: true}
 	var errs []error

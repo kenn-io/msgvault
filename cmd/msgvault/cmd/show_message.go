@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,8 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -37,7 +38,7 @@ Examples:
 
 		// Use remote if configured
 		if IsRemoteMode() {
-			return showRemoteMessage(idStr)
+			return showRemoteMessage(cmd, idStr)
 		}
 
 		return showLocalMessage(cmd, idStr)
@@ -45,11 +46,11 @@ Examples:
 }
 
 // showRemoteMessage fetches and displays a message from the remote server.
-func showRemoteMessage(idStr string) error {
+func showRemoteMessage(cmd *cobra.Command, idStr string) error {
 	// Parse as numeric ID (remote API only supports numeric IDs)
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		return fmt.Errorf("remote mode requires numeric message ID (got: %s)", idStr)
+		return usageErr(cmd, fmt.Errorf("remote mode requires numeric message ID (got: %s)", idStr))
 	}
 
 	s, err := OpenRemoteStore()
@@ -59,11 +60,11 @@ func showRemoteMessage(idStr string) error {
 	defer func() { _ = s.Close() }()
 
 	msg, err := s.GetMessage(id)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return fmt.Errorf("message not found: %s", idStr)
+	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
-	}
-	if msg == nil {
-		return fmt.Errorf("message not found: %s", idStr)
 	}
 
 	if showMessageJSON {
@@ -90,7 +91,7 @@ func showLocalMessage(cmd *cobra.Command, idStr string) error {
 	}
 
 	// Create query engine
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 	// Try to parse as numeric ID first
 	var msg *query.MessageDetail
@@ -120,6 +121,10 @@ func showLocalMessage(cmd *cobra.Command, idStr string) error {
 	return outputMessageText(msg)
 }
 
+// nil error return mirrors outputMessageJSON so callers can return either
+// uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning outputMessageJSON sibling
 func outputMessageText(msg *query.MessageDetail) error {
 	// Header section
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
@@ -186,25 +191,25 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 	// Build address arrays
 	fromAddrs := make([]map[string]string, len(msg.From))
 	for i, addr := range msg.From {
-		fromAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		fromAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	toAddrs := make([]map[string]string, len(msg.To))
 	for i, addr := range msg.To {
-		toAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		toAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	ccAddrs := make([]map[string]string, len(msg.Cc))
 	for i, addr := range msg.Cc {
-		ccAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		ccAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 	bccAddrs := make([]map[string]string, len(msg.Bcc))
 	for i, addr := range msg.Bcc {
-		bccAddrs[i] = map[string]string{"email": addr.Email, "name": addr.Name}
+		bccAddrs[i] = map[string]string{keyEmail: addr.Email, "name": addr.Name}
 	}
 
 	// Build attachment array
-	attachments := make([]map[string]interface{}, len(msg.Attachments))
+	attachments := make([]map[string]any, len(msg.Attachments))
 	for i, att := range msg.Attachments {
-		attachments[i] = map[string]interface{}{
+		attachments[i] = map[string]any{
 			"id":           att.ID,
 			"filename":     att.Filename,
 			"mime_type":    att.MimeType,
@@ -213,7 +218,7 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 		}
 	}
 
-	output := map[string]interface{}{
+	output := map[string]any{
 		"id":                     msg.ID,
 		"source_message_id":      msg.SourceMessageID,
 		"conversation_id":        msg.ConversationID,
@@ -255,6 +260,10 @@ func formatAddresses(addrs []query.Address) string {
 }
 
 // outputRemoteMessageText displays a message from the remote API.
+// nil error return mirrors outputRemoteMessageJSON so callers can return
+// either uniformly; text printing never fails.
+//
+//nolint:unparam // symmetry with error-returning outputRemoteMessageJSON sibling
 func outputRemoteMessageText(msg *store.APIMessage) error {
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 	fmt.Printf("Message ID: %d\n", msg.ID)
@@ -311,16 +320,16 @@ func outputRemoteMessageText(msg *store.APIMessage) error {
 // outputRemoteMessageJSON outputs a remote message as JSON.
 func outputRemoteMessageJSON(msg *store.APIMessage) error {
 	// Build attachment array
-	attachments := make([]map[string]interface{}, len(msg.Attachments))
+	attachments := make([]map[string]any, len(msg.Attachments))
 	for i, att := range msg.Attachments {
-		attachments[i] = map[string]interface{}{
+		attachments[i] = map[string]any{
 			"filename":  att.Filename,
 			"mime_type": att.MimeType,
 			"size":      att.Size,
 		}
 	}
 
-	output := map[string]interface{}{
+	output := map[string]any{
 		"id":              msg.ID,
 		"subject":         msg.Subject,
 		"snippet":         msg.Snippet,
@@ -341,5 +350,5 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 
 func init() {
 	rootCmd.AddCommand(showMessageCmd)
-	showMessageCmd.Flags().BoolVar(&showMessageJSON, "json", false, "Output as JSON")
+	showMessageCmd.Flags().BoolVar(&showMessageJSON, flagJSON, false, "Output as JSON")
 }

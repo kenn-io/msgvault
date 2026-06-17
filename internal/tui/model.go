@@ -10,10 +10,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/msgvault/internal/deletion"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/update"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/update"
 )
 
 // defaultAggregateLimit is the maximum number of aggregate rows to load for display.
@@ -99,6 +99,13 @@ type selectionState struct {
 }
 
 // Model is the main TUI model following the Elm architecture.
+//
+// The receiver mix below is intentional: tea.Model (Init/Update/View) uses
+// value receivers so each update returns a modified copy, while the in-place
+// mutation helpers (toggleAggregateSelection, pushBreadcrumb, etc.) use pointer
+// receivers to mutate that copy. Converting either set would break the TUI.
+//
+//nolint:recvcheck // intentional value/pointer mix required by tea.Model semantics
 type Model struct {
 	viewState // Embedded state
 
@@ -660,6 +667,8 @@ func (m Model) buildMessageFilter() query.MessageFilter {
 		case query.ViewTime:
 			filter.TimeRange.Period = m.filterKey
 			filter.TimeRange.Granularity = m.timeGranularity
+		default:
+			// SenderNames/RecipientNames/Count aren't simple-filter targets.
 		}
 	}
 
@@ -744,8 +753,9 @@ func (m Model) drillFilterKey() string {
 		return m.drillFilter.Label
 	case query.ViewTime:
 		return m.drillFilter.TimeRange.Period
+	default:
+		return ""
 	}
-	return ""
 }
 
 // loadThreadMessages fetches all messages in a conversation/thread.
@@ -954,10 +964,7 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if m.height < 0 {
 		m.height = 0
 	}
-	m.pageSize = m.height - headerFooterLines
-	if m.pageSize < 1 {
-		m.pageSize = 1
-	}
+	m.pageSize = max(m.height-headerFooterLines, 1)
 	// Recalculate detail line count if in detail view (width affects wrapping)
 	if m.level == levelMessageDetail && m.messageDetail != nil {
 		m.updateDetailLineCount()
@@ -1358,10 +1365,7 @@ func (m *Model) detailPageSize() int {
 
 // clampDetailScroll ensures detailScroll stays within valid bounds.
 func (m *Model) clampDetailScroll() {
-	maxScroll := m.detailLineCount - m.detailPageSize()
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(m.detailLineCount-m.detailPageSize(), 0)
 	if m.detailScroll > maxScroll {
 		m.detailScroll = maxScroll
 	}
@@ -1390,10 +1394,7 @@ func (m *Model) scrollToDetailMatch() {
 	targetLine := m.detailSearchMatches[m.detailSearchMatchIndex]
 	pageSize := m.detailPageSize()
 	// Center the match in the viewport
-	m.detailScroll = targetLine - pageSize/2
-	if m.detailScroll < 0 {
-		m.detailScroll = 0
-	}
+	m.detailScroll = max(targetLine-pageSize/2, 0)
 	m.clampDetailScroll()
 }
 

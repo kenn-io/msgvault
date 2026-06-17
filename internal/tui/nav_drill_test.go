@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/query/querytest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 )
 
 // =============================================================================
@@ -14,6 +16,7 @@ import (
 // =============================================================================
 
 func TestSubGroupingNavigation(t *testing.T) {
+	assert := assertpkg.New(t)
 	rows := []query.AggregateRow{
 		{Key: "alice@example.com", Count: 10},
 		{Key: "bob@example.com", Count: 5},
@@ -28,53 +31,35 @@ func TestSubGroupingNavigation(t *testing.T) {
 
 	// Press Enter to drill into first sender - should go to message list (not sub-aggregate)
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
-	if !m.hasDrillFilter() {
-		t.Error("expected drillFilter to be set")
-	}
-	if m.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender = alice@example.com, got %s", m.drillFilter.Sender)
-	}
-	if m.drillViewType != query.ViewSenders {
-		t.Errorf("expected drillViewType = ViewSenders, got %v", m.drillViewType)
-	}
-	if cmd == nil {
-		t.Error("expected command to load messages")
-	}
+	assert.True(m.hasDrillFilter(), "expected drillFilter to be set")
+	assert.Equal("alice@example.com", m.drillFilter.Sender)
+	assert.Equal(query.ViewSenders, m.drillViewType)
+	assert.NotNil(cmd, "expected command to load messages")
 
 	// Should have a breadcrumb
-	if len(m.breadcrumbs) != 1 {
-		t.Errorf("expected 1 breadcrumb, got %d", len(m.breadcrumbs))
-	}
+	assert.Len(m.breadcrumbs, 1)
 
 	// Test Tab from message list goes to sub-aggregate view
 	m.messages = msgs // Simulate messages loaded
 	newModel, cmd = m.handleMessageListKeys(keyTab())
-	m = newModel.(Model)
+	m = asModel(t, newModel)
 
 	assertLevel(t, m, levelDrillDown)
 	// Default sub-group after drilling from Senders should be Recipients (skips redundant SenderNames)
-	if m.viewType != query.ViewRecipients {
-		t.Errorf("expected viewType = ViewRecipients for sub-grouping, got %v", m.viewType)
-	}
-	if cmd == nil {
-		t.Error("expected command to load sub-aggregate data")
-	}
+	assert.Equal(query.ViewRecipients, m.viewType, "expected viewType for sub-grouping")
+	assert.NotNil(cmd, "expected command to load sub-aggregate data")
 
 	// Test Tab in sub-aggregate cycles views (skipping drill view type)
 	m.rows = rows // Simulate data loaded
 	newModel, cmd = m.handleAggregateKeys(keyTab())
-	m = newModel.(Model)
+	m = asModel(t, newModel)
 
 	// From ViewRecipients, Tab cycles to ViewRecipientNames
-	if m.viewType != query.ViewRecipientNames {
-		t.Errorf("expected viewType = ViewRecipientNames after Tab, got %v", m.viewType)
-	}
-	if cmd == nil {
-		t.Error("expected command to reload data after Tab")
-	}
+	assert.Equal(query.ViewRecipientNames, m.viewType, "after Tab")
+	assert.NotNil(cmd, "expected command to reload data after Tab")
 
 	// Test Esc goes back to message list (not all the way to aggregates)
 	m.rows = rows
@@ -82,25 +67,17 @@ func TestSubGroupingNavigation(t *testing.T) {
 
 	assertLevel(t, m, levelMessageList)
 	// Drill filter should still be set (we're still viewing alice's messages)
-	if !m.hasDrillFilter() {
-		t.Error("expected drillFilter to still be set in message list")
-	}
+	assert.True(m.hasDrillFilter(), "expected drillFilter to still be set in message list")
 	// Should have 1 breadcrumb (from aggregates → message list)
-	if len(m.breadcrumbs) != 1 {
-		t.Errorf("expected 1 breadcrumb after going back to message list, got %d", len(m.breadcrumbs))
-	}
+	assert.Len(m.breadcrumbs, 1, "after going back to message list")
 
 	// Test Esc again goes back to aggregates
 	m.messages = msgs
 	m = applyMessageListKey(t, m, keyEsc())
 
 	assertLevel(t, m, levelAggregates)
-	if m.hasDrillFilter() {
-		t.Error("expected drillFilter to be cleared after going back to aggregates")
-	}
-	if len(m.breadcrumbs) != 0 {
-		t.Errorf("expected 0 breadcrumbs after going back to aggregates, got %d", len(m.breadcrumbs))
-	}
+	assert.False(m.hasDrillFilter(), "expected drillFilter to be cleared after going back to aggregates")
+	assert.Empty(m.breadcrumbs, "after going back to aggregates")
 }
 
 func TestSubAggregateDrillDown(t *testing.T) {
@@ -115,19 +92,13 @@ func TestSubAggregateDrillDown(t *testing.T) {
 
 	// Press Enter on recipient - should go to message list with combined filter
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	assertLevel(t, m, levelMessageList)
 	// Drill filter should now include both sender and recipient
-	if m.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender = alice@example.com, got %s", m.drillFilter.Sender)
-	}
-	if m.drillFilter.Recipient != "bob@example.com" {
-		t.Errorf("expected drillFilter.Recipient = bob@example.com, got %s", m.drillFilter.Recipient)
-	}
-	if cmd == nil {
-		t.Error("expected command to load messages")
-	}
+	assertpkg.Equal(t, "alice@example.com", m.drillFilter.Sender)
+	assertpkg.Equal(t, "bob@example.com", m.drillFilter.Recipient)
+	assertpkg.NotNil(t, cmd, "expected command to load messages")
 }
 
 // =============================================================================
@@ -155,6 +126,7 @@ func (st *statsTracker) install(eng *querytest.MockEngine) {
 
 // TestStatsUpdateOnDrillDown verifies stats are reloaded when drilling into a subgroup.
 func TestStatsUpdateOnDrillDown(t *testing.T) {
+	assert := assertpkg.New(t)
 	engine := newMockEngine(MockConfig{
 		Rows: []query.AggregateRow{
 			{Key: "alice@example.com", Count: 100, TotalSize: 500000},
@@ -176,33 +148,26 @@ func TestStatsUpdateOnDrillDown(t *testing.T) {
 
 	// Press Enter to drill down into alice's messages
 	newModel, cmd := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Verify we transitioned to message list
 	assertLevel(t, m, levelMessageList)
 
 	// The stats should be refreshed for the drill-down context
-	if cmd == nil {
-		t.Error("expected command to load messages/stats")
-	}
+	assert.NotNil(cmd, "expected command to load messages/stats")
 
 	// Verify drillFilter is set correctly
-	if m.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender='alice@example.com', got '%s'", m.drillFilter.Sender)
-	}
+	assert.Equal("alice@example.com", m.drillFilter.Sender)
 
 	// Verify contextStats is set from selected row (not from GetTotalStats call)
-	if m.contextStats == nil {
-		t.Error("expected contextStats to be set from selected row")
-	} else {
-		if m.contextStats.MessageCount != 100 {
-			t.Errorf("expected contextStats.MessageCount=100, got %d", m.contextStats.MessageCount)
-		}
+	if assert.NotNil(m.contextStats, "expected contextStats to be set from selected row") {
+		assert.Equal(int64(100), m.contextStats.MessageCount)
 	}
 }
 
 // TestContextStatsSetOnDrillDown verifies contextStats is set from selected row.
 func TestContextStatsSetOnDrillDown(t *testing.T) {
+	assert := assertpkg.New(t)
 	rows := []query.AggregateRow{
 		{Key: "alice@example.com", Count: 100, TotalSize: 500000, AttachmentSize: 100000},
 		{Key: "bob@example.com", Count: 50, TotalSize: 250000, AttachmentSize: 50000},
@@ -219,24 +184,16 @@ func TestContextStatsSetOnDrillDown(t *testing.T) {
 	model.cursor = 0 // Select alice
 
 	// Before drill-down, contextStats should be nil
-	if model.contextStats != nil {
-		t.Error("expected contextStats=nil before drill-down")
-	}
+	assert.Nil(model.contextStats, "expected contextStats=nil before drill-down")
 
 	// Press Enter to drill down into alice's messages
 	newModel, _ := model.handleAggregateKeys(keyEnter())
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Verify contextStats is set from selected row
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set after drill-down")
-	}
-	if m.contextStats.MessageCount != 100 {
-		t.Errorf("expected MessageCount=100, got %d", m.contextStats.MessageCount)
-	}
-	if m.contextStats.TotalSize != 500000 {
-		t.Errorf("expected TotalSize=500000, got %d", m.contextStats.TotalSize)
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
+	assert.Equal(int64(100), m.contextStats.MessageCount)
+	assert.Equal(int64(500000), m.contextStats.TotalSize)
 }
 
 // TestContextStatsClearedOnGoBack verifies contextStats is cleared when going back to aggregates.
@@ -250,22 +207,20 @@ func TestContextStatsClearedOnGoBack(t *testing.T) {
 	// Drill down
 	m := drillDown(t, model)
 
-	if m.contextStats == nil {
-		t.Fatal("expected contextStats to be set after drill-down")
-	}
+	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
 
 	// Go back
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	// contextStats should be cleared
-	if m2.contextStats != nil {
-		t.Error("expected contextStats=nil after going back to aggregates")
-	}
+	assertpkg.Nil(t, m2.contextStats, "expected contextStats=nil after going back to aggregates")
 }
 
 // TestContextStatsRestoredOnGoBackToSubAggregate verifies contextStats is restored when going back.
 func TestContextStatsRestoredOnGoBackToSubAggregate(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	msgs := []query.MessageSummary{{ID: 1, Subject: "Test"}}
 	model := NewBuilder().
 		WithRows(
@@ -278,9 +233,8 @@ func TestContextStatsRestoredOnGoBackToSubAggregate(t *testing.T) {
 
 	// Step 1: Drill down to message list (sets contextStats from alice's row)
 	m := applyAggregateKey(t, model, keyEnter())
-	if m.contextStats == nil || m.contextStats.MessageCount != 100 {
-		t.Fatalf("expected contextStats.MessageCount=100, got %v", m.contextStats)
-	}
+	require.NotNil(m.contextStats)
+	require.Equal(int64(100), m.contextStats.MessageCount)
 
 	// Simulate messages loaded and transition to message list level
 	m.level = levelMessageList
@@ -298,27 +252,22 @@ func TestContextStatsRestoredOnGoBackToSubAggregate(t *testing.T) {
 	m2.loading = false
 	assertLevel(t, m2, levelDrillDown)
 	// contextStats should still be the same (alice's stats)
-	if m2.contextStats != originalContextStats {
-		t.Errorf("contextStats should be preserved after Tab")
-	}
+	assert.Same(originalContextStats, m2.contextStats, "contextStats should be preserved after Tab")
 
 	// Step 3: Drill down from sub-aggregate to message list (contextStats overwritten)
 	m3 := applyAggregateKey(t, m2, keyEnter())
 	assertLevel(t, m3, levelMessageList)
 	// contextStats should now be domain1's stats (60)
-	if m3.contextStats == nil || m3.contextStats.MessageCount != 60 {
-		t.Errorf("expected contextStats.MessageCount=60 for domain1, got %v", m3.contextStats)
-	}
+	require.NotNil(m3.contextStats)
+	assert.Equal(int64(60), m3.contextStats.MessageCount, "expected domain1's stats")
 
 	// Step 4: Go back to sub-aggregate (contextStats should be restored to alice's stats)
 	newModel4, _ := m3.goBack()
-	m4 := newModel4.(Model)
+	m4 := asModel(t, newModel4)
 	assertLevel(t, m4, levelDrillDown)
 	// contextStats should be restored from breadcrumb
-	if m4.contextStats == nil {
-		t.Error("expected contextStats to be restored after goBack")
-	} else if m4.contextStats.MessageCount != 100 {
-		t.Errorf("expected contextStats.MessageCount=100 after goBack, got %d", m4.contextStats.MessageCount)
+	if assert.NotNil(m4.contextStats, "expected contextStats to be restored after goBack") {
+		assert.Equal(int64(100), m4.contextStats.MessageCount, "after goBack")
 	}
 }
 
@@ -342,26 +291,23 @@ func TestViewTypeRestoredAfterEscFromSubAggregate(t *testing.T) {
 
 	assertLevel(t, m, levelDrillDown)
 	// viewType should have changed to next sub-group view (Recipients, skipping redundant SenderNames)
-	if m.viewType != query.ViewRecipients {
-		t.Errorf("expected ViewRecipients in sub-aggregate, got %v", m.viewType)
-	}
+	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "in sub-aggregate")
 
 	// Press Esc to go back to message list
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelMessageList)
 	// viewType should be restored to ViewSenders
-	if m2.viewType != query.ViewSenders {
-		t.Errorf("expected ViewSenders after going back, got %v", m2.viewType)
-	}
+	assertpkg.Equal(t, query.ViewSenders, m2.viewType, "after going back")
 }
 
 // TestCursorScrollPreservedAfterGoBack verifies cursor and scroll are preserved
 // when navigating back. With view caching, data is restored from cache instantly
 // without requiring a reload.
 func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
-	rows := makeRows(10)
+	assert := assertpkg.New(t)
+	rows := makeRows()
 	model := NewBuilder().WithRows(rows...).WithViewType(query.ViewSenders).Build()
 	model.cursor = 5
 	model.scrollOffset = 3
@@ -372,45 +318,31 @@ func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
 	assertLevel(t, m, levelMessageList)
 
 	// Verify breadcrumb was saved with cached rows
-	if len(m.breadcrumbs) != 1 {
-		t.Fatalf("expected 1 breadcrumb, got %d", len(m.breadcrumbs))
-	}
-	if m.breadcrumbs[0].state.rows == nil {
-		t.Error("expected CachedRows to be set in breadcrumb")
-	}
+	requirepkg.Len(t, m.breadcrumbs, 1)
+	assert.NotNil(m.breadcrumbs[0].state.rows, "expected CachedRows to be set in breadcrumb")
 
 	// Go back to aggregates - with caching, this restores instantly without reload
 	newModel2, cmd := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	// With caching, no reload command is returned
-	if cmd != nil {
-		t.Error("expected nil command when restoring from cache")
-	}
+	assert.Nil(cmd, "expected nil command when restoring from cache")
 
 	// Loading should be false (no async reload needed)
-	if m2.loading {
-		t.Error("expected loading=false when restoring from cache")
-	}
+	assert.False(m2.loading, "expected loading=false when restoring from cache")
 
 	// Cursor and scroll should be preserved from breadcrumb
-	if m2.cursor != 5 {
-		t.Errorf("expected cursor=5, got %d", m2.cursor)
-	}
-	if m2.scrollOffset != 3 {
-		t.Errorf("expected scrollOffset=3, got %d", m2.scrollOffset)
-	}
+	assert.Equal(5, m2.cursor)
+	assert.Equal(3, m2.scrollOffset)
 
 	// Rows should be restored from cache
-	if len(m2.rows) != 10 {
-		t.Errorf("expected 10 rows, got %d", len(m2.rows))
-	}
+	assert.Len(m2.rows, 10)
 }
 
 // TestGoBackClearsError verifies that goBack clears any stale error.
 func TestGoBackClearsError(t *testing.T) {
 	model := NewBuilder().WithLevel(levelMessageList).Build()
-	model.err = fmt.Errorf("some previous error")
+	model.err = errors.New("some previous error")
 	model.breadcrumbs = []navigationSnapshot{{state: viewState{
 		level:    levelAggregates,
 		viewType: query.ViewSenders,
@@ -418,17 +350,16 @@ func TestGoBackClearsError(t *testing.T) {
 
 	// Go back
 	newModel, _ := model.goBack()
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Error should be cleared
-	if m.err != nil {
-		t.Errorf("expected err=nil after goBack, got %v", m.err)
-	}
+	assertpkg.NoError(t, m.err, "expected err=nil after goBack")
 }
 
 // TestDrillFilterPreservedAfterMessageDetail verifies drillFilter is preserved
 // when navigating back from message detail to message list.
 func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "Test message"},
@@ -448,39 +379,23 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 	assertLevel(t, m, levelMessageDetail)
 
 	// Verify breadcrumb saved drillFilter
-	if len(m.breadcrumbs) == 0 {
-		t.Fatal("expected breadcrumb to be saved")
-	}
+	requirepkg.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
 	bc := m.breadcrumbs[len(m.breadcrumbs)-1]
-	if bc.state.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected breadcrumb DrillFilter.Sender='alice@example.com', got %q", bc.state.drillFilter.Sender)
-	}
-	if bc.state.drillFilter.Recipient != "bob@example.com" {
-		t.Errorf("expected breadcrumb DrillFilter.Recipient='bob@example.com', got %q", bc.state.drillFilter.Recipient)
-	}
-	if bc.state.drillViewType != query.ViewSenders {
-		t.Errorf("expected breadcrumb DrillViewType=ViewSenders, got %v", bc.state.drillViewType)
-	}
+	assert.Equal("alice@example.com", bc.state.drillFilter.Sender)
+	assert.Equal("bob@example.com", bc.state.drillFilter.Recipient)
+	assert.Equal(query.ViewSenders, bc.state.drillViewType)
 
 	// Press Esc to go back to message list
 	newModel2, _ := m.goBack()
-	m2 := newModel2.(Model)
+	m2 := asModel(t, newModel2)
 
 	assertLevel(t, m2, levelMessageList)
 
 	// drillFilter should be restored
-	if m2.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender='alice@example.com', got %q", m2.drillFilter.Sender)
-	}
-	if m2.drillFilter.Recipient != "bob@example.com" {
-		t.Errorf("expected drillFilter.Recipient='bob@example.com', got %q", m2.drillFilter.Recipient)
-	}
-	if m2.drillViewType != query.ViewSenders {
-		t.Errorf("expected drillViewType=ViewSenders, got %v", m2.drillViewType)
-	}
-	if m2.viewType != query.ViewRecipients {
-		t.Errorf("expected viewType=ViewRecipients, got %v", m2.viewType)
-	}
+	assert.Equal("alice@example.com", m2.drillFilter.Sender)
+	assert.Equal("bob@example.com", m2.drillFilter.Recipient)
+	assert.Equal(query.ViewSenders, m2.drillViewType)
+	assert.Equal(query.ViewRecipients, m2.viewType)
 }
 
 // =============================================================================
@@ -490,19 +405,13 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 func TestPushBreadcrumb(t *testing.T) {
 	m := NewBuilder().Build()
 
-	if len(m.breadcrumbs) != 0 {
-		t.Fatal("expected no breadcrumbs initially")
-	}
+	requirepkg.Empty(t, m.breadcrumbs, "expected no breadcrumbs initially")
 
 	m.pushBreadcrumb()
-	if len(m.breadcrumbs) != 1 {
-		t.Errorf("expected 1 breadcrumb, got %d", len(m.breadcrumbs))
-	}
+	assertpkg.Len(t, m.breadcrumbs, 1)
 
 	m.pushBreadcrumb()
-	if len(m.breadcrumbs) != 2 {
-		t.Errorf("expected 2 breadcrumbs, got %d", len(m.breadcrumbs))
-	}
+	assertpkg.Len(t, m.breadcrumbs, 2)
 }
 
 // =============================================================================
@@ -546,9 +455,7 @@ func TestSubAggregateDrillDownPreservesSelection(t *testing.T) {
 	assertLevel(t, m3, levelMessageList)
 
 	// The selection should NOT have been cleared by the sub-aggregate Enter
-	if len(m3.selection.aggregateKeys) == 0 {
-		t.Error("sub-aggregate Enter should not clear aggregate selection")
-	}
+	assertpkg.NotEmpty(t, m3.selection.aggregateKeys, "sub-aggregate Enter should not clear aggregate selection")
 }
 
 func TestTopLevelDrillDownClearsSelection(t *testing.T) {
@@ -568,12 +475,8 @@ func TestTopLevelDrillDownClearsSelection(t *testing.T) {
 	assertLevel(t, m, levelMessageList)
 
 	// Selection should be cleared
-	if len(m.selection.aggregateKeys) != 0 {
-		t.Errorf("top-level Enter should clear aggregate selection, got %v", m.selection.aggregateKeys)
-	}
-	if len(m.selection.messageIDs) != 0 {
-		t.Errorf("top-level Enter should clear message selection, got %v", m.selection.messageIDs)
-	}
+	assertpkg.Empty(t, m.selection.aggregateKeys, "top-level Enter should clear aggregate selection")
+	assertpkg.Empty(t, m.selection.messageIDs, "top-level Enter should clear message selection")
 }
 
 // =============================================================================
@@ -583,6 +486,7 @@ func TestTopLevelDrillDownClearsSelection(t *testing.T) {
 // TestSubAggregateAKeyJumpsToMessages verifies 'a' key in sub-aggregate view
 // jumps to message list with the drill filter applied.
 func TestSubAggregateAKeyJumpsToMessages(t *testing.T) {
+	assert := assertpkg.New(t)
 	model := NewBuilder().
 		WithRows(
 			query.AggregateRow{Key: "work", Count: 5},
@@ -595,28 +499,20 @@ func TestSubAggregateAKeyJumpsToMessages(t *testing.T) {
 
 	// Press 'a' to jump to all messages (with drill filter)
 	newModel, cmd := model.handleAggregateKeys(key('a'))
-	m := newModel.(Model)
+	m := asModel(t, newModel)
 
 	// Should navigate to message list
 	assertLevel(t, m, levelMessageList)
 
 	// Should have a command to load messages
-	if cmd == nil {
-		t.Error("expected command to load messages")
-	}
+	assert.NotNil(cmd, "expected command to load messages")
 
 	// Should preserve drill filter
-	if m.drillFilter.Sender != "alice@example.com" {
-		t.Errorf("expected drillFilter.Sender = alice@example.com, got %s", m.drillFilter.Sender)
-	}
+	assert.Equal("alice@example.com", m.drillFilter.Sender)
 
 	// Should have saved breadcrumb
-	if len(m.breadcrumbs) != 1 {
-		t.Errorf("expected 1 breadcrumb, got %d", len(m.breadcrumbs))
-	}
+	requirepkg.Len(t, m.breadcrumbs, 1)
 
 	// Breadcrumb should be for sub-aggregate level
-	if m.breadcrumbs[0].state.level != levelDrillDown {
-		t.Errorf("expected breadcrumb level = levelDrillDown, got %v", m.breadcrumbs[0].state.level)
-	}
+	assert.Equal(levelDrillDown, m.breadcrumbs[0].state.level)
 }

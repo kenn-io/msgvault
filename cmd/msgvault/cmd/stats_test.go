@@ -4,12 +4,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestStatsCommand_AccountAndCollectionMutuallyExclusive confirms that passing
@@ -25,13 +26,10 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 	cmd.SetArgs([]string{"stats", "--account", "foo@example.com", "--collection", "bar"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when both --account and --collection are set, got nil")
-	}
+	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	if !strings.Contains(msg, "account") || !strings.Contains(msg, "collection") {
-		t.Errorf("error should mention both flag names; got: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
+	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }
@@ -44,6 +42,7 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 // SourceIDs() returned an empty slice, and GetStatsForScope treats
 // an empty slice as unscoped/global.
 func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -51,22 +50,13 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 	// requires at least one source, so create a source, attach, and
 	// then remove the source from the collection to leave it empty.
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(st.InitSchema(), "init schema")
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
-	if err != nil {
-		t.Fatalf("create source: %v", err)
-	}
-	if _, err := st.CreateCollection("empty", "test", []int64{src.ID}); err != nil {
-		t.Fatalf("create collection: %v", err)
-	}
-	if err := st.RemoveSourcesFromCollection("empty", []int64{src.ID}); err != nil {
-		t.Fatalf("remove source from collection: %v", err)
-	}
+	require.NoError(err, "create source")
+	_, err = st.CreateCollection("empty", "test", []int64{src.ID})
+	require.NoError(err, "create collection")
+	require.NoError(st.RemoveSourcesFromCollection("empty", []int64{src.ID}), "remove source from collection")
 	_ = st.Close()
 
 	savedCfg := cfg
@@ -94,10 +84,6 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 	root.SetArgs([]string{"stats", "--collection", "empty"})
 
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error for empty collection, got nil")
-	}
-	if !strings.Contains(err.Error(), "no member accounts") {
-		t.Errorf("error message = %q, want substring \"no member accounts\"", err.Error())
-	}
+	require.Error(err, "expected error for empty collection")
+	assertpkg.Contains(t, err.Error(), "no member accounts")
 }

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // IngestRawMessage parses and stores a raw MIME message into the database.
@@ -175,7 +175,7 @@ func IngestRawMessage(
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
 		if err := st.DB().QueryRow(
-			`SELECT COUNT(*) FROM attachments WHERE message_id = ?`,
+			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
 			log.Warn("failed to count stored attachments",
@@ -183,7 +183,7 @@ func IngestRawMessage(
 			)
 		} else if storedCount != attachmentCount {
 			if _, err := st.DB().Exec(
-				`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`,
+				st.Rebind(`UPDATE messages SET has_attachments = ?, attachment_count = ? WHERE id = ?`),
 				storedCount > 0, storedCount, messageID,
 			); err != nil {
 				log.Warn("failed to update attachment metadata",

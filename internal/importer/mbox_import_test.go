@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,24 +14,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mbox"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil/email"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	attachmentsDir := filepath.Join(tmp, "attachments")
 
@@ -68,9 +68,7 @@ func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "hey-export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "hey",
@@ -80,12 +78,8 @@ func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
 		CheckpointInterval: 1,
 		AttachmentsDir:     attachmentsDir,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.MessagesAdded != 2 {
-		t.Fatalf("MessagesAdded = %d, want 2", summary.MessagesAdded)
-	}
+	require.NoError(err, "ImportMbox")
+	require.Equal(int64(2), summary.MessagesAdded, "MessagesAdded")
 
 	// Verify counts.
 	var (
@@ -97,75 +91,39 @@ func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
 		msgLabelCount     int
 		attachmentCount   int
 	)
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount); err != nil {
-		t.Fatalf("count sources: %v", err)
-	}
-	if sourceCount != 1 {
-		t.Fatalf("sourceCount = %d, want 1", sourceCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationCount); err != nil {
-		t.Fatalf("count conversations: %v", err)
-	}
-	if conversationCount != 1 {
-		t.Fatalf("conversationCount = %d, want 1", conversationCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount = %d, want 2", messageCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawCount); err != nil {
-		t.Fatalf("count message_raw: %v", err)
-	}
-	if rawCount != 2 {
-		t.Fatalf("rawCount = %d, want 2", rawCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM labels WHERE name = 'hey'`).Scan(&labelCount); err != nil {
-		t.Fatalf("count labels: %v", err)
-	}
-	if labelCount != 1 {
-		t.Fatalf("labelCount = %d, want 1", labelCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&msgLabelCount); err != nil {
-		t.Fatalf("count message_labels: %v", err)
-	}
-	if msgLabelCount != 2 {
-		t.Fatalf("msgLabelCount = %d, want 2", msgLabelCount)
-	}
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if attachmentCount != 1 {
-		t.Fatalf("attachmentCount = %d, want 1", attachmentCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
+	require.Equal(1, sourceCount, "sourceCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversationCount), "count conversations")
+	require.Equal(1, conversationCount, "conversationCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(2, messageCount, "messageCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawCount), "count message_raw")
+	require.Equal(2, rawCount, "rawCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM labels WHERE name = 'hey'`).Scan(&labelCount), "count labels")
+	require.Equal(1, labelCount, "labelCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&msgLabelCount), "count message_labels")
+	require.Equal(2, msgLabelCount, "msgLabelCount")
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
+	require.Equal(1, attachmentCount, "attachmentCount")
 
 	// Verify attachment file exists.
 	var storagePath string
-	if err := st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath); err != nil {
-		t.Fatalf("select storage_path: %v", err)
-	}
-	if storagePath == "" {
-		t.Fatalf("storage_path empty")
-	}
-	if _, err := os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(storagePath))); err != nil {
-		t.Fatalf("attachment file missing: %v", err)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
+	require.NotEmpty(storagePath, "storage_path empty")
+	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(storagePath)))
+	require.NoError(err, "attachment file missing")
 }
 
 func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -185,9 +143,7 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -196,49 +152,32 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 		CheckpointInterval: 1,
 		AttachmentsDir:     "",
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.MessagesAdded != 1 {
-		t.Fatalf("MessagesAdded = %d, want 1", summary.MessagesAdded)
-	}
+	require.NoError(err, "ImportMbox")
+	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
 
 	var attachmentRows int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentRows); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if attachmentRows != 0 {
-		t.Fatalf("attachmentRows = %d, want 0", attachmentRows)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentRows), "count attachments")
+	require.Equal(0, attachmentRows, "attachmentRows")
 
 	var (
 		hasAttachments  bool
 		attachmentCount int
 	)
-	if err := st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE subject = 'Hello' LIMIT 1`).Scan(&hasAttachments, &attachmentCount); err != nil {
-		t.Fatalf("select message attachment metadata: %v", err)
-	}
-	if !hasAttachments {
-		t.Fatalf("has_attachments = %v, want true", hasAttachments)
-	}
-	if attachmentCount != 1 {
-		t.Fatalf("attachment_count = %d, want 1", attachmentCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT has_attachments, attachment_count FROM messages WHERE subject = 'Hello' LIMIT 1`).Scan(&hasAttachments, &attachmentCount), "select message attachment metadata")
+	require.True(hasAttachments, "has_attachments")
+	require.Equal(1, attachmentCount, "attachment_count")
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw1 := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -272,84 +211,57 @@ func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {
 
 	dir1 := filepath.Join(tmp, "a")
 	dir2 := filepath.Join(tmp, "b")
-	if err := os.MkdirAll(dir1, 0700); err != nil {
-		t.Fatalf("mkdir dir1: %v", err)
-	}
-	if err := os.MkdirAll(dir2, 0700); err != nil {
-		t.Fatalf("mkdir dir2: %v", err)
-	}
+	require.NoError(os.MkdirAll(dir1, 0700), "mkdir dir1")
+	require.NoError(os.MkdirAll(dir2, 0700), "mkdir dir2")
 
 	mboxPath1 := filepath.Join(dir1, "export.mbox")
 	mboxPath2 := filepath.Join(dir2, "export.mbox")
-	if err := os.WriteFile(mboxPath1, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox1: %v", err)
-	}
-	if err := os.WriteFile(mboxPath2, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox2: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath1, []byte(mboxData.String()), 0600), "write mbox1")
+	require.NoError(os.WriteFile(mboxPath2, []byte(mboxData.String()), 0600), "write mbox2")
 
-	if _, err := ImportMbox(context.Background(), st, mboxPath1, MboxImportOptions{
+	_, err = ImportMbox(context.Background(), st, mboxPath1, MboxImportOptions{
 		SourceType:         "mbox",
 		Identifier:         "me@example.com",
 		NoResume:           true,
 		CheckpointInterval: 1,
-	}); err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
+	})
+	require.NoError(err, "ImportMbox")
 
 	var messageCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount = %d, want 2", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(2, messageCount, "messageCount")
 
-	if _, err := ImportMbox(context.Background(), st, mboxPath2, MboxImportOptions{
+	_, err = ImportMbox(context.Background(), st, mboxPath2, MboxImportOptions{
 		SourceType:         "mbox",
 		Identifier:         "me@example.com",
 		NoResume:           true,
 		CheckpointInterval: 1,
-	}); err != nil {
-		t.Fatalf("ImportMbox (second path): %v", err)
-	}
+	})
+	require.NoError(err, "ImportMbox (second path)")
 
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages (second path): %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount (second path) = %d, want 2", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages (second path)")
+	require.Equal(2, messageCount, "messageCount (second path)")
 }
 
 func TestParseFromLineDate_NamedTimezone(t *testing.T) {
 	got, ok := parseFromLineDate("From sender@example.com Mon Jan 1 00:00:00 MST 2024")
-	if !ok {
-		t.Fatalf("expected ok")
-	}
-	if got.Year() != 2024 {
-		t.Fatalf("got year %d, want 2024", got.Year())
-	}
+	requirepkg.True(t, ok)
+	requirepkg.Equal(t, 2024, got.Year())
 }
 
 func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	mboxPath := filepath.Join(tmp, "not-mbox.txt")
-	if err := os.WriteFile(mboxPath, []byte("this is not an mbox file\n"), 0600); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte("this is not an mbox file\n"), 0600), "write file")
 
 	_, err = ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -357,32 +269,23 @@ func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
+	require.Error(err)
 
 	var status string
-	if err := st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status); err != nil {
-		t.Fatalf("select status: %v", err)
-	}
-	if status != store.SyncStatusFailed {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusFailed)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status), "select status")
+	require.Equal(store.SyncStatusFailed, status)
 }
 
 func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -406,9 +309,7 @@ func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "dup.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -416,44 +317,27 @@ func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.MessagesProcessed != 2 {
-		t.Fatalf("MessagesProcessed = %d, want 2", summary.MessagesProcessed)
-	}
-	if summary.MessagesAdded != 2 {
-		t.Fatalf("MessagesAdded = %d, want 2", summary.MessagesAdded)
-	}
-	if summary.MessagesSkipped != 0 {
-		t.Fatalf("MessagesSkipped = %d, want 0", summary.MessagesSkipped)
-	}
-	if summary.Errors != 0 {
-		t.Fatalf("Errors = %d, want 0", summary.Errors)
-	}
+	require.NoError(err, "ImportMbox")
+	require.Equal(int64(2), summary.MessagesProcessed, "MessagesProcessed")
+	require.Equal(int64(2), summary.MessagesAdded, "MessagesAdded")
+	require.Equal(int64(0), summary.MessagesSkipped, "MessagesSkipped")
+	require.Equal(int64(0), summary.Errors, "Errors")
 
 	var messageCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount = %d, want 2", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(2, messageCount, "messageCount")
 }
 
 func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -472,32 +356,25 @@ func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	// Create a partial ingest: message row exists, but no message_raw row.
 	src, err := st.GetOrCreateSource("mbox", "me@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	convID, err := st.EnsureConversation(src.ID, "thread1", "Thread")
-	if err != nil {
-		t.Fatalf("ensure conversation: %v", err)
-	}
+	require.NoError(err, "ensure conversation")
 
 	sum := sha256.Sum256(raw)
 	rawHash := hex.EncodeToString(sum[:])
 
 	sourceMsgID := fmt.Sprintf("mbox-%s-%d", rawHash, int64(1))
-	if _, err := st.UpsertMessage(&store.Message{
+	_, err = st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: sourceMsgID,
 		MessageType:     "email",
-	}); err != nil {
-		t.Fatalf("upsert message: %v", err)
-	}
+	})
+	require.NoError(err, "upsert message")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -505,46 +382,33 @@ func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.MessagesSkipped != 0 {
-		t.Fatalf("MessagesSkipped = %d, want 0", summary.MessagesSkipped)
-	}
+	require.NoError(err, "ImportMbox")
+	require.Equal(int64(0), summary.MessagesSkipped, "MessagesSkipped")
 
 	var rawCount int
-	if err := st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRow(`
 		SELECT COUNT(*)
 		FROM message_raw mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_id = ? AND m.source_message_id = ?
-	`, src.ID, sourceMsgID).Scan(&rawCount); err != nil {
-		t.Fatalf("count message_raw: %v", err)
-	}
-	if rawCount != 1 {
-		t.Fatalf("rawCount = %d, want 1", rawCount)
-	}
+	`, src.ID, sourceMsgID).Scan(&rawCount), "count message_raw")
+	require.Equal(1, rawCount, "rawCount")
 }
 
 func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	attachmentsDir := filepath.Join(tmp, "attachments")
 	// Force attachment storage errors by making the attachments path a file.
-	if err := os.WriteFile(attachmentsDir, []byte("not a dir"), 0600); err != nil {
-		t.Fatalf("write attachments sentinel: %v", err)
-	}
+	require.NoError(os.WriteFile(attachmentsDir, []byte("not a dir"), 0600), "write attachments sentinel")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -564,9 +428,7 @@ func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	// Attachment storage is best-effort: the ingest succeeds even
 	// though the attachment file couldn't be written to disk.
@@ -577,52 +439,32 @@ func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
 		CheckpointInterval: 1,
 		AttachmentsDir:     attachmentsDir,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
+	require.NoError(err, "ImportMbox")
 
 	// Message + raw MIME are committed inside the atomic transaction.
 	var rawCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawCount); err != nil {
-		t.Fatalf("count message_raw: %v", err)
-	}
-	if rawCount != 1 {
-		t.Fatalf("rawCount = %d, want 1", rawCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawCount), "count message_raw")
+	require.Equal(1, rawCount, "rawCount")
 
 	// Attachment was not stored because disk write failed, but the
 	// attachment count correction updated the metadata to reflect this.
 	var attachmentCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if attachmentCount != 0 {
-		t.Fatalf("attachmentCount = %d, want 0", attachmentCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
+	require.Equal(0, attachmentCount, "attachmentCount")
 
 	// Metadata was corrected to reflect zero stored attachments.
 	var hasAttachments bool
 	var metaCount int
-	if err := st.DB().QueryRow(
+	require.NoError(st.DB().QueryRow(
 		`SELECT has_attachments, attachment_count FROM messages LIMIT 1`,
-	).Scan(&hasAttachments, &metaCount); err != nil {
-		t.Fatalf("select attachment metadata: %v", err)
-	}
-	if hasAttachments {
-		t.Fatalf("has_attachments = true, want false")
-	}
-	if metaCount != 0 {
-		t.Fatalf("attachment_count = %d, want 0", metaCount)
-	}
+	).Scan(&hasAttachments, &metaCount), "select attachment metadata")
+	require.False(hasAttachments, "has_attachments should be false")
+	require.Equal(0, metaCount, "attachment_count")
 
 	// Fix the attachments dir, rerun — the message is already
 	// ingested so it's skipped, but verify no errors.
-	if err := os.Remove(attachmentsDir); err != nil {
-		t.Fatalf("remove attachments file: %v", err)
-	}
-	if err := os.MkdirAll(attachmentsDir, 0700); err != nil {
-		t.Fatalf("mkdir attachments dir: %v", err)
-	}
+	require.NoError(os.Remove(attachmentsDir), "remove attachments file")
+	require.NoError(os.MkdirAll(attachmentsDir, 0700), "mkdir attachments dir")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -631,30 +473,23 @@ func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
 		CheckpointInterval: 1,
 		AttachmentsDir:     attachmentsDir,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox (rerun): %v", err)
-	}
-	if summary.MessagesSkipped != 1 {
-		t.Fatalf("MessagesSkipped = %d, want 1", summary.MessagesSkipped)
-	}
+	require.NoError(err, "ImportMbox (rerun)")
+	require.Equal(int64(1), summary.MessagesSkipped, "MessagesSkipped")
 }
 
 func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
-	if _, err := st.DB().Exec(`DROP TABLE messages`); err != nil {
-		t.Fatalf("drop messages: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
+	_, err = st.DB().Exec(`DROP TABLE messages`)
+	require.NoError(err, "drop messages")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -673,9 +508,7 @@ func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -683,41 +516,29 @@ func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.Errors == 0 {
-		t.Fatalf("expected errors > 0")
-	}
+	require.NoError(err, "ImportMbox")
+	assert.NotZero(summary.Errors, "expected errors > 0")
 
 	var (
 		status      string
 		errorsCount int
 	)
-	if err := st.DB().QueryRow(`SELECT status, errors_count FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &errorsCount); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusFailed {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusFailed)
-	}
-	if errorsCount == 0 {
-		t.Fatalf("errorsCount = %d, want > 0", errorsCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status, errors_count FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &errorsCount), "select sync")
+	require.Equal(store.SyncStatusFailed, status)
+	assert.NotZero(errorsCount, "errorsCount")
 }
 
 func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	maxBytes := int64(64)
 
@@ -735,9 +556,7 @@ func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
 	}, "\n")
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
 
 	summary, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
@@ -746,44 +565,29 @@ func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
 		CheckpointInterval: 1,
 		MaxMessageBytes:    maxBytes,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
-	if summary.Errors == 0 {
-		t.Fatalf("expected errors > 0")
-	}
-	if summary.HardErrors {
-		t.Fatalf("expected no hard errors")
-	}
+	require.NoError(err, "ImportMbox")
+	assert.NotZero(summary.Errors, "expected errors > 0")
+	assert.False(summary.HardErrors, "expected no hard errors")
 
 	var (
 		status      string
 		errorsCount int
 	)
-	if err := st.DB().QueryRow(`SELECT status, errors_count FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &errorsCount); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusCompleted {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusCompleted)
-	}
-	if errorsCount == 0 {
-		t.Fatalf("errorsCount = %d, want > 0", errorsCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status, errors_count FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &errorsCount), "select sync")
+	require.Equal(store.SyncStatusCompleted, status)
+	assert.NotZero(errorsCount, "errorsCount")
 }
 
 func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw := func(subject string) []byte {
 		return email.NewMessage().
@@ -819,20 +623,17 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData.String()), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData.String()), 0600), "write mbox")
 
 	// Capture the offset after the first message: this is the safe resume point
 	// if the second message fails to ingest.
 	f, err := os.Open(mboxPath)
-	if err != nil {
-		t.Fatalf("open mbox: %v", err)
-	}
+	require.NoError(err, "open mbox")
 	r := mbox.NewReaderWithMaxMessageBytes(f, defaultMaxMboxMessageBytes)
-	if _, err := r.Next(); err != nil {
+	_, err = r.Next()
+	if err != nil {
 		_ = f.Close()
-		t.Fatalf("read first message: %v", err)
+		require.NoError(err, "read first message")
 	}
 	wantOffset := r.NextFromOffset()
 	_ = f.Close()
@@ -845,7 +646,7 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 		calls++
 		switch calls {
 		case 2:
-			return fmt.Errorf("boom")
+			return errors.New("boom")
 		}
 		if err := ingestRawEmail(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, msg, log); err != nil {
 			return err
@@ -865,137 +666,88 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 		CheckpointInterval: 1,
 		IngestFunc:         ingestFn,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
+	require.NoError(err, "ImportMbox")
 
 	var (
 		status string
 		cursor string
 	)
-	if err := st.DB().QueryRow(`SELECT status, cursor_before FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &cursor); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusRunning {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusRunning)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status, cursor_before FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &cursor), "select sync")
+	require.Equal(store.SyncStatusRunning, status)
 
 	var cp mboxCheckpoint
-	if err := json.Unmarshal([]byte(cursor), &cp); err != nil {
-		t.Fatalf("unmarshal checkpoint: %v", err)
-	}
-	if cp.Offset != wantOffset {
-		t.Fatalf("checkpoint offset = %d, want %d", cp.Offset, wantOffset)
-	}
+	require.NoError(json.Unmarshal([]byte(cursor), &cp), "unmarshal checkpoint")
+	require.Equal(wantOffset, cp.Offset, "checkpoint offset")
 
 	var messageCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 2 {
-		t.Fatalf("messageCount = %d, want 2", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(2, messageCount, "messageCount")
 
 	// Resume the interrupted sync and ensure already-ingested messages are not duplicated.
-	if _, err := ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
+	_, err = ImportMbox(context.Background(), st, mboxPath, MboxImportOptions{
 		SourceType:         "mbox",
 		Identifier:         "me@example.com",
 		NoResume:           false,
 		CheckpointInterval: 1,
-	}); err != nil {
-		t.Fatalf("ImportMbox (resume): %v", err)
-	}
+	})
+	require.NoError(err, "ImportMbox (resume)")
 
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages (resume): %v", err)
-	}
-	if messageCount != 4 {
-		t.Fatalf("messageCount (resume) = %d, want 4", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages (resume)")
+	require.Equal(4, messageCount, "messageCount (resume)")
 
 	for _, subj := range []string{"msg1", "msg2", "msg3", "msg4"} {
 		var c int
-		if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c); err != nil {
-			t.Fatalf("count subject %q: %v", subj, err)
-		}
-		if c != 1 {
-			t.Fatalf("subject %q count = %d, want 1", subj, c)
-		}
+		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c), "count subject %q", subj)
+		assertpkg.Equal(t, 1, c, "subject %q count", subj)
 	}
 }
 
 func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	mboxData := "From sender@example.com Mon Jan 1 00:00:00 2024\nSubject: One\n\nBody\n"
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
 	absPath, err := filepath.Abs(mboxPath)
-	if err != nil {
-		t.Fatalf("abs path: %v", err)
-	}
+	require.NoError(err, "abs path")
 	fi, err := os.Stat(absPath)
-	if err != nil {
-		t.Fatalf("stat mbox: %v", err)
-	}
+	require.NoError(err, "stat mbox")
 
 	src, err := st.GetOrCreateSource("mbox", "me@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	syncID, err := st.StartSync(src.ID, "import-mbox")
-	if err != nil {
-		t.Fatalf("start sync: %v", err)
-	}
+	require.NoError(err, "start sync")
 
 	cp := store.Checkpoint{}
-	if err := saveMboxCheckpoint(st, syncID, absPath, fi.Size()+1, 0, &cp); err != nil {
-		t.Fatalf("save checkpoint: %v", err)
-	}
+	require.NoError(saveMboxCheckpoint(st, syncID, absPath, fi.Size()+1, 0, &cp), "save checkpoint")
 
 	_, err = ImportMbox(context.Background(), st, absPath, MboxImportOptions{
 		SourceType: "mbox",
 		Identifier: "me@example.com",
 		NoResume:   false,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "beyond end of file") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.Error(err)
+	requirepkg.ErrorContains(t, err, "beyond end of file")
 
 	var status string
-	if err := st.DB().QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, syncID).Scan(&status); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusFailed {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusFailed)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, syncID).Scan(&status), "select sync")
+	require.Equal(store.SyncStatusFailed, status)
 
 	var messageCount int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount); err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-	if messageCount != 0 {
-		t.Fatalf("messageCount = %d, want 0", messageCount)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.Equal(0, messageCount, "messageCount")
 }
 
 func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
+	require := requirepkg.New(t)
 	// Verify that when ImportMbox reports HardErrors, the caller's
 	// multi-file loop should break. This simulates the control flow
 	// in import_mbox.go where HardErrors now stops subsequent files.
@@ -1003,14 +755,10 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	raw1 := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -1031,9 +779,7 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 			buf.WriteString("\n")
 		}
 		p := filepath.Join(tmp, name)
-		if err := os.WriteFile(p, []byte(buf.String()), 0600); err != nil {
-			t.Fatalf("write mbox %s: %v", name, err)
-		}
+		require.NoError(os.WriteFile(p, []byte(buf.String()), 0600), "write mbox %s", name)
 		return p
 	}
 
@@ -1042,7 +788,7 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 
 	// Inject ingest failure to cause HardErrors on file1.
 	failIngest := func(_ context.Context, _ *store.Store, _ int64, _ string, _ string, _ []int64, _ string, _ string, _ *mbox.Message, _ *slog.Logger) error {
-		return fmt.Errorf("injected failure")
+		return errors.New("injected failure")
 	}
 
 	sum1, err := ImportMbox(context.Background(), st, path1, MboxImportOptions{
@@ -1052,33 +798,18 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 		CheckpointInterval: 1,
 		IngestFunc:         failIngest,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox file1: %v", err)
-	}
-	if !sum1.HardErrors {
-		t.Fatalf("expected HardErrors=true for file1")
-	}
+	require.NoError(err, "ImportMbox file1")
+	require.True(sum1.HardErrors, "expected HardErrors=true for file1")
 
 	// Simulate the multi-file loop: if HardErrors, skip file2.
-	if sum1.HardErrors {
-		// This is the behavior we're testing: the loop breaks.
-		// Verify file2 was NOT processed.
-		var msgCount int
-		if err := st.DB().QueryRow(
-			`SELECT COUNT(*) FROM messages`,
-		).Scan(&msgCount); err != nil {
-			t.Fatalf("count messages: %v", err)
-		}
-		if msgCount != 0 {
-			t.Fatalf("msgCount = %d, want 0 (file1 failed)", msgCount)
-		}
+	// This is the behavior we're testing: the loop breaks.
+	// Verify file2 was NOT processed.
+	var msgCount int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount), "count messages")
+	require.Equal(0, msgCount, "msgCount (file1 failed)")
 
-		// File2 should not have been imported.
-		_ = path2 // would be processed if loop didn't break
-		return
-	}
-
-	t.Fatalf("should not reach here; HardErrors should have stopped the loop")
+	// File2 should not have been imported.
+	_ = path2 // would be processed if loop didn't break
 }
 
 type cancelOnLogMessageHandler struct {
@@ -1095,7 +826,10 @@ func (h *cancelOnLogMessageHandler) Handle(ctx context.Context, r slog.Record) e
 	if r.Message == h.msg {
 		h.cancel()
 	}
-	return h.next.Handle(ctx, r)
+	if err := h.next.Handle(ctx, r); err != nil {
+		return fmt.Errorf("delegate slog handler: %w", err)
+	}
+	return nil
 }
 
 func (h *cancelOnLogMessageHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -1115,18 +849,15 @@ func (h *cancelOnLogMessageHandler) WithGroup(name string) slog.Handler {
 }
 
 func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	maxBytes := int64(64)
 
@@ -1143,15 +874,11 @@ func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
 		"",
 	}, "\n")
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	if err := os.WriteFile(mboxPath, []byte(mboxData), 0600); err != nil {
-		t.Fatalf("write mbox: %v", err)
-	}
+	require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
 
 	// Expected resume point is the next message separator after the read error.
 	f, err := os.Open(mboxPath)
-	if err != nil {
-		t.Fatalf("open mbox: %v", err)
-	}
+	require.NoError(err, "open mbox")
 	r := mbox.NewReaderWithMaxMessageBytes(f, maxBytes)
 	_, _ = r.Next() // first message is expected to exceed max size
 	wantOffset := r.NextFromOffset()
@@ -1163,7 +890,10 @@ func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
 	log := slog.New(&cancelOnLogMessageHandler{
 		msg:    "mbox read error",
 		cancel: cancel,
-		next:   slog.NewTextHandler(io.Discard, nil),
+		// slog.DiscardHandler.Enabled() always returns false, which would
+		// stop the wrapping handler's Handle (and thus cancel) from ever
+		// firing. A real handler keeps Enabled() true so the cancel triggers.
+		next: slog.NewTextHandler(io.Discard, nil), //nolint:sloglint // need an Enabled() handler so the cancel fires
 	})
 
 	_, err = ImportMbox(ctx, st, mboxPath, MboxImportOptions{
@@ -1174,26 +904,16 @@ func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
 		MaxMessageBytes:    maxBytes,
 		Logger:             log,
 	})
-	if err != nil {
-		t.Fatalf("ImportMbox: %v", err)
-	}
+	require.NoError(err, "ImportMbox")
 
 	var (
 		status string
 		cursor string
 	)
-	if err := st.DB().QueryRow(`SELECT status, cursor_before FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &cursor); err != nil {
-		t.Fatalf("select sync: %v", err)
-	}
-	if status != store.SyncStatusRunning {
-		t.Fatalf("status = %q, want %q", status, store.SyncStatusRunning)
-	}
+	require.NoError(st.DB().QueryRow(`SELECT status, cursor_before FROM sync_runs ORDER BY started_at DESC LIMIT 1`).Scan(&status, &cursor), "select sync")
+	require.Equal(store.SyncStatusRunning, status)
 
 	var cp mboxCheckpoint
-	if err := json.Unmarshal([]byte(cursor), &cp); err != nil {
-		t.Fatalf("unmarshal checkpoint: %v", err)
-	}
-	if cp.Offset != wantOffset {
-		t.Fatalf("checkpoint offset = %d, want %d", cp.Offset, wantOffset)
-	}
+	require.NoError(json.Unmarshal([]byte(cursor), &cp), "unmarshal checkpoint")
+	require.Equal(wantOffset, cp.Offset, "checkpoint offset")
 }

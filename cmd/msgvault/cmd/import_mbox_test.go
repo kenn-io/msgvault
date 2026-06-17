@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"io"
 	"os"
 	"path"
@@ -16,38 +15,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/importer/mboxzip"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/importer/mboxzip"
 )
 
 func writeZipFile(t *testing.T, path string, entries map[string]string) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create zip: %v", err)
-	}
+	requirepkg.NoError(t, err, "create zip")
 	defer func() { _ = f.Close() }()
 
 	zw := zip.NewWriter(f)
 	for name, content := range entries {
 		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("create zip entry %q: %v", name, err)
-		}
-		if _, err := w.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %q: %v", name, err)
-		}
+		requirepkg.NoError(t, err, "create zip entry %q", name)
+		_, err = w.Write([]byte(content))
+		requirepkg.NoError(t, err, "write zip entry %q", name)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close zip: %v", err)
-	}
+	requirepkg.NoError(t, zw.Close(), "close zip")
 }
 
 func writeZipFileStored(t *testing.T, path string, entries map[string][]byte) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create zip: %v", err)
-	}
+	requirepkg.NoError(t, err, "create zip")
 	defer func() { _ = f.Close() }()
 
 	zw := zip.NewWriter(f)
@@ -57,45 +49,31 @@ func writeZipFileStored(t *testing.T, path string, entries map[string][]byte) {
 			Method: zip.Store,
 		}
 		w, err := zw.CreateHeader(hdr)
-		if err != nil {
-			t.Fatalf("create zip entry %q: %v", name, err)
-		}
-		if _, err := w.Write(content); err != nil {
-			t.Fatalf("write zip entry %q: %v", name, err)
-		}
+		requirepkg.NoError(t, err, "create zip entry %q", name)
+		_, err = w.Write(content)
+		requirepkg.NoError(t, err, "write zip entry %q", name)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close zip: %v", err)
-	}
+	requirepkg.NoError(t, zw.Close(), "close zip")
 }
 
 func corruptZipFileBytes(t *testing.T, zipPath string, needle []byte) {
 	t.Helper()
 	b, err := os.ReadFile(zipPath)
-	if err != nil {
-		t.Fatalf("read zip: %v", err)
-	}
-	if n := bytes.Count(b, needle); n != 1 {
-		t.Fatalf("expected needle to appear once in zip, got %d matches", n)
-	}
+	requirepkg.NoError(t, err, "read zip")
+	n := bytes.Count(b, needle)
+	requirepkg.Equal(t, 1, n, "expected needle to appear once in zip, got %d matches", n)
 	idx := bytes.Index(b, needle)
-	if idx == -1 {
-		t.Fatalf("needle not found in zip")
-	}
+	requirepkg.NotEqual(t, -1, idx, "needle not found in zip")
 	// Flip one byte in the stored payload to trigger a CRC mismatch on extraction.
 	b[idx] ^= 0xff
-	if err := os.WriteFile(zipPath, b, 0600); err != nil {
-		t.Fatalf("write corrupted zip: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(zipPath, b, 0600), "write corrupted zip")
 }
 
 func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName string) {
 	t.Helper()
 
 	b, err := os.ReadFile(zipPath)
-	if err != nil {
-		t.Fatalf("read zip: %v", err)
-	}
+	requirepkg.NoError(t, err, "read zip")
 
 	// Find End of Central Directory record (EOCD). Search backwards since there's an optional comment.
 	const (
@@ -103,10 +81,7 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 		maxCommentLen        = 1<<16 - 1
 		eocdSig       uint32 = 0x06054b50
 	)
-	start := len(b) - (eocdLen + maxCommentLen)
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(b)-(eocdLen+maxCommentLen), 0)
 	eocd := -1
 	for i := len(b) - eocdLen; i >= start; i-- {
 		if binary.LittleEndian.Uint32(b[i:]) == eocdSig {
@@ -114,15 +89,12 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 			break
 		}
 	}
-	if eocd == -1 {
-		t.Fatalf("eocd not found")
-	}
+	requirepkg.NotEqual(t, -1, eocd, "eocd not found")
 
 	cdSize := int(binary.LittleEndian.Uint32(b[eocd+12:]))
 	cdOff := int(binary.LittleEndian.Uint32(b[eocd+16:]))
-	if cdOff < 0 || cdSize < 0 || cdOff+cdSize > len(b) {
-		t.Fatalf("central directory out of bounds (off=%d size=%d len=%d)", cdOff, cdSize, len(b))
-	}
+	requirepkg.False(t, cdOff < 0 || cdSize < 0 || cdOff+cdSize > len(b),
+		"central directory out of bounds (off=%d size=%d len=%d)", cdOff, cdSize, len(b))
 
 	// Iterate central directory entries and zero the uncompressed size field for entryName.
 	cd := b[cdOff : cdOff+cdSize]
@@ -130,19 +102,17 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 	off := 0
 	found := false
 	for off+46 <= len(cd) {
-		if binary.LittleEndian.Uint32(cd[off:]) != cdfhSig {
-			t.Fatalf("central directory header signature mismatch at offset %d", off)
-		}
+		requirepkg.Equal(t, cdfhSig, binary.LittleEndian.Uint32(cd[off:]),
+			"central directory header signature mismatch at offset %d", off)
 		nameLen := int(binary.LittleEndian.Uint16(cd[off+28:]))
 		extraLen := int(binary.LittleEndian.Uint16(cd[off+30:]))
 		commentLen := int(binary.LittleEndian.Uint16(cd[off+32:]))
-		if off+46+nameLen+extraLen+commentLen > len(cd) {
-			t.Fatalf("central directory entry out of bounds")
-		}
+		requirepkg.LessOrEqual(t, off+46+nameLen+extraLen+commentLen, len(cd),
+			"central directory entry out of bounds")
 
 		name := cd[off+46 : off+46+nameLen]
 		if bytes.Equal(name, []byte(entryName)) {
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				cd[off+24+i] = 0
 			}
 			found = true
@@ -150,23 +120,18 @@ func zeroZipCentralDirUncompressedSize(t *testing.T, zipPath string, entryName s
 		}
 		off += 46 + nameLen + extraLen + commentLen
 	}
-	if !found {
-		t.Fatalf("central directory entry %q not found", entryName)
-	}
+	requirepkg.True(t, found, "central directory entry %q not found", entryName)
 
-	if err := os.WriteFile(zipPath, b, 0600); err != nil {
-		t.Fatalf("write patched zip: %v", err)
-	}
+	requirepkg.NoError(t, os.WriteFile(zipPath, b, 0600), "write patched zip")
 }
 
 func TestResolveMboxExport_ZipExtractsAndCaches(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	// Resolve symlinks / 8.3 short names so path comparisons work on Windows.
 	evalTmp, err := filepath.EvalSymlinks(tmp)
-	if err != nil {
-		t.Fatalf("eval symlinks: %v", err)
-	}
+	require.NoError(err, "eval symlinks")
 
 	zipPath := filepath.Join(tmp, "export.zip")
 	writeZipFile(t, zipPath, map[string]string{
@@ -175,37 +140,27 @@ func TestResolveMboxExport_ZipExtractsAndCaches(t *testing.T) {
 	})
 
 	files1, err := mboxzip.ResolveMboxExport(zipPath, tmp, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport: %v", err)
-	}
-	if len(files1) != 2 {
-		t.Fatalf("len(files) = %d, want 2", len(files1))
-	}
-	if files1[0] == files1[1] {
-		t.Fatalf("expected distinct extracted files, got %q", files1[0])
-	}
+	require.NoError(err, "resolveMboxExport")
+	require.Len(files1, 2)
+	require.NotEqual(files1[0], files1[1], "expected distinct extracted files, got %q", files1[0])
 
 	// Verify files exist and are in the expected extracted directory.
 	for _, p := range files1 {
-		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("stat extracted file %q: %v", p, err)
-		}
-		if !strings.Contains(filepath.Dir(p), filepath.Join(evalTmp, "imports", "mbox")) {
-			t.Fatalf("unexpected extracted dir for %q", p)
-		}
+		_, err := os.Stat(p)
+		require.NoError(err, "stat extracted file %q", p)
+		require.Contains(filepath.Dir(p), filepath.Join(evalTmp, "imports", "mbox"),
+			"unexpected extracted dir for %q", p)
 	}
 
 	// Second run should reuse the extracted files (sentinel-based caching).
 	files2, err := mboxzip.ResolveMboxExport(zipPath, tmp, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport (2nd): %v", err)
-	}
-	if strings.Join(files1, "|") != strings.Join(files2, "|") {
-		t.Fatalf("cached files mismatch:\n1=%v\n2=%v", files1, files2)
-	}
+	require.NoError(err, "resolveMboxExport (2nd)")
+	require.Equal(strings.Join(files1, "|"), strings.Join(files2, "|"),
+		"cached files mismatch:\n1=%v\n2=%v", files1, files2)
 }
 
 func TestResolveMboxExport_ZipTouchDoesNotInvalidateCache(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -214,29 +169,21 @@ func TestResolveMboxExport_ZipTouchDoesNotInvalidateCache(t *testing.T) {
 	})
 
 	files1, err := mboxzip.ResolveMboxExport(zipPath, tmp, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport: %v", err)
-	}
-	if len(files1) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files1))
-	}
+	require.NoError(err, "resolveMboxExport")
+	require.Len(files1, 1)
 
 	// Touch the zip without changing its contents; cache key should remain stable.
 	touch := time.Now().Add(10 * time.Second)
-	if err := os.Chtimes(zipPath, touch, touch); err != nil {
-		t.Fatalf("chtimes zip: %v", err)
-	}
+	require.NoError(os.Chtimes(zipPath, touch, touch), "chtimes zip")
 
 	files2, err := mboxzip.ResolveMboxExport(zipPath, tmp, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport (2nd): %v", err)
-	}
-	if strings.Join(files1, "|") != strings.Join(files2, "|") {
-		t.Fatalf("cached files mismatch:\n1=%v\n2=%v", files1, files2)
-	}
+	require.NoError(err, "resolveMboxExport (2nd)")
+	require.Equal(strings.Join(files1, "|"), strings.Join(files2, "|"),
+		"cached files mismatch:\n1=%v\n2=%v", files1, files2)
 }
 
 func TestExtractMboxFromZip_CacheValidationRejectsUnknownUncompressedSizeCRCMismatch(t *testing.T) {
+	require := requirepkg.New(t)
 	t.Setenv("MSGVAULT_ZIP_CACHE_VALIDATE_CRC32", "")
 
 	tmp := t.TempDir()
@@ -248,30 +195,21 @@ func TestExtractMboxFromZip_CacheValidationRejectsUnknownUncompressedSizeCRCMism
 	zeroZipCentralDirUncompressedSize(t, zipPath, "inbox.mbox")
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 	wantPath := filepath.Join(destDir, "inbox.mbox")
-	if err := os.WriteFile(wantPath, []byte("cached"), 0600); err != nil {
-		t.Fatalf("write cached file: %v", err)
-	}
+	require.NoError(os.WriteFile(wantPath, []byte("cached"), 0600), "write cached file")
 
 	_, err := mboxzip.ValidateExtractedMboxCache(zipPath, destDir, mboxzip.ExtractLimits{
 		MaxEntryBytes: mboxzip.DefaultMaxZipEntryBytes,
 		MaxTotalBytes: mboxzip.DefaultMaxZipTotalBytes,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "crc32") {
-		t.Fatalf("expected crc32 error, got %v", err)
-	}
+	require.Error(err)
+	assertpkg.ErrorContains(t, err, "crc32")
 }
 
 func TestExtractMboxFromZip_CacheValidationRejectsEmptyEntrySizeMismatch(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -280,30 +218,21 @@ func TestExtractMboxFromZip_CacheValidationRejectsEmptyEntrySizeMismatch(t *test
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 	wantPath := filepath.Join(destDir, "empty.mbox")
-	if err := os.WriteFile(wantPath, []byte("cached"), 0600); err != nil {
-		t.Fatalf("write cached file: %v", err)
-	}
+	require.NoError(os.WriteFile(wantPath, []byte("cached"), 0600), "write cached file")
 
 	_, err := mboxzip.ValidateExtractedMboxCache(zipPath, destDir, mboxzip.ExtractLimits{
 		MaxEntryBytes: mboxzip.DefaultMaxZipEntryBytes,
 		MaxTotalBytes: mboxzip.DefaultMaxZipTotalBytes,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "crc32") {
-		t.Fatalf("expected crc32 error, got %v", err)
-	}
+	require.Error(err)
+	assertpkg.ErrorContains(t, err, "crc32")
 }
 
 func TestExtractMboxFromZip_CacheValidationRejectsSameSizeCRCMismatch(t *testing.T) {
+	require := requirepkg.New(t)
 	t.Setenv("MSGVAULT_ZIP_CACHE_VALIDATE_CRC32", "1")
 
 	tmp := t.TempDir()
@@ -314,30 +243,21 @@ func TestExtractMboxFromZip_CacheValidationRejectsSameSizeCRCMismatch(t *testing
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 	wantPath := filepath.Join(destDir, "inbox.mbox")
-	if err := os.WriteFile(wantPath, []byte("jello"), 0600); err != nil { // same size as "hello"
-		t.Fatalf("write cached file: %v", err)
-	}
+	require.NoError(os.WriteFile(wantPath, []byte("jello"), 0600), "write cached file") // same size as "hello"
 
 	_, err := mboxzip.ValidateExtractedMboxCache(zipPath, destDir, mboxzip.ExtractLimits{
 		MaxEntryBytes: mboxzip.DefaultMaxZipEntryBytes,
 		MaxTotalBytes: mboxzip.DefaultMaxZipTotalBytes,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "crc32") {
-		t.Fatalf("expected crc32 error, got %v", err)
-	}
+	require.Error(err)
+	assertpkg.ErrorContains(t, err, "crc32")
 }
 
 func TestExtractMboxFromZip_CacheValidationSkipsCRCByDefaultWhenSizeKnown(t *testing.T) {
+	require := requirepkg.New(t)
 	t.Setenv("MSGVAULT_ZIP_CACHE_VALIDATE_CRC32", "")
 
 	tmp := t.TempDir()
@@ -348,27 +268,20 @@ func TestExtractMboxFromZip_CacheValidationSkipsCRCByDefaultWhenSizeKnown(t *tes
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 	wantPath := filepath.Join(destDir, "inbox.mbox")
-	if err := os.WriteFile(wantPath, []byte("jello"), 0600); err != nil { // same size as "hello"
-		t.Fatalf("write cached file: %v", err)
-	}
+	require.NoError(os.WriteFile(wantPath, []byte("jello"), 0600), "write cached file") // same size as "hello"
 
 	_, err := mboxzip.ValidateExtractedMboxCache(zipPath, destDir, mboxzip.ExtractLimits{
 		MaxEntryBytes: mboxzip.DefaultMaxZipEntryBytes,
 		MaxTotalBytes: mboxzip.DefaultMaxZipTotalBytes,
 	})
-	if err != nil {
-		t.Fatalf("expected success, got %v", err)
-	}
+	require.NoError(err, "expected success")
 }
 
 func TestExtractMboxFromZip_CacheValidationRejectsExtraFiles(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -378,30 +291,18 @@ func TestExtractMboxFromZip_CacheValidationRejectsExtraFiles(t *testing.T) {
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 	wantPath := filepath.Join(destDir, "inbox.mbox")
-	if err := os.WriteFile(wantPath, []byte(inbox), 0600); err != nil {
-		t.Fatalf("write cached file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, "extra.txt"), []byte("x"), 0600); err != nil {
-		t.Fatalf("write extra file: %v", err)
-	}
+	require.NoError(os.WriteFile(wantPath, []byte(inbox), 0600), "write cached file")
+	require.NoError(os.WriteFile(filepath.Join(destDir, "extra.txt"), []byte("x"), 0600), "write extra file")
 
 	_, err := mboxzip.ValidateExtractedMboxCache(zipPath, destDir, mboxzip.ExtractLimits{
 		MaxEntryBytes: mboxzip.DefaultMaxZipEntryBytes,
 		MaxTotalBytes: mboxzip.DefaultMaxZipTotalBytes,
 	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "unexpected") {
-		t.Fatalf("expected unexpected-file error, got %v", err)
-	}
+	require.Error(err)
+	assertpkg.ErrorContains(t, err, "unexpected")
 }
 
 func TestExtractMboxFromZip_RejectsZipChecksumError(t *testing.T) {
@@ -416,12 +317,8 @@ func TestExtractMboxFromZip_RejectsZipChecksumError(t *testing.T) {
 
 	destDir := filepath.Join(tmp, "extract")
 	_, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !errors.Is(err, zip.ErrChecksum) {
-		t.Fatalf("expected zip.ErrChecksum, got %v", err)
-	}
+	requirepkg.Error(t, err)
+	requirepkg.ErrorIs(t, err, zip.ErrChecksum)
 }
 
 type noProgressReader struct {
@@ -443,12 +340,8 @@ func TestCopyWithLimit_NoProgressAfterLimit_ReturnsErrNoProgress(t *testing.T) {
 	src := &noProgressReader{b: []byte("abc")}
 
 	n, err := mboxzip.CopyWithLimit(&dst, src, 3)
-	if n != 3 {
-		t.Fatalf("n=%d, want 3", n)
-	}
-	if !errors.Is(err, io.ErrNoProgress) {
-		t.Fatalf("expected ErrNoProgress, got %v", err)
-	}
+	requirepkg.Equal(t, int64(3), n)
+	requirepkg.ErrorIs(t, err, io.ErrNoProgress)
 }
 
 func TestExtractMboxFromZip_DisambiguatesCollidingBaseNames(t *testing.T) {
@@ -462,21 +355,16 @@ func TestExtractMboxFromZip_DisambiguatesCollidingBaseNames(t *testing.T) {
 
 	destDir := filepath.Join(tmp, "extract")
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 2 {
-		t.Fatalf("len(files) = %d, want 2", len(files))
-	}
+	requirepkg.NoError(t, err, "extractMboxFromZip")
+	requirepkg.Len(t, files, 2)
 
 	b0 := filepath.Base(files[0])
 	b1 := filepath.Base(files[1])
-	if b0 == b1 {
-		t.Fatalf("expected disambiguated output names, got %q", b0)
-	}
+	assertpkg.NotEqual(t, b0, b1, "expected disambiguated output names, got %q", b0)
 }
 
 func TestExtractMboxFromZip_DoesNotOverwriteOnCraftedNameCollision(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -487,58 +375,44 @@ func TestExtractMboxFromZip_DoesNotOverwriteOnCraftedNameCollision(t *testing.T)
 	literalName := "inbox_" + hex.EncodeToString(sum[:4]) + ".mbox"
 
 	f, err := os.Create(zipPath)
-	if err != nil {
-		t.Fatalf("create zip: %v", err)
-	}
+	require.NoError(err, "create zip")
 	t.Cleanup(func() { _ = f.Close() })
 
 	zw := zip.NewWriter(f)
 	writeEntry := func(name, content string) {
 		t.Helper()
 		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("create zip entry %q: %v", name, err)
-		}
-		if _, err := w.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %q: %v", name, err)
-		}
+		require.NoError(err, "create zip entry %q", name)
+		_, err = w.Write([]byte(content))
+		require.NoError(err, "write zip entry %q", name)
 	}
 	writeEntry(literalName, "literal")
 	writeEntry("a/inbox.mbox", "a")
 	writeEntry("b/inbox.mbox", "b")
 
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close zip: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close file: %v", err)
-	}
+	require.NoError(zw.Close(), "close zip")
+	require.NoError(f.Close(), "close file")
 
 	destDir := filepath.Join(tmp, "extract")
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 3 {
-		t.Fatalf("len(files) = %d, want 3", len(files))
-	}
+	require.NoError(err, "extractMboxFromZip")
+	require.Len(files, 3)
 
 	seen := make(map[string]struct{})
 	for _, p := range files {
 		b, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("read extracted file %q: %v", p, err)
-		}
+		require.NoError(err, "read extracted file %q", p)
 		seen[string(b)] = struct{}{}
 	}
 	for _, want := range []string{"literal", "a", "b"} {
-		if _, ok := seen[want]; !ok {
-			t.Fatalf("missing extracted content %q; got %v", want, seen)
-		}
+		_, ok := seen[want]
+		assertpkg.True(t, ok, "missing extracted content %q; got %v", want, seen)
 	}
 }
 
 func TestExtractMboxFromZip_FlattensTraversalNamesSafely(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -548,18 +422,10 @@ func TestExtractMboxFromZip_FlattensTraversalNamesSafely(t *testing.T) {
 
 	destDir := filepath.Join(tmp, "extract")
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
-	}
-	if filepath.Dir(files[0]) != destDir {
-		t.Fatalf("expected extracted file under destDir; got %q", files[0])
-	}
-	if filepath.Base(files[0]) != "evil.mbox" {
-		t.Fatalf("expected flattened base name evil.mbox, got %q", filepath.Base(files[0]))
-	}
+	require.NoError(err, "extractMboxFromZip")
+	require.Len(files, 1)
+	assert.Equal(destDir, filepath.Dir(files[0]), "expected extracted file under destDir")
+	assert.Equal("evil.mbox", filepath.Base(files[0]), "expected flattened base name")
 }
 
 func TestExtractMboxFromZip_SanitizesWindowsInvalidFilenames(t *testing.T) {
@@ -572,15 +438,9 @@ func TestExtractMboxFromZip_SanitizesWindowsInvalidFilenames(t *testing.T) {
 
 	destDir := filepath.Join(tmp, "extract")
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
-	}
-	if got := filepath.Base(files[0]); got != "Inbox_2024.mbox" {
-		t.Fatalf("base name = %q, want %q", got, "Inbox_2024.mbox")
-	}
+	requirepkg.NoError(t, err, "extractMboxFromZip")
+	requirepkg.Len(t, files, 1)
+	assertpkg.Equal(t, "Inbox_2024.mbox", filepath.Base(files[0]))
 }
 
 func TestExtractMboxFromZip_EnforcesEntrySizeLimit(t *testing.T) {
@@ -596,12 +456,8 @@ func TestExtractMboxFromZip_EnforcesEntrySizeLimit(t *testing.T) {
 		MaxEntryBytes: 10,
 		MaxTotalBytes: 0,
 	}, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "limit") {
-		t.Fatalf("expected limit error, got %v", err)
-	}
+	requirepkg.Error(t, err)
+	assertpkg.ErrorContains(t, err, "limit")
 }
 
 func TestExtractMboxFromZip_EnforcesTotalSizeLimit(t *testing.T) {
@@ -618,15 +474,12 @@ func TestExtractMboxFromZip_EnforcesTotalSizeLimit(t *testing.T) {
 		MaxEntryBytes: 100,
 		MaxTotalBytes: 10,
 	}, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "limit") {
-		t.Fatalf("expected limit error, got %v", err)
-	}
+	requirepkg.Error(t, err)
+	assertpkg.ErrorContains(t, err, "limit")
 }
 
 func TestResolveMboxExport_Zip_ReturnsAbsolutePathsWhenImportsDirRelative(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	zipPath := filepath.Join(tmp, "export.zip")
@@ -635,23 +488,15 @@ func TestResolveMboxExport_Zip_ReturnsAbsolutePathsWhenImportsDirRelative(t *tes
 	})
 
 	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
+	require.NoError(err, "getwd")
 	importsRel, err := filepath.Rel(wd, tmp)
 	if err != nil {
 		t.Skipf("cannot make relative path (cross-drive on Windows): %v", err)
 	}
 	files, err := mboxzip.ResolveMboxExport(zipPath, importsRel, nil)
-	if err != nil {
-		t.Fatalf("resolveMboxExport: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
-	}
-	if !filepath.IsAbs(files[0]) {
-		t.Fatalf("expected absolute extracted path, got %q", files[0])
-	}
+	require.NoError(err, "resolveMboxExport")
+	require.Len(files, 1)
+	assertpkg.True(t, filepath.IsAbs(files[0]), "expected absolute extracted path, got %q", files[0])
 }
 
 func TestResolveMboxExport_Zip_RejectsSymlinkedImportsDir(t *testing.T) {
@@ -667,21 +512,15 @@ func TestResolveMboxExport_Zip_RejectsSymlinkedImportsDir(t *testing.T) {
 	})
 
 	realImports := filepath.Join(tmp, "real")
-	if err := os.MkdirAll(realImports, 0700); err != nil {
-		t.Fatalf("mkdir real imports: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(realImports, 0700), "mkdir real imports")
 	linkImports := filepath.Join(tmp, "link")
 	if err := os.Symlink(realImports, linkImports); err != nil {
 		t.Skipf("symlink not available: %v", err)
 	}
 
 	_, err := mboxzip.ResolveMboxExport(zipPath, linkImports, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink error, got %v", err)
-	}
+	requirepkg.Error(t, err)
+	assertpkg.ErrorContains(t, err, "symlink")
 }
 
 func TestResolveMboxExport_RejectsNonRegularFile(t *testing.T) {
@@ -689,17 +528,11 @@ func TestResolveMboxExport_RejectsNonRegularFile(t *testing.T) {
 
 	// Looks like a zip export but is a directory.
 	exportPath := filepath.Join(tmp, "export.zip")
-	if err := os.MkdirAll(exportPath, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(exportPath, 0700), "mkdir")
 
 	_, err := mboxzip.ResolveMboxExport(exportPath, tmp, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("expected regular file error, got %v", err)
-	}
+	requirepkg.Error(t, err)
+	assertpkg.ErrorContains(t, err, "not a regular file")
 }
 
 func TestExtractMboxFromZip_RejectsSymlinkExtractDir(t *testing.T) {
@@ -715,21 +548,19 @@ func TestExtractMboxFromZip_RejectsSymlinkExtractDir(t *testing.T) {
 	})
 
 	targetDir := filepath.Join(tmp, "target")
-	if err := os.MkdirAll(targetDir, 0700); err != nil {
-		t.Fatalf("mkdir target: %v", err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(targetDir, 0700), "mkdir target")
 	destDir := filepath.Join(tmp, "extract")
 	if err := os.Symlink(targetDir, destDir); err != nil {
 		t.Skipf("symlink not available: %v", err)
 	}
 
 	_, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
+	requirepkg.Error(t, err)
 }
 
 func TestExtractMboxFromZip_DoesNotWriteThroughPreExistingSymlink(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlink support")
 	}
@@ -742,48 +573,35 @@ func TestExtractMboxFromZip_DoesNotWriteThroughPreExistingSymlink(t *testing.T) 
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
 
 	target := filepath.Join(tmp, "target")
-	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
+	require.NoError(os.WriteFile(target, []byte("keep"), 0600), "write target")
 	outPath := filepath.Join(destDir, "inbox.mbox")
 	if err := os.Symlink(target, outPath); err != nil {
 		t.Skipf("symlink not available: %v", err)
 	}
 
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
-	}
+	require.NoError(err, "extractMboxFromZip")
+	require.Len(files, 1)
 
-	if b, err := os.ReadFile(target); err != nil {
-		t.Fatalf("read target: %v", err)
-	} else if string(b) != "keep" {
-		t.Fatalf("target was modified: %q", string(b))
-	}
+	b, err := os.ReadFile(target)
+	require.NoError(err, "read target")
+	assert.Equal("keep", string(b), "target was modified")
 
 	st, err := os.Lstat(files[0])
-	if err != nil {
-		t.Fatalf("lstat extracted file: %v", err)
-	}
-	if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
-		t.Fatalf("expected regular extracted file, got mode %v", st.Mode())
-	}
-	if b, err := os.ReadFile(files[0]); err != nil {
-		t.Fatalf("read extracted file: %v", err)
-	} else if string(b) != "zipdata" {
-		t.Fatalf("extracted contents = %q, want %q", string(b), "zipdata")
-	}
+	require.NoError(err, "lstat extracted file")
+	assert.True(st.Mode()&os.ModeSymlink == 0 && st.Mode().IsRegular(),
+		"expected regular extracted file, got mode %v", st.Mode())
+	b, err = os.ReadFile(files[0])
+	require.NoError(err, "read extracted file")
+	assert.Equal("zipdata", string(b), "extracted contents")
 }
 
 func TestExtractMboxFromZip_CachedExtractionRejectsSymlinkedFiles(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlink support")
 	}
@@ -796,40 +614,25 @@ func TestExtractMboxFromZip_CachedExtractionRejectsSymlinkedFiles(t *testing.T) 
 	})
 
 	destDir := filepath.Join(tmp, "extract")
-	if err := os.MkdirAll(destDir, 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
+	require.NoError(os.MkdirAll(destDir, 0700), "mkdir")
+	require.NoError(os.WriteFile(filepath.Join(destDir, ".done"), []byte("ok\n"), 0600), "write sentinel")
 
 	target := filepath.Join(tmp, "target")
-	if err := os.WriteFile(target, []byte("evil"), 0600); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
+	require.NoError(os.WriteFile(target, []byte("evil"), 0600), "write target")
 	outPath := filepath.Join(destDir, "inbox.mbox")
 	if err := os.Symlink(target, outPath); err != nil {
 		t.Skipf("symlink not available: %v", err)
 	}
 
 	files, err := mboxzip.ExtractMboxFromZip(zipPath, destDir, nil)
-	if err != nil {
-		t.Fatalf("extractMboxFromZip: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
-	}
+	require.NoError(err, "extractMboxFromZip")
+	require.Len(files, 1)
 
 	st, err := os.Lstat(files[0])
-	if err != nil {
-		t.Fatalf("lstat extracted file: %v", err)
-	}
-	if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
-		t.Fatalf("expected regular extracted file, got mode %v", st.Mode())
-	}
-	if b, err := os.ReadFile(files[0]); err != nil {
-		t.Fatalf("read extracted file: %v", err)
-	} else if string(b) != "zipdata" {
-		t.Fatalf("extracted contents = %q, want %q", string(b), "zipdata")
-	}
+	require.NoError(err, "lstat extracted file")
+	assert.True(st.Mode()&os.ModeSymlink == 0 && st.Mode().IsRegular(),
+		"expected regular extracted file, got mode %v", st.Mode())
+	b, err := os.ReadFile(files[0])
+	require.NoError(err, "read extracted file")
+	assert.Equal("zipdata", string(b), "extracted contents")
 }

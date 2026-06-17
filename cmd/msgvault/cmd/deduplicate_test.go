@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // TestDeduplicateMutualExclusion confirms that passing both --account and
@@ -24,13 +24,10 @@ func TestDeduplicateMutualExclusion(t *testing.T) {
 	cmd.SetArgs([]string{"deduplicate", "--account", "alpha@example.com", "--collection", "work"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when both --account and --collection are set, got nil")
-	}
+	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	if !strings.Contains(msg, "account") || !strings.Contains(msg, "collection") {
-		t.Errorf("error should mention both flag names; got: %q", msg)
-	}
+	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
+	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }
@@ -38,47 +35,37 @@ func TestDeduplicateMutualExclusion(t *testing.T) {
 // TestDeduplicateCollectionResolution confirms that --collection resolves
 // successfully when the name matches a real collection in the store.
 func TestDeduplicateCollectionResolution(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f, _, collectionName := setupScopeFixture(t)
 
 	scope, err := ResolveCollectionFlag(f.Store, collectionName)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if scope.Collection == nil {
-		t.Fatal("expected Collection to be populated")
-	}
-	if scope.Collection.Name != collectionName {
-		t.Errorf("collection name = %q, want %q", scope.Collection.Name, collectionName)
-	}
+	require.NoError(err)
+	require.NotNil(scope.Collection, "expected Collection to be populated")
+	assert.Equal(collectionName, scope.Collection.Name, "collection name")
 	ids := scope.SourceIDs()
-	if len(ids) == 0 {
-		t.Error("expected non-empty SourceIDs for collection")
-	}
+	assert.NotEmpty(ids, "expected non-empty SourceIDs for collection")
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands
 // to all members when a collection has more than one source.
 func TestDeduplicateCollectionResolution_MultiSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	src2, err := f.Store.GetOrCreateSource("mbox", "backup@example.com")
-	testutil.MustNoErr(t, err, "GetOrCreateSource src2")
+	require.NoError(err, "GetOrCreateSource src2")
 
 	collName := "two-account-collection"
 	_, err = f.Store.CreateCollection(collName, "", []int64{f.Source.ID, src2.ID})
-	testutil.MustNoErr(t, err, "CreateCollection")
+	require.NoError(err, "CreateCollection")
 
 	scope, err := ResolveCollectionFlag(f.Store, collName)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(err)
 	ids := scope.SourceIDs()
-	if len(ids) != 2 {
-		t.Errorf("expected 2 source IDs, got %d: %v", len(ids), ids)
-	}
-	if scope.DisplayName() != collName {
-		t.Errorf("DisplayName = %q, want %q", scope.DisplayName(), collName)
-	}
+	assert.Len(ids, 2, "expected 2 source IDs, got %v", ids)
+	assert.Equal(collName, scope.DisplayName(), "DisplayName")
 }
 
 // TestPrintAccumulatedUndoHint asserts the helper's behavior:
@@ -118,15 +105,11 @@ func TestPrintAccumulatedUndoHint(t *testing.T) {
 			printAccumulatedUndoHint(tc.batches)
 			out := done()
 			if tc.wantNoOutput {
-				if out != "" {
-					t.Errorf("expected no output, got %q", out)
-				}
+				assertpkg.Empty(t, out, "expected no output")
 				return
 			}
 			for _, want := range tc.wantContains {
-				if !strings.Contains(out, want) {
-					t.Errorf("output missing %q; got:\n%s", want, out)
-				}
+				assertpkg.Contains(t, out, want, "output missing %q", want)
 			}
 		})
 	}

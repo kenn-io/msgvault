@@ -1,0 +1,201 @@
+version: "2"
+
+run:
+  # Lint the build-tagged code, not just the untagged subset. The primary
+  # build uses `fts5 sqlite_vec` (Makefile BUILD_TAGS) and the pgvector
+  # backend is gated behind `pgvector`; without these tags golangci-lint
+  # never compiles those files, so lint debt silently accumulates behind
+  # //go:build constraints (it did — see reviews/codex-pr4-iter3.md).
+  build-tags:
+    - fts5
+    - sqlite_vec
+    - pgvector
+
+linters:
+  # Opt-in linter set: only the linters listed under `enable` run. Using
+  # `default: none` instead of `default: all` means a golangci-lint upgrade
+  # cannot silently turn on a new linter; it stays off until added here.
+  default: none
+  enable:
+    - arangolint
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - clickhouselint
+    - copyloopvar
+    - decorder
+    - dogsled
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - forcetypeassert
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - goconst
+    - gocritic
+    - godoclint
+    - godot
+    - goheader
+    - gomoddirectives
+    - gomodguard_v2
+    - goprintffuncname
+    - gosec
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - intrange
+    - iotamixing
+    - loggercheck
+    - makezero
+    - mirror
+    - misspell
+    - modernize
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - testableexamples
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+    - wrapcheck
+    - zerologlint
+  # Deliberately not enabled (kept here so an upgrade cannot quietly re-add them):
+  #   style/opinionated: nlreturn, wsl, wsl_v5, varnamelen, ireturn, lll,
+  #     tagliatelle, exhaustruct, nonamedreturns, tagalign, noinlineerr, dupl,
+  #     dupword, fatcontext, funcorder, containedctx, godox, interfacebloat, unqueryvet
+  #   complexity (trust reviewer judgment): funlen, cyclop, gocognit, maintidx, gocyclo, nestif
+  #   project misfit: depguard, mnd, gochecknoglobals, gochecknoinits, testpackage,
+  #     paralleltest, tparallel, gosmopolitan, prealloc, err113, forbidigo
+  #   deprecated: gomodguard (use gomodguard_v2)
+  #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
+
+  settings:
+    errorlint:
+      comparison: true
+      asserts: true
+      errorf: true
+      errorf-multi: true
+
+    exhaustive:
+      # `default:` is an acceptable way to handle the missing cases when the
+      # author has consciously chosen to lump them together.
+      default-signifies-exhaustive: true
+
+    gosec:
+      excludes:
+        # G304: file inclusion via variable. msgvault is a CLI that processes
+        # user-supplied file paths and its own ~/.msgvault/ storage paths;
+        # gosec can't tell those from untrusted-network input.
+        - G304
+        # G301: directory permissions. Same rationale - we operate on the
+        # user's own directories.
+        - G301
+        # G201/G202: SQL string formatting/concatenation. We assemble SQL
+        # dynamically from our own CTE/view/condition fragments; no caller
+        # input reaches the format string. Real bind params still use ? / $N.
+        - G201
+        - G202
+
+    goconst:
+      # Default is 3; raise to filter noise like TUI keycodes, runtime.GOOS
+      # comparisons, and rare yes/no prompts. Real candidates (source types,
+      # SQL table names) recur many more times than the threshold.
+      min-occurrences: 10
+
+    revive:
+      enable-default-rules: true
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        # Most "unused" params are imposed by the cobra RunE / http.HandlerFunc /
+        # tea.Cmd signatures. Renaming each to _ adds churn without value.
+        - name: unused-parameter
+          disabled: true
+
+    gocritic:
+      enable-all: true
+      disabled-tags:
+        - experimental
+        - opinionated
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+        - ifElseChain
+        - singleCaseSwitch
+
+    wrapcheck:
+      # Errors crossing these boundaries don't need extra wrapping.
+      # Internal-to-internal calls preserve full type info; stdlib SQL/HTTP
+      # errors are routinely returned verbatim from helpers, and `os`/
+      # `encoding/json` errors already include the operation in their message.
+      ignore-package-globs:
+        - go.kenn.io/msgvault/*
+        - database/sql
+        - database/sql/*
+        - io
+        - os
+        - encoding/json
+        - encoding/csv
+        - net/http
+        - path/filepath
+      extra-ignore-sigs:
+        # ctx.Err() returns context.Canceled / context.DeadlineExceeded; callers
+        # use errors.Is to distinguish, which wrapping would break.
+        - .Err(
+
+  exclusions:
+    rules:
+      # Tests legitimately repeat fixture strings
+      - linters: [goconst]
+        path: _test\.go
+
+      # gosec G204/G704: test binaries and URLs are controlled
+      # G306/G301/G302: test fixture file/dir permissions are not a real risk
+      # G101: test fixtures use obviously-fake "secret" strings
+      # G117: marshaled "password"/"access_token" fields are test fixtures
+      # G703/G122: test paths/walks operate on t.TempDir
+      # G403: 1024-bit RSA keys are acceptable in tests for speed
+      # G115: int->byte conversions on known small test inputs
+      - linters: [gosec]
+        path: _test\.go
+        text: "G204|G704|G306|G301|G302|G101|G117|G703|G122|G403|G115"
+
+      # staticcheck nil-after-Fatal false positives in tests
+      - linters: [staticcheck]
+        path: _test\.go
+        text: "SA5011"

@@ -36,6 +36,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -132,8 +133,8 @@ func (d discardHandler) WithGroup(string) slog.Handler           { return d }
 // Close releases file handles held by the handler. Safe to call
 // multiple times.
 func (r *Result) Close() {
-	for i := len(r.closers) - 1; i >= 0; i-- {
-		r.closers[i]()
+	for _, v := range slices.Backward(r.closers) {
+		v()
 	}
 	r.closers = nil
 }

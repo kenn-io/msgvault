@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var collectionCmd = &cobra.Command{
@@ -30,7 +30,7 @@ var collectionCreateCmd = &cobra.Command{
 }
 
 var collectionListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   cmdUseList,
 	Short: "List all collections",
 	RunE:  runCollectionList,
 }
@@ -69,7 +69,7 @@ var (
 	collectionRemoveAccounts string
 )
 
-func runCollectionCreate(_ *cobra.Command, args []string) error {
+func runCollectionCreate(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func runCollectionCreate(_ *cobra.Command, args []string) error {
 	defer func() { _ = st.Close() }()
 
 	name := args[0]
-	sourceIDs, err := resolveAccountList(st, collectionCreateAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionCreateAccounts)
 	if err != nil {
 		return err
 	}
@@ -155,14 +155,14 @@ func runCollectionShow(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCollectionAdd(_ *cobra.Command, args []string) error {
+func runCollectionAdd(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(st, collectionAddAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionAddAccounts)
 	if err != nil {
 		return err
 	}
@@ -174,14 +174,14 @@ func runCollectionAdd(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCollectionRemove(_ *cobra.Command, args []string) error {
+func runCollectionRemove(cmd *cobra.Command, args []string) error {
 	st, err := openStoreAndInit()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	sourceIDs, err := resolveAccountList(st, collectionRemoveAccounts)
+	sourceIDs, err := resolveAccountList(cmd, st, collectionRemoveAccounts)
 	if err != nil {
 		return err
 	}
@@ -207,9 +207,9 @@ func runCollectionDelete(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func resolveAccountList(st *store.Store, accounts string) ([]int64, error) {
+func resolveAccountList(cmd *cobra.Command, st *store.Store, accounts string) ([]int64, error) {
 	if accounts == "" {
-		return nil, fmt.Errorf("--accounts is required")
+		return nil, usageErr(cmd, errors.New("--accounts is required"))
 	}
 	parts := strings.Split(accounts, ",")
 	var ids []int64
@@ -253,7 +253,7 @@ func resolveAccountList(st *store.Store, accounts string) ([]int64, error) {
 		ids = append(ids, scope.SourceIDs()...)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("no valid accounts in --accounts")
+		return nil, errors.New("no valid accounts in --accounts")
 	}
 	return ids, nil
 }

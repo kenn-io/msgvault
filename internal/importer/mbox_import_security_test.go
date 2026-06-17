@@ -8,22 +8,21 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/mime"
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
+	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	attachmentsDir := filepath.Join(tmp, "attachments")
 
@@ -36,46 +35,36 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 	}
 
 	err = storeAttachment(st, attachmentsDir, 1, att)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
+	require.Error(err)
 
 	// Ensure nothing was written.
-	if _, statErr := os.Stat(attachmentsDir); statErr == nil {
-		t.Fatalf("attachments dir should not have been created for invalid content hash")
-	}
+	_, statErr := os.Stat(attachmentsDir)
+	assertpkg.Error(t, statErr,
+		"attachments dir should not have been created for invalid content hash")
 }
 
 func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("mbox", "me@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	convID, err := st.EnsureConversation(src.ID, "thread1", "Thread")
-	if err != nil {
-		t.Fatalf("ensure conversation: %v", err)
-	}
+	require.NoError(err, "ensure conversation")
 	msgID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: "msg1",
 		MessageType:     "email",
 	})
-	if err != nil {
-		t.Fatalf("upsert message: %v", err)
-	}
+	require.NoError(err, "upsert message")
 
 	attachmentsDir := filepath.Join(tmp, "attachments")
 
@@ -87,29 +76,22 @@ func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
 		Size:        2,
 	}
 
-	if err := storeAttachment(st, attachmentsDir, msgID, att); err != nil {
-		t.Fatalf("storeAttachment: %v", err)
-	}
-	if att.ContentHash == "" {
-		t.Fatalf("expected ContentHash to be computed")
-	}
+	require.NoError(storeAttachment(st, attachmentsDir, msgID, att), "storeAttachment")
+	assert.NotEmpty(att.ContentHash, "expected ContentHash to be computed")
 
 	// Ensure file + DB record exist.
 	fullPath := filepath.Join(attachmentsDir, att.ContentHash[:2], att.ContentHash)
-	if _, err := os.Stat(fullPath); err != nil {
-		t.Fatalf("attachment file missing: %v", err)
-	}
+	_, err = os.Stat(fullPath)
+	require.NoError(err, "attachment file missing")
 
 	var count int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("count = %d, want 1", count)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)
+	require.NoError(err, "count attachments")
+	assert.Equal(1, count)
 }
 
 func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
+	require := requirepkg.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlink support")
 	}
@@ -118,31 +100,21 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("mbox", "me@example.com")
-	if err != nil {
-		t.Fatalf("get/create source: %v", err)
-	}
+	require.NoError(err, "get/create source")
 	convID, err := st.EnsureConversation(src.ID, "thread1", "Thread")
-	if err != nil {
-		t.Fatalf("ensure conversation: %v", err)
-	}
+	require.NoError(err, "ensure conversation")
 	msgID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: "msg1",
 		MessageType:     "email",
 	})
-	if err != nil {
-		t.Fatalf("upsert message: %v", err)
-	}
+	require.NoError(err, "upsert message")
 
 	attachmentsDir := filepath.Join(tmp, "attachments")
 
@@ -151,9 +123,7 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 	contentHash := hex.EncodeToString(sum[:])
 	fullPath := filepath.Join(attachmentsDir, contentHash[:2], contentHash)
 
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(os.MkdirAll(filepath.Dir(fullPath), 0700), "mkdir")
 	if err := os.Symlink(fullPath, fullPath); err != nil {
 		t.Skipf("symlink not available: %v", err)
 	}
@@ -166,15 +136,10 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 		Size:        len(content),
 	}
 
-	if err := storeAttachment(st, attachmentsDir, msgID, att); err == nil {
-		t.Fatalf("expected error")
-	}
+	require.Error(storeAttachment(st, attachmentsDir, msgID, att))
 
 	var count int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count); err != nil {
-		t.Fatalf("count attachments: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("count = %d, want 0", count)
-	}
+	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)
+	require.NoError(err, "count attachments")
+	assertpkg.Equal(t, 0, count)
 }

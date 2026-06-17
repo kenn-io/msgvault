@@ -4,7 +4,6 @@ package email
 import (
 	"sort"
 	"strings"
-	"testing"
 )
 
 // Options configures a raw RFC 2822 email message for testing.
@@ -52,18 +51,4 @@ func MakeRaw(opts Options) []byte {
 	b.WriteString(opts.Body)
 
 	return []byte(b.String())
-}
-
-// AssertStringSliceEqual compares two string slices with a descriptive label.
-func AssertStringSliceEqual(t *testing.T, got, want []string, label string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Errorf("%s: got %v (len %d), want %v (len %d)", label, got, len(got), want, len(want))
-		return
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("%s[%d] = %q, want %q", label, i, got[i], want[i])
-		}
-	}
 }

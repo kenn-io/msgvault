@@ -13,8 +13,8 @@ import (
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // sqliteDatetimeFormat is the text DATETIME layout used everywhere
@@ -99,11 +99,20 @@ func (b *Backend) Path() string { return b.path }
 // sees the new generation and dual-enqueues newly-synced messages. The
 // seed loop then uses INSERT OR IGNORE, so any rows the Enqueuer has
 // already written are silently de-duplicated and nothing is missed.
-func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int) (vector.GenerationID, error) {
+func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, fingerprint string) (vector.GenerationID, error) {
 	if err := EnsureVectorTable(ctx, b.db, dim); err != nil {
 		return 0, err
 	}
-	fp := fmt.Sprintf("%s:%d", model, dim)
+	fp := fingerprint
+	if fp == "" {
+		// Defensive default: a missing fingerprint loses the staleness
+		// signal that callers depend on. Fall back to the legacy
+		// model:dim format rather than write an empty string into the
+		// DB, but log nothing — tests intentionally pass an empty
+		// fingerprint to exercise the old shape, and adding noise
+		// there hides real failures.
+		fp = fmt.Sprintf("%s:%d", model, dim)
+	}
 	now := time.Now().Unix()
 
 	gen, isNew, err := b.claimOrInsertBuilding(ctx, model, dim, fp, now)
@@ -166,7 +175,7 @@ func (b *Backend) markGenerationSeeded(ctx context.Context, gen vector.Generatio
 // EnsureSeeded re-runs the initial seed pass for gen if seeded_at is
 // NULL. Used on the resume path so that a crash between
 // claimOrInsertBuilding and the original seedPending commit cannot
-// cause a later `msgvault build-embeddings` to "drain" zero pending rows and
+// cause a later `msgvault embeddings build` to "drain" zero pending rows and
 // activate an unseeded generation. Returns an error if gen no longer
 // exists or has been activated/retired (state != 'building'); the
 // caller should surface --full-rebuild guidance in that case.
@@ -305,7 +314,7 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 	// query-time live filtering (dropDeletedFromSource,
 	// filteredMessageIDs) enforces the live-message contract.
 	rows, err := b.mainDB.QueryContext(ctx,
-		fmt.Sprintf(`SELECT id FROM messages WHERE %s`, store.LiveMessagesWhere("", true)))
+		`SELECT id FROM messages WHERE `+store.LiveMessagesWhere("", true))
 	if err != nil {
 		return fmt.Errorf("select messages: %w", err)
 	}
@@ -342,7 +351,7 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 
 // ActivateGeneration atomically retires the current active generation
 // (if any) and promotes `gen` to active.
-func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationID) error {
+func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationID, force bool) error {
 	now := time.Now().Unix()
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -350,31 +359,157 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx,
+	// Demote the current active generation and capture its id in a single
+	// statement via RETURNING (SQLite 3.35+), so the id whose queue rows we reap
+	// below is provably the row this UPDATE retired (no separate SELECT that
+	// could diverge). No active row -> no row returned -> demoted invalid -> the
+	// reap is skipped, exactly as before. Done inside the tx so the demote+reap
+	// is atomic with the activation below.
+	var demoted sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
 		`UPDATE index_generations
 		 SET state = 'retired', completed_at = COALESCE(completed_at, ?)
-		 WHERE state = 'active'`, now); err != nil {
+		 WHERE state = 'active'
+		 RETURNING id`, now).Scan(&demoted); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("retire previous active: %w", err)
 	}
+	if demoted.Valid {
+		// Reap the demoted generation's queue rows in the same tx. Retired
+		// generations are never re-targeted by pickTarget, so leftover
+		// pending_embeddings rows would be orphaned forever (the
+		// index_generations row is preserved, so the ON DELETE CASCADE never
+		// fires). Keeps the "retired generations have zero pending items"
+		// stats invariant true. [cr2-3, cr2-4]
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pending_embeddings WHERE generation_id = ?`, demoted.Int64); err != nil {
+			return fmt.Errorf("delete retired generation %d pending: %w", demoted.Int64, err)
+		}
+	}
+	// Re-check the seeded/no-pending gate IN the activation tx (unless force).
+	// SQLite serializes writers, so the gate and flip are atomic once inside
+	// the tx: this closes the window between a CALLER's pre-flight pending read
+	// and this flip — no pending row committed before this statement can sneak
+	// gen past the gate. It does NOT prevent an enqueue that commits just AFTER
+	// this flip from leaving one pending row on the now-active gen; that
+	// post-flip row is acceptable and is drained by the embed worker's
+	// active-generation top-up on the next run (see embed_job.go pickTarget /
+	// enqueue.go). [cr2-1]
 	res, err := tx.ExecContext(ctx,
 		`UPDATE index_generations
 		 SET state = 'active', activated_at = ?, completed_at = COALESCE(completed_at, ?)
-		 WHERE id = ? AND state = 'building'`, now, now, int64(gen))
+		 WHERE id = ? AND state = 'building'
+		   AND (? OR seeded_at IS NOT NULL)
+		   AND (? OR NOT EXISTS (
+		       SELECT 1 FROM pending_embeddings WHERE generation_id = ?
+		   ))`, now, now, int64(gen), force, force, int64(gen))
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("generation %d not in 'building' state", gen)
+		return activateGateError(ctx, tx, gen, force)
 	}
 	return tx.Commit()
 }
 
-// RetireGeneration marks the given generation as retired.
-func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID) error {
-	_, err := b.db.ExecContext(ctx,
-		`UPDATE index_generations SET state = 'retired' WHERE id = ?`, int64(gen))
-	return err
+// activateGateError re-reads gen inside the activation tx to return a
+// precise reason the gated promote affected zero rows: pending rows present,
+// not finished seeding, unknown generation, or not in 'building' state.
+func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
+	var pending int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pending); err != nil {
+		return fmt.Errorf("count pending rows for generation %d: %w", gen, err)
+	}
+	if pending > 0 && !force {
+		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
+			gen, pending)
+	}
+	var state vector.GenerationState
+	var seededAt sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state, seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&state, &seededAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == vector.GenerationBuilding && !seededAt.Valid && !force {
+		return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
+			gen)
+	}
+	return fmt.Errorf("generation %d not in 'building' state", gen)
+}
+
+// RetireGeneration marks the given generation as retired and reaps its
+// queue rows in one transaction.
+//
+// Unless force is true, the state-flip UPDATE refuses to retire a generation
+// in state='active' (WHERE state != 'active'): if it affects zero rows the
+// active guard tripped, so the tx rolls back returning ErrRefuseRetireActive
+// WITHOUT reaping pending rows. SQLite serializes writers, so the guard and
+// flip are atomic once inside the tx — closing the CLI's pre-flight TOCTOU so
+// a concurrent activation cannot retire the now-serving generation without
+// --force-active. force retires unconditionally (operator override).
+func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID, force bool) error {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin retire tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The active-gen guard is the WHERE clause itself: when force is false we
+	// only retire a generation that is NOT active, so a concurrent activation
+	// that flipped gen to active before this statement leaves zero rows
+	// affected and we bail out before reaping anything. force=true drops the
+	// guard (? OR ... is always satisfiable).
+	res, err := tx.ExecContext(ctx,
+		`UPDATE index_generations SET state = 'retired'
+		 WHERE id = ? AND (? OR state != 'active')`, int64(gen), force)
+	if err != nil {
+		return fmt.Errorf("retire generation %d: %w", gen, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return retireGateError(ctx, tx, gen, force)
+	}
+	// Reap the retired generation's queue rows in the same tx so they cannot
+	// be orphaned (no future run re-targets a retired generation, and the
+	// preserved index_generations row means the ON DELETE CASCADE never
+	// fires). Keeps the "retired generations have zero pending items"
+	// stats invariant true. [cr2-2, cr2-4]
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen)); err != nil {
+		return fmt.Errorf("delete retired generation %d pending: %w", gen, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit retire generation %d: %w", gen, err)
+	}
+	return nil
+}
+
+// retireGateError re-reads gen inside the retire tx to explain why the gated
+// state flip affected zero rows: the generation is active (and force was not
+// passed) or it does not exist. Mirrors activateGateError so the management
+// command gets precise, actionable errors now that the guard lives in the
+// backend.
+func retireGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
+	var state vector.GenerationState
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
+		}
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == vector.GenerationActive && !force {
+		return fmt.Errorf("%w: generation %d", vector.ErrRefuseRetireActive, gen)
+	}
+	// A non-active row always matches `state != 'active'`, so the gated UPDATE
+	// would have affected it (a no-op flip still counts as a matched row).
+	// Reaching here for a non-active, existing generation means the row
+	// vanished mid-tx; surface it rather than reporting a phantom retire.
+	return fmt.Errorf("retire generation %d: state flip affected no rows (state=%q)", gen, state)
 }
 
 // ActiveGeneration returns the current active generation, or
@@ -388,7 +523,7 @@ func (b *Backend) ActiveGeneration(ctx context.Context) (vector.Generation, erro
 func (b *Backend) BuildingGeneration(ctx context.Context) (*vector.Generation, error) {
 	g, err := b.generationByState(ctx, vector.GenerationBuilding)
 	if errors.Is(err, vector.ErrNoActiveGeneration) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // (nil, nil) signals "no building generation"; callers nil-check the pointer
 	}
 	if err != nil {
 		return nil, err
@@ -439,38 +574,47 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return nil
 	}
 
-	var dim int
-	err := b.db.QueryRowContext(ctx,
-		`SELECT dimension FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
-	}
-	if err != nil {
-		return fmt.Errorf("lookup generation %d: %w", gen, err)
-	}
-	for _, c := range chunks {
-		if len(c.Vector) != dim {
-			return fmt.Errorf("%w: chunk for msg %d has %d dims, gen has %d",
-				vector.ErrDimensionMismatch, c.MessageID, len(c.Vector), dim)
-		}
-	}
-
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin upsert tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Count how many of these message_ids already have a row in
-	// embeddings for this generation, so we can apply an O(1) delta to
-	// index_generations.message_count instead of rescanning the whole
-	// table after every Upsert. Touches len(chunks) rows via the PK
-	// index, not the entire generation.
-	chunkIDs := make([]int64, len(chunks))
-	for i, c := range chunks {
-		chunkIDs[i] = c.MessageID
+	// Read the generation's dimension and lifecycle state inside the write
+	// transaction and refuse to write to a retired generation. SQLite has
+	// no SELECT ... FOR UPDATE, but a write tx serializes against other
+	// writers (Activate/Retire), so this read is consistent for the life of
+	// the upsert. sqlitevec's vec0 PARTITION KEY isolates retired rows so it
+	// does not delete them on retire, making re-pollution impossible here;
+	// the guard is kept for symmetry with the pgvector backend and to
+	// document the invariant that retired generations are immutable.
+	var dim int
+	var state string
+	err = tx.QueryRowContext(ctx,
+		`SELECT dimension, state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
 	}
-	preexisting, err := countExistingEmbeddings(ctx, tx, gen, chunkIDs)
+	if err != nil {
+		return fmt.Errorf("lookup generation %d: %w", gen, err)
+	}
+	if state == string(vector.GenerationRetired) {
+		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
+	}
+	for _, c := range chunks {
+		if len(c.Vector) != dim {
+			return fmt.Errorf("%w: chunk %d for msg %d has %d dims, gen has %d",
+				vector.ErrDimensionMismatch, c.ChunkIndex, c.MessageID, len(c.Vector), dim)
+		}
+	}
+
+	// message_count tracks distinct messages, not chunks. Count how
+	// many of the message_ids in this batch already have any row in
+	// the generation so we can apply an O(1) delta instead of
+	// rescanning the table. The "distinct" semantics matter because a
+	// single upsert may carry multiple chunks for the same message.
+	distinctIDs := distinctMessageIDs(chunks)
+	preexisting, err := countExistingMessages(ctx, tx, gen, distinctIDs)
 	if err != nil {
 		return err
 	}
@@ -478,24 +622,30 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	now := time.Now().Unix()
 	vecTable := VectorTableName(dim)
 
-	embedStmt, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO embeddings
-		(generation_id, message_id, embedded_at, source_char_len, truncated)
-		VALUES (?, ?, ?, ?, ?)`)
+	// Idempotency: clear any prior rows for the message_ids we're
+	// about to replace. Chunking is not stable across upserts (the
+	// same message may have produced 3 chunks last time and 2 this
+	// time, e.g. after a preprocess change), so partial replacement
+	// would leave orphaned tail chunks behind. Delete from vec0 first
+	// — it references embedding_id values that vanish from embeddings
+	// next.
+	if err := deleteForMessageIDs(ctx, tx, vecTable, gen, distinctIDs); err != nil {
+		return err
+	}
+
+	embedInsertStmt, err := tx.PrepareContext(ctx, `INSERT INTO embeddings
+		(generation_id, message_id, chunk_index, embedded_at,
+		 source_char_len, chunk_char_start, chunk_char_end, truncated)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING embedding_id`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
 	}
-	defer func() { _ = embedStmt.Close() }()
+	defer func() { _ = embedInsertStmt.Close() }()
 
 	// vecTable name comes from VectorTableName(dim) where dim is sourced from index_generations; safe to interpolate.
-	vecDeleteStmt, err := tx.PrepareContext(ctx, fmt.Sprintf(
-		`DELETE FROM %s WHERE generation_id = ? AND message_id = ?`, vecTable))
-	if err != nil {
-		return fmt.Errorf("prepare vec delete: %w", err)
-	}
-	defer func() { _ = vecDeleteStmt.Close() }()
-
 	vecStmt, err := tx.PrepareContext(ctx, fmt.Sprintf(
-		`INSERT INTO %s (generation_id, message_id, embedding) VALUES (?, ?, ?)`, vecTable))
+		`INSERT INTO %s (generation_id, embedding_id, embedding) VALUES (?, ?, ?)`, vecTable))
 	if err != nil {
 		return fmt.Errorf("prepare vec insert: %w", err)
 	}
@@ -506,24 +656,71 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		if c.Truncated {
 			truncFlag = 1
 		}
-		if _, err := embedStmt.ExecContext(ctx, int64(gen), c.MessageID, now, c.SourceCharLen, truncFlag); err != nil {
-			return fmt.Errorf("insert embedding: %w", err)
+		var embeddingID int64
+		if err := embedInsertStmt.QueryRowContext(ctx,
+			int64(gen), c.MessageID, c.ChunkIndex, now,
+			c.SourceCharLen, c.ChunkCharStart, c.ChunkCharEnd, truncFlag,
+		).Scan(&embeddingID); err != nil {
+			return fmt.Errorf("insert embedding (msg %d chunk %d): %w", c.MessageID, c.ChunkIndex, err)
 		}
-		// vec0 virtual tables do not support INSERT OR REPLACE for updates,
-		// so delete any existing row first, then insert.
-		if _, err := vecDeleteStmt.ExecContext(ctx, int64(gen), c.MessageID); err != nil {
-			return fmt.Errorf("delete existing vector: %w", err)
-		}
-		if _, err := vecStmt.ExecContext(ctx, int64(gen), c.MessageID, float32SliceBlob(c.Vector)); err != nil {
-			return fmt.Errorf("insert vector: %w", err)
+		if _, err := vecStmt.ExecContext(ctx, int64(gen), embeddingID, float32SliceBlob(c.Vector)); err != nil {
+			return fmt.Errorf("insert vector (msg %d chunk %d): %w", c.MessageID, c.ChunkIndex, err)
 		}
 	}
 
-	delta := len(chunks) - preexisting
+	delta := len(distinctIDs) - preexisting
 	if err := applyMessageCountDelta(ctx, tx, gen, delta); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// distinctMessageIDs returns the unique message_ids referenced by
+// chunks, preserving first-seen order. Order is irrelevant for
+// idempotency but stable iteration helps in tests.
+func distinctMessageIDs(chunks []vector.Chunk) []int64 {
+	seen := make(map[int64]struct{}, len(chunks))
+	out := make([]int64, 0, len(chunks))
+	for _, c := range chunks {
+		if _, ok := seen[c.MessageID]; ok {
+			continue
+		}
+		seen[c.MessageID] = struct{}{}
+		out = append(out, c.MessageID)
+	}
+	return out
+}
+
+// deleteForMessageIDs removes every chunk (in both vec0 and embeddings)
+// belonging to the given message_ids under gen. The vec0 delete runs
+// first so its rowids (which equal embeddings.embedding_id) still exist
+// for the subquery to resolve. Used by Upsert for idempotent replace.
+func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable string, gen vector.GenerationID, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	blob, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("encode msg ids: %w", err)
+	}
+	// vec0 partition-aware filter (generation_id) so the engine can
+	// prune by partition before scanning, then embedding_id IN (...).
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %s WHERE generation_id = ? AND embedding_id IN (
+			SELECT embedding_id FROM embeddings
+			WHERE generation_id = ?
+			  AND message_id IN (SELECT value FROM json_each(?))
+		)`, vecTable), int64(gen), int64(gen), string(blob)); err != nil {
+		return fmt.Errorf("delete vectors: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM embeddings
+		WHERE generation_id = ?
+		  AND message_id IN (SELECT value FROM json_each(?))`,
+		int64(gen), string(blob)); err != nil {
+		return fmt.Errorf("delete embeddings: %w", err)
+	}
+	return nil
 }
 
 // applyMessageCountDelta nudges index_generations.message_count by
@@ -544,14 +741,13 @@ func applyMessageCountDelta(ctx context.Context, tx *sql.Tx, gen vector.Generati
 	return nil
 }
 
-// countExistingEmbeddings returns how many of ids already have a row
-// in embeddings for the given generation. The query touches len(ids)
-// rows via the (generation_id, message_id) PK index, not the whole
-// generation, so callers can compute an O(1) message_count delta. ids
-// is JSON-encoded and consumed via json_each so the bind-parameter
-// count stays at 2 regardless of batch size (matches the pattern used
-// by resolveFilter for the same reason).
-func countExistingEmbeddings(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, ids []int64) (int, error) {
+// countExistingMessages returns how many of ids already have at least
+// one row in embeddings for the given generation. Note "messages" not
+// "embeddings": message_count tracks distinct messages, so a message
+// with 5 chunks counts once. Used by Upsert to compute the O(1)
+// message_count delta. ids is JSON-encoded and consumed via json_each
+// so the bind-parameter count stays at 2 regardless of batch size.
+func countExistingMessages(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -561,12 +757,12 @@ func countExistingEmbeddings(ctx context.Context, tx *sql.Tx, gen vector.Generat
 	}
 	var n int
 	err = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings
+		`SELECT COUNT(DISTINCT message_id) FROM embeddings
 		  WHERE generation_id = ?
 		    AND message_id IN (SELECT value FROM json_each(?))`,
 		int64(gen), string(blob)).Scan(&n)
 	if err != nil {
-		return 0, fmt.Errorf("count existing embeddings: %w", err)
+		return 0, fmt.Errorf("count existing messages: %w", err)
 	}
 	return n, nil
 }
@@ -577,9 +773,9 @@ func float32SliceBlob(v []float32) []byte {
 	buf := make([]byte, 4*len(v))
 	for i, f := range v {
 		bits := math.Float32bits(f)
-		buf[4*i] = byte(bits)
-		buf[4*i+1] = byte(bits >> 8)
-		buf[4*i+2] = byte(bits >> 16)
+		buf[4*i] = byte(bits & 0xff)
+		buf[4*i+1] = byte((bits >> 8) & 0xff)
+		buf[4*i+2] = byte((bits >> 16) & 0xff)
 		buf[4*i+3] = byte(bits >> 24)
 	}
 	return buf
@@ -592,7 +788,7 @@ func blobToFloat32(b []byte, dim int) ([]float32, error) {
 		return nil, fmt.Errorf("blob length %d does not match dimension %d", len(b), dim)
 	}
 	out := make([]float32, dim)
-	for i := 0; i < dim; i++ {
+	for i := range dim {
 		bits := uint32(b[4*i]) | uint32(b[4*i+1])<<8 | uint32(b[4*i+2])<<16 | uint32(b[4*i+3])<<24
 		out[i] = math.Float32frombits(bits)
 	}
@@ -608,9 +804,20 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	if err != nil {
 		return nil, err
 	}
-	// vecTable name derives from VectorTableName(active.Dimension) where dimension is sourced from index_generations; safe to interpolate.
-	q := fmt.Sprintf(
-		`SELECT embedding FROM %s WHERE generation_id = ? AND message_id = ?`,
+	// Return the chunk_index=0 vector — the head of the message,
+	// which always exists for any embedded message regardless of how
+	// many additional chunks it has. find_similar callers (the only
+	// consumer of LoadVector today) want one representative vector;
+	// they treat embeddings as message-level. vecTable name derives
+	// from VectorTableName(active.Dimension) where dimension is sourced
+	// from index_generations; safe to interpolate.
+	q := fmt.Sprintf(`
+		SELECT v.embedding
+		  FROM %s v
+		  JOIN embeddings e ON e.embedding_id = v.embedding_id
+		 WHERE v.generation_id = ?
+		   AND e.message_id = ?
+		   AND e.chunk_index = 0`,
 		VectorTableName(active.Dimension))
 	var blob []byte
 	err = b.db.QueryRowContext(ctx, q, int64(active.ID), messageID).Scan(&blob)
@@ -628,7 +835,7 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 // ordered by ascending distance and assigned 1-based ranks.
 func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, filter vector.Filter) ([]vector.Hit, error) {
 	if len(queryVec) == 0 {
-		return nil, fmt.Errorf("search: empty query vector")
+		return nil, errors.New("search: empty query vector")
 	}
 
 	var dim int
@@ -660,30 +867,50 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 	// always terminates: each iteration either satisfies k or grows
 	// fetch toward the fixed ceiling.
 	if filter.IsEmpty() {
-		var embeddedCount int
+		// chunkCeiling is the actual number of rows in vec0 for this
+		// generation — the upper bound for the over-fetch loop. Using
+		// message_count (distinct messages) instead would under-shoot
+		// when avg_chunks_per_msg > chunkOverfetchFactor and could
+		// short-return when soft-deletions cluster densely. Counting
+		// embeddings rows uses the existing idx_embeddings_gen_msg
+		// index — O(rows-for-gen) but in practice fast because
+		// SQLite optimises COUNT(*) on a covered index.
+		var chunkCeiling int
 		if err := b.db.QueryRowContext(ctx,
-			`SELECT message_count FROM index_generations WHERE id = ?`,
-			int64(gen)).Scan(&embeddedCount); err != nil {
-			return nil, fmt.Errorf("lookup message count: %w", err)
+			`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
+			int64(gen)).Scan(&chunkCeiling); err != nil {
+			return nil, fmt.Errorf("lookup chunk count: %w", err)
 		}
-		if embeddedCount == 0 {
+		if chunkCeiling == 0 {
 			return nil, nil
 		}
+		// Group by message_id (each message may have multiple chunks);
+		// MIN(distance) keeps the best-scoring chunk and discards the
+		// rest. Order applies after the group, so the ranking is by
+		// best-chunk distance per message.
 		q := fmt.Sprintf(`
-			SELECT message_id, distance
-			  FROM %s
-			 WHERE generation_id = ?
-			   AND embedding MATCH ?
+			SELECT e.message_id, MIN(v.distance) AS distance
+			  FROM %s v
+			  JOIN embeddings e ON e.embedding_id = v.embedding_id
+			 WHERE v.generation_id = ?
+			   AND v.embedding MATCH ?
 			   AND k = ?
+			 GROUP BY e.message_id
 			 ORDER BY distance ASC
 		`, vecTable)
-		fetch := k * deletedOverfetchFactor
-		if fetch < k {
-			fetch = k // guard against overflow or degenerate small k
-		}
+		// Two over-fetch dimensions stacked:
+		//   - chunk-level: with N chunks/msg, a top-k by chunk could
+		//     pack the result with one or two messages' tail chunks.
+		//     Multiply by chunkOverfetchFactor so the GROUP BY can
+		//     still pick out k distinct messages.
+		//   - deletion-level: existing soft-delete filter may shrink
+		//     the result; the doubling loop below already handles
+		//     this dimension.
+		// max() guards against overflow or degenerate small k.
+		fetch := max(k*chunkOverfetchFactor*deletedOverfetchFactor, k)
 		for {
-			if fetch > embeddedCount {
-				fetch = embeddedCount
+			if fetch > chunkCeiling {
+				fetch = chunkCeiling
 			}
 			hits, err := b.scanHits(ctx, q, int64(gen), float32SliceBlob(queryVec), fetch)
 			if err != nil {
@@ -693,7 +920,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 			if err != nil {
 				return nil, err
 			}
-			if len(filtered) >= k || fetch >= embeddedCount {
+			if len(filtered) >= k || fetch >= chunkCeiling {
 				if len(filtered) > k {
 					filtered = filtered[:k]
 				}
@@ -714,22 +941,94 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		return nil, err
 	}
 
+	// The filtered path's GROUP BY hides the same hazard as the
+	// empty-filter path: a few messages with many matching chunks
+	// could pack the top-k chunk pool and collapse below k distinct
+	// messages once grouped. Widen the chunk fetch with the same
+	// doubling loop, bounded by the actual chunk count in the
+	// generation so the loop always terminates.
+	var chunkCeiling int
+	if err := b.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`,
+		int64(gen)).Scan(&chunkCeiling); err != nil {
+		return nil, fmt.Errorf("lookup chunk count: %w", err)
+	}
+	if chunkCeiling == 0 {
+		return nil, nil
+	}
+
+	// Filtered-message ceiling: count distinct filtered messages
+	// that have at least one chunk in this generation. The widening
+	// loop below uses this as an early exit so a selective filter
+	// (few matching messages) doesn't drive the loop all the way to
+	// the generation-wide chunkCeiling: once len(hits) reaches the
+	// filtered-message count, every filtered message is in the
+	// result set with its best-distance chunk (further iterations
+	// only fetch chunks with worse distances, so neither the set of
+	// messages nor each message's MIN(distance) can change).
+	filteredMessageCeiling := chunkCeiling // empty-filter falls through to the fast path above; this clause runs only for non-empty filters
+	ceilingSQL := `SELECT COUNT(DISTINCT message_id) FROM embeddings e WHERE e.generation_id = ? ` + idClause
+	ceilingArgs := make([]any, 0, 1+len(filterArgs))
+	ceilingArgs = append(ceilingArgs, int64(gen))
+	ceilingArgs = append(ceilingArgs, filterArgs...)
+	if err := b.db.QueryRowContext(ctx, ceilingSQL, ceilingArgs...).Scan(&filteredMessageCeiling); err != nil {
+		return nil, fmt.Errorf("lookup filtered message count: %w", err)
+	}
+	if filteredMessageCeiling == 0 {
+		return nil, nil
+	}
+
 	q := fmt.Sprintf(`
-		SELECT message_id, distance
-		  FROM %s
-		 WHERE generation_id = ?
-		   AND embedding MATCH ?
+		SELECT e.message_id, MIN(v.distance) AS distance
+		  FROM %s v
+		  JOIN embeddings e ON e.embedding_id = v.embedding_id
+		 WHERE v.generation_id = ?
+		   AND v.embedding MATCH ?
 		   AND k = ?
 		   %s
+		 GROUP BY e.message_id
 		 ORDER BY distance ASC
 	`, vecTable, idClause)
 
-	allArgs := make([]any, 0, 3+len(filterArgs))
-	allArgs = append(allArgs, int64(gen), float32SliceBlob(queryVec), k)
-	allArgs = append(allArgs, filterArgs...)
+	fetch := max(k*chunkOverfetchFactor, k)
+	for {
+		if fetch > chunkCeiling {
+			fetch = chunkCeiling
+		}
+		allArgs := make([]any, 0, 3+len(filterArgs))
+		allArgs = append(allArgs, int64(gen), float32SliceBlob(queryVec), fetch)
+		allArgs = append(allArgs, filterArgs...)
 
-	return b.scanHits(ctx, q, allArgs...)
+		hits, err := b.scanHits(ctx, q, allArgs...)
+		if err != nil {
+			return nil, err
+		}
+		// Exit when either: we have k distinct messages (caller is
+		// satisfied), every filtered message has been found (no new
+		// messages will appear regardless of further iterations —
+		// see filteredMessageCeiling comment above), or we've
+		// scanned the entire generation. Without the middle
+		// condition, a selective filter that matches m < k messages
+		// would drive the loop all the way to chunkCeiling doing
+		// wasted ANN work; with it, the loop terminates as soon as
+		// the filtered universe has been fully resolved.
+		if len(hits) >= k || len(hits) >= filteredMessageCeiling || fetch >= chunkCeiling {
+			if len(hits) > k {
+				hits = hits[:k]
+			}
+			return hits, nil
+		}
+		fetch *= 2
+	}
 }
+
+// chunkOverfetchFactor multiplies the requested k when fetching from
+// the vec0 table so the message-level GROUP BY downstream still has
+// enough chunks to surface k distinct messages. Most messages produce
+// a single chunk; this factor only matters for the long tail. 4× is
+// generous for typical email corpora (avg ~1.1 chunks/msg) and cheap
+// — sqlite-vec returns the top-N rows in O(N log N) regardless.
+const chunkOverfetchFactor = 4
 
 // scanHits runs an ANN query and materializes hits in distance order
 // (higher score = better). Extracted so Search can share the scan
@@ -760,30 +1059,37 @@ func (b *Backend) scanHits(ctx context.Context, query string, args ...any) ([]ve
 	return hits, nil
 }
 
-// resolveFilter returns a SQL fragment constraining message_id to the
-// set of messages that pass the structured filter, along with the args
-// to bind. For a populated filter this also enforces the deletion check
-// inline via filteredMessageIDs; empty filters take the fast path in
-// Search and post-filter deletions on the smaller hit set instead of
-// materializing the entire corpus ID list here.
+// resolveFilter returns a SQL fragment constraining the JOINed
+// embeddings.message_id to the set of messages that pass the structured
+// filter, along with the args to bind. For a populated filter this
+// also enforces the deletion check inline via filteredMessageIDs;
+// empty filters take the fast path in Search and post-filter deletions
+// on the smaller hit set instead of materializing the entire corpus ID
+// list here.
 //
 // The fragment uses json_each over a single JSON-encoded id list, so
 // the bind-parameter count is O(1) no matter how many messages match
 // — this keeps broad filters (one account, one common label, wide
 // date range) under SQLite's ~999-parameter practical cap.
+//
+// The fragment qualifies `message_id` with the `e.` alias from Search's
+// SELECT (`embeddings e JOIN vectors_vec_dN v ...`) so the column is
+// unambiguous: the vec0 table itself no longer carries `message_id`
+// post-chunking, but a stray reference here would have read as
+// "embeddings.message_id" by accident, masking the chunking change.
 func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter) (string, []any, error) {
 	ids, err := b.filteredMessageIDs(ctx, filter)
 	if err != nil {
 		return "", nil, err
 	}
 	if len(ids) == 0 {
-		return "AND message_id IN (SELECT NULL WHERE 0)", nil, nil
+		return "AND e.message_id IN (SELECT NULL WHERE 0)", nil, nil
 	}
 	blob, err := json.Marshal(ids)
 	if err != nil {
 		return "", nil, fmt.Errorf("encode filter ids: %w", err)
 	}
-	return "AND message_id IN (SELECT value FROM json_each(?))", []any{string(blob)}, nil
+	return "AND e.message_id IN (SELECT value FROM json_each(?))", []any{string(blob)}, nil
 }
 
 // deletedOverfetchFactor is the starting multiplier applied to k on
@@ -814,9 +1120,9 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 	if err != nil {
 		return nil, fmt.Errorf("encode hit ids: %w", err)
 	}
-	q := fmt.Sprintf(`SELECT id FROM messages
+	q := `SELECT id FROM messages
 	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND %s`, store.LiveMessagesWhere("", true))
+	         AND ` + store.LiveMessagesWhere("", true)
 	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
 	if err != nil {
 		return nil, fmt.Errorf("live-hit filter: %w", err)
@@ -1008,38 +1314,23 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Count rows that will actually be removed before issuing the
-	// per-id deletes so we can apply a precise message_count delta.
-	// Counting up-front (rather than summing RowsAffected from each
-	// per-id stmt) keeps the helper symmetric with the Upsert path
-	// and avoids a second pass.
-	willDelete, err := countExistingEmbeddings(ctx, tx, gen, messageIDs)
+	// Count distinct messages that will actually be removed before
+	// issuing the deletes so we can apply a precise message_count
+	// delta. Counting up-front keeps the helper symmetric with the
+	// Upsert path and works correctly for multi-chunk messages — one
+	// message contributes one to message_count regardless of how many
+	// chunks it has.
+	willDelete, err := countExistingMessages(ctx, tx, gen, messageIDs)
 	if err != nil {
 		return err
 	}
 
-	embedStmt, err := tx.PrepareContext(ctx,
-		`DELETE FROM embeddings WHERE generation_id = ? AND message_id = ?`)
-	if err != nil {
-		return fmt.Errorf("prepare embeddings delete: %w", err)
-	}
-	defer func() { _ = embedStmt.Close() }()
-
-	// vecTable name derives from VectorTableName(dim) where dim is sourced from index_generations; safe to interpolate.
-	vecStmt, err := tx.PrepareContext(ctx, fmt.Sprintf(
-		`DELETE FROM %s WHERE generation_id = ? AND message_id = ?`, VectorTableName(dim)))
-	if err != nil {
-		return fmt.Errorf("prepare vec delete: %w", err)
-	}
-	defer func() { _ = vecStmt.Close() }()
-
-	for _, id := range messageIDs {
-		if _, err := embedStmt.ExecContext(ctx, int64(gen), id); err != nil {
-			return fmt.Errorf("delete embedding: %w", err)
-		}
-		if _, err := vecStmt.ExecContext(ctx, int64(gen), id); err != nil {
-			return fmt.Errorf("delete vector: %w", err)
-		}
+	// deleteForMessageIDs handles vec0 (via the embedding_id subquery)
+	// and embeddings together. Both the vec0 and embeddings deletes
+	// take a single JSON-each batch rather than per-id statements, so
+	// the call count stays at 2 even for a large messageIDs list.
+	if err := deleteForMessageIDs(ctx, tx, VectorTableName(dim), gen, messageIDs); err != nil {
+		return err
 	}
 	if err := applyMessageCountDelta(ctx, tx, gen, -willDelete); err != nil {
 		return err
@@ -1074,8 +1365,26 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 		}
 	}
 
-	if err := b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings `+where, args...).Scan(&s.EmbeddingCount); err != nil {
+	// Count distinct messages, not rows. After chunking each long
+	// message occupies multiple rows in the embeddings table, but the
+	// "EmbeddingCount" semantic across the codebase (progress bar
+	// denominator, generation summary, etc.) is "how many messages are
+	// embedded" — counting rows would inflate by avg_chunks_per_msg
+	// and break Done/Total invariants in internal/vector/stats.go.
+	//
+	// The aggregate path (gen == 0) counts DISTINCT (generation_id,
+	// message_id) pairs rather than DISTINCT message_id alone: a
+	// message that lives in both the active and a building generation
+	// represents two units of embedded work, and the aggregate Stats
+	// view exists precisely so operators can see total work done
+	// across generations. Per-generation paths are already constrained
+	// by the WHERE clause, so DISTINCT message_id there has no
+	// undercount hazard.
+	embeddingCountSQL := `SELECT COUNT(DISTINCT message_id) FROM embeddings ` + where
+	if gen == 0 {
+		embeddingCountSQL = `SELECT COUNT(*) FROM (SELECT DISTINCT generation_id, message_id FROM embeddings)`
+	}
+	if err := b.db.QueryRowContext(ctx, embeddingCountSQL, args...).Scan(&s.EmbeddingCount); err != nil {
 		return s, fmt.Errorf("count embeddings: %w", err)
 	}
 	if err := b.db.QueryRowContext(ctx,

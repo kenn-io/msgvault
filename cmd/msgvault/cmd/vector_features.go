@@ -3,10 +3,10 @@ package cmd
 import (
 	"database/sql"
 
-	"github.com/wesm/msgvault/internal/sync"
-	"github.com/wesm/msgvault/internal/vector"
-	"github.com/wesm/msgvault/internal/vector/embed"
-	"github.com/wesm/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/embed"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 // vectorFeatures carries the optional vector-search components that the
@@ -28,6 +28,11 @@ type vectorFeatures struct {
 	// activation gate; other consumers should prefer the higher-
 	// level Backend abstraction.
 	VectorsDB *sql.DB
+	// Rebind translates ?-placeholders to the driver's native form for
+	// raw queries run directly against VectorsDB (the daemon's EmbedJob
+	// activation-gate count). Identity on SQLite, PostgreSQLDialect.Rebind
+	// on PG. Callers that issue raw SQL against VectorsDB must apply it.
+	Rebind func(string) string
 	// Close releases the underlying vectors.db handle. Every caller
 	// that receives a non-nil vectorFeatures must invoke Close during
 	// shutdown so WAL checkpoints complete.

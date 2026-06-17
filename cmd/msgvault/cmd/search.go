@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -8,9 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -59,31 +60,29 @@ Examples:
 		queryStr := strings.Join(args, " ")
 
 		if queryStr == "" && searchAccount == "" && searchCollection == "" {
-			return fmt.Errorf("provide a search query or --account/--collection flag")
+			return usageErr(cmd, errors.New("provide a search query or --account/--collection flag"))
 		}
 
 		// Use remote search if configured
 		if IsRemoteMode() {
 			if searchAccount != "" {
-				return fmt.Errorf(
-					"--account is not supported in remote mode",
-				)
+				return usageErr(cmd, errors.New("--account is not supported in remote mode"))
 			}
 			if searchCollection != "" {
-				return fmt.Errorf("--collection is not supported in remote mode")
+				return usageErr(cmd, errors.New("--collection is not supported in remote mode"))
 			}
 			if searchMode != "fts" {
-				return fmt.Errorf("--mode is not supported in remote mode")
+				return usageErr(cmd, errors.New("--mode is not supported in remote mode"))
 			}
 			return runRemoteSearch(queryStr)
 		}
 
 		// Validate mode before any scope work so we fail fast on a typo.
 		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
-			return fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)
+			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
 		if searchMode != "fts" && searchOffset > 0 {
-			return fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode)
+			return usageErr(cmd, fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode))
 		}
 		// Vector and hybrid modes need free-text terms to embed; both
 		// an empty raw query and a filter-only query (e.g. `from:alice`)
@@ -92,10 +91,10 @@ Examples:
 		// allows scoped queryless searches.
 		if searchMode != "fts" {
 			if queryStr == "" {
-				return fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode)
+				return usageErr(cmd, fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode))
 			}
 			if len(search.Parse(queryStr).TextTerms) == 0 {
-				return fmt.Errorf("--mode=%s requires free-text terms to embed; %q parsed to filters only — add a search phrase or use --mode=fts", searchMode, queryStr)
+				return usageErr(cmd, fmt.Errorf("--mode=%s requires free-text terms to embed; %q parsed to filters only — add a search phrase or use --mode=fts", searchMode, queryStr))
 			}
 		}
 
@@ -252,7 +251,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 		if scopedStore != nil {
 			_ = scopedStore.Close()
 		}
-		return fmt.Errorf("empty search query")
+		return errors.New("empty search query")
 	}
 
 	var s *store.Store
@@ -312,7 +311,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	started := time.Now()
 
 	// Create query engine and execute search
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 	results, err := engine.Search(cmd.Context(), q, searchLimit, searchOffset)
 	fmt.Fprintf(os.Stderr, "\r            \r")
 	if err != nil {
@@ -341,6 +340,10 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	return outputSearchResultsTable(results)
 }
 
+// nil error return mirrors outputSearchResultsJSON so callers can return
+// either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputSearchResultsJSON sibling
 func outputSearchResultsTable(results []query.MessageSummary) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
@@ -348,7 +351,7 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 
 	for _, msg := range results {
 		date := msg.SentAt.Format("2006-01-02")
-		from := truncate(msg.FromEmail, 30)
+		from := truncate(summaryFromDisplay(msg), 30)
 		subject := truncate(msg.Subject, 50)
 		size := formatSize(msg.SizeEstimate)
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", msg.ID, date, from, subject, size)
@@ -359,6 +362,19 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 	return nil
 }
 
+func summaryFromDisplay(msg query.MessageSummary) string {
+	for _, value := range []string{msg.FromEmail, msg.FromName, msg.FromPhone} {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// nil error return mirrors outputRemoteSearchResultsJSON so callers can
+// return either uniformly; tabwriter output never fails.
+//
+//nolint:unparam // symmetry with error-returning outputRemoteSearchResultsJSON sibling
 func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ID\tDATE\tFROM\tSUBJECT\tSIZE")
@@ -378,16 +394,16 @@ func outputRemoteSearchResultsTable(results []store.APIMessage, total int64) err
 }
 
 func outputRemoteSearchResultsJSON(results []store.APIMessage, total int64) error {
-	return printJSON(map[string]interface{}{
+	return printJSON(map[string]any{
 		"total":   total,
 		"results": results,
 	})
 }
 
 func outputSearchResultsJSON(results []query.MessageSummary) error {
-	output := make([]map[string]interface{}, len(results))
+	output := make([]map[string]any, len(results))
 	for i, msg := range results {
-		output[i] = map[string]interface{}{
+		output[i] = map[string]any{
 			"id":                     msg.ID,
 			"source_message_id":      msg.SourceMessageID,
 			"conversation_id":        msg.ConversationID,
@@ -411,7 +427,7 @@ func init() {
 	rootCmd.AddCommand(searchCmd)
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 50, "Maximum number of results")
 	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Skip first N results")
-	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "Output as JSON")
+	searchCmd.Flags().BoolVar(&searchJSON, flagJSON, false, "Output as JSON")
 	searchCmd.Flags().StringVar(&searchAccount, "account", "", "Limit results to a specific account (email address)")
 	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
 		"Limit results to all member accounts of one collection")

@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -18,8 +18,17 @@ var (
 	noDefaultIdentityAddAccount bool
 )
 
+// addAccountUse is the usage string for the add-account command.
+const addAccountUse = "add-account <email>"
+
+// errGmailSourceNotFound is returned by findGmailSource when no Gmail
+// source is registered for the given identifier. Wrapped via fmt.Errorf
+// so callers can use errors.Is to tell "no such account" apart from real
+// lookup errors.
+var errGmailSourceNotFound = errors.New("gmail source not found")
+
 var addAccountCmd = &cobra.Command{
-	Use:   "add-account <email>",
+	Use:   addAccountUse,
 	Short: "Add a Gmail account via OAuth",
 	Long: `Add a Gmail account by completing the OAuth2 authorization flow.
 
@@ -43,7 +52,7 @@ Examples:
 		email := args[0]
 
 		if headless && forceReauth {
-			return fmt.Errorf("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode")
+			return usageErr(cmd, errors.New("--headless and --force cannot be used together: --force requires browser-based OAuth which is not available in headless mode"))
 		}
 
 		// Resolve which client secrets to use
@@ -68,7 +77,7 @@ Examples:
 
 		// Look up existing source to detect binding changes
 		existingSource, err := findGmailSource(s, email)
-		if err != nil {
+		if err != nil && !errors.Is(err, errGmailSourceNotFound) {
 			return fmt.Errorf("look up existing source: %w", err)
 		}
 
@@ -95,7 +104,7 @@ Examples:
 		saKeyPath := cfg.OAuth.ServiceAccountKeyFor(resolvedApp)
 		if headless {
 			if saKeyPath != "" {
-				return fmt.Errorf("service accounts do not use --headless; run add-account without --headless")
+				return usageErr(cmd, errors.New("service accounts do not use --headless; run add-account without --headless"))
 			}
 			oauth.PrintHeadlessInstructions(email, cfg.TokensDir(), resolvedApp)
 			return nil
@@ -104,7 +113,7 @@ Examples:
 		// Check for service account configuration first
 		if saKeyPath != "" {
 			if forceReauth {
-				return fmt.Errorf("service accounts do not use --force; tokens are minted on demand from the configured service account key")
+				return usageErr(cmd, errors.New("service accounts do not use --force; tokens are minted on demand from the configured service account key"))
 			}
 			saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 			if saErr != nil {
@@ -120,8 +129,8 @@ Examples:
 				var mismatch *oauth.TokenMismatchError
 				if errors.As(saErr, &mismatch) {
 					existing, lookupErr := findGmailSource(s, email)
-					if lookupErr != nil {
-						return fmt.Errorf("service account validation failed: %w (also: %v)", saErr, lookupErr)
+					if lookupErr != nil && !errors.Is(lookupErr, errGmailSourceNotFound) {
+						return fmt.Errorf("service account validation failed: %w (also: %w)", saErr, lookupErr)
 					}
 					if existing == nil {
 						return fmt.Errorf(
@@ -135,7 +144,7 @@ Examples:
 			}
 
 			// Register source
-			source, saErr := s.GetOrCreateSource("gmail", email)
+			source, saErr := s.GetOrCreateSource(sourceTypeGmail, email)
 			if saErr != nil {
 				return fmt.Errorf("create source: %w", saErr)
 			}
@@ -202,7 +211,7 @@ Examples:
 		tokenReusable := !forceReauth && oauthMgr.HasToken(email) &&
 			(!needsClientCheck || oauthMgr.TokenMatchesClient(email))
 		if tokenReusable {
-			source, err := s.GetOrCreateSource("gmail", email)
+			source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 			if err != nil {
 				return fmt.Errorf("create source: %w", err)
 			}
@@ -250,8 +259,8 @@ Examples:
 			var mismatch *oauth.TokenMismatchError
 			if errors.As(err, &mismatch) {
 				existing, lookupErr := findGmailSource(s, email)
-				if lookupErr != nil {
-					return fmt.Errorf("authorization failed: %w (also: %v)", err, lookupErr)
+				if lookupErr != nil && !errors.Is(lookupErr, errGmailSourceNotFound) {
+					return fmt.Errorf("authorization failed: %w (also: %w)", err, lookupErr)
 				}
 				if existing == nil {
 					return fmt.Errorf(
@@ -265,7 +274,7 @@ Examples:
 		}
 
 		// Authorization succeeded — now persist the binding and source.
-		source, err := s.GetOrCreateSource("gmail", email)
+		source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
@@ -312,11 +321,11 @@ func findGmailSource(
 		return nil, fmt.Errorf("look up sources for %s: %w", email, err)
 	}
 	for _, src := range sources {
-		if src.SourceType == "gmail" {
+		if src.SourceType == sourceTypeGmail {
 			return src, nil
 		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("identifier %q: %w", email, errGmailSourceNotFound)
 }
 
 func init() {

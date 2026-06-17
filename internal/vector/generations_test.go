@@ -3,12 +3,14 @@ package vector
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// fakeBackend implements Backend for ResolveActive tests. Only
-// ActiveGeneration and BuildingGeneration are exercised.
+// fakeBackend implements Backend for ResolveActiveForFingerprint tests.
+// Only ActiveGeneration and BuildingGeneration are exercised.
 type fakeBackend struct {
 	active    *Generation
 	building  *Generation
@@ -16,13 +18,13 @@ type fakeBackend struct {
 	buildErr  error
 }
 
-func (f *fakeBackend) CreateGeneration(context.Context, string, int) (GenerationID, error) {
+func (f *fakeBackend) CreateGeneration(context.Context, string, int, string) (GenerationID, error) {
 	return 0, errors.New("not implemented")
 }
-func (f *fakeBackend) ActivateGeneration(context.Context, GenerationID) error {
+func (f *fakeBackend) ActivateGeneration(context.Context, GenerationID, bool) error {
 	return errors.New("not implemented")
 }
-func (f *fakeBackend) RetireGeneration(context.Context, GenerationID) error {
+func (f *fakeBackend) RetireGeneration(context.Context, GenerationID, bool) error {
 	return errors.New("not implemented")
 }
 func (f *fakeBackend) ActiveGeneration(context.Context) (Generation, error) {
@@ -60,58 +62,55 @@ func (f *fakeBackend) EnsureSeeded(context.Context, GenerationID) error {
 	return errors.New("not implemented")
 }
 
-func TestResolveActive_Matches(t *testing.T) {
-	b := &fakeBackend{active: &Generation{ID: 1, Fingerprint: "m:768"}}
-	g, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 768})
-	if err != nil {
-		t.Fatalf("ResolveActive: %v", err)
-	}
-	if g.Fingerprint != "m:768" {
-		t.Errorf("fingerprint = %q, want m:768", g.Fingerprint)
-	}
-	if g.ID != 1 {
-		t.Errorf("ID = %d, want 1", g.ID)
-	}
+func TestResolveActiveForFingerprint_Matches(t *testing.T) {
+	b := &fakeBackend{active: &Generation{ID: 1, Fingerprint: "m:768:p1-111111"}}
+	g, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	require.NoError(t, err, "ResolveActiveForFingerprint")
+	assert.Equal(t, "m:768:p1-111111", g.Fingerprint)
+	assert.Equal(t, GenerationID(1), g.ID)
 }
 
-func TestResolveActive_Stale(t *testing.T) {
-	b := &fakeBackend{active: &Generation{Fingerprint: "m:768"}}
-	_, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 1024})
-	if !errors.Is(err, ErrIndexStale) {
-		t.Errorf("err = %v, want ErrIndexStale", err)
-	}
+func TestResolveActiveForFingerprint_Stale(t *testing.T) {
+	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:1024:p1-111111")
+	assert.ErrorIs(t, err, ErrIndexStale)
 }
 
-func TestResolveActive_NoneAndBuildingReturnsBuildingError(t *testing.T) {
-	b := &fakeBackend{building: &Generation{ID: 42, Fingerprint: "m:768"}}
-	_, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 768})
-	if !errors.Is(err, ErrIndexBuilding) {
-		t.Errorf("err = %v, want ErrIndexBuilding", err)
-	}
+// TestResolveActiveForFingerprint_StaleOnPreprocessFlip pins the
+// upgrade path that motivated folding preprocess into the fingerprint:
+// flipping a strip_* toggle (here strip_html → false) must surface as
+// ErrIndexStale, not silently top up the existing index with vectors
+// built under the new sanitization policy.
+func TestResolveActiveForFingerprint_StaleOnPreprocessFlip(t *testing.T) {
+	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-101111")
+	assert.ErrorIs(t, err, ErrIndexStale)
 }
 
-func TestResolveActive_NothingReturnsNotEnabled(t *testing.T) {
+func TestResolveActiveForFingerprint_NoneAndBuildingReturnsBuildingError(t *testing.T) {
+	b := &fakeBackend{building: &Generation{ID: 42, Fingerprint: "m:768:p1-111111"}}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	assert.ErrorIs(t, err, ErrIndexBuilding)
+}
+
+func TestResolveActiveForFingerprint_NothingReturnsNotEnabled(t *testing.T) {
 	b := &fakeBackend{}
-	_, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 768})
-	if !errors.Is(err, ErrNotEnabled) {
-		t.Errorf("err = %v, want ErrNotEnabled", err)
-	}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	assert.ErrorIs(t, err, ErrNotEnabled)
 }
 
-func TestResolveActive_BackendError(t *testing.T) {
-	wantErr := fmt.Errorf("db down")
+func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
+	wantErr := errors.New("db down")
 	b := &fakeBackend{activeErr: wantErr}
-	_, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 768})
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want wraps db down", err)
-	}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	require.Error(t, err, "expected error wrapping db down")
+	assert.ErrorIs(t, err, wantErr)
 }
 
-func TestResolveActive_BuildingBackendError(t *testing.T) {
-	wantErr := fmt.Errorf("building failed")
+func TestResolveActiveForFingerprint_BuildingBackendError(t *testing.T) {
+	wantErr := errors.New("building failed")
 	b := &fakeBackend{buildErr: wantErr}
-	_, err := ResolveActive(context.Background(), b, EmbeddingsConfig{Model: "m", Dimension: 768})
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Errorf("err = %v, want wraps building failed", err)
-	}
+	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	require.Error(t, err, "expected error wrapping building failed")
+	assert.ErrorIs(t, err, wantErr)
 }

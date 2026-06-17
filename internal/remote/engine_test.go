@@ -8,15 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/msgvault/internal/query"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
+	require := requirepkg.New(t)
 	deletedAt := "2026-03-18T15:00:00Z"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/messages/filter" {
-			t.Fatalf("path = %q, want %q", r.URL.Path, "/api/v1/messages/filter")
-		}
+		assertpkg.Equal(t, "/api/v1/messages/filter", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"count":    1,
@@ -48,18 +49,10 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	engine := NewEngineFromStore(store)
 
 	msgs, err := engine.ListMessages(context.Background(), query.MessageFilter{})
-	if err != nil {
-		t.Fatalf("ListMessages() error = %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("len(msgs) = %d, want 1", len(msgs))
-	}
-	if msgs[0].DeletedAt == nil {
-		t.Fatal("DeletedAt = nil, want parsed timestamp")
-	}
-	if got := msgs[0].DeletedAt.UTC().Format(time.RFC3339); got != deletedAt {
-		t.Fatalf("DeletedAt = %q, want %q", got, deletedAt)
-	}
+	require.NoError(err, "ListMessages()")
+	require.Len(msgs, 1)
+	require.NotNil(msgs[0].DeletedAt, "DeletedAt should be parsed")
+	assertpkg.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
 // TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount
@@ -68,6 +61,8 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 // MessageSummary it returns, matching the shape callers would have
 // seen from the older per-hit GetMessage-to-summary projection.
 func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -92,20 +87,10 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	engine := NewEngineFromStore(store)
 
 	summaries, err := engine.GetMessageSummariesByIDs(context.Background(), []int64{42})
-	if err != nil {
-		t.Fatalf("GetMessageSummariesByIDs: %v", err)
-	}
-	if len(summaries) != 1 {
-		t.Fatalf("len(summaries) = %d, want 1", len(summaries))
-	}
+	require.NoError(err, "GetMessageSummariesByIDs")
+	require.Len(summaries, 1)
 	s := summaries[0]
-	if s.FromEmail != "alice@example.com" {
-		t.Errorf("FromEmail = %q, want %q", s.FromEmail, "alice@example.com")
-	}
-	if s.AttachmentCount != 2 {
-		t.Errorf("AttachmentCount = %d, want 2", s.AttachmentCount)
-	}
-	if !s.HasAttachments {
-		t.Error("HasAttachments = false, want true")
-	}
+	assert.Equal("alice@example.com", s.FromEmail, "FromEmail")
+	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
+	assert.True(s.HasAttachments, "HasAttachments")
 }

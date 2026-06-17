@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,9 +11,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/textutil"
-	"github.com/wesm/msgvault/internal/whatsapp"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/whatsapp"
 )
 
 var (
@@ -50,10 +51,10 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 
 	// Validate phone number.
 	if importPhone == "" {
-		return fmt.Errorf("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)")
+		return usageErr(cmd, errors.New("--phone is required for WhatsApp import (E.164 format, e.g., +447700900000)"))
 	}
 	if !strings.HasPrefix(importPhone, "+") {
-		return fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone)
+		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", importPhone))
 	}
 
 	// Validate media dir if provided.
@@ -141,9 +142,8 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		matched, total, err := whatsapp.ImportContacts(s, importContacts)
 		if err != nil {
 			return fmt.Errorf("contact import: %w", err)
-		} else {
-			fmt.Printf("  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
 		}
+		fmt.Printf("  Contacts: %d in file, %d phone numbers matched to participants\n", total, matched)
 	}
 
 	// Print summary.
@@ -212,7 +212,7 @@ func (p *ImportCLIProgress) OnProgress(processed, added, skipped int64) {
 		if len(name) > 30 {
 			name = name[:27] + "..."
 		}
-		chatStr = fmt.Sprintf(" | Chat: %s", name)
+		chatStr = " | Chat: " + name
 	}
 
 	fmt.Printf("\r  Processed: %d | Added: %d | Skipped: %d | Rate: %.0f/s | Elapsed: %s%s    ",

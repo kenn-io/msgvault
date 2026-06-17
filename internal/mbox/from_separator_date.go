@@ -119,7 +119,7 @@ func looksLikeTZToken(token string) bool {
 	if token != strings.ToUpper(token) {
 		return false
 	}
-	for i := 0; i < len(token); i++ {
+	for i := range len(token) {
 		c := token[i]
 		if c < 'A' || c > 'Z' {
 			return false

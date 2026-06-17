@@ -54,7 +54,7 @@ func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
 				}
 
 				// Handle preflight
-				if r.Method == "OPTIONS" {
+				if r.Method == http.MethodOptions {
 					w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
 					w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
 					if cfg.MaxAge > 0 {

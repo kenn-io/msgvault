@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"html"
 	"regexp"
 	"strings"
@@ -53,7 +54,7 @@ type Attachment struct {
 func Parse(raw []byte) (*Message, error) {
 	env, err := enmime.ReadEnvelope(bytes.NewReader(raw))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read MIME envelope: %w", err)
 	}
 
 	msg := &Message{
@@ -66,7 +67,7 @@ func Parse(raw []byte) (*Message, error) {
 
 	// Parse date
 	if dateStr := env.GetHeader("Date"); dateStr != "" {
-		if t, err := parseDate(dateStr); err == nil {
+		if t := parseDate(dateStr); !t.IsZero() {
 			msg.Date = t
 		}
 	}
@@ -188,7 +189,7 @@ func makeAttachment(part *enmime.Part, isInline bool) Attachment {
 // parseReferences parses the References header into individual message IDs.
 func parseReferences(refs string) []string {
 	var result []string
-	for _, ref := range strings.Fields(refs) {
+	for ref := range strings.FieldsSeq(refs) {
 		ref = strings.Trim(ref, "<>")
 		if ref != "" {
 			result = append(result, ref)
@@ -221,7 +222,7 @@ var dateFormats = []string{
 	"2006-01-02 15:04:05",                   // SQL-like without TZ
 }
 
-// numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00
+// numericOffsetRe matches numeric timezone offsets like +0000, -0700, +00:00, -07:00.
 var numericOffsetRe = regexp.MustCompile(`[+-]\d{2}:?\d{2}`)
 
 // hasNumericOffset returns true if the string contains a numeric timezone offset or Z (UTC).
@@ -250,7 +251,9 @@ func toUTC(t time.Time, numericOffset bool) time.Time {
 // Returns the time in UTC for consistent storage.
 // Named timezones (like "MST") are treated as UTC since their offsets
 // can't be reliably determined across platforms.
-func parseDate(s string) (time.Time, error) {
+// parseDate returns the zero time when no known format matches; callers
+// detect failure via the zero value rather than an error.
+func parseDate(s string) time.Time {
 	// Normalize whitespace efficiently: split on whitespace runs and rejoin
 	s = strings.Join(strings.Fields(s), " ")
 
@@ -270,7 +273,7 @@ func parseDate(s string) (time.Time, error) {
 	// like -0700 are absolute and unaffected by the reference location.
 	for _, format := range dateFormats {
 		if t, err := time.ParseInLocation(format, baseStr, time.UTC); err == nil {
-			return toUTC(t, numericOffset), nil
+			return toUTC(t, numericOffset)
 		}
 	}
 
@@ -280,18 +283,18 @@ func parseDate(s string) (time.Time, error) {
 			if t, err := time.ParseInLocation(format, s, time.UTC); err == nil {
 				// Recompute numericOffset for the original string since it may
 				// have a different offset than baseStr (e.g., "+0700 (UTC)")
-				return toUTC(t, hasNumericOffset(s)), nil
+				return toUTC(t, hasNumericOffset(s))
 			}
 		}
 	}
 
-	return time.Time{}, nil
+	return time.Time{}
 }
 
-// Block tags that should create line breaks when stripped
+// Block tags that should create line breaks when stripped.
 var blockTagRe = regexp.MustCompile(`(?i)<(/?)(p|div|br|hr|h[1-6]|li|tr|td|th|blockquote|pre|table|ul|ol|dl|dt|dd)[^>]*>`)
 
-// Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations)
+// Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations).
 var scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
 var styleTagRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 var headTagRe = regexp.MustCompile(`(?is)<head[^>]*>.*?</head>`)

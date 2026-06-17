@@ -14,14 +14,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/api"
-	"github.com/wesm/msgvault/internal/gmail"
-	"github.com/wesm/msgvault/internal/oauth"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/scheduler"
-	"github.com/wesm/msgvault/internal/search"
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/sync"
+	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
@@ -103,7 +104,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build optional vector-search components. Returns (nil, nil) when
 	// cfg.Vector.Enabled is false, or an error when enabled but the
 	// binary was built without -tags sqlite_vec.
-	vf, err := setupVectorFeatures(ctx, s.DB(), dbPath)
+	vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
 	if err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
@@ -118,28 +119,40 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create query engine for TUI aggregate support.
 	// Prefer DuckDB over Parquet when the cache is complete and fresh;
 	// otherwise fall back to SQLite so remote endpoints still work.
+	// PostgreSQL bypasses the cache entirely — it is a SQLite-only ETL.
 	analyticsDir := cfg.AnalyticsDir()
 	var engine query.Engine
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
-		duckEngine, engineErr := query.NewDuckDBEngine(
-			analyticsDir, dbPath, s.DB(),
-		)
-		if engineErr != nil {
-			logger.Warn("DuckDB engine failed, falling back to SQLite",
-				"error", engineErr)
-			engine = query.NewSQLiteEngine(s.DB())
-		} else {
-			engine = duckEngine
-		}
+	if s.IsPostgreSQL() {
+		engine = query.NewEngine(s.DB(), true)
 	} else {
-		if staleness.Reason != "" {
-			logger.Info("parquet cache not usable, using SQLite engine",
-				"reason", staleness.Reason)
+		staleness := cacheNeedsBuild(dbPath, analyticsDir)
+		if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
+			// DisableSQLiteScanner keeps DuckDB's bundled SQLite library
+			// from ATTACHing the live database for the daemon's entire
+			// lifetime, which would corrupt the daemon's own go-sqlite3
+			// connections' WAL/lock state (issue #379). Detail queries
+			// route through the shared go-sqlite3 connection instead;
+			// aggregates still read Parquet.
+			duckEngine, engineErr := query.NewDuckDBEngine(
+				analyticsDir, dbPath, s.DB(),
+				query.DuckDBOptions{DisableSQLiteScanner: true},
+			)
+			if engineErr != nil {
+				logger.Warn("DuckDB engine failed, falling back to SQLite",
+					"error", engineErr)
+				engine = query.NewEngine(s.DB(), false)
+			} else {
+				engine = duckEngine
+			}
 		} else {
-			logger.Info("parquet cache not built - using SQLite engine (run 'msgvault build-cache' for faster aggregates)")
+			if staleness.Reason != "" {
+				logger.Info("parquet cache not usable, using SQLite engine",
+					"reason", staleness.Reason)
+			} else {
+				logger.Info("parquet cache not built - using SQLite engine (run 'msgvault build-cache' for faster aggregates)")
+			}
+			engine = query.NewEngine(s.DB(), false)
 		}
-		engine = query.NewSQLiteEngine(s.DB())
 	}
 	defer func() { _ = engine.Close() }()
 
@@ -166,6 +179,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Warn("no accounts scheduled - upload tokens via API and add accounts to config.toml")
 	}
 
+	for _, src := range cfg.ScheduledSynctechSMSSources() {
+		source := src
+		jobName := "synctech-sms:" + source.Name
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredSynctechSMSSourceWithStore(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
+		} else {
+			logger.Info("scheduled synctech-sms source", "source", source.Name, "schedule", source.Schedule)
+		}
+	}
+
 	// Register the embed job (cron-driven plus optional post-sync hook).
 	// Only when vector search is enabled and wired.
 	if vf != nil {
@@ -173,7 +202,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Worker:      vf.Worker,
 			Backend:     vf.Backend,
 			VectorsDB:   vf.VectorsDB,
-			Fingerprint: vf.Cfg.Embeddings.Fingerprint(),
+			Rebind:      vf.Rebind,
+			Fingerprint: vf.Cfg.GenerationFingerprint(),
 			Log:         logger,
 		}
 		schedule := cfg.Vector.Embed.Schedule.Cron
@@ -273,12 +303,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// storeAPIAdapter adapts store.Store to api.MessageStore.
+// storeAPIAdapter adapts store.Store to the API store interfaces.
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
 	store *store.Store
 }
+
+var _ api.MessageStore = (*storeAPIAdapter)(nil)
+var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
@@ -302,6 +335,22 @@ func (a *storeAPIAdapter) SearchMessages(query string, offset, limit int) ([]api
 
 func (a *storeAPIAdapter) SearchMessagesQuery(q *search.Query, offset, limit int) ([]api.APIMessage, int64, error) {
 	return a.store.SearchMessagesQuery(q, offset, limit)
+}
+
+func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {
+	return a.store.ListSources(sourceType)
+}
+
+func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetActiveSync(sourceID)
+}
+
+func (a *storeAPIAdapter) GetLatestSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLatestSync(sourceID)
+}
+
+func (a *storeAPIAdapter) GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSync(sourceID)
 }
 
 // schedulerAdapter adapts scheduler.Scheduler to api.SyncScheduler.
@@ -331,21 +380,104 @@ func (a *schedulerAdapter) Status() []api.AccountStatus {
 	return a.scheduler.Status()
 }
 
-// runScheduledSync performs an incremental sync for a scheduled
-// account. When vf is non-nil (vector search enabled), the Syncer is
-// configured to enqueue newly-ingested message IDs into the embedding
-// pipeline so subsequent embed runs pick them up.
-func runScheduledSync(ctx context.Context, email string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), vf *vectorFeatures) error {
-	logger.Info("starting scheduled sync", "email", email)
+// runScheduledSync performs a sync for a scheduled account. The
+// dispatch is by source_type: Gmail accounts run an incremental sync
+// using the Gmail History API; IMAP accounts run a full sync (already
+// deduplicated by message-id at the store layer, since IMAP has no
+// equivalent history API). When vf is non-nil (vector search enabled),
+// the Syncer is configured to enqueue newly-ingested message IDs into
+// the embedding pipeline so subsequent embed runs pick them up.
+//
+// The identifier passed in is whatever the scheduler holds — for
+// Gmail this is the email address, for IMAP it's the full
+// `imaps://user@host:port` URL recorded by `add-imap`.
+func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), vf *vectorFeatures) error {
+	logger.Info("starting scheduled sync", "identifier", identifier)
 	startTime := time.Now()
 
-	// Look up source to get OAuth app binding. Fall back to default
-	// if no source row exists (token-first workflow).
-	appName := ""
-	src, srcErr := findGmailSource(s, email)
+	src, srcErr := findScheduledSyncSource(s, identifier)
 	if srcErr != nil {
-		return fmt.Errorf("look up source for %s: %w", email, srcErr)
+		return fmt.Errorf("look up source for %s: %w", identifier, srcErr)
 	}
+
+	// Source type drives dispatch. A nil source falls back to Gmail to
+	// preserve the token-first workflow (tokens uploaded via API before
+	// the source row exists).
+	sourceType := sourceTypeGmail
+	if src != nil {
+		sourceType = src.SourceType
+		if sourceType == "" {
+			sourceType = sourceTypeGmail
+		}
+	}
+
+	var (
+		summary *gmail.SyncSummary
+		err     error
+	)
+	switch sourceType {
+	case sourceTypeGmail:
+		summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, vf)
+	case sourceTypeIMAP:
+		summary, err = runScheduledIMAPSync(ctx, src, s, vf)
+	default:
+		return fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler (only gmail and imap)", identifier, sourceType)
+	}
+	if err != nil {
+		return err
+	}
+
+	logger.Info("sync completed",
+		"identifier", identifier,
+		"source_type", sourceType,
+		"messages_added", summary.MessagesAdded,
+		"duration", time.Since(startTime),
+	)
+
+	// Rebuild cache if stale (covers new messages and deletions).
+	rebuildCacheAfterScheduledSync(ctx, identifier)
+
+	return nil
+}
+
+// findScheduledSyncSource resolves the source row for a scheduler
+// identifier. Returns (nil, nil) when no syncable source matches —
+// callers fall back to the Gmail token-first workflow.
+//
+// Matches against both sources.identifier and sources.display_name so
+// an IMAP account listed in config.toml as a plain email
+// (`email = "user@example.com"`) resolves to the row whose identifier
+// is the `imaps://...` URL but whose display_name is that email.
+//
+// When multiple rows match (rare; e.g. an mbox import plus a Gmail
+// account with the same name), the first syncable row (gmail/imap)
+// wins, with gmail taking precedence over imap.
+func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, error) {
+	sources, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
+	if err != nil {
+		return nil, err
+	}
+	var imapSrc *store.Source
+	for _, src := range sources {
+		switch src.SourceType {
+		case sourceTypeGmail:
+			return src, nil
+		case sourceTypeIMAP:
+			if imapSrc == nil {
+				imapSrc = src
+			}
+		}
+	}
+	return imapSrc, nil
+}
+
+// runScheduledGmailSync runs an incremental Gmail sync for the daemon.
+// Token-source lookup uses oauthMgr.TokenSource directly (not
+// getTokenSourceWithReauth) because serve runs as a daemon and cannot
+// open a browser for OAuth — the error path tells the user how to
+// re-authorize from a terminal.
+func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), vf *vectorFeatures) (*gmail.SyncSummary, error) {
+	appName := ""
 	if src != nil {
 		appName = sourceOAuthApp(src)
 	}
@@ -353,34 +485,36 @@ func runScheduledSync(ctx context.Context, email string, s *store.Store, getOAut
 	var tokenSource oauth2.TokenSource
 	var tsErr error
 
-	// Check for service account configuration
 	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
-			return fmt.Errorf("service account for %s: %w", email, saErr)
+			return nil, fmt.Errorf("service account for %s: %w", email, saErr)
 		}
 		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
 		if tsErr != nil {
-			return fmt.Errorf("service account token for %s: %w", email, tsErr)
+			return nil, fmt.Errorf("service account token for %s: %w", email, tsErr)
 		}
 	} else {
 		oauthMgr, oaErr := getOAuthMgr(appName)
 		if oaErr != nil {
-			return fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr)
+			return nil, fmt.Errorf("resolve OAuth credentials for %s: %w", email, oaErr)
 		}
-
-		// Get token source — intentionally not using getTokenSourceWithReauth here
-		// because serve runs as a daemon and cannot open a browser for OAuth.
 		tokenSource, tsErr = oauthMgr.TokenSource(ctx, email)
 		if tsErr != nil {
-			if oauthMgr.HasToken(email) {
-				return fmt.Errorf("get token source: %w (token may be expired; run 'sync %s' or 'verify %s' from an interactive terminal to re-authorize)", tsErr, email, email)
+			// Distinguish transient network failures (DNS lookup timeout,
+			// dial timeout after laptop sleep/wake, Wi-Fi flap) from real
+			// auth errors. Suggesting reauth on every network blip sends
+			// the user down the wrong path.
+			if syncerr.IsTransientNetwork(tsErr) {
+				return nil, fmt.Errorf("get token source: %w (transient network error; will retry on next schedule)", tsErr)
 			}
-			return fmt.Errorf("get token source: %w (run 'add-account %s' first)", tsErr, email)
+			if oauthMgr.HasToken(email) {
+				return nil, fmt.Errorf("get token source: %w (token may be expired; run 'sync %s' or 'verify %s' from an interactive terminal to re-authorize)", tsErr, email, email)
+			}
+			return nil, fmt.Errorf("get token source: %w (run 'add-account %s' first)", tsErr, email)
 		}
 	}
 
-	// Create Gmail client
 	rateLimiter := gmail.NewRateLimiter(float64(cfg.Sync.RateLimitQPS))
 	client := gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
@@ -388,20 +522,17 @@ func runScheduledSync(ctx context.Context, email string, s *store.Store, getOAut
 	)
 	defer func() { _ = client.Close() }()
 
-	// Set up sync options
 	opts := sync.DefaultOptions()
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
-	// Create syncer (no CLI progress for daemon mode)
 	syncer := sync.New(client, s, opts).WithLogger(logger)
 	if vf != nil {
 		syncer.SetEmbedEnqueuer(vf.Enqueuer)
 	}
 
-	// Resolve source — scheduled sync is Gmail-only.
-	source, err := s.GetOrCreateSource("gmail", email)
+	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	if err != nil {
-		return fmt.Errorf("get source: %w", err)
+		return nil, fmt.Errorf("get source: %w", err)
 	}
 	// Auto-default-identity must run BEFORE the legacy migration retry
 	// — see comment in account_identity.go. serve is a daemon, so the
@@ -409,39 +540,59 @@ func runScheduledSync(ctx context.Context, email string, s *store.Store, getOAut
 	// failure path through its own logger.Warn.
 	confirmDefaultIdentity(io.Discard, s, source.ID, email, email, "account-identifier")
 	if err := runPostSourceCreateMigrations(s); err != nil {
-		return fmt.Errorf("post-source-create migrations: %w", err)
+		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	// Run incremental sync
 	summary, err := syncer.Incremental(ctx, source)
 	if err != nil {
-		return fmt.Errorf("incremental sync failed: %w", err)
+		return nil, fmt.Errorf("incremental sync failed: %w", err)
+	}
+	return summary, nil
+}
+
+// runScheduledIMAPSync runs a full IMAP sync for the daemon. IMAP has
+// no incremental/history API, so we always do a full pass and rely on
+// the store to dedupe by message-id. NoResume is forced on because
+// IMAP page tokens are numeric offsets that don't survive across
+// processes (see syncfull.go).
+func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, vf *vectorFeatures) (*gmail.SyncSummary, error) {
+	apiClient, err := buildAPIClient(ctx, src, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build IMAP client: %w", err)
+	}
+	defer func() { _ = apiClient.Close() }()
+
+	opts := sync.DefaultOptions()
+	opts.SourceType = sourceTypeIMAP
+	opts.AttachmentsDir = cfg.AttachmentsDir()
+	opts.NoResume = true
+
+	syncer := sync.New(apiClient, s, opts).WithLogger(logger)
+	if vf != nil {
+		syncer.SetEmbedEnqueuer(vf.Enqueuer)
 	}
 
-	logger.Info("sync completed",
-		"email", email,
-		"messages_added", summary.MessagesAdded,
-		"duration", time.Since(startTime),
-	)
-
-	// Rebuild cache if stale (covers new messages and deletions).
-	dbPath := cfg.DatabaseDSN()
-	analyticsDir := cfg.AnalyticsDir()
-	if staleness := cacheNeedsBuild(dbPath, analyticsDir); staleness.NeedsBuild {
-		logger.Info("rebuilding cache after sync",
-			"email", email, "reason", staleness.Reason,
-			"full_rebuild", staleness.FullRebuild)
-		result, err := buildCache(
-			dbPath, analyticsDir, staleness.FullRebuild)
-		if err != nil {
-			logger.Error("cache build failed", "error", err)
-			// Don't fail the sync for cache build errors
-		} else if !result.Skipped {
-			logger.Info("cache build completed",
-				"exported", result.ExportedCount,
-			)
-		}
+	// runPostSourceCreateMigrations is keyed off Gmail-only legacy
+	// state, so it's a no-op for fresh IMAP installs; we still call it
+	// for parity with the Gmail path so the daemon converges legacy
+	// DBs that happen to mix sources.
+	//
+	// Pass display_name (the IMAP username/email recorded by `add-imap`),
+	// not Identifier (the `imaps://...` URL), so the auto-default-identity
+	// matches what add-imap wrote and won't pollute account_identities
+	// with a URL if the user has cleared identities. confirmDefaultIdentity
+	// silently no-ops when the identifier arg is empty, so a legacy IMAP
+	// row with NULL display_name skips the write rather than re-injecting
+	// the URL.
+	displayName := src.DisplayName.String
+	confirmDefaultIdentity(io.Discard, s, src.ID, displayName, displayName, "account-identifier")
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	return nil
+	summary, err := syncer.Full(ctx, src.Identifier)
+	if err != nil {
+		return nil, fmt.Errorf("IMAP sync failed: %w", err)
+	}
+	return summary, nil
 }

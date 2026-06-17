@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // ErrNotSupported is returned for operations not available in remote mode.
@@ -96,6 +97,7 @@ type messageSummaryJSON struct {
 	ID             int64    `json:"id"`
 	ConversationID int64    `json:"conversation_id,omitempty"`
 	Subject        string   `json:"subject"`
+	MessageType    string   `json:"message_type,omitempty"`
 	From           string   `json:"from"`
 	To             []string `json:"to"`
 	SentAt         string   `json:"sent_at"`
@@ -258,6 +260,9 @@ func buildFilterQuery(filter query.MessageFilter) url.Values {
 	if filter.Label != "" {
 		params.Set("label", filter.Label)
 	}
+	if filter.MessageType != "" {
+		params.Set("message_type", filter.MessageType)
+	}
 	if filter.TimeRange.Period != "" {
 		params.Set("time_period", filter.TimeRange.Period)
 	}
@@ -372,6 +377,7 @@ func parseMessageSummaries(msgs []messageSummaryJSON) []query.MessageSummary {
 			ID:             m.ID,
 			ConversationID: m.ConversationID,
 			Subject:        m.Subject,
+			MessageType:    m.MessageType,
 			FromEmail:      m.From,
 			SentAt:         sentAt,
 			DeletedAt:      deletedAt,
@@ -393,13 +399,13 @@ func (e *Engine) Aggregate(ctx context.Context, groupBy query.ViewType, opts que
 	params := buildAggregateQuery(groupBy, opts)
 	path := "/api/v1/aggregates?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -430,13 +436,13 @@ func (e *Engine) SubAggregate(ctx context.Context, filter query.MessageFilter, g
 
 	path := "/api/v1/aggregates/sub?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -453,13 +459,13 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 	params := buildFilterQuery(filter)
 	path := "/api/v1/messages/filter?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -474,11 +480,11 @@ func (e *Engine) ListMessages(ctx context.Context, filter query.MessageFilter) (
 // GetMessage returns a single message by ID.
 func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail, error) {
 	msg, err := e.store.GetMessage(id)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return nil, nil //nolint:nilnil // engine API uses (nil, nil) for not-found
+	}
 	if err != nil {
 		return nil, err
-	}
-	if msg == nil {
-		return nil, nil
 	}
 
 	// Convert store.APIMessage to query.MessageDetail
@@ -613,13 +619,13 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 
 	path := "/api/v1/search/deep?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -654,7 +660,6 @@ func (e *Engine) SearchFastCount(ctx context.Context, q *search.Query, filter qu
 // total count, and aggregate stats in a single operation.
 func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) (*query.SearchFastResult, error) {
-
 	params := buildFilterQuery(filter)
 	params.Set("q", queryStr)
 	params.Set("offset", strconv.Itoa(offset))
@@ -663,13 +668,13 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 
 	path := "/api/v1/search/fast?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -730,13 +735,13 @@ func (e *Engine) GetTotalStats(ctx context.Context, opts query.StatsOptions) (*q
 	params := buildStatsQuery(opts)
 	path := "/api/v1/stats/total?" + params.Encode()
 
-	resp, err := e.store.doRequestWithContext(ctx, "GET", path, nil)
+	resp, err := e.store.doRequestWithContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, handleErrorResponse(resp)
 	}
 
@@ -799,14 +804,14 @@ func buildSearchQueryString(q *search.Query) string {
 		parts = append(parts, fmt.Sprintf("smaller:%d", *q.SmallerThan))
 	}
 
-	result := ""
+	var result strings.Builder
 	for i, part := range parts {
 		if i > 0 {
-			result += " "
+			result.WriteString(" ")
 		}
-		result += part
+		result.WriteString(part)
 	}
-	return result
+	return result.String()
 }
 
 // readBody reads the response body into a byte slice.

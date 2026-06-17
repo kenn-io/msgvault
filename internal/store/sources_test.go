@@ -6,46 +6,44 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesm/msgvault/internal/store"
-	"github.com/wesm/msgvault/internal/testutil"
-	"github.com/wesm/msgvault/internal/testutil/storetest"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestStore_GetSourcesByIdentifier(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create two sources with same identifier, different types
 	_, err := st.GetOrCreateSource("gmail", "user@example.com")
-	testutil.MustNoErr(t, err, "create gmail source")
+	require.NoError(err, "create gmail source")
 	_, err = st.GetOrCreateSource("mbox", "user@example.com")
-	testutil.MustNoErr(t, err, "create mbox source")
+	require.NoError(err, "create mbox source")
 
 	sources, err := st.GetSourcesByIdentifier("user@example.com")
-	testutil.MustNoErr(t, err, "GetSourcesByIdentifier")
-	if len(sources) != 2 {
-		t.Fatalf("got %d sources, want 2", len(sources))
-	}
+	require.NoError(err, "GetSourcesByIdentifier")
+	require.Len(sources, 2)
 
 	// Verify ordering by source_type
-	if sources[0].SourceType != "gmail" {
-		t.Errorf("sources[0].SourceType = %q, want gmail", sources[0].SourceType)
-	}
-	if sources[1].SourceType != "mbox" {
-		t.Errorf("sources[1].SourceType = %q, want mbox", sources[1].SourceType)
-	}
+	assert.Equal("gmail", sources[0].SourceType, "sources[0].SourceType")
+	assert.Equal("mbox", sources[1].SourceType, "sources[1].SourceType")
 }
 
 func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	sources, err := st.GetSourcesByIdentifier("nobody@example.com")
-	testutil.MustNoErr(t, err, "GetSourcesByIdentifier")
-	if len(sources) != 0 {
-		t.Errorf("got %d sources, want 0", len(sources))
-	}
+	requirepkg.NoError(t, err, "GetSourcesByIdentifier")
+	assertpkg.Empty(t, sources)
 }
 
 func TestStore_RemoveSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	// Create messages, labels, and FTS data
@@ -56,51 +54,45 @@ func TestStore_RemoveSource(t *testing.T) {
 		"INBOX": "Inbox",
 	}, "system")
 	err := f.Store.ReplaceMessageLabels(msgID, []int64{labels["INBOX"]})
-	testutil.MustNoErr(t, err, "ReplaceMessageLabels")
+	require.NoError(err, "ReplaceMessageLabels")
 
 	if f.Store.FTS5Available() {
 		err = f.Store.UpsertFTS(msgID, "Test", "body", "a@b.com", "", "")
-		testutil.MustNoErr(t, err, "UpsertFTS")
+		require.NoError(err, "UpsertFTS")
 	}
 
 	// Remove source
 	err = f.Store.RemoveSource(f.Source.ID)
-	testutil.MustNoErr(t, err, "RemoveSource")
+	require.NoError(err, "RemoveSource")
 
 	// Verify source is gone
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	testutil.MustNoErr(t, err, "GetSourceByIdentifier")
-	if src != nil {
-		t.Error("source should be nil after removal")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assert.Nil(src, "source should be nil after removal")
 
 	// Verify messages are gone
 	count, err := f.Store.CountMessagesForSource(f.Source.ID)
-	testutil.MustNoErr(t, err, "CountMessagesForSource")
-	if count != 0 {
-		t.Errorf("message count = %d, want 0", count)
-	}
+	require.NoError(err, "CountMessagesForSource")
+	assert.Equal(int64(0), count, "message count")
 
 	// Verify labels are gone
 	var labelCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM labels WHERE source_id = ?`, f.Source.ID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id = ?`), f.Source.ID,
 	).Scan(&labelCount)
-	testutil.MustNoErr(t, err, "count labels")
-	if labelCount != 0 {
-		t.Errorf("label count = %d, want 0", labelCount)
-	}
+	require.NoError(err, "count labels")
+	assert.Equal(0, labelCount, "label count")
 
-	// Verify FTS rows are gone
-	if f.Store.FTS5Available() {
+	// Verify FTS rows are gone (SQLite FTS5 vtable only; on PG the
+	// equivalent invariant — search_fts cleared — is covered by the
+	// dialect-level FTSDeleteSQL test).
+	if f.Store.FTS5Available() && !f.Store.IsPostgreSQL() {
 		var ftsCount int
 		err = f.Store.DB().QueryRow(
 			`SELECT COUNT(*) FROM messages_fts`,
 		).Scan(&ftsCount)
-		testutil.MustNoErr(t, err, "count FTS")
-		if ftsCount != 0 {
-			t.Errorf("FTS count = %d, want 0", ftsCount)
-		}
+		require.NoError(err, "count FTS")
+		assert.Equal(0, ftsCount, "FTS count")
 	}
 }
 
@@ -108,12 +100,12 @@ func TestStore_RemoveSource_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	err := st.RemoveSource(99999)
-	if err == nil {
-		t.Fatal("RemoveSource should error for nonexistent ID")
-	}
+	requirepkg.Error(t, err, "RemoveSource should error for nonexistent ID")
 }
 
 func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	// Create message with body, raw, and recipients
@@ -123,81 +115,73 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 		sql.NullString{String: "body text", Valid: true},
 		sql.NullString{},
 	)
-	testutil.MustNoErr(t, err, "UpsertMessageBody")
+	require.NoError(err, "UpsertMessageBody")
 
 	err = f.Store.UpsertMessageRaw(msgID, []byte("raw MIME data"))
-	testutil.MustNoErr(t, err, "UpsertMessageRaw")
+	require.NoError(err, "UpsertMessageRaw")
 
 	pid := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	err = f.Store.ReplaceMessageRecipients(
 		msgID, "from", []int64{pid}, []string{"Sender"},
 	)
-	testutil.MustNoErr(t, err, "ReplaceMessageRecipients")
+	require.NoError(err, "ReplaceMessageRecipients")
 
 	// Remove source
 	err = f.Store.RemoveSource(f.Source.ID)
-	testutil.MustNoErr(t, err, "RemoveSource")
+	require.NoError(err, "RemoveSource")
 
 	// Verify conversations are gone
 	var convCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM conversations WHERE source_id = ?`,
+		f.Store.Rebind(`SELECT COUNT(*) FROM conversations WHERE source_id = ?`),
 		f.Source.ID,
 	).Scan(&convCount)
-	testutil.MustNoErr(t, err, "count conversations")
-	if convCount != 0 {
-		t.Errorf("conversation count = %d, want 0", convCount)
-	}
+	require.NoError(err, "count conversations")
+	assert.Equal(0, convCount, "conversation count")
 
 	// Verify message_bodies are gone (cascaded via messages)
 	var bodyCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_bodies WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_bodies WHERE message_id = ?`), msgID,
 	).Scan(&bodyCount)
-	testutil.MustNoErr(t, err, "count message_bodies")
-	if bodyCount != 0 {
-		t.Errorf("message_bodies count = %d, want 0", bodyCount)
-	}
+	require.NoError(err, "count message_bodies")
+	assert.Equal(0, bodyCount, "message_bodies count")
 
 	// Verify message_raw is gone (cascaded via messages)
 	var rawCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`), msgID,
 	).Scan(&rawCount)
-	testutil.MustNoErr(t, err, "count message_raw")
-	if rawCount != 0 {
-		t.Errorf("message_raw count = %d, want 0", rawCount)
-	}
+	require.NoError(err, "count message_raw")
+	assert.Equal(0, rawCount, "message_raw count")
 
 	// Verify message_recipients are gone (cascaded via messages)
 	var recipCount int
 	err = f.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`, msgID,
+		f.Store.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), msgID,
 	).Scan(&recipCount)
-	testutil.MustNoErr(t, err, "count message_recipients")
-	if recipCount != 0 {
-		t.Errorf("message_recipients count = %d, want 0", recipCount)
-	}
+	require.NoError(err, "count message_recipients")
+	assert.Equal(0, recipCount, "message_recipients count")
 }
 
 func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 
 	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
-	testutil.MustNoErr(t, err, "RemoveSourceSerialized")
-	if had {
-		t.Error("hadActiveSync = true, want false")
-	}
+	require.NoError(err, "RemoveSourceSerialized")
+	assert.False(had, "hadActiveSync")
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	testutil.MustNoErr(t, err, "GetSourceByIdentifier")
-	if src != nil {
-		t.Error("source should be removed")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assert.Nil(src, "source should be removed")
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 	// Active sync on the source being removed — this row would be cascaded
@@ -205,174 +189,153 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 	f.StartSync()
 
 	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
-	testutil.MustNoErr(t, err, "RemoveSourceSerialized")
-	if !had {
-		t.Error("hadActiveSync = false, want true for sync on removed source")
-	}
+	require.NoError(err, "RemoveSourceSerialized")
+	assert.True(had, "hadActiveSync should be true for sync on removed source")
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	testutil.MustNoErr(t, err, "GetSourceByIdentifier")
-	if src != nil {
-		t.Error("source should still be removed even when sync was active")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assert.Nil(src, "source should still be removed even when sync was active")
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	// Create a second source with its own running sync.
 	otherSrc, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	testutil.MustNoErr(t, err, "create other source")
+	require.NoError(err, "create other source")
 	_, err = f.Store.StartSync(otherSrc.ID, "full")
-	testutil.MustNoErr(t, err, "start other sync")
+	require.NoError(err, "start other sync")
 
 	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
-	testutil.MustNoErr(t, err, "RemoveSourceSerialized")
-	if !had {
-		t.Error("hadActiveSync = false, want true for sync on another source")
-	}
+	require.NoError(err, "RemoveSourceSerialized")
+	assert.True(had, "hadActiveSync should be true for sync on another source")
 
 	// Original source is gone.
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
-	testutil.MustNoErr(t, err, "GetSourceByIdentifier")
-	if src != nil {
-		t.Error("test source should be removed")
-	}
+	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
+	assert.Nil(src, "test source should be removed")
 
 	// Other source (with the active sync) is untouched.
 	other, err := f.Store.GetSourceByIdentifier("other@example.com")
-	testutil.MustNoErr(t, err, "GetSourceByIdentifier other")
-	if other == nil {
-		t.Error("other source should remain")
-	}
+	require.NoError(err, "GetSourceByIdentifier other")
+	assert.NotNil(other, "other source should remain")
 }
 
 func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	_, err := st.RemoveSourceSerialized(context.Background(), 99999)
-	if err == nil {
-		t.Fatal("RemoveSourceSerialized should error for nonexistent ID")
-	}
+	requirepkg.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
 }
 
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
+	require := requirepkg.New(t)
 	f := storetest.New(t)
 
 	// Create a second source with its own conversation.
 	otherSrc, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	testutil.MustNoErr(t, err, "create other source")
+	require.NoError(err, "create other source")
 	otherConv, err := f.Store.EnsureConversation(otherSrc.ID, "other-thread", "Other")
-	testutil.MustNoErr(t, err, "ensure other conv")
+	require.NoError(err, "ensure other conv")
 	otherMsgID, err := f.Store.UpsertMessage(&store.Message{
 		ConversationID:  otherConv,
 		SourceID:        otherSrc.ID,
 		SourceMessageID: "other-msg-1",
 		MessageType:     "email",
 	})
-	testutil.MustNoErr(t, err, "create other message")
+	require.NoError(err, "create other message")
 
 	// Attachment unique to the default source.
 	uniqueMsg := f.CreateMessage("msg-unique")
 	err = f.Store.UpsertAttachment(uniqueMsg, "u.pdf", "application/pdf",
 		"aa/uniquehash", "uniquehash", 10)
-	testutil.MustNoErr(t, err, "upsert unique attachment")
+	require.NoError(err, "upsert unique attachment")
 
 	// Attachment shared with another source (same content_hash).
 	sharedMsg := f.CreateMessage("msg-shared")
 	err = f.Store.UpsertAttachment(sharedMsg, "s.pdf", "application/pdf",
 		"bb/sharedhash", "sharedhash", 20)
-	testutil.MustNoErr(t, err, "upsert shared attachment in default source")
+	require.NoError(err, "upsert shared attachment in default source")
 	err = f.Store.UpsertAttachment(otherMsgID, "s.pdf", "application/pdf",
 		"bb/sharedhash", "sharedhash", 20)
-	testutil.MustNoErr(t, err, "upsert shared attachment in other source")
+	require.NoError(err, "upsert shared attachment in other source")
 
 	// Attachment with NULL content_hash (must be excluded).
 	nullHashMsg := f.CreateMessage("msg-null-hash")
 	_, err = f.Store.DB().Exec(
-		`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-		 VALUES (?, 'n.pdf', 'application/pdf', 'cc/x', NULL, 30, CURRENT_TIMESTAMP)`,
+		f.Store.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+		 VALUES (?, 'n.pdf', 'application/pdf', 'cc/x', NULL, 30, CURRENT_TIMESTAMP)`),
 		nullHashMsg,
 	)
-	testutil.MustNoErr(t, err, "insert null-hash attachment")
+	require.NoError(err, "insert null-hash attachment")
 
 	// Attachment with empty storage_path (must be excluded).
 	emptyPathMsg := f.CreateMessage("msg-empty-path")
 	err = f.Store.UpsertAttachment(emptyPathMsg, "e.pdf", "application/pdf",
 		"", "emptypathhash", 40)
-	testutil.MustNoErr(t, err, "upsert empty-path attachment")
+	require.NoError(err, "upsert empty-path attachment")
 
 	// Two messages in the default source referencing the same unique hash
 	// should collapse to a single storage_path in the result.
 	dupMsg := f.CreateMessage("msg-dup-hash")
 	err = f.Store.UpsertAttachment(dupMsg, "u.pdf", "application/pdf",
 		"aa/uniquehash", "uniquehash", 10)
-	testutil.MustNoErr(t, err, "upsert duplicate-of-unique attachment")
+	require.NoError(err, "upsert duplicate-of-unique attachment")
 
 	paths, err := f.Store.AttachmentPathsUniqueToSource(f.Source.ID)
-	testutil.MustNoErr(t, err, "AttachmentPathsUniqueToSource")
+	require.NoError(err, "AttachmentPathsUniqueToSource")
 
-	if len(paths) != 1 {
-		t.Fatalf("got %d paths, want 1: %v", len(paths), paths)
-	}
-	if paths[0] != "aa/uniquehash" {
-		t.Errorf("path[0] = %q, want aa/uniquehash", paths[0])
-	}
+	require.Len(paths, 1, "paths: %v", paths)
+	assertpkg.Equal(t, "aa/uniquehash", paths[0], "path[0]")
 }
 
 func TestStore_GetSourceByID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	got, err := f.Store.GetSourceByID(f.Source.ID)
-	testutil.MustNoErr(t, err, "GetSourceByID")
-	if got == nil {
-		t.Fatal("expected non-nil source")
-	}
-	if got.ID != f.Source.ID {
-		t.Errorf("ID = %d, want %d", got.ID, f.Source.ID)
-	}
-	if got.Identifier != f.Source.Identifier {
-		t.Errorf("Identifier = %q, want %q", got.Identifier, f.Source.Identifier)
-	}
+	require.NoError(err, "GetSourceByID")
+	require.NotNil(got, "expected non-nil source")
+	assert.Equal(f.Source.ID, got.ID, "ID")
+	assert.Equal(f.Source.Identifier, got.Identifier, "Identifier")
 }
 
 func TestStore_GetSourceByID_NotFound(t *testing.T) {
 	f := storetest.New(t)
 
 	_, err := f.Store.GetSourceByID(99999)
-	if err == nil {
-		t.Fatal("expected error for non-existent ID, got nil")
-	}
+	requirepkg.Error(t, err, "expected error for non-existent ID")
 }
 
 func TestStore_IsAttachmentPathReferenced(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-ref-1")
 	err := f.Store.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		"aa/hash1", "hash1", 10)
-	testutil.MustNoErr(t, err, "UpsertAttachment")
+	require.NoError(err, "UpsertAttachment")
 
 	referenced, err := f.Store.IsAttachmentPathReferenced("aa/hash1")
-	testutil.MustNoErr(t, err, "IsAttachmentPathReferenced (hit)")
-	if !referenced {
-		t.Error("expected true for referenced path")
-	}
+	require.NoError(err, "IsAttachmentPathReferenced (hit)")
+	assert.True(referenced, "expected true for referenced path")
 
 	referenced, err = f.Store.IsAttachmentPathReferenced("zz/nothere")
-	testutil.MustNoErr(t, err, "IsAttachmentPathReferenced (miss)")
-	if referenced {
-		t.Error("expected false for unreferenced path")
-	}
+	require.NoError(err, "IsAttachmentPathReferenced (miss)")
+	assert.False(referenced, "expected false for unreferenced path")
 }
 
 func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// Simulate a pre-migration database that lacks the oauth_app column.
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
 	// Create the sources table WITHOUT the oauth_app column,
@@ -392,61 +355,41 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 			UNIQUE(source_type, identifier)
 		)
 	`)
-	if err != nil {
-		t.Fatalf("create legacy sources table: %v", err)
-	}
+	require.NoError(err, "create legacy sources table")
 
 	// Insert a row into the legacy table.
 	_, err = st.DB().Exec(`
 		INSERT INTO sources (source_type, identifier, display_name)
 		VALUES ('gmail', 'legacy@example.com', 'Legacy User')
 	`)
-	if err != nil {
-		t.Fatalf("insert legacy source: %v", err)
-	}
+	require.NoError(err, "insert legacy source")
 
 	// Run InitSchema — this should migrate the table by adding oauth_app.
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("InitSchema on legacy DB: %v", err)
-	}
+	require.NoError(st.InitSchema(), "InitSchema on legacy DB")
 
 	// Verify GetSourcesByIdentifier works (reads oauth_app column).
 	sources, err := st.GetSourcesByIdentifier("legacy@example.com")
-	if err != nil {
-		t.Fatalf("GetSourcesByIdentifier after migration: %v", err)
-	}
-	if len(sources) != 1 {
-		t.Fatalf("got %d sources, want 1", len(sources))
-	}
-	if sources[0].OAuthApp.Valid {
-		t.Errorf("OAuthApp should be NULL for legacy row, got %q", sources[0].OAuthApp.String)
-	}
+	require.NoError(err, "GetSourcesByIdentifier after migration")
+	require.Len(sources, 1)
+	assert.False(sources[0].OAuthApp.Valid,
+		"OAuthApp should be NULL for legacy row, got %q", sources[0].OAuthApp.String)
 
 	// Verify GetSourcesByDisplayName works (also reads oauth_app column).
 	sources, err = st.GetSourcesByDisplayName("Legacy User")
-	if err != nil {
-		t.Fatalf("GetSourcesByDisplayName after migration: %v", err)
-	}
-	if len(sources) != 1 {
-		t.Fatalf("got %d sources, want 1", len(sources))
-	}
+	require.NoError(err, "GetSourcesByDisplayName after migration")
+	require.Len(sources, 1)
 
 	// Verify oauth_app can be written and read back.
 	_, err = st.DB().Exec(
-		`UPDATE sources SET oauth_app = ? WHERE identifier = ?`,
+		st.Rebind(`UPDATE sources SET oauth_app = ? WHERE identifier = ?`),
 		"acme", "legacy@example.com",
 	)
-	if err != nil {
-		t.Fatalf("update oauth_app: %v", err)
-	}
+	require.NoError(err, "update oauth_app")
 
 	sources, err = st.GetSourcesByIdentifier("legacy@example.com")
-	if err != nil {
-		t.Fatalf("GetSourcesByIdentifier after update: %v", err)
-	}
-	if !sources[0].OAuthApp.Valid || sources[0].OAuthApp.String != "acme" {
-		t.Errorf("OAuthApp = %v, want {acme true}", sources[0].OAuthApp)
-	}
+	require.NoError(err, "GetSourcesByIdentifier after update")
+	assert.True(sources[0].OAuthApp.Valid, "OAuthApp should be valid after update")
+	assert.Equal("acme", sources[0].OAuthApp.String, "OAuthApp value")
 }
 
 // TestInitSchema_AddsDeletedAtToLegacyMessagesTable verifies the
@@ -457,11 +400,10 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 // `deleted_at` (LiveMessagesWhere, the dedup engine, the cache
 // staleness check) fails on upgraded databases with "no such column".
 func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
+	require := requirepkg.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
+	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
 	// Build a messages table that has every column the embedded
@@ -469,7 +411,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	// deleted_from_source_at, message_type, …) but DOES NOT have the
 	// new dedup-hide columns (`deleted_at`, `delete_batch_id`).
 	// Approximates a legacy DB just before this branch landed.
-	if _, err := st.DB().Exec(`
+	_, err = st.DB().Exec(`
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER NOT NULL,
@@ -490,42 +432,33 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 			attachment_count INTEGER DEFAULT 0,
 			deleted_from_source_at DATETIME
 		)
-	`); err != nil {
-		t.Fatalf("create legacy messages table: %v", err)
-	}
+	`)
+	require.NoError(err, "create legacy messages table")
 
-	if _, err := st.DB().Exec(`
+	_, err = st.DB().Exec(`
 		INSERT INTO messages (id, source_id, source_message_id, sent_at)
 		VALUES (1, 1, 'msg1', datetime('now'))
-	`); err != nil {
-		t.Fatalf("insert legacy message: %v", err)
-	}
+	`)
+	require.NoError(err, "insert legacy message")
 
 	// Run InitSchema — should add deleted_at and delete_batch_id via
 	// ALTER TABLE migrations (and silently no-op the columns that
 	// already exist, like deleted_from_source_at).
-	if err := st.InitSchema(); err != nil {
-		t.Fatalf("InitSchema on legacy DB: %v", err)
-	}
+	require.NoError(st.InitSchema(), "InitSchema on legacy DB")
 
 	// Confirm the canonical live-messages predicate runs without
 	// "no such column": this is the failure mode codex flagged. The
 	// query uses both deleted_at and deleted_from_source_at.
 	var n int
-	if err := st.DB().QueryRow(
-		"SELECT COUNT(*) FROM messages WHERE " + store.LiveMessagesWhere("", true),
-	).Scan(&n); err != nil {
-		t.Fatalf("post-migration live count: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("post-migration live count = %d, want 1", n)
-	}
+	require.NoError(st.DB().QueryRow(
+		"SELECT COUNT(*) FROM messages WHERE "+store.LiveMessagesWhere("", true),
+	).Scan(&n), "post-migration live count")
+	assertpkg.Equal(t, 1, n, "post-migration live count")
 
 	// Confirm delete_batch_id is also queryable post-migration so
 	// DeleteAllDeduped's distinct-batch count works on upgraded DBs.
-	if _, err := st.DB().Exec(
+	_, err = st.DB().Exec(
 		"SELECT COUNT(DISTINCT delete_batch_id) FROM messages",
-	); err != nil {
-		t.Fatalf("post-migration delete_batch_id query: %v", err)
-	}
+	)
+	require.NoError(err, "post-migration delete_batch_id query")
 }

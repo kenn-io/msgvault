@@ -1,42 +1,31 @@
 package cmd
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNormalizeMCPHTTPAddr(t *testing.T) {
 	t.Run("bare_port_defaults_to_loopback", func(t *testing.T) {
 		got, err := normalizeMCPHTTPAddr("8080", false)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "127.0.0.1:8080" {
-			t.Fatalf("got %q, want 127.0.0.1:8080", got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1:8080", got)
 	})
 
 	t.Run("colon_port_defaults_to_loopback", func(t *testing.T) {
 		got, err := normalizeMCPHTTPAddr(":8080", false)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "127.0.0.1:8080" {
-			t.Fatalf("got %q, want 127.0.0.1:8080", got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1:8080", got)
 	})
 
 	t.Run("explicit_loopback_passes", func(t *testing.T) {
 		cases := []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"}
 		for _, c := range cases {
 			got, err := normalizeMCPHTTPAddr(c, false)
-			if err != nil {
-				t.Errorf("%s: unexpected error: %v", c, err)
-				continue
-			}
-			if got != c {
-				t.Errorf("%s: got %q, want unchanged", c, got)
-			}
+			require.NoError(t, err, "%s", c)
+			assert.Equal(t, c, got, "%s: should be unchanged", c)
 		}
 	})
 
@@ -52,37 +41,24 @@ func TestNormalizeMCPHTTPAddr(t *testing.T) {
 		}
 		for _, c := range cases {
 			_, err := normalizeMCPHTTPAddr(c, false)
-			if err == nil {
-				t.Errorf("%s: expected refusal, got nil", c)
-				continue
-			}
-			if !strings.Contains(err.Error(), "--http-allow-insecure") {
-				t.Errorf("%s: expected hint about --http-allow-insecure, got %v", c, err)
-			}
+			require.Error(t, err, "%s: expected refusal", c)
+			assert.ErrorContains(t, err, "--http-allow-insecure", "%s: expected hint", c)
 		}
 	})
 
 	t.Run("non_loopback_allowed_with_optin", func(t *testing.T) {
 		got, err := normalizeMCPHTTPAddr("0.0.0.0:8080", true)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "0.0.0.0:8080" {
-			t.Fatalf("got %q, want unchanged", got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, "0.0.0.0:8080", got)
 	})
 
 	t.Run("empty_rejected", func(t *testing.T) {
 		_, err := normalizeMCPHTTPAddr("", false)
-		if err == nil {
-			t.Fatal("expected error for empty addr")
-		}
+		require.Error(t, err, "expected error for empty addr")
 	})
 
 	t.Run("garbage_rejected", func(t *testing.T) {
 		_, err := normalizeMCPHTTPAddr("not-a-port", false)
-		if err == nil {
-			t.Fatal("expected error for non-port, non-host:port")
-		}
+		require.Error(t, err, "expected error for non-port, non-host:port")
 	})
 }

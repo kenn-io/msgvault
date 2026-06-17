@@ -1,36 +1,29 @@
 package tui
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // assertHighlight checks that applyHighlight produces the expected plain text
 // (after stripping ANSI) and validates ANSI behavior based on wantANSI:
 // - wantANSI=true: output must contain ANSI escapes and differ from input
-// - wantANSI=false: output must be unchanged from input
+// - wantANSI=false: output must be unchanged from input.
 func assertHighlight(t *testing.T, text string, terms []string, wantANSI bool) {
 	t.Helper()
 	result := applyHighlight(text, terms)
 	stripped := stripANSI(result)
 
 	// Content integrity check
-	if stripped != text {
-		t.Errorf("text content mismatch:\n  got:  %q\n  want: %q", stripped, text)
-	}
+	assert.Equal(t, text, stripped, "text content mismatch")
 
 	// ANSI/change check
 	if wantANSI {
-		if result == text {
-			t.Errorf("expected highlighting (ANSI) but output was unchanged")
-		}
-		if !strings.Contains(result, ansiStart) {
-			t.Errorf("expected output to contain ANSI start sequence, got %q", result)
-		}
+		assert.NotEqual(t, text, result, "expected highlighting (ANSI) but output was unchanged")
+		assert.Contains(t, result, ansiStart, "expected output to contain ANSI start sequence")
 	} else {
-		if result != text {
-			t.Errorf("expected unchanged output, got: %q", result)
-		}
+		assert.Equal(t, text, result, "expected unchanged output")
 	}
 }
 

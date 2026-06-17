@@ -1,6 +1,10 @@
 package testutil
 
 // EncodedSamplesT holds encoded byte sequences for testing charset detection and repair.
+// Field names intentionally use underscores to separate the encoding name from
+// the sample content, which is far more readable than camelCase.
+//
+//nolint:revive // underscore-separated encoding+sample names are intentional
 type EncodedSamplesT struct {
 	ShiftJIS_Konnichiwa     []byte
 	GBK_Nihao               []byte

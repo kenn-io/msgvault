@@ -5,33 +5,28 @@ package embed
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnqueuer_NoGenerations_Noop(t *testing.T) {
 	ctx := context.Background()
 	db := openVectorsDBForEnqueue(t)
-	e := NewEnqueuer(db)
-	if err := e.EnqueueMessages(ctx, []int64{1, 2, 3}); err != nil {
-		t.Fatalf("EnqueueMessages with no generations: %v", err)
-	}
+	e := NewEnqueuer(db, nil, nil)
+	require.NoError(t, e.EnqueueMessages(ctx, []int64{1, 2, 3}), "EnqueueMessages with no generations")
 	// Should be no pending rows.
 	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pending_embeddings`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Errorf("pending count = %d, want 0", n)
-	}
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pending_embeddings`).Scan(&n))
+	assert.Equal(t, 0, n, "pending count")
 }
 
 func TestEnqueuer_ActiveGenerationOnly(t *testing.T) {
 	ctx := context.Background()
 	db := openVectorsDBForEnqueue(t)
 	insertGenerationStatic(t, db, 1, "active")
-	e := NewEnqueuer(db)
-	if err := e.EnqueueMessages(ctx, []int64{10, 11}); err != nil {
-		t.Fatal(err)
-	}
+	e := NewEnqueuer(db, nil, nil)
+	require.NoError(t, e.EnqueueMessages(ctx, []int64{10, 11}))
 	assertPending(t, db, 1, 2)
 }
 
@@ -41,10 +36,8 @@ func TestEnqueuer_ActiveAndBuilding_DualEnqueue(t *testing.T) {
 	insertGenerationStatic(t, db, 1, "active")
 	insertGenerationStatic(t, db, 2, "building")
 	insertGenerationStatic(t, db, 3, "retired") // should NOT receive.
-	e := NewEnqueuer(db)
-	if err := e.EnqueueMessages(ctx, []int64{100}); err != nil {
-		t.Fatal(err)
-	}
+	e := NewEnqueuer(db, nil, nil)
+	require.NoError(t, e.EnqueueMessages(ctx, []int64{100}))
 	assertPending(t, db, 1, 1)
 	assertPending(t, db, 2, 1)
 	assertPending(t, db, 3, 0)
@@ -54,14 +47,10 @@ func TestEnqueuer_DuplicateIDs_Ignored(t *testing.T) {
 	ctx := context.Background()
 	db := openVectorsDBForEnqueue(t)
 	insertGenerationStatic(t, db, 1, "active")
-	e := NewEnqueuer(db)
-	if err := e.EnqueueMessages(ctx, []int64{42}); err != nil {
-		t.Fatal(err)
-	}
+	e := NewEnqueuer(db, nil, nil)
+	require.NoError(t, e.EnqueueMessages(ctx, []int64{42}))
 	// Second call with same ID should not error; count still 1.
-	if err := e.EnqueueMessages(ctx, []int64{42, 42}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, e.EnqueueMessages(ctx, []int64{42, 42}))
 	assertPending(t, db, 1, 1)
 }
 
@@ -69,12 +58,8 @@ func TestEnqueuer_EmptyIDs_Noop(t *testing.T) {
 	ctx := context.Background()
 	db := openVectorsDBForEnqueue(t)
 	insertGenerationStatic(t, db, 1, "active")
-	e := NewEnqueuer(db)
-	if err := e.EnqueueMessages(ctx, nil); err != nil {
-		t.Errorf("EnqueueMessages(nil): %v", err)
-	}
-	if err := e.EnqueueMessages(ctx, []int64{}); err != nil {
-		t.Errorf("EnqueueMessages([]): %v", err)
-	}
+	e := NewEnqueuer(db, nil, nil)
+	assert.NoError(t, e.EnqueueMessages(ctx, nil), "EnqueueMessages(nil)")
+	assert.NoError(t, e.EnqueueMessages(ctx, []int64{}), "EnqueueMessages([])")
 	assertPending(t, db, 1, 0)
 }

@@ -5,16 +5,15 @@ package sqlitevec
 import (
 	"database/sql"
 	"testing"
+
+	requirepkg "github.com/stretchr/testify/require"
 )
 
 func TestSQLiteVecExtensionLoads(t *testing.T) {
-	if err := RegisterExtension(); err != nil {
-		t.Fatalf("RegisterExtension: %v", err)
-	}
+	require := requirepkg.New(t)
+	require.NoError(RegisterExtension(), "RegisterExtension")
 	db, err := sql.Open(DriverName(), ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	require.NoError(err, "open")
 	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`CREATE VIRTUAL TABLE t USING vec0(
@@ -22,15 +21,11 @@ func TestSQLiteVecExtensionLoads(t *testing.T) {
 		message_id INTEGER PRIMARY KEY,
 		embedding FLOAT[4]
 	)`)
-	if err != nil {
-		t.Fatalf("create virtual table: %v", err)
-	}
+	require.NoError(err, "create virtual table")
 
 	// Sanity: insert and query a vector.
 	// Little-endian float32 blob for [1.0, 0.0, 0.0, 0.0].
 	_, err = db.Exec(`INSERT INTO t (generation_id, message_id, embedding) VALUES (?, ?, ?)`,
 		1, 42, []byte{0, 0, 0x80, 0x3f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-	if err != nil {
-		t.Fatalf("insert vector: %v", err)
-	}
+	require.NoError(err, "insert vector")
 }

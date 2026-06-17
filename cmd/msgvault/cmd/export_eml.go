@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/fileutil"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
@@ -44,7 +44,7 @@ type resolvedMessage struct {
 	SourceMessageID string
 }
 
-func resolveMessage(engine *query.SQLiteEngine, cmd *cobra.Command, messageRef string) (resolvedMessage, error) {
+func resolveMessage(engine query.Engine, cmd *cobra.Command, messageRef string) (resolvedMessage, error) {
 	if id, err := strconv.ParseInt(messageRef, 10, 64); err == nil {
 		msg, err := engine.GetMessage(cmd.Context(), id)
 		if err != nil {
@@ -98,7 +98,7 @@ func runExportEML(cmd *cobra.Command, messageRef, outputPath string) error {
 		return fmt.Errorf("startup migrations: %w", err)
 	}
 
-	engine := query.NewSQLiteEngine(s.DB())
+	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
 
 	resolved, err := resolveMessage(engine, cmd, messageRef)
 	if err != nil {

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // noDefaultIdentityHelp is the flag help text for --no-default-identity.

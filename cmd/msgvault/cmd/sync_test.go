@@ -4,12 +4,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/config"
-	"github.com/wesm/msgvault/internal/store"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // fakeClientSecrets is a minimal Google OAuth client_secret.json that
@@ -34,48 +35,37 @@ const fakeClientSecrets = `{
 // scaffolding so the test exercises runIncrementalSync, not just
 // the OAuth manager setup.
 func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	// Insert IMAP *before* Gmail so that an ambiguous single-row
 	// lookup (the old GetSourceByIdentifier bug) would return the
 	// IMAP row, not the Gmail one. This ensures the test only
 	// passes when the resolved Gmail source is actually used.
 	_, err = s.GetOrCreateSource("imap", "shared@example.com")
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	require.NoError(err, "create imap source")
 
 	gmailSrc, err := s.GetOrCreateSource(
 		"gmail", "shared@example.com",
 	)
-	if err != nil {
-		t.Fatalf("create gmail source: %v", err)
-	}
+	require.NoError(err, "create gmail source")
 	// Set a history cursor so runIncrementalSync proceeds past
 	// the "no history ID" guard and into getTokenSourceWithReauth.
-	if err := s.UpdateSourceSyncCursor(gmailSrc.ID, "99999"); err != nil {
-		t.Fatalf("set sync cursor: %v", err)
-	}
+	require.NoError(s.UpdateSourceSyncCursor(gmailSrc.ID, "99999"), "set sync cursor")
 	_ = s.Close()
 
 	// Write a minimal client_secret.json so the OAuth manager
 	// can be created without error.
 	secretsPath := filepath.Join(tmpDir, "client_secret.json")
-	err = os.WriteFile(
+	require.NoError(os.WriteFile(
 		secretsPath, []byte(fakeClientSecrets), 0600,
-	)
-	if err != nil {
-		t.Fatalf("write client secrets: %v", err)
-	}
+	), "write client secrets")
 
 	savedCfg := cfg
 	savedLogger := logger
@@ -107,58 +97,40 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	execErr := root.Execute()
 	output := getOutput()
 
-	if execErr == nil {
-		t.Fatal("expected error (no credentials/token)")
-	}
+	require.Error(execErr, "expected error (no credentials/token)")
 
 	errMsg := execErr.Error()
 
 	// Should NOT hit the legacy Gmail-only fallback, which sets
 	// source to nil and produces "no source found".
-	if strings.Contains(output, "no source found") {
-		t.Error("should not hit legacy Gmail-only fallback path")
-	}
+	assert.NotContains(output, "no source found", "should not hit legacy Gmail-only fallback path")
 
 	// Both sources should be resolved and attempted, producing
 	// 2 failures (IMAP: missing config, Gmail: missing token).
-	if !strings.Contains(errMsg, "2 account(s) failed") {
-		t.Errorf(
-			"expected both sources resolved; got: %s",
-			errMsg,
-		)
-	}
+	assert.Contains(errMsg, "2 account(s) failed", "expected both sources resolved")
 
 	// The Gmail error should come from inside runIncrementalSync
 	// (reaching getTokenSourceWithReauth), not from OAuth manager
 	// creation. "add-account" appears only in the token-missing
 	// error produced by getTokenSourceWithReauth.
-	if !strings.Contains(output, "add-account") {
-		t.Errorf(
-			"Gmail error should originate from "+
-				"runIncrementalSync; output:\n%s",
-			output,
-		)
-	}
+	assert.Contains(output, "add-account",
+		"Gmail error should originate from runIncrementalSync; output:\n%s", output)
 }
 
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
 // source for an identifier works without the legacy fallback.
 func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("imap", "solo@example.com")
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	require.NoError(err, "create imap source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -185,24 +157,15 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	root.SetArgs([]string{"sync", "solo@example.com"})
 
 	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected error (no IMAP config)")
-	}
+	require.Error(err, "expected error (no IMAP config)")
 
 	errMsg := err.Error()
 
 	// Exactly 1 source should fail (IMAP with missing config).
-	if !strings.Contains(errMsg, "1 account(s) failed") {
-		t.Errorf(
-			"expected 1 failed account; got: %s",
-			errMsg,
-		)
-	}
+	assert.Contains(errMsg, "1 account(s) failed", "expected 1 failed account")
 
 	// Should NOT hit legacy fallback (source exists in DB).
-	if strings.Contains(errMsg, "no source found") {
-		t.Error("should not hit legacy fallback path")
-	}
+	assert.NotContains(errMsg, "no source found", "should not hit legacy fallback path")
 }
 
 // TestSyncCmd_MboxIdentifierDoesNotFallback verifies that an
@@ -214,17 +177,11 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	requirepkg.NoError(t, err, "open store")
+	requirepkg.NoError(t, s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("mbox", "imported@example.com")
-	if err != nil {
-		t.Fatalf("create mbox source: %v", err)
-	}
+	requirepkg.NoError(t, err, "create mbox source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -262,18 +219,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 			})
 
 			err := root.Execute()
-			if err == nil {
-				t.Fatal("expected error for non-syncable source")
-			}
-
-			errMsg := err.Error()
-
-			if !strings.Contains(errMsg, "cannot be synced") {
-				t.Errorf(
-					"expected unsupported-source error; got: %s",
-					errMsg,
-				)
-			}
+			requirepkg.Error(t, err, "expected error for non-syncable source")
+			assertpkg.ErrorContains(t, err, "cannot be synced", "expected unsupported-source error")
 		})
 	}
 }
@@ -282,25 +229,19 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 // mixed Gmail+IMAP setup without OAuth configured, sync-full skips
 // the Gmail source and still syncs the IMAP source.
 func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("gmail", "g@example.com")
-	if err != nil {
-		t.Fatalf("create gmail source: %v", err)
-	}
+	require.NoError(err, "create gmail source")
 	_, err = s.GetOrCreateSource("imap", "i@example.com")
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	require.NoError(err, "create imap source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -335,25 +276,15 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 	// IMAP source should be attempted (and fail due to missing
 	// config), but the command should NOT abort entirely because
 	// of the Gmail OAuth failure.
-	if execErr == nil {
-		t.Fatal("expected error (IMAP has no config)")
-	}
+	require.Error(execErr, "expected error (IMAP has no config)")
 
 	// Gmail should be skipped, not cause an abort.
-	if !strings.Contains(output, "Skipping g@example.com") {
-		t.Errorf(
-			"Gmail source should be skipped; output:\n%s",
-			output,
-		)
-	}
+	assert.Contains(output, "Skipping g@example.com",
+		"Gmail source should be skipped; output:\n%s", output)
 
 	// IMAP source should have been attempted.
-	if !strings.Contains(output, "i@example.com") {
-		t.Errorf(
-			"IMAP source should be attempted; output:\n%s",
-			output,
-		)
-	}
+	assert.Contains(output, "i@example.com",
+		"IMAP source should be attempted; output:\n%s", output)
 }
 
 // TestSyncCmd_BrokenOAuthDoesNotBlockIMAP verifies that a malformed
@@ -369,47 +300,36 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 		{"sync-full", syncFullCmd.RunE},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
 			s, err := store.Open(dbPath)
-			if err != nil {
-				t.Fatalf("open store: %v", err)
-			}
-			if err := s.InitSchema(); err != nil {
-				t.Fatalf("init schema: %v", err)
-			}
+			require.NoError(err, "open store")
+			require.NoError(s.InitSchema(), "init schema")
 
 			gmailSrc, err := s.GetOrCreateSource(
 				"gmail", "g@example.com",
 			)
-			if err != nil {
-				t.Fatalf("create gmail source: %v", err)
-			}
+			require.NoError(err, "create gmail source")
 			// Give Gmail source a cursor so it passes
 			// the sync command's discovery checks.
-			if err := s.UpdateSourceSyncCursor(gmailSrc.ID, "1"); err != nil {
-				t.Fatalf("set cursor: %v", err)
-			}
+			require.NoError(s.UpdateSourceSyncCursor(gmailSrc.ID, "1"), "set cursor")
 
 			_, err = s.GetOrCreateSource(
 				"imap", "i@example.com",
 			)
-			if err != nil {
-				t.Fatalf("create imap source: %v", err)
-			}
+			require.NoError(err, "create imap source")
 			_ = s.Close()
 
 			// Write a malformed client_secret.json.
 			secretsPath := filepath.Join(
 				tmpDir, "client_secret.json",
 			)
-			err = os.WriteFile(
+			require.NoError(os.WriteFile(
 				secretsPath, []byte("not json"), 0600,
-			)
-			if err != nil {
-				t.Fatalf("write secrets: %v", err)
-			}
+			), "write secrets")
 
 			savedCfg := cfg
 			savedLogger := logger
@@ -443,41 +363,24 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 			execErr := root.Execute()
 			output := getOutput()
 
-			if execErr == nil {
-				t.Fatal("expected error")
-			}
+			require.Error(execErr, "expected error")
 
 			errMsg := execErr.Error()
 
 			// IMAP source should be attempted (appears in
 			// output), not blocked by the OAuth failure.
-			if !strings.Contains(output, "i@example.com") {
-				t.Errorf(
-					"IMAP source should be attempted; "+
-						"output:\n%s",
-					output,
-				)
-			}
+			assert.Contains(output, "i@example.com",
+				"IMAP source should be attempted; output:\n%s", output)
 
 			// The OAuth error should be surfaced, not
 			// masked as "no accounts are ready to sync".
-			if strings.Contains(errMsg, "no accounts are ready") {
-				t.Errorf(
-					"should surface OAuth error, not "+
-						"generic message; got: %s",
-					errMsg,
-				)
-			}
+			assert.NotContains(errMsg, "no accounts are ready",
+				"should surface OAuth error, not generic message")
 
 			// The actual OAuth parse error must appear in
 			// the returned error, not just a count.
-			if !strings.Contains(errMsg, "parse client secrets") {
-				t.Errorf(
-					"returned error should contain OAuth "+
-						"parse error; got: %s",
-					errMsg,
-				)
-			}
+			assert.Contains(errMsg, "parse client secrets",
+				"returned error should contain OAuth parse error")
 		})
 	}
 }
@@ -487,45 +390,33 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 // even in a mixed Gmail+IMAP setup where Gmail would otherwise
 // succeed first.
 func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	// Create both Gmail and IMAP sources. The Gmail source is
 	// made fully syncable (OAuth config + token) so that without
 	// the early validation it would be selected and synced before
 	// the IMAP source rejects the malformed date.
 	_, err = s.GetOrCreateSource("gmail", "g@example.com")
-	if err != nil {
-		t.Fatalf("create gmail source: %v", err)
-	}
+	require.NoError(err, "create gmail source")
 	_, err = s.GetOrCreateSource("imap", "i@example.com")
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	require.NoError(err, "create imap source")
 	_ = s.Close()
 
 	// Write OAuth client secrets and a fake token so the Gmail
 	// source passes discovery checks (HasAnyConfig + HasToken).
 	secretsPath := filepath.Join(tmpDir, "client_secret.json")
-	if err := os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600); err != nil {
-		t.Fatalf("write client secrets: %v", err)
-	}
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write client secrets")
 	tokensDir := filepath.Join(tmpDir, "tokens")
-	if err := os.MkdirAll(tokensDir, 0700); err != nil {
-		t.Fatalf("create tokens dir: %v", err)
-	}
+	require.NoError(os.MkdirAll(tokensDir, 0700), "create tokens dir")
 	fakeToken := `{"access_token":"fake","token_type":"Bearer"}`
-	if err := os.WriteFile(filepath.Join(tokensDir, "g@example.com.json"), []byte(fakeToken), 0600); err != nil {
-		t.Fatalf("write fake token: %v", err)
-	}
+	require.NoError(os.WriteFile(filepath.Join(tokensDir, "g@example.com.json"), []byte(fakeToken), 0600), "write fake token")
 
 	savedCfg := cfg
 	savedLogger := logger
@@ -559,43 +450,30 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	err = root.Execute()
 	output := getOutput()
 
-	if err == nil {
-		t.Fatal("expected error for malformed date")
-	}
-	if !strings.Contains(err.Error(), "--after") {
-		t.Errorf("error should mention --after; got: %s", err.Error())
-	}
+	require.Error(err, "expected error for malformed date")
+	require.ErrorContains(err, "--after")
 	// No source should have been attempted — the date error
 	// must fire before source discovery, not after Gmail syncs.
-	if strings.Contains(output, "Starting full sync") {
-		t.Error("no sync should start when date flag is invalid")
-	}
+	assert.NotContains(output, "Starting full sync", "no sync should start when date flag is invalid")
 }
 
 // TestSyncFullCmd_MalformedIMAPDateFlagErrors verifies that malformed
 // --after/--before flags produce a clear error for IMAP sources
 // instead of silently syncing the entire mailbox.
 func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
+	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
 
 	src, err := s.GetOrCreateSource("imap", "i@example.com")
-	if err != nil {
-		t.Fatalf("create imap source: %v", err)
-	}
+	require.NoError(err, "create imap source")
 	// Store a minimal IMAP config so buildAPIClient reaches
 	// the date-parsing code instead of failing on missing config.
-	if err := s.UpdateSourceSyncConfig(src.ID, `{"host":"localhost","port":993,"username":"i@example.com","tls":true}`); err != nil {
-		t.Fatalf("set sync config: %v", err)
-	}
+	require.NoError(s.UpdateSourceSyncConfig(src.ID, `{"host":"localhost","port":993,"username":"i@example.com","tls":true}`), "set sync config")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -642,21 +520,9 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			})
 
 			err := root.Execute()
-			if err == nil {
-				t.Fatal("expected error for malformed date")
-			}
-			if !strings.Contains(err.Error(), tc.errStr) {
-				t.Errorf(
-					"error should mention %q; got: %s",
-					tc.errStr, err.Error(),
-				)
-			}
-			if !strings.Contains(err.Error(), "YYYY-MM-DD") {
-				t.Errorf(
-					"error should mention expected format; got: %s",
-					err.Error(),
-				)
-			}
+			requirepkg.Error(t, err, "expected error for malformed date")
+			requirepkg.ErrorContains(t, err, tc.errStr, "error should mention %q", tc.errStr)
+			assertpkg.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
 		})
 	}
 }
@@ -673,37 +539,27 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 		{"sync-full", syncFullCmd.RunE},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := requirepkg.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
 			s, err := store.Open(dbPath)
-			if err != nil {
-				t.Fatalf("open store: %v", err)
-			}
-			if err := s.InitSchema(); err != nil {
-				t.Fatalf("init schema: %v", err)
-			}
+			require.NoError(err, "open store")
+			require.NoError(s.InitSchema(), "init schema")
 
 			gmailSrc, err := s.GetOrCreateSource(
 				"gmail", "g@example.com",
 			)
-			if err != nil {
-				t.Fatalf("create source: %v", err)
-			}
-			if err := s.UpdateSourceSyncCursor(gmailSrc.ID, "1"); err != nil {
-				t.Fatalf("set cursor: %v", err)
-			}
+			require.NoError(err, "create source")
+			require.NoError(s.UpdateSourceSyncCursor(gmailSrc.ID, "1"), "set cursor")
 			_ = s.Close()
 
 			secretsPath := filepath.Join(
 				tmpDir, "client_secret.json",
 			)
-			err = os.WriteFile(
+			require.NoError(os.WriteFile(
 				secretsPath, []byte("not json"), 0600,
-			)
-			if err != nil {
-				t.Fatalf("write secrets: %v", err)
-			}
+			), "write secrets")
 
 			savedCfg := cfg
 			savedLogger := logger
@@ -734,19 +590,12 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 			root.SetArgs([]string{tc.name})
 
 			err = root.Execute()
-			if err == nil {
-				t.Fatal("expected error")
-			}
+			require.Error(err, "expected error")
 
 			errMsg := err.Error()
 
 			// Should surface the real OAuth parse error.
-			if !strings.Contains(errMsg, "client secrets") {
-				t.Errorf(
-					"expected OAuth parse error; got: %s",
-					errMsg,
-				)
-			}
+			assertpkg.Contains(t, errMsg, "client secrets", "expected OAuth parse error")
 		})
 	}
 }

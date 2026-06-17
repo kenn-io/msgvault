@@ -3,11 +3,12 @@ package cmd
 import (
 	"bytes"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/deletion"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/deletion"
 )
 
 func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
@@ -23,44 +24,31 @@ func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("err = nil, want mutual-exclusion error")
-	}
-	if !strings.Contains(err.Error(), "permanent") || !strings.Contains(err.Error(), "yes") {
-		t.Errorf("err = %q, want substrings 'permanent' and 'yes'", err.Error())
-	}
+	requirepkg.Error(t, err, "want mutual-exclusion error")
+	assertpkg.Contains(t, err.Error(), "permanent")
+	assertpkg.Contains(t, err.Error(), "yes")
 }
 
 func TestListDeletions_ShowsCancelled(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tmpDir := t.TempDir()
 	mgr, err := deletion.NewManager(tmpDir)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
+	require.NoError(err, "NewManager")
 
 	manifest := deletion.NewManifest("test cancel", []string{"abc123"})
-	if err := manifest.Save(filepath.Join(tmpDir, "pending", manifest.ID+".json")); err != nil {
-		t.Fatalf("save manifest: %v", err)
-	}
-	if err := mgr.CancelManifest(manifest.ID); err != nil {
-		t.Fatalf("CancelManifest: %v", err)
-	}
+	require.NoError(manifest.Save(filepath.Join(tmpDir, "pending", manifest.ID+".json")), "save manifest")
+	require.NoError(mgr.CancelManifest(manifest.ID), "CancelManifest")
 
 	var buf bytes.Buffer
-	if err := runListDeletionsForManager(mgr, &buf); err != nil {
-		t.Fatalf("runListDeletionsForManager: %v", err)
-	}
+	require.NoError(runListDeletionsForManager(mgr, &buf), "runListDeletionsForManager")
 
-	if !strings.Contains(buf.String(), "Cancelled") {
-		t.Errorf("output missing 'Cancelled' header:\n%s", buf.String())
-	}
+	assert.Contains(buf.String(), "Cancelled", "output missing 'Cancelled' header")
 	// The ID is truncated to 25 chars in the table; check the first 20 chars
 	// (the timestamp prefix) which always survive truncation.
 	idPrefix := manifest.ID
 	if len(idPrefix) > 20 {
 		idPrefix = idPrefix[:20]
 	}
-	if !strings.Contains(buf.String(), idPrefix) {
-		t.Errorf("output missing manifest ID prefix %q:\n%s", idPrefix, buf.String())
-	}
+	assert.Contains(buf.String(), idPrefix, "output missing manifest ID prefix %q", idPrefix)
 }

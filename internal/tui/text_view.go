@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // renderTextView renders the current Texts mode view.
@@ -38,12 +38,9 @@ func (m Model) textHeaderView() string {
 
 	breadcrumbStyled := statsStyle.Render(" " + breadcrumb + " ")
 	statsStyled := statsStyle.Render(statsStr + " ")
-	gap := m.width -
-		lipgloss.Width(breadcrumbStyled) -
-		lipgloss.Width(statsStyled)
-	if gap < 0 {
-		gap = 0
-	}
+	gap := max(m.width-
+		lipgloss.Width(breadcrumbStyled)-
+		lipgloss.Width(statsStyled), 0)
 	line2 := breadcrumbStyled +
 		strings.Repeat(" ", gap) + statsStyled
 
@@ -91,7 +88,7 @@ func (m Model) textBreadcrumb() string {
 		if m.textState.filter.SortDirection == query.SortDesc {
 			order = "\u2193 newest first"
 		}
-		return fmt.Sprintf("Timeline %s", order)
+		return "Timeline " + order
 	}
 	return ""
 }
@@ -193,14 +190,8 @@ func (m Model) textConversationsView() string {
 
 	// Visible row range
 	// Available data rows = pageSize - header(1) - separator(1) - info(1)
-	availRows := m.pageSize - 1
-	if availRows < 1 {
-		availRows = 1
-	}
-	endRow := m.textState.scrollOffset + availRows
-	if endRow > len(m.textState.conversations) {
-		endRow = len(m.textState.conversations)
-	}
+	availRows := max(m.pageSize-1, 1)
+	endRow := min(m.textState.scrollOffset+availRows, len(m.textState.conversations))
 
 	// Measure source column from visible data
 	sourceVals := make(
@@ -212,10 +203,7 @@ func (m Model) textConversationsView() string {
 			m.textState.conversations[i].SourceType,
 		)
 	}
-	sourceWidth := measureMaxWidth(sourceVals, len("Source"))
-	if sourceWidth > 16 {
-		sourceWidth = 16
-	}
+	sourceWidth := min(measureMaxWidth(sourceVals, len("Source")), 16)
 
 	// Fixed column widths
 	const (
@@ -226,10 +214,7 @@ func (m Model) textConversationsView() string {
 	)
 	fixedTotal := indicatorWidth + sourceWidth +
 		msgsWidth + lastMsgWidth + colSpacing
-	nameWidth := m.width - fixedTotal
-	if nameWidth < 15 {
-		nameWidth = 15
-	}
+	nameWidth := max(m.width-fixedTotal, 15)
 
 	// Header with sort indicators
 	sortArrow := func(field query.TextSortField) string {
@@ -366,14 +351,8 @@ func (m Model) textAggregateView() string {
 	var sb strings.Builder
 
 	// Available data rows = pageSize - header(1) - separator(1) - info(1)
-	aggAvailRows := m.pageSize - 1
-	if aggAvailRows < 1 {
-		aggAvailRows = 1
-	}
-	endRow := m.textState.scrollOffset + aggAvailRows
-	if endRow > len(m.textState.aggregateRows) {
-		endRow = len(m.textState.aggregateRows)
-	}
+	aggAvailRows := max(m.pageSize-1, 1)
+	endRow := min(m.textState.scrollOffset+aggAvailRows, len(m.textState.aggregateRows))
 
 	// Fixed column widths
 	const (
@@ -385,10 +364,7 @@ func (m Model) textAggregateView() string {
 	)
 	fixedTotal := indicatorWidth + countWidth +
 		sizeWidth + attachWidth + colSpacing
-	keyWidth := m.width - fixedTotal
-	if keyWidth < 20 {
-		keyWidth = 20
-	}
+	keyWidth := max(m.width-fixedTotal, 20)
 
 	// Sort indicators
 	sortInd := func(field query.TextSortField) string {
@@ -556,13 +532,12 @@ func (m Model) textTimelineView() string {
 		isFirst bool // first line of this message (shows cursor)
 	}
 
-	bodyWidth := m.width - 6 // indent + margin
-	if bodyWidth < 20 {
-		bodyWidth = 20
-	}
+	bodyWidth := max(
+		// indent + margin
+		m.width-6, 20)
 
 	var allLines []chatLine
-	for i := 0; i < len(m.textState.messages); i++ {
+	for i := range len(m.textState.messages) {
 		msg := m.textState.messages[i]
 
 		// Sender line: "Name  12:34 PM" or "Name  2026-03-05 12:34"
@@ -578,10 +553,7 @@ func (m Model) textTimelineView() string {
 		}
 		timeStr := msg.SentAt.Format("2006-01-02 15:04")
 		// Right-justify timestamp: sender on left, time on right
-		gap := bodyWidth - len(from) - len(timeStr)
-		if gap < 2 {
-			gap = 2
-		}
+		gap := max(bodyWidth-len(from)-len(timeStr), 2)
 		headerLine := from + strings.Repeat(" ", gap) + timeStr
 
 		allLines = append(allLines, chatLine{
@@ -620,14 +592,8 @@ func (m Model) textTimelineView() string {
 
 	// Ensure cursor is visible with some body context.
 	// Available lines = pageSize - header(1) - separator(1) - info(1)
-	visibleLines := m.pageSize - 1
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
-	scrollLine := m.textState.scrollOffset
-	if cursorLine < scrollLine {
-		scrollLine = cursorLine
-	}
+	visibleLines := max(m.pageSize-1, 1)
+	scrollLine := min(cursorLine, m.textState.scrollOffset)
 	// Show the message header plus a few body lines (not just
 	// the header), so long messages don't appear cut off.
 	cursorEndLine := cursorLine + 3
@@ -760,12 +726,9 @@ func (m Model) textFooterView() string {
 	}
 
 	keysStr := strings.Join(keys, " \u2502 ")
-	gap := m.width -
-		lipgloss.Width(keysStr) -
-		lipgloss.Width(posStr) - 2
-	if gap < 0 {
-		gap = 0
-	}
+	gap := max(m.width-
+		lipgloss.Width(keysStr)-
+		lipgloss.Width(posStr)-2, 0)
 
 	return footerStyle.Render(
 		keysStr + strings.Repeat(" ", gap) + posStr,

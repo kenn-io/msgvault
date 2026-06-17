@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// ErrSourceNotFound is returned by GetSourceByID when no source row
-// matches the given ID. Wrapped via fmt.Errorf("...: %w", ...) so
+// ErrSourceNotFound is returned by GetSourceByID and GetSourceByIdentifier
+// when no source row matches. Wrapped via fmt.Errorf("...: %w", ...) so
 // callers can use errors.Is to distinguish absence from real DB
 // errors.
 var ErrSourceNotFound = errors.New("source not found")
@@ -25,7 +25,7 @@ func (s *Store) GetSourceByID(id int64) (*Source, error) {
 	`, id)
 
 	source, err := scanSource(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("source %d: %w", id, ErrSourceNotFound)
 	}
 	if err != nil {
@@ -126,8 +126,14 @@ func (s *Store) GetSourcesByDisplayName(displayName string) ([]*Source, error) {
 // FTS5 rows are cleaned up explicitly (no FK cascade for virtual tables).
 // CASCADE handles conversations, messages, labels, attachments, sync state.
 // Orphaned participants are left for a future `gc` command.
+//
+// Runs under runMaintenance: the cascade DELETE removes millions of rows
+// across messages/recipients/labels/bodies/raw on a large archive and the
+// FTSDelete rewrites every matching tsvector, so the maintenance hatch
+// disables the pool-wide 30s statement_timeout for this tx (finding S1).
+// No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
-	return s.withTx(func(tx *loggedTx) error {
+	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
 		return s.removeSourceExec(tx, sourceID)
 	})
 }
@@ -151,7 +157,7 @@ func (s *Store) RemoveSourceSerialized(
 	}
 	defer func() { _ = conn.Close() }()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
 		return false, fmt.Errorf("begin exclusive: %w", err)
 	}
 	committed := false
@@ -163,7 +169,7 @@ func (s *Store) RemoveSourceSerialized(
 
 	var count int
 	if err := conn.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sync_runs WHERE status = 'running'`,
+		s.dialect.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE status = 'running'`),
 	).Scan(&count); err != nil {
 		return false, fmt.Errorf("check active syncs: %w", err)
 	}
@@ -178,7 +184,7 @@ func (s *Store) RemoveSourceSerialized(
 	}
 
 	res, err := conn.ExecContext(
-		ctx, `DELETE FROM sources WHERE id = ?`, sourceID,
+		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
 	if err != nil {
 		return hadActiveSync, fmt.Errorf("delete source: %w", err)

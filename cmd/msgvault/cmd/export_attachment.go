@@ -3,14 +3,15 @@ package cmd
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/export"
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var (
@@ -54,14 +55,14 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 
 	// Validate flag combinations
 	if exportAttachmentJSON && exportAttachmentBase64 {
-		return fmt.Errorf("--json and --base64 are mutually exclusive")
+		return usageErr(cmd, errors.New("--json and --base64 are mutually exclusive"))
 	}
 	if exportAttachmentOutput != "" && exportAttachmentOutput != "-" {
 		if exportAttachmentJSON {
-			return fmt.Errorf("--json and --output are mutually exclusive (--json writes to stdout)")
+			return usageErr(cmd, errors.New("--json and --output are mutually exclusive (--json writes to stdout)"))
 		}
 		if exportAttachmentBase64 {
-			return fmt.Errorf("--base64 and --output are mutually exclusive (--base64 writes to stdout)")
+			return usageErr(cmd, errors.New("--base64 and --output are mutually exclusive (--base64 writes to stdout)"))
 		}
 	}
 
@@ -84,7 +85,7 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 	if exportAttachmentBase64 {
 		return exportAttachmentAsBase64(storagePath)
 	}
-	return exportAttachmentBinary(storagePath, contentHash)
+	return exportAttachmentBinary(storagePath)
 }
 
 func exportAttachmentAsJSON(storagePath, contentHash string) error {
@@ -121,7 +122,7 @@ func exportAttachmentAsBase64(storagePath string) error {
 	return nil
 }
 
-func exportAttachmentBinary(storagePath, contentHash string) error {
+func exportAttachmentBinary(storagePath string) error {
 	f, err := openAttachmentFile(storagePath)
 	if err != nil {
 		return err
@@ -179,6 +180,6 @@ func readAttachmentFile(storagePath, contentHash string) ([]byte, error) {
 func init() {
 	rootCmd.AddCommand(exportAttachmentCmd)
 	exportAttachmentCmd.Flags().StringVarP(&exportAttachmentOutput, "output", "o", "", "Output file path (default: stdout, use - for stdout)")
-	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentJSON, "json", false, "Output as JSON with base64-encoded data")
+	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentJSON, flagJSON, false, "Output as JSON with base64-encoded data")
 	exportAttachmentCmd.Flags().BoolVar(&exportAttachmentBase64, "base64", false, "Output raw base64 to stdout")
 }

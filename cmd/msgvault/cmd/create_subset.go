@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var createSubsetCmd = &cobra.Command{
@@ -49,10 +50,16 @@ func runCreateSubset(cmd *cobra.Command, _ []string) error {
 	}
 
 	if subsetRows <= 0 {
-		return fmt.Errorf("--rows must be a positive integer")
+		return usageErr(cmd, errors.New("--rows must be a positive integer"))
 	}
 
 	srcDBPath := cfg.DatabaseDSN()
+	// store.CopySubset uses ATTACH DATABASE + SQLite-only file-stat
+	// semantics; refuse early on a PG DSN to mirror the equivalent
+	// guard in backupDatabase (cmd/msgvault/cmd/deduplicate.go).
+	if store.IsPostgresURL(srcDBPath) {
+		return errors.New("create-subset is SQLite-only (uses ATTACH DATABASE); not supported with PostgreSQL stores")
+	}
 	if _, err := os.Stat(srcDBPath); os.IsNotExist(err) {
 		return fmt.Errorf(
 			"source database not found: %s\n"+

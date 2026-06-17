@@ -2,13 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
-	"github.com/wesm/msgvault/internal/query"
-	"github.com/wesm/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // highlightTerms applies highlight styling to all occurrences of search terms in text.
@@ -66,7 +67,7 @@ func applyHighlight(text string, terms []string) string {
 		}
 		for i := 0; i <= len(lowerRunes)-tLen; i++ {
 			match := true
-			for j := 0; j < tLen; j++ {
+			for j := range tLen {
 				if lowerRunes[i+j] != termLowerRunes[j] {
 					match = false
 					break
@@ -131,7 +132,7 @@ func formatBytes(bytes int64) string {
 // formatCount formats a count as a human-readable string (e.g., "1.5K", "2.3M").
 func formatCount(n int64) string {
 	if n < 1000 {
-		return fmt.Sprintf("%d", n)
+		return strconv.FormatInt(n, 10)
 	}
 	if n < 1000000 {
 		return fmt.Sprintf("%.1fK", float64(n)/1000)
@@ -192,9 +193,9 @@ func wrapText(text string, width int) []string {
 	}
 
 	var result []string
-	lines := strings.Split(text, "\n")
+	lines := strings.SplitSeq(text, "\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		lineWidth := runewidth.StringWidth(line)
 		if lineWidth <= width {
 			result = append(result, line)

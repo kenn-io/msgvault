@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,10 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -23,9 +23,7 @@ func setupTestManager(t *testing.T, scopes []string) *Manager {
 	t.Helper()
 	dir := t.TempDir()
 	tokensDir := filepath.Join(dir, "tokens")
-	if err := os.MkdirAll(tokensDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, os.MkdirAll(tokensDir, 0700))
 	return &Manager{
 		config:    &oauth2.Config{Scopes: scopes},
 		tokensDir: tokensDir,
@@ -40,23 +38,15 @@ func writeTokenFile(t *testing.T, mgr *Manager, email string, token oauth2.Token
 		Scopes: scopes,
 	}
 	data, err := json.Marshal(tf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
 }
 
 func writeLegacyTokenFile(t *testing.T, mgr *Manager, email string, token oauth2.Token) {
 	t.Helper()
 	data, err := json.Marshal(token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, err)
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
 }
 
 var testToken = oauth2.Token{AccessToken: "test", TokenType: "Bearer"}
@@ -69,7 +59,7 @@ func assertNoSend[T any](t *testing.T, ch <-chan T, chanName string) {
 	const noSendTimeout = 100 * time.Millisecond
 	select {
 	case v := <-ch:
-		t.Errorf("unexpected value on %s: %v", chanName, v)
+		assertpkg.Failf(t, "unexpected value", "unexpected value on %s: %v", chanName, v)
 	case <-time.After(noSendTimeout):
 		// expected: no value arrived
 	}
@@ -106,9 +96,7 @@ func TestScopesToString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := scopesToString(tt.scopes)
-			if got != tt.want {
-				t.Errorf("scopesToString() = %q, want %q", got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "scopesToString()")
 		})
 	}
 }
@@ -122,22 +110,21 @@ func TestHasScope(t *testing.T) {
 	})
 
 	// Has a scope that was saved
-	if !mgr.HasScope("test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly") {
-		t.Error("expected HasScope to return true for gmail.readonly")
-	}
+	assertpkg.True(t, mgr.HasScope("test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+		"expected HasScope to return true for gmail.readonly")
 
 	// Does not have deletion scope
-	if mgr.HasScope("test@gmail.com", "https://mail.google.com/") {
-		t.Error("expected HasScope to return false for mail.google.com")
-	}
+	assertpkg.False(t, mgr.HasScope("test@gmail.com", "https://mail.google.com/"),
+		"expected HasScope to return false for mail.google.com")
 
 	// Non-existent account
-	if mgr.HasScope("missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly") {
-		t.Error("expected HasScope to return false for missing account")
-	}
+	assertpkg.False(t, mgr.HasScope("missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+		"expected HasScope to return false for missing account")
 }
 
 func TestTokenFileScopesRoundTrip(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mgr := setupTestManager(t, ScopesDeletion)
 
 	token := &oauth2.Token{
@@ -146,31 +133,23 @@ func TestTokenFileScopesRoundTrip(t *testing.T) {
 		TokenType:    "Bearer",
 	}
 
-	if err := mgr.saveToken("test@gmail.com", token, ScopesDeletion); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(mgr.saveToken("test@gmail.com", token, ScopesDeletion))
 
 	// Load and verify scopes were saved
 	tf, err := mgr.loadTokenFile("test@gmail.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
-	if len(tf.Scopes) != 1 || tf.Scopes[0] != "https://mail.google.com/" {
-		t.Errorf("expected ScopesDeletion, got %v", tf.Scopes)
-	}
+	require.Len(tf.Scopes, 1, "expected ScopesDeletion")
+	assert.Equal("https://mail.google.com/", tf.Scopes[0], "scopes[0]")
 
 	// loadToken should still work (returns just the token)
 	loaded, err := mgr.loadToken("test@gmail.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.AccessToken != "access" {
-		t.Errorf("expected access token 'access', got %q", loaded.AccessToken)
-	}
+	require.NoError(err)
+	assert.Equal("access", loaded.AccessToken, "access token")
 }
 
 func TestSaveToken_OverwriteExisting(t *testing.T) {
+	require := requirepkg.New(t)
 	mgr := setupTestManager(t, Scopes)
 
 	token1 := &oauth2.Token{
@@ -178,9 +157,7 @@ func TestSaveToken_OverwriteExisting(t *testing.T) {
 		RefreshToken: "refresh1",
 		TokenType:    "Bearer",
 	}
-	if err := mgr.saveToken("test@gmail.com", token1, Scopes); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(mgr.saveToken("test@gmail.com", token1, Scopes))
 
 	// Save again with a different access token — must overwrite (not fail).
 	token2 := &oauth2.Token{
@@ -188,17 +165,12 @@ func TestSaveToken_OverwriteExisting(t *testing.T) {
 		RefreshToken: "refresh2",
 		TokenType:    "Bearer",
 	}
-	if err := mgr.saveToken("test@gmail.com", token2, Scopes); err != nil {
-		t.Fatalf("second saveToken should overwrite existing file: %v", err)
-	}
+	require.NoError(mgr.saveToken("test@gmail.com", token2, Scopes),
+		"second saveToken should overwrite existing file")
 
 	loaded, err := mgr.loadToken("test@gmail.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.AccessToken != "second" {
-		t.Errorf("expected access token 'second' after overwrite, got %q", loaded.AccessToken)
-	}
+	require.NoError(err)
+	assertpkg.Equal(t, "second", loaded.AccessToken, "access token after overwrite")
 }
 
 func TestHasScope_LegacyToken(t *testing.T) {
@@ -206,9 +178,8 @@ func TestHasScope_LegacyToken(t *testing.T) {
 
 	writeLegacyTokenFile(t, mgr, "legacy@gmail.com", testToken)
 
-	if mgr.HasScope("legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly") {
-		t.Error("expected HasScope to return false for legacy token")
-	}
+	assertpkg.False(t, mgr.HasScope("legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+		"expected HasScope to return false for legacy token")
 }
 
 func TestHasScopeMetadata(t *testing.T) {
@@ -218,9 +189,7 @@ func TestHasScopeMetadata(t *testing.T) {
 		"https://www.googleapis.com/auth/gmail.readonly",
 	})
 	writeLegacyTokenFile(t, mgr, "legacy@gmail.com", testToken)
-	if err := os.WriteFile(filepath.Join(mgr.tokensDir, "corrupt@gmail.com.json"), []byte("not json"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, "corrupt@gmail.com.json"), []byte("not json"), 0600))
 
 	tests := []struct {
 		name  string
@@ -236,9 +205,7 @@ func TestHasScopeMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mgr.HasScopeMetadata(tt.email)
-			if got != tt.want {
-				t.Errorf("HasScopeMetadata(%q) = %v, want %v", tt.email, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "HasScopeMetadata(%q)", tt.email)
 		})
 	}
 }
@@ -258,9 +225,7 @@ func TestShellQuote(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := shellQuote(tt.input)
-			if got != tt.want {
-				t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "shellQuote(%q)", tt.input)
 		})
 	}
 }
@@ -280,14 +245,14 @@ func TestSanitizeEmail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.email, func(t *testing.T) {
 			got := sanitizeEmail(tt.email)
-			if got != tt.want {
-				t.Errorf("sanitizeEmail(%q) = %q, want %q", tt.email, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "sanitizeEmail(%q)", tt.email)
 		})
 	}
 }
 
 func TestTokenPath_SymlinkEscape(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	// This test verifies that symlinks inside tokensDir cannot be used
 	// to write tokens outside the tokens directory.
 	//
@@ -300,12 +265,8 @@ func TestTokenPath_SymlinkEscape(t *testing.T) {
 	tokensDir := filepath.Join(dir, "tokens")
 	outsideDir := filepath.Join(dir, "outside")
 
-	if err := os.MkdirAll(tokensDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(outsideDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.MkdirAll(tokensDir, 0700))
+	require.NoError(os.MkdirAll(outsideDir, 0700))
 
 	// Create a symlink inside tokensDir that points outside
 	symlinkPath := filepath.Join(tokensDir, "evil.json")
@@ -324,15 +285,12 @@ func TestTokenPath_SymlinkEscape(t *testing.T) {
 	gotPath := mgr.tokenPath("evil")
 
 	// The path should NOT be the symlink (which would write outside tokensDir)
-	if gotPath == symlinkPath {
-		t.Errorf("tokenPath returned symlink path %q, should use hash-based fallback to prevent escape", gotPath)
-	}
+	assert.NotEqual(symlinkPath, gotPath,
+		"tokenPath returned symlink path %q, should use hash-based fallback to prevent escape", gotPath)
 
 	// Verify the returned path is exactly the expected hash-based fallback
 	expectedPath := filepath.Join(tokensDir, fmt.Sprintf("%x.json", sha256.Sum256([]byte("evil"))))
-	if gotPath != expectedPath {
-		t.Errorf("tokenPath = %q, want hash-based fallback %q", gotPath, expectedPath)
-	}
+	assert.Equal(expectedPath, gotPath, "tokenPath should match hash-based fallback")
 }
 
 func TestHasPathPrefix(t *testing.T) {
@@ -376,9 +334,7 @@ func TestHasPathPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := hasPathPrefix(tt.path, tt.dir)
-			if got != tt.want {
-				t.Errorf("hasPathPrefix(%q, %q) = %v, want %v", tt.path, tt.dir, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "hasPathPrefix(%q, %q)", tt.path, tt.dir)
 		})
 	}
 }
@@ -465,15 +421,9 @@ func TestParseClientSecrets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := parseClientSecrets([]byte(tt.data), Scopes)
 			if tt.wantErr == "" {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
+				assertpkg.NoError(t, err)
 			} else {
-				if err == nil {
-					t.Error("expected error, got nil")
-				} else if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantErr)
-				}
+				assertpkg.ErrorContains(t, err, tt.wantErr)
 			}
 		})
 	}
@@ -532,6 +482,7 @@ func TestNewCallbackHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
 			codeChan := make(chan string, 1)
 			errChan := make(chan error, 1)
 
@@ -546,24 +497,20 @@ func TestNewCallbackHandler(t *testing.T) {
 
 			handler(rec, req)
 
-			if rec.Code != tt.wantStatusCode {
-				t.Errorf("status code = %d, want %d", rec.Code, tt.wantStatusCode)
-			}
+			assert.Equal(tt.wantStatusCode, rec.Code, "status code")
 
 			body := rec.Body.String()
-			if tt.wantBodyContains != "" && !strings.Contains(body, tt.wantBodyContains) {
-				t.Errorf("body = %q, want to contain %q", body, tt.wantBodyContains)
+			if tt.wantBodyContains != "" {
+				assert.Contains(body, tt.wantBodyContains, "body")
 			}
 
 			// Check for expected code on success
 			if tt.wantCode != "" {
 				select {
 				case code := <-codeChan:
-					if code != tt.wantCode {
-						t.Errorf("code = %q, want %q", code, tt.wantCode)
-					}
+					assert.Equal(tt.wantCode, code, "code")
 				default:
-					t.Error("expected code on codeChan, got nothing")
+					assert.Fail("expected code on codeChan, got nothing")
 				}
 			} else {
 				assertNoSend(t, codeChan, "codeChan")
@@ -573,11 +520,9 @@ func TestNewCallbackHandler(t *testing.T) {
 			if tt.wantErr != "" {
 				select {
 				case err := <-errChan:
-					if err.Error() != tt.wantErr {
-						t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
-					}
+					assert.Equal(tt.wantErr, err.Error(), "error")
 				default:
-					t.Error("expected error on errChan, got nothing")
+					assert.Fail("expected error on errChan, got nothing")
 				}
 			} else {
 				assertNoSend(t, errChan, "errChan")
@@ -595,6 +540,8 @@ func TestNewCallbackHandler(t *testing.T) {
 // Regression: a previous version saved under canonicalEmail, which
 // broke HasToken/TokenSource lookups elsewhere in the app.
 func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	const canonicalEmail = "firstlast@gmail.com"
 
 	// Mock Gmail profile endpoint returning the canonical address.
@@ -621,30 +568,24 @@ func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
 	}
 
 	inputEmail := "first.last@gmail.com"
-	if err := mgr.Authorize(context.Background(), inputEmail); err != nil {
-		t.Fatalf("Authorize: %v", err)
-	}
+	require.NoError(mgr.Authorize(context.Background(), inputEmail), "Authorize")
 
 	// Token must be loadable under the original identifier.
 	loaded, err := mgr.loadToken(inputEmail)
-	if err != nil {
-		t.Fatalf("loadToken(%q) failed: %v", inputEmail, err)
-	}
-	if loaded.AccessToken != "test-access-token" {
-		t.Errorf("wrong access token: got %q", loaded.AccessToken)
-	}
+	require.NoError(err, "loadToken(%q)", inputEmail)
+	assert.Equal("test-access-token", loaded.AccessToken, "access token")
 
 	// Token must NOT exist under the canonical email.
-	if _, err := mgr.loadToken(canonicalEmail); err == nil {
-		t.Errorf("token should NOT exist under canonical %q",
-			canonicalEmail)
-	}
+	_, err = mgr.loadToken(canonicalEmail)
+	assert.Error(err, "token should NOT exist under canonical %q", canonicalEmail)
 }
 
 // TestAuthorize_RejectsMismatch verifies that authorize() rejects
 // tokens where the profile email is for a different account and
 // does NOT persist a token file.
 func TestAuthorize_RejectsMismatch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -666,31 +607,19 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 	}
 
 	err := mgr.Authorize(context.Background(), "expected@gmail.com")
-	if err == nil {
-		t.Fatal("expected error for mismatched email")
-	}
+	require.Error(err, "expected error for mismatched email")
 
 	var mismatch *TokenMismatchError
-	if !errors.As(err, &mismatch) {
-		t.Fatalf("expected TokenMismatchError, got %T: %v",
-			err, err)
-	}
-	if mismatch.Expected != "expected@gmail.com" {
-		t.Errorf("Expected = %q, want expected@gmail.com",
-			mismatch.Expected)
-	}
-	if mismatch.Actual != "wrong@gmail.com" {
-		t.Errorf("Actual = %q, want wrong@gmail.com",
-			mismatch.Actual)
-	}
+	require.ErrorAs(err, &mismatch,
+		"expected TokenMismatchError, got %T: %v", err, err)
+	assert.Equal("expected@gmail.com", mismatch.Expected, "Expected")
+	assert.Equal("wrong@gmail.com", mismatch.Actual, "Actual")
 
 	// No token should have been saved under either address.
-	if _, loadErr := mgr.loadToken("expected@gmail.com"); loadErr == nil {
-		t.Error("token should NOT be saved under expected address")
-	}
-	if _, loadErr := mgr.loadToken("wrong@gmail.com"); loadErr == nil {
-		t.Error("token should NOT be saved under profile address")
-	}
+	_, loadErr := mgr.loadToken("expected@gmail.com")
+	require.Error(loadErr, "token should NOT be saved under expected address")
+	_, loadErr = mgr.loadToken("wrong@gmail.com")
+	assert.Error(loadErr, "token should NOT be saved under profile address")
 }
 
 // TestAuthorize_WorkspaceAliasMismatch verifies that a Workspace
@@ -698,6 +627,8 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 // same domain is rejected (we can't verify aliases without admin
 // API access, so we reject to prevent token pollution).
 func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -719,27 +650,18 @@ func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
 	}
 
 	err := mgr.Authorize(context.Background(), "alias@company.com")
-	if err == nil {
-		t.Fatal("expected error for Workspace alias mismatch")
-	}
+	require.Error(err, "expected error for Workspace alias mismatch")
 
 	var mismatch *TokenMismatchError
-	if !errors.As(err, &mismatch) {
-		t.Fatalf("expected TokenMismatchError, got %T: %v",
-			err, err)
-	}
-	if mismatch.Actual != "primary@company.com" {
-		t.Errorf("Actual = %q, want primary@company.com",
-			mismatch.Actual)
-	}
+	require.ErrorAs(err, &mismatch,
+		"expected TokenMismatchError, got %T: %v", err, err)
+	assert.Equal("primary@company.com", mismatch.Actual, "Actual")
 
 	// No token should exist under either address.
-	if _, loadErr := mgr.loadToken("alias@company.com"); loadErr == nil {
-		t.Error("token should NOT be saved under alias address")
-	}
-	if _, loadErr := mgr.loadToken("primary@company.com"); loadErr == nil {
-		t.Error("token should NOT be saved under primary address")
-	}
+	_, loadErr := mgr.loadToken("alias@company.com")
+	require.Error(loadErr, "token should NOT be saved under alias address")
+	_, loadErr = mgr.loadToken("primary@company.com")
+	assert.Error(loadErr, "token should NOT be saved under primary address")
 }
 
 // TestAuthorize_CrossDomainReject verifies that entirely different
@@ -766,13 +688,8 @@ func TestAuthorize_CrossDomainReject(t *testing.T) {
 	}
 
 	err := mgr.Authorize(context.Background(), "user@company.com")
-	if err == nil {
-		t.Fatal("expected error for cross-domain mismatch")
-	}
-	if !strings.Contains(err.Error(), "token mismatch") {
-		t.Errorf("error should contain 'token mismatch': %q",
-			err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for cross-domain mismatch")
+	assertpkg.ErrorContains(t, err, "token mismatch")
 }
 
 func TestSameGoogleAccount(t *testing.T) {
@@ -802,10 +719,7 @@ func TestSameGoogleAccount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := sameGoogleAccount(tt.expected, tt.canonical)
-			if got != tt.want {
-				t.Errorf("sameGoogleAccount(%q, %q) = %v, want %v",
-					tt.expected, tt.canonical, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "sameGoogleAccount(%q, %q)", tt.expected, tt.canonical)
 		})
 	}
 }
@@ -833,10 +747,7 @@ func TestNormalizeGmailAddress(t *testing.T) {
 		t.Run(tt.email, func(t *testing.T) {
 			t.Parallel()
 			got := normalizeGmailAddress(tt.email)
-			if got != tt.want {
-				t.Errorf("normalizeGmailAddress(%q) = %q, want %q",
-					tt.email, got, tt.want)
-			}
+			assertpkg.Equal(t, tt.want, got, "normalizeGmailAddress(%q)", tt.email)
 		})
 	}
 }
@@ -868,15 +779,9 @@ func TestValidateBrowserURL(t *testing.T) {
 			t.Parallel()
 			err := validateBrowserURL(tt.url)
 			if tt.wantErr == "" {
-				if err != nil {
-					t.Errorf("validateBrowserURL(%q) = %v, want nil", tt.url, err)
-				}
+				assertpkg.NoError(t, err, "validateBrowserURL(%q)", tt.url)
 			} else {
-				if err == nil {
-					t.Errorf("validateBrowserURL(%q) = nil, want error containing %q", tt.url, tt.wantErr)
-				} else if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("validateBrowserURL(%q) error = %q, want to contain %q", tt.url, err.Error(), tt.wantErr)
-				}
+				assertpkg.ErrorContains(t, err, tt.wantErr, "validateBrowserURL(%q)", tt.url)
 			}
 		})
 	}

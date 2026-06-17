@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -50,10 +51,10 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			assert := assertpkg.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
-					t.Errorf("Authorization = %q, want Bearer test-token", got)
-				}
+				assert.Equal("Bearer test-token", r.Header.Get("Authorization"), "Authorization")
 				w.WriteHeader(tt.statusCode)
 				_, _ = fmt.Fprint(w, tt.body)
 			}))
@@ -71,24 +72,14 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 				tokenProfileErrorServiceAccount,
 			)
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("error = nil, want %q", tt.wantErr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error = %v, want %q", err, tt.wantErr)
-				}
+				require.Error(err, "expected error")
+				require.ErrorContains(err, tt.wantErr)
 				var mismatch *TokenMismatchError
-				if errors.As(err, &mismatch) != tt.wantMis {
-					t.Fatalf("TokenMismatchError presence = %v, want %v", errors.As(err, &mismatch), tt.wantMis)
-				}
+				assert.Equal(tt.wantMis, errors.As(err, &mismatch), "TokenMismatchError presence")
 				return
 			}
-			if err != nil {
-				t.Fatalf("fetchTokenProfileEmail: %v", err)
-			}
-			if got != tt.wantEmail {
-				t.Errorf("email = %q, want %q", got, tt.wantEmail)
-			}
+			require.NoError(err, "fetchTokenProfileEmail")
+			assert.Equal(tt.wantEmail, got, "email")
 		})
 	}
 }

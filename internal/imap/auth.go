@@ -2,12 +2,13 @@ package imap
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/wesm/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 type credentialsFile struct {
@@ -17,7 +18,7 @@ type credentialsFile struct {
 // CredentialsPath returns the path to the credentials file for the given identifier.
 func CredentialsPath(tokensDir, identifier string) string {
 	hash := sha256.Sum256([]byte(identifier))
-	prefix := fmt.Sprintf("%x", hash[:8])
+	prefix := hex.EncodeToString(hash[:8])
 	return filepath.Join(tokensDir, "imap_"+prefix+".json")
 }
 
@@ -29,7 +30,7 @@ func SaveCredentials(tokensDir, identifier, password string) error {
 		return fmt.Errorf("create tokens dir: %w", err)
 	}
 	creds := credentialsFile{Password: password}
-	data, err := json.Marshal(creds)
+	data, err := json.Marshal(creds) //nolint:gosec // serialized to a 0600 file on the user's own machine
 	if err != nil {
 		return err
 	}
