@@ -242,17 +242,14 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 		}
 
 		// Hook vector-search enqueue after the batch-insert point.
-		// On PostgreSQL, the pending_embeddings table is the durable
-		// queue; a failed INSERT means those message IDs are silently
-		// dropped from the embed queue with no automatic recovery path,
-		// so treat it as a hard error. On SQLite the queue lives in a
-		// separate vectors.db that may not exist yet, so a warn-only
-		// non-fatal failure is acceptable (full-rebuild picks them up).
+		// A failed enqueue is non-fatal on both backends: the message
+		// rows are already persisted, and any IDs missed by a failed
+		// enqueue are recovered by a full vector rebuild
+		// (`msgvault embed --full-rebuild`), which re-seeds every live
+		// message (both pgvector and sqlitevec provide this path). So we
+		// warn and continue rather than abort the sync.
 		if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
 			if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
-				if s.store.IsPostgreSQL() {
-					return nil, fmt.Errorf("vector enqueue failed (PG): %w", err)
-				}
 				s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
 			}
 		}
