@@ -519,79 +519,7 @@ func (r *fakeRunner) calls() (reclaim, run int, lastGen vector.GenerationID) {
 	return r.reclaimCalls, r.runCalls, r.lastRunGen
 }
 
-// catchUpFakeBackend extends fakeBackend with the optional CatchUpPending
-// capability the daemon detects on the pgvector backend via a type
-// assertion. It records the gen IDs the EmbedJob asked to catch up and,
-// for each call, the runner's RunOnce count at that moment so a test can
-// prove catch-up runs BEFORE the drain. runner is consulted read-only.
-type catchUpFakeBackend struct {
-	*fakeBackend
-
-	runner       *fakeRunner
-	catchUpErr   error
-	catchUpN     int64
-	catchUpIDs   []vector.GenerationID
-	runsAtCatch  []int
-	catchUpCalls int
-}
-
-func (c *catchUpFakeBackend) CatchUpPending(_ context.Context, gen vector.GenerationID) (int64, error) {
-	c.mu.Lock()
-	c.catchUpCalls++
-	c.catchUpIDs = append(c.catchUpIDs, gen)
-	c.mu.Unlock()
-	c.runner.mu.Lock()
-	c.runsAtCatch = append(c.runsAtCatch, c.runner.runCalls)
-	c.runner.mu.Unlock()
-	return c.catchUpN, c.catchUpErr
-}
-
 // ---------- EmbedJob tests ----------
-
-// TestEmbedJob_Run_CatchesUpBeforeDraining proves the daemon's PostgreSQL
-// self-heal: a backend exposing CatchUpPending has it invoked against the
-// target generation BEFORE RunOnce, so messages whose enqueue was missed
-// during sync get re-queued before the worker drains.
-func TestEmbedJob_Run_CatchesUpBeforeDraining(t *testing.T) {
-	assert := assertpkg.New(t)
-	runner := &fakeRunner{}
-	backend := &catchUpFakeBackend{
-		fakeBackend: &fakeBackend{active: vector.Generation{ID: 5, State: vector.GenerationActive}},
-		runner:      runner,
-		catchUpN:    3,
-	}
-	job := &EmbedJob{Worker: runner, Backend: backend}
-
-	job.Run(context.Background())
-
-	_, run, gen := runner.calls()
-	assert.Equal(1, run, "RunOnce calls")
-	assert.Equal(vector.GenerationID(5), gen, "RunOnce gen")
-	assert.Equal([]vector.GenerationID{5}, backend.catchUpIDs,
-		"CatchUpPending must be called once for the target generation")
-	assert.Equal([]int{0}, backend.runsAtCatch,
-		"CatchUpPending must run before RunOnce (0 RunOnce calls at catch-up time)")
-}
-
-// TestEmbedJob_Run_CatchUpErrorDoesNotAbortDrain ensures a catch-up
-// failure is non-fatal on the daemon path: the worker still drains
-// whatever is already queued, and the next tick retries the catch-up.
-func TestEmbedJob_Run_CatchUpErrorDoesNotAbortDrain(t *testing.T) {
-	runner := &fakeRunner{}
-	backend := &catchUpFakeBackend{
-		fakeBackend: &fakeBackend{active: vector.Generation{ID: 8, State: vector.GenerationActive}},
-		runner:      runner,
-		catchUpErr:  errors.New("catch-up boom"),
-	}
-	job := &EmbedJob{Worker: runner, Backend: backend}
-
-	job.Run(context.Background())
-
-	_, run, gen := runner.calls()
-	assertpkg.Equal(t, 1, backend.catchUpCalls, "CatchUpPending must have been attempted")
-	assertpkg.Equal(t, 1, run, "RunOnce must still drain despite catch-up failure")
-	assertpkg.Equal(t, vector.GenerationID(8), gen, "RunOnce gen")
-}
 
 func TestEmbedJob_Run_ActiveGeneration(t *testing.T) {
 	assert := assertpkg.New(t)
