@@ -38,6 +38,14 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 // row in the batch — including ones AFTER the bad one — and (d) BackfillFTS
 // returns no error.
 //
+// The skipped row is NOT left with search_fts NULL: the codebase treats
+// search_fts IS NULL as the sole "needs backfill" signal (FTSNeedsBackfill /
+// idx_messages_search_fts_null), so a permanently-unindexable row left NULL
+// would make backfill re-run forever. The fallback instead marks it with a
+// non-NULL empty tsvector, so it (e) drops out of the needs-backfill probe
+// (NeedsFTSBackfill becomes false) and (f) is correctly unsearchable. This
+// test pins both: the loop-guard and the unsearchability.
+//
 // Approach: a test-only injection seam (store.SetBackfillFTSBatchErrHookForTest).
 // A post-cap tsvector overflow is not reliably reproducible — the 600000-char
 // LEFT cap keeps even a pathological many-distinct-token body comfortably under
@@ -98,17 +106,29 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err, "BackfillFTS must complete despite a forced bad row")
 
-	// (a) ONLY the bad row was skipped: total-1 rows indexed, exactly one NULL.
+	// (a) ONLY the bad row was skipped: total-1 rows indexed (the skipped row's
+	// terminal empty-tsvector UPDATE is not counted as an indexed row).
 	assert.Equal(int64(total-1), n, "every row except the bad one should be indexed")
-	assert.Equal(1, nullSearchFTSCount(t, f.Store),
-		"exactly one row (the bad one) left with NULL search_fts")
 
-	// The bad row specifically is the NULL one.
-	var badIsNull bool
+	// (e) Loop-guard: the skipped row is marked with a non-NULL empty tsvector,
+	// so NO row is left NULL and NeedsFTSBackfill reports false — without this,
+	// the permanently-unindexable row would keep backfill re-running forever.
+	assert.Equal(0, nullSearchFTSCount(t, f.Store),
+		"no row may be left NULL (would make backfill loop forever)")
+	assert.False(f.Store.NeedsFTSBackfill(),
+		"NeedsFTSBackfill must be false after the overflow row is marked terminal")
+
+	// The bad row specifically holds the empty tsvector: non-NULL but empty.
+	var (
+		badIsNull bool
+		badFTS    string
+	)
 	require.NoError(f.Store.DB().QueryRow(
-		"SELECT search_fts IS NULL FROM messages WHERE id = $1", badID).Scan(&badIsNull),
+		"SELECT search_fts IS NULL, COALESCE(search_fts::text, '') FROM messages WHERE id = $1",
+		badID).Scan(&badIsNull, &badFTS),
 		"probe bad row")
-	assert.True(badIsNull, "the forced-bad row must be left NULL")
+	assert.False(badIsNull, "the forced-bad row must be marked non-NULL (terminal)")
+	assert.Empty(badFTS, "the forced-bad row must hold an EMPTY tsvector")
 
 	// (c) Good rows BEFORE and AFTER the bad one are indexed and searchable.
 	for i, tok := range tokens {

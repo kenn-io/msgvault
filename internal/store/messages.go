@@ -1114,6 +1114,16 @@ func (s *Store) backfillFTSRange(minID, maxID int64, progress func(done, total i
 // logged warning naming the id) ONLY when its per-row failure is itself the
 // tsvector-overflow error; any OTHER per-row error aborts and is returned so a
 // systemic failure cannot be swallowed. Returns the number of rows indexed.
+//
+// A skipped row is NOT left with search_fts NULL: the codebase treats
+// search_fts IS NULL as the sole "needs backfill" signal (FTSNeedsBackfill /
+// idx_messages_search_fts_null), so leaving a permanently-unindexable row NULL
+// would make backfill re-run forever, re-hitting the same overflow each time.
+// Instead the row is marked with a non-NULL empty tsvector: it drops out of the
+// needs-backfill probe and the partial NULL index, and the row is correctly
+// unsearchable (an empty vector matches nothing). This skip write is PG-only —
+// the overflow error is PG-specific (IsFTSValueTooLargeError is always false on
+// SQLite), so the PG-syntax empty-tsvector literal is safe.
 func (s *Store) backfillFTSRowByRow(fromID, toID int64) (int64, error) {
 	var indexed int64
 	for id := fromID; id < toID; id++ {
@@ -1122,9 +1132,17 @@ func (s *Store) backfillFTSRowByRow(fromID, toID int64) (int64, error) {
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
 			}
+			// Mark the overflow row terminal with a non-NULL empty tsvector so
+			// FTSNeedsBackfill stops flagging it and backfill cannot loop on it
+			// forever. Keep the warning so the skipped id is still logged.
 			slog.Warn("skipping message in FTS backfill",
 				slog.Int64("message_id", id),
 				slog.Any("error", err))
+			if _, uerr := s.db.Exec(
+				`UPDATE messages SET search_fts = ''::tsvector WHERE id = ?`, id,
+			); uerr != nil {
+				return indexed, fmt.Errorf("mark FTS-overflow row %d terminal: %w", id, uerr)
+			}
 			continue
 		}
 		indexed += n
