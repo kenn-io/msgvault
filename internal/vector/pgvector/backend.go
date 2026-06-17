@@ -245,6 +245,16 @@ func isUniqueViolation(err error) bool {
 	return pgErr.Code == "23505"
 }
 
+// afterSeedLockHook is a test-only synchronization seam. When non-nil it is
+// invoked once inside seedPending's transaction AFTER the SET LOCAL
+// statement_timeout reset but BEFORE the generation's state is re-read under
+// the FOR NO KEY UPDATE row lock. It lets the concurrency regression test
+// commit a RetireGeneration at exactly the window the orphan-pending race
+// opens (seed tx begins → retire commits → seed re-reads + inserts), proving
+// the locked re-validation refuses to seed a now-retired generation. It is
+// always nil in production. Mirrors enqueue.go's afterGenSnapshotHook.
+var afterSeedLockHook func()
+
 // seedPending inserts one pending_embeddings row per live message in
 // the main schema. Uses ON CONFLICT DO NOTHING for idempotency on
 // retries and to deduplicate against rows already added by the
@@ -253,6 +263,22 @@ func isUniqueViolation(err error) bool {
 // Because messages and pending_embeddings live in the same Postgres
 // database, this can be done in a single INSERT … SELECT rather than
 // streaming rows through Go like the SQLite backend does.
+//
+// The generation's state is re-read under a FOR NO KEY UPDATE row lock IN the
+// same tx before the insert. This mirrors the Enqueuer's locked re-validation
+// (enqueue.go): the lock conflicts with the no-key tuple lock that
+// RetireGeneration / ActivateGeneration's state-flip UPDATE takes, so a
+// concurrent retire that deletes this generation's pending rows and flips it
+// to 'retired' cannot interleave with this seed to leave orphan pending rows
+// behind. The two interleavings serialize:
+//   - seed-first: retire's state-flip UPDATE blocks on this lock, then its
+//     DELETE removes the rows we just inserted -> no orphan.
+//   - retire-first: this locking SELECT blocks until retire commits, then
+//     re-reads state='retired' and we skip the insert -> we seed nothing.
+//
+// Seedable = not yet retired, matching how the Enqueuer decides eligibility
+// (WHERE state != 'retired'). A generation deleted outright (no row) is also
+// skipped.
 func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now int64) error {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -268,6 +294,36 @@ func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now 
 	// so the timeout cannot leak onto other connections. [V7]
 	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return fmt.Errorf("disable statement_timeout for seed: %w", err)
+	}
+
+	// Test-only synchronization seam (nil in production): fires after the tx
+	// begins but before the locked re-read below, so the concurrency
+	// regression test can commit a RetireGeneration inside the exact window
+	// the orphan-pending race opens.
+	if afterSeedLockHook != nil {
+		afterSeedLockHook()
+	}
+
+	// Re-read the generation's state under a FOR NO KEY UPDATE row lock and
+	// confirm it is still seedable (not retired) before inserting. If it has
+	// been retired (or deleted) concurrently, skip the insert so we never seed
+	// a retired generation with orphan pending rows. Held through the INSERT
+	// below in this same tx.
+	var state string
+	err = tx.QueryRowContext(ctx,
+		`SELECT state FROM index_generations WHERE id = $1 FOR NO KEY UPDATE`,
+		int64(gen)).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Generation deleted concurrently — nothing to seed.
+		return tx.Commit()
+	}
+	if err != nil {
+		return fmt.Errorf("re-validate generation %d for seed: %w", gen, err)
+	}
+	if state == string(vector.GenerationRetired) {
+		// Retired concurrently (PG: by a now-committed retire we just blocked
+		// on) — do not seed, leaving no orphan pending rows for this gen.
+		return tx.Commit()
 	}
 
 	stmt := fmt.Sprintf(`
