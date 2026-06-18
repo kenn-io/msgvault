@@ -152,15 +152,26 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 
 		// Batch-fetch and ingest new messages
 		if len(newMsgIDs) > 0 {
-			rawMessages, fetchErr := s.client.GetMessagesRawBatch(ctx, newMsgIDs)
+			rawMessages, fetchErr := s.getMessagesRawBatchWithDiagnostics(ctx, newMsgIDs)
 			if fetchErr != nil {
 				s.logger.Warn("failed to batch fetch messages", "error", fetchErr)
+				for _, id := range newMsgIDs {
+					s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, fetchErr)
+				}
 				checkpoint.ErrorsCount += int64(len(newMsgIDs))
 			} else {
 				var insertedIDs []int64
-				for i, raw := range rawMessages {
+				for i, fetch := range rawMessages {
+					raw := fetch.Message
 					if raw == nil {
-						s.logger.Warn("failed to fetch message (nil response)", "id", newMsgIDs[i])
+						if isGmailNotFound(fetch.Err) {
+							s.logger.Debug("skipping message deleted before fetch", "id", newMsgIDs[i])
+							s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+							continue
+						}
+						errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
+						s.logger.Warn("failed to fetch message", "id", newMsgIDs[i], "error", errMsg)
+						s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 						checkpoint.ErrorsCount++
 						continue
 					}
@@ -168,6 +179,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 					insertedID, err := s.ingestMessage(source.ID, raw, threadID, labelMap)
 					if err != nil {
 						s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
+						s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 						checkpoint.ErrorsCount++
 						continue
 					}
@@ -196,6 +208,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 		if len(deletedIDs) > 0 {
 			if err := s.store.MarkMessagesDeletedBatch(source.ID, deletedIDs); err != nil {
 				s.logger.Warn("failed to batch mark messages deleted", "error", err)
+				for _, id := range deletedIDs {
+					s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
+				}
 				checkpoint.ErrorsCount += int64(len(deletedIDs))
 			}
 		}

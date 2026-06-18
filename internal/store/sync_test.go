@@ -129,6 +129,71 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusRunning, run.Status, "Status")
 }
 
+func TestStore_SyncRunItems(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+
+	syncID := f.StartSync()
+
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-skipped",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusSkipped,
+		ErrorKind:       "gmail_not_found",
+		ErrorMessage:    "not found: /messages/msg-skipped",
+	}), "RecordSyncRunItem skipped")
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-error",
+		Phase:           "ingest",
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       "ingest_error",
+		ErrorMessage:    "parse MIME: malformed header",
+	}), "RecordSyncRunItem error")
+
+	errorCount, err := f.Store.CountSyncRunItems(syncID, store.SyncRunItemStatusError)
+	require.NoError(err, "CountSyncRunItems error")
+	assert.Equal(int64(1), errorCount, "error count")
+
+	skippedCount, err := f.Store.CountSyncRunItems(syncID, store.SyncRunItemStatusSkipped)
+	require.NoError(err, "CountSyncRunItems skipped")
+	assert.Equal(int64(1), skippedCount, "skipped count")
+
+	items, err := f.Store.ListSyncRunItems(syncID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "items")
+	assert.Equal("msg-error", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("ingest", items[0].Phase, "Phase")
+	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
+	assert.Equal("parse MIME: malformed header", items[0].ErrorMessage, "ErrorMessage")
+	assert.False(items[0].CreatedAt.IsZero(), "CreatedAt")
+}
+
+func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+
+	syncID := f.StartSync()
+	require.NoError(f.Store.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       syncID,
+		SourceMessageID: "msg-error",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       "fetch_error",
+		ErrorMessage:    "network unavailable",
+	}), "RecordSyncRunItem")
+
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM sync_runs WHERE id = ?`), syncID)
+	require.NoError(err, "delete sync run")
+
+	count, err := f.Store.CountSyncRunItems(syncID, "")
+	require.NoError(err, "CountSyncRunItems")
+	assert.Equal(int64(0), count, "sync_run_items should cascade with sync_run")
+}
+
 // TestListSources_ParsesTimestamps verifies that ListSources correctly parses
 // timestamps for all returned sources.
 func TestListSources_ParsesTimestamps(t *testing.T) {

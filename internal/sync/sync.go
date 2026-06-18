@@ -159,7 +159,7 @@ type batchResult struct {
 }
 
 // processBatch processes a single batch of messages from a list response.
-func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
+func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listResp *gmail.MessageListResponse, labelMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (*batchResult, error) {
 	result := &batchResult{}
 
 	if len(listResp.Messages) == 0 {
@@ -193,15 +193,27 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 
 	// Fetch and ingest new messages
 	if len(newIDs) > 0 {
-		rawMessages, err := s.client.GetMessagesRawBatch(ctx, newIDs)
+		rawMessages, err := s.getMessagesRawBatchWithDiagnostics(ctx, newIDs)
 		if err != nil {
+			for _, id := range newIDs {
+				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
+			}
 			return nil, fmt.Errorf("fetch messages: %w", err)
 		}
 
 		var insertedIDs []int64
-		for i, raw := range rawMessages {
+		for i, fetch := range rawMessages {
+			raw := fetch.Message
 			if raw == nil {
-				s.logger.Warn("failed to fetch message (nil response)", "id", newIDs[i])
+				if isGmailNotFound(fetch.Err) {
+					s.logger.Debug("skipping message deleted before fetch", "id", newIDs[i])
+					s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, fetch.Err)
+					result.skipped++
+					continue
+				}
+				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
+				s.logger.Warn("failed to fetch message", "id", newIDs[i], "error", errMsg)
+				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -230,6 +242,7 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
+				s.recordSyncItem(syncID, newIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -345,7 +358,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		}
 
 		// Process batch
-		result, err := s.processBatch(ctx, source.ID, listResp, labelMap, state.checkpoint, summary)
+		result, err := s.processBatch(ctx, state.syncID, source.ID, listResp, labelMap, state.checkpoint, summary)
 		if err != nil {
 			_ = s.store.FailSync(state.syncID, err.Error())
 			return nil, err

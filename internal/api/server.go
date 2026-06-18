@@ -39,6 +39,8 @@ type SourceStatusStore interface {
 	GetActiveSync(sourceID int64) (*store.SyncRun, error)
 	GetLatestSync(sourceID int64) (*store.SyncRun, error)
 	GetLastSuccessfulSync(sourceID int64) (*store.SyncRun, error)
+	CountSyncRunItems(syncRunID int64, status string) (int64, error)
+	ListSyncRunItems(syncRunID int64, status string, limit int) ([]store.SyncRunItem, error)
 }
 
 // StoreStats is an alias for store.Stats — single source of truth.

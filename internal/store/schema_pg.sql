@@ -263,6 +263,17 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_after TEXT
 );
 
+CREATE TABLE IF NOT EXISTS sync_run_items (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sync_run_id BIGINT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_kind TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sync_checkpoints (
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     checkpoint_type TEXT NOT NULL,
@@ -381,6 +392,8 @@ CREATE INDEX IF NOT EXISTS idx_labels_source ON labels(source_id);
 CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
+    ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider
     ON source_import_items(source_id, provider, status);
 

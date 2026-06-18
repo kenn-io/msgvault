@@ -396,6 +396,20 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 
 	assert.True(foundDebug404, "expected debug log for msg_404 with message %q, got records: %v", "message deleted before fetch", records)
 	assert.True(foundWarnErr, "expected warn log for msg_err with message %q, got records: %v", "failed to fetch message", records)
+
+	batch, err := client.GetMessagesRawBatchWithErrors(ctx, []string{"msg_ok", "msg_404", "msg_err"})
+	requirepkg.NoError(t, err, "GetMessagesRawBatchWithErrors()")
+	requirepkg.Len(t, batch, 3, "batch results")
+	assert.Equal("msg_ok", batch[0].ID, "batch[0].ID")
+	assert.NotNil(batch[0].Message, "batch[0].Message")
+	assert.NoError(batch[0].Err, "batch[0].Err")
+	assert.Equal("msg_404", batch[1].ID, "batch[1].ID")
+	assert.Nil(batch[1].Message, "batch[1].Message")
+	var notFound *NotFoundError
+	assert.ErrorAs(batch[1].Err, &notFound, "batch[1].Err")
+	assert.Equal("msg_err", batch[2].ID, "batch[2].ID")
+	assert.Nil(batch[2].Message, "batch[2].Message")
+	assert.Error(batch[2].Err, "batch[2].Err")
 }
 
 // rewriteTransport rewrites requests from the Gmail API baseURL to a test server URL.
