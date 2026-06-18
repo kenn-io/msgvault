@@ -6,6 +6,66 @@ on:
   pull_request:
 
 jobs:
+  release-linux-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-latest
+            go_arch_name: amd64
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+            go_arch_name: arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Install build tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Go
+        run: |
+          GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
+          tar -C /usr/local -xzf go.tar.gz
+          rm go.tar.gz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux release binary
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+        run: |
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+          COMMIT=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)
+          VERSION="ci-$COMMIT"
+
+          mkdir -p dist
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
+          go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
+
+          echo "--- Binary info ---"
+          file dist/msgvault
+          ldd dist/msgvault || true
+
+          echo "--- Runtime requirements ---"
+          objdump -T dist/msgvault 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -uV | tail -1 || true
+          objdump -T dist/msgvault 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+(\.\d+)?' | sort -uV | tail -1 || true
+
+          echo "--- Smoke test ---"
+          SMOKE_OUT=$(dist/msgvault version 2>&1)
+          echo "$SMOKE_OUT"
+          echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
+
   test:
     runs-on: macos-15
     steps:

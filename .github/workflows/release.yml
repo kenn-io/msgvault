@@ -44,8 +44,8 @@ jobs:
           curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
-          echo "$HOME/go/bin" >> $GITHUB_PATH
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Build
         env:
