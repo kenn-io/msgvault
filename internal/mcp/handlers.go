@@ -27,9 +27,6 @@ const (
 	maxLimit               = 1000
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
-	searchModeFTS          = "fts"
-	searchModeVector       = "vector"
-	searchModeHybrid       = "hybrid"
 	// totalCountUnknown is returned when the backend cannot report a full match
 	// count (body FTS fallback, hybrid/vector ranking depth, or list_messages
 	// without a separate count query). Clients should use has_more for paging.
