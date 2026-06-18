@@ -137,7 +137,7 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			for _, msg := range record.MessagesDeleted {
 				deletedSet[msg.Message.ID] = true
 			}
-			s.processLabelChanges(ctx, source.ID, record, labelMap, existingMap, updatedExisting)
+			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, updatedExisting, checkpoint, summary)
 		}
 		checkpoint.MessagesUpdated += int64(len(updatedExisting))
 		checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
@@ -264,9 +264,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) processLabelChanges(ctx context.Context, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, updatedExisting map[string]struct{}) {
+func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, updatedExisting map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
 	for _, item := range record.LabelsAdded {
-		updated, err := s.handleLabelChange(ctx, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap)
+		updated, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
 		if err != nil {
 			s.logLabelChangeError("add", item.Message.ID, err)
 			continue
@@ -276,7 +276,7 @@ func (s *Syncer) processLabelChanges(ctx context.Context, sourceID int64, record
 		}
 	}
 	for _, item := range record.LabelsRemoved {
-		updated, err := s.handleLabelChange(ctx, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap)
+		updated, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
 		if err != nil {
 			s.logLabelChangeError("remove", item.Message.ID, err)
 			continue
@@ -290,18 +290,27 @@ func (s *Syncer) processLabelChanges(ctx context.Context, sourceID int64, record
 // handleLabelChange processes a label addition or removal.
 // For existing messages, applies the label diff directly without any API calls.
 // For unknown messages with labels being added, fetches and ingests the message.
-func (s *Syncer) handleLabelChange(ctx context.Context, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64) (bool, error) {
+func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, error) {
 	internalID, exists := existingMap[messageID]
 
 	if !exists {
 		// Message doesn't exist locally - if adding labels, we should fetch it
 		if isAdd {
+			checkpoint.MessagesProcessed++
 			raw, err := s.client.GetMessageRaw(ctx, messageID)
 			if err != nil {
+				if isGmailNotFound(err) {
+					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, err)
+					return false, err
+				}
+				s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
+				checkpoint.ErrorsCount++
 				return false, err
 			}
 			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
 			if err != nil {
+				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				checkpoint.ErrorsCount++
 				return false, err
 			}
 			// Hook vector-search enqueue for the new message. A failed
@@ -314,6 +323,10 @@ func (s *Syncer) handleLabelChange(ctx context.Context, sourceID int64, messageI
 				if err := s.embedEnqueuer.EnqueueMessages(ctx, []int64{insertedID}); err != nil {
 					s.logger.Warn("vector enqueue failed", "ids", 1, "error", err)
 				}
+			}
+			checkpoint.MessagesAdded++
+			if raw != nil {
+				summary.BytesDownloaded += int64(len(raw.Raw))
 			}
 			return false, nil
 		}

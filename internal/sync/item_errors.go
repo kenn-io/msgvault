@@ -23,7 +23,7 @@ const (
 var errRawBatchMissing = errors.New("missing raw message in batch result")
 
 type rawBatchWithErrors interface {
-	GetMessagesRawBatchWithErrors(context.Context, []string) ([]gmail.RawMessageBatchResult, error)
+	GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error)
 }
 
 func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error) {
