@@ -370,6 +370,64 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 	require.Error(err, "mismatched token should be rejected with explicit --oauth-app \"\"")
 }
 
+// TestAddAccount_EmbeddedDefaultRejectsMismatchedToken verifies that the
+// no-config embedded fallback does not silently reuse a token minted by a
+// different OAuth client.
+func TestAddAccount_EmbeddedDefaultRejectsMismatchedToken(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+	tokenData, err := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "wrong-client.apps.googleusercontent.com",
+	})
+	require.NoError(err, "marshal token")
+	require.NoError(os.WriteFile(
+		filepath.Join(tokensDir, "user@example.com.json"),
+		tokenData, 0600,
+	), "write token")
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	err = root.ExecuteContext(ctx)
+	require.Error(err, "embedded client should reject a token minted by another OAuth client")
+}
+
 // TestAddAccount_ExplicitDefaultAcceptsMatchingToken verifies that
 // --oauth-app "" accepts a token minted by the default client.
 func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {

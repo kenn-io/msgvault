@@ -101,6 +101,7 @@ jobs:
       - name: Prepare build args
         id: build_args
         run: |
+          set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
@@ -111,6 +112,17 @@ jobs:
             echo "commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
             echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Validate OAuth build args
+        env:
+          MSGVAULT_OAUTH_CLIENT_ID: ${{ secrets.MSGVAULT_OAUTH_CLIENT_ID }}
+          MSGVAULT_OAUTH_CLIENT_SECRET: ${{ secrets.MSGVAULT_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$MSGVAULT_OAUTH_CLIENT_ID" || -z "$MSGVAULT_OAUTH_CLIENT_SECRET" ]]; then
+            echo "MSGVAULT OAuth secrets are required for Docker publish" >&2
+            exit 1
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -124,5 +136,7 @@ jobs:
             VERSION=${{ steps.build_args.outputs.version }}
             COMMIT=${{ steps.build_args.outputs.commit }}
             BUILD_DATE=${{ steps.build_args.outputs.build_date }}
+            MSGVAULT_OAUTH_CLIENT_ID=${{ secrets.MSGVAULT_OAUTH_CLIENT_ID }}
+            MSGVAULT_OAUTH_CLIENT_SECRET=${{ secrets.MSGVAULT_OAUTH_CLIENT_SECRET }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

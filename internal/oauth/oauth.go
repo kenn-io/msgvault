@@ -487,6 +487,12 @@ func (m *Manager) TokenMatchesClient(email string) bool {
 	return tf.ClientID == m.config.ClientID
 }
 
+// UsesEmbeddedClient reports whether this manager uses msgvault's embedded
+// OAuth client rather than user-provided client secrets.
+func (m *Manager) UsesEmbeddedClient() bool {
+	return m.isEmbedded
+}
+
 // HasScopeMetadata returns true if the token file for this account has any
 // scope metadata stored. Legacy tokens (saved before scope tracking) return false.
 func (m *Manager) HasScopeMetadata(email string) bool {

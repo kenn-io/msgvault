@@ -22,15 +22,22 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
+ARG MSGVAULT_OAUTH_CLIENT_ID=
+ARG MSGVAULT_OAUTH_CLIENT_SECRET=
 
 # Note: Module path must match go.mod (go.kenn.io/msgvault)
+# Docker builds receive production OAuth values from the publish workflow.
+# Local/PR Docker builds default these to empty so they do not accidentally
+# embed the source development client in container images.
 RUN CGO_ENABLED=1 go build \
     -tags fts5 \
     -trimpath \
     -ldflags="-s -w \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=${VERSION} \
         -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=${COMMIT} \
-        -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE}" \
+        -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=${BUILD_DATE} \
+        -X go.kenn.io/msgvault/internal/oauth.oauthClientID=${MSGVAULT_OAUTH_CLIENT_ID} \
+        -X go.kenn.io/msgvault/internal/oauth.oauthClientSecret=${MSGVAULT_OAUTH_CLIENT_SECRET}" \
     -o /msgvault \
     ./cmd/msgvault
 
