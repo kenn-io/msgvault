@@ -353,6 +353,14 @@ func (a *storeAPIAdapter) GetLastSuccessfulSync(sourceID int64) (*store.SyncRun,
 	return a.store.GetLastSuccessfulSync(sourceID)
 }
 
+func (a *storeAPIAdapter) CountSyncRunItems(syncRunID int64, status string) (int64, error) {
+	return a.store.CountSyncRunItems(syncRunID, status)
+}
+
+func (a *storeAPIAdapter) ListSyncRunItems(syncRunID int64, status string, limit int) ([]store.SyncRunItem, error) {
+	return a.store.ListSyncRunItems(syncRunID, status, limit)
+}
+
 // schedulerAdapter adapts scheduler.Scheduler to api.SyncScheduler.
 // Since api.AccountStatus is a type alias for scheduler.AccountStatus,
 // the adapter methods are simple pass-throughs.

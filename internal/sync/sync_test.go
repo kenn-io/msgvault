@@ -31,6 +31,10 @@ func (p *panicOnBatchAPI) GetMessagesRawBatch(_ context.Context, _ []string) ([]
 	panic("unexpected nil pointer in batch processing")
 }
 
+func (p *panicOnBatchAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []string) ([]gmail.RawMessageBatchResult, error) {
+	panic("unexpected nil pointer in batch processing")
+}
+
 func TestFullSync_PanicReturnsError(t *testing.T) {
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
@@ -111,14 +115,50 @@ func TestFullSyncResume(t *testing.T) {
 }
 
 func TestFullSyncWithErrors(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
 	// Make msg2 fail to fetch
-	env.Mock.GetMessageError["msg2"] = &gmail.NotFoundError{Path: "/messages/msg2"}
+	env.Mock.GetMessageError["msg2"] = errors.New("temporary fetch failure")
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(2)), Errors: new(int64(1))})
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("msg2", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch", items[0].Phase, "Phase")
+	assert.Equal("fetch_error", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
+
+	env.Mock.GetMessageError["msg2"] = &gmail.NotFoundError{Path: "/messages/msg2"}
+
+	summary := runFullSync(t, env)
+	assertSummary(t, summary, WantSummary{Added: new(int64(2)), Errors: new(int64(0)), Skipped: new(int64(1))})
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusSkipped, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "skipped items")
+	assert.Equal("msg2", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch", items[0].Phase, "Phase")
+	assert.Equal("gmail_not_found", items[0].ErrorKind, "ErrorKind")
 }
 
 func TestMIMEParsing(t *testing.T) {
@@ -278,9 +318,9 @@ func TestFullSyncAllErrors(t *testing.T) {
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
-	env.Mock.GetMessageError["msg1"] = &gmail.NotFoundError{Path: "/messages/msg1"}
-	env.Mock.GetMessageError["msg2"] = &gmail.NotFoundError{Path: "/messages/msg2"}
-	env.Mock.GetMessageError["msg3"] = &gmail.NotFoundError{Path: "/messages/msg3"}
+	env.Mock.GetMessageError["msg1"] = errors.New("temporary fetch failure 1")
+	env.Mock.GetMessageError["msg2"] = errors.New("temporary fetch failure 2")
+	env.Mock.GetMessageError["msg3"] = errors.New("temporary fetch failure 3")
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(0)), Errors: new(int64(3))})
@@ -894,6 +934,8 @@ func TestFullSyncDateFallbackToInternalDate(t *testing.T) {
 }
 
 func TestFullSyncEmptyRawMIME(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12345
@@ -909,6 +951,16 @@ func TestFullSyncEmptyRawMIME(t *testing.T) {
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(1))})
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("msg-empty-raw", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
 }
 
 func TestFullSyncEmptyThreadID(t *testing.T) {
@@ -1041,7 +1093,8 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 		Messages: nil,
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
 	requirepkg.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(0), result.processed, "processed")
@@ -1069,7 +1122,8 @@ func TestProcessBatch_AllNew(t *testing.T) {
 		},
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
 	requirepkg.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
@@ -1099,7 +1153,8 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 		},
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
 	requirepkg.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
@@ -1132,7 +1187,8 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 		},
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
 	requirepkg.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
@@ -1174,7 +1230,8 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 		},
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
 	requirepkg.NoError(t, err, "processBatch")
 
 	// oldestDate should be Jan 10, 2024
@@ -1186,6 +1243,8 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 }
 
 func TestProcessBatch_ErrorsCount(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1196,6 +1255,41 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 
 	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX"})
 	// msg2 will return nil (simulating fetch failure)
+	env.Mock.GetMessageError["msg2"] = errors.New("temporary fetch failure")
+
+	listResp := &gmail.MessageListResponse{
+		Messages: []gmail.MessageID{
+			{ID: "msg1", ThreadID: "thread1"},
+			{ID: "msg2", ThreadID: "thread2"},
+		},
+	}
+
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
+	require.NoError(err, "processBatch")
+
+	assert.Equal(int64(1), result.added, "added")
+	assert.Equal(int64(1), checkpoint.ErrorsCount, "ErrorsCount")
+
+	items, err := env.Store.ListSyncRunItems(syncID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("msg2", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch_error", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"INBOX": {Name: "Inbox", Type: "system"},
+	})
+	checkpoint := &store.Checkpoint{}
+	summary := &gmail.SyncSummary{}
+
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX"})
 	env.Mock.GetMessageError["msg2"] = &gmail.NotFoundError{Path: "/messages/msg2"}
 
 	listResp := &gmail.MessageListResponse{
@@ -1205,11 +1299,19 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 		},
 	}
 
-	result, err := env.Syncer.processBatch(env.Context, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	syncID := startSyncRun(t, env, source.ID)
+	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
+	require.NoError(err, "processBatch")
 
-	assertpkg.Equal(t, int64(1), result.added, "added")
-	assertpkg.Equal(t, int64(1), checkpoint.ErrorsCount, "ErrorsCount")
+	assert.Equal(int64(1), result.added, "added")
+	assert.Equal(int64(1), result.skipped, "skipped")
+	assert.Equal(int64(0), checkpoint.ErrorsCount, "ErrorsCount")
+
+	items, err := env.Store.ListSyncRunItems(syncID, store.SyncRunItemStatusSkipped, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "skipped items")
+	assert.Equal("msg2", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("gmail_not_found", items[0].ErrorKind, "ErrorKind")
 }
 
 // TestAttachmentFilePermissions verifies that attachment files are saved with
@@ -1334,6 +1436,190 @@ func TestIncrementalSyncBatchNewMessages(t *testing.T) {
 	summary := runIncrementalSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(5))})
 	assertMessageCount(t, env.Store, 5)
+}
+
+func TestIncrementalSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.AddMessage("new-ok", testMIME(), []string{"INBOX"})
+	env.Mock.GetMessageError["new-gone"] = &gmail.NotFoundError{Path: "/messages/new-gone"}
+
+	env.SetHistory(12350,
+		historyAdded("new-ok"),
+		historyAdded("new-gone"),
+	)
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(2)), Added: new(int64(1)), Errors: new(int64(0))})
+	assertMessageCount(t, env.Store, 1)
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusSkipped, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "skipped items")
+	assert.Equal("new-gone", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("gmail_not_found", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestIncrementalSyncRecordsFetchErrors(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.AddMessage("new-ok", testMIME(), []string{"INBOX"})
+	env.Mock.GetMessageError["new-error"] = errors.New("temporary fetch failure")
+
+	env.SetHistory(12350,
+		historyAdded("new-ok"),
+		historyAdded("new-error"),
+	)
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(2)), Added: new(int64(1)), Errors: new(int64(1))})
+	assertMessageCount(t, env.Store, 1)
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("new-error", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch_error", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestIncrementalSyncRecordsLabelAddFetchErrors(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.GetMessageError["label-fetch-error"] = errors.New("temporary fetch failure")
+
+	env.SetHistory(12350,
+		historyLabelAdded("label-fetch-error", "INBOX"),
+	)
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(1)), Added: new(int64(0)), Errors: new(int64(1))})
+	assertMessageCount(t, env.Store, 0)
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("label-fetch-error", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch", items[0].Phase, "Phase")
+	assert.Equal("fetch_error", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestIncrementalSyncRecordsLabelAddGmailNotFound(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.GetMessageError["label-gone"] = &gmail.NotFoundError{Path: "/messages/label-gone"}
+
+	env.SetHistory(12350,
+		historyLabelAdded("label-gone", "INBOX"),
+	)
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(1)), Added: new(int64(0)), Errors: new(int64(0))})
+	assertMessageCount(t, env.Store, 0)
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusSkipped, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "skipped items")
+	assert.Equal("label-gone", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("fetch", items[0].Phase, "Phase")
+	assert.Equal("gmail_not_found", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.Messages["label-ingest-error"] = &gmail.RawMessage{
+		ID:       "label-ingest-error",
+		ThreadID: "thread_label-ingest-error",
+		LabelIDs: []string{"INBOX"},
+		Raw:      []byte{},
+	}
+
+	env.SetHistory(12350,
+		historyLabelAdded("label-ingest-error", "INBOX"),
+	)
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(1)), Added: new(int64(0)), Errors: new(int64(1))})
+	assertMessageCount(t, env.Store, 0)
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 1, "error items")
+	assert.Equal("label-ingest-error", items[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("ingest", items[0].Phase, "Phase")
+	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
+}
+
+func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	raw := testMIME()
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.AddMessage("new-with-label", raw, []string{"INBOX", "STARRED"})
+
+	env.SetHistory(12350, gmail.HistoryRecord{
+		MessagesAdded: []gmail.HistoryMessage{
+			{Message: gmail.MessageID{ID: "new-with-label", ThreadID: "thread_new-with-label"}},
+		},
+		LabelsAdded: []gmail.HistoryLabelChange{
+			{
+				Message:  gmail.MessageID{ID: "new-with-label", ThreadID: "thread_new-with-label"},
+				LabelIDs: []string{"STARRED"},
+			},
+		},
+	})
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(1)), Added: new(int64(1)), Errors: new(int64(0))})
+	assert.Equal(int64(len(raw)), summary.BytesDownloaded, "BytesDownloaded")
+	assertMessageCount(t, env.Store, 1)
+	assert.Equal([]string{"new-with-label"}, env.Mock.GetMessageCalls, "GetMessageRaw calls")
+	assertMessageHasLabel(t, env.Store, "new-with-label", "STARRED")
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	itemCount, err := env.Store.CountSyncRunItems(run.ID, "")
+	require.NoError(err, "CountSyncRunItems")
+	assert.Zero(itemCount, "sync_run_items")
 }
 
 // TestIncrementalSyncMixedOperations tests a history page with adds, deletes,

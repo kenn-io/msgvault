@@ -31,6 +31,8 @@ import (
 // maxPageSize is the hard upper bound for any paginated endpoint.
 const maxPageSize = 500
 
+const sourceStatusItemErrorLimit = 10
+
 // StatsResponse represents the archive statistics.
 type StatsResponse struct {
 	TotalMessages int64             `json:"total_messages"`
@@ -80,18 +82,29 @@ type SourceStatus struct {
 
 // SyncRunStatus represents the API-visible details for a sync run.
 type SyncRunStatus struct {
-	ID                int64   `json:"id"`
-	SourceID          int64   `json:"source_id"`
-	StartedAt         string  `json:"started_at"`
-	CompletedAt       *string `json:"completed_at"`
-	Status            string  `json:"status"`
-	MessagesProcessed int64   `json:"messages_processed"`
-	MessagesAdded     int64   `json:"messages_added"`
-	MessagesUpdated   int64   `json:"messages_updated"`
-	ErrorsCount       int64   `json:"errors_count"`
-	ErrorMessage      *string `json:"error_message"`
-	CursorBefore      *string `json:"cursor_before"`
-	CursorAfter       *string `json:"cursor_after"`
+	ID                int64               `json:"id"`
+	SourceID          int64               `json:"source_id"`
+	StartedAt         string              `json:"started_at"`
+	CompletedAt       *string             `json:"completed_at"`
+	Status            string              `json:"status"`
+	MessagesProcessed int64               `json:"messages_processed"`
+	MessagesAdded     int64               `json:"messages_added"`
+	MessagesUpdated   int64               `json:"messages_updated"`
+	ErrorsCount       int64               `json:"errors_count"`
+	ErrorMessage      *string             `json:"error_message"`
+	CursorBefore      *string             `json:"cursor_before"`
+	CursorAfter       *string             `json:"cursor_after"`
+	SkippedCount      int64               `json:"skipped_count,omitempty"`
+	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
+}
+
+// SyncRunItemStatus represents one recent per-item sync error.
+type SyncRunItemStatus struct {
+	SourceMessageID string `json:"source_message_id"`
+	Phase           string `json:"phase"`
+	ErrorKind       string `json:"error_kind"`
+	ErrorMessage    string `json:"error_message"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // SchedulerStatusResponse represents scheduler status.
@@ -779,20 +792,48 @@ func (s *Server) sourceStatus(statusStore SourceStatusStore, source *store.Sourc
 		return SourceStatus{}, fmt.Errorf("get active sync: %w", err)
 	}
 	status.ActiveSync = syncRunStatus(active)
+	if err := s.hydrateSyncRunStatus(statusStore, status.ActiveSync); err != nil {
+		return SourceStatus{}, err
+	}
 
 	latest, err := statusStore.GetLatestSync(source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get latest sync: %w", err)
 	}
 	status.LatestSync = syncRunStatus(latest)
+	if err := s.hydrateSyncRunStatus(statusStore, status.LatestSync); err != nil {
+		return SourceStatus{}, err
+	}
 
 	lastSuccessful, err := statusStore.GetLastSuccessfulSync(source.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return SourceStatus{}, fmt.Errorf("get last successful sync: %w", err)
 	}
 	status.LastSuccessfulSync = syncRunStatus(lastSuccessful)
+	if err := s.hydrateSyncRunStatus(statusStore, status.LastSuccessfulSync); err != nil {
+		return SourceStatus{}, err
+	}
 
 	return status, nil
+}
+
+func (s *Server) hydrateSyncRunStatus(statusStore SourceStatusStore, status *SyncRunStatus) error {
+	if status == nil {
+		return nil
+	}
+
+	skippedCount, err := statusStore.CountSyncRunItems(status.ID, store.SyncRunItemStatusSkipped)
+	if err != nil {
+		return fmt.Errorf("count skipped sync items: %w", err)
+	}
+	status.SkippedCount = skippedCount
+
+	items, err := statusStore.ListSyncRunItems(status.ID, store.SyncRunItemStatusError, sourceStatusItemErrorLimit)
+	if err != nil {
+		return fmt.Errorf("list sync item errors: %w", err)
+	}
+	status.ItemErrors = syncRunItemStatuses(items)
+	return nil
 }
 
 func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
@@ -823,6 +864,23 @@ func syncRunStatus(run *store.SyncRun) *SyncRunStatus {
 		status.CursorAfter = new(run.CursorAfter.String)
 	}
 	return status
+}
+
+func syncRunItemStatuses(items []store.SyncRunItem) []SyncRunItemStatus {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]SyncRunItemStatus, len(items))
+	for i, item := range items {
+		out[i] = SyncRunItemStatus{
+			SourceMessageID: item.SourceMessageID,
+			Phase:           item.Phase,
+			ErrorKind:       item.ErrorKind,
+			ErrorMessage:    item.ErrorMessage,
+			CreatedAt:       item.CreatedAt.UTC().Format(time.RFC3339),
+		}
+	}
+	return out
 }
 
 // handleTriggerSync manually triggers a sync for an account.

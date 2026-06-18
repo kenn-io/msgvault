@@ -431,11 +431,28 @@ func isRateLimitError(body []byte) bool {
 
 // GetMessagesRawBatch fetches multiple messages in parallel with rate limiting.
 func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) ([]*RawMessage, error) {
+	batch, err := c.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*RawMessage, len(batch))
+	for i, result := range batch {
+		results[i] = result.Message
+	}
+	return results, nil
+}
+
+// GetMessagesRawBatchWithErrors fetches multiple messages in parallel with
+// rate limiting and preserves per-message fetch errors.
+func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]RawMessageBatchResult, error) {
 	if len(messageIDs) == 0 {
 		return nil, nil
 	}
 
-	results := make([]*RawMessage, len(messageIDs))
+	results := make([]RawMessageBatchResult, len(messageIDs))
+	for i, id := range messageIDs {
+		results[i].ID = id
+	}
 	sem := make(chan struct{}, c.concurrency)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -452,6 +469,7 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 
 			msg, err := c.GetMessageRaw(ctx, id)
 			if err != nil {
+				results[i].Err = err
 				// Log but don't fail the batch - allow partial results.
 				// 404s are expected (message deleted between history scan and fetch),
 				// so log at debug level to avoid noise during incremental sync.
@@ -464,7 +482,7 @@ func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) (
 				return nil
 			}
 
-			results[i] = msg
+			results[i].Message = msg
 			return nil
 		})
 	}

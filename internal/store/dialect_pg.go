@@ -451,7 +451,7 @@ var exclusiveLockTables = []string{
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
-	"source_import_items", "sync_checkpoints",
+	"source_import_items", "sync_run_items", "sync_checkpoints",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

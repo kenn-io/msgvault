@@ -303,6 +303,21 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_after TEXT
 );
 
+-- Per-item sync outcomes, for diagnosing partial sync completion.
+-- status='error' is actionable and contributes to sync_runs.errors_count.
+-- status='skipped' records expected item churn, such as Gmail messages that
+-- were deleted between a history/list response and raw-message fetch.
+CREATE TABLE IF NOT EXISTS sync_run_items (
+    id INTEGER PRIMARY KEY,
+    sync_run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_kind TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Sync checkpoints (for resumable imports)
 CREATE TABLE IF NOT EXISTS sync_checkpoints (
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -389,6 +404,8 @@ CREATE INDEX IF NOT EXISTS idx_message_labels_label ON message_labels(label_id);
 
 -- Sync
 CREATE INDEX IF NOT EXISTS idx_sync_runs_source ON sync_runs(source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_run_items_run_status
+    ON sync_run_items(sync_run_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_import_items_source_provider
     ON source_import_items(source_id, provider, status);
 

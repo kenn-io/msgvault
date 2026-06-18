@@ -13,6 +13,9 @@ const (
 	SyncStatusRunning   = "running"
 	SyncStatusCompleted = "completed"
 	SyncStatusFailed    = "failed"
+
+	SyncRunItemStatusError   = "error"
+	SyncRunItemStatusSkipped = "skipped"
 )
 
 // ErrSyncRunNotFound is returned by the sync-run getters (GetActiveSync,
@@ -146,6 +149,20 @@ type Checkpoint struct {
 	ErrorsCount       int64
 }
 
+// SyncRunItem records an individual item outcome within a sync run.
+// Error items are actionable and count toward SyncRun.ErrorsCount; skipped
+// items preserve expected churn such as Gmail messages deleted before fetch.
+type SyncRunItem struct {
+	ID              int64
+	SyncRunID       int64
+	SourceMessageID string
+	Phase           string
+	Status          string
+	ErrorKind       string
+	ErrorMessage    string
+	CreatedAt       time.Time
+}
+
 type SourceImportItem struct {
 	ID              int64
 	SourceID        int64
@@ -260,6 +277,89 @@ func (s *Store) UpdateSyncCheckpoint(syncID int64, cp *Checkpoint) error {
 		WHERE id = ?
 	`, cp.PageToken, cp.MessagesProcessed, cp.MessagesAdded, cp.MessagesUpdated, cp.ErrorsCount, syncID)
 	return err
+}
+
+// RecordSyncRunItem records a per-item sync outcome for diagnostics.
+func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
+	_, err := s.db.Exec(fmt.Sprintf(`
+		INSERT INTO sync_run_items (
+			sync_run_id, source_message_id, phase, status,
+			error_kind, error_message, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, %s)
+	`, s.dialect.Now()),
+		item.SyncRunID, item.SourceMessageID, item.Phase, item.Status,
+		item.ErrorKind, item.ErrorMessage,
+	)
+	if err != nil {
+		return fmt.Errorf("insert sync_run_item: %w", err)
+	}
+	return nil
+}
+
+// CountSyncRunItems returns the number of recorded per-item sync outcomes for
+// a run. If status is non-empty, only items with that status are counted.
+func (s *Store) CountSyncRunItems(syncRunID int64, status string) (int64, error) {
+	query := `SELECT COUNT(*) FROM sync_run_items WHERE sync_run_id = ?`
+	args := []any{syncRunID}
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	var count int64
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count sync_run_items: %w", err)
+	}
+	return count, nil
+}
+
+// ListSyncRunItems returns the newest recorded per-item sync outcomes for a
+// run. If status is non-empty, only items with that status are returned.
+func (s *Store) ListSyncRunItems(syncRunID int64, status string, limit int) ([]SyncRunItem, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id, sync_run_id, source_message_id, phase, status,
+		       error_kind, error_message, created_at
+		FROM sync_run_items
+		WHERE sync_run_id = ?
+	`
+	args := []any{syncRunID}
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list sync_run_items: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]SyncRunItem, 0)
+	for rows.Next() {
+		var item SyncRunItem
+		var createdAt sql.NullTime
+		if err := rows.Scan(
+			&item.ID, &item.SyncRunID, &item.SourceMessageID, &item.Phase,
+			&item.Status, &item.ErrorKind, &item.ErrorMessage, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan sync_run_item: %w", err)
+		}
+		var err error
+		item.CreatedAt, err = requireNullTime(createdAt, "created_at")
+		if err != nil {
+			return nil, fmt.Errorf("sync_run_item %d: %w", item.ID, err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sync_run_items: %w", err)
+	}
+	return items, nil
 }
 
 // CompleteSync marks a sync as successfully completed.

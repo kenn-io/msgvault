@@ -182,6 +182,22 @@ func TestHandleSourceStatus(t *testing.T) {
 		MessagesAdded:     8,
 		MessagesUpdated:   2,
 	}), "UpdateSyncCheckpoint")
+	require.NoError(st.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       completedID,
+		SourceMessageID: "gmail-missing",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusSkipped,
+		ErrorKind:       "gmail_not_found",
+		ErrorMessage:    "not found: /messages/gmail-missing",
+	}), "RecordSyncRunItem skipped")
+	require.NoError(st.RecordSyncRunItem(store.SyncRunItem{
+		SyncRunID:       completedID,
+		SourceMessageID: "gmail-error",
+		Phase:           "ingest",
+		Status:          store.SyncRunItemStatusError,
+		ErrorKind:       "ingest_error",
+		ErrorMessage:    "parse MIME: malformed header",
+	}), "RecordSyncRunItem error")
 	require.NoError(st.CompleteSync(completedID, "history-2"), "CompleteSync")
 
 	runningID, err := st.StartSync(gmail.ID, "incremental")
@@ -221,6 +237,13 @@ func TestHandleSourceStatus(t *testing.T) {
 	assert.Equal(completedID, got.LastSuccessfulSync.ID, "LastSuccessfulSync.ID")
 	assert.Equal(store.SyncStatusCompleted, got.LastSuccessfulSync.Status, "LastSuccessfulSync.Status")
 	assert.Equal(int64(10), got.LastSuccessfulSync.MessagesProcessed, "LastSuccessfulSync.MessagesProcessed")
+	assert.Equal(int64(1), got.LastSuccessfulSync.SkippedCount, "LastSuccessfulSync.SkippedCount")
+	require.Len(got.LastSuccessfulSync.ItemErrors, 1, "LastSuccessfulSync.ItemErrors")
+	assert.Equal("gmail-error", got.LastSuccessfulSync.ItemErrors[0].SourceMessageID, "LastSuccessfulSync.ItemErrors[0].SourceMessageID")
+	assert.Equal("ingest", got.LastSuccessfulSync.ItemErrors[0].Phase, "LastSuccessfulSync.ItemErrors[0].Phase")
+	assert.Equal("ingest_error", got.LastSuccessfulSync.ItemErrors[0].ErrorKind, "LastSuccessfulSync.ItemErrors[0].ErrorKind")
+	assert.Equal("parse MIME: malformed header", got.LastSuccessfulSync.ItemErrors[0].ErrorMessage, "LastSuccessfulSync.ItemErrors[0].ErrorMessage")
+	assert.NotEmpty(got.LastSuccessfulSync.ItemErrors[0].CreatedAt, "LastSuccessfulSync.ItemErrors[0].CreatedAt")
 	require.NotNil(got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 }

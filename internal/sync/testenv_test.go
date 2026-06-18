@@ -114,6 +114,13 @@ func runIncrementalSync(t *testing.T, env *TestEnv) *gmail.SyncSummary {
 	return summary
 }
 
+func startSyncRun(t *testing.T, env *TestEnv, sourceID int64) int64 {
+	t.Helper()
+	syncID, err := env.Store.StartSync(sourceID, "full")
+	require.NoError(t, err, "StartSync")
+	return syncID
+}
+
 // WantSummary specifies expected SyncSummary values. Nil fields are not checked.
 type WantSummary struct {
 	Added   *int64
