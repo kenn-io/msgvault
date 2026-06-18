@@ -4,9 +4,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 )
@@ -18,9 +19,7 @@ func writeStubClientSecrets(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	const stub = `{"installed":{"client_id":"abc","client_secret":"xyz","redirect_uris":["http://localhost"]}}`
-	if err := os.WriteFile(path, []byte(stub), 0600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	requirepkg.NoError(t, os.WriteFile(path, []byte(stub), 0600), "write %s", path)
 	return path
 }
 
@@ -39,35 +38,23 @@ func TestResolveOAuthManager_NamedBYO(t *testing.T) {
 	secrets := writeStubClientSecrets(t, cfg.Data.DataDir, "acme.json")
 	cfg.OAuth.Apps = map[string]config.OAuthApp{"acme": {ClientSecrets: secrets}}
 	mgr, err := resolveOAuthManager(cfg, "acme", oauth.Scopes, slog.Default())
-	if err != nil {
-		t.Fatalf("resolveOAuthManager: %v", err)
-	}
-	if mgr == nil {
-		t.Fatal("manager is nil")
-	}
+	requirepkg.NoError(t, err, "resolveOAuthManager")
+	requirepkg.NotNil(t, mgr, "manager")
 }
 
 func TestResolveOAuthManager_NamedNotConfigured(t *testing.T) {
 	cfg := newTestConfig(t)
 	_, err := resolveOAuthManager(cfg, "nonexistent", oauth.Scopes, slog.Default())
-	if err == nil {
-		t.Fatal("expected error for unknown app name")
-	}
-	if !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("error %q should mention the app name", err.Error())
-	}
+	requirepkg.Error(t, err, "expected error for unknown app name")
+	assertpkg.ErrorContains(t, err, "nonexistent")
 }
 
 func TestResolveOAuthManager_GlobalBYO(t *testing.T) {
 	cfg := newTestConfig(t)
 	cfg.OAuth.ClientSecrets = writeStubClientSecrets(t, cfg.Data.DataDir, "default.json")
 	mgr, err := resolveOAuthManager(cfg, "", oauth.Scopes, slog.Default())
-	if err != nil {
-		t.Fatalf("resolveOAuthManager: %v", err)
-	}
-	if mgr == nil {
-		t.Fatal("manager is nil")
-	}
+	requirepkg.NoError(t, err, "resolveOAuthManager")
+	requirepkg.NotNil(t, mgr, "manager")
 }
 
 func TestResolveOAuthManager_Embedded(t *testing.T) {
@@ -75,10 +62,6 @@ func TestResolveOAuthManager_Embedded(t *testing.T) {
 	// default — the source has the dev placeholder strings).
 	cfg := newTestConfig(t)
 	mgr, err := resolveOAuthManager(cfg, "", oauth.Scopes, slog.Default())
-	if err != nil {
-		t.Fatalf("resolveOAuthManager: %v", err)
-	}
-	if mgr == nil {
-		t.Fatal("manager is nil")
-	}
+	requirepkg.NoError(t, err, "resolveOAuthManager")
+	requirepkg.NotNil(t, mgr, "manager")
 }

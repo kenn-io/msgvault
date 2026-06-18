@@ -1,7 +1,7 @@
 package oauth
 
 import (
-	"fmt"
+	"errors"
 	"log/slog"
 
 	"golang.org/x/oauth2"
@@ -18,6 +18,8 @@ import (
 // client secret is "obviously not treated as a secret"; PKCE provides the
 // flow security. The values below are the dev project's credentials,
 // suitable for contributor builds. Production binaries override both.
+// #nosec G101 -- Google desktop OAuth client credentials are public client
+// identifiers; PKCE secures the flow and release builds override these values.
 var (
 	oauthClientID     = "913114107126-tfruv1983bsv811mbjkqjvtd23io5b93.apps.googleusercontent.com"
 	oauthClientSecret = "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"
@@ -49,7 +51,7 @@ func EmbeddedConfig(scopes []string) *oauth2.Config {
 // locally).
 func NewEmbeddedManager(tokensDir string, logger *slog.Logger, scopes []string) (*Manager, error) {
 	if !HasEmbeddedCredentials() {
-		return nil, fmt.Errorf("no embedded OAuth credentials in this build")
+		return nil, errors.New("no embedded OAuth credentials in this build")
 	}
 	if logger == nil {
 		logger = slog.Default()

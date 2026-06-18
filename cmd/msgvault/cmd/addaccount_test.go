@@ -1033,14 +1033,15 @@ func TestAddAccount_ResolverBranches(t *testing.T) {
 	tests := []struct {
 		name        string
 		appName     string
-		setup       func(cfg *config.Config, t *testing.T)
+		setup       func(t *testing.T, cfg *config.Config)
 		wantErr     bool
 		errContains string
 	}{
 		{
 			name:    "named BYO with client_secrets",
 			appName: "acme",
-			setup: func(cfg *config.Config, t *testing.T) {
+			setup: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
 				path := writeStubClientSecrets(t, cfg.Data.DataDir, "acme.json")
 				cfg.OAuth.Apps = map[string]config.OAuthApp{"acme": {ClientSecrets: path}}
 			},
@@ -1049,14 +1050,15 @@ func TestAddAccount_ResolverBranches(t *testing.T) {
 		{
 			name:        "named app without client_secrets",
 			appName:     "missing",
-			setup:       func(cfg *config.Config, t *testing.T) {},
+			setup:       func(t *testing.T, cfg *config.Config) { t.Helper() },
 			wantErr:     true,
 			errContains: "missing",
 		},
 		{
 			name:    "global BYO",
 			appName: "",
-			setup: func(cfg *config.Config, t *testing.T) {
+			setup: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
 				cfg.OAuth.ClientSecrets = writeStubClientSecrets(t, cfg.Data.DataDir, "default.json")
 			},
 			wantErr: false,
@@ -1064,27 +1066,24 @@ func TestAddAccount_ResolverBranches(t *testing.T) {
 		{
 			name:    "no config falls through to embedded",
 			appName: "",
-			setup:   func(cfg *config.Config, t *testing.T) {},
+			setup:   func(t *testing.T, cfg *config.Config) { t.Helper() },
 			wantErr: false,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			require := requirepkg.New(t)
 			cfg := newTestConfig(t)
-			tc.setup(cfg, t)
+			tc.setup(t, cfg)
 			_, err := resolveOAuthManager(cfg, tc.appName, oauth.Scopes, slog.Default())
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
-					t.Errorf("error %q should contain %q", err.Error(), tc.errContains)
+				require.Error(err, "expected error")
+				if tc.errContains != "" {
+					require.ErrorContains(err, tc.errContains)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(err, "resolveOAuthManager")
 		})
 	}
 }

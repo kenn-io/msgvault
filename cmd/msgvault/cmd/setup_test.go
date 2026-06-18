@@ -60,17 +60,18 @@ func TestCreateNASBundle(t *testing.T) {
 }
 
 func TestCreateNASBundle_NoSecrets(t *testing.T) {
+	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
 	err := createNASBundle(bundleDir, "key", "", 8080)
-	requirepkg.NoError(t, err, "createNASBundle")
+	require.NoError(err, "createNASBundle")
 
 	// config.toml and docker-compose.yml should exist
 	_, err = os.Stat(filepath.Join(bundleDir, "config.toml"))
-	requirepkg.NoError(t, err, "config.toml should exist")
+	require.NoError(err, "config.toml should exist")
 	_, err = os.Stat(filepath.Join(bundleDir, "docker-compose.yml"))
-	requirepkg.NoError(t, err, "docker-compose.yml should exist")
+	require.NoError(err, "docker-compose.yml should exist")
 
 	// client_secret.json should NOT exist (no source path given)
 	_, err = os.Stat(filepath.Join(bundleDir, "client_secret.json"))
@@ -79,7 +80,7 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 	// config.toml should NOT contain [oauth] section when no secrets provided;
 	// the NAS instance falls back to the embedded verified OAuth client.
 	configBytes, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
-	requirepkg.NoError(t, err, "read bundle config")
+	require.NoError(err, "read bundle config")
 	assert.NotContains(string(configBytes), "[oauth]", "config.toml should not contain [oauth] section when no secrets provided")
 }
 

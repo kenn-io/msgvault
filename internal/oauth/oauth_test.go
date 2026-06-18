@@ -538,17 +538,15 @@ func TestCallbackHandlerAccessDenied(t *testing.T) {
 	errChan := make(chan error, 1)
 	handler := mgr.newCallbackHandler("expected-state", codeChan, errChan)
 
-	req := httptest.NewRequest("GET", "/callback?error=access_denied&state=expected-state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/callback?error=access_denied&state=expected-state", nil)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
 	select {
 	case err := <-errChan:
-		if !errors.Is(err, errAccessDenied) {
-			t.Errorf("callback error = %v, want errAccessDenied", err)
-		}
+		requirepkg.ErrorIs(t, err, errAccessDenied)
 	default:
-		t.Fatal("callback handler did not send an error")
+		requirepkg.Fail(t, "callback handler did not send an error")
 	}
 }
 
@@ -809,22 +807,20 @@ func TestValidateBrowserURL(t *testing.T) {
 }
 
 func TestScopesEmbedded(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	want := []string{
 		"https://www.googleapis.com/auth/gmail.readonly",
 		"https://www.googleapis.com/auth/gmail.modify",
 		"https://mail.google.com/",
 	}
-	if len(ScopesEmbedded) != len(want) {
-		t.Fatalf("ScopesEmbedded has %d entries, want %d", len(ScopesEmbedded), len(want))
-	}
-	for i, scope := range want {
-		if ScopesEmbedded[i] != scope {
-			t.Errorf("ScopesEmbedded[%d] = %q, want %q", i, ScopesEmbedded[i], scope)
-		}
-	}
+	require.Len(ScopesEmbedded, len(want), "ScopesEmbedded length")
+	assert.Equal(want, ScopesEmbedded, "ScopesEmbedded")
 }
 
 func TestAuthorizeEmbeddedFallbackMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	tokensDir := t.TempDir()
 	mgr := &Manager{
 		config:     &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
@@ -842,15 +838,13 @@ func TestAuthorizeEmbeddedFallbackMessage(t *testing.T) {
 	defer func() { stdout = origStdout }()
 
 	err := mgr.Authorize(context.Background(), "u@example.com")
-	if !errors.Is(err, errAccessDenied) {
-		t.Fatalf("Authorize error = %v, want errAccessDenied", err)
-	}
-	if !strings.Contains(buf.String(), "still in Google's verification") {
-		t.Errorf("expected fallback message, got: %q", buf.String())
-	}
+	require.ErrorIs(err, errAccessDenied, "Authorize")
+	assert.Contains(buf.String(), "still in Google's verification")
 }
 
 func TestAuthorizeNonEmbeddedNoFallback(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	mgr := &Manager{
 		config:    &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
 		tokensDir: t.TempDir(),
@@ -867,10 +861,6 @@ func TestAuthorizeNonEmbeddedNoFallback(t *testing.T) {
 	defer func() { stdout = origStdout }()
 
 	err := mgr.Authorize(context.Background(), "u@example.com")
-	if !errors.Is(err, errAccessDenied) {
-		t.Fatalf("Authorize error = %v, want errAccessDenied", err)
-	}
-	if strings.Contains(buf.String(), "still in Google's verification") {
-		t.Errorf("did not expect fallback message for non-embedded, got: %q", buf.String())
-	}
+	require.ErrorIs(err, errAccessDenied, "Authorize")
+	assert.NotContains(buf.String(), "still in Google's verification")
 }

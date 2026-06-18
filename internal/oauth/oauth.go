@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -265,7 +266,7 @@ func (m *Manager) newCallbackHandler(expectedState string, codeChan chan<- strin
 				return
 			}
 			errChan <- fmt.Errorf("oauth callback error: %s", errParam)
-			_, _ = fmt.Fprintf(w, "Error: %s", errParam)
+			_, _ = fmt.Fprintf(w, "Error: %s", html.EscapeString(errParam))
 			return
 		}
 		if r.URL.Query().Get("state") != expectedState {
