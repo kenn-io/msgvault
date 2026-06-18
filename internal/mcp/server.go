@@ -271,7 +271,7 @@ func listMessagesTool() mcp.Tool {
 	return mcp.NewTool(ToolListMessages,
 		mcp.WithDescription("List messages with optional filters. Returns message summaries sorted by date. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
-			"total=-1 when has_more is true (full count unknown)."),
+			"total=-1 because the full count is not computed; use has_more for paging."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		withAccount(),
 		mcp.WithString("from",

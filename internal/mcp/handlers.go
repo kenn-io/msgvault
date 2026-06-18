@@ -27,10 +27,12 @@ const (
 	maxLimit               = 1000
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
+	searchModeFTS          = "fts"
+	searchModeVector       = "vector"
+	searchModeHybrid       = "hybrid"
 	// totalCountUnknown is returned when the backend cannot report a full match
 	// count (body FTS fallback, hybrid/vector ranking depth, or list_messages
-	// has_more without a separate count query). Clients should use has_more for
-	// paging.
+	// without a separate count query). Clients should use has_more for paging.
 	totalCountUnknown = -1
 )
 
@@ -56,27 +58,6 @@ func newPaginatedResponse[T any](data []T, total int64, offset int) paginatedRes
 	}
 }
 
-// newPaginatedResponseHasMore builds a page when total match count is unknown.
-// When hasMore is false, total is exact (offset+returned). When hasMore is true,
-// total is totalCountUnknown — use has_more to fetch the next page.
-func newPaginatedResponseHasMore[T any](data []T, offset int, hasMore bool) paginatedResponse[T] {
-	if data == nil {
-		data = []T{}
-	}
-	returned := len(data)
-	total := int64(offset + returned)
-	if hasMore {
-		total = totalCountUnknown
-	}
-	return paginatedResponse[T]{
-		Data:     data,
-		Total:    total,
-		Returned: returned,
-		Offset:   offset,
-		HasMore:  hasMore,
-	}
-}
-
 // newPaginatedResponseNoTotal builds a page when the backend cannot report a
 // total match count. total is always totalCountUnknown; use has_more to page.
 func newPaginatedResponseNoTotal[T any](data []T, offset int, hasMore bool) paginatedResponse[T] {
@@ -94,6 +75,9 @@ func newPaginatedResponseNoTotal[T any](data []T, offset int, hasMore bool) pagi
 
 func searchLimitArg(args map[string]any) int {
 	limit := limitArg(args, "limit", defaultSearchLimit)
+	if limit <= 0 {
+		return defaultSearchLimit
+	}
 	if limit > maxSearchMessagesLimit {
 		return maxSearchMessagesLimit
 	}
@@ -851,7 +835,7 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 		results = results[:pageLimit]
 	}
 
-	return jsonResult(newPaginatedResponseHasMore(results, offset, hasMore))
+	return jsonResult(newPaginatedResponseNoTotal(results, offset, hasMore))
 }
 
 // getStatsResponse is the JSON body returned by the get_stats MCP tool.

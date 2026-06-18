@@ -155,6 +155,40 @@ func TestSearchFallbackToFTS(t *testing.T) {
 	assert.True(resp.HasMore, "has_more")
 }
 
+func TestSearchMessages_NonPositiveLimitUsesDefault(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		limit float64
+	}{
+		{name: "zero", limit: 0},
+		{name: "negative", limit: -5},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
+			eng := &querytest.MockEngine{
+				SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, gotLimit, offset int) ([]query.MessageSummary, error) {
+					assert.Equal(defaultSearchLimit, gotLimit, "limit")
+					assert.Equal(0, offset, "offset")
+					return []query.MessageSummary{
+						testutil.NewMessageSummary(1).WithSubject("Hello").Build(),
+					}, nil
+				},
+				SearchFastCountFunc: func(context.Context, *search.Query, query.MessageFilter) (int64, error) {
+					return 1, nil
+				},
+			}
+			h := newTestHandlers(eng)
+
+			resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
+				"query": "hello",
+				"limit": tt.limit,
+			})
+			assert.Equal(1, resp.Returned, "returned")
+			assert.Equal(int64(1), resp.Total, "total")
+		})
+	}
+}
+
 func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 	// Handlers constructed without a hybridEngine must reject
 	// mode=hybrid (and mode=vector) with a vector_not_enabled error.
@@ -715,6 +749,27 @@ func TestListMessages(t *testing.T) {
 			runToolExpectError(t, "list_messages", h.listMessages, tt.args)
 		})
 	}
+}
+
+func TestListMessages_TotalUnknownWithoutCount(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	eng := &querytest.MockEngine{
+		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+			assert.Equal(defaultSearchLimit+1, filter.Pagination.Limit, "limit includes has_more probe")
+			assert.Equal(1000, filter.Pagination.Offset, "offset")
+			return nil, nil
+		},
+	}
+	h := newTestHandlers(eng)
+
+	resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
+		"offset": float64(1000),
+	})
+	assert.Empty(resp.Data, "data")
+	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
+	assert.Equal(0, resp.Returned, "returned")
+	assert.False(resp.HasMore, "has_more")
 }
 
 func TestAggregateInvalidDates(t *testing.T) {
