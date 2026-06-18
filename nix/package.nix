@@ -41,7 +41,7 @@ buildGoModule {
 
   meta = {
     description = "Offline Gmail archive with full-text search";
-    homepage = "https://github.com/wesm/msgvault";
+    homepage = "https://github.com/kenn-io/msgvault";
     license = lib.licenses.asl20;
     mainProgram = "msgvault";
   };

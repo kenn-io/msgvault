@@ -43,12 +43,12 @@ curl -fsSL https://msgvault.io/install.sh | bash
 powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex"
 ```
 
-The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/wesm/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
+The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
 
 To build from source instead (requires **Go 1.25+** and a C/C++ compiler for CGO and to statically link DuckDB):
 
 ```bash
-git clone https://github.com/wesm/msgvault.git
+git clone https://github.com/kenn-io/msgvault.git
 cd msgvault
 make install
 ```
@@ -275,7 +275,7 @@ Join the [msgvault Discord](https://discord.gg/fDnmxB8Wkq) to ask questions, sha
 ## Development
 
 ```bash
-git clone https://github.com/wesm/msgvault.git
+git clone https://github.com/kenn-io/msgvault.git
 cd msgvault
 make install-hooks  # install pre-commit hook (requires prek)
 make test           # run tests

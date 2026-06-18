@@ -1,6 +1,6 @@
 # GitHub Issue Draft: Database Backend Abstraction (PostgreSQL Support)
 
-> To be filed at: https://github.com/wesm/msgvault/issues
+> To be filed at: https://github.com/kenn-io/msgvault/issues
 
 ---
 

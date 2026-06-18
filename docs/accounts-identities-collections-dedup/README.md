@@ -7,8 +7,8 @@ on April 8, alongside the [implementation plan](https://github.com/jesserobbins/
 and [test plan](https://github.com/jesserobbins/msgvault/commit/df61cee)
 committed earlier the same day. The unified model that emerged over
 the next four weeks is proposed in upstream issue
-[wesm/msgvault#278](https://github.com/wesm/msgvault/issues/278) and
-ships via [PR #304](https://github.com/wesm/msgvault/pull/304).
+[kenn-io/msgvault#278](https://github.com/kenn-io/msgvault/issues/278) and
+ships via [PR #304](https://github.com/kenn-io/msgvault/pull/304).
 
 ## What you need to know
 
