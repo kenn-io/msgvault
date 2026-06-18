@@ -2,7 +2,7 @@
 
 ## What Is msgvault?
 
-[msgvault](https://github.com/wesm/msgvault) is an open-source, local-first
+[msgvault](https://github.com/kenn-io/msgvault) is an open-source, local-first
 email archival tool by Wes McKinney (creator of pandas, Apache Arrow). Written
 in Go, single binary. Archives a lifetime of email and chat with offline search,
 analytics, and AI query via MCP.
