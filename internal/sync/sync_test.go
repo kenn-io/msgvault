@@ -35,6 +35,14 @@ func (p *panicOnBatchAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []s
 	panic("unexpected nil pointer in batch processing")
 }
 
+type batchErrorAPI struct {
+	*gmail.MockAPI
+}
+
+func (b *batchErrorAPI) GetMessagesRawBatchWithErrors(_ context.Context, _ []string) ([]gmail.RawMessageBatchResult, error) {
+	return nil, errors.New("batch fetch unavailable")
+}
+
 func TestFullSync_PanicReturnsError(t *testing.T) {
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
@@ -46,6 +54,30 @@ func TestFullSync_PanicReturnsError(t *testing.T) {
 	_, err := env.Syncer.Full(env.Context, testEmail)
 	requirepkg.Error(t, err, "expected error from panic recovery")
 	assertpkg.ErrorContains(t, err, "panic")
+}
+
+func TestFullSyncBatchFetchErrorUpdatesFailedSyncErrorCount(t *testing.T) {
+	env := newTestEnv(t)
+	seedMessages(env, 2, 12345, "msg1", "msg2")
+	env.Syncer = New(&batchErrorAPI{MockAPI: env.Mock}, env.Store, nil)
+
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	requirepkg.Error(t, err, "full sync should fail on whole-batch fetch error")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	requirepkg.NoError(t, err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLatestSync(source.ID)
+	requirepkg.NoError(t, err, "GetLatestSync")
+	assertpkg.Equal(t, store.SyncStatusFailed, run.Status, "Status")
+	assertpkg.Equal(t, int64(2), run.ErrorsCount, "ErrorsCount")
+
+	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
+	requirepkg.NoError(t, err, "ListSyncRunItems")
+	requirepkg.Len(t, items, 2, "error items")
+	for _, item := range items {
+		assertpkg.Equal(t, "fetch", item.Phase, "Phase")
+		assertpkg.Equal(t, "batch_fetch_error", item.ErrorKind, "ErrorKind")
+	}
 }
 
 // panicOnHistoryAPI wraps a MockAPI and panics when ListHistory is called.

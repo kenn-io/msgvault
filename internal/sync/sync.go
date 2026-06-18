@@ -198,6 +198,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			for _, id := range newIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
 			}
+			checkpoint.ErrorsCount += int64(len(newIDs))
 			return nil, fmt.Errorf("fetch messages: %w", err)
 		}
 
@@ -360,6 +361,9 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		// Process batch
 		result, err := s.processBatch(ctx, state.syncID, source.ID, listResp, labelMap, state.checkpoint, summary)
 		if err != nil {
+			if checkpointErr := s.store.UpdateSyncCheckpoint(state.syncID, state.checkpoint); checkpointErr != nil {
+				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
+			}
 			_ = s.store.FailSync(state.syncID, err.Error())
 			return nil, err
 		}
