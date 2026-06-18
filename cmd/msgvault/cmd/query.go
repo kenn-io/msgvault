@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
+	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
 )

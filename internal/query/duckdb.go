@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
+	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/duckdb/duckdb-go/v2"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/fbmessenger"

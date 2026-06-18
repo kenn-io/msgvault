@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb" // DuckDB driver (database/sql)
-	_ "github.com/mattn/go-sqlite3"     // SQLite driver (database/sql)
+	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	_ "github.com/mattn/go-sqlite3"    // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
