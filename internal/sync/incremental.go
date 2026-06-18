@@ -137,7 +137,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			for _, msg := range record.MessagesDeleted {
 				deletedSet[msg.Message.ID] = true
 			}
-			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, updatedExisting, checkpoint, summary)
+		}
+		for _, record := range historyResp.History {
+			s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, checkpoint, summary)
 		}
 		checkpoint.MessagesUpdated += int64(len(updatedExisting))
 		checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
@@ -264,8 +266,13 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, updatedExisting map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
+func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
 	for _, item := range record.LabelsAdded {
+		if _, exists := existingMap[item.Message.ID]; !exists {
+			if _, pending := newMsgThreads[item.Message.ID]; pending {
+				continue
+			}
+		}
 		updated, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
 		if err != nil {
 			s.logLabelChangeError("add", item.Message.ID, err)

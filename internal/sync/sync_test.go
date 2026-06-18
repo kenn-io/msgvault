@@ -1585,6 +1585,43 @@ func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
 	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
 }
 
+func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+	source := env.CreateSourceWithHistory(t, "12340")
+
+	raw := testMIME()
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12350
+	env.Mock.AddMessage("new-with-label", raw, []string{"INBOX", "STARRED"})
+
+	env.SetHistory(12350, gmail.HistoryRecord{
+		MessagesAdded: []gmail.HistoryMessage{
+			{Message: gmail.MessageID{ID: "new-with-label", ThreadID: "thread_new-with-label"}},
+		},
+		LabelsAdded: []gmail.HistoryLabelChange{
+			{
+				Message:  gmail.MessageID{ID: "new-with-label", ThreadID: "thread_new-with-label"},
+				LabelIDs: []string{"STARRED"},
+			},
+		},
+	})
+
+	summary := runIncrementalSync(t, env)
+	assertSummary(t, summary, WantSummary{Found: new(int64(1)), Added: new(int64(1)), Errors: new(int64(0))})
+	assert.Equal(int64(len(raw)), summary.BytesDownloaded, "BytesDownloaded")
+	assertMessageCount(t, env.Store, 1)
+	assert.Equal([]string{"new-with-label"}, env.Mock.GetMessageCalls, "GetMessageRaw calls")
+	assertMessageHasLabel(t, env.Store, "new-with-label", "STARRED")
+
+	run, err := env.Store.GetLastSuccessfulSync(source.ID)
+	require.NoError(err, "GetLastSuccessfulSync")
+	itemCount, err := env.Store.CountSyncRunItems(run.ID, "")
+	require.NoError(err, "CountSyncRunItems")
+	assert.Zero(itemCount, "sync_run_items")
+}
+
 // TestIncrementalSyncMixedOperations tests a history page with adds, deletes,
 // and label changes all at once.
 func TestIncrementalSyncMixedOperations(t *testing.T) {
