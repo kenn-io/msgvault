@@ -550,6 +550,31 @@ func TestCallbackHandlerAccessDenied(t *testing.T) {
 	}
 }
 
+func TestCallbackHandlerEscapesErrorResponse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	mgr := &Manager{logger: slog.Default()}
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	handler := mgr.newCallbackHandler("expected-state", codeChan, errChan)
+
+	const rawError = "<script>alert(1)</script>"
+	req := httptest.NewRequest(http.MethodGet, "/callback?error=%3Cscript%3Ealert(1)%3C%2Fscript%3E&state=expected-state", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	select {
+	case err := <-errChan:
+		require.ErrorContains(err, rawError)
+	default:
+		require.Fail("callback handler did not send an error")
+	}
+
+	body := rec.Body.String()
+	assert.Contains(body, "Error: &lt;script&gt;alert(1)&lt;/script&gt;")
+	assert.NotContains(body, rawError)
+}
+
 // TestAuthorize_SavesUnderOriginalIdentifier exercises the real
 // authorize() method end-to-end (with injected browserFlow and
 // profile server) to verify the token is saved under the original
