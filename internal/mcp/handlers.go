@@ -237,17 +237,17 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 
 	mode, _ := args["mode"].(string)
 	if mode == "" {
-		mode = "fts"
+		mode = searchModeFTS
 	}
 	explain, _ := args["explain"].(bool)
 
-	if mode == "vector" || mode == "hybrid" {
+	if mode == searchModeVector || mode == searchModeHybrid {
 		return h.searchMessagesHybrid(ctx, args, queryStr, mode, explain)
 	}
 
-	if mode != "fts" {
+	if mode != searchModeFTS {
 		return mcp.NewToolResultError(
-			fmt.Sprintf("invalid mode %q: must be fts, vector, or hybrid", mode),
+			fmt.Sprintf("invalid mode %q: must be %s, %s, or %s", mode, searchModeFTS, searchModeVector, searchModeHybrid),
 		), nil
 	}
 

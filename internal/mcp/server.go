@@ -29,6 +29,13 @@ const (
 	ToolFindSimilarMessages = "find_similar_messages"
 )
 
+// search_messages mode values (wire format).
+const (
+	searchModeFTS    = "fts"
+	searchModeVector = "vector"
+	searchModeHybrid = "hybrid"
+)
+
 // Common argument helpers for recurring tool option definitions.
 
 func withLimit(defaultDesc string) mcp.ToolOption {
@@ -217,7 +224,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		),
 		mcp.WithString("mode",
 			mcp.Description("Search mode: fts (default, keyword only), vector (semantic only), or hybrid (BM25 + vector fused via RRF)"),
-			mcp.Enum("fts", "vector", "hybrid"),
+			mcp.Enum(searchModeFTS, searchModeVector, searchModeHybrid),
 		),
 		mcp.WithBoolean("explain",
 			mcp.Description("Include per-signal scores in the response (for debugging or ranking inspection)"),

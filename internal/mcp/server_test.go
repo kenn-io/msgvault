@@ -162,7 +162,7 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query": "meeting notes",
-		"mode":  "hybrid",
+		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
@@ -203,7 +203,7 @@ func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query": "anything",
-		"mode":  "hybrid",
+		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "index_building", "expected 'index_building' error, got: %s")
@@ -222,7 +222,7 @@ func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query": "anything",
-		"mode":  "hybrid",
+		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
@@ -272,7 +272,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query": "from:alice@example.com",
-		"mode":  "vector",
+		"mode":  searchModeVector,
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "missing_free_text", "expected 'missing_free_text' error, got: %s")
@@ -304,7 +304,7 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 
 	r := callToolDirect(t, "search_messages", h.searchMessages, map[string]any{
 		"query": "hello world",
-		"mode":  "vector",
+		"mode":  searchModeVector,
 	})
 	require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 	var raw map[string]json.RawMessage
@@ -355,7 +355,7 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 	}
 	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(1),
 		"limit":  float64(1),
 	})
@@ -407,7 +407,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 	}
 	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(40),
 		"limit":  float64(20),
 	})
@@ -419,7 +419,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(60),
 		"limit":  float64(20),
 	})
@@ -465,7 +465,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 	}
 	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(30),
 		"limit":  float64(20),
 	})
@@ -477,7 +477,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 
 	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(50),
 		"limit":  float64(20),
 	})
@@ -521,7 +521,7 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 	}
 	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
 		"query": "hit",
-		"mode":  "vector",
+		"mode":  searchModeVector,
 		"limit": float64(20),
 	})
 	require := requirepkg.New(t)
@@ -531,7 +531,7 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 
 	resp2 := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
 		"query":  "hit",
-		"mode":   "vector",
+		"mode":   searchModeVector,
 		"offset": float64(20),
 		"limit":  float64(20),
 	})
