@@ -57,26 +57,28 @@ func TestFullSync_PanicReturnsError(t *testing.T) {
 }
 
 func TestFullSyncBatchFetchErrorUpdatesFailedSyncErrorCount(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 	env.Syncer = New(&batchErrorAPI{MockAPI: env.Mock}, env.Store, nil)
 
 	_, err := env.Syncer.Full(env.Context, testEmail)
-	requirepkg.Error(t, err, "full sync should fail on whole-batch fetch error")
+	require.Error(err, "full sync should fail on whole-batch fetch error")
 
 	source, err := env.Store.GetSourceByIdentifier(testEmail)
-	requirepkg.NoError(t, err, "GetSourceByIdentifier")
+	require.NoError(err, "GetSourceByIdentifier")
 	run, err := env.Store.GetLatestSync(source.ID)
-	requirepkg.NoError(t, err, "GetLatestSync")
-	assertpkg.Equal(t, store.SyncStatusFailed, run.Status, "Status")
-	assertpkg.Equal(t, int64(2), run.ErrorsCount, "ErrorsCount")
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusFailed, run.Status, "Status")
+	assert.Equal(int64(2), run.ErrorsCount, "ErrorsCount")
 
 	items, err := env.Store.ListSyncRunItems(run.ID, store.SyncRunItemStatusError, 10)
-	requirepkg.NoError(t, err, "ListSyncRunItems")
-	requirepkg.Len(t, items, 2, "error items")
+	require.NoError(err, "ListSyncRunItems")
+	require.Len(items, 2, "error items")
 	for _, item := range items {
-		assertpkg.Equal(t, "fetch", item.Phase, "Phase")
-		assertpkg.Equal(t, "batch_fetch_error", item.ErrorKind, "ErrorKind")
+		assert.Equal("fetch", item.Phase, "Phase")
+		assert.Equal("batch_fetch_error", item.ErrorKind, "ErrorKind")
 	}
 }
 
