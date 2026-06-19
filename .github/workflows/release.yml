@@ -22,7 +22,9 @@ jobs:
             go_arch_name: arm64
     runs-on: ${{ matrix.runner }}
     container:
-      image: ubuntu:22.04
+      # Digest-pinned. ubuntu:22.04 ships GCC 12, needed to link DuckDB 1.5.4's
+      # static lib.
+      image: ubuntu:22.04@sha256:4f838adc7181d9039ac795a7d0aba05a9bd9ecd480d294483169c5def983b64d
 
     steps:
       - name: Install build tools
@@ -30,11 +32,9 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          # libsqlite3-dev provides sqlite3.h, which sqlite-vec's CGo
-          # binding includes unconditionally with -DSQLITE_CORE. mattn's
-          # sqlite3 driver still links its own bundled amalgamation at
-          # runtime; the header is only needed at compile time.
-          apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
+          # gcc-12: lets us statically embed GCC 12's libstdc++ (see Build).
+          # libsqlite3-dev: sqlite3.h for sqlite-vec's CGo binding.
+          apt-get install -y gcc-12 g++-12 make git curl tar gzip file binutils libsqlite3-dev
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -52,17 +52,32 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
+          CC: gcc-12
+          CXX: g++-12
         run: |
           export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
           VERSION=${GITHUB_REF#refs/tags/v}
 
+          # Embed libstdc++/libgcc statically (no runtime GLIBCXX dep). Only
+          # libstdc++.a on the search path forces -lstdc++ to the static archive.
+          STATICLIBS="$(mktemp -d)"
+          cp "$(gcc-12 -print-file-name=libstdc++.a)" "$STATICLIBS/"
+          export CGO_LDFLAGS="-L$STATICLIBS"
+
           mkdir -p dist
-          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-lstdc++ -lm'"
+          LDFLAGS="-s -w -X go.kenn.io/msgvault/cmd/msgvault/cmd.Version=v${VERSION} -X go.kenn.io/msgvault/cmd/msgvault/cmd.Commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-8) -X go.kenn.io/msgvault/cmd/msgvault/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -extldflags '-static-libgcc -lm'"
           go build -tags "fts5 sqlite_vec" -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o dist/msgvault ./cmd/msgvault
 
           echo "--- Binary info ---"
           file dist/msgvault
           ldd dist/msgvault || true
+
+          # Fail if libstdc++ linked dynamically — it would reintroduce a
+          # GLIBCXX runtime dependency.
+          if ldd dist/msgvault | grep -q 'libstdc++'; then
+            echo "FATAL: binary dynamically links libstdc++ — static link failed"
+            exit 1
+          fi
 
           # Verify runtime version requirements are reasonable. DuckDB's
           # prebuilt static library still links against libstdc++ symbols.
