@@ -38,6 +38,11 @@ Currently supports Gmail and IMAP sync, plus offline imports from MBOX exports a
 curl -fsSL https://msgvault.io/install.sh | bash
 ```
 
+**macOS via Homebrew**
+```bash
+brew install msgvault
+```
+
 **Windows (PowerShell):**
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex"
