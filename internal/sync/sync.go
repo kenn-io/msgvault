@@ -216,7 +216,11 @@ func (s *Syncer) processBatch(ctx context.Context, sourceID int64, listResp *gma
 			// Track oldest message date for progress display
 			// Gmail returns messages newest-to-oldest, so oldest shows where we've reached
 			if raw.InternalDate > 0 {
-				msgDate := time.UnixMilli(raw.InternalDate)
+				// .UTC() to match how InternalDate is normalized everywhere
+				// else (the stored message date and parsed.Date both use
+				// .UTC()); without it oldestDate carries the local zone and
+				// callers reading its calendar day are off by one east of UTC.
+				msgDate := time.UnixMilli(raw.InternalDate).UTC()
 				if result.oldestDate.IsZero() || msgDate.Before(result.oldestDate) {
 					result.oldestDate = msgDate
 				}
