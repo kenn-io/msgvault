@@ -42,8 +42,12 @@ func mapMessage(msg waMessage, conversationID, sourceID int64, senderID sql.Null
 	sentAt := sql.NullTime{}
 	if msg.Timestamp > 0 {
 		// WhatsApp timestamps are in milliseconds since epoch.
+		// .UTC() to match how every other importer normalizes stored
+		// message dates; without it SentAt carries the local zone and
+		// Parquet year-partitioning / calendar-day reads are off by one
+		// near boundaries east of UTC.
 		sentAt = sql.NullTime{
-			Time:  time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*1e6),
+			Time:  time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*1e6).UTC(),
 			Valid: true,
 		}
 	}
