@@ -66,7 +66,7 @@ public_doc_globs=(
 )
 
 root_media_refs="$(
-  (rg -n '(<img[^>]+src="/|!\[[^]]*\]\(/)[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)' docs README.md "${public_doc_globs[@]}" || true) \
+  (rg -n -o '(<img[^>]+src="/|!\[[^]]*\]\(/)[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)' docs README.md "${public_doc_globs[@]}" || true) \
     | grep -Ev '(^|[^[:alnum:]_-])/?assets/(static|generated)/' \
     || true
 )"
@@ -76,8 +76,8 @@ if [[ -n "$root_media_refs" ]]; then
 fi
 
 source_media_refs="$(
-  (rg -n '(https://msgvault\.io/[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)|/(concepts/[^)" >]+\.(png|jpg|jpeg|webp|gif)|tui-[^)" >]+\.svg|stats\.svg|list-senders\.svg|how-it-works\.svg|oauth-multi-account\.svg|og-image\.(png|svg)|favicon(-192|-512)?\.(png|svg)))' docs README.md "${public_doc_globs[@]}" || true) \
-    | grep -Ev '(^|[^[:alnum:]_-])/?assets/(static|generated)/' \
+  (rg -n -o '(https://msgvault\.io/[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)|(^|[^[:alnum:]_./-])/?(concepts/[^)" >]+\.(png|jpg|jpeg|webp|gif)|tui-[^)" >]+\.svg|stats\.svg|list-senders\.svg|how-it-works\.svg|oauth-multi-account\.svg|og-image\.(png|svg)|favicon(-192|-512)?\.(png|svg)))' docs README.md "${public_doc_globs[@]}" || true) \
+    | grep -Ev 'https://msgvault\.io/assets/(static|generated)/|(^|[^[:alnum:]_-])/?assets/(static|generated)/' \
     || true
 )"
 if [[ -n "$source_media_refs" ]]; then

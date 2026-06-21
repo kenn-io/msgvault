@@ -209,6 +209,60 @@ func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
 	}
 }
 
+func TestCheckDocsRejectsForbiddenMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
+	runCheckDocsMediaReferenceTest(
+		t,
+		"![bad](/favicon.svg) ![ok](/assets/static/favicon.svg)",
+		"docs media references must use /assets/static or /assets/generated",
+	)
+}
+
+func TestCheckDocsRejectsForbiddenSourceMediaReferenceOnLineWithAllowedAsset(t *testing.T) {
+	runCheckDocsMediaReferenceTest(
+		t,
+		`logo = "/favicon.svg" favicon = "assets/static/favicon.svg"`,
+		"docs source media references must use /assets/static or /assets/generated",
+	)
+}
+
+func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	repo := filepath.Join(tempDir, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	git(t, repo, "init")
+	git(t, repo, "config", "user.name", "Test User")
+	git(t, repo, "config", "user.email", "test@example.invalid")
+
+	scriptPath := installScript(t, repo, filepath.Join("scripts", "check-docs.sh"))
+	writeAssetFile(
+		t,
+		filepath.Join(repo, "docs"),
+		"index.md",
+		docsLine,
+	)
+	writeAssetFile(t, repo, "README.md", "# test")
+	writeExecutableFile(
+		t,
+		filepath.Join(repo, "docs", "scripts", "check_markdown_sources.py"),
+		"#!/usr/bin/env python3\nprint('docs markdown source checks passed')\n",
+	)
+	writeExecutableFile(
+		t,
+		filepath.Join(repo, "docs", "assets", "hydrate-assets.sh"),
+		"#!/usr/bin/env bash\necho 'hydrate should not run' >&2\nexit 1\n",
+	)
+
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = repo
+	output, err := cmd.CombinedOutput()
+
+	require.Error(t, err, string(output))
+	assert.Contains(t, string(output), wantMessage)
+	assert.Contains(t, string(output), "/favicon.svg")
+	assert.NotContains(t, string(output), "hydrate should not run")
+}
+
 func installScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
 	sourceScriptPath := filepath.Join("..", scriptRel)
@@ -268,6 +322,12 @@ func writeAssetFile(t *testing.T, dir, file, content string) {
 	path := filepath.Join(dir, file)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
+}
+
+func writeExecutableFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))
 }
 
 func assertRecursiveFileList(t *testing.T, dir string, want []string) {
