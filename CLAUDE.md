@@ -208,6 +208,16 @@ After making any Go code changes, always run `go fmt ./...` and `go vet ./...` b
 
 All Go tests use [testify](https://github.com/stretchr/testify) for assertions. Do NOT introduce new `t.Errorf`/`t.Fatalf`/`t.Fatal`/`t.Error` patterns — use `assert.X` or `require.X` instead.
 
+Tests must exercise real behavior through the production path. Do not add
+tautological "fake TDD" tests that copy shell scripts into synthetic temporary
+trees, stub the primary commands, and only assert that the stub saw expected
+arguments or filenames. Those tests usually verify the fixture rather than the
+system. Prefer testing a real validator, parser, or public command output; for
+shell/docs workflows, use the actual repository script against the real docs
+tree or a built artifact. If a fake command is truly needed, the test must prove
+a stable external contract or regression that cannot be covered by the real
+path, and the commit message must explain why.
+
 **Mapping rule:**
 - `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.
 - `assert.X` — continues after failure (replaces what was `t.Errorf` / `t.Error`). Use for independent value checks where reporting multiple failures helps debugging.

@@ -16,6 +16,13 @@ All Go tests use `github.com/stretchr/testify`. New tests and modifications to e
 
 The mapping cheatsheet is in `CLAUDE.md` under the Testing section.
 
+## Testing — No Fake TDD
+
+Do not add tautological tests that copy shell scripts into synthetic temp trees,
+stub the primary commands, and only assert that the stub saw expected arguments.
+Exercise the production path, a real validator/parser, or a built artifact
+instead. See `CLAUDE.md` for the full rule and narrow exception.
+
 ## Custom Helpers
 
 `internal/testutil` retains non-assertion helpers (`MakeSet`, `NewTestStore`, fixture builders, etc.). It no longer provides `AssertEqual` / `MustNoErr` / similar — those were removed in favor of calling testify directly.

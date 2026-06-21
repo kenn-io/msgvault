@@ -58,7 +58,11 @@ tmp_config_base=""
   tar \
     --exclude './.venv' \
     --exclude './.vercel' \
+    --exclude './.env' \
+    --exclude './.env.*' \
     --exclude './.env*.local' \
+    --exclude './client_secret*.json' \
+    --exclude './oauth_client*.json' \
     --exclude './site' \
     --exclude './zensical-public-docs.*' \
     --exclude './.zensical-build.*' \
@@ -78,6 +82,14 @@ tmp_config_base=""
     --exclude './assets/*.sh' \
     -cf - .
 ) | (cd "$tmp_docs" && tar -xf -)
+
+# The temporary docs tree is the public publishing boundary. Keep ignored local
+# credentials and dotfiles out even if a future tar implementation misses a glob.
+find "$tmp_docs" -depth \( \
+  -name '.*' -o \
+  -iname 'client_secret*.json' -o \
+  -iname 'oauth_client*.json' \
+\) -exec rm -rf {} +
 
 awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
   $0 == "docs_dir = \"docs\"" {

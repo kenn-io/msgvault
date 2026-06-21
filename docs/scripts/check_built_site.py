@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html.parser
+import fnmatch
 import pathlib
 import re
 import sys
@@ -132,6 +133,11 @@ FORBIDDEN_PATTERNS = [
     ":::",
     "set:html",
     "sl-markdown-content",
+]
+
+FORBIDDEN_SITE_FILENAMES = [
+    "client_secret*.json",
+    "oauth_client*.json",
 ]
 
 ALLOWED_MISSING_LOCAL_PATHS = {
@@ -330,9 +336,24 @@ def check_expected_asset_files() -> None:
                 )
 
 
+def check_public_site_file_inventory() -> None:
+    for path in SITE.rglob("*"):
+        rel = path.relative_to(SITE)
+        for part in rel.parts:
+            if part.startswith("."):
+                fail(f"forbidden public site dotfile: {rel.as_posix()}")
+
+        name = path.name.lower()
+        for pattern in FORBIDDEN_SITE_FILENAMES:
+            if fnmatch.fnmatchcase(name, pattern):
+                fail(f"forbidden public site credential file: {rel.as_posix()}")
+
+
 def main() -> None:
     if not SITE.exists():
         fail("site directory does not exist. Run the Zensical build first.")
+
+    check_public_site_file_inventory()
 
     for route in ROUTES:
         path = route_to_file(route)
