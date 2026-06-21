@@ -413,7 +413,9 @@ func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) 
 	t.Helper()
 	tempDir := t.TempDir()
 	repo := filepath.Join(tempDir, "repo")
+	binDir := filepath.Join(tempDir, "bin")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
 	git(t, repo, "init")
 	git(t, repo, "config", "user.name", "Test User")
 	git(t, repo, "config", "user.email", "test@example.invalid")
@@ -436,9 +438,11 @@ func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) 
 		filepath.Join(repo, "docs", "assets", "hydrate-assets.sh"),
 		"#!/usr/bin/env bash\necho 'hydrate should not run' >&2\nexit 1\n",
 	)
+	writeExecutableFile(t, filepath.Join(binDir, "rg"), fakeRipgrepForDocsMediaRefs())
 
 	cmd := exec.Command("bash", scriptPath)
 	cmd.Dir = repo
+	cmd.Env = envWithPath(binDir + string(os.PathListSeparator) + os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
 
 	require.Error(t, err, string(output))
@@ -538,6 +542,53 @@ func fakeDockerScript(logPath string) string {
 		"    exit 125\n" +
 		"  fi\n" +
 		"done\n"
+}
+
+func fakeRipgrepForDocsMediaRefs() string {
+	return `#!/usr/bin/env bash
+set -euo pipefail
+
+mode="root"
+args="$*"
+if [[ "$args" == *"https://msgvault"* ]]; then
+  mode="source"
+fi
+
+status=1
+line=""
+if [[ -f docs/index.md ]]; then
+  line="$(cat docs/index.md)"
+fi
+
+case "$mode" in
+  root)
+    if [[ "$line" == *"/favicon.svg"* && ( "$line" == *"!["* || "$line" == *"<img"* ) ]]; then
+      printf 'docs/index.md:1:/favicon.svg\n'
+      status=0
+    fi
+    ;;
+  source)
+    if [[ "$line" == *"/favicon.svg"* ]]; then
+      printf 'docs/index.md:1:/favicon.svg\n'
+      status=0
+    fi
+    ;;
+esac
+
+exit "$status"
+`
+}
+
+func envWithPath(pathValue string) []string {
+	env := os.Environ()
+	pathEntry := "PATH=" + pathValue
+	for i, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			env[i] = pathEntry
+			return env
+		}
+	}
+	return append(env, pathEntry)
 }
 
 func shellQuote(value string) string {
