@@ -59,11 +59,7 @@ FORBIDDEN_MARKERS = (
     "<CardGrid",
     "<Screenshot",
     "<style>{`",
-    ":::note",
-    ":::tip",
-    ":::caution",
-    ":::danger",
-    "::::",
+    ":::",
     "sl-markdown-content",
     "virtual:starlight",
 )

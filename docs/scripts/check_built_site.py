@@ -129,6 +129,7 @@ FORBIDDEN_PATTERNS = [
     "<CardGrid",
     "<Screenshot",
     "<Aside",
+    ":::",
     "set:html",
     "sl-markdown-content",
 ]

@@ -80,7 +80,7 @@ disk that you own and control.
   </section>
   <section>
     <h3>Semantic &amp; Hybrid Search</h3>
-    <p>Opt-in semantic search with vectors stored locally, plus hybrid ranking that fuses BM25 and vector similarity via Reciprocal Rank Fusion. Point msgvault at a local or self-hosted OpenAI-compatible embedding endpoint and query by meaning, not just keywords.</p>
+    <p>Opt-in semantic search with vectors stored locally, plus hybrid ranking that fuses BM25 and vector similarity via Reciprocal Rank Fusion. Point msgvault at a local or self-hosted OpenAI-compatible embedding endpoint and query by meaning, not just keywords. Exposed through local CLI search, the HTTP API, and MCP server.</p>
   </section>
   <section>
     <h3>Multi-Account</h3>
