@@ -133,7 +133,7 @@ Common IMAP servers:
 | Provider | Host | Port | Notes |
 |---|---|---|---|
 | Fastmail | `imap.fastmail.com` | 993 | App password recommended |
-| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`add-o365`](/guides/oauth-setup/#microsoft-365-outlook--hotmail) for OAuth (recommended); or app password with 2FA |
+| Outlook / Hotmail | `outlook.office365.com` | 993 | Use [`add-o365`](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for OAuth (recommended); or app password with 2FA |
 | Yahoo | `imap.mail.yahoo.com` | 993 | [App password](#yahoo-app-passwords) required |
 | iCloud | `imap.mail.me.com` | 993 | App-specific password required |
 | Gmail (IMAP) | `imap.gmail.com` | 993 | Use `add-account` for Gmail API instead |
@@ -154,7 +154,7 @@ msgvault sync-full
 IMAP accounts are stored in the same database as Gmail accounts. All tools (TUI, search, MCP, web server) work with IMAP messages the same way.
 
 !!! tip "Microsoft 365 / Outlook.com"
-    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook--hotmail) for details.
+    For Outlook, Hotmail, Live.com, and Microsoft 365 accounts, `add-o365` provides OAuth-based access without app passwords. It auto-detects the correct IMAP host and configures XOAUTH2 authentication. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for details.
 
 <span id="yahoo-app-passwords"></span>
 

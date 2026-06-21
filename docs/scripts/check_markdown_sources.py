@@ -58,6 +58,7 @@ FORBIDDEN_MARKERS = (
     "<Card",
     "<CardGrid",
     "<Screenshot",
+    "#microsoft-365-outlook--hotmail",
     "<style>{`",
     ":::",
     "sl-markdown-content",

@@ -344,6 +344,12 @@ def main() -> None:
     check_expected_asset_files()
 
     html_files = list(SITE.rglob("*.html"))
+    leaked_overrides = [path for path in html_files if "overrides" in path.relative_to(SITE).parts]
+    if leaked_overrides:
+        fail(
+            "override templates leaked into site output: "
+            + ", ".join(str(path.relative_to(SITE)) for path in leaked_overrides)
+        )
     all_text = "\n".join(
         path.read_text(encoding="utf-8", errors="ignore") for path in html_files
     )

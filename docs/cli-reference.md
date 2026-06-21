@@ -95,7 +95,7 @@ msgvault add-o365 <email>
 
 The command opens your browser for Microsoft OAuth consent, then configures IMAP with XOAUTH2 automatically. The correct IMAP host is auto-detected: `outlook.office.com` for personal accounts (hotmail.com, outlook.com, live.com, msn.com) and `outlook.office365.com` for organizational accounts.
 
-Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook--hotmail) for Azure AD app registration.
+Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAuth Setup guide](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for Azure AD app registration.
 
 | Flag | Default | Description |
 |---|---|---|

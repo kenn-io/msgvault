@@ -64,6 +64,7 @@ tmp_config_base=""
     --exclude './.zensical-build.*' \
     --exclude './superpowers' \
     --exclude './internal' \
+    --exclude './overrides' \
     --exclude './scripts' \
     --exclude './screenshots' \
     --exclude './diagrams' \

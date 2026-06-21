@@ -153,7 +153,7 @@ Configuration for Microsoft 365 / Outlook.com OAuth. Required only if you use `a
 | `client_id` | — | Azure AD Application (client) ID (required) |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook--hotmail) for app registration steps.
+See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps.
 
 ### `[log]`
 
