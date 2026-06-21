@@ -12,10 +12,73 @@ SITE = ROOT / "site"
 
 ROUTES = [
     "/",
+    "/api-server/",
+    "/architecture/overview/",
+    "/architecture/postgresql/",
+    "/architecture/search-ranking/",
+    "/architecture/storage/",
+    "/changelog/",
+    "/cli-reference/",
+    "/configuration/",
+    "/development/",
+    "/faq/",
+    "/guides/oauth-setup/",
+    "/guides/remote-deployment/",
+    "/guides/verification/",
+    "/introduction/",
+    "/setup/",
+    "/troubleshooting/",
+    "/usage/analytics/",
+    "/usage/chat/",
+    "/usage/deduplication/",
+    "/usage/deletion/",
+    "/usage/exporting/",
+    "/usage/importing/",
+    "/usage/multi-account/",
+    "/usage/querying/",
+    "/usage/searching/",
+    "/usage/text-messages/",
+    "/usage/tui/",
+    "/usage/vector-search/",
 ]
 
 REQUIRED_SITEMAP_URLS = [
     "https://msgvault.io/",
+    "https://msgvault.io/api-server/",
+    "https://msgvault.io/architecture/overview/",
+    "https://msgvault.io/architecture/postgresql/",
+    "https://msgvault.io/architecture/search-ranking/",
+    "https://msgvault.io/architecture/storage/",
+    "https://msgvault.io/changelog/",
+    "https://msgvault.io/cli-reference/",
+    "https://msgvault.io/configuration/",
+    "https://msgvault.io/development/",
+    "https://msgvault.io/faq/",
+    "https://msgvault.io/guides/oauth-setup/",
+    "https://msgvault.io/guides/remote-deployment/",
+    "https://msgvault.io/guides/verification/",
+    "https://msgvault.io/introduction/",
+    "https://msgvault.io/setup/",
+    "https://msgvault.io/troubleshooting/",
+    "https://msgvault.io/usage/analytics/",
+    "https://msgvault.io/usage/chat/",
+    "https://msgvault.io/usage/deduplication/",
+    "https://msgvault.io/usage/deletion/",
+    "https://msgvault.io/usage/exporting/",
+    "https://msgvault.io/usage/importing/",
+    "https://msgvault.io/usage/multi-account/",
+    "https://msgvault.io/usage/querying/",
+    "https://msgvault.io/usage/searching/",
+    "https://msgvault.io/usage/text-messages/",
+    "https://msgvault.io/usage/tui/",
+    "https://msgvault.io/usage/vector-search/",
+]
+
+REQUIRED_METADATA = [
+    '<meta property="og:image" content="https://msgvault.io/assets/static/og-image.png">',
+    '<meta name="twitter:image" content="https://msgvault.io/assets/static/og-image.png">',
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="msgvault">',
 ]
 
 STATIC_ASSETS = [
@@ -67,6 +130,7 @@ FORBIDDEN_PATTERNS = [
     "<Screenshot",
     "<Aside",
     "set:html",
+    "sl-markdown-content",
 ]
 
 ALLOWED_MISSING_LOCAL_PATHS = {
@@ -282,6 +346,9 @@ def main() -> None:
     all_text = "\n".join(
         path.read_text(encoding="utf-8", errors="ignore") for path in html_files
     )
+    for marker in REQUIRED_METADATA:
+        if marker not in all_text:
+            fail(f"missing required generated metadata: {marker}")
     for pattern in FORBIDDEN_PATTERNS:
         if pattern in all_text:
             fail(f"forbidden generated marker found: {pattern}")

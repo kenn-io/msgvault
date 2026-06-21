@@ -19,18 +19,53 @@ EXCLUDED_DIRS = {
     "superpowers",
 }
 ADMONITION_DIRECTIVE_RE = re.compile(
-    r'!!!\s+[A-Za-z][\w-]*(?:\s+"[^"]+")?\s*'
+    r'!!!\s+[A-Za-z][\w-]*(?:\s+"(?:[^"\\]|\\.)*")?\s*'
 )
+PUBLIC_MARKDOWN = {
+    "api-server.md",
+    "architecture/overview.md",
+    "architecture/postgresql.md",
+    "architecture/search-ranking.md",
+    "architecture/storage.md",
+    "changelog.md",
+    "cli-reference.md",
+    "configuration.md",
+    "development.md",
+    "faq.md",
+    "guides/oauth-setup.md",
+    "guides/remote-deployment.md",
+    "guides/verification.md",
+    "index.md",
+    "introduction.md",
+    "setup.md",
+    "troubleshooting.md",
+    "usage/analytics.md",
+    "usage/chat.md",
+    "usage/deduplication.md",
+    "usage/deletion.md",
+    "usage/exporting.md",
+    "usage/importing.md",
+    "usage/multi-account.md",
+    "usage/querying.md",
+    "usage/searching.md",
+    "usage/text-messages.md",
+    "usage/tui.md",
+    "usage/vector-search.md",
+}
 FORBIDDEN_MARKERS = (
+    "@astrojs/starlight",
     "<Aside",
     "<Card",
     "<CardGrid",
     "<Screenshot",
+    "<style>{`",
     ":::note",
     ":::tip",
     ":::caution",
     ":::danger",
     "::::",
+    "sl-markdown-content",
+    "virtual:starlight",
 )
 
 
@@ -47,11 +82,7 @@ def is_excluded(path: pathlib.Path) -> bool:
 
 
 def public_markdown_files() -> list[pathlib.Path]:
-    return [
-        path
-        for path in sorted(ROOT.rglob("*.md"))
-        if not is_excluded(path)
-    ]
+    return [ROOT / path for path in sorted(PUBLIC_MARKDOWN)]
 
 
 def check_frontmatter(path: pathlib.Path, lines: list[str], errors: list[str]) -> None:
@@ -125,6 +156,9 @@ def main() -> None:
     errors: list[str] = []
 
     for path in public_markdown_files():
+        if not path.exists():
+            errors.append(f"{path.relative_to(ROOT)}: missing public Markdown file")
+            continue
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
         check_frontmatter(path, lines, errors)
