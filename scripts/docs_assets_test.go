@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -50,6 +51,14 @@ var msgvaultGeneratedAssets = []string{
 	"tui-time.svg",
 }
 
+type publisherScriptCase struct {
+	name        string
+	scriptRel   string
+	branch      string
+	write       func(*testing.T, string, string)
+	symlinkPath string
+}
+
 func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	tempDir := t.TempDir()
 	remoteRepo := filepath.Join(tempDir, "remote")
@@ -91,6 +100,8 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	require.NoError(t, os.MkdirAll(docsAssetsDir, 0o755))
 	writeStaticAssets(t, filepath.Join(docsAssetsDir, "static"), "stale local static")
 	writeGeneratedAssets(t, filepath.Join(docsAssetsDir, "generated"), "stale local generated")
+	writeAssetFile(t, filepath.Join(docsAssetsDir, "static"), "stale-static.svg", "stale static extra")
+	writeAssetFile(t, filepath.Join(docsAssetsDir, "generated"), "stale-generated.svg", "stale generated extra")
 
 	scriptPath := installScript(t, localRepo, filepath.Join("docs", "assets", "hydrate-assets.sh"))
 	cmd := exec.Command("bash", scriptPath)
@@ -100,29 +111,14 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 
 	assert.Equal(t, newStaticCommit, gitOutput(t, localRepo, "rev-parse", "refs/remotes/origin/docs-assets"))
 	assert.Equal(t, generatedCommit, gitOutput(t, localRepo, "rev-parse", "refs/remotes/origin/docs-generated-assets"))
+	assertRecursiveFileList(t, filepath.Join(docsAssetsDir, "static"), msgvaultStaticAssets)
+	assertRecursiveFileList(t, filepath.Join(docsAssetsDir, "generated"), msgvaultGeneratedAssets)
 	assertAssetFilesHaveContent(t, filepath.Join(docsAssetsDir, "static"), msgvaultStaticAssets, "new static")
 	assertAssetFilesHaveContent(t, filepath.Join(docsAssetsDir, "generated"), msgvaultGeneratedAssets, "generated")
 }
 
 func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
-	cases := []struct {
-		name      string
-		scriptRel string
-		write     func(*testing.T, string, string)
-	}{
-		{
-			name:      "static",
-			scriptRel: filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
-			write:     writeStaticAssets,
-		},
-		{
-			name:      "generated",
-			scriptRel: filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
-			write:     writeGeneratedAssets,
-		},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range publisherScriptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
 			repo := filepath.Join(tempDir, "repo")
@@ -133,6 +129,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 			git(t, repo, "config", "user.email", "test@example.invalid")
 			tc.write(t, sourceDir, "asset")
 			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, ".env.local"), []byte("TOKEN=secret\n"), 0o600))
+			beforeRef, beforeExists := gitRef(t, repo, tc.branch)
 
 			scriptPath := installScript(t, repo, tc.scriptRel)
 			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
@@ -142,32 +139,13 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 			require.Error(t, err, string(output))
 			assert.Contains(t, strings.ToLower(string(output)), "unexpected")
 			assert.Contains(t, string(output), ".env.local")
+			assertBranchRefUnchanged(t, repo, tc.branch, beforeRef, beforeExists)
 		})
 	}
 }
 
 func TestAssetPublishersRejectSymlinks(t *testing.T) {
-	cases := []struct {
-		name        string
-		scriptRel   string
-		write       func(*testing.T, string, string)
-		symlinkPath string
-	}{
-		{
-			name:        "static",
-			scriptRel:   filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
-			write:       writeStaticAssets,
-			symlinkPath: "favicon.svg",
-		},
-		{
-			name:        "generated",
-			scriptRel:   filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
-			write:       writeGeneratedAssets,
-			symlinkPath: "tui-filter-modal.svg",
-		},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range publisherScriptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
 			repo := filepath.Join(tempDir, "repo")
@@ -177,6 +155,7 @@ func TestAssetPublishersRejectSymlinks(t *testing.T) {
 			git(t, repo, "config", "user.name", "Test User")
 			git(t, repo, "config", "user.email", "test@example.invalid")
 			tc.write(t, sourceDir, "asset")
+			beforeRef := seedBranchRef(t, repo, tc.branch)
 
 			target := filepath.Join(tempDir, "symlink-target")
 			require.NoError(t, os.WriteFile(target, []byte("not an asset\n"), 0o644))
@@ -191,18 +170,44 @@ func TestAssetPublishersRejectSymlinks(t *testing.T) {
 
 			require.Error(t, err, string(output))
 			assert.Contains(t, strings.ToLower(string(output)), "symlink")
+			assertBranchRefUnchanged(t, repo, tc.branch, beforeRef, true)
 		})
 	}
 }
 
 func installScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
-	script, err := os.ReadFile(filepath.Join("..", scriptRel))
+	sourceScriptPath := filepath.Join("..", scriptRel)
+	info, err := os.Stat(sourceScriptPath)
 	require.NoError(t, err)
+	require.False(t, info.IsDir(), sourceScriptPath)
+
+	for _, relDir := range supportDirsForScript(scriptRel) {
+		copySupportFiles(t, repo, relDir)
+	}
+
 	scriptPath := filepath.Join(repo, scriptRel)
-	require.NoError(t, os.MkdirAll(filepath.Dir(scriptPath), 0o755))
-	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
+	require.FileExists(t, scriptPath)
 	return scriptPath
+}
+
+func publisherScriptCases() []publisherScriptCase {
+	return []publisherScriptCase{
+		{
+			name:        "static",
+			scriptRel:   filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
+			branch:      "docs-assets",
+			write:       writeStaticAssets,
+			symlinkPath: "favicon.svg",
+		},
+		{
+			name:        "generated",
+			scriptRel:   filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
+			branch:      "docs-generated-assets",
+			write:       writeGeneratedAssets,
+			symlinkPath: "tui-filter-modal.svg",
+		},
+	}
 }
 
 func writeStaticAssets(t *testing.T, dir, content string) {
@@ -218,10 +223,23 @@ func writeGeneratedAssets(t *testing.T, dir, content string) {
 func writeAssetFiles(t *testing.T, dir string, files []string, content string) {
 	t.Helper()
 	for _, file := range files {
-		path := filepath.Join(dir, file)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
+		writeAssetFile(t, dir, file, content)
 	}
+}
+
+func writeAssetFile(t *testing.T, dir, file, content string) {
+	t.Helper()
+	path := filepath.Join(dir, file)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
+}
+
+func assertRecursiveFileList(t *testing.T, dir string, want []string) {
+	t.Helper()
+	got := recursiveFileList(t, dir)
+	expected := append([]string(nil), want...)
+	sort.Strings(expected)
+	assert.Equal(t, expected, got)
 }
 
 func assertAssetFilesHaveContent(t *testing.T, dir string, files []string, want string) {
@@ -231,6 +249,24 @@ func assertAssetFilesHaveContent(t *testing.T, dir string, files []string, want 
 		require.NoError(t, err, file)
 		assert.Equal(t, want, strings.TrimRight(string(content), "\r\n"), file)
 	}
+}
+
+func recursiveFileList(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		require.NoError(t, err)
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	require.NoError(t, err)
+	sort.Strings(files)
+	return files
 }
 
 func clearWorkingTree(t *testing.T, dir string) {
@@ -243,6 +279,90 @@ func clearWorkingTree(t *testing.T, dir string) {
 		}
 		require.NoError(t, os.RemoveAll(filepath.Join(dir, entry.Name())))
 	}
+}
+
+func supportDirsForScript(scriptRel string) []string {
+	dirs := []string{filepath.Dir(scriptRel)}
+	if filepath.Dir(scriptRel) == filepath.Join("docs", "screenshots") {
+		dirs = append(dirs, filepath.Join("docs", "assets"))
+	}
+	return dirs
+}
+
+func copySupportFiles(t *testing.T, repo, relDir string) {
+	t.Helper()
+	sourceDir := filepath.Join("..", relDir)
+	if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
+		return
+	}
+
+	err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".venv", ".vercel", "demo-data", "generated", "site", "static":
+				return filepath.SkipDir
+			default:
+				return nil
+			}
+		}
+		if !isSupportFile(path) {
+			return nil
+		}
+
+		rel, err := filepath.Rel("..", path)
+		require.NoError(t, err)
+		info, err := entry.Info()
+		require.NoError(t, err)
+		content, err := os.ReadFile(path)
+		require.NoError(t, err)
+		dest := filepath.Join(repo, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
+		require.NoError(t, os.WriteFile(dest, content, info.Mode().Perm()))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func isSupportFile(path string) bool {
+	switch filepath.Ext(path) {
+	case ".bash", ".py", ".sh":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedBranchRef(t *testing.T, repo, branch string) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "branch-seed.txt"), []byte(branch+"\n"), 0o644))
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "seed branch ref")
+	commit := gitOutput(t, repo, "rev-parse", "HEAD")
+	git(t, repo, "branch", branch, commit)
+	return commit
+}
+
+func assertBranchRefUnchanged(t *testing.T, repo, branch, beforeRef string, beforeExists bool) {
+	t.Helper()
+	afterRef, afterExists := gitRef(t, repo, branch)
+	if !beforeExists {
+		assert.False(t, afterExists, branch)
+		return
+	}
+	require.True(t, afterExists, branch)
+	assert.Equal(t, beforeRef, afterRef, branch)
+}
+
+func gitRef(t *testing.T, dir, ref string) (string, bool) {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--verify", ref)
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(output)), true
 }
 
 func git(t *testing.T, dir string, args ...string) {
