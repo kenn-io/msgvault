@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Accounts and Collections</title>
+  <style>
+    :root {
+      /* msgvault.io palette */
+      --bg: #0a0a0a;
+      --surface-1: #161616;
+      --surface-2: #212121;
+      --hairline: #3a3a3a;
+      --text: #e8e8e8;
+      --text-2: #c0c0c0;
+      --muted: #a0a0a0;
+      --muted-2: #707070;
+      --accent: #ffffff;
+
+      /* Account/source colors (low-saturation for dark theme) */
+      --gmail: #3fa37e;
+      --mbox: #d0a04a;
+      --mail: #6e8ab2;
+      --imsg: #4a9bb2;
+      --work: #c46e4a;
+      --edu: #5a9b7d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 1600px;
+      min-height: 980px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .slide {
+      width: 1600px;
+      padding: 76px 100px 76px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 50px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1200px;
+      color: var(--text-2);
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 40px;
+    }
+
+    .panel {
+      min-height: 600px;
+      padding: 30px 32px 28px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.1;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .rule {
+      max-width: 290px;
+      color: var(--muted);
+      font-size: 14.5px;
+      line-height: 1.4;
+      text-align: right;
+    }
+
+    .account-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .account {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 14px;
+      min-height: 110px;
+      align-items: start;
+      padding: 16px 18px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
+    }
+
+    .account .accent-bar {
+      width: 4px;
+      height: 100%;
+      border-radius: 2px;
+      align-self: stretch;
+    }
+
+    .account.gmail .accent-bar { background: var(--gmail); }
+    .account.mbox .accent-bar { background: var(--mbox); }
+    .account.mail .accent-bar { background: var(--mail); }
+    .account.imsg .accent-bar { background: var(--imsg); }
+    .account.work .accent-bar { background: var(--work); }
+    .account.edu .accent-bar { background: var(--edu); }
+
+    .name {
+      font-size: 19px;
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--text);
+    }
+
+    .hint {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .identity {
+      display: inline-block;
+      max-width: 100%;
+      margin-top: 8px;
+      padding: 4px 9px;
+      border-radius: 4px;
+      color: var(--text-2);
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .collection-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .collection {
+      padding: 22px 24px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: var(--surface-2);
+    }
+
+    .collection.all {
+      border-color: var(--accent);
+      background: var(--bg);
+    }
+
+    .collection.personal {
+      border-left: 3px solid var(--gmail);
+    }
+
+    .collection.work {
+      border-left: 3px solid var(--mail);
+    }
+
+    .collection-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 14px;
+    }
+
+    .collection-title strong {
+      font-size: 28px;
+      line-height: 1;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .collection-title span {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 5px 12px;
+      border-radius: 4px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .chip::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+
+    .chip.gmail::before { background: var(--gmail); }
+    .chip.mbox::before { background: var(--mbox); }
+    .chip.mail::before { background: var(--mail); }
+    .chip.imsg::before { background: var(--imsg); }
+    .chip.work-chip::before { background: var(--work); }
+    .chip.edu::before { background: var(--edu); }
+
+    .footer-rule {
+      margin-top: 24px;
+      padding: 16px 20px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--gmail);
+      color: var(--text-2);
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .identity-rule {
+      margin-top: 12px;
+      padding: 14px 18px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--mbox);
+      color: var(--text-2);
+      font-size: 15px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">msgvault · core model</div>
+    <h1>Accounts &amp; Collections: Imports vs. Named Groups</h1>
+    <p class="subtitle">Each account keeps one import or sync, plus the addresses and numbers that show who the account belongs to. Collections are the user's explicit grouping of accounts.</p>
+
+    <section class="stage" aria-label="Accounts and collections explanation">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Accounts</h2>
+          <div class="rule">Messages from one import, plus owner identities for sent vs. received.</div>
+        </div>
+
+        <div class="account-grid">
+          <div class="account gmail">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">Personal Gmail</div>
+              <div class="hint">current mailbox sync</div>
+              <div class="identity">me@example.com · +1 phone</div>
+            </div>
+          </div>
+
+          <div class="account mbox">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">Old mbox</div>
+              <div class="hint">historical email backup</div>
+              <div class="identity">old-me@example.org · me@alumni.example.edu</div>
+            </div>
+          </div>
+
+          <div class="account mail">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">Apple Mail archive</div>
+              <div class="hint">retired laptop import</div>
+              <div class="identity">me@laptop.example · personal alias</div>
+            </div>
+          </div>
+
+          <div class="account imsg">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">iMessage</div>
+              <div class="hint">phone and chat history</div>
+              <div class="identity">+1 phone · Apple ID email</div>
+            </div>
+          </div>
+
+          <div class="account work">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">Old work account</div>
+              <div class="hint">former company archive</div>
+              <div class="identity">me@oldco.example · desk phone</div>
+            </div>
+          </div>
+
+          <div class="account edu">
+            <div class="accent-bar"></div>
+            <div>
+              <div class="name">College email</div>
+              <div class="hint">school account export</div>
+              <div class="identity">me@college.example.edu</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Collections</h2>
+          <div class="rule">Collections are groups of accounts.</div>
+        </div>
+
+        <div class="collection-stack">
+          <div class="collection all">
+            <div class="collection-title">
+              <strong>All</strong>
+              <span>everything in msgvault</span>
+            </div>
+            <div class="chips">
+              <span class="chip gmail">Gmail</span>
+              <span class="chip mbox">old mbox</span>
+              <span class="chip mail">Apple Mail</span>
+              <span class="chip imsg">iMessage</span>
+              <span class="chip work-chip">old work</span>
+              <span class="chip edu">college</span>
+            </div>
+          </div>
+
+          <div class="collection personal">
+            <div class="collection-title">
+              <strong>Personal</strong>
+              <span>a deliberate subset</span>
+            </div>
+            <div class="chips">
+              <span class="chip gmail">Personal Gmail</span>
+              <span class="chip imsg">iMessage</span>
+              <span class="chip edu">College email</span>
+            </div>
+          </div>
+
+          <div class="collection work">
+            <div class="collection-title">
+              <strong>Work</strong>
+              <span>another named view</span>
+            </div>
+            <div class="chips">
+              <span class="chip work-chip">Old work account</span>
+              <span class="chip mail">Apple Mail archive</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="footer-rule">Cross-account search, stats, and dedup happen through a collection boundary.</div>
+        <div class="identity-rule">A collection's identity is the union of the identities on its member accounts.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

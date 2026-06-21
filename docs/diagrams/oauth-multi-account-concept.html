@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Default and Named OAuth Apps</title>
+  <style>
+    :root {
+      /* msgvault.io palette */
+      --bg: #0a0a0a;
+      --surface-1: #161616;
+      --surface-2: #212121;
+      --hairline: #3a3a3a;
+      --text: #e8e8e8;
+      --text-2: #c0c0c0;
+      --muted: #a0a0a0;
+      --muted-2: #707070;
+      --accent: #ffffff;
+
+      /* one color per example account, threaded from its command to its token file */
+      --acct-personal: #3fa37e;   /* personal@gmail.com */
+      --acct-other: #6e8ab2;      /* other@gmail.com */
+      --acct-acme: #b26e9b;       /* you@acme.com */
+      --tokens: #d0a04a;          /* token store */
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 1600px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .slide { width: 1600px; padding: 76px 100px 76px; }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 50px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1240px;
+      color: var(--text-2);
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    .lanes { margin-top: 38px; }
+
+    /* each lane: 2 rows (column labels, then content) over a shared 5-column track */
+    .lane {
+      display: grid;
+      grid-template-columns: 340px 56px 1fr 56px 1fr;
+      column-gap: 0;
+      row-gap: 14px;
+      align-items: center;
+      padding: 22px 26px 24px;
+      border-radius: 8px;
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+      margin-bottom: 16px;
+    }
+
+    .lane-h {
+      grid-row: 1;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+    }
+    .lane-h.h-app { grid-column: 1; }
+    .lane-h.h-auth { grid-column: 3; }
+    .lane-h.h-tok { grid-column: 5; }
+    .lane-h.h-tok b { color: var(--tokens); font-weight: 700; text-transform: none; letter-spacing: 0; }
+
+    .lane .app { grid-row: 2; grid-column: 1; }
+    .lane .a1 { grid-row: 2; grid-column: 2; }
+    .lane .cmds { grid-row: 2; grid-column: 3; }
+    .lane .a2 { grid-row: 2; grid-column: 4; }
+    .lane .toks { grid-row: 2; grid-column: 5; }
+
+    .app-name {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+    .app-scope {
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.35;
+      margin-bottom: 12px;
+    }
+    .config {
+      padding: 12px 14px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: var(--text-2);
+    }
+    .config .key { color: var(--accent); }
+
+    .arrow {
+      text-align: center;
+      color: var(--muted-2);
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .stack { display: grid; gap: 10px; }
+
+    .cmd, .token {
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14.5px;
+      line-height: 1.25;
+    }
+    .cmd {
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--hairline);
+      color: var(--text);
+    }
+    .cmd .flag { color: var(--muted); }
+
+    .token {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      color: var(--text);
+    }
+    .token::before {
+      content: "";
+      display: inline-block;
+      width: 9px; height: 9px;
+      border-radius: 2px;
+      flex: none;
+    }
+
+    /* per-account color, identical on the command and the token it creates */
+    .cmd.personal { border-left-color: var(--acct-personal); }
+    .token.personal::before { background: var(--acct-personal); }
+    .cmd.other { border-left-color: var(--acct-other); }
+    .token.other::before { background: var(--acct-other); }
+    .cmd.acme { border-left-color: var(--acct-acme); }
+    .token.acme::before { background: var(--acct-acme); }
+
+    .footer-rule {
+      margin-top: 8px;
+      padding: 16px 20px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--tokens);
+      color: var(--text-2);
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    .footer-rule code {
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <div class="eyebrow">msgvault · oauth apps</div>
+    <h1>Default and Named OAuth Apps</h1>
+    <p class="subtitle">Read each lane left to right: an OAuth app authorizes one or more <code>add-account</code> runs, and every run writes its own token file. Each example account keeps one color, from its command to the token it creates. The default app covers personal Gmail; a named app covers a Workspace org that restricts OAuth to its own apps.</p>
+
+    <div class="lanes">
+      <section class="lane" aria-label="Default OAuth app authorizes personal Gmail accounts">
+        <span class="lane-h h-app">OAuth app</span>
+        <span class="lane-h h-auth">authorizes — add-account</span>
+        <span class="lane-h h-tok">creates — <b>~/.msgvault/tokens/</b></span>
+
+        <div class="app">
+          <div class="app-name">Default app</div>
+          <div class="app-scope">Personal Gmail. One <code>client_secret.json</code> covers them all.</div>
+          <div class="config"><span class="key">[oauth]</span><br>client_secrets = "client_secret.json"</div>
+        </div>
+        <div class="arrow a1">&#8594;</div>
+        <div class="stack cmds">
+          <div class="cmd personal">msgvault add-account personal@gmail.com</div>
+          <div class="cmd other">msgvault add-account other@gmail.com</div>
+        </div>
+        <div class="arrow a2">&#8594;</div>
+        <div class="stack toks">
+          <div class="token personal">personal@gmail.com.json</div>
+          <div class="token other">other@gmail.com.json</div>
+        </div>
+      </section>
+
+      <section class="lane" aria-label="Named OAuth app authorizes a Workspace account">
+        <span class="lane-h h-app">OAuth app</span>
+        <span class="lane-h h-auth">authorizes — add-account</span>
+        <span class="lane-h h-tok">creates — <b>~/.msgvault/tokens/</b></span>
+
+        <div class="app">
+          <div class="app-name">Named app</div>
+          <div class="app-scope">A Workspace org that allows only its own OAuth app.</div>
+          <div class="config"><span class="key">[oauth.apps.acme]</span><br>client_secrets = "acme_secret.json"</div>
+        </div>
+        <div class="arrow a1">&#8594;</div>
+        <div class="stack cmds">
+          <div class="cmd acme">msgvault add-account you@acme.com <span class="flag">--oauth-app acme</span></div>
+        </div>
+        <div class="arrow a2">&#8594;</div>
+        <div class="stack toks">
+          <div class="token acme">you@acme.com.json</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="footer-rule">Each account gets its own token file. <code>sync</code>, <code>serve</code>, and re-auth resolve the right credentials automatically.</div>
+  </main>
+</body>
+</html>
