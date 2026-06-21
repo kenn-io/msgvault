@@ -89,13 +89,14 @@ fi
 
 bash docs/assets/hydrate-assets.sh
 
-if command -v uv >/dev/null 2>&1; then
-  (
-    cd docs
-    uv run --frozen bash ./zensical-docs.sh build
-    uv run --frozen python scripts/check_built_site.py
-    uv run --frozen python scripts/check_vercel_redirects.py
-  )
-else
-  printf 'uv not found; skipping docs build validation\n' >&2
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'uv not found; install uv before running docs-check\n' >&2
+  exit 1
 fi
+
+(
+  cd docs
+  uv run --frozen bash ./zensical-docs.sh build
+  uv run --frozen python scripts/check_built_site.py
+  uv run --frozen python scripts/check_vercel_redirects.py
+)

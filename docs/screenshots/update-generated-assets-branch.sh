@@ -41,15 +41,14 @@ expected_assets=(
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--source DIR] [--skip-generate] [--push]
+Usage: $(basename "$0") [--source DIR] [--push]
 
 Update the local $assets_branch branch to a single orphan commit containing
 generated docs screenshots and concept assets. By default this runs
 docs/screenshots/generate-all.sh and docs/diagrams/build.sh first.
 
 Pass --source DIR to publish an already generated directory without running
-generators. Pass --skip-generate to publish docs/assets/generated as-is.
-Pass --push to force-push the updated branch to origin.
+generators. Pass --push to force-push the updated branch to origin.
 EOF
 }
 
@@ -60,10 +59,6 @@ while [[ $# -gt 0 ]]; do
       source_dir="$2"
       generate=false
       shift 2
-      ;;
-    --skip-generate)
-      generate=false
-      shift
       ;;
     --push)
       push=true
