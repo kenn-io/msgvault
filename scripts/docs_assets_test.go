@@ -225,6 +225,15 @@ func TestCheckDocsRejectsForbiddenSourceMediaReferenceOnLineWithAllowedAsset(t *
 	)
 }
 
+func TestDocsScreenshotDemoDataUsesIntegratedRepoSchemaPath(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"))
+	require.NoError(t, err)
+
+	text := string(content)
+	assert.Contains(t, text, `SCRIPT_DIR / "../../internal/store/schema.sql"`)
+	assert.NotContains(t, text, `SCRIPT_DIR / "../../msgvault/internal/store/schema.sql"`)
+}
+
 func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
 	t.Helper()
 	tempDir := t.TempDir()
