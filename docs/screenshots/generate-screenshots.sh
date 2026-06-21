@@ -5,13 +5,16 @@ set -euo pipefail
 OUTPUT_DIR="${1:-/output}"
 FREEZE_CFG="/tapes/freeze.json"
 SESSION="mv"
+SVG_FONT_FAMILY="Liberation Mono, Menlo, Monaco, Consolas, Courier New, monospace"
 
 mkdir -p "$OUTPUT_DIR"
 
 # Helper: capture current tmux pane to SVG via freeze
 capture() {
     local name="$1"
-    tmux capture-pane -pet "$SESSION" | freeze -o "$OUTPUT_DIR/${name}.svg" --language ansi -c "$FREEZE_CFG"
+    local output_path="$OUTPUT_DIR/${name}.svg"
+    tmux capture-pane -pet "$SESSION" | freeze -o "$output_path" --language ansi -c "$FREEZE_CFG"
+    sed -i "s/font-family=\"Liberation Mono\"/font-family=\"$SVG_FONT_FAMILY\"/g" "$output_path"
     echo "  captured $name.svg"
 }
 

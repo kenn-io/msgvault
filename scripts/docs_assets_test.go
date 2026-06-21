@@ -270,6 +270,13 @@ func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T)
 	assert.Equal(t, string(sourceIgnore), string(dockerfileIgnore))
 }
 
+func TestDocsGitignoreIgnoresVercelLocalGitignore(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", ".gitignore"))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(content), "docs/.gitignore")
+}
+
 func TestDocsScreenshotDemoDataPrefersMSGVAULTRepoSchema(t *testing.T) {
 	tempDir := t.TempDir()
 	overrideRepo := filepath.Join(tempDir, "override")

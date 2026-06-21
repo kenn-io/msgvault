@@ -35,6 +35,7 @@ All notable changes to msgvault, grouped by release.
 - Thanks to [danshapiro](https://github.com/danshapiro) for source sync status, per-item sync diagnostics, SyncTech Drive lifecycle hardening, and null-checksum handling.
 - Thanks to [Matthew Sweeney](https://github.com/sweenzor) for the DuckDB 1.5.4 / `duckdb-go/v2` migration and stale URL cleanup.
 - Thanks to [endolith](https://github.com/endolith) for MCP pagination on `search_messages` and `list_messages`.
+- Thanks to [Jesse Robbins](https://github.com/jesserobbins) for improving the AFM vector-search docs and correcting the accounts, identities, collections, and deduplication documentation for the shipped 0.16.0 behavior.
 - Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for isolating DuckDB's SQLite usage from the daemon to prevent WAL corruption.
 - Thanks to [Wes McKinney](https://github.com/wesm) for the Linux release-build fix and 0.16.0 packaging/release metadata updates.
 

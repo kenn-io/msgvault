@@ -50,17 +50,6 @@
   height: 1.5rem;
 }
 
-.msgvault-logo-text {
-  color: #ffffff;
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.msgvault-logo-link:hover .msgvault-logo-text {
-  color: #ffffff;
-}
-
 .msgvault-discord-link {
   color: var(--msgvault-muted);
 }

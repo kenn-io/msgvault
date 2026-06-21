@@ -321,6 +321,13 @@ def check_expected_asset_files() -> None:
         path = SITE / "assets" / "generated" / asset
         if not path.is_file():
             fail(f"missing built generated asset {path.relative_to(SITE)}")
+        if path.suffix == ".svg":
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if "font-family=" in text and "monospace" not in text:
+                fail(
+                    "generated terminal SVG lacks monospace fallback: "
+                    f"{path.relative_to(SITE)}"
+                )
 
 
 def main() -> None:
@@ -344,6 +351,10 @@ def main() -> None:
     check_expected_asset_files()
 
     html_files = list(SITE.rglob("*.html"))
+    index_text = (SITE / "index.html").read_text(encoding="utf-8", errors="ignore")
+    if "msgvault-logo-text" in index_text:
+        fail("header logo must be icon-only; remove msgvault-logo-text")
+
     leaked_overrides = [path for path in html_files if "overrides" in path.relative_to(SITE).parts]
     if leaked_overrides:
         fail(

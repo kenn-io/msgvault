@@ -9,7 +9,6 @@
   <nav class="md-header__inner md-grid" aria-label="{{ lang.t('header') }}">
     <a href="{{ config.extra.homepage | d(nav.homepage.url, true) | url }}" title="{{ config.site_name | e }}" class="md-header__button md-logo msgvault-logo-link" aria-label="{{ config.site_name }}" data-md-component="logo">
       <img src="{{ 'assets/static/favicon.svg' | url }}" alt="" width="24" height="24">
-      <span class="msgvault-logo-text">msgvault</span>
     </a>
     <label class="md-header__button md-icon" for="__drawer" aria-label="{{ lang.t('nav') }}">
       {% set icon = config.theme.icon.menu or "material/menu" %}

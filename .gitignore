@@ -53,6 +53,7 @@ result
 docs/.venv/
 docs/.vercel/
 docs/.env*.local
+docs/.gitignore
 docs/site/
 docs/zensical-public-docs.*/
 docs/.zensical-build.*
