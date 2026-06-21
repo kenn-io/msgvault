@@ -76,6 +76,31 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_assets_branch_name() {
+  local branch="$1"
+
+  if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+    printf 'invalid docs asset branch name: %s\n' "$branch" >&2
+    exit 1
+  fi
+
+  case "$branch" in
+    main|master|integrate-docs|release*|feature*|feat*|fix*|hotfix*|chore*)
+      printf 'protected branch is not allowed for docs assets: %s\n' "$branch" >&2
+      exit 1
+      ;;
+    docs-assets|docs-assets-*|docs-generated-assets|docs-generated-assets-*|docs/*assets*)
+      return 0
+      ;;
+    *)
+      printf 'not an allowed docs asset branch: %s\n' "$branch" >&2
+      exit 1
+      ;;
+  esac
+}
+
+validate_assets_branch_name "$assets_branch"
+
 if [[ "$generate" == true ]]; then
   screenshots_script="$docs_root/screenshots/generate-all.sh"
   diagrams_script="$docs_root/diagrams/build.sh"

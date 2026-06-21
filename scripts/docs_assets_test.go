@@ -55,6 +55,7 @@ type publisherScriptCase struct {
 	name        string
 	scriptRel   string
 	branch      string
+	branchEnv   string
 	write       func(*testing.T, string, string)
 	symlinkPath string
 }
@@ -175,6 +176,39 @@ func TestAssetPublishersRejectSymlinks(t *testing.T) {
 	}
 }
 
+func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
+	for _, tc := range publisherScriptCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			repo := filepath.Join(tempDir, "repo")
+			sourceDir := filepath.Join(tempDir, "source")
+			require.NoError(t, os.MkdirAll(repo, 0o755))
+			git(t, repo, "init")
+			git(t, repo, "config", "user.name", "Test User")
+			git(t, repo, "config", "user.email", "test@example.invalid")
+			tc.write(t, sourceDir, "asset")
+
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "main-seed.txt"), []byte("main\n"), 0o644))
+			git(t, repo, "add", ".")
+			git(t, repo, "commit", "-m", "seed main")
+			mainRef := gitOutput(t, repo, "rev-parse", "HEAD")
+			git(t, repo, "update-ref", "refs/heads/main", mainRef)
+			git(t, repo, "checkout", "-b", "work")
+
+			scriptPath := installScript(t, repo, tc.scriptRel)
+			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd.Dir = repo
+			cmd.Env = append(os.Environ(), tc.branchEnv+"=main")
+			output, err := cmd.CombinedOutput()
+
+			require.Error(t, err, string(output))
+			assert.Contains(t, strings.ToLower(string(output)), "protected")
+			assert.Contains(t, string(output), "main")
+			assertBranchRefUnchanged(t, repo, "main", mainRef, true)
+		})
+	}
+}
+
 func installScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
 	sourceScriptPath := filepath.Join("..", scriptRel)
@@ -197,6 +231,7 @@ func publisherScriptCases() []publisherScriptCase {
 			name:        "static",
 			scriptRel:   filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
 			branch:      "docs-assets",
+			branchEnv:   "MSGVAULT_DOCS_ASSETS_BRANCH",
 			write:       writeStaticAssets,
 			symlinkPath: "favicon.svg",
 		},
@@ -204,6 +239,7 @@ func publisherScriptCases() []publisherScriptCase {
 			name:        "generated",
 			scriptRel:   filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
 			branch:      "docs-generated-assets",
+			branchEnv:   "MSGVAULT_DOCS_GENERATED_ASSETS_BRANCH",
 			write:       writeGeneratedAssets,
 			symlinkPath: "tui-filter-modal.svg",
 		},

@@ -54,9 +54,9 @@ run() {
 
 require_clean_tracked_tree() {
   local status
-  status="$(git status --porcelain --untracked-files=no)"
+  status="$(git status --porcelain --untracked-files=all)"
   if [[ -n "$status" ]]; then
-    printf 'ERROR: uncommitted tracked changes are present. Commit or stash docs source changes before deploying.\n' >&2
+    printf 'ERROR: uncommitted, non-ignored changes are present. Commit or stash docs source changes before deploying.\n' >&2
     printf '%s\n' "$status" >&2
     exit 1
   fi
