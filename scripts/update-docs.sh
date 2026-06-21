@@ -62,15 +62,20 @@ require_clean_tracked_tree() {
   fi
 }
 
+run_clean_tree_check() {
+  printf '+ check clean working tree\n'
+  if [[ "$dry_run" == false ]]; then
+    require_clean_tracked_tree
+  fi
+}
+
 require_cmd bash
 require_cmd git
 require_cmd make
 require_cmd vercel
 
 cd "$repo_root"
-if [[ "$dry_run" == false ]]; then
-  require_clean_tracked_tree
-fi
+run_clean_tree_check
 
 run make docs-install
 run rm -rf docs/assets/generated
@@ -81,4 +86,5 @@ run rm -rf docs/assets/static docs/assets/generated
 run bash docs/assets/hydrate-assets.sh
 run make docs-build
 run make docs-check
+run_clean_tree_check
 run make docs-deploy
