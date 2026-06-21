@@ -690,21 +690,19 @@ func writeThreadToStore(
 		}
 
 		// Attachments.
-		for _, att := range m.Attachments {
+		for ai := range m.Attachments {
+			att := m.Attachments[ai]
 			summary.AttachmentsFound++
 			storagePath, contentHash, size := handleAttachment(att, opts.AttachmentsDir)
 			if storagePath != "" {
 				summary.AttachmentsStored++
 			}
-			if storagePath != "" || contentHash != "" || att.AbsPath != "" {
-				if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, contentHash, size); err != nil {
-					logger.Warn("fbmessenger: upsert attachment", "err", err)
-				}
-			} else {
-				// Empty row so the user sees a trace that something was referenced.
-				if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, "", "", 0); err != nil {
-					logger.Warn("fbmessenger: upsert attachment (empty)", "err", err)
-				}
+			hash := contentHash
+			if hash == "" {
+				hash = fbAttachmentHash(att, ai)
+			}
+			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
+				logger.Warn("fbmessenger: upsert attachment", "err", err)
 			}
 		}
 
@@ -858,4 +856,26 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 		return "", contentHash, 0
 	}
 	return rel, contentHash, int(info.Size())
+}
+
+// fbAttachmentHash derives a stable synthetic content hash for an attachment
+// that has no real (content-derived) hash — e.g. the file is missing or no
+// attachments dir was configured. Without it, UpsertAttachment collapses every
+// hashless attachment on a message to a single row. Keyed on the export-relative
+// URI (present even when the file is missing), then AbsPath/Filename, with the
+// loop index as a last-resort tiebreaker, so re-importing the same export is
+// idempotent. It is NOT a hash of file bytes, so storage_path stays empty.
+func fbAttachmentHash(att Attachment, idx int) string {
+	key := att.URI
+	if key == "" {
+		key = att.AbsPath
+	}
+	if key == "" {
+		key = att.Filename
+	}
+	if key == "" {
+		key = fmt.Sprintf("idx-%d", idx)
+	}
+	sum := sha256.Sum256([]byte("fbmessenger\x00" + key))
+	return hex.EncodeToString(sum[:])
 }

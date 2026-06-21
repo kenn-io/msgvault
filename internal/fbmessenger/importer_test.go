@@ -283,7 +283,7 @@ func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: path escape not rejected")
-	assert.Empty(ch, "content_hash: path escape not rejected")
+	assert.NotEmpty(ch, "content_hash: rejected attachment now gets a synthetic (non-content) hash")
 }
 
 // TestImportDYI_AttachmentSymlinkRejected verifies that an attachment URI
@@ -327,7 +327,10 @@ func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: symlinked attachment not rejected")
-	assert.Empty(ch, "content_hash: symlinked attachment not rejected")
+	assert.NotEmpty(ch, "content_hash: rejected attachment now gets a synthetic (non-content) hash")
+	// The synthetic hash must never be the hash of the secret's contents.
+	leak := fmt.Sprintf("%x", sha256.Sum256([]byte("password=hunter2")))
+	assert.NotEqual(leak, ch, "content_hash must never be the secret's content hash")
 	// Defense in depth: assert nothing under attachmentsDir contains the
 	// secret bytes, so even a future copy regression would be caught.
 	_ = filepath.Walk(attachmentsDir, func(p string, info os.FileInfo, err error) error {
@@ -362,7 +365,51 @@ func TestImportDYI_MissingAttachment(t *testing.T) {
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: missing attachment should have empty storage_path")
-	assert.Empty(ch, "content_hash: missing attachment should have empty content_hash")
+	assert.NotEmpty(ch, "missing attachment now gets a synthetic (non-content) hash so siblings aren't dropped")
+}
+
+// TestImportDYI_MultipleMissingAttachments verifies that a single message
+// with multiple missing photos records one attachment row per photo, rather
+// than collapsing them to a single hashless row. Each row gets a stable,
+// distinct synthetic content_hash while storage_path stays empty (no bytes
+// copied).
+func TestImportDYI_MultipleMissingAttachments(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	tmp := t.TempDir()
+	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "missing_MIS")
+	require.NoError(os.MkdirAll(threadPath, 0755))
+	body := `{"participants":[{"name":"A"},{"name":"B"}],"messages":[
+{"sender_name":"A","timestamp_ms":1600000000000,"type":"Generic","photos":[{"uri":"messages/inbox/missing_MIS/photos/a.png"},{"uri":"messages/inbox/missing_MIS/photos/b.png"}]}
+],"title":"x"}`
+	require.NoError(os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(body), 0644))
+	summary, err := ImportDYI(context.Background(), st, ImportOptions{
+		Me:             "test.user@facebook.messenger",
+		RootDir:        tmp,
+		AttachmentsDir: t.TempDir(),
+	})
+	require.NoError(err)
+	assert.False(summary.HardErrors, "HardErrors")
+
+	var count int
+	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM attachments").Scan(&count))
+	assert.Equal(2, count, "both missing attachments should be recorded as distinct rows")
+
+	rows, err := st.DB().Query("SELECT storage_path, content_hash FROM attachments ORDER BY id")
+	require.NoError(err)
+	defer rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var sp, ch string
+		require.NoError(rows.Scan(&sp, &ch))
+		assert.Empty(sp, "storage_path: missing attachment should have empty storage_path")
+		assert.NotEmpty(ch, "content_hash: missing attachment should have synthetic non-empty hash")
+		hashes = append(hashes, ch)
+	}
+	require.NoError(rows.Err())
+	require.Len(hashes, 2)
+	assert.NotEqual(hashes[0], hashes[1], "the two synthetic hashes must be distinct")
 }
 
 // TestImportDYI_ReactionsFirstClass verifies reaction rows and the
