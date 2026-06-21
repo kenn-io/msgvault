@@ -124,7 +124,14 @@ var operators = map[string]operatorFn{
 		q.BccAddrs = append(q.BccAddrs, normalizeAddr(v))
 	},
 	"subject": func(q *Query, v string, _ time.Time) {
-		q.SubjectTerms = append(q.SubjectTerms, v)
+		// Drop empty/whitespace-only values (e.g. `subject:` or `subject:""`).
+		// Otherwise the store builds `LOWER(subject) LIKE '%%'`, which matches
+		// every message instead of being a no-op. Mirrors the label handlers.
+		// Non-empty punctuation (e.g. `subject:"!!!"`) is a valid literal
+		// substring search and is preserved.
+		if v = strings.TrimSpace(v); v != "" {
+			q.SubjectTerms = append(q.SubjectTerms, v)
+		}
 	},
 	"label": func(q *Query, v string, _ time.Time) {
 		if v = strings.TrimSpace(v); v != "" {

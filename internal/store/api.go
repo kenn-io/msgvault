@@ -375,11 +375,26 @@ func (s *Store) searchMessagesQueryImpl(
 		// Match each term against subject OR snippet so the no-FTS
 		// path catches snippet hits, not just subjects. Per CLAUDE.md,
 		// search queries never scan message_bodies.
+		added := 0
 		for _, term := range q.TextTerms {
+			// Skip terms with no searchable token (empty string,
+			// punctuation-only). hasFTSToken is the same predicate the
+			// FTS path uses via BuildFTSArg, so both paths agree on what
+			// is "tokenless". Without this, term=="" becomes LIKE '%%'
+			// and matches every message instead of nothing.
+			if !hasFTSToken(term) {
+				continue
+			}
 			like := "%" + escapeLike(strings.ToLower(term)) + "%"
 			conditions = append(conditions,
 				`(LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')`)
 			args = append(args, like, like)
+			added++
+		}
+		if added == 0 {
+			// All terms were tokenless: substitute FALSE so the LIKE
+			// fallback returns zero rows, matching the FTS path.
+			conditions = append(conditions, "FALSE")
 		}
 	}
 
@@ -453,6 +468,13 @@ func (s *Store) searchMessagesQueryImpl(
 	// against "Invoice from acme" on PG. Every other LIKE in this
 	// function already wraps with LOWER.
 	for _, term := range q.SubjectTerms {
+		// An empty subject term would build LIKE '%%' and match every
+		// message; skip it. (The parser already drops empties; this guards
+		// directly-constructed queries.) Punctuation-only terms are kept —
+		// the subject filter is a literal substring match, not FTS.
+		if strings.TrimSpace(term) == "" {
+			continue
+		}
 		conditions = append(conditions,
 			`LOWER(m.subject) LIKE LOWER(?) ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(strings.ToLower(term))+"%")

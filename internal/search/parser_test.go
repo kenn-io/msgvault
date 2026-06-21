@@ -94,6 +94,21 @@ func TestParse(t *testing.T) {
 					query: `from:"alice@example.com"`,
 					want:  Query{FromAddrs: []string{"alice@example.com"}},
 				},
+				{
+					name:  "empty subject value is dropped",
+					query: `subject:""`,
+					want:  Query{},
+				},
+				{
+					name:  "bare subject operator with no value is dropped",
+					query: `subject:`,
+					want:  Query{},
+				},
+				{
+					name:  "punctuation-only subject value is preserved",
+					query: `subject:"!!!"`,
+					want:  Query{SubjectTerms: []string{"!!!"}},
+				},
 			},
 		},
 		{
