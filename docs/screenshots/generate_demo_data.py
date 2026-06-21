@@ -82,10 +82,10 @@ TARGET_MESSAGES = 10000
 def load_schema(conn: sqlite3.Connection) -> None:
     """Load schema from msgvault source repo if available, otherwise use embedded schema."""
     # Prefer the integrated repo layout; MSGVAULT_REPO lets callers override it.
-    schema_paths = [
-        SCRIPT_DIR / "../../internal/store/schema.sql",
-        Path(os.environ.get("MSGVAULT_REPO", "")) / "internal/store/schema.sql",
-    ]
+    schema_paths = []
+    if msgvault_repo := os.environ.get("MSGVAULT_REPO"):
+        schema_paths.append(Path(msgvault_repo) / "internal/store/schema.sql")
+    schema_paths.append(SCRIPT_DIR / "../../internal/store/schema.sql")
     for p in schema_paths:
         resolved = p.resolve()
         if resolved.exists():

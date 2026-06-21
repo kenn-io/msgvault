@@ -52,12 +52,7 @@ fi
 # --- Step 2: Build Docker image ---
 if [[ "$SKIP_BUILD" == false ]]; then
     echo "==> Building Docker image: $IMAGE_NAME"
-    if ! docker build --help 2>&1 | grep -q -- '--ignorefile'; then
-        echo "Error: docker build must support --ignorefile for the docs screenshot context." >&2
-        echo "Upgrade Docker/Buildx rather than sending the full repository context." >&2
-        exit 1
-    fi
-    DOCKER_BUILDKIT=1 docker build --ignorefile "$SCRIPT_DIR/.dockerignore" -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO"
+    DOCKER_BUILDKIT=1 docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$REPO"
     echo ""
 fi
 

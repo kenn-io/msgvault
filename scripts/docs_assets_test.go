@@ -234,6 +234,107 @@ func TestDocsScreenshotDemoDataUsesIntegratedRepoSchemaPath(t *testing.T) {
 	assert.NotContains(t, text, `SCRIPT_DIR / "../../msgvault/internal/store/schema.sql"`)
 }
 
+func TestDocsScreenshotGenerateAllDoesNotRequireDockerIgnorefileFlag(t *testing.T) {
+	tempDir := t.TempDir()
+	screenshotsDir := filepath.Join(tempDir, "docs", "screenshots")
+	productRepo := filepath.Join(tempDir, "product")
+	binDir := filepath.Join(tempDir, "bin")
+	logPath := filepath.Join(tempDir, "docker-calls.log")
+	require.NoError(t, os.MkdirAll(screenshotsDir, 0o755))
+	require.NoError(t, os.MkdirAll(productRepo, 0o755))
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+
+	copyTestFile(t, filepath.Join("..", "docs", "screenshots", "generate-all.sh"), filepath.Join(screenshotsDir, "generate-all.sh"))
+	writeExecutableFile(t, filepath.Join(binDir, "docker"), fakeDockerScript(logPath))
+
+	cmd := exec.Command("bash", filepath.Join(screenshotsDir, "generate-all.sh"), "--skip-data", "--repo", productRepo)
+	cmd.Dir = tempDir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	logContent, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(logContent), "--ignorefile")
+	assert.Contains(t, string(logContent), "build")
+	assert.Contains(t, string(logContent), productRepo)
+}
+
+func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T) {
+	sourceIgnore, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", ".dockerignore"))
+	require.NoError(t, err)
+	dockerfileIgnore, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile.dockerignore"))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(sourceIgnore), string(dockerfileIgnore))
+}
+
+func TestDocsScreenshotDemoDataPrefersMSGVAULTRepoSchema(t *testing.T) {
+	tempDir := t.TempDir()
+	overrideRepo := filepath.Join(tempDir, "override")
+	require.NoError(t, os.MkdirAll(filepath.Join(overrideRepo, "internal", "store"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(overrideRepo, "internal", "store", "schema.sql"),
+		[]byte("-- override schema marker\n"),
+		0o644,
+	))
+
+	probe := `
+import importlib.util
+import os
+import pathlib
+import sys
+import types
+
+class FakeFaker:
+    @staticmethod
+    def seed(value):
+        pass
+
+    def name(self):
+        return "Test User"
+
+    def user_name(self):
+        return "test"
+
+    def sentence(self, *args, **kwargs):
+        return "Test subject."
+
+    def paragraphs(self, *args, **kwargs):
+        return ["Test body."]
+
+fake_module = types.ModuleType("faker")
+fake_module.Faker = FakeFaker
+sys.modules["faker"] = fake_module
+
+module_path = pathlib.Path(os.environ["GENERATE_DEMO_DATA_PATH"])
+spec = importlib.util.spec_from_file_location("generate_demo_data", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+class Conn:
+    def __init__(self):
+        self.scripts = []
+
+    def executescript(self, script):
+        self.scripts.append(script)
+
+conn = Conn()
+module.load_schema(conn)
+print(conn.scripts[0])
+`
+	cmd := exec.Command("python3", "-c", probe)
+	cmd.Env = append(
+		os.Environ(),
+		"MSGVAULT_REPO="+overrideRepo,
+		"GENERATE_DEMO_DATA_PATH="+filepath.Join("..", "docs", "screenshots", "generate_demo_data.py"),
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	assert.Contains(t, string(output), "override schema marker")
+}
+
 func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -337,6 +438,36 @@ func writeExecutableFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))
+}
+
+func copyTestFile(t *testing.T, source, dest string) {
+	t.Helper()
+	content, err := os.ReadFile(source)
+	require.NoError(t, err)
+	info, err := os.Stat(source)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dest), 0o755))
+	require.NoError(t, os.WriteFile(dest, content, info.Mode().Perm()))
+}
+
+func fakeDockerScript(logPath string) string {
+	return "#!/usr/bin/env bash\n" +
+		"set -euo pipefail\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\n" +
+		"if [[ \"${1:-}\" == \"build\" && \"${2:-}\" == \"--help\" ]]; then\n" +
+		"  printf 'Usage: docker build [OPTIONS] PATH\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [[ \"$arg\" == \"--ignorefile\" ]]; then\n" +
+		"    printf 'unknown flag: --ignorefile\\n' >&2\n" +
+		"    exit 125\n" +
+		"  fi\n" +
+		"done\n"
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func assertRecursiveFileList(t *testing.T, dir string, want []string) {
