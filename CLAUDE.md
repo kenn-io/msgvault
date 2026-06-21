@@ -140,7 +140,7 @@ Schema files in `internal/store/`:
 
 **Database backend**: SQLite is the default. PostgreSQL is opt-in via
 `[data].database_url` and runs through the same store/query interfaces.
-See `docs/PG_STATUS.md` for the current implementation state and
+See `docs/internal/PG_STATUS.md` for the current implementation state and
 follow-up work.
 
 **Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed
@@ -207,6 +207,16 @@ After making any Go code changes, always run `go fmt ./...` and `go vet ./...` b
 ## Testing
 
 All Go tests use [testify](https://github.com/stretchr/testify) for assertions. Do NOT introduce new `t.Errorf`/`t.Fatalf`/`t.Fatal`/`t.Error` patterns — use `assert.X` or `require.X` instead.
+
+Tests must exercise real behavior through the production path. Do not add
+tautological "fake TDD" tests that copy shell scripts into synthetic temporary
+trees, stub the primary commands, and only assert that the stub saw expected
+arguments or filenames. Those tests usually verify the fixture rather than the
+system. Prefer testing a real validator, parser, or public command output; for
+shell/docs workflows, use the actual repository script against the real docs
+tree or a built artifact. If a fake command is truly needed, the test must prove
+a stable external contract or regression that cannot be covered by the real
+path, and the commit message must explain why.
 
 **Mapping rule:**
 - `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.
