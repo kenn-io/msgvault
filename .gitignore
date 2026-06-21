@@ -48,3 +48,14 @@ result
 
 # Testify migration coverage baseline
 .testify-coverage/
+
+# Docs build, tool state, and hydrated assets
+docs/.venv/
+docs/.vercel/
+docs/.env*.local
+docs/site/
+docs/zensical-public-docs.*/
+docs/.zensical-build.*
+docs/assets/static/
+docs/assets/generated/
+docs/screenshots/demo-data/

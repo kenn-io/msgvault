@@ -33,7 +33,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build:
@@ -133,6 +133,43 @@ tidy:
 bench:
 	go test -tags "$(BUILD_TAGS)" -run=^$$ -bench=. -benchtime=1s -count=1 ./internal/query/
 
+# Install docs dependencies
+docs-install:
+	cd docs && uv sync --frozen
+
+# Build docs site
+docs-build:
+	cd docs && bash ./vercel-build.sh
+
+# Serve docs site locally
+docs-serve:
+	bash docs/assets/hydrate-assets.sh
+	cd docs && uv run bash ./zensical-docs.sh serve
+
+# Check docs sources and build output
+docs-check:
+	bash scripts/check-docs.sh
+
+# Regenerate docs screenshots
+docs-screenshots:
+	bash docs/screenshots/generate-all.sh
+
+# Publish curated static docs assets to local asset branch
+docs-assets-branch:
+	bash docs/assets/update-static-assets-branch.sh
+
+# Publish generated docs assets to local asset branch
+docs-generated-assets-branch:
+	bash docs/screenshots/update-generated-assets-branch.sh
+
+# Deploy docs to Vercel staging
+docs-deploy-staging:
+	cd docs && vercel
+
+# Deploy docs to Vercel production
+docs-deploy:
+	cd docs && vercel --prod
+
 # Build the MIME shootout tool
 shootout:
 	CGO_ENABLED=1 go build -o mimeshootout ./scripts/mimeshootout
@@ -158,6 +195,16 @@ help:
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"
+	@echo ""
+	@echo "  docs-install   - Install docs dependencies"
+	@echo "  docs-build     - Build docs site"
+	@echo "  docs-serve     - Hydrate and serve docs locally"
+	@echo "  docs-check     - Run docs validation"
+	@echo "  docs-screenshots - Regenerate docs screenshots"
+	@echo "  docs-assets-branch - Publish static docs assets branch"
+	@echo "  docs-generated-assets-branch - Publish generated docs assets branch"
+	@echo "  docs-deploy-staging - Deploy docs to Vercel staging"
+	@echo "  docs-deploy    - Deploy docs to Vercel production"
 	@echo ""
 	@echo "  bench          - Run query engine benchmarks"
 	@echo "  shootout       - Build MIME shootout tool"
