@@ -270,9 +270,20 @@ func TestDocsScreenshotGenerateAllDoesNotRequireDockerIgnorefileFlag(t *testing.
 
 	logContent, err := os.ReadFile(logPath)
 	require.NoError(err)
-	assert.NotContains(string(logContent), "--ignorefile")
-	assert.Contains(string(logContent), "build")
-	assert.Contains(string(logContent), productRepo)
+	logText := string(logContent)
+	assert.NotContains(logText, "--ignorefile")
+
+	var buildLine string
+	for line := range strings.SplitSeq(logText, "\n") {
+		if strings.HasPrefix(line, "build ") {
+			buildLine = line
+			break
+		}
+	}
+	require.NotEmpty(buildLine)
+	buildFields := strings.Fields(buildLine)
+	require.NotEmpty(buildFields)
+	assert.Equal(filepath.Base(productRepo), filepath.Base(filepath.FromSlash(buildFields[len(buildFields)-1])))
 }
 
 func TestDocsScreenshotDockerfileSpecificIgnoreMatchesSourceIgnore(t *testing.T) {
