@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -333,6 +334,72 @@ print(conn.scripts[0])
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 	assert.Contains(t, string(output), "override schema marker")
+}
+
+func TestDocsScreenshotDockerfileGoVersionMatchesModule(t *testing.T) {
+	goMod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	require.NoError(t, err)
+	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
+	require.NoError(t, err)
+
+	moduleGoVersion := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+)`).FindStringSubmatch(string(goMod))
+	require.Len(t, moduleGoVersion, 2)
+	dockerGoVersion := regexp.MustCompile(`(?m)^FROM\s+golang:([0-9]+\.[0-9]+)-`).FindStringSubmatch(string(dockerfile))
+	require.Len(t, dockerGoVersion, 2)
+
+	assert.Equal(t, moduleGoVersion[1], dockerGoVersion[1])
+}
+
+func TestDocsScreenshotDockerfileInstallsCGODependencies(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "Dockerfile"))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(dockerfile), "libsqlite3-dev")
+}
+
+func TestDocsScreenshotTmuxSessionStartsWithOptions(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	text := string(script)
+	assert.NotContains(t, text, "start-server")
+	assert.Contains(t, text, `tmux -f /dev/null set-option -g default-terminal "tmux-256color"`)
+	assert.Contains(t, text, `new-session -d -s "$SESSION" -x 120 -y 40`)
+}
+
+func TestDocsScreenshotWaitsForCurrentSenderLabel(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(script), `wait_until "Sender Name"`)
+	assert.Contains(t, string(script), `wait_until "Sender"`)
+}
+
+func TestDocsScreenshotSubgroupRecipientWaitUsesCurrentLabel(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	text := string(script)
+	subgroupStart := strings.Index(text, "# Sub-grouping:")
+	require.NotEqual(t, -1, subgroupStart)
+	captureIndex := strings.Index(text[subgroupStart:], `capture "tui-subgroup-recipients"`)
+	require.NotEqual(t, -1, captureIndex)
+	subgroupBlock := text[subgroupStart : subgroupStart+captureIndex]
+
+	assert.Contains(t, subgroupBlock, `wait_until "Recipient"`)
+	assert.NotContains(t, subgroupBlock, `wait_until "Recipient Name"`)
+}
+
+func TestDocsScreenshotCapturesLegacyTimeAsset(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "docs", "screenshots", "generate-screenshots.sh"))
+	require.NoError(t, err)
+
+	text := string(script)
+	legacyIndex := strings.Index(text, `capture "tui-time"`)
+	monthlyIndex := strings.Index(text, `capture "tui-time-monthly"`)
+	require.NotEqual(t, -1, legacyIndex)
+	require.NotEqual(t, -1, monthlyIndex)
+	assert.Less(t, legacyIndex, monthlyIndex)
 }
 
 func runCheckDocsMediaReferenceTest(t *testing.T, docsLine, wantMessage string) {

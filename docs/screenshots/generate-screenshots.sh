@@ -37,10 +37,9 @@ wait_until() {
 
 # --- Start tmux session ---
 # Set terminal options before creating the session so the pane inherits them
-tmux -f /dev/null start-server
-tmux set-option -g default-terminal "tmux-256color"
-tmux set-option -ga terminal-overrides ",*:Tc"
-tmux new-session -d -s "$SESSION" -x 120 -y 40
+tmux -f /dev/null set-option -g default-terminal "tmux-256color" \; \
+    set-option -ga terminal-overrides ",*:Tc" \; \
+    new-session -d -s "$SESSION" -x 120 -y 40
 tmux send-keys -t "$SESSION" "export COLORTERM=truecolor" Enter
 sleep 0.3
 
@@ -50,7 +49,7 @@ sleep 0.3
 echo "==> TUI screenshots"
 
 send "MSGVAULT_HOME=/data msgvault tui" Enter
-wait_until "Sender Name"
+wait_until "Sender"
 
 # 1. Senders view (default)
 sleep 0.5
@@ -73,7 +72,7 @@ send Escape
 sleep 0.5
 send Escape
 sleep 0.5
-wait_until "Sender Name"
+wait_until "Sender"
 sleep 0.5
 
 # 2. Drill into a sender
@@ -118,7 +117,7 @@ send Escape
 sleep 0.5
 send Escape
 sleep 0.5
-wait_until "Sender Name"
+wait_until "Sender"
 sleep 0.5
 
 # Sub-grouping: drill into a sender first, then press g to re-aggregate
@@ -132,7 +131,7 @@ send Enter
 wait_until "Date"
 sleep 0.5
 send "g"
-wait_until "Recipient Name"
+wait_until "Recipient"
 sleep 0.5
 capture "tui-subgroup-recipients"
 
@@ -149,7 +148,7 @@ send Escape
 sleep 1
 
 # --- Search screenshots (at top-level Senders) ---
-wait_until "Sender Name"
+wait_until "Sender"
 
 # Search for a sender
 send "/"
@@ -183,7 +182,7 @@ send Escape
 sleep 0.5
 send Escape
 sleep 0.5
-wait_until "Sender Name"
+wait_until "Sender"
 sleep 0.5
 
 # Filter modal screenshot
@@ -196,7 +195,7 @@ sleep 0.5
 
 # 3. Domains view (cycle: Sender -> Sender Name -> Recipient -> Recipient Name -> Domain)
 send "g"
-wait_until "Sender Name"
+wait_until "Sender"
 sleep 0.3
 send "g"
 wait_until "Recipient"
@@ -220,6 +219,7 @@ send "g"
 wait_until "Time"
 sleep 0.5
 # Default is monthly
+capture "tui-time"
 capture "tui-time-monthly"
 
 # Cycle to daily
@@ -235,7 +235,7 @@ capture "tui-time-yearly"
 # 6. Multi-row selection (back to Sender first)
 # From Time, cycle: Sender
 send "g"
-wait_until "Sender Name"
+wait_until "Sender"
 sleep 0.5
 send Down
 sleep 0.3

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.4
 # Stage 1: Build msgvault binary
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends git make gcc g++ && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git make gcc g++ libsqlite3-dev && rm -rf /var/lib/apt/lists/*
 
 COPY . /src
 WORKDIR /src
