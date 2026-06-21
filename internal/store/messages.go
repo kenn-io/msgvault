@@ -796,7 +796,7 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 // internal/mcp/handlers.go, where the account filter is optional), so a single
 // Filters.Account cannot scope every id correctly. Properly scoping this needs a
 // manifest schema/version change (out of scope). Gmail IDs are random enough that
-// a cross-account collision is astronomically unlikely. See docs/PG_STATUS.md.
+// a cross-account collision is astronomically unlikely. See docs/internal/PG_STATUS.md.
 func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) error {
 	if permanent {
 		// A2 (deferred): unscoped by source_id — see function doc.
@@ -822,7 +822,7 @@ func (s *Store) MarkMessageDeletedByGmailID(permanent bool, gmailID string) erro
 //
 // A2 (deferred): the IN (...) match is NOT scoped by source_id — same unscoped
 // collision caveat as MarkMessageDeletedByGmailID; see that function's doc and
-// docs/PG_STATUS.md for why it is deferred (manifest lacks per-id source_id and
+// docs/internal/PG_STATUS.md for why it is deferred (manifest lacks per-id source_id and
 // can span multiple accounts; collision astronomically unlikely).
 func (s *Store) MarkMessagesDeletedByGmailIDBatch(gmailIDs []string) error {
 	if len(gmailIDs) == 0 {

@@ -140,7 +140,7 @@ Schema files in `internal/store/`:
 
 **Database backend**: SQLite is the default. PostgreSQL is opt-in via
 `[data].database_url` and runs through the same store/query interfaces.
-See `docs/PG_STATUS.md` for the current implementation state and
+See `docs/internal/PG_STATUS.md` for the current implementation state and
 follow-up work.
 
 **Test env**: `MSGVAULT_TEST_DB=postgres://...` runs PostgreSQL-backed

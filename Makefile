@@ -78,7 +78,7 @@ test-v:
 # Example: MSGVAULT_TEST_DB=postgres://user:pass@localhost:5432/db make test-pg
 #
 # CI runs the same target under .github/workflows/ci.yml's test-postgres job.
-# See docs/PG_STATUS.md for the supported feature surface.
+# See docs/internal/PG_STATUS.md for the supported feature surface.
 test-pg:
 	@if [ -z "$$MSGVAULT_TEST_DB" ]; then \
 		echo "MSGVAULT_TEST_DB must be set, e.g., postgres://user:pass@localhost:5432/db" >&2; \

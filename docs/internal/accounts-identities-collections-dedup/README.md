@@ -42,14 +42,13 @@ is always opt-in). Read these if you read nothing else.
    cross-account features: search, stats, dedup. A collection's
    identity is the union of its members'.
 
-![Accounts and collections — left side shows six per-import accounts (Personal Gmail, Old mbox, Apple Mail archive, iMessage, Old work account, College email), each with the addresses or phone numbers that identify the owner inside that source. Right side shows three collections — All (every account), Personal (a deliberate subset), Work (another named view) — each composed of accounts.](./assets/account-collection-concept.png)
-
-Each account on the left is one ingest source with its own owner
-identity. Collections on the right are user-named groups of those
-accounts. `All` is built automatically and contains everything.
-`Personal` and `Work` are named subsets. One account can belong to
-multiple collections. Collections contain accounts only, not other
-collections.
+The public docs render this model in
+[Accounts & Collections](../../usage/multi-account.md). Each account
+is one ingest source with its own owner identity. Collections are
+user-named groups of those accounts. `All` is built automatically and
+contains everything. `Personal` and `Work` are named subsets. One
+account can belong to multiple collections. Collections contain
+accounts only, not other collections.
 
 ### The safety story: hide, don't delete
 
@@ -63,17 +62,16 @@ collections.
    ladder**: four explicit rungs the user climbs deliberately, with
    no automatic escalation between them.
 
-![Data safety ladder — five rungs. Rung 00 (Backup, default-on) writes a point-in-time database copy before any rung that modifies data. Rung 01 (Scan, deduplicate --dry-run) reports what would change with no data touched. Rung 02 (Hide, deduplicate) soft-deletes redundant copies; reversible via --undo. Rung 03 (Local hard delete, delete-deduped --batch) permanently removes hidden rows from the local archive. Rung 04 (Remote delete, delete-staged) deletes from the source server, source-scoped, moves to source trash by default. A banner reads: deletion is never required — you can run deduplicate as many times as you want and stay on rung 02 forever.](./assets/safety-ladder-concept.png)
-
-The diagram is the mental model for every dedup-related command.
-**Each rung is a separate, explicit user action.** Rung 00 (backup)
-and rung 02 (hide) happen by default when you run `deduplicate`.
-Rungs 03 and 04 happen only when you invoke a different command:
-`delete-deduped` or `delete-staged`. msgvault never escalates between
-rungs on its own. "Apply dedup" never implies "hard-delete locally."
-"Hard-delete locally" never implies "delete from the source server."
-"Delete from the source server" never implies "permanently delete
-from the source server."
+The public docs render the safety ladder in
+[Deduplication](../../usage/deduplication.md). It is the mental model
+for every dedup-related command. **Each rung is a separate, explicit
+user action.** Rung 00 (backup) and rung 02 (hide) happen by default
+when you run `deduplicate`. Rungs 03 and 04 happen only when you
+invoke a different command: `delete-deduped` or `delete-staged`.
+msgvault never escalates between rungs on its own. "Apply dedup" never
+implies "hard-delete locally." "Hard-delete locally" never implies
+"delete from the source server." "Delete from the source server" never
+implies "permanently delete from the source server."
 
 The rest of this document is a HOWTO with worked examples.
 

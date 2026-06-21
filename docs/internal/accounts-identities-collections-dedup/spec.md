@@ -125,7 +125,8 @@ and the CLI reports them that way.
 `collection delete All` and explicit membership edits on `All`. New
 accounts join `All` automatically when they are created.
 
-![Accounts and collections](./assets/account-collection-concept.png)
+The public [Accounts & Collections](../../usage/multi-account.md)
+guide carries the rendered concept diagram for this model.
 
 ## Scope semantics
 
@@ -318,7 +319,8 @@ preference runs in this order:
 Earlier rules win outright. Later rules apply only when all earlier
 ones tie. The exact policy is visible in dry-run output.
 
-![Survivor selection: filter then priority list](./assets/survivor-selection-concept.png)
+The public [Deduplication](../../usage/deduplication.md) guide carries
+the rendered survivor-selection diagram.
 
 ### Effects of applying dedup
 
@@ -338,7 +340,8 @@ A successful `deduplicate` run:
 Dedup does not silently escalate from local hiding to local hard
 deletion or remote deletion.
 
-![Dedup hides; delete is separate](./assets/deduplication-concept.png)
+The public [Deduplication](../../usage/deduplication.md) guide carries
+the rendered hide-versus-delete diagram.
 
 ## Data safety ladder
 
@@ -396,7 +399,8 @@ regardless of how many messages reference them. Hiding or
 hard-deleting a duplicate message does not delete the underlying
 attachment blob unless no remaining message references it.
 
-![Data safety ladder](./assets/safety-ladder-concept.png)
+The public [Deduplication](../../usage/deduplication.md) guide carries
+the rendered safety-ladder diagram.
 
 ## Live-message contract
 

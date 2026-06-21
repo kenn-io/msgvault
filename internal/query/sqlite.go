@@ -963,7 +963,7 @@ func (e *SQLiteEngine) GetMessage(ctx context.Context, id int64) (*MessageDetail
 // A2 (deferred): the unscoped match mirrors the deletion write path
 // (internal/store/messages.go MarkMessageDeletedByGmailID). Adding a source_id
 // scope here is deferred for the same reason — see that function's doc and
-// docs/PG_STATUS.md.
+// docs/internal/PG_STATUS.md.
 func (e *SQLiteEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID string) (*MessageDetail, error) {
 	return e.getMessageByQuery(ctx, "m.source_message_id = ?", sourceMessageID)
 }
