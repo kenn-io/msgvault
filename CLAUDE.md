@@ -218,6 +218,11 @@ tree or a built artifact. If a fake command is truly needed, the test must prove
 a stable external contract or regression that cannot be covered by the real
 path, and the commit message must explain why.
 
+Do not add bash tests that grep shell scripts, workflows, config files, or docs
+for expected implementation text. Those checks are usually tautological. Use
+real execution, parser/tool-native validation, or a documented manual release
+check instead.
+
 **Mapping rule:**
 - `require.X` — halts the test on failure (replaces what was `t.Fatalf` / `t.Fatal`). Use for setup operations or when subsequent assertions would be meaningless on failure.
 - `assert.X` — continues after failure (replaces what was `t.Errorf` / `t.Error`). Use for independent value checks where reporting multiple failures helps debugging.

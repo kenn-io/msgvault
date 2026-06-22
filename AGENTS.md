@@ -23,6 +23,11 @@ stub the primary commands, and only assert that the stub saw expected arguments.
 Exercise the production path, a real validator/parser, or a built artifact
 instead. See `CLAUDE.md` for the full rule and narrow exception.
 
+Do not add bash tests that grep shell scripts, workflows, config files, or docs
+for expected implementation text. Those checks are usually tautological; prefer
+real execution, parser/tool-native validation, or a documented manual release
+check.
+
 ## Custom Helpers
 
 `internal/testutil` retains non-assertion helpers (`MakeSet`, `NewTestStore`, fixture builders, etc.). It no longer provides `AssertEqual` / `MustNoErr` / similar — those were removed in favor of calling testify directly.
