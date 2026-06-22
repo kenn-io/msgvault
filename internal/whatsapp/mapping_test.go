@@ -286,6 +286,8 @@ func TestChatTitle(t *testing.T) {
 }
 
 func TestMapMessageSentAtIsUTC(t *testing.T) {
+	assert := assertpkg.New(t)
+
 	// 2024-01-10T12:00:00Z in milliseconds. On a machine east of UTC
 	// (e.g. NZ) a non-UTC SentAt would read back as Jan 11 and carry the
 	// local zone — wrong for Parquet year-partitioning and date display.
@@ -293,9 +295,9 @@ func TestMapMessageSentAtIsUTC(t *testing.T) {
 	got := mapMessage(msg, 1, 1, sql.NullInt64{})
 
 	requirepkg.True(t, got.SentAt.Valid, "SentAt should be set")
-	assertpkg.Equal(t, "UTC", got.SentAt.Time.Location().String(), "SentAt must be normalized to UTC")
+	assert.Equal("UTC", got.SentAt.Time.Location().String(), "SentAt must be normalized to UTC")
 	y, m, d := got.SentAt.Time.Date()
-	assertpkg.Equal(t, 2024, y, "year")
-	assertpkg.Equal(t, 1, int(m), "month")
-	assertpkg.Equal(t, 10, d, "day")
+	assert.Equal(2024, y, "year")
+	assert.Equal(1, int(m), "month")
+	assert.Equal(10, d, "day")
 }
