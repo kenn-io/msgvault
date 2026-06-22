@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/duckdb/duckdb-go/v2 v2.10504.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
@@ -20,10 +20,10 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jhillyerd/enmime v1.3.0
-	github.com/mark3labs/mcp-go v0.54.1
+	github.com/mark3labs/mcp-go v0.55.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mattn/go-runewidth v0.0.24
-	github.com/mattn/go-sqlite3 v1.14.45
+	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/muesli/termenv v0.16.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -39,7 +39,7 @@ require (
 	golang.org/x/text v0.38.0
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.46.0
-	google.golang.org/api v0.284.0
+	google.golang.org/api v0.286.0
 	howett.net/plist v1.0.1
 )
 
@@ -118,7 +118,7 @@ require (
 	golang.org/x/telemetry v0.0.0-20260610154732-fb80ec83bdd9 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
