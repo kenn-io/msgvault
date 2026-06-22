@@ -468,7 +468,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 							reactorID = selfParticipantID
 						}
 
-						createdAt := time.Unix(r.Timestamp/1000, 0)
+						createdAt := time.Unix(r.Timestamp/1000, 0).UTC()
 						if err := imp.store.UpsertReaction(messageID, reactorID, reactionTypeEmoji, reactionValue, createdAt); err != nil {
 							summary.Errors++
 							imp.progress.OnError(fmt.Errorf("upsert reaction: %w", err))
