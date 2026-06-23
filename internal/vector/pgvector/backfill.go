@@ -143,7 +143,7 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: disable statement_timeout: %w", err)
 	}
 
-	// Preserve the legacy pending re-embed signal (129 review MEDIUM). Under the
+	// Preserve the legacy pending re-embed signal. Under the
 	// OLD design, pending_embeddings was a re-embed flag: a message could carry
 	// BOTH an active-gen embedding AND an active-gen pending row (old
 	// repair-encoding re-enqueued already-embedded messages; the old worker
@@ -197,7 +197,7 @@ type rowQueryer interface {
 
 // pendingEmbeddingsExists reports whether the legacy pending_embeddings table
 // is present. Used by BackfillEmbedGenForUpgrade to decide whether to apply the
-// active-gen pending exclusion (review MEDIUM). to_regclass returns NULL for a
+// active-gen pending exclusion. to_regclass returns NULL for a
 // non-existent relation, so a NULL scan means "absent".
 func pendingEmbeddingsExists(ctx context.Context, q rowQueryer) (bool, error) {
 	var reg *string
@@ -214,7 +214,7 @@ func pendingEmbeddingsExists(ctx context.Context, q rowQueryer) (bool, error) {
 // only wastes space and confuses operators.
 //
 // It runs on every WRITABLE Open, AFTER BackfillEmbedGenForUpgrade has had a
-// chance to consult the table and preserve its re-embed signal (review MEDIUM).
+// chance to consult the table and preserve its re-embed signal.
 // Doing the drop here rather than in Migrate guarantees the backfill (when it
 // runs) sees the table first; gated to the writable Open path so a read-only
 // Open leaves the table — and its signal — intact for the next writable open.

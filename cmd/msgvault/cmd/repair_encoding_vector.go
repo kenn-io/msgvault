@@ -13,6 +13,60 @@ import (
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
+// openVectorBackendForRepair opens the dialect-selected vector backend the same
+// way the embed/serve commands do and returns it together with a close func.
+//
+// Opening a writable backend runs the one-time upgrade backfill
+// (BackfillEmbedGenForUpgrade) as a side effect when the upgrade ledger is
+// still unmarked. repair-encoding MUST open the backend BEFORE it clears
+// embed_gen (s.ResetEmbedGen): if the reset ran first, a first-run backfill
+// would re-stamp the just-NULLed (previously-embedded) messages back to
+// embed_gen=active, silently undoing the re-embed request. Opening first lets
+// the backfill land and mark its ledger, so the subsequent reset sticks.
+//
+// Returns (nil, nil, nil) and is a silent no-op when vector search is not
+// configured (cfg.Vector.Enabled == false): a user without embeddings has no
+// watermark to fix and no backfill to run.
+//
+// This file is compiled only with a vector backend build tag; the no-tag build
+// uses the stub in repair_encoding_vector_stub.go.
+func openVectorBackendForRepair(ctx context.Context, s *store.Store) (vector.Backend, func() error, error) {
+	if !cfg.Vector.Enabled {
+		// Vector search disabled: nothing to open. No-op.
+		return nil, nil, nil
+	}
+
+	if s.IsPostgreSQL() {
+		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			DB:            s.DB(),
+			Dimension:     cfg.Vector.Embeddings.Dimension,
+			SkipExtension: cfg.Vector.SkipExtensionCreate,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("open pgvector backend: %w", err)
+		}
+		return pgb, pgb.Close, nil
+	}
+
+	if err := sqlitevec.RegisterExtension(); err != nil {
+		return nil, nil, fmt.Errorf("register sqlite-vec: %w", err)
+	}
+	vecPath := cfg.Vector.DBPath
+	if vecPath == "" {
+		vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
+	}
+	sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+		Path:      vecPath,
+		MainPath:  cfg.DatabaseDSN(),
+		Dimension: cfg.Vector.Embeddings.Dimension,
+		MainDB:    s.DB(),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open vectors.db: %w", err)
+	}
+	return sb, sb.Close, nil
+}
+
 // lowerEmbedWatermarkForRepair lowers the scan-and-fill embed watermark below
 // the minimum repaired message id so the next incremental embed run re-finds
 // the repaired messages, even when their ids sit BELOW the current watermark.
@@ -23,57 +77,19 @@ import (
 // the CLI defaults off and serve can have disabled). Lowering the watermark
 // closes that gap.
 //
-// Skips silently (returns nil) when vector search is not configured
-// (cfg.Vector.Enabled == false): a user without embeddings has no watermark to
-// fix. Opens the vector backend the same dialect-selected way the embed/serve
-// commands do, lowers the watermark for every generation, and closes it. The
-// reset is idempotent and never raises a generation's cursor.
+// It operates on an already-open backend handle (see
+// openVectorBackendForRepair) so the one-time upgrade backfill has already run
+// and marked its ledger; the watermark reset itself is idempotent and never
+// raises a generation's cursor. backend may be nil when vector search is
+// disabled, in which case this is a no-op.
 //
 // This file is compiled only with a vector backend build tag; the no-tag build
 // uses the stub in repair_encoding_vector_stub.go.
-func lowerEmbedWatermarkForRepair(ctx context.Context, s *store.Store, minRepairedID int64) error {
-	if !cfg.Vector.Enabled {
+func lowerEmbedWatermarkForRepair(ctx context.Context, backend vector.Backend, minRepairedID int64) error {
+	if backend == nil {
 		// Vector search disabled: no watermark exists to lower. No-op.
 		return nil
 	}
-
-	var (
-		backend vector.Backend
-		closeFn func() error
-	)
-	if s.IsPostgreSQL() {
-		pgb, err := pgvector.Open(ctx, pgvector.Options{
-			DB:            s.DB(),
-			Dimension:     cfg.Vector.Embeddings.Dimension,
-			SkipExtension: cfg.Vector.SkipExtensionCreate,
-		})
-		if err != nil {
-			return fmt.Errorf("open pgvector backend: %w", err)
-		}
-		backend = pgb
-		closeFn = pgb.Close
-	} else {
-		if err := sqlitevec.RegisterExtension(); err != nil {
-			return fmt.Errorf("register sqlite-vec: %w", err)
-		}
-		vecPath := cfg.Vector.DBPath
-		if vecPath == "" {
-			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
-		}
-		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:      vecPath,
-			MainPath:  cfg.DatabaseDSN(),
-			Dimension: cfg.Vector.Embeddings.Dimension,
-			MainDB:    s.DB(),
-		})
-		if err != nil {
-			return fmt.Errorf("open vectors.db: %w", err)
-		}
-		backend = sb
-		closeFn = sb.Close
-	}
-	defer func() { _ = closeFn() }()
-
 	if err := backend.ResetWatermarkBelow(ctx, minRepairedID); err != nil {
 		return fmt.Errorf("lower embed watermark: %w", err)
 	}

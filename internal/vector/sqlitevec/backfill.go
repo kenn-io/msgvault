@@ -144,7 +144,7 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: iterate embedded message ids: %w", err)
 	}
 
-	// Preserve the legacy pending re-embed signal (129 review MEDIUM). Under the
+	// Preserve the legacy pending re-embed signal. Under the
 	// OLD design, pending_embeddings was a re-embed flag: a message could carry
 	// BOTH an active-gen embedding AND an active-gen pending row (old
 	// repair-encoding re-enqueued already-embedded messages; the old worker
@@ -228,7 +228,7 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 // activeGenPendingIDs returns the message ids that carry an active-generation
 // row in the legacy pending_embeddings table — the OLD "needs (re-)embedding"
 // signal. Used by BackfillEmbedGenForUpgrade to EXCLUDE these from the
-// embed_gen stamp so they re-embed under scan-and-fill (review MEDIUM).
+// embed_gen stamp so they re-embed under scan-and-fill.
 //
 // Returns nil with no error when pending_embeddings does not exist (a fresh
 // DB, or one already cleaned up): there is no legacy signal to preserve.
@@ -269,7 +269,7 @@ func (b *Backend) activeGenPendingIDs(ctx context.Context, active vector.Generat
 // vectors.db.
 //
 // It runs on every WRITABLE Open, AFTER BackfillEmbedGenForUpgrade has had a
-// chance to consult the table and preserve its re-embed signal (review MEDIUM).
+// chance to consult the table and preserve its re-embed signal.
 // Doing the drop here rather than in Migrate guarantees the backfill (when it
 // runs) sees the table first. It is gated to the writable path so a read-only
 // Open leaves the table — and its signal — intact for the next writable open.

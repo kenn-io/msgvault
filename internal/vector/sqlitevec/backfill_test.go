@@ -161,10 +161,10 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 }
 
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the SQLite
-// regression guard for the 129 review MEDIUM: the one-time upgrade backfill
-// must NOT stamp embed_gen=active on a message that carried an active-gen
-// pending_embeddings row (the OLD re-embed flag), even though it has an
-// active-gen embedding. Such a message had a STALE embedding queued for
+// regression guard for the pending-signal preservation case: the one-time
+// upgrade backfill must NOT stamp embed_gen=active on a message that carried an
+// active-gen pending_embeddings row (the OLD re-embed flag), even though it has
+// an active-gen embedding. Such a message had a STALE embedding queued for
 // re-embed (old repair-encoding re-enqueued it); stamping it "covered" would
 // leave it permanently stale. It must end embed_gen=NULL so scan-and-fill
 // re-embeds it, while a normal embedded message with no pending row ends
@@ -177,9 +177,13 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	mainPath := filepath.Join(dir, "msgvault.db")
 	vecPath := filepath.Join(dir, "vectors.db")
 
-	// Real main DB with two live messages.
+	// Real main DB with two live messages. Close the store via t.Cleanup
+	// (registered before the backend's, so LIFO closes the store LAST, after
+	// the backend that borrows s.DB()) — otherwise the open msgvault.db handle
+	// blocks t.TempDir() cleanup on Windows.
 	s, err := store.Open(mainPath)
 	require.NoError(t, err, "store.Open (rw)")
+	t.Cleanup(func() { _ = s.Close() })
 	require.NoError(t, s.InitSchema(), "InitSchema")
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
@@ -247,7 +251,7 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 
 // TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
 // the dead pending_embeddings table from vectors.db AFTER the backfill has had
-// a chance to consult it (review MEDIUM). The drop moved out of Migrate into
+// a chance to consult it. The drop moved out of Migrate into
 // the Open writable path.
 func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
 	require.NoError(t, RegisterExtension(), "RegisterExtension")

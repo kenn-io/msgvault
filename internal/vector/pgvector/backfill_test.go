@@ -95,14 +95,15 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 }
 
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the PG
-// regression guard for the 129 review MEDIUM: the one-time upgrade backfill
-// must NOT stamp embed_gen=active on a message that carried an active-gen
-// pending_embeddings row (the OLD re-embed flag), even though that message has
-// an active-gen embedding. Such a message had a STALE embedding queued for
-// re-embed (old repair-encoding re-enqueued it). If the backfill stamps it
-// "covered" it is never re-embedded — silent permanent staleness. It must end
-// embed_gen=NULL so scan-and-fill re-embeds it; a normal embedded message with
-// no pending row must end embed_gen=active. pending_embeddings is dropped after.
+// regression guard for the pending-signal preservation case: the one-time
+// upgrade backfill must NOT stamp embed_gen=active on a message that carried an
+// active-gen pending_embeddings row (the OLD re-embed flag), even though that
+// message has an active-gen embedding. Such a message had a STALE embedding
+// queued for re-embed (old repair-encoding re-enqueued it). If the backfill
+// stamps it "covered" it is never re-embedded — silent permanent staleness. It
+// must end embed_gen=NULL so scan-and-fill re-embeds it; a normal embedded
+// message with no pending row must end embed_gen=active. pending_embeddings is
+// dropped after.
 func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	ctx := context.Background()
 	db := openPGTestDB(t)
@@ -165,7 +166,7 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 
 // TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
 // the dead pending_embeddings table AFTER the backfill has had a chance to
-// consult it (review MEDIUM). The drop moved out of Migrate into the Open
+// consult it. The drop moved out of Migrate into the Open
 // writable path.
 func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
 	ctx := context.Background()

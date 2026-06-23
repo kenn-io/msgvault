@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -64,31 +65,8 @@ charset detection issues in the MIME parser.`,
 		// embed_gen makes the message read as "needs embedding" again.
 		// No-op when vector search is disabled — the column is harmless.
 		if len(reembedNeededIDs) > 0 {
-			if err := s.ResetEmbedGen(ctx, reembedNeededIDs); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: failed to mark %d repaired message(s) for re-embedding: %v\n",
-					len(reembedNeededIDs), err)
-			} else {
-				fmt.Printf("Marked %d message(s) for re-embedding.\n",
-					len(reembedNeededIDs))
-				// Clearing embed_gen is not enough on its own: an incremental
-				// embed run resumes from the per-generation watermark and only
-				// scans ids ABOVE it, so a repaired message whose id sits below
-				// the current watermark would never be re-found (it would wait
-				// for a full-scan backstop, which the CLI defaults off and serve
-				// can have disabled). Lower the watermark below the smallest
-				// repaired id so the next incremental run re-embeds them.
-				// Skips silently when vector search is not configured.
-				minID := reembedNeededIDs[0]
-				for _, id := range reembedNeededIDs[1:] {
-					if id < minID {
-						minID = id
-					}
-				}
-				if err := lowerEmbedWatermarkForRepair(ctx, s, minID); err != nil {
-					fmt.Fprintf(os.Stderr,
-						"Warning: failed to lower embed watermark for repaired messages: %v\n", err)
-				}
+			if err := repairResetEmbeddings(ctx, s, reembedNeededIDs); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 		}
 
@@ -103,6 +81,60 @@ charset detection issues in the MIME parser.`,
 		}
 		return nil
 	},
+}
+
+// repairResetEmbeddings marks the repaired messages for re-embedding and lowers
+// the scan-and-fill watermark so the next incremental embed run re-finds them.
+//
+// Ordering is load-bearing. The vector backend is opened FIRST, before
+// s.ResetEmbedGen clears embed_gen. Opening a writable backend runs the
+// one-time upgrade backfill as a side effect when its ledger is still unmarked;
+// that backfill stamps embed_gen=active on every already-embedded message. If
+// the reset ran first, a first-run backfill would re-stamp the just-NULLed
+// (previously-embedded) repaired messages back to active, silently undoing the
+// re-embed request. Opening first lets the backfill land and mark its ledger so
+// the subsequent reset sticks.
+//
+// When vector search is disabled, openVectorBackendForRepair returns a nil
+// backend and this still resets embed_gen (a harmless no-op on the main DB
+// column) while the watermark step short-circuits.
+func repairResetEmbeddings(ctx context.Context, s *store.Store, reembedNeededIDs []int64) error {
+	// 1. Open the vector backend up front. This triggers (and marks the
+	//    ledger for) the one-time upgrade backfill BEFORE we clear embed_gen.
+	//    nil backend + nil closeFn when vector search is disabled.
+	backend, closeFn, err := openVectorBackendForRepair(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to open vector backend for re-embedding: %w", err)
+	}
+	if closeFn != nil {
+		defer func() { _ = closeFn() }()
+	}
+
+	// 2. Clear embed_gen on the repaired messages — now post-backfill, so the
+	//    (already-marked) ledger cannot re-run and re-cover them.
+	if err := s.ResetEmbedGen(ctx, reembedNeededIDs); err != nil {
+		return fmt.Errorf("failed to mark %d repaired message(s) for re-embedding: %w",
+			len(reembedNeededIDs), err)
+	}
+	fmt.Printf("Marked %d message(s) for re-embedding.\n", len(reembedNeededIDs))
+
+	// 3. Lower the watermark below the smallest repaired id. Clearing embed_gen
+	//    is not enough on its own: an incremental embed run resumes from the
+	//    per-generation watermark and only scans ids ABOVE it, so a repaired
+	//    message whose id sits below the current watermark would never be
+	//    re-found (it would wait for a full-scan backstop, which the CLI
+	//    defaults off and serve can have disabled). No-op (nil backend) when
+	//    vector search is not configured.
+	minID := reembedNeededIDs[0]
+	for _, id := range reembedNeededIDs[1:] {
+		if id < minID {
+			minID = id
+		}
+	}
+	if err := lowerEmbedWatermarkForRepair(ctx, backend, minID); err != nil {
+		return fmt.Errorf("failed to lower embed watermark for repaired messages: %w", err)
+	}
+	return nil
 }
 
 // repairStats tracks repair statistics.

@@ -225,7 +225,7 @@ func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
 // TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
 // drops the dead pending_embeddings queue table: the one-time upgrade backfill
 // (BackfillEmbedGenForUpgrade) must first consult it to preserve its legacy
-// re-embed signal (review MEDIUM). The drop moved to the writable Open path,
+// re-embed signal. The drop moved to the writable Open path,
 // AFTER the backfill — see TestOpen_DropsDeadPendingEmbeddings and
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal. Migrate runs on
 // read-only opens too, where dropping (before the signal is honored on a later

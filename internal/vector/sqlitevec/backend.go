@@ -103,8 +103,8 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		return nil, fmt.Errorf("embed_gen upgrade backfill: %w", err)
 	}
 	// Drop the dead pending_embeddings queue table now that the backfill has
-	// consulted it (review MEDIUM: the backfill preserves the table's legacy
-	// re-embed signal, then we drop it here). Gated to the writable path —
+	// consulted it: the backfill preserves the table's legacy
+	// re-embed signal, then we drop it here. Gated to the writable path —
 	// mirrors the backfill's own b.readOnly / b.mainDB guards — so a read-only
 	// Open leaves the table (and its signal) for a later writable open. Skipped
 	// when the main handle is absent (management commands) so a backend opened

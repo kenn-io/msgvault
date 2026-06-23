@@ -10,13 +10,14 @@ import (
 	requirepkg "github.com/stretchr/testify/require"
 )
 
-// TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset is the FIX 1
-// regression guard (review HIGH): repair-encoding clears embed_gen=NULL on a
-// repaired message, but an INCREMENTAL embed run resumes from the per-gen
-// watermark and only scans ids ABOVE it (ScanForEmbedding applies `id >
-// watermark`). A repaired message whose id sits BELOW the current watermark is
-// therefore never re-found by an incremental run — it would wait for a
-// full-scan backstop (which the CLI defaults off and serve can have disabled).
+// TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset is the
+// regression guard for the below-watermark repair gap: repair-encoding clears
+// embed_gen=NULL on a repaired message, but an INCREMENTAL embed run resumes
+// from the per-gen watermark and only scans ids ABOVE it (ScanForEmbedding
+// applies `id > watermark`). A repaired message whose id sits BELOW the current
+// watermark is therefore never re-found by an incremental run — it would wait
+// for a full-scan backstop (which the CLI defaults off and serve can have
+// disabled).
 //
 // The fix lowers the watermark below the repaired id (Backend.ResetWatermarkBelow)
 // so the next incremental RunOnce re-finds and re-embeds it. This test pins both
