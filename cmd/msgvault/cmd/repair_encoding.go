@@ -61,7 +61,7 @@ charset detection issues in the MIME parser.`,
 		// embed worker re-embeds them with the corrected text on its next
 		// run (msgvault embeddings build / the serve daemon). This is the
 		// scan-and-fill replacement for the old re-enqueue step: clearing
-		// the watermark makes the message read as "needs embedding" again.
+		// embed_gen makes the message read as "needs embedding" again.
 		// No-op when vector search is disabled — the column is harmless.
 		if len(reembedNeededIDs) > 0 {
 			if err := s.ResetEmbedGen(ctx, reembedNeededIDs); err != nil {
@@ -71,6 +71,24 @@ charset detection issues in the MIME parser.`,
 			} else {
 				fmt.Printf("Marked %d message(s) for re-embedding.\n",
 					len(reembedNeededIDs))
+				// Clearing embed_gen is not enough on its own: an incremental
+				// embed run resumes from the per-generation watermark and only
+				// scans ids ABOVE it, so a repaired message whose id sits below
+				// the current watermark would never be re-found (it would wait
+				// for a full-scan backstop, which the CLI defaults off and serve
+				// can have disabled). Lower the watermark below the smallest
+				// repaired id so the next incremental run re-embeds them.
+				// Skips silently when vector search is not configured.
+				minID := reembedNeededIDs[0]
+				for _, id := range reembedNeededIDs[1:] {
+					if id < minID {
+						minID = id
+					}
+				}
+				if err := lowerEmbedWatermarkForRepair(ctx, s, minID); err != nil {
+					fmt.Fprintf(os.Stderr,
+						"Warning: failed to lower embed watermark for repaired messages: %v\n", err)
+				}
 			}
 		}
 

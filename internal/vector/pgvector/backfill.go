@@ -143,17 +143,38 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: disable statement_timeout: %w", err)
 	}
 
-	// Stamp embed_gen=active for messages with an embedding row under the
-	// active generation, only where embed_gen is still NULL (never overwrite
-	// a row stamped for another generation).
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE messages SET embed_gen = $1
+	// Preserve the legacy pending re-embed signal (129 review MEDIUM). Under the
+	// OLD design, pending_embeddings was a re-embed flag: a message could carry
+	// BOTH an active-gen embedding AND an active-gen pending row (old
+	// repair-encoding re-enqueued already-embedded messages; the old worker
+	// deleted the pending row only on a successful re-embed). Stamping
+	// embed_gen=active on such a message would read "covered" forever and never
+	// re-embed it — silent permanent staleness. EXCLUDE active-gen pending ids
+	// from the stamp so they end embed_gen=NULL and scan-and-fill re-embeds them.
+	//
+	// pending_embeddings may already be gone (a DB upgraded before this change
+	// dropped it in Migrate, or a fresh DB never had it). Probe first and add the
+	// NOT IN exclusion only when the table is present; otherwise the plain stamp
+	// (no legacy signal to preserve) runs.
+	pendingExists, err := pendingEmbeddingsExists(ctx, tx)
+	if err != nil {
+		return err
+	}
+	stamp := `UPDATE messages SET embed_gen = $1
 		  WHERE embed_gen IS NULL
 		    AND EXISTS (
 		        SELECT 1 FROM embeddings e
 		         WHERE e.message_id = messages.id
-		           AND e.generation_id = $1)`,
-		int64(active.ID)); err != nil {
+		           AND e.generation_id = $1)`
+	if pendingExists {
+		stamp += `
+		    AND messages.id NOT IN (
+		        SELECT message_id FROM pending_embeddings WHERE generation_id = $1)`
+	}
+	// Stamp embed_gen=active for messages with an embedding row under the
+	// active generation, only where embed_gen is still NULL (never overwrite
+	// a row stamped for another generation), excluding active-gen pending ids.
+	if _, err := tx.ExecContext(ctx, stamp, int64(active.ID)); err != nil {
 		return fmt.Errorf("backfill: stamp embed_gen: %w", err)
 	}
 
@@ -165,6 +186,58 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: commit tx: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// rowQueryer is the subset of *sql.DB / *sql.Tx that pendingEmbeddingsExists
+// needs, so it can probe either on the pool or inside the backfill tx.
+type rowQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// pendingEmbeddingsExists reports whether the legacy pending_embeddings table
+// is present. Used by BackfillEmbedGenForUpgrade to decide whether to apply the
+// active-gen pending exclusion (review MEDIUM). to_regclass returns NULL for a
+// non-existent relation, so a NULL scan means "absent".
+func pendingEmbeddingsExists(ctx context.Context, q rowQueryer) (bool, error) {
+	var reg *string
+	if err := q.QueryRowContext(ctx,
+		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg); err != nil {
+		return false, fmt.Errorf("backfill: probe pending_embeddings: %w", err)
+	}
+	return reg != nil, nil
+}
+
+// dropDeadPendingEmbeddings drops the legacy pending_embeddings queue table.
+// The scan-and-fill design replaced the per-generation seed queue with a live
+// messages.embed_gen scan, so the table is otherwise unused; left in place it
+// only wastes space and confuses operators.
+//
+// It runs on every WRITABLE Open, AFTER BackfillEmbedGenForUpgrade has had a
+// chance to consult the table and preserve its re-embed signal (review MEDIUM).
+// Doing the drop here rather than in Migrate guarantees the backfill (when it
+// runs) sees the table first; gated to the writable Open path so a read-only
+// Open leaves the table — and its signal — intact for the next writable open.
+// Runs inside a tx that lifts the pool-wide statement_timeout (DROP takes an
+// ACCESS EXCLUSIVE lock; the lock-wait alone can exceed 30s on a busy serve),
+// matching the sibling write helpers. Idempotent: DROP TABLE IF EXISTS is a
+// no-op on fresh DBs and on a second run.
+func (b *Backend) dropDeadPendingEmbeddings(ctx context.Context) error {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("drop dead pending_embeddings: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings: disable statement_timeout: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS pending_embeddings`); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings table: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings: commit tx: %w", err)
+	}
 	return nil
 }
 

@@ -222,11 +222,15 @@ func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
 		"re-migrate must drop the legacy idx_embeddings_gen_msg")
 }
 
-// TestMigrate_DropsDeadPendingEmbeddings pins that a legacy DB
-// carrying the dead pending_embeddings queue table must have it dropped on
-// Migrate. The scan-and-fill design replaced the seed queue with a live
-// messages.embed_gen scan, so the table is never read or written.
-func TestMigrate_DropsDeadPendingEmbeddings(t *testing.T) {
+// TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
+// drops the dead pending_embeddings queue table: the one-time upgrade backfill
+// (BackfillEmbedGenForUpgrade) must first consult it to preserve its legacy
+// re-embed signal (review MEDIUM). The drop moved to the writable Open path,
+// AFTER the backfill — see TestOpen_DropsDeadPendingEmbeddings and
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal. Migrate runs on
+// read-only opens too, where dropping (before the signal is honored on a later
+// writable open) would be wrong.
+func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 	db := openPGTestDB(t)
 	ctx := context.Background()
 	require.NoError(t, Migrate(ctx, db, 0, false), "first Migrate")
@@ -245,7 +249,7 @@ func TestMigrate_DropsDeadPendingEmbeddings(t *testing.T) {
 	require.NoError(t, Migrate(ctx, db, 0, false), "second Migrate")
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
-	assert.Nil(t, reg, "re-migrate must drop the dead pending_embeddings table")
+	assert.NotNil(t, reg, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
 }
 
 // TestMigrate_SkipExtension (V5 / finding B3) asserts that the skipExtension

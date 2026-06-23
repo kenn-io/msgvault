@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // embedGenOf reads embed_gen for a message, reporting the value and whether
@@ -157,4 +158,130 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 	assert.Positive(t, v, "embed_gen references the active generation")
 	assert.True(t, backfillLedgerMarked(t, s.DB()),
 		"ledger marked after successful backfill")
+}
+
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the SQLite
+// regression guard for the 129 review MEDIUM: the one-time upgrade backfill
+// must NOT stamp embed_gen=active on a message that carried an active-gen
+// pending_embeddings row (the OLD re-embed flag), even though it has an
+// active-gen embedding. Such a message had a STALE embedding queued for
+// re-embed (old repair-encoding re-enqueued it); stamping it "covered" would
+// leave it permanently stale. It must end embed_gen=NULL so scan-and-fill
+// re-embeds it, while a normal embedded message with no pending row ends
+// embed_gen=active. pending_embeddings (in vectors.db) is dropped by Open after.
+func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
+	require.NoError(t, RegisterExtension(), "RegisterExtension")
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	vecPath := filepath.Join(dir, "vectors.db")
+
+	// Real main DB with two live messages.
+	s, err := store.Open(mainPath)
+	require.NoError(t, err, "store.Open (rw)")
+	require.NoError(t, s.InitSchema(), "InitSchema")
+	_, err = s.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
+VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
+`)
+	require.NoError(t, err, "seed messages")
+
+	rw, err := Open(ctx, Options{
+		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+	})
+	require.NoError(t, err, "rw backend Open")
+	gen, err := rw.CreateGeneration(ctx, "model", 4, "model:4")
+	require.NoError(t, err, "CreateGeneration")
+	// Both messages have an active-gen embedding.
+	require.NoError(t, rw.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, ChunkIndex: 0, Vector: []float32{0, 0, 0, 1}},
+		{MessageID: 2, ChunkIndex: 0, Vector: []float32{0, 0, 1, 0}},
+	}), "Upsert")
+	require.NoError(t, rw.ActivateGeneration(ctx, gen, true), "Activate")
+
+	// Reconstruct the OLD-state precondition inside vectors.db: pending_embeddings
+	// exists with an active-gen row for msg 1 ONLY (msg 1 was re-enqueued for
+	// re-embed while still holding its stale active-gen embedding).
+	_, err = rw.DB().ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id INTEGER NOT NULL,
+		message_id    INTEGER NOT NULL
+	)`)
+	require.NoError(t, err, "create legacy pending_embeddings")
+	_, err = rw.DB().ExecContext(ctx,
+		`INSERT INTO pending_embeddings (generation_id, message_id) VALUES (?, 1)`, int64(gen))
+	require.NoError(t, err, "seed active-gen pending row for msg 1")
+	require.NoError(t, rw.Close(), "close rw backend")
+
+	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared.
+	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
+	require.NoError(t, err, "reset embed_gen")
+	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	require.NoError(t, err, "clear ledger")
+
+	// Writable Open runs the backfill (which consults pending) then drops the
+	// table.
+	b, err := Open(ctx, Options{
+		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+	})
+	require.NoError(t, err, "writable Open (runs backfill)")
+	t.Cleanup(func() { _ = b.Close() })
+
+	// msg 1 (had an active-gen pending re-embed row) must stay NULL → re-embed.
+	_, isNull1 := embedGenOf(t, s.DB(), 1)
+	assert.True(t, isNull1,
+		"msg 1 (active-gen pending re-embed) must stay embed_gen=NULL so it re-embeds")
+	// msg 2 (normal embedded, no pending) must be stamped → not re-embedded.
+	v2, isNull2 := embedGenOf(t, s.DB(), 2)
+	assert.False(t, isNull2, "msg 2 (no pending row) must be stamped")
+	assert.Equal(t, int64(gen), v2, "msg 2 embed_gen = active")
+
+	// The dead pending_embeddings table is dropped after the backfill consumed
+	// its signal.
+	exists, err := tableExists(ctx, b.DB(), "pending_embeddings")
+	require.NoError(t, err, "probe pending_embeddings")
+	assert.False(t, exists, "writable Open must drop pending_embeddings after the backfill consults it")
+}
+
+// TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
+// the dead pending_embeddings table from vectors.db AFTER the backfill has had
+// a chance to consult it (review MEDIUM). The drop moved out of Migrate into
+// the Open writable path.
+func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
+	require.NoError(t, RegisterExtension(), "RegisterExtension")
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "msgvault.db")
+	vecPath := filepath.Join(dir, "vectors.db")
+
+	s, err := store.Open(mainPath)
+	require.NoError(t, err, "store.Open (rw)")
+	require.NoError(t, s.InitSchema(), "InitSchema")
+	defer func() { _ = s.Close() }()
+
+	// First Open creates vectors.db; then stand up a legacy pending_embeddings
+	// table and reopen writably so the Open drop path runs against it.
+	b0, err := Open(ctx, Options{
+		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+	})
+	require.NoError(t, err, "first Open")
+	_, err = b0.DB().ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id INTEGER NOT NULL,
+		message_id    INTEGER NOT NULL
+	)`)
+	require.NoError(t, err, "create legacy pending_embeddings")
+	require.NoError(t, b0.Close(), "close first Open")
+
+	b, err := Open(ctx, Options{
+		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
+	})
+	require.NoError(t, err, "writable reopen")
+	t.Cleanup(func() { _ = b.Close() })
+
+	exists, err := tableExists(ctx, b.DB(), "pending_embeddings")
+	require.NoError(t, err, "probe pending_embeddings")
+	assert.False(t, exists, "writable Open must drop pending_embeddings")
 }

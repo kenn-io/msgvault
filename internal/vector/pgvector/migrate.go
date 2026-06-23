@@ -82,13 +82,18 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_embeddings_gen_msg`); err != nil {
 		return fmt.Errorf("drop redundant idx_embeddings_gen_msg: %w", err)
 	}
-	// Drop the dead pending_embeddings queue table on upgrade. The
-	// scan-and-fill design replaced the per-generation seed queue with a
-	// live messages.embed_gen scan, so this table is never read or written
-	// anymore. Idempotent: IF EXISTS is a no-op on fresh DBs.
-	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS pending_embeddings`); err != nil {
-		return fmt.Errorf("drop dead pending_embeddings table: %w", err)
-	}
+	// NOTE: the dead pending_embeddings queue table is NOT dropped here. The
+	// scan-and-fill design replaced the per-generation seed queue with a live
+	// messages.embed_gen scan, so the table is otherwise unused — BUT the
+	// one-time upgrade backfill (BackfillEmbedGenForUpgrade) must first consult
+	// it to preserve the legacy "pending re-embed" signal: a message could
+	// carry BOTH a stale active-gen embedding AND an active-gen pending row.
+	// Dropping it here, before the backfill reads it, would let the backfill
+	// stamp those messages "covered" and never re-embed them. The drop now
+	// happens in the writable Open path AFTER the backfill has consulted it
+	// (see dropDeadPendingEmbeddings, called from Open). Migrate runs on
+	// read-only opens too, where dropping would be wrong (it must linger until
+	// a writable open honors the signal).
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit pgvector migrate tx: %w", err)
 	}

@@ -1917,6 +1917,9 @@ func (f *fakeVectorBackend) Stats(_ context.Context, _ vector.GenerationID) (vec
 func (f *fakeVectorBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return nil, errors.New("not implemented")
 }
+func (f *fakeVectorBackend) ResetWatermarkBelow(_ context.Context, _ int64) error {
+	return nil
+}
 func (f *fakeVectorBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, errors.New("not implemented")
 }

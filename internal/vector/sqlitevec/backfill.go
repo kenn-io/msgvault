@@ -144,6 +144,34 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: iterate embedded message ids: %w", err)
 	}
 
+	// Preserve the legacy pending re-embed signal (129 review MEDIUM). Under the
+	// OLD design, pending_embeddings was a re-embed flag: a message could carry
+	// BOTH an active-gen embedding AND an active-gen pending row (old
+	// repair-encoding re-enqueued already-embedded messages; the old worker
+	// deleted the pending row only on a successful re-embed). If we stamp
+	// embed_gen=active on such a message it reads "covered" forever and is never
+	// re-embedded — silent permanent staleness against the corrected text.
+	// EXCLUDE every active-gen pending message id from the stamp set so it ends
+	// embed_gen=NULL and the scan-and-fill worker re-embeds it. pending_embeddings
+	// lives in vectors.db (b.db) on SQLite, the same handle as embeddings.
+	pendingIDs, err := b.activeGenPendingIDs(ctx, active.ID)
+	if err != nil {
+		return err
+	}
+	if len(pendingIDs) > 0 {
+		pendingSet := make(map[int64]struct{}, len(pendingIDs))
+		for _, id := range pendingIDs {
+			pendingSet[id] = struct{}{}
+		}
+		kept := ids[:0]
+		for _, id := range ids {
+			if _, isPending := pendingSet[id]; !isPending {
+				kept = append(kept, id)
+			}
+		}
+		ids = kept
+	}
+
 	// Atomicity (Codex 129d #2/#3): the embed_gen stamp UPDATE(s) and the
 	// ledger mark must be all-or-nothing. messages and applied_migrations
 	// both live in main.db, so a single transaction covers every chunk plus
@@ -194,6 +222,64 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: commit tx: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// activeGenPendingIDs returns the message ids that carry an active-generation
+// row in the legacy pending_embeddings table — the OLD "needs (re-)embedding"
+// signal. Used by BackfillEmbedGenForUpgrade to EXCLUDE these from the
+// embed_gen stamp so they re-embed under scan-and-fill (review MEDIUM).
+//
+// Returns nil with no error when pending_embeddings does not exist (a fresh
+// DB, or one already cleaned up): there is no legacy signal to preserve.
+// pending_embeddings lives in vectors.db (b.db).
+func (b *Backend) activeGenPendingIDs(ctx context.Context, active vector.GenerationID) ([]int64, error) {
+	exists, err := tableExists(ctx, b.db, "pending_embeddings")
+	if err != nil {
+		return nil, fmt.Errorf("backfill: probe pending_embeddings: %w", err)
+	}
+	if !exists {
+		return nil, nil
+	}
+	rows, err := b.db.QueryContext(ctx,
+		`SELECT DISTINCT message_id FROM pending_embeddings WHERE generation_id = ?`,
+		int64(active))
+	if err != nil {
+		return nil, fmt.Errorf("backfill: list active-gen pending ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("backfill: scan pending id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("backfill: iterate pending ids: %w", err)
+	}
+	return ids, nil
+}
+
+// dropDeadPendingEmbeddings drops the legacy pending_embeddings queue table
+// from vectors.db. The scan-and-fill design replaced the per-generation seed
+// queue with a live messages.embed_gen scan, so the table is otherwise unused;
+// left in place it only wastes space and confuses operators inspecting
+// vectors.db.
+//
+// It runs on every WRITABLE Open, AFTER BackfillEmbedGenForUpgrade has had a
+// chance to consult the table and preserve its re-embed signal (review MEDIUM).
+// Doing the drop here rather than in Migrate guarantees the backfill (when it
+// runs) sees the table first. It is gated to the writable path so a read-only
+// Open leaves the table — and its signal — intact for the next writable open.
+// Idempotent: DROP TABLE IF EXISTS is a no-op on fresh DBs and on a second run.
+// vectors.db is read-write regardless of the main-handle readOnly flag, so this
+// targets b.db unconditionally; the CALLER gates it on the writable Open path.
+func (b *Backend) dropDeadPendingEmbeddings(ctx context.Context) error {
+	if _, err := b.db.ExecContext(ctx, `DROP TABLE IF EXISTS pending_embeddings`); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings table: %w", err)
+	}
 	return nil
 }
 

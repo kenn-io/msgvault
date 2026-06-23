@@ -322,11 +322,15 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 	assertpkg.NoError(t, err, "vectors_vec_d1024 not created")
 }
 
-// TestMigrate_DropsDeadPendingEmbeddings pins that a legacy
-// vectors.db carrying the dead pending_embeddings queue table must have it
-// dropped on Migrate. The scan-and-fill design replaced the seed queue with
-// a live messages.embed_gen scan, so the table is never read or written.
-func TestMigrate_DropsDeadPendingEmbeddings(t *testing.T) {
+// TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
+// drops the dead pending_embeddings queue table: the one-time upgrade backfill
+// (BackfillEmbedGenForUpgrade) must first consult the table to preserve its
+// legacy re-embed signal (review MEDIUM). The drop moved to the writable Open
+// path, AFTER the backfill — see TestOpen_DropsDeadPendingEmbeddings and
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal. Migrate runs on
+// read-only opens too, where dropping (before the signal is honored on a later
+// writable open) would be wrong.
+func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db := openTestDB(t, path)
@@ -343,10 +347,13 @@ func TestMigrate_DropsDeadPendingEmbeddings(t *testing.T) {
 
 	exists, err := tableExists(ctx, db, "pending_embeddings")
 	requirepkg.NoError(t, err, "probe pending_embeddings")
-	assertpkg.False(t, exists, "pending_embeddings must be dropped on upgrade")
+	assertpkg.True(t, exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
 
-	// Idempotent on a fresh DB (no pending_embeddings present).
+	// Idempotent: a second Migrate still leaves it (the drop is Open's job).
 	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate (idempotent)")
+	exists, err = tableExists(ctx, db, "pending_embeddings")
+	requirepkg.NoError(t, err, "probe pending_embeddings after second migrate")
+	assertpkg.True(t, exists, "second Migrate still must not drop pending_embeddings")
 }
 
 func openTestDB(t *testing.T, path string) *sql.DB {

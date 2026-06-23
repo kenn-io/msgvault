@@ -112,6 +112,11 @@ func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return nil, ErrNotBuilt
 }
 
+// ResetWatermarkBelow is a stub that always returns ErrNotBuilt.
+func (b *Backend) ResetWatermarkBelow(_ context.Context, _ int64) error {
+	return ErrNotBuilt
+}
+
 // EmbeddedMessageCount is a stub that always returns ErrNotBuilt.
 func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, ErrNotBuilt

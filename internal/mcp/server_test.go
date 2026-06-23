@@ -1480,6 +1480,9 @@ type fakeBackend struct {
 func (f *fakeBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return f.loadVec, f.loadErr
 }
+func (f *fakeBackend) ResetWatermarkBelow(_ context.Context, _ int64) error {
+	return nil
+}
 func (f *fakeBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
 	return 0, errors.New("not implemented")
 }

@@ -102,6 +102,20 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("embed_gen upgrade backfill: %w", err)
 	}
+	// Drop the dead pending_embeddings queue table now that the backfill has
+	// consulted it (review MEDIUM: the backfill preserves the table's legacy
+	// re-embed signal, then we drop it here). Gated to the writable path —
+	// mirrors the backfill's own b.readOnly / b.mainDB guards — so a read-only
+	// Open leaves the table (and its signal) for a later writable open. Skipped
+	// when the main handle is absent (management commands) so a backend opened
+	// without a writable main DB does not mutate vectors.db schema unexpectedly.
+	// Idempotent.
+	if b.mainDB != nil && !b.readOnly {
+		if err := b.dropDeadPendingEmbeddings(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("drop dead pending_embeddings: %w", err)
+		}
+	}
 	return b, nil
 }
 
@@ -745,6 +759,28 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 		return nil, fmt.Errorf("load vector for message %d: %w", messageID, err)
 	}
 	return blobToFloat32(blob, active.Dimension)
+}
+
+// ResetWatermarkBelow lowers the embed_watermark for EVERY generation to at
+// most minID-1 (clamped at 0) so a subsequent incremental RunOnce re-scans
+// from below minID and re-finds rows whose embed_gen was just reset to NULL
+// by repair-encoding. The watermark lives in vectors.db on SQLite (b.db).
+//
+// SQLite's MIN(a, b) is the scalar two-argument minimum (not the aggregate),
+// so `watermark_id = MIN(watermark_id, ?)` never raises a generation's
+// cursor — it only lowers one that currently sits above the new floor. minID
+// < 1 is a no-op (nothing below id 1). Idempotent: a second call with the
+// same or higher minID changes nothing.
+func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
+	if minID < 1 {
+		return nil
+	}
+	floorID := minID - 1
+	if _, err := b.db.ExecContext(ctx,
+		`UPDATE embed_watermark SET watermark_id = MIN(watermark_id, ?)`, floorID); err != nil {
+		return fmt.Errorf("reset watermark below %d: %w", minID, err)
+	}
+	return nil
 }
 
 // Search runs an ANN query against the given generation and returns the

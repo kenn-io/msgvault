@@ -125,6 +125,15 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		if err := b.BackfillEmbedGenForUpgrade(ctx); err != nil {
 			return nil, fmt.Errorf("embed_gen upgrade backfill: %w", err)
 		}
+		// Drop the dead pending_embeddings queue table now that the backfill has
+		// consulted it (review MEDIUM: the backfill preserves the table's legacy
+		// re-embed signal, then we drop it here). On the writable path only —
+		// a read-only Open never reaches here (this whole block is gated on
+		// !opts.ReadOnly), so the table (and its signal) survives until a
+		// writable open. Idempotent.
+		if err := b.dropDeadPendingEmbeddings(ctx); err != nil {
+			return nil, fmt.Errorf("drop dead pending_embeddings: %w", err)
+		}
 	}
 	return b, nil
 }
@@ -733,6 +742,45 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 		return nil, fmt.Errorf("load vector for message %d: %w", messageID, err)
 	}
 	return parseVectorLiteral(lit, active.Dimension)
+}
+
+// ResetWatermarkBelow lowers the embed_watermark for EVERY generation to at
+// most minID-1 (clamped at 0) so a subsequent incremental RunOnce re-scans
+// from below minID and re-finds rows whose embed_gen was just reset to NULL
+// by repair-encoding. On PostgreSQL the watermark lives in the same database
+// as messages (b.db).
+//
+// PostgreSQL's two-argument scalar minimum is LEAST (MIN is aggregate-only),
+// so `watermark_id = LEAST(watermark_id, $1)` never raises a generation's
+// cursor — it only lowers one that currently sits above the new floor. minID
+// < 1 is a no-op. The UPDATE runs inside a tx that lifts the pool-wide
+// statement_timeout, matching the sibling write helpers (Migrate,
+// resetOrphanedEmbedGen, BackfillEmbedGenForUpgrade); the UPDATE itself is
+// tiny (one row per generation) but the tx keeps the convention uniform and
+// is robust under a busy pool. SET LOCAL is tx-scoped so the disabled timeout
+// cannot leak onto other pooled connections. Idempotent.
+func (b *Backend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
+	if minID < 1 {
+		return nil
+	}
+	floorID := minID - 1
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("reset watermark below %d: begin tx: %w", minID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
+		return fmt.Errorf("reset watermark below %d: disable statement_timeout: %w", minID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE embed_watermark SET watermark_id = LEAST(watermark_id, $1)`, floorID); err != nil {
+		return fmt.Errorf("reset watermark below %d: %w", minID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reset watermark below %d: commit tx: %w", minID, err)
+	}
+	return nil
 }
 
 // Search runs an ANN query against the given generation and returns

@@ -198,6 +198,20 @@ type Backend interface {
 	// generation.
 	LoadVector(ctx context.Context, messageID int64) ([]float32, error)
 
+	// ResetWatermarkBelow lowers the scan-and-fill forward-scan watermark
+	// for EVERY generation to at most minID-1 (clamped at 0), so the next
+	// incremental RunOnce re-scans from below minID and re-finds rows whose
+	// embed_gen was just reset to NULL (repair-encoding). Without it, a
+	// repaired message whose id sits BELOW the current watermark would never
+	// be re-found by an incremental scan (the scan applies `id > watermark`)
+	// and would only be recovered by a full-scan backstop. Lowering is a MIN
+	// against the stored watermark, so it never pushes the cursor FORWARD past
+	// unswept work; a row already at/below the watermark is left untouched.
+	// minID < 1 is a no-op. The watermark lives in vectors.db on SQLite and
+	// the main DB on PostgreSQL, so each backend implements it against its
+	// own handle/dialect. Idempotent.
+	ResetWatermarkBelow(ctx context.Context, minID int64) error
+
 	Close() error
 }
 

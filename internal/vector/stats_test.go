@@ -75,6 +75,10 @@ func (f *statsFakeBackend) LoadVector(context.Context, int64) ([]float32, error)
 	return nil, errors.New("not implemented")
 }
 
+func (f *statsFakeBackend) ResetWatermarkBelow(context.Context, int64) error {
+	return errors.New("not implemented")
+}
+
 func (f *statsFakeBackend) EmbeddedMessageCount(context.Context, GenerationID) (int64, error) {
 	return 0, errors.New("not implemented")
 }

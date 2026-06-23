@@ -151,6 +151,20 @@ type EmbedGenStamp struct {
 // back: a missed row's last_modified moved (and its embed_gen may be NULL), so
 // the auto-backstop's watermark-ignoring full scan re-finds and re-embeds it
 // with the corrected content. A real driver error still aborts (returns err).
+//
+// ACCEPTED RESIDUAL — 1-second CAS resolution (single-user). The CAS token is
+// last_modified, defaulted/bumped by CURRENT_TIMESTAMP (schema.sql:310 and the
+// AFTER/BEFORE-UPDATE triggers), which has 1-SECOND resolution on both backends.
+// So a content edit that lands in the SAME WHOLE SECOND as the worker's content
+// read leaves last_modified textually UNCHANGED — this CAS then matches and
+// stamps embed_gen=target on an embedding built from the now-stale text, a
+// missed staleness the sub-second window cannot detect. This is an accepted
+// residual for the single-user tool (an edit and an embed of the same message in
+// the same second is rare) and is NOT closed by schema/behavior change. It
+// self-recovers: the next edit to that message (repair-encoding or any sync
+// update) bumps last_modified and clears embed_gen (repair) / re-finds it, and a
+// full rebuild or the auto-backstop re-embeds it regardless. See
+// docs/usage/vector-search.md ("CAS resolution").
 func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStamp, target int64) (missed []int64, err error) {
 	for _, it := range items {
 		q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`

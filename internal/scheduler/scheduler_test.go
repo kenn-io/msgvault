@@ -460,6 +460,9 @@ func (f *fakeBackend) Stats(ctx context.Context, gen vector.GenerationID) (vecto
 func (f *fakeBackend) LoadVector(ctx context.Context, messageID int64) ([]float32, error) {
 	panic("unexpected: LoadVector")
 }
+func (f *fakeBackend) ResetWatermarkBelow(ctx context.Context, minID int64) error {
+	panic("unexpected: ResetWatermarkBelow")
+}
 func (f *fakeBackend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
 	panic("unexpected: EmbeddedMessageCount")
 }

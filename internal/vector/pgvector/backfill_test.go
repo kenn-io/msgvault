@@ -94,6 +94,105 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	assert.True(t, isNull3Again, "msg 3 still NULL after second backfill (ledger no-op)")
 }
 
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the PG
+// regression guard for the 129 review MEDIUM: the one-time upgrade backfill
+// must NOT stamp embed_gen=active on a message that carried an active-gen
+// pending_embeddings row (the OLD re-embed flag), even though that message has
+// an active-gen embedding. Such a message had a STALE embedding queued for
+// re-embed (old repair-encoding re-enqueued it). If the backfill stamps it
+// "covered" it is never re-embedded — silent permanent staleness. It must end
+// embed_gen=NULL so scan-and-fill re-embeds it; a normal embedded message with
+// no pending row must end embed_gen=active. pending_embeddings is dropped after.
+func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	_, err := db.Exec(`CREATE TABLE applied_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err, "create applied_migrations")
+
+	// msg 1: embedded AND pending-for-re-embed (stale) -> must stay NULL.
+	// msg 2: embedded, NO pending row (normal)         -> must be stamped.
+	for _, id := range []int64{1, 2} {
+		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		require.NoError(t, err, "insert message")
+	}
+
+	b, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(t, err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
+	require.NoError(t, err, "CreateGeneration")
+	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+	}), "Upsert")
+	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
+
+	// Reconstruct the OLD-state precondition: pending_embeddings exists and
+	// carries an active-gen row for msg 1 only (msg 1 was re-enqueued for
+	// re-embed while still holding its stale active-gen embedding).
+	_, err = db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id BIGINT NOT NULL,
+		message_id    BIGINT NOT NULL
+	)`)
+	require.NoError(t, err, "create legacy pending_embeddings")
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO pending_embeddings (generation_id, message_id) VALUES ($1, 1)`, int64(gen))
+	require.NoError(t, err, "seed active-gen pending row for msg 1")
+
+	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared so the
+	// next backfill runs (Open marked it at open time when no gen existed).
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
+	require.NoError(t, err, "reset embed_gen")
+	_, err = db.ExecContext(ctx,
+		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
+	require.NoError(t, err, "clear ledger")
+
+	require.NoError(t, b.BackfillEmbedGenForUpgrade(ctx), "backfill")
+
+	// msg 1 (had an active-gen pending re-embed row) must stay NULL → re-embed.
+	_, isNull1 := embedGenOf(t, db, 1)
+	assert.True(t, isNull1,
+		"msg 1 (active-gen pending re-embed) must stay embed_gen=NULL so it re-embeds")
+	// msg 2 (normal embedded, no pending) must be stamped → not re-embedded.
+	v2, isNull2 := embedGenOf(t, db, 2)
+	assert.False(t, isNull2, "msg 2 (no pending row) must be stamped")
+	assert.Equal(t, int64(gen), v2, "msg 2 embed_gen = active")
+}
+
+// TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
+// the dead pending_embeddings table AFTER the backfill has had a chance to
+// consult it (review MEDIUM). The drop moved out of Migrate into the Open
+// writable path.
+func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	_, err := db.Exec(`CREATE TABLE applied_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err, "create applied_migrations")
+
+	// Stand up a legacy pending_embeddings table, then open writably.
+	_, err = db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id BIGINT NOT NULL,
+		message_id    BIGINT NOT NULL
+	)`)
+	require.NoError(t, err, "create legacy pending_embeddings")
+
+	b, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(t, err, "writable Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	var reg *string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
+	assert.Nil(t, reg, "writable Open must drop pending_embeddings after the backfill consults it")
+}
+
 // TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure is the
 // PostgreSQL companion to the sqlitevec atomicity guard (Codex 129d #2/#3):
 // the embed_gen stamp UPDATE and the applied_migrations ledger mark must be

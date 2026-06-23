@@ -289,6 +289,27 @@ new one is ready. If the rebuild changes the configured model or
 dimension, vector and hybrid queries return `index_stale` until the
 new generation activates.
 
+### CAS resolution (accepted single-user residual)
+
+When a message's text changes during embedding (for example
+`msgvault repair-encoding` rewriting a body while an embed run is in flight),
+the embed worker uses an optimistic compare-and-set on the message's
+`last_modified` timestamp to avoid stamping an embedding built from stale
+text: if `last_modified` moved between the worker reading the content and
+writing the coverage stamp, the stamp is skipped and the message is re-embedded
+on a later run.
+
+`last_modified` has **1-second resolution** (it is a `CURRENT_TIMESTAMP`
+default/trigger). A concurrent edit that lands in the *same whole second* as
+the worker's content read leaves `last_modified` unchanged, so the CAS can
+mark an embedding current even though it was built from the now-stale text.
+This sub-second window is an accepted residual for this single-user tool — an
+edit and an embed of the *same* message within the *same second* is rare. It
+self-recovers: the next edit to that message bumps `last_modified` (and
+`repair-encoding` clears its coverage stamp outright), and a full rebuild
+(`embeddings build --full-rebuild`) or the periodic full-scan backstop
+re-embeds it regardless.
+
 ## Search
 
 **CLI:**
