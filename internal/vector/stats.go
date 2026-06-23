@@ -26,10 +26,12 @@ type StatsView struct {
 	// Omitted entirely when no build is running.
 	BuildingGeneration *BuildingSummary `json:"building_generation,omitempty"`
 
-	// PendingEmbeddingsTotal is the sum of pending_embeddings rows
-	// across the active and building generations. Retired generations
-	// are assumed to have zero pending items.
-	PendingEmbeddingsTotal int64 `json:"pending_embeddings_total"`
+	// MissingEmbeddingsTotal is the sum, across the active and building
+	// generations, of live messages still needing embedding for that
+	// generation (embed_gen <> gen), computed from the main DB rather than
+	// a queue table. Retired generations contribute zero. Replaces the
+	// former pending_embeddings_total under the scan-and-fill design.
+	MissingEmbeddingsTotal int64 `json:"missing_embeddings_total"`
 }
 
 // GenerationSummary reports the serving state for the active index
@@ -53,9 +55,10 @@ type BuildingSummary struct {
 	Progress  Progress     `json:"progress"`
 }
 
-// Progress reports the build-queue position for a generation. Done is
-// the count of already-embedded messages; Total is Done plus the
-// currently-pending queue depth.
+// Progress reports embedding coverage for a generation under scan-and-fill
+// (there is no build/pending queue). Done is the count of already-embedded
+// messages; Total is Done plus the live messages still missing an embedding
+// for the generation (embed_gen <> gen), i.e. the coverage denominator.
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
@@ -98,7 +101,7 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 				MessageCount: s.EmbeddingCount,
 				ActivatedAt:  formatTimePtr(active.ActivatedAt),
 			}
-			out.PendingEmbeddingsTotal += s.PendingCount
+			out.MissingEmbeddingsTotal += s.PendingCount
 		}
 	case errors.Is(err, ErrNoActiveGeneration):
 		// Leave ActiveGeneration nil; this is normal during first build.
@@ -124,7 +127,7 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 					Total: s.EmbeddingCount + s.PendingCount,
 				},
 			}
-			out.PendingEmbeddingsTotal += s.PendingCount
+			out.MissingEmbeddingsTotal += s.PendingCount
 		}
 	}
 	return out, errors.Join(errs...)

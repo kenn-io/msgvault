@@ -75,11 +75,11 @@ func (f *statsFakeBackend) LoadVector(context.Context, int64) ([]float32, error)
 	return nil, errors.New("not implemented")
 }
 
-func (f *statsFakeBackend) Close() error { return nil }
-
-func (f *statsFakeBackend) EnsureSeeded(context.Context, GenerationID) error {
-	return errors.New("not implemented")
+func (f *statsFakeBackend) EmbeddedMessageCount(context.Context, GenerationID) (int64, error) {
+	return 0, errors.New("not implemented")
 }
+
+func (f *statsFakeBackend) Close() error { return nil }
 
 var _ Backend = (*statsFakeBackend)(nil)
 
@@ -121,7 +121,7 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 	assert.Equal(int64(100), ag.MessageCount)
 	assert.Equal(activatedAt.Format(time.RFC3339), ag.ActivatedAt)
 	assert.Nil(sv.BuildingGeneration)
-	assert.Equal(int64(7), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(7), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_BuildingOnly(t *testing.T) {
@@ -154,7 +154,7 @@ func TestCollectStats_BuildingOnly(t *testing.T) {
 	assert.Equal(startedAt.Format(time.RFC3339), bg.StartedAt)
 	assert.Equal(int64(40), bg.Progress.Done)
 	assert.Equal(int64(100), bg.Progress.Total)
-	assert.Equal(int64(60), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(60), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_BothGenerations(t *testing.T) {
@@ -193,7 +193,7 @@ func TestCollectStats_BothGenerations(t *testing.T) {
 		assert.Equal(GenerationID(2), sv.BuildingGeneration.ID)
 	}
 	// Sum of both pending counts: 3 + 450.
-	assert.Equal(int64(453), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(453), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_ActiveError(t *testing.T) {
@@ -252,7 +252,7 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.Nil(sv.BuildingGeneration, "Stats failed")
-	assert.Equal(int64(0), sv.PendingEmbeddingsTotal)
+	assert.Equal(int64(0), sv.MissingEmbeddingsTotal)
 }
 
 func TestCollectStats_StatsError_Tolerated(t *testing.T) {
@@ -279,5 +279,5 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
 	assert.True(sv.Enabled, "backend is non-nil")
 	assert.Nil(sv.ActiveGeneration, "Stats failed")
-	assert.Equal(int64(0), sv.PendingEmbeddingsTotal, "no successful stats")
+	assert.Equal(int64(0), sv.MissingEmbeddingsTotal, "no successful stats")
 }

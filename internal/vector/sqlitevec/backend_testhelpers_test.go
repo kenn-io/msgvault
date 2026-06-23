@@ -26,7 +26,8 @@ func openMainDBWithOneMessage(t *testing.T) *sql.DB {
 	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
-		deleted_from_source_at DATETIME
+		deleted_from_source_at DATETIME,
+		embed_gen INTEGER
 	)`)
 	require.NoError(t, err, "create messages")
 	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
@@ -45,7 +46,8 @@ func openBackendWithOneDeletedMessage(t *testing.T) *Backend {
 	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
-		deleted_from_source_at DATETIME
+		deleted_from_source_at DATETIME,
+		embed_gen INTEGER
 	)`)
 	require.NoError(t, err, "create messages")
 	_, err = db.Exec(`INSERT INTO messages (id, deleted_from_source_at) VALUES (1, CURRENT_TIMESTAMP)`)
@@ -95,7 +97,8 @@ CREATE TABLE messages (
     size_estimate INTEGER,
     sent_at DATETIME,
     deleted_at DATETIME,
-    deleted_from_source_at DATETIME
+    deleted_from_source_at DATETIME,
+    embed_gen INTEGER
 );
 CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);
 CREATE TABLE message_labels (
@@ -183,12 +186,15 @@ func seedAndEmbed(t *testing.T, b *Backend, vecs map[int64][]float32) vector.Gen
 		chunks = append(chunks, vector.Chunk{MessageID: id, Vector: vecs[id]})
 	}
 	require.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
-	// Upsert intentionally does not clear pending_embeddings — that
-	// belongs to the queue's token-aware Complete. For helper
-	// scenarios that want the "fully embedded" end state, we clear
-	// pending here directly.
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gid))
-	require.NoError(t, err, "clear pending")
+	// Upsert intentionally does not stamp messages.embed_gen — that is the
+	// worker's job (it stamps after a successful upsert). For helper
+	// scenarios that want the "fully embedded" end state (coverage
+	// complete), stamp the seeded messages directly so a later
+	// ActivateGeneration's coverage gate would pass.
+	for _, id := range ids {
+		_, err = b.mainDB.ExecContext(ctx,
+			`UPDATE messages SET embed_gen = ? WHERE id = ?`, int64(gid), id)
+		require.NoErrorf(t, err, "stamp embed_gen for msg %d", id)
+	}
 	return gid
 }

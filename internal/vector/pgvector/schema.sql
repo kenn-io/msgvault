@@ -12,11 +12,11 @@ CREATE TABLE IF NOT EXISTS index_generations (
     dimension     INTEGER NOT NULL,
     fingerprint   TEXT NOT NULL,
     started_at    BIGINT NOT NULL,
-    -- seeded_at marks when the initial pending_embeddings seed pass
-    -- finished. NULL means "row inserted but seed never committed"
-    -- (e.g. crash between insert and seed) — the resume path re-runs
-    -- seedPending in that case rather than activating an empty
-    -- generation.
+    -- seeded_at is stamped at CreateGeneration as harmless vestigial
+    -- metadata. Under the scan-and-fill design there is no separate seed
+    -- pass, and activation no longer gates on it (coverage — missing==0 —
+    -- is the real gate). Retained only so the column stays populated for
+    -- legacy display; no destructive migration drops it.
     seeded_at     BIGINT,
     completed_at  BIGINT,
     activated_at  BIGINT,
@@ -63,19 +63,6 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_msg ON embeddings(message_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_dim ON embeddings(dimension);
 
-CREATE TABLE IF NOT EXISTS pending_embeddings (
-    generation_id BIGINT NOT NULL REFERENCES index_generations(id) ON DELETE CASCADE,
-    message_id    BIGINT NOT NULL,
-    enqueued_at   BIGINT NOT NULL,
-    claimed_at    BIGINT,
-    claim_token   TEXT,
-    PRIMARY KEY (generation_id, message_id)
-);
-CREATE INDEX IF NOT EXISTS idx_pending_available
-    ON pending_embeddings(generation_id, message_id) WHERE claimed_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_pending_claims
-    ON pending_embeddings(claimed_at) WHERE claimed_at IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS embed_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     generation_id BIGINT NOT NULL REFERENCES index_generations(id),
@@ -86,4 +73,16 @@ CREATE TABLE IF NOT EXISTS embed_runs (
     failed        INTEGER NOT NULL DEFAULT 0,
     truncated     INTEGER NOT NULL DEFAULT 0,
     error         TEXT
+);
+
+-- embed_watermark tracks the highest message id the scan-and-fill embed
+-- worker has already swept for a generation, so each RunOnce resumes the
+-- forward scan instead of re-scanning the whole messages table. It is a
+-- pure optimization: losing it only makes the next scan start at id 0,
+-- which is harmless (the scan predicate + idempotent upsert make
+-- re-sweeping covered rows a no-op). The full-scan backstop ignores it.
+-- See internal/vector/sqlitevec/schema.sql for the full contract.
+CREATE TABLE IF NOT EXISTS embed_watermark (
+    generation_id BIGINT PRIMARY KEY,
+    watermark_id  BIGINT NOT NULL DEFAULT 0
 );

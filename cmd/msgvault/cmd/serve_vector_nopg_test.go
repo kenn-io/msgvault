@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // TestSetupVectorFeatures_PostgresWithoutPgvectorTag verifies that when
@@ -30,7 +31,14 @@ func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 	cfg.Vector.Embeddings.Dimension = 768
 	cfg.Vector.Embeddings.BatchSize = 32
 
-	_, err := setupVectorFeatures(context.Background(), nil, "postgres://user@host/db", false)
+	// setupVectorFeatures needs a non-nil *store.Store (it reads
+	// store.DB()); an in-memory SQLite store suffices — the PG branch is
+	// selected from the DSN and fails at the pgvector stub.
+	st, err := store.Open(":memory:")
+	require.NoError(t, err, "store.Open")
+	t.Cleanup(func() { _ = st.Close() })
+
+	_, err = setupVectorFeatures(context.Background(), st, "postgres://user@host/db", false)
 	require.Error(t, err, "setupVectorFeatures with postgres DSN and no pgvector tag")
 	// Must come from the stub, not the removed up-front refusal.
 	assert.Contains(t, err.Error(), "pgvector support not compiled in",

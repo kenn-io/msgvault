@@ -684,7 +684,7 @@ func TestGetStats_VectorEnabled(t *testing.T) {
 	assert.Equal(vector.GenerationID(5), ag.ID, "active_generation.id")
 	assert.Equal("nomic-embed", ag.Model, "active_generation.model")
 	assert.Equal(int64(100), ag.MessageCount, "active_generation.message_count")
-	assert.Equal(int64(3), resp.VectorSearch.PendingEmbeddingsTotal, "pending_embeddings_total")
+	assert.Equal(int64(3), resp.VectorSearch.MissingEmbeddingsTotal, "missing_embeddings_total")
 	assert.Nil(resp.VectorSearch.BuildingGeneration, "building_generation")
 }
 
@@ -1480,6 +1480,9 @@ type fakeBackend struct {
 func (f *fakeBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return f.loadVec, f.loadErr
 }
+func (f *fakeBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return 0, errors.New("not implemented")
+}
 func (f *fakeBackend) ActiveGeneration(_ context.Context) (vector.Generation, error) {
 	return f.active, f.activeErr
 }
@@ -1511,9 +1514,6 @@ func (f *fakeBackend) Stats(_ context.Context, gen vector.GenerationID) (vector.
 	return f.stats[gen], nil
 }
 func (f *fakeBackend) Close() error { return nil }
-func (f *fakeBackend) EnsureSeeded(_ context.Context, _ vector.GenerationID) error {
-	return nil
-}
 
 var _ vector.Backend = (*fakeBackend)(nil)
 

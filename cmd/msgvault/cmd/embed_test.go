@@ -22,11 +22,15 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require.Equal("build", buildCmd.Name())
 	require.NotNil(buildCmd.Flags().Lookup("full-rebuild"))
 	require.NotNil(buildCmd.Flags().Lookup("yes"))
+	require.NotNil(buildCmd.Flags().Lookup("backstop"))
 
 	resumeCmd, _, err := rootCmd.Find([]string{"embeddings", "resume"})
 	require.NoError(err)
 	require.Equal("resume", resumeCmd.Name())
 	require.Nil(resumeCmd.Flags().Lookup("full-rebuild"))
+	// --backstop is also available on resume, so operators
+	// can do a watermark-ignoring straggler sweep without --full-rebuild.
+	require.NotNil(resumeCmd.Flags().Lookup("backstop"))
 
 	listCmd, _, err := rootCmd.Find([]string{"embeddings", "list"})
 	require.NoError(err)
@@ -52,11 +56,49 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require.NotNil(legacyCmd.Flags().Lookup("yes"))
 }
 
+// TestRunEmbeddingsResume_PreservesBackstopFlag pins the resume behavior:
+// resume forces incremental mode (saves/restores embedFullRebuild + embedYes) but
+// must leave embedBackstop exactly as the operator set it, so
+// `embeddings resume --backstop` actually runs a backstop pass.
+func TestRunEmbeddingsResume_PreservesBackstopFlag(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	// Save and restore all three globals so the test is hermetic.
+	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
+	t.Cleanup(func() { embedFullRebuild, embedYes, embedBackstop = oldFull, oldYes, oldBackstop })
+
+	// Operator state: full-rebuild on (resume must clear it), backstop on
+	// (resume must NOT touch it). Point at an empty config so the run errors
+	// out early (vector disabled) without needing a real backend.
+	embedFullRebuild = true
+	embedYes = false
+	embedBackstop = true
+	oldCfg := cfg
+	cfg = &config.Config{}
+	t.Cleanup(func() { cfg = oldCfg })
+
+	cmd := embeddingsResumeCmd
+	oldCtx := cmd.Context()
+	cmd.SetContext(context.Background())
+	t.Cleanup(func() { cmd.SetContext(oldCtx) })
+
+	// Errors because vector is not enabled — that's fine; we only assert the
+	// flag-preservation contract of runEmbeddingsResume.
+	_ = runEmbeddingsResume(cmd, nil)
+
+	assert.True(embedBackstop, "resume must NOT clobber embedBackstop")
+	assert.True(embedFullRebuild, "resume must restore embedFullRebuild to its prior value")
+	assert.False(embedYes, "resume must restore embedYes to its prior value")
+}
+
 func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	db := newEmbeddingMetadataTestDB(t)
 
+	// listEmbeddingGenerations reads only the generation metadata now;
+	// coverage (missing count) is filled separately from the main DB via
+	// fillCoverage, so it is not asserted here.
 	rows, err := listEmbeddingGenerations(t.Context(), db, sqliteRebind)
 	require.NoError(err)
 	require.Len(rows, 2)
@@ -64,18 +106,24 @@ func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
 	assert.Equal(vector.GenerationID(1), rows[0].ID)
 	assert.Equal(vector.GenerationActive, rows[0].State)
 	assert.Equal(int64(2), rows[0].MessageCount)
-	assert.Equal(int64(0), rows[0].PendingCount)
 
 	assert.Equal(vector.GenerationID(2), rows[1].ID)
 	assert.Equal(vector.GenerationBuilding, rows[1].State)
-	assert.Equal(int64(1), rows[1].PendingCount)
 }
 
-func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
+// TestRunEmbeddingsActivateRefusesMissingWithoutForce verifies the CLI
+// pre-flight coverage gate: activating a building generation that still
+// has live messages needing embedding (embed_gen <> gen in the main DB)
+// must fail without --force.
+func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
-	dbPath := newEmbeddingMetadataTestDBFile(t)
-	withEmbeddingCommandConfig(t, dbPath)
+	dataDir := t.TempDir()
+	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
+	// Main DB with one live, unembedded message -> coverage reports
+	// missing=1 for generation 2.
+	seedMainDBWithLiveMessage(t, dataDir)
+	withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
 
 	oldYes := embeddingsActivateYes
 	embeddingsActivateYes = true
@@ -87,7 +135,7 @@ func TestRunEmbeddingsActivateRefusesPendingWithoutForce(t *testing.T) {
 	err := runEmbeddingsActivate(cmd, []string{"2"})
 
 	require.Error(err)
-	assert.Contains(err.Error(), "pending embedding rows")
+	assert.Contains(err.Error(), "needing embedding")
 }
 
 // TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck pins the
@@ -134,7 +182,14 @@ func newEmbeddingMetadataTestDB(t *testing.T) *sql.DB {
 
 func newEmbeddingMetadataTestDBFile(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "vectors.db")
+	return newEmbeddingMetadataTestDBFileAt(t, filepath.Join(t.TempDir(), "vectors.db"))
+}
+
+// newEmbeddingMetadataTestDBFileAt creates a vectors.db with just the
+// index_generations metadata (no pending_embeddings — coverage now lives
+// in the main DB) at the given path.
+func newEmbeddingMetadataTestDBFileAt(t *testing.T, path string) string {
+	t.Helper()
 	db, err := sql.Open("sqlite3", path)
 	requirepkg.NoError(t, err)
 	defer func() { requirepkg.NoError(t, db.Close()) }()
@@ -152,14 +207,6 @@ CREATE TABLE index_generations (
 	state TEXT NOT NULL,
 	message_count INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE pending_embeddings (
-	generation_id INTEGER NOT NULL,
-	message_id INTEGER NOT NULL,
-	enqueued_at INTEGER NOT NULL,
-	claimed_at INTEGER,
-	claim_token TEXT,
-	PRIMARY KEY (generation_id, message_id)
-);
 `)
 	requirepkg.NoError(t, err)
 
@@ -170,16 +217,44 @@ INSERT INTO index_generations
 VALUES
 	(1, 'model', 4, ?, 100, 101, 110, 111, 'active', 2),
 	(2, 'model', 4, ?, 120, 121, NULL, NULL, 'building', 1);
-INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at) VALUES (2, 42, 120);
 `, fp, fp)
 	requirepkg.NoError(t, err)
 	return path
+}
+
+// seedMainDBWithLiveMessage creates a main msgvault.db in dataDir with one
+// live message whose embed_gen is NULL — i.e. it reads as "missing" for
+// every generation, so the coverage gate refuses activation.
+func seedMainDBWithLiveMessage(t *testing.T, dataDir string) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	requirepkg.NoError(t, err)
+	defer func() { requirepkg.NoError(t, s.Close()) }()
+	requirepkg.NoError(t, s.InitSchema())
+	_, err = s.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES (1, 1, 1, 'm1', 'email', NULL);
+`)
+	requirepkg.NoError(t, err)
 }
 
 func withEmbeddingCommandConfig(t *testing.T, vecPath string) {
 	t.Helper()
 	oldCfg := cfg
 	cfg = newTestConfigForFingerprint(vecPath)
+	t.Cleanup(func() { cfg = oldCfg })
+}
+
+// withEmbeddingCommandConfigDataDir is like withEmbeddingCommandConfig but
+// also sets Data.DataDir so DatabaseDSN() resolves to a real main DB (used
+// by the coverage gate).
+func withEmbeddingCommandConfigDataDir(t *testing.T, vecPath, dataDir string) {
+	t.Helper()
+	oldCfg := cfg
+	c := newTestConfigForFingerprint(vecPath)
+	c.Data.DataDir = dataDir
+	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
 }
 

@@ -32,10 +32,98 @@ type embeddingGenerationRow struct {
 	CompletedAt  *time.Time
 	ActivatedAt  *time.Time
 	MessageCount int64
-	PendingCount int64
+	// Coverage counts for this generation over the live-message universe,
+	// computed from the main DB (live/stamped/missing) plus the vector
+	// backend (embedded). Filled by fillCoverage / fillFullCoverage. The
+	// invariant LiveCount == EmbeddedCount + BlankCount + MissingCount holds.
+	//
+	//   - LiveCount:     total live messages (the embedding universe).
+	//   - EmbeddedCount: live messages that actually have >=1 vector for
+	//     this generation (COUNT(DISTINCT message_id) in the embeddings
+	//     table). Only filled by fillFullCoverage (needs the backend).
+	//   - BlankCount:    stamped-but-empty messages (stamped embed_gen=id
+	//     but no vector) — the body-extraction-regression detector.
+	//     Only filled by fillFullCoverage.
+	//   - MissingCount:  live messages not yet stamped for this generation.
+	LiveCount     int64
+	EmbeddedCount int64
+	BlankCount    int64
+	MissingCount  int64
+}
+
+// fillCoverage populates row.LiveCount and row.MissingCount from the main
+// DB so the management commands can gate on how many live messages still
+// need embedding for the generation. This is the cheap, backend-free path
+// used by the activation gate (which only needs MissingCount). It leaves
+// EmbeddedCount/BlankCount at zero — use fillFullCoverage for the display
+// table where the embedded/blank split is wanted. A failure is surfaced to
+// the caller.
+func fillCoverage(ctx context.Context, row *embeddingGenerationRow) error {
+	s, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return fmt.Errorf("open main db for coverage: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+	live, _, _, missing, err := s.CoverageCounts(ctx, int64(row.ID))
+	if err != nil {
+		return err
+	}
+	row.LiveCount = live
+	row.MissingCount = missing
+	return nil
+}
+
+// fillFullCoverage populates the complete live/embedded/blank/missing split
+// for the generation. The main DB supplies live, stamped (embed_gen=id),
+// and missing; the vector backend supplies embedded (COUNT(DISTINCT
+// message_id) in the embeddings table for this generation). blank is the
+// remainder, stamped - embedded, clamped >= 0 — messages stamped terminal
+// DONE but with no vector (the empty/unembeddable case). The invariant
+// live == embedded + blank + missing holds. The backend handle is passed
+// in by the caller (which already opened it for the generation listing).
+func fillFullCoverage(ctx context.Context, backend vector.Backend, row *embeddingGenerationRow) error {
+	s, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return fmt.Errorf("open main db for coverage: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+	live, stamped, _, missing, err := s.CoverageCounts(ctx, int64(row.ID))
+	if err != nil {
+		return err
+	}
+	embedded, err := backend.EmbeddedMessageCount(ctx, row.ID)
+	if err != nil {
+		return fmt.Errorf("count embedded messages for generation %d: %w", row.ID, err)
+	}
+	blank := max(stamped-embedded, 0)
+	row.LiveCount = live
+	row.EmbeddedCount = embedded
+	row.BlankCount = blank
+	row.MissingCount = missing
+	return nil
+}
+
+// ensureMainSchema opens the main DB and runs InitSchema so that an
+// upgraded SQLite archive (whose messages table predates the embed_gen
+// column) gets the column added before any management command reads
+// embed_gen via CoverageCounts. Mirrors the serve.go / runEmbed pattern.
+// Cheap and idempotent on an already-current schema; harmless on PG.
+func ensureMainSchema() error {
+	s, err := store.Open(cfg.DatabaseDSN())
+	if err != nil {
+		return fmt.Errorf("open main db: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.InitSchema(); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+	return nil
 }
 
 func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
+	if err := ensureMainSchema(); err != nil {
+		return err
+	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
 	if err != nil {
 		return err
@@ -51,16 +139,46 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Fill per-generation coverage (live/embedded/blank/missing) for
+	// non-retired generations — the interesting numbers. The embedded leg
+	// comes from the vector backend (the embeddings table), so open it once
+	// and thread it down. Retired generations are immutable; leave their
+	// coverage at zero and skip the backend scan.
+	needCoverage := false
+	for i := range rows {
+		if rows[i].State != vector.GenerationRetired {
+			needCoverage = true
+			break
+		}
+	}
+	if needCoverage {
+		backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer closeBackend()
+		for i := range rows {
+			if rows[i].State == vector.GenerationRetired {
+				continue
+			}
+			if err := fillFullCoverage(cmd.Context(), backend, &rows[i]); err != nil {
+				return err
+			}
+		}
+	}
+
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ID\tSTATE\tMODEL\tDIM\tMESSAGES\tPENDING\tFINGERPRINT\tSTARTED\tCOMPLETED\tACTIVATED")
+	_, _ = fmt.Fprintln(w, "ID\tSTATE\tMODEL\tDIM\tLIVE\tEMBEDDED\tBLANK\tMISSING\tFINGERPRINT\tSTARTED\tCOMPLETED\tACTIVATED")
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n",
 			row.ID,
 			row.State,
 			row.Model,
 			row.Dimension,
-			row.MessageCount,
-			row.PendingCount,
+			row.LiveCount,
+			row.EmbeddedCount,
+			row.BlankCount,
+			row.MissingCount,
 			row.Fingerprint,
 			formatGenerationTime(row.StartedAt),
 			formatGenerationTimePtr(row.CompletedAt),
@@ -76,6 +194,9 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
+		return err
+	}
+	if err := ensureMainSchema(); err != nil {
 		return err
 	}
 
@@ -134,6 +255,9 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureMainSchema(); err != nil {
+		return err
+	}
 
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(cmd.Context())
 	if err != nil {
@@ -153,20 +277,19 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generation %d fingerprint=%q does not match config=%q; pass --force to activate anyway",
 			gen, row.Fingerprint, expected)
 	}
-	// The pending/seeded gate is enforced atomically inside
-	// backend.ActivateGeneration (see below) so a concurrent sync that
-	// dual-enqueues a pending row cannot slip it in between this read and
-	// the state flip. We still surface a friendly pre-flight error here
-	// (against the committed metadata read) so the common case fails fast
-	// before opening a backend connection and before prompting — but the
-	// backend's transactional gate is the authoritative guarantee.
-	if row.PendingCount > 0 && !embeddingsActivateForce {
-		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
-			gen, row.PendingCount)
-	}
-	if row.SeededAt == nil && !embeddingsActivateForce {
-		return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
-			gen)
+	// The coverage gate is enforced inside backend.ActivateGeneration
+	// (atomically on PG; via a Go pre-check on SQLite). We still surface a
+	// friendly pre-flight error here (against the main-DB coverage) so the
+	// common case fails fast before opening a backend connection and before
+	// prompting — but the backend's gate is the authoritative guarantee.
+	if !embeddingsActivateForce {
+		if err := fillCoverage(cmd.Context(), &row); err != nil {
+			return err
+		}
+		if row.MissingCount > 0 {
+			return fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume` or pass --force",
+				gen, row.MissingCount)
+		}
 	}
 
 	active, hasActive, err := activeEmbeddingGeneration(cmd.Context(), db, rebind)
@@ -187,11 +310,11 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	// Route through the vector backend so the auto-retire of the previously
 	// active generation deletes its embeddings on PG (the same delete-on-retire
 	// invariant as the retire path). The backend's ActivateGeneration requires
-	// the target to be in 'building' state, enforces the seeded/no-pending gate
-	// ATOMICALLY with the state flip (unless force), and auto-retires the prior
-	// active generation in one transaction. The fingerprint check above is the
-	// only gate the backend cannot make (it does not know the config
-	// fingerprint); the pending/seeded gate is owned by the backend.
+	// the target to be in 'building' state, enforces the coverage (no-missing)
+	// gate ATOMICALLY with the state flip (unless force), and auto-retires the
+	// prior active generation in one transaction. The fingerprint check above
+	// is the only gate the backend cannot make (it does not know the config
+	// fingerprint); the coverage gate is owned by the backend.
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
 	if err != nil {
 		return err
@@ -282,9 +405,17 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("open postgres for embeddings backend: %w", err)
 		}
-		// SkipMigrate: the metadata tables already exist (the caller's
-		// openEmbeddingsMetadataDB pre-checks index_generations), and a
-		// management command must not run migrations as a side effect.
+		// SkipMigrate skips only the privileged CREATE EXTENSION + full
+		// migrate: the extension + metadata tables already exist (the caller's
+		// openEmbeddingsMetadataDB pre-checks index_generations), so a
+		// management command must not attempt the privileged extension step.
+		// This open is WRITABLE management, NOT read-only — ReadOnly stays
+		// false so Open still applies the extension-less schema (bringing up
+		// embed_watermark etc. if missing) and runs the one-time embed_gen
+		// upgrade backfill, matching the SQLite management path (which always
+		// migrates vectors.db + backfills). Without this, a post-upgrade PG
+		// archive would report its whole corpus as missing on the first
+		// writable management command.
 		b, err := pgvector.Open(ctx, pgvector.Options{
 			DB:          db,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
@@ -311,15 +442,28 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 		}
 		return nil, nil, fmt.Errorf("stat vectors.db: %w", err)
 	}
+	// On SQLite the messages table (and embed_gen) lives in the main DB,
+	// in a SEPARATE file from vectors.db. Backend methods that gate on
+	// live-message coverage — ActivateGeneration's hasMissingForGen, and
+	// the live-intersected EmbeddedMessageCount — dereference b.mainDB, so
+	// the management path must open and pass a main-DB handle just like
+	// embed_vector.go does. Omitting it leaves b.mainDB nil and panics on
+	// `msgvault embeddings activate`. Close it in the returned cleanup.
+	mainStore, err := store.Open(dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open main db for embeddings backend: %w", err)
+	}
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      vecPath,
 		MainPath:  dsn,
 		Dimension: cfg.Vector.Embeddings.Dimension,
+		MainDB:    mainStore.DB(),
 	})
 	if err != nil {
+		_ = mainStore.Close()
 		return nil, nil, fmt.Errorf("open vectors.db backend: %w", err)
 	}
-	return b, func() { _ = b.Close() }, nil
+	return b, func() { _ = b.Close(); _ = mainStore.Close() }, nil
 }
 
 func sqliteDSNWithBusyTimeout(path string) string {
@@ -345,10 +489,8 @@ func listEmbeddingGenerations(ctx context.Context, db *sql.DB, rebind func(strin
 	rows, err := db.QueryContext(ctx, `
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       g.seeded_at, COUNT(p.message_id) AS pending_count
+		       g.seeded_at
 		  FROM index_generations g
-		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
-		 GROUP BY g.id
 		 ORDER BY g.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list embedding generations: %w", err)
@@ -373,11 +515,9 @@ func getEmbeddingGeneration(ctx context.Context, db *sql.DB, rebind func(string)
 	row := db.QueryRowContext(ctx, rebind(`
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       g.seeded_at, COUNT(p.message_id) AS pending_count
+		       g.seeded_at
 		  FROM index_generations g
-		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
-		 WHERE g.id = ?
-		 GROUP BY g.id`), int64(gen))
+		 WHERE g.id = ?`), int64(gen))
 	g, err := scanEmbeddingGeneration(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return embeddingGenerationRow{}, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
@@ -392,11 +532,9 @@ func activeEmbeddingGeneration(ctx context.Context, db *sql.DB, rebind func(stri
 	row := db.QueryRowContext(ctx, rebind(`
 		SELECT g.id, g.model, g.dimension, g.fingerprint, g.state,
 		       g.started_at, g.completed_at, g.activated_at, g.message_count,
-		       g.seeded_at, COUNT(p.message_id) AS pending_count
+		       g.seeded_at
 		  FROM index_generations g
-		  LEFT JOIN pending_embeddings p ON p.generation_id = g.id
-		 WHERE g.state = ?
-		 GROUP BY g.id`), string(vector.GenerationActive))
+		 WHERE g.state = ?`), string(vector.GenerationActive))
 	g, err := scanEmbeddingGeneration(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return embeddingGenerationRow{}, false, nil
@@ -426,7 +564,6 @@ func scanEmbeddingGeneration(s generationScanner) (embeddingGenerationRow, error
 		&activatedAt,
 		&row.MessageCount,
 		&seededAt,
-		&row.PendingCount,
 	); err != nil {
 		return embeddingGenerationRow{}, err
 	}

@@ -36,6 +36,7 @@ type Options struct {
 	MainPath  string
 	Dimension int
 	MainDB    *sql.DB
+	ReadOnly  bool
 }
 
 // Backend is the stub backend type for builds without sqlite_vec.
@@ -106,12 +107,12 @@ func (b *Backend) Stats(_ context.Context, _ vector.GenerationID) (vector.Stats,
 	return vector.Stats{}, ErrNotBuilt
 }
 
-// EnsureSeeded is a stub that always returns ErrNotBuilt.
-func (b *Backend) EnsureSeeded(_ context.Context, _ vector.GenerationID) error {
-	return ErrNotBuilt
-}
-
 // LoadVector is a stub that always returns ErrNotBuilt.
 func (b *Backend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return nil, ErrNotBuilt
+}
+
+// EmbeddedMessageCount is a stub that always returns ErrNotBuilt.
+func (b *Backend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return 0, ErrNotBuilt
 }

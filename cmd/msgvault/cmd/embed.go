@@ -9,6 +9,7 @@ import (
 var (
 	embedFullRebuild            bool
 	embedYes                    bool
+	embedBackstop               bool
 	embeddingsRetireYes         bool
 	embeddingsRetireForceActive bool
 	embeddingsActivateForce     bool
@@ -25,9 +26,11 @@ var embeddingsResumeCmd = &cobra.Command{
 	Use:   "resume",
 	Short: "Resume or top up the current vector embedding generation",
 	Long: `Resume or top up the current vector embedding generation.
-If a matching generation is building, this drains its pending queue and
-activates it when complete. Otherwise it embeds pending rows for the
-active generation.`,
+If a matching generation is building, this embeds any messages still
+needing embedding for it and activates it when complete. Otherwise it
+embeds any messages still needing embedding for the active generation.
+Pass --backstop for a full-scan pass that ignores the per-generation
+watermark, catching any straggler messages the incremental scan skipped.`,
 	RunE: runEmbeddingsResume,
 }
 var embeddingsListCmd = &cobra.Command{
@@ -55,9 +58,10 @@ func newEmbeddingsBuildCmd(use string) *cobra.Command {
 		Short: "Build or update the vector embedding index (incremental by default; --full-rebuild for a new generation)",
 		Long: `Build or update the vector embedding index for hybrid search.
 Writes vectors to the co-located vectors.db. In the default incremental
-mode, the command drains any pending rows in the active generation. With
---full-rebuild, it creates a new building generation, embeds the entire
-corpus, and (on a clean completion) atomically activates it.
+mode, the command embeds any messages still needing embedding for the
+active generation. With --full-rebuild, it creates a new building
+generation, embeds the entire corpus, and (on a clean completion)
+atomically activates it.
 
 Requires [vector] to be enabled in config.toml and [vector.embeddings]
 to point at a running OpenAI-compatible endpoint.`,
@@ -65,6 +69,8 @@ to point at a running OpenAI-compatible endpoint.`,
 	}
 	cmd.Flags().BoolVar(&embedFullRebuild, "full-rebuild", false, "Create a new generation and rebuild from scratch")
 	cmd.Flags().BoolVar(&embedYes, "yes", false, "Skip confirmation prompts")
+	cmd.Flags().BoolVar(&embedBackstop, "backstop", false,
+		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
 	return cmd
 }
 
@@ -92,10 +98,12 @@ func runEmbeddingsResume(cmd *cobra.Command, args []string) error {
 
 func init() {
 	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
+	embeddingsResumeCmd.Flags().BoolVar(&embedBackstop, "backstop", false,
+		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")
 	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")
-	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateForce, "force", false, "Allow activation with pending rows or a fingerprint mismatch")
+	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateForce, "force", false, "Allow activation while messages still need embedding, or with a fingerprint mismatch")
 	embeddingsCmd.AddCommand(embeddingsBuildCmd)
 	embeddingsCmd.AddCommand(embeddingsResumeCmd)
 	embeddingsCmd.AddCommand(embeddingsListCmd)

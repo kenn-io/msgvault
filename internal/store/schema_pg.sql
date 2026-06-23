@@ -132,8 +132,19 @@ CREATE TABLE IF NOT EXISTS messages (
 
     metadata JSONB,
 
+    -- Row-level last-modified watermark, maintained ENTIRELY by the
+    -- database (triggers, created by EnsureTriggers), never by application
+    -- write paths. Used by the embed worker as an optimistic-CAS token.
+    -- See schema.sql for the full contract.
+    last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
     -- Full-text search column
     search_fts TSVECTOR,
+
+    -- Vector-embedding watermark: the index generation this message's
+    -- embeddings were last written for. NULL means "needs embedding"
+    -- (new rows default to NULL). See schema.sql for the full contract.
+    embed_gen BIGINT,
 
     UNIQUE(source_id, source_message_id)
 );

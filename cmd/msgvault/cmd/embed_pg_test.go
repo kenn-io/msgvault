@@ -34,17 +34,19 @@ func countEmbeddingRowsPG(t *testing.T, db *sql.DB, gen vector.GenerationID) int
 	return n
 }
 
-// seedGenWithEmbeddingsPG creates a building generation, upserts one chunk per
-// supplied message id (dim 4), and clears its pending queue so the management
-// commands treat it as a finished generation. Returns the generation id.
+// seedGenWithEmbeddingsPG creates a building generation and upserts one chunk
+// per supplied message id (dim 4). The consuming tests force-activate/retire
+// (force=true), bypassing the coverage gate, so no embed_gen stamping is
+// needed to make the management commands treat it as finished. Returns the
+// generation id.
 func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, ids ...int64) vector.GenerationID {
 	t.Helper()
 	ctx := context.Background()
-	for _, id := range ids {
-		_, err := pgb.DB().ExecContext(ctx,
-			`INSERT INTO messages (id) VALUES ($1) ON CONFLICT DO NOTHING`, id)
-		require.NoErrorf(t, err, "seed message %d", id)
-	}
+	// No messages rows are inserted: embeddings.message_id has no FK to
+	// messages, and the consuming tests force-activate/retire (force=true),
+	// bypassing the coverage gate, so no live messages are needed. (The full
+	// schema's messages.id is GENERATED ALWAYS AS IDENTITY, so an explicit-id
+	// insert would be rejected anyway.)
 	gen, err := pgb.CreateGeneration(ctx, "test-model", 4, "test-model:4")
 	require.NoError(t, err, "CreateGeneration")
 	chunks := make([]vector.Chunk, 0, len(ids))
@@ -54,9 +56,8 @@ func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, ids ...int64) 
 		chunks = append(chunks, vector.Chunk{MessageID: id, ChunkIndex: 0, Vector: v})
 	}
 	require.NoError(t, pgb.Upsert(ctx, gen, chunks), "Upsert")
-	_, err = pgb.DB().ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen))
-	require.NoError(t, err, "clear pending")
+	// The consuming tests force-activate/retire (force=true), bypassing the
+	// coverage gate, so no embed_gen stamping is needed here.
 	return gen
 }
 
@@ -157,21 +158,22 @@ func openEmbedManagePGDB(t *testing.T) (*pgvector.Backend, func(string) string, 
 	require.NoError(t, err, "store.Open")
 	t.Cleanup(func() { _ = st.Close() })
 
+	// Mirror production: the CLI embeddings commands (runEmbed,
+	// runEmbeddingsRetire/Activate/List) all run store.InitSchema BEFORE
+	// opening the pgvector backend. InitSchema creates the full messages table
+	// (with embed_gen) and applied_migrations, so the backend's open-time reset/
+	// backfill have the columns they touch. A minimal hand-rolled messages
+	// table omitting embed_gen diverges from production and breaks both the
+	// open-time reset and the activate/retire coverage gates (which reference
+	// embed_gen even under --force).
+	require.NoError(t, st.InitSchema(), "InitSchema")
+
 	pgb, err := pgvector.Open(ctx, pgvector.Options{
 		DB:        st.DB(),
 		Dimension: 4,
 	})
 	require.NoError(t, err, "pgvector.Open")
 	t.Cleanup(func() { _ = pgb.Close() })
-
-	// Create a minimal messages table so CreateGeneration's seed query works.
-	_, err = st.DB().ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS messages (
-			id BIGINT PRIMARY KEY,
-			deleted_at TIMESTAMPTZ,
-			deleted_from_source_at TIMESTAMPTZ
-		)`)
-	require.NoError(t, err, "create messages scaffold")
 
 	return pgb, (&store.PostgreSQLDialect{}).Rebind, dsn
 }

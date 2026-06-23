@@ -57,29 +57,20 @@ charset detection issues in the MIME parser.`,
 			return err
 		}
 
-		// Re-enqueue repaired messages for re-embedding so semantic
-		// results reflect the corrected text. setupVectorFeatures
-		// returns (nil, nil) when vector search is disabled or the
-		// binary was built without sqlite_vec; in those cases the
-		// pending_embeddings table is irrelevant and there's nothing
-		// to do.
+		// Reset embed_gen = NULL on repaired messages so the scan-and-fill
+		// embed worker re-embeds them with the corrected text on its next
+		// run (msgvault embeddings build / the serve daemon). This is the
+		// scan-and-fill replacement for the old re-enqueue step: clearing
+		// the watermark makes the message read as "needs embedding" again.
+		// No-op when vector search is disabled — the column is harmless.
 		if len(reembedNeededIDs) > 0 {
-			vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
-			if err != nil {
+			if err := s.ResetEmbedGen(ctx, reembedNeededIDs); err != nil {
 				fmt.Fprintf(os.Stderr,
-					"Warning: failed to open vectors.db for re-enqueue: %v\n", err)
-			} else if vf != nil {
-				if err := vf.Enqueuer.EnqueueMessages(ctx, reembedNeededIDs); err != nil {
-					fmt.Fprintf(os.Stderr,
-						"Warning: failed to re-enqueue %d messages for re-embedding: %v\n",
-						len(reembedNeededIDs), err)
-				} else {
-					fmt.Printf("Re-enqueued %d message(s) for re-embedding.\n",
-						len(reembedNeededIDs))
-				}
-				if closeErr := vf.Close(); closeErr != nil {
-					logger.Warn("closing vectors.db failed", "error", closeErr)
-				}
+					"Warning: failed to mark %d repaired message(s) for re-embedding: %v\n",
+					len(reembedNeededIDs), err)
+			} else {
+				fmt.Printf("Marked %d message(s) for re-embedding.\n",
+					len(reembedNeededIDs))
 			}
 		}
 
@@ -114,10 +105,10 @@ type repairStats struct {
 
 // repairEncoding runs all repair passes over s and returns the IDs of
 // messages whose embedding inputs (subject, body_text, or body_html)
-// were modified. Callers use that list to re-enqueue affected messages
-// for re-embedding so semantic search results don't stay stale against
-// the repaired text. Snippet-only repairs are NOT included because the
-// embedder doesn't read snippet.
+// were modified. Callers reset embed_gen to NULL (via s.ResetEmbedGen) on
+// those ids so the scan-and-fill worker re-embeds them and semantic search
+// results don't stay stale against the repaired text. Snippet-only repairs
+// are NOT included because the embedder doesn't read snippet.
 func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	stats := &repairStats{}
 
@@ -273,9 +264,10 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			}
 
 			// Any change to fields that feed the embedder (subject,
-			// body_text, body_html) invalidates prior embeddings and
-			// must trigger a re-enqueue. Snippet is not embedded, so
-			// snippet-only repairs are excluded.
+			// body_text, body_html) invalidates prior embeddings, so we
+			// reset embed_gen to NULL (via ResetEmbedGen) on these ids so
+			// the scan-and-fill worker re-embeds them. Snippet is not
+			// embedded, so snippet-only repairs are excluded.
 			if r.newSubject.Valid || r.newBody.Valid || r.newHTML.Valid {
 				reembedNeededIDs = append(reembedNeededIDs, r.id)
 			}

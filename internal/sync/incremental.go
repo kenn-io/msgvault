@@ -162,7 +162,6 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 				}
 				checkpoint.ErrorsCount += int64(len(newMsgIDs))
 			} else {
-				var insertedIDs []int64
 				for i, fetch := range rawMessages {
 					raw := fetch.Message
 					if raw == nil {
@@ -178,31 +177,19 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 						continue
 					}
 					threadID := newMsgThreads[newMsgIDs[i]]
-					insertedID, err := s.ingestMessage(source.ID, raw, threadID, labelMap)
-					if err != nil {
+					if err := s.ingestMessage(source.ID, raw, threadID, labelMap); err != nil {
 						s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 						s.recordSyncItem(syncID, newMsgIDs[i], syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 						checkpoint.ErrorsCount++
 						continue
 					}
-					if insertedID > 0 {
-						insertedIDs = append(insertedIDs, insertedID)
-					}
 					checkpoint.MessagesAdded++
 					summary.BytesDownloaded += int64(len(raw.Raw))
 				}
 
-				// Hook vector-search enqueue. A failed enqueue is
-				// non-fatal on both backends: the message rows are
-				// already persisted, and any missed IDs are recovered by
-				// a full vector rebuild (`msgvault embed --full-rebuild`),
-				// which re-seeds every live message (pgvector and
-				// sqlitevec both provide this path).
-				if s.embedEnqueuer != nil && len(insertedIDs) > 0 {
-					if err := s.embedEnqueuer.EnqueueMessages(ctx, insertedIDs); err != nil {
-						s.logger.Warn("vector enqueue failed", "ids", len(insertedIDs), "error", err)
-					}
-				}
+				// Newly-persisted messages get embed_gen = NULL by column
+				// default, so the scan-and-fill embed worker picks them up
+				// automatically — no sync-time enqueue step is needed.
 			}
 		}
 
@@ -314,23 +301,14 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, err
 			}
-			insertedID, err := s.ingestMessage(sourceID, raw, threadID, labelMap)
-			if err != nil {
+			if err := s.ingestMessage(sourceID, raw, threadID, labelMap); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, err
 			}
-			// Hook vector-search enqueue for the new message. A failed
-			// enqueue is non-fatal on both backends: the message row is
-			// already persisted, and any missed ID is recovered by a
-			// full vector rebuild (`msgvault embed --full-rebuild`),
-			// which re-seeds every live message (pgvector and sqlitevec
-			// both provide this path).
-			if s.embedEnqueuer != nil && insertedID > 0 {
-				if err := s.embedEnqueuer.EnqueueMessages(ctx, []int64{insertedID}); err != nil {
-					s.logger.Warn("vector enqueue failed", "ids", 1, "error", err)
-				}
-			}
+			// The new message gets embed_gen = NULL by column default, so
+			// the scan-and-fill embed worker picks it up automatically — no
+			// sync-time enqueue step is needed.
 			checkpoint.MessagesAdded++
 			if raw != nil {
 				summary.BytesDownloaded += int64(len(raw.Raw))

@@ -104,7 +104,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build optional vector-search components. Returns (nil, nil) when
 	// cfg.Vector.Enabled is false, or an error when enabled but the
 	// binary was built without -tags sqlite_vec.
-	vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
+	vf, err := setupVectorFeatures(ctx, s, dbPath, false)
 	if err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
@@ -158,11 +158,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	getOAuthMgr := oauthManagerCache()
 
-	// Create sync function for the scheduler. vf is captured and used
-	// inside runScheduledSync to wire the embed enqueuer into each
-	// per-run Syncer; it is nil when vector search is disabled.
+	// Create sync function for the scheduler. Under scan-and-fill the
+	// Syncer no longer needs an enqueuer — newly-ingested messages get
+	// embed_gen = NULL by column default and the embed worker (wired
+	// separately below from vf) discovers them on its next run, so the
+	// sync path no longer threads vf.
 	syncFunc := func(ctx context.Context, email string) error {
-		return runScheduledSync(ctx, email, s, getOAuthMgr, vf)
+		return runScheduledSync(ctx, email, s, getOAuthMgr)
 	}
 
 	// Create and configure scheduler
@@ -199,12 +201,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Only when vector search is enabled and wired.
 	if vf != nil {
 		embedJob := &scheduler.EmbedJob{
-			Worker:      vf.Worker,
-			Backend:     vf.Backend,
-			VectorsDB:   vf.VectorsDB,
-			Rebind:      vf.Rebind,
-			Fingerprint: vf.Cfg.GenerationFingerprint(),
-			Log:         logger,
+			Worker:           vf.Worker,
+			Backend:          vf.Backend,
+			Store:            s,
+			Fingerprint:      vf.Cfg.GenerationFingerprint(),
+			BackstopInterval: vf.Cfg.Embed.BackstopInterval,
+			Log:              logger,
 		}
 		schedule := cfg.Vector.Embed.Schedule.Cron
 		if err := sched.SetEmbedJob(
@@ -392,14 +394,15 @@ func (a *schedulerAdapter) Status() []api.AccountStatus {
 // dispatch is by source_type: Gmail accounts run an incremental sync
 // using the Gmail History API; IMAP accounts run a full sync (already
 // deduplicated by message-id at the store layer, since IMAP has no
-// equivalent history API). When vf is non-nil (vector search enabled),
-// the Syncer is configured to enqueue newly-ingested message IDs into
-// the embedding pipeline so subsequent embed runs pick them up.
+// equivalent history API). Under scan-and-fill there is no enqueue step
+// — newly-ingested messages get embed_gen = NULL by column default, so
+// subsequent embed runs discover and pick them up by scanning; the sync
+// path therefore needs no vector-feature wiring.
 //
 // The identifier passed in is whatever the scheduler holds — for
 // Gmail this is the email address, for IMAP it's the full
 // `imaps://user@host:port` URL recorded by `add-imap`.
-func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), vf *vectorFeatures) error {
+func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) error {
 	logger.Info("starting scheduled sync", "identifier", identifier)
 	startTime := time.Now()
 
@@ -425,9 +428,9 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	)
 	switch sourceType {
 	case sourceTypeGmail:
-		summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, vf)
+		summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr)
 	case sourceTypeIMAP:
-		summary, err = runScheduledIMAPSync(ctx, src, s, vf)
+		summary, err = runScheduledIMAPSync(ctx, src, s)
 	default:
 		return fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler (only gmail and imap)", identifier, sourceType)
 	}
@@ -484,7 +487,7 @@ func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, 
 // getTokenSourceWithReauth) because serve runs as a daemon and cannot
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
-func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), vf *vectorFeatures) (*gmail.SyncSummary, error) {
+func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) (*gmail.SyncSummary, error) {
 	appName := ""
 	if src != nil {
 		appName = sourceOAuthApp(src)
@@ -534,9 +537,6 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	syncer := sync.New(client, s, opts).WithLogger(logger)
-	if vf != nil {
-		syncer.SetEmbedEnqueuer(vf.Enqueuer)
-	}
 
 	source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	if err != nil {
@@ -563,7 +563,7 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 // the store to dedupe by message-id. NoResume is forced on because
 // IMAP page tokens are numeric offsets that don't survive across
 // processes (see syncfull.go).
-func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, vf *vectorFeatures) (*gmail.SyncSummary, error) {
+func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
 	apiClient, err := buildAPIClient(ctx, src, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -576,9 +576,6 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	opts.NoResume = true
 
 	syncer := sync.New(apiClient, s, opts).WithLogger(logger)
-	if vf != nil {
-		syncer.SetEmbedEnqueuer(vf.Enqueuer)
-	}
 
 	// runPostSourceCreateMigrations is keyed off Gmail-only legacy
 	// state, so it's a no-op for fresh IMAP installs; we still call it

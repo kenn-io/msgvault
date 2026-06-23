@@ -1917,10 +1917,10 @@ func (f *fakeVectorBackend) Stats(_ context.Context, _ vector.GenerationID) (vec
 func (f *fakeVectorBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeVectorBackend) Close() error { return nil }
-func (f *fakeVectorBackend) EnsureSeeded(_ context.Context, _ vector.GenerationID) error {
-	return errors.New("not implemented")
+func (f *fakeVectorBackend) EmbeddedMessageCount(_ context.Context, _ vector.GenerationID) (int64, error) {
+	return 0, errors.New("not implemented")
 }
+func (f *fakeVectorBackend) Close() error { return nil }
 
 func TestHandleStats_VectorDisabled(t *testing.T) {
 	srv, _ := newTestServerWithMockStore(t)
@@ -1987,7 +1987,7 @@ func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
 	require.True(ok, "expected 'vector_search' object, got %T: %v", resp["vector_search"], resp["vector_search"])
 
 	assert.Equal(true, vs["enabled"], "enabled")
-	assert.InDelta(float64(7), vs["pending_embeddings_total"], 1e-9, "pending_embeddings_total")
+	assert.InDelta(float64(7), vs["missing_embeddings_total"], 1e-9, "missing_embeddings_total")
 
 	active, ok := vs["active_generation"].(map[string]any)
 	require.True(ok, "expected 'vector_search.active_generation' object, got %T", vs["active_generation"])

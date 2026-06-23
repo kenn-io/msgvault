@@ -41,28 +41,28 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	assert.Error(t, err, "ActiveGeneration should error after retire")
 }
 
-// TestBackend_CreateGeneration_SeedsPending verifies the initial seed
-// pass populates pending_embeddings with one row per live message.
-func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
+// TestBackend_CreateGeneration_StampsSeededAt verifies CreateGeneration
+// stamps seeded_at so the activation gate's lifecycle check passes.
+func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 	b, ctx, _ := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(t, err, "Create")
 
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = $1`, int64(gid),
-	).Scan(&n)
-	require.NoError(t, err, "count pending")
-	assert.Equal(t, 1, n, "pending count")
+	var seededAt sql.NullInt64
+	require.NoError(t, b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = $1`, int64(gid)).Scan(&seededAt))
+	assert.True(t, seededAt.Valid, "seeded_at stamped at creation")
 }
 
-// TestBackend_CreateGeneration_SkipsDeleted ensures the seed pass
-// honours the live-message predicate, so soft-deleted rows are not
-// re-embedded by a future rebuild.
-func TestBackend_CreateGeneration_SkipsDeleted(t *testing.T) {
+// TestBackend_CoverageGate_SkipsDeleted ensures the coverage gate honours
+// the live-message predicate: a soft-deleted message does not count as
+// missing, so a building generation can activate without force.
+func TestBackend_CoverageGate_SkipsDeleted(t *testing.T) {
 	db := openPGTestDB(t)
-	_, err := db.Exec(`INSERT INTO messages (id, deleted_from_source_at) VALUES (1, NOW())`)
-	require.NoError(t, err, "seed deleted")
+	// testSetupPGSchema seeds a live message id=1; mark it deleted so the
+	// only message is excluded from the coverage universe.
+	_, err := db.Exec(`UPDATE messages SET deleted_from_source_at = NOW() WHERE id = 1`)
+	require.NoError(t, err, "soft-delete message")
 
 	ctx := context.Background()
 	b, err := Open(ctx, Options{DB: db, Dimension: 768})
@@ -72,12 +72,11 @@ func TestBackend_CreateGeneration_SkipsDeleted(t *testing.T) {
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(t, err, "Create")
 
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = $1`, int64(gid),
-	).Scan(&n)
-	require.NoError(t, err, "count pending")
-	assert.Equal(t, 0, n, "pending count (deleted message must be skipped)")
+	s, err := b.Stats(ctx, gid)
+	require.NoError(t, err, "Stats")
+	assert.Equal(t, int64(0), s.PendingCount, "deleted message must not count as missing")
+	// With no live missing message, activation passes the coverage gate.
+	require.NoError(t, b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding checks the idempotent
@@ -109,62 +108,86 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 		"error = %v, want wrapping ErrBuildingInProgress", err)
 }
 
-// TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration covers
-// the "crash between row insert and seed commit" path: a building row
-// exists but seeded_at is NULL. Resume must re-run seedPending.
-func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) {
+// TestBackend_ActivateGeneration_CoverageGate pins the scan-and-fill
+// activation gate (in-tx on PG): a generation with a live message still
+// needing embedding (embed_gen <> gen) is refused without force, and
+// succeeds once the message is stamped covered.
+func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(t, err, "Create")
+
+	// The seeded live message (id=1) is unembedded -> activation refused.
+	err = b.ActivateGeneration(ctx, gen, false)
+	require.Error(t, err, "activate must be refused with missing coverage")
+	assert.Contains(t, err.Error(), "needing embedding")
+
+	// Stamp it covered, then activation succeeds.
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = 1`, int64(gen))
+	require.NoError(t, err, "stamp embed_gen")
+	require.NoError(t, b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
+}
+
+// TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage pins that
+// activating an unknown or non-building generation WITHOUT --force returns
+// the lifecycle error (unknown generation / not in 'building' state), NOT
+// the misleading "messages needing embedding" coverage error. The coverage
+// predicate (embed_gen <> gen) is true for an unknown gen id, so
+// activateGateError must check existence + 'building' state before coverage.
+// The seeded test message (id=1) stays unembedded so the coverage gate WOULD
+// trip if checked first.
+func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
 	b, ctx, _ := newBackendForTest(t)
 
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(t, err, "first Create")
+	// (a) Unknown gen id: lifecycle error (ErrUnknownGeneration), not coverage.
+	err := b.ActivateGeneration(ctx, vector.GenerationID(999), false)
+	require.Error(t, err, "activating unknown gen must fail")
+	require.ErrorIs(t, err, vector.ErrUnknownGeneration,
+		"unknown gen must return ErrUnknownGeneration, not coverage error")
+	assert.NotContains(t, err.Error(), "needing embedding",
+		"unknown gen must NOT surface the coverage error")
 
-	_, err = b.db.ExecContext(ctx,
+	// (b) Non-building (retired) gen id: lifecycle error, not coverage.
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(t, err, "Create")
+	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
+	require.NoError(t, b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
+	require.Equal(t, string(vector.GenerationRetired), genState(t, b, gen), "precondition: gen retired")
+
+	err = b.ActivateGeneration(ctx, gen, false)
+	require.Error(t, err, "activating retired gen must fail")
+	assert.Contains(t, err.Error(), "not in 'building' state",
+		"retired gen must return the not-building lifecycle error")
+	assert.NotContains(t, err.Error(), "needing embedding",
+		"retired gen must NOT surface the coverage error")
+}
+
+// TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage mirrors
+// the sqlitevec lifecycle test: a legacy/crashed generation with seeded_at
+// NULL must still activate WITHOUT --force as long as coverage is complete
+// (missing==0). The old seeded_at IS NOT NULL gate is gone; coverage is the
+// real gate.
+func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(t, err, "Create")
+
+	// Simulate a legacy/crashed generation: clear seeded_at.
+	_, err = db.ExecContext(ctx,
 		`UPDATE index_generations SET seeded_at = NULL WHERE id = $1`, int64(gen))
 	require.NoError(t, err, "clear seeded_at")
-
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen))
-	require.NoError(t, err, "clear pending")
-
-	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(t, err, "resume Create")
-	assert.Equal(t, gen, resumed, "resumed gen must match original")
-
-	var pending int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = $1`,
-		int64(gen)).Scan(&pending)
-	require.NoError(t, err, "count pending")
-	assert.Equal(t, 1, pending, "pending count after resume")
-
 	var seededAt sql.NullInt64
-	err = b.db.QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = $1`, int64(gen)).Scan(&seededAt)
-	require.NoError(t, err, "read seeded_at")
-	assert.True(t, seededAt.Valid, "seeded_at still NULL after resume re-seed")
-}
+	require.NoError(t, b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = $1`, int64(gen)).Scan(&seededAt))
+	require.False(t, seededAt.Valid, "precondition: seeded_at is NULL")
 
-// TestBackend_EnsureSeeded_Idempotent calls EnsureSeeded twice and
-// asserts the seeded_at stamp persists across calls.
-func TestBackend_EnsureSeeded_Idempotent(t *testing.T) {
-	b, ctx, _ := newBackendForTest(t)
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(t, err, "Create")
-	require.NoError(t, b.EnsureSeeded(ctx, gen), "EnsureSeeded #1")
-	require.NoError(t, b.EnsureSeeded(ctx, gen), "EnsureSeeded #2")
-}
+	// Make coverage complete (worker would stamp this after upsert).
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id = 1`, int64(gen))
+	require.NoError(t, err, "stamp embed_gen")
 
-// TestBackend_EnsureSeeded_RejectsActiveGeneration verifies the guard
-// that prevents re-seeding a non-building generation.
-func TestBackend_EnsureSeeded_RejectsActiveGeneration(t *testing.T) {
-	b, ctx, _ := newBackendForTest(t)
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(t, err, "Create")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
-
-	err = b.EnsureSeeded(ctx, gen)
-	assert.ErrorIs(t, err, vector.ErrGenerationNotBuilding,
-		"EnsureSeeded on active gen returned %v, want ErrGenerationNotBuilding", err)
+	// Activation succeeds WITHOUT force despite seeded_at=NULL.
+	require.NoError(t, b.ActivateGeneration(ctx, gen, false),
+		"NULL seeded_at + full coverage must activate without --force")
 }
 
 // TestBackend_Upsert_RejectsDimensionMismatch ensures the per-chunk

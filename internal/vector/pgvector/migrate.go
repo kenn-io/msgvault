@@ -50,7 +50,7 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 
 	// Wrap the schema apply AND the redundant-index drop in a single
 	// transaction that disables the pool-wide 30s statement_timeout
-	// (finding S1, mirroring EnsureVectorIndex/seedPending). Two reasons:
+	// (finding S1, mirroring EnsureVectorIndex). Two reasons:
 	//   - DROP INDEX takes an ACCESS EXCLUSIVE lock; on a busy serve daemon
 	//     the lock-wait alone can exceed 30s.
 	//   - On a legacy populated DB, schema.sql's `CREATE INDEX IF NOT EXISTS`
@@ -81,6 +81,13 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	// before that change. [V3]
 	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_embeddings_gen_msg`); err != nil {
 		return fmt.Errorf("drop redundant idx_embeddings_gen_msg: %w", err)
+	}
+	// Drop the dead pending_embeddings queue table on upgrade. The
+	// scan-and-fill design replaced the per-generation seed queue with a
+	// live messages.embed_gen scan, so this table is never read or written
+	// anymore. Idempotent: IF EXISTS is a no-op on fresh DBs.
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS pending_embeddings`); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings table: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit pgvector migrate tx: %w", err)

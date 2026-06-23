@@ -44,6 +44,14 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 			return fmt.Errorf("migrate vectors.db (%s): %w", m.desc, err)
 		}
 	}
+	// Drop the dead pending_embeddings queue table on upgrade. The
+	// scan-and-fill design replaced the per-generation seed queue with a
+	// live messages.embed_gen scan, so this table is never read or written
+	// anymore; left in place it only wastes space and confuses operators
+	// inspecting vectors.db. Idempotent: IF EXISTS is a no-op on fresh DBs.
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS pending_embeddings`); err != nil {
+		return fmt.Errorf("drop dead pending_embeddings table: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
 		return fmt.Errorf("enable WAL: %w", err)
 	}

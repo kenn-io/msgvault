@@ -284,7 +284,7 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 		return nil, nil //nolint:nilnil // unreachable guard, see comment above
 	}
 
-	err = runScheduledSync(context.Background(), imapID, s, getOAuthMgr, nil)
+	err = runScheduledSync(context.Background(), imapID, s, getOAuthMgr)
 	require.Error(err, "runScheduledSync(imap, no creds) want credentials error")
 	msg := err.Error()
 	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
@@ -330,7 +330,7 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 	// Pass the email (as config.toml `email = "..."` would supply it),
 	// not the imaps:// identifier. Dispatch must still land on the
 	// IMAP path; absence of credentials produces an IMAP-shaped error.
-	err = runScheduledSync(context.Background(), imapEmail, s, getOAuthMgr, nil)
+	err = runScheduledSync(context.Background(), imapEmail, s, getOAuthMgr)
 	require.Error(err, "runScheduledSync(email, no creds) want IMAP credentials error")
 	msg := err.Error()
 	assert.False(strings.Contains(msg, "refresh token") || strings.Contains(msg, "token may be expired"),
@@ -381,7 +381,7 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 
 	// Expected to fail at the IMAP connection; what matters is that
 	// confirmDefaultIdentity ran first with the display_name.
-	_ = runScheduledSync(context.Background(), imapID, s, getOAuthMgr, nil)
+	_ = runScheduledSync(context.Background(), imapID, s, getOAuthMgr)
 
 	identities, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err, "ListAccountIdentities")

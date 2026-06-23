@@ -25,7 +25,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 
 	for _, tbl := range []string{
 		"index_generations", "embeddings", "embed_runs",
-		"pending_embeddings", "vectors_vec_d768", "schema_version",
+		"embed_watermark", "vectors_vec_d768", "schema_version",
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
@@ -322,6 +322,33 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 	assertpkg.NoError(t, err, "vectors_vec_d1024 not created")
 }
 
+// TestMigrate_DropsDeadPendingEmbeddings pins that a legacy
+// vectors.db carrying the dead pending_embeddings queue table must have it
+// dropped on Migrate. The scan-and-fill design replaced the seed queue with
+// a live messages.embed_gen scan, so the table is never read or written.
+func TestMigrate_DropsDeadPendingEmbeddings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "vectors.db")
+	db := openTestDB(t, path)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Stand up a legacy pending_embeddings table before migrating.
+	_, err := db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id INTEGER NOT NULL,
+		message_id    INTEGER NOT NULL
+	)`)
+	requirepkg.NoError(t, err, "create legacy pending_embeddings")
+
+	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate")
+
+	exists, err := tableExists(ctx, db, "pending_embeddings")
+	requirepkg.NoError(t, err, "probe pending_embeddings")
+	assertpkg.False(t, exists, "pending_embeddings must be dropped on upgrade")
+
+	// Idempotent on a fresh DB (no pending_embeddings present).
+	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate (idempotent)")
+}
+
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	requirepkg.NoError(t, RegisterExtension(), "register")
@@ -379,9 +406,13 @@ func TestForeignKeys_PerConnection(t *testing.T) {
 		err := c.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk)
 		require.NoErrorf(err, "conn %d pragma read", i)
 		assert.Equalf(1, fk, "conn %d: foreign_keys (ConnectHook missed this conn)", i)
+		// embeddings.generation_id REFERENCES index_generations(id); insert
+		// a row pointing at a non-existent generation to trigger the FK
+		// violation on a properly-configured connection.
 		_, err = c.ExecContext(ctx,
-			`INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
-			 VALUES (?, ?, ?)`, 9999999, int64(i), int64(i))
+			`INSERT INTO embeddings
+			   (generation_id, message_id, chunk_index, embedded_at, source_char_len)
+			 VALUES (?, ?, 0, 0, 0)`, 9999999, int64(i))
 		//nolint:testifylint // guarded assert+continue: a require here would abort the per-conn loop instead of skipping to the next connection
 		if !assert.Errorf(err, "conn %d: FK-violating insert should fail", i) {
 			continue

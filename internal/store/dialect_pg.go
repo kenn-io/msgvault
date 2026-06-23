@@ -320,6 +320,16 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
+		// embed_gen: per-message vector-embedding watermark. NULL default
+		// means every legacy row reads as "needs embedding", which is
+		// correct — the scan-and-fill worker (and backstop) will embed and
+		// stamp them. No backfill.
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embed_gen BIGINT`, "embed_gen"},
+		// last_modified: row-level last-modified watermark, the embed
+		// worker's optimistic-CAS token. Existing rows get the default
+		// (CURRENT_TIMESTAMP at the time the column is added); the triggers
+		// created by EnsureTriggers keep it current thereafter.
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`, "last_modified"},
 	}
 }
 
@@ -343,6 +353,54 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 		"CREATE INDEX IF NOT EXISTS idx_messages_search_fts_null ON messages (id) WHERE search_fts IS NULL",
 	); err != nil {
 		return fmt.Errorf("create idx_messages_search_fts_null: %w", err)
+	}
+	return nil
+}
+
+// EnsureTriggers creates the last_modified maintenance triggers idempotently.
+// Two triggers feed messages.last_modified:
+//
+//   - trg_messages_last_modified (BEFORE UPDATE on messages): sets
+//     NEW.last_modified in-row. BEFORE → no secondary write → no recursion.
+//     The WHEN guard (OLD.last_modified IS NOT DISTINCT FROM NEW.last_modified)
+//     yields to an explicit last_modified write in the UPDATE rather than
+//     overriding it, mirroring the SQLite trigger's guard.
+//   - trg_message_bodies_last_modified (AFTER INSERT OR UPDATE on
+//     message_bodies): bumps the parent message's last_modified so body
+//     edits move the worker's CAS token too.
+//
+// CREATE TRIGGER is not idempotent before PG14, so each trigger is dropped
+// (IF EXISTS) and recreated; the functions use CREATE OR REPLACE. Re-running
+// InitSchema is therefore safe. Runs on the querier so InitSchema can route
+// it through the maintenance transaction (consistent with EnsureFTSIndex).
+func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
+	stmts := []string{
+		`CREATE OR REPLACE FUNCTION set_messages_last_modified() RETURNS trigger AS $$
+		 BEGIN
+		     NEW.last_modified := CURRENT_TIMESTAMP;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_messages_last_modified ON messages`,
+		`CREATE TRIGGER trg_messages_last_modified
+		     BEFORE UPDATE ON messages FOR EACH ROW
+		     WHEN (OLD.last_modified IS NOT DISTINCT FROM NEW.last_modified)
+		     EXECUTE FUNCTION set_messages_last_modified()`,
+		`CREATE OR REPLACE FUNCTION bump_message_last_modified() RETURNS trigger AS $$
+		 BEGIN
+		     UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+		     RETURN NEW;
+		 END;
+		 $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_message_bodies_last_modified ON message_bodies`,
+		`CREATE TRIGGER trg_message_bodies_last_modified
+		     AFTER INSERT OR UPDATE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_last_modified()`,
+	}
+	for _, stmt := range stmts {
+		if _, err := q.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure last_modified triggers: %w", err)
+		}
 	}
 	return nil
 }
@@ -374,7 +432,7 @@ func (d *PostgreSQLDialect) CheckpointWAL(db *sql.DB) error { return nil }
 // SchemaStaleCheck returns the SQL to check whether migrations are needed.
 // PostgreSQL uses information_schema instead of pragma_table_info.
 func (d *PostgreSQLDialect) SchemaStaleCheck() string {
-	return postgresColumnExistsSQL("conversations", "conversation_type")
+	return postgresColumnExistsSQL("messages", "embed_gen")
 }
 
 // IsDuplicateColumnError returns true if the error is a "column already exists" error.

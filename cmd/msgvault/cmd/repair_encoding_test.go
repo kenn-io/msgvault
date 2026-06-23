@@ -100,9 +100,10 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 // TestRepairMessageFields_ReturnsReembedNeededIDs guards the re-embedding
 // hook: when any field that feeds the embedder (subject, body_text,
 // body_html) is repaired, the affected message id must appear in the
-// returned slice so the caller can re-enqueue it against
-// pending_embeddings. Snippet-only repairs must NOT appear because the
-// embedder doesn't read snippet.
+// returned slice so the caller can mark it for re-embedding via
+// ResetEmbedGen (embed_gen -> NULL), which the scan-and-fill worker then
+// re-picks up. Snippet-only repairs must NOT appear because the embedder
+// doesn't read snippet.
 func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

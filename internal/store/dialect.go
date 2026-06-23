@@ -129,6 +129,19 @@ type Dialect interface {
 	// 30s timeout on a large archive (finding S1).
 	EnsureFTSIndex(q querier) error
 
+	// EnsureTriggers idempotently creates the database-maintained triggers
+	// that bump messages.last_modified on any change to a message or its
+	// body row. Called by InitSchema after LegacyColumnMigrations (which add
+	// the last_modified column on legacy DBs), so the column is guaranteed
+	// present. SQLite is a no-op: its triggers are `CREATE TRIGGER IF NOT
+	// EXISTS` in schema.sql, re-exec'd idempotently by InitSchema. PostgreSQL
+	// creates them here because CREATE TRIGGER is not idempotent before PG14,
+	// so the impl wraps each in `DROP TRIGGER IF EXISTS ...; CREATE TRIGGER`.
+	//
+	// Takes a querier (not *sql.DB) so InitSchema can run it on the
+	// maintenance transaction (consistent with EnsureFTSIndex).
+	EnsureTriggers(q querier) error
+
 	// LegacyColumnMigrations returns ALTER TABLE ADD COLUMN statements to
 	// bring older databases up to date with schema columns added over time.
 	// Both dialects return the same logical list, translated to the

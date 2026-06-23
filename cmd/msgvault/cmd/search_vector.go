@@ -71,6 +71,11 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 			return fmt.Errorf("open main db: %w", err)
 		}
 		mainDB = st.DB()
+		// store.Open returns a WRITABLE connection (not OpenReadOnly), so
+		// ReadOnly stays false: Open runs the full migrate + one-time upgrade
+		// backfill, exactly as before. This CLI search path is user-facing
+		// read-only in intent but the connection can write, so it correctly
+		// behaves like serve's writable open.
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:            mainDB,
 			Dimension:     cfg.Vector.Embeddings.Dimension,

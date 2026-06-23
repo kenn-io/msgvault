@@ -39,11 +39,25 @@ type Options struct {
 	// per-dimension HNSW index on first migration. Optional; if zero
 	// the index is created on first CreateGeneration.
 	Dimension int
-	// SkipMigrate suppresses the automatic schema migration on Open.
-	// Set this when the caller holds a read-only connection (e.g. the
-	// MCP server), where CREATE EXTENSION and DDL statements are
-	// rejected by PostgreSQL with SQLSTATE 25006.
+	// SkipMigrate suppresses the privileged CREATE EXTENSION + full
+	// migrate. A WRITABLE open still applies the (extension-less) schema so
+	// the one-time upgrade lands — read-only-ness is now signalled by
+	// ReadOnly, not SkipMigrate. Set this when the caller cannot run the
+	// privileged `CREATE EXTENSION vector` (e.g. a management command on a
+	// DB whose extension+schema were already installed by serve/build), but
+	// still wants the writable Open to bring up the extension-less schema +
+	// run the one-time upgrade backfill. The heavy migrate (CREATE EXTENSION
+	// + eager index build) is skipped; the extension-less schema apply is
+	// not (it is gated by ReadOnly instead).
 	SkipMigrate bool
+	// ReadOnly indicates the connection cannot write — e.g. MCP
+	// store.OpenReadOnly, where CREATE EXTENSION and DDL statements are
+	// rejected by PostgreSQL with SQLSTATE 25006. When set, Open performs NO
+	// writes: no Migrate, no schema apply, no orphan reset, no upgrade
+	// backfill. Mirrors sqlitevec.Options.ReadOnly. A read-only open must set
+	// this (typically alongside SkipMigrate); a writable management open
+	// leaves it false so the upgrade backfill still lands.
+	ReadOnly bool
 	// SkipExtension suppresses only the `CREATE EXTENSION IF NOT EXISTS
 	// vector` step during migration while still creating the schema
 	// tables and indexes. Set this when the vector extension is
@@ -71,12 +85,48 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	if opts.DB == nil {
 		return nil, errors.New("pgvector.Open: Options.DB is required")
 	}
+	b := &Backend{db: opts.DB}
 	if !opts.SkipMigrate {
+		// serve / build / search: full migrate incl. CREATE EXTENSION (the
+		// extension step is gated by SkipExtension for managed PG). The eager
+		// per-dimension HNSW index is built here too.
 		if err := Migrate(ctx, opts.DB, opts.Dimension, opts.SkipExtension); err != nil {
 			return nil, fmt.Errorf("pgvector migrate: %w", err)
 		}
 	}
-	return &Backend{db: opts.DB}, nil
+	if !opts.ReadOnly {
+		// Writable open. When the heavy Migrate above was skipped (management
+		// sets SkipMigrate=true to avoid the privileged CREATE EXTENSION), still
+		// apply the schema WITHOUT the extension so embed_watermark etc. exist
+		// and the one-time upgrade backfill lands — parity with sqlitevec (which
+		// always Migrates vectors.db + backfills unless ReadOnly).
+		if opts.SkipMigrate {
+			if err := Migrate(ctx, opts.DB, opts.Dimension, true /* skipExtension */); err != nil {
+				return nil, fmt.Errorf("pgvector migrate (schema-only): %w", err)
+			}
+		}
+		// Orphaned-stamp reset (DB-recreate safety): clear embed_gen for any
+		// message whose stamp points to a generation id absent from
+		// index_generations. MUST run BEFORE BackfillEmbedGenForUpgrade. On PG
+		// messages and index_generations share one DB, so a true recreate means
+		// the whole DB was dropped (stamps and generations vanish together) —
+		// but the reset is kept for symmetry with sqlitevec and to defend
+		// against partial restores (e.g. messages restored, embeddings not).
+		// Not ledger-guarded: re-checks every writable Open; cheap + idempotent.
+		// Skipped on the ReadOnly path, where writes are rejected anyway.
+		if err := b.resetOrphanedEmbedGen(ctx); err != nil {
+			return nil, fmt.Errorf("reset orphaned embed_gen: %w", err)
+		}
+		// One-time upgrade backfill (Package A): stamp embed_gen for messages
+		// already embedded under the active generation so an upgraded archive
+		// is not reported as entirely missing (which would re-embed it all).
+		// Ledger-guarded, runs at most once. Skipped on the ReadOnly path,
+		// where writes are rejected anyway.
+		if err := b.BackfillEmbedGenForUpgrade(ctx); err != nil {
+			return nil, fmt.Errorf("embed_gen upgrade backfill: %w", err)
+		}
+	}
+	return b, nil
 }
 
 // Close is a no-op for the pgvector backend: the *sql.DB handle is
@@ -89,10 +139,14 @@ func (b *Backend) Close() error { return nil }
 // can retrieve it here instead of carrying the main handle separately.
 func (b *Backend) DB() *sql.DB { return b.db }
 
-// CreateGeneration allocates a new building generation and seeds
-// pending_embeddings with every currently-embeddable message in
-// messages. Mirrors the sqlitevec semantics (§5.1): if a building row
-// with the same fingerprint already exists, returns its id so a crashed
+// CreateGeneration allocates a new building generation. Under the
+// scan-and-fill design there is no pending_embeddings seed: the embed
+// worker populates the generation by scanning messages whose embed_gen
+// does not yet match it. seeded_at is stamped at creation as harmless
+// vestigial metadata (it no longer gates a seed pass and no longer gates
+// activation; coverage is the real gate). Mirrors the sqlitevec semantics
+// (§5.1): if a building row with
+// the same fingerprint already exists, returns its id so a crashed
 // rebuild can resume; a mismatched fingerprint surfaces
 // vector.ErrBuildingInProgress.
 func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, fingerprint string) (vector.GenerationID, error) {
@@ -105,76 +159,11 @@ func (b *Backend) CreateGeneration(ctx context.Context, model string, dim int, f
 	}
 	now := time.Now().Unix()
 
-	gen, isNew, err := b.claimOrInsertBuilding(ctx, model, dim, fp, now)
+	gen, _, err := b.claimOrInsertBuilding(ctx, model, dim, fp, now)
 	if err != nil {
-		return 0, err
-	}
-
-	if !isNew {
-		seeded, err := b.isGenerationSeeded(ctx, gen)
-		if err != nil {
-			return 0, err
-		}
-		if seeded {
-			return gen, nil
-		}
-	}
-	if err := b.seedPending(ctx, gen, now); err != nil {
-		return 0, err
-	}
-	if err := b.markGenerationSeeded(ctx, gen, now); err != nil {
 		return 0, err
 	}
 	return gen, nil
-}
-
-func (b *Backend) isGenerationSeeded(ctx context.Context, gen vector.GenerationID) (bool, error) {
-	var seededAt sql.NullInt64
-	err := b.db.QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = $1`, int64(gen)).Scan(&seededAt)
-	if err != nil {
-		return false, fmt.Errorf("read seeded_at: %w", err)
-	}
-	return seededAt.Valid, nil
-}
-
-func (b *Backend) markGenerationSeeded(ctx context.Context, gen vector.GenerationID, now int64) error {
-	if _, err := b.db.ExecContext(ctx,
-		`UPDATE index_generations SET seeded_at = COALESCE(seeded_at, $1) WHERE id = $2`,
-		now, int64(gen)); err != nil {
-		return fmt.Errorf("mark generation seeded: %w", err)
-	}
-	return nil
-}
-
-// EnsureSeeded mirrors sqlitevec.EnsureSeeded: re-runs the initial seed
-// pass when seeded_at is NULL so an interrupted resume cannot activate
-// an empty generation.
-func (b *Backend) EnsureSeeded(ctx context.Context, gen vector.GenerationID) error {
-	var state string
-	err := b.db.QueryRowContext(ctx,
-		`SELECT state FROM index_generations WHERE id = $1`, int64(gen)).Scan(&state)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
-	}
-	if err != nil {
-		return fmt.Errorf("lookup generation %d: %w", gen, err)
-	}
-	if state != string(vector.GenerationBuilding) {
-		return fmt.Errorf("%w: generation %d state=%q", vector.ErrGenerationNotBuilding, gen, state)
-	}
-	seeded, err := b.isGenerationSeeded(ctx, gen)
-	if err != nil {
-		return err
-	}
-	if seeded {
-		return nil
-	}
-	now := time.Now().Unix()
-	if err := b.seedPending(ctx, gen, now); err != nil {
-		return err
-	}
-	return b.markGenerationSeeded(ctx, gen, now)
 }
 
 // claimOrInsertBuilding returns (id, isNew, err). See sqlitevec for
@@ -190,11 +179,15 @@ func (b *Backend) claimOrInsertBuilding(ctx context.Context, model string, dim i
 		return id, false, nil
 	}
 
+	// seeded_at is stamped at creation as harmless vestigial metadata:
+	// scan-and-fill has no separate seed pass, and activation no longer
+	// gates on it (coverage is the real gate). Kept only so the column is
+	// populated for legacy display.
 	var newID int64
 	err := b.db.QueryRowContext(ctx,
 		`INSERT INTO index_generations
-		 (model, dimension, fingerprint, started_at, state)
-		 VALUES ($1, $2, $3, $4, 'building')
+		 (model, dimension, fingerprint, started_at, seeded_at, state)
+		 VALUES ($1, $2, $3, $4, $4, 'building')
 		 RETURNING id`,
 		model, dim, fp, now).Scan(&newID)
 	if err != nil {
@@ -245,101 +238,17 @@ func isUniqueViolation(err error) bool {
 	return pgErr.Code == "23505"
 }
 
-// afterSeedLockHook is a test-only synchronization seam. When non-nil it is
-// invoked once inside seedPending's transaction AFTER the SET LOCAL
-// statement_timeout reset but BEFORE the generation's state is re-read under
-// the FOR NO KEY UPDATE row lock. It lets the concurrency regression test
-// commit a RetireGeneration at exactly the window the orphan-pending race
-// opens (seed tx begins → retire commits → seed re-reads + inserts), proving
-// the locked re-validation refuses to seed a now-retired generation. It is
-// always nil in production. Mirrors enqueue.go's afterGenSnapshotHook.
-var afterSeedLockHook func()
-
-// seedPending inserts one pending_embeddings row per live message in
-// the main schema. Uses ON CONFLICT DO NOTHING for idempotency on
-// retries and to deduplicate against rows already added by the
-// concurrent Enqueuer path (parallel to sqlitevec's INSERT OR IGNORE).
-//
-// Because messages and pending_embeddings live in the same Postgres
-// database, this can be done in a single INSERT … SELECT rather than
-// streaming rows through Go like the SQLite backend does.
-//
-// The generation's state is re-read under a FOR NO KEY UPDATE row lock IN the
-// same tx before the insert. This mirrors the Enqueuer's locked re-validation
-// (enqueue.go): the lock conflicts with the no-key tuple lock that
-// RetireGeneration / ActivateGeneration's state-flip UPDATE takes, so a
-// concurrent retire that deletes this generation's pending rows and flips it
-// to 'retired' cannot interleave with this seed to leave orphan pending rows
-// behind. The two interleavings serialize:
-//   - seed-first: retire's state-flip UPDATE blocks on this lock, then its
-//     DELETE removes the rows we just inserted -> no orphan.
-//   - retire-first: this locking SELECT blocks until retire commits, then
-//     re-reads state='retired' and we skip the insert -> we seed nothing.
-//
-// Seedable = not yet retired, matching how the Enqueuer decides eligibility
-// (WHERE state != 'retired'). A generation deleted outright (no row) is also
-// skipped.
-func (b *Backend) seedPending(ctx context.Context, gen vector.GenerationID, now int64) error {
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin seed tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Disable the pool-wide 30s statement_timeout for this tx: the shared
-	// store pool sets statement_timeout=30s via pgx RuntimeParams
-	// (postgresConnConfig), and this single INSERT ... SELECT over the whole
-	// messages table can exceed that on a 1M+ message archive (finding S1's
-	// family, V7). SET LOCAL is tx-scoped and auto-resets on commit/rollback,
-	// so the timeout cannot leak onto other connections. [V7]
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
-		return fmt.Errorf("disable statement_timeout for seed: %w", err)
-	}
-
-	// Test-only synchronization seam (nil in production): fires after the tx
-	// begins but before the locked re-read below, so the concurrency
-	// regression test can commit a RetireGeneration inside the exact window
-	// the orphan-pending race opens.
-	if afterSeedLockHook != nil {
-		afterSeedLockHook()
-	}
-
-	// Re-read the generation's state under a FOR NO KEY UPDATE row lock and
-	// confirm it is still seedable (not retired) before inserting. If it has
-	// been retired (or deleted) concurrently, skip the insert so we never seed
-	// a retired generation with orphan pending rows. Held through the INSERT
-	// below in this same tx.
-	var state string
-	err = tx.QueryRowContext(ctx,
-		`SELECT state FROM index_generations WHERE id = $1 FOR NO KEY UPDATE`,
-		int64(gen)).Scan(&state)
-	if errors.Is(err, sql.ErrNoRows) {
-		// Generation deleted concurrently — nothing to seed.
-		return tx.Commit()
-	}
-	if err != nil {
-		return fmt.Errorf("re-validate generation %d for seed: %w", gen, err)
-	}
-	if state == string(vector.GenerationRetired) {
-		// Retired concurrently (PG: by a now-committed retire we just blocked
-		// on) — do not seed, leaving no orphan pending rows for this gen.
-		return tx.Commit()
-	}
-
-	stmt := fmt.Sprintf(`
-		INSERT INTO pending_embeddings (generation_id, message_id, enqueued_at)
-		SELECT $1, id, $2
-		  FROM messages
-		 WHERE %s
-		ON CONFLICT (generation_id, message_id) DO NOTHING`,
-		store.LiveMessagesWhere("", true))
-	if _, err := tx.ExecContext(ctx, stmt, int64(gen), now); err != nil {
-		return fmt.Errorf("seed pending: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit seed pending: %w", err)
-	}
-	return nil
+// missingForGenExistsClause is the coverage gate predicate: a generation
+// is fully covered when no live message still needs embedding for it
+// (embed_gen IS NULL OR embed_gen <> gen). Built once and reused by
+// ActivateGeneration (in-tx, single-DB on PG) and Stats. The $N ordinal
+// of the generation id is supplied by the caller.
+func missingForGenExistsClause(genArg string) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM messages
+		 WHERE (embed_gen IS NULL OR embed_gen <> %s)
+		   AND %s
+	)`, genArg, store.LiveMessagesWhere("", true))
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -363,8 +272,8 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	defer func() { _ = tx.Rollback() }()
 
 	// Disable the pool-wide 30s statement_timeout for this tx: the auto-retire
-	// path below DELETEs the demoted generation's embeddings + pending rows,
-	// which are corpus-size on a large archive and can exceed the shared store
+	// path below DELETEs the demoted generation's embeddings, which are
+	// corpus-size on a large archive and can exceed the shared store
 	// pool's statement_timeout=30s, cancelling the activation at 30s and rolling
 	// it back (finding C1, S1 family). SET LOCAL is tx-scoped and auto-resets on
 	// commit/rollback, so the timeout cannot leak onto other connections. Must be
@@ -393,35 +302,22 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 			`DELETE FROM embeddings WHERE generation_id = $1`, demoted.Int64); err != nil {
 			return fmt.Errorf("delete retired generation %d embeddings: %w", demoted.Int64, err)
 		}
-		// Reap the demoted generation's queue rows in the same tx. Retired
-		// generations are never re-targeted by pickTarget, so any leftover
-		// pending_embeddings rows would be orphaned forever (the
-		// index_generations row is preserved, so the ON DELETE CASCADE never
-		// fires). Deleting them keeps the documented stats invariant
-		// ("retired generations have zero pending items") true. [cr2-3, cr2-4]
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM pending_embeddings WHERE generation_id = $1`, demoted.Int64); err != nil {
-			return fmt.Errorf("delete retired generation %d pending: %w", demoted.Int64, err)
-		}
 	}
-	// The promote re-checks the seeded/no-pending gate IN the same tx as the
-	// flip (unless force). This closes the window between a CALLER's pre-flight
-	// pending read and this UPDATE: no pending row committed before this
-	// statement can sneak gen past the gate. It does NOT serialize against a
-	// concurrent enqueue.go dual-enqueue under READ COMMITTED — the FK key-share
-	// lock enqueue takes does not conflict with this non-key UPDATE, so an
-	// enqueue that commits just AFTER this gated UPDATE can still leave one
-	// pending row on the now-active gen. That post-flip row is acceptable: the
-	// embed worker's active-generation top-up (see embed_job.go pickTarget /
-	// enqueue.go) simply processes it on the next run. [cr2-1]
+	// The promote re-checks the coverage gate IN the same tx as the flip
+	// (unless force): refuse to activate while any live message still needs
+	// embedding for gen (embed_gen <> gen). On PG messages and the
+	// generation lifecycle share one database, so the gate is folded into
+	// the activation UPDATE — fully atomic with the state flip, no TOCTOU.
+	// The seeded_at gate was removed: seeding was the old queue-population
+	// phase, which scan-and-fill no longer has, so a legacy/crashed gen with
+	// seeded_at=NULL but full coverage must be activatable. Coverage
+	// (missing==0) is the real gate.
 	res, err := tx.ExecContext(ctx,
 		`UPDATE index_generations
 		    SET state = 'active', activated_at = $1, completed_at = COALESCE(completed_at, $2)
 		  WHERE id = $3 AND state = 'building'
-		    AND ($4 OR seeded_at IS NOT NULL)
-		    AND ($4 OR NOT EXISTS (
-		        SELECT 1 FROM pending_embeddings WHERE generation_id = $3
-		    ))`, now, now, int64(gen), force)
+		    AND ($4 OR NOT `+missingForGenExistsClause("$3")+`)`,
+		now, now, int64(gen), force)
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
@@ -436,34 +332,38 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 }
 
 // activateGateError re-reads gen inside the activation tx to return a
-// precise reason the gated promote affected zero rows: pending rows present,
-// not finished seeding, unknown generation, or not in 'building' state.
-// Mirrors the prior CLI raw helper so callers get the same actionable
-// messages now that the gate lives in the backend.
+// precise reason the gated promote affected zero rows. The existence +
+// 'building'-state lifecycle check runs FIRST: an unknown/non-building gen
+// also satisfies the coverage predicate (embed_gen <> gen is true for an
+// unknown gen id), so checking coverage first would surface the misleading
+// "messages needing embedding" error instead of the real lifecycle reason.
 func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
-	var pending int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = $1`, int64(gen)).Scan(&pending); err != nil {
-		return fmt.Errorf("count pending rows for generation %d: %w", gen, err)
-	}
-	if pending > 0 && !force {
-		return fmt.Errorf("generation %d still has %d pending embedding rows; run `msgvault embeddings resume` or pass --force",
-			gen, pending)
-	}
 	var state vector.GenerationState
-	var seededAt sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT state, seeded_at FROM index_generations WHERE id = $1`, int64(gen)).Scan(&state, &seededAt); err != nil {
+		`SELECT state FROM index_generations WHERE id = $1`, int64(gen)).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
 		}
 		return fmt.Errorf("lookup generation %d: %w", gen, err)
 	}
-	if state == vector.GenerationBuilding && !seededAt.Valid && !force {
-		return fmt.Errorf("generation %d has not finished seeding; run `msgvault embeddings resume` or pass --force",
-			gen)
+	if state != vector.GenerationBuilding {
+		return fmt.Errorf("generation %d not in 'building' state", gen)
 	}
-	return fmt.Errorf("generation %d not in 'building' state", gen)
+	// Gen exists and is building, so the only remaining reason the gated
+	// promote affected zero rows is the coverage term.
+	var missing bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT `+missingForGenExistsClause("$1"), int64(gen)).Scan(&missing); err != nil {
+		return fmt.Errorf("check coverage for generation %d: %w", gen, err)
+	}
+	if missing && !force {
+		return fmt.Errorf("generation %d still has messages needing embedding; run `msgvault embeddings resume` or pass --force", gen)
+	}
+	// Gen reads as building with full coverage yet the gated UPDATE still
+	// matched no rows: a concurrent transaction must have flipped its state
+	// between the promote and this re-read. Surface it rather than reporting a
+	// phantom gate.
+	return fmt.Errorf("activate generation %d: gated promote affected no rows (state=%q)", gen, state)
 }
 
 // RetireGeneration marks the given generation as retired and DELETEs its
@@ -481,7 +381,7 @@ func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID,
 // Unless force is true, the state-flip UPDATE refuses to retire a generation
 // in state='active' (WHERE state != 'active'): if it affects zero rows the
 // active guard tripped, so the tx rolls back returning ErrRefuseRetireActive
-// WITHOUT touching embeddings or pending rows. The guard lives in the same tx
+// WITHOUT touching embeddings. The guard lives in the same tx
 // as the flip — closing the CLI's pre-flight TOCTOU so a concurrent
 // activation cannot delete the now-serving generation's embeddings without
 // --force-active. force retires unconditionally (operator override).
@@ -493,7 +393,7 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 	defer func() { _ = tx.Rollback() }()
 
 	// Disable the pool-wide 30s statement_timeout for this tx: the DELETEs below
-	// remove the retired generation's embeddings + pending rows, which are
+	// remove the retired generation's embeddings, which are
 	// corpus-size on a large archive and can exceed the shared store pool's
 	// statement_timeout=30s, cancelling the retire at 30s and rolling it back
 	// (finding C1, S1 family). SET LOCAL is tx-scoped and auto-resets on
@@ -521,15 +421,7 @@ func (b *Backend) RetireGeneration(ctx context.Context, gen vector.GenerationID,
 		`DELETE FROM embeddings WHERE generation_id = $1`, int64(gen)); err != nil {
 		return fmt.Errorf("delete retired generation %d embeddings: %w", gen, err)
 	}
-	// Reap the retired generation's queue rows in the same tx so they cannot
-	// be orphaned (no future run re-targets a retired generation, and the
-	// preserved index_generations row means the ON DELETE CASCADE never
-	// fires). Keeps the "retired generations have zero pending items"
-	// stats invariant true. [cr2-2, cr2-3]
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen)); err != nil {
-		return fmt.Errorf("delete retired generation %d pending: %w", gen, err)
-	}
+	// Scan-and-fill has no per-generation queue to reap.
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit retire generation %d: %w", gen, err)
 	}
@@ -1217,9 +1109,19 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	if err := b.db.QueryRowContext(ctx, embeddingCountSQL, args...).Scan(&s.EmbeddingCount); err != nil {
 		return s, fmt.Errorf("count embeddings: %w", err)
 	}
-	if err := b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings `+where, args...).Scan(&s.PendingCount); err != nil {
-		return s, fmt.Errorf("count pending: %w", err)
+	// PendingCount is now "messages still needing embedding for this
+	// generation" (embed_gen <> gen), read from the messages table in the
+	// same database. The aggregate path (gen == 0) has no single target
+	// generation, so it reports 0 — the StatsView consumer sums per-gen
+	// pending across the active/building generations anyway.
+	if gen != 0 {
+		if err := b.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM messages
+			  WHERE (embed_gen IS NULL OR embed_gen <> $1)
+			    AND `+store.LiveMessagesWhere("", true),
+			int64(gen)).Scan(&s.PendingCount); err != nil {
+			return s, fmt.Errorf("count missing: %w", err)
+		}
 	}
 	// StorageBytes: total on-disk size of the embeddings table (heap +
 	// indexes + TOAST), table-wide rather than per-generation. Unlike
@@ -1232,4 +1134,38 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 		return s, fmt.Errorf("embeddings storage size: %w", err)
 	}
 	return s, nil
+}
+
+// EmbeddedMessageCount returns the number of LIVE messages that are
+// stamped for gen (embed_gen = gen) AND actually have at least one vector
+// for the generation. Used by the coverage readout to split stamped
+// messages into embedded vs blank. Counts distinct messages (not chunk
+// rows) so a long, multi-chunk message counts once, matching the
+// EmbeddingCount semantic elsewhere.
+//
+// The liveness + stamped filter is REQUIRED for the coverage invariant
+// live == embedded + blank + missing to hold. A non-live message
+// (soft-deleted via deleted_at / deleted_from_source_at, or a dedup
+// loser) keeps its embedding rows — Backend.Delete has no production
+// callers — so an unfiltered COUNT(DISTINCT message_id) over the
+// embeddings table can exceed stamped (which is live-only), driving
+// blank = stamped - embedded negative (clamped to 0) and breaking the
+// invariant (EMBEDDED could display larger than LIVE).
+//
+// On PostgreSQL embeddings and messages share one database (b.db), so the
+// live intersection is a single JOIN against messages, mirroring
+// store.LiveMessagesWhere's predicate.
+func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
+	var n int64
+	if err := b.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT e.message_id)
+		   FROM embeddings e
+		   JOIN messages m ON m.id = e.message_id
+		  WHERE e.generation_id = $1
+		    AND m.embed_gen = $1
+		    AND `+store.LiveMessagesWhere("m", true),
+		int64(gen)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count embedded messages: %w", err)
+	}
+	return n, nil
 }
