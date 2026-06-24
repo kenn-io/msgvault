@@ -218,14 +218,25 @@ class LinkParser(html.parser.HTMLParser):
         self.assets: list[str] = []
         self.style_attrs: list[str] = []
         self.style_blocks: list[str] = []
+        self.fragment_nav_labels: list[tuple[str, str]] = []
         self._in_style = False
+        self._nav_label_href: str | None = None
+        self._nav_label_text: list[str] = []
+        self._nav_label_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr = {key: value or "" for key, value in attrs}
+        if self._nav_label_href is not None:
+            self._nav_label_depth += 1
         if "id" in attr:
             self.ids.add(attr["id"])
         if tag == "a" and "href" in attr:
             self.links.append(attr["href"])
+            classes = set(attr.get("class", "").split())
+            if "md-nav__link" in classes and attr["href"].startswith("#"):
+                self._nav_label_href = attr["href"]
+                self._nav_label_text = []
+                self._nav_label_depth = 1
         if tag in {"img", "script", "source"} and "src" in attr:
             self.assets.append(attr["src"])
         if tag in {"img", "source"} and "srcset" in attr:
@@ -242,10 +253,19 @@ class LinkParser(html.parser.HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._in_style:
             self.style_blocks.append(data)
+        if self._nav_label_href is not None:
+            self._nav_label_text.append(data)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "style":
             self._in_style = False
+        if self._nav_label_href is not None:
+            self._nav_label_depth -= 1
+            if self._nav_label_depth == 0:
+                label = " ".join("".join(self._nav_label_text).split())
+                self.fragment_nav_labels.append((self._nav_label_href, label))
+                self._nav_label_href = None
+                self._nav_label_text = []
 
 
 def parse_html(path: pathlib.Path) -> LinkParser:
@@ -336,6 +356,16 @@ def check_expected_asset_files() -> None:
                 )
 
 
+def check_fragment_nav_labels(current: pathlib.Path, parser: LinkParser) -> None:
+    for href, label in parser.fragment_nav_labels:
+        for token in label.split():
+            if len(token) > 30:
+                fail(
+                    "fragment nav label has a long unbroken token that can overflow "
+                    f"the sidebar: {label!r} ({href}) in {current}"
+                )
+
+
 def check_public_site_file_inventory() -> None:
     for path in SITE.rglob("*"):
         rel = path.relative_to(SITE)
@@ -421,6 +451,7 @@ def main() -> None:
         for css_text in parser.style_attrs + parser.style_blocks:
             for asset in css_url_refs(css_text):
                 check_local_asset(current, asset)
+        check_fragment_nav_labels(current, parser)
 
     print("built site checks passed")
 
