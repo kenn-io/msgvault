@@ -86,12 +86,20 @@ type EmbedJob struct {
 	// backstop interval deterministically. nil uses time.Now.
 	Now func() time.Time
 
-	// lastBackstop is the time the most recent backstop ran, used to gate
-	// the next one by BackstopInterval. In-memory (not persisted): a daemon
-	// restart resets it, so the first tick after a restart runs one extra
-	// backstop — harmless because RunBackstop is idempotent. Read/written
-	// only while the running lock is held, so it needs no separate guard.
-	lastBackstop time.Time
+	// lastBackstop maps each generation to the time its most recent backstop
+	// ran, used to gate the next one by BackstopInterval. Keyed per generation
+	// so that switching the target (e.g. the active gen recently backstopped,
+	// then a building gen selected) does not let one generation's recent
+	// backstop throttle a different generation's first backstop — which would
+	// otherwise delay recovery of a below-watermark straggler and block
+	// auto-activation for up to BackstopInterval. In-memory (not persisted): a
+	// daemon restart resets it, so the first tick after a restart runs one extra
+	// backstop per generation — harmless because RunBackstop is idempotent.
+	// Read/written only while the running lock is held, so it needs no separate
+	// guard. Lazily allocated in maybeRunBackstop so the zero value stays usable.
+	// Growth is negligible (a handful of generations over the tool's life), so
+	// no pruning is needed.
+	lastBackstop map[vector.GenerationID]time.Time
 
 	// running guards against overlapping Run calls (cron fires while a
 	// post-sync hook is still draining, etc). sync.Mutex.TryLock gives
@@ -194,10 +202,12 @@ func (j *EmbedJob) Run(ctx context.Context) {
 }
 
 // maybeRunBackstop runs a full watermark-ignoring backstop pass on gen when
-// BackstopInterval has elapsed since the last one, then records the time.
-// Called with the running lock held (from Run), so lastBackstop needs no
-// separate guard. A negative BackstopInterval disables it; zero defaults to
-// 24h. A backstop failure is logged, not fatal — the next interval retries.
+// BackstopInterval has elapsed since this generation's last one, then records
+// the time. The throttle is keyed per generation so a recent backstop of one
+// generation cannot suppress a different generation's first backstop. Called
+// with the running lock held (from Run), so lastBackstop needs no separate
+// guard. A negative BackstopInterval disables it; zero defaults to 24h. A
+// backstop failure is logged, not fatal — the next interval retries.
 func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID, log *slog.Logger) {
 	interval := j.BackstopInterval
 	if interval < 0 {
@@ -211,9 +221,9 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 		now = j.Now
 	}
 	t := now()
-	// First run (lastBackstop zero) always runs a backstop; thereafter gate
-	// by the interval.
-	if !j.lastBackstop.IsZero() && t.Sub(j.lastBackstop) < interval {
+	// First run for this generation (no recorded time) always runs a backstop;
+	// thereafter gate by the interval against this generation's own last run.
+	if last, ok := j.lastBackstop[gen]; ok && t.Sub(last) < interval {
 		return
 	}
 	res, err := j.Worker.RunBackstop(ctx, gen)
@@ -222,7 +232,10 @@ func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID
 		// Do not advance lastBackstop on failure so the next tick retries.
 		return
 	}
-	j.lastBackstop = t
+	if j.lastBackstop == nil {
+		j.lastBackstop = make(map[vector.GenerationID]time.Time)
+	}
+	j.lastBackstop[gen] = t
 	log.Info("embed backstop complete",
 		"gen", gen,
 		"scanned", res.Claimed,

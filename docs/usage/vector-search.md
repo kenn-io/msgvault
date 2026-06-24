@@ -420,9 +420,10 @@ curl -H "X-API-Key: ..." http://localhost:8080/api/v1/stats | jq .vector_search
 ```
 
 The `active_generation.message_count` should roughly match
-`total_messages`. `pending_embeddings_total` shows how many rows
-still need embedding (either because a rebuild is in flight or
-because recent syncs have not yet been drained).
+`total_messages`. `missing_embeddings_total` shows how many live
+messages still need embedding under the active (and building, if any)
+generation — either because a rebuild is in flight or because recent
+syncs have not yet been drained.
 
 ## What Gets Embedded
 

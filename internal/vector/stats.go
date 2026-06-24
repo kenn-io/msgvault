@@ -30,7 +30,7 @@ type StatsView struct {
 	// generations, of live messages still needing embedding for that
 	// generation (embed_gen <> gen), computed from the main DB rather than
 	// a queue table. Retired generations contribute zero. Replaces the
-	// former pending_embeddings_total under the scan-and-fill design.
+	// former pending-embeddings queue total under the scan-and-fill design.
 	MissingEmbeddingsTotal int64 `json:"missing_embeddings_total"`
 }
 

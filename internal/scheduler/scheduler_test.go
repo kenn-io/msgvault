@@ -483,6 +483,10 @@ type fakeRunner struct {
 	backstopResult embed.RunResult
 	runDoneOnce    sync.Once
 	runDone        chan struct{} // optional: closed after first RunOnce
+	// onBackstop, if set, is invoked from RunBackstop (after recording the
+	// call) to let tests model a side effect of the backstop pass, e.g. a
+	// straggler becoming covered. Called while r.mu is held.
+	onBackstop func()
 }
 
 func (r *fakeRunner) ReclaimStale(ctx context.Context) (int, error) {
@@ -511,6 +515,9 @@ func (r *fakeRunner) RunBackstop(ctx context.Context, gen vector.GenerationID) (
 	defer r.mu.Unlock()
 	r.backstopCalls++
 	r.lastBackstop = gen
+	if r.onBackstop != nil && r.backstopErr == nil {
+		r.onBackstop()
+	}
 	return r.backstopResult, r.backstopErr
 }
 
@@ -865,6 +872,81 @@ func TestEmbedJob_Run_BackstopFailureRetries(t *testing.T) {
 	job.Run(context.Background())
 	n, _ = runner.backstops()
 	assertpkg.Equal(t, 2, n, "tick 2: backstop retried after prior failure")
+}
+
+// TestEmbedJob_Run_BackstopThrottleIsPerGeneration reproduces the compound
+// precondition the per-generation throttle fixes: the throttle was recently
+// set for the ACTIVE generation (so a single job-global throttle WOULD skip
+// the next backstop), then pickTarget switches to a DIFFERENT building
+// generation that has a below-watermark straggler. With a global time.Time
+// throttle the building generation's first backstop would be suppressed for up
+// to BackstopInterval — leaving the straggler unrecovered and blocking
+// auto-activation (MissingCount stays > 0). With the per-generation map the
+// building generation has no recorded backstop, so it runs on this tick,
+// recovers the straggler, and the generation activates.
+//
+// This FAILS with the old global throttle (no backstop for gen 99 -> straggler
+// remains, no activation) and PASSES with the per-gen map.
+func TestEmbedJob_Run_BackstopThrottleIsPerGeneration(t *testing.T) {
+	assert := assertpkg.New(t)
+	building := &vector.Generation{ID: 99, State: vector.GenerationBuilding, Fingerprint: "m:768"}
+	backend := &fakeBackend{
+		active:   vector.Generation{ID: 5, State: vector.GenerationActive, Fingerprint: "m:768"},
+		building: building,
+	}
+	// The straggler is recovered by the backstop pass: coverage reports it
+	// missing UNTIL RunBackstop runs, then reports complete. This mirrors the
+	// production recovery path (RunBackstop re-embeds the sub-watermark
+	// straggler, after which MissingCount drops to 0 and the gen can activate).
+	cov := &recoverOnBackstopCoverage{}
+	runner := &fakeRunner{onBackstop: cov.markRecovered}
+	now := time.Now()
+	clock := &now
+	job := &EmbedJob{
+		Worker:           runner,
+		Backend:          backend,
+		Store:            cov,
+		Fingerprint:      "m:768",
+		BackstopInterval: 24 * time.Hour,
+		Now:              func() time.Time { return *clock },
+		// Seed only the ACTIVE generation's last backstop to "just now". A
+		// job-global throttle would read this and skip the building gen's
+		// backstop; the per-gen map must not, because gen 99 has no entry.
+		lastBackstop: map[vector.GenerationID]time.Time{5: now},
+	}
+
+	// Single tick: pickTarget prefers the building generation. Its backstop
+	// must run despite the active generation's recent (seeded) backstop.
+	job.Run(context.Background())
+
+	n, bsGen := runner.backstops()
+	assert.Equal(1, n, "building generation backstop must run despite active gen's recent backstop")
+	assert.Equal(vector.GenerationID(99), bsGen, "backstop targets the building generation")
+	assert.Equal([]vector.GenerationID{99}, backend.activations(),
+		"building generation activates after backstop recovers its straggler")
+}
+
+// recoverOnBackstopCoverage models the activation gate's view of a building
+// generation that has one below-watermark straggler: MissingCount reports 1
+// until the backstop pass recovers it (markRecovered), then 0.
+type recoverOnBackstopCoverage struct {
+	mu        sync.Mutex
+	recovered bool
+}
+
+func (c *recoverOnBackstopCoverage) markRecovered() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.recovered = true
+}
+
+func (c *recoverOnBackstopCoverage) MissingCount(context.Context, int64) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.recovered {
+		return 0, nil
+	}
+	return 1, nil
 }
 
 // fakeCoverage satisfies EmbedCoverage for the activation-gate tests:

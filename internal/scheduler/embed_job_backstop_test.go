@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -210,9 +211,10 @@ END;`)
 		Fingerprint:      "fake:4",
 		BackstopInterval: 24 * time.Hour,
 		Now:              func() time.Time { return *clock },
-		// Seed lastBackstop to "just now" so the first Run is WITHIN the
-		// interval and exercises the RunOnce-only path before we elapse it.
-		lastBackstop: now,
+		// Seed this generation's last backstop to "just now" so the first Run
+		// is WITHIN the interval and exercises the RunOnce-only path before we
+		// elapse it.
+		lastBackstop: map[vector.GenerationID]time.Time{gen: now},
 	}
 
 	// Tick A (within interval): RunOnce only. The sub-watermark straggler is

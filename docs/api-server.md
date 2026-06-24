@@ -109,15 +109,16 @@ the state of the index.
       "started_at": "2026-04-19T09:02:10Z",
       "progress": { "done": 8200, "total": 142857 }
     },
-    "pending_embeddings_total": 134657
+    "missing_embeddings_total": 134657
   }
 }
 ```
 
 `active_generation` is always present in the object (null until the
 first build completes). `building_generation` is omitted when no
-rebuild is in flight. `pending_embeddings_total` is the sum of rows
-still pending across the active and building generations. See
+rebuild is in flight. `missing_embeddings_total` is the sum, across the
+active and building generations, of live messages still needing embedding
+under each generation. See
 [Vector Search](/usage/vector-search/) for the end-to-end workflow.
 
 ---
