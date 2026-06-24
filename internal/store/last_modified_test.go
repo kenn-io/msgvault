@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,107 @@ func TestLastModified_BodyInsertBumpsParent(t *testing.T) {
 
 	got := readLM(t, st, id)
 	assert.NotEqual(t, base, got, "message_bodies INSERT must bump parent last_modified")
+}
+
+// TestLastModified_UpgradePathMissingColumn covers the universal SQLite
+// upgrade path for the last_modified watermark: a pre-existing archive whose
+// messages table predates the column. On such a DB, InitSchema runs schema.sql
+// FIRST — which executes `CREATE TRIGGER IF NOT EXISTS trg_messages_last_modified`,
+// a trigger that REFERENCES last_modified — BEFORE LegacyColumnMigrations adds
+// the column. This only works because SQLite resolves a trigger body's column
+// references lazily (at fire time, not create time). After the column is added,
+// InitSchema's one-shot backfill stamps the pre-existing NULL rows.
+//
+// Every existing SQLite user hits this exact path on upgrade, yet the other
+// last_modified trigger tests all use a fresh DB where the column already
+// exists when the trigger is created — so none of them exercise the
+// trigger-before-column ordering. This test reconstructs the precondition by
+// dropping the column (and the triggers that reference it, which SQLite would
+// otherwise refuse to leave dangling) from a real schema, then re-runs the
+// production InitSchema and asserts (a) it succeeds, (b) the column is added
+// and backfilled to a non-NULL value for the pre-existing rows, and (c) the
+// re-created trigger then functions as the CAS watermark.
+//
+// SQLite-only: it relies on ALTER TABLE DROP COLUMN and SQLite's deferred
+// trigger column resolution. PostgreSQL's ADD COLUMN ... DEFAULT
+// CURRENT_TIMESTAMP backfills automatically and its triggers are created
+// after the column, so the upgrade ordering risk does not apply there.
+func TestLastModified_UpgradePathMissingColumn(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite ALTER TABLE DROP COLUMN + deferred trigger column resolution")
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dbPath := filepath.Join(t.TempDir(), "upgrade.db")
+
+	// 1. Build a real schema, seed two messages (with bodies), then strip the
+	//    last_modified column to reproduce a pre-last_modified archive.
+	seed, err := store.OpenForTest(dbPath)
+	require.NoError(err, "open seed store")
+	require.NoError(seed.InitSchema(), "seed InitSchema")
+	_, err = seed.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'alice@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject)
+VALUES (1, 1, 1, 'm1', 'email', 'original one'),
+       (2, 1, 1, 'm2', 'email', 'original two');
+INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, 'body two');
+`)
+	require.NoError(err, "seed rows")
+
+	// SQLite refuses to DROP a column while a trigger references it, so drop the
+	// three last_modified triggers first; the resulting shape (messages without
+	// last_modified, no last_modified triggers) is exactly what an archive built
+	// before the column looks like.
+	for _, trg := range []string{
+		"trg_messages_last_modified",
+		"trg_message_bodies_last_modified_upd",
+		"trg_message_bodies_last_modified_ins",
+	} {
+		_, err = seed.DB().Exec(`DROP TRIGGER IF EXISTS ` + trg)
+		require.NoErrorf(err, "drop trigger %s", trg)
+	}
+	_, err = seed.DB().Exec(`ALTER TABLE messages DROP COLUMN last_modified`)
+	require.NoError(err, "drop last_modified to simulate pre-upgrade schema")
+
+	var preCols int
+	require.NoError(seed.DB().QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'last_modified'`).Scan(&preCols),
+		"check column dropped")
+	require.Equal(0, preCols, "precondition: messages must lack last_modified before upgrade")
+	require.NoError(seed.Close(), "close seed store")
+
+	// 2. Reopen and run the PRODUCTION upgrade entry point. (a) It must succeed:
+	//    schema.sql creates trg_messages_last_modified (referencing last_modified)
+	//    before LegacyColumnMigrations adds the column.
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err, "reopen upgraded store")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema(),
+		"InitSchema must succeed on a messages table lacking last_modified")
+
+	// (b) The column now exists and the pre-existing rows were backfilled to a
+	//     non-NULL value (a NULL CAS token would loop "needs embedding" forever).
+	var postCols int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'last_modified'`).Scan(&postCols),
+		"check column added")
+	assert.Equal(1, postCols, "InitSchema must add last_modified")
+
+	var nullCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE last_modified IS NULL`).Scan(&nullCount),
+		"count NULL last_modified")
+	assert.Equal(0, nullCount, "backfill must populate last_modified for pre-existing rows")
+
+	// (c) The re-created trigger functions: a content UPDATE bumps last_modified.
+	//     Baseline to a fixed far-past value so the bump is an unambiguous change.
+	base := baselineLM(t, st, 1)
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed one", int64(1))
+	require.NoError(err, "update subject after upgrade")
+	got := readLM(t, st, 1)
+	assert.NotEqual(base, got,
+		"re-created trigger must bump last_modified on UPDATE after upgrade")
 }
 
 // TestLastModified_NoInfiniteRecursion is a liveness check: a message UPDATE

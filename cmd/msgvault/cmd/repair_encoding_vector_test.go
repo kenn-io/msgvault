@@ -31,7 +31,7 @@ func readEmbedGen(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 }
 
 // TestRepairResetEmbeddings_OpensBackendBeforeResettingEmbedGen is the FIX A
-// regression guard (review MEDIUM): repair-encoding must OPEN the vector backend
+// regression guard: repair-encoding must OPEN the vector backend
 // (which runs the one-time upgrade backfill as a side effect) BEFORE it clears
 // embed_gen on the repaired messages.
 //
