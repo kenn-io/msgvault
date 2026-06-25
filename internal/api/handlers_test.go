@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1313,17 +1314,14 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	assertpkg.Equal(t, "invalid_view_type", errResp["error"], "error")
 }
 
-// TestSearchRejectsMessageTypeFilter guards against silently dropping
-// the message_type filter. The fast/deep query engine paths do not
-// honor MessageType, so accepting it there would let
-// /search/fast?q=hello&message_type=sms return unscoped results. Reject
-// until those routes gain end-to-end message_type support.
-func TestSearchRejectsMessageTypeFilter(t *testing.T) {
+// TestSearchRejectsMessageTypeFilterParam guards against silently dropping
+// the message_type filter parameter. Fast/deep search support the parsed
+// message_type: operator, but parseMessageFilter's parameter form is still
+// list-search-only and must not be accepted as a no-op.
+func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/search/fast?q=hello&message_type=sms",
 		"/api/v1/search/deep?q=hello&message_type=sms",
-		"/api/v1/search/fast?q=message_type:sms%20hello",
-		"/api/v1/search/deep?q=message_type:sms%20hello",
 	} {
 		t.Run(path, func(t *testing.T) {
 			engine := &querytest.MockEngine{}
@@ -1340,6 +1338,94 @@ func TestSearchRejectsMessageTypeFilter(t *testing.T) {
 			requirepkg.Equal(t, "unsupported_filter", errResp["error"], "error")
 		})
 	}
+}
+
+func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "fast", path: "/api/v1/search/fast?q=message_type:sms%20hello"},
+		{name: "deep", path: "/api/v1/search/deep?q=message_type:sms%20hello"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &querytest.MockEngine{
+				Stats: &query.TotalStats{},
+				SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					assertpkg.Equal(t, []string{"sms"}, q.MessageTypes, "fast MessageTypes")
+					return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+				},
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					assertpkg.Equal(t, []string{"sms"}, q.MessageTypes, "deep MessageTypes")
+					return nil, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		})
+	}
+}
+
+func TestRemoteSearchParsedMessageTypeThroughAPI(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := &querytest.MockEngine{
+		SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			assert.Equal([]string{"sms"}, q.MessageTypes, "MessageTypes")
+			assert.Equal([]string{"hello"}, q.TextTerms, "TextTerms")
+			return []query.MessageSummary{{
+				ID:          7,
+				Subject:     "hello",
+				MessageType: "sms",
+				SentAt:      time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			}}, nil
+		},
+		SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+			assert.Equal([]string{"sms"}, q.MessageTypes, "fast MessageTypes")
+			assert.Equal([]string{"hello"}, q.TextTerms, "fast TextTerms")
+			return &query.SearchFastResult{
+				Messages: []query.MessageSummary{{
+					ID:          8,
+					Subject:     "hello fast",
+					MessageType: "sms",
+					SentAt:      time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+				}},
+				TotalCount: 1,
+				Stats:      &query.TotalStats{MessageCount: 1},
+			}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	httpSrv := httptest.NewServer(srv.Router())
+	defer httpSrv.Close()
+
+	remoteEngine, err := remote.NewEngine(remote.Config{
+		URL:           httpSrv.URL,
+		AllowInsecure: true,
+	})
+	require.NoError(err, "NewEngine")
+
+	results, err := remoteEngine.Search(context.Background(), &search.Query{
+		TextTerms:    []string{"hello"},
+		MessageTypes: []string{"sms"},
+	}, 10, 0)
+	require.NoError(err, "remote Search")
+	require.Len(results, 1, "results")
+	assert.Equal("sms", results[0].MessageType, "MessageType")
+
+	fastResults, err := remoteEngine.SearchFast(context.Background(), &search.Query{
+		TextTerms:    []string{"hello"},
+		MessageTypes: []string{"sms"},
+	}, query.MessageFilter{}, 10, 0)
+	require.NoError(err, "remote SearchFast")
+	require.Len(fastResults, 1, "fast results")
+	assert.Equal("sms", fastResults[0].MessageType, "fast MessageType")
 }
 
 func TestHandleDeepSearch(t *testing.T) {

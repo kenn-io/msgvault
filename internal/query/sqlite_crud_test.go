@@ -1058,6 +1058,21 @@ func TestGetTotalStatsWithSearchQuery(t *testing.T) {
 	assert.Equal(int64(10000+5000), stats.AttachmentSize, "SearchQuery=Hello attachment size")
 }
 
+func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	_, err := env.DB.Exec(`UPDATE messages SET message_type = ? WHERE id = ?`, "sms", int64(2))
+	requirepkg.NoError(t, err, "mark message as sms")
+
+	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "message_type:sms Hello"})
+
+	assert.Equal(int64(1), stats.MessageCount, "SearchQuery=message_type:sms messages")
+	assert.Equal(int64(2000), stats.TotalSize, "SearchQuery=message_type:sms total size")
+	assert.Equal(int64(2), stats.AttachmentCount, "SearchQuery=message_type:sms attachments")
+	assert.Equal(int64(10000+5000), stats.AttachmentSize, "SearchQuery=message_type:sms attachment size")
+}
+
 // TestGetTotalStatsWithSearchQuery_FromFilter verifies that from: search
 // filters are applied correctly to stats.
 func TestGetTotalStatsWithSearchQuery_FromFilter(t *testing.T) {

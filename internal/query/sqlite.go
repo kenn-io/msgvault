@@ -1026,8 +1026,10 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	var searchConditions []string
 	var searchArgs []any
 	var searchFTSJoin string
+	hasSearchMessageTypes := false
 	if opts.SearchQuery != "" {
 		q := search.Parse(opts.SearchQuery)
+		hasSearchMessageTypes = len(q.MessageTypes) > 0
 		searchConditions, searchArgs, searchFTSJoin = e.buildSearchQueryParts(ctx, q)
 	}
 
@@ -1038,10 +1040,10 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	// Restrict to email messages only; NULL and '' handle pre-message_type data.
 	// Exclude rows soft-deleted by deduplicate; gate source-deleted on
 	// opts.HideDeletedFromSource via the helper.
-	conditions = append(conditions,
-		emailOnlyFilterM,
-		store.LiveMessagesWhere("m", opts.HideDeletedFromSource),
-	)
+	if !hasSearchMessageTypes {
+		conditions = append(conditions, emailOnlyFilterM)
+	}
+	conditions = append(conditions, store.LiveMessagesWhere("m", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(
 		conditions, args, "m.", opts.SourceID, opts.SourceIDs,
 	)

@@ -1162,10 +1162,11 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	var args []any
 
 	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	conditions = append(conditions,
-		emailOnlyFilterMsg,
-		store.LiveMessagesWhere("msg", opts.HideDeletedFromSource),
-	)
+	hasSearchMessageTypes := opts.SearchQuery != "" && len(search.Parse(opts.SearchQuery).MessageTypes) > 0
+	if !hasSearchMessageTypes {
+		conditions = append(conditions, emailOnlyFilterMsg)
+	}
+	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", opts.SourceID, opts.SourceIDs)
 
 	if opts.WithAttachmentsOnly {
