@@ -1497,6 +1497,15 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 		}
 	}
 
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, strings.ToLower(typ))
+		}
+		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
+	}
+
 	// Has attachment filter
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))

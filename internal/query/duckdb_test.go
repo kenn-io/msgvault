@@ -41,6 +41,33 @@ func newSQLiteEngine(t *testing.T) *DuckDBEngine {
 	return engine
 }
 
+func newMessageTypeParquetEngine(t *testing.T) *DuckDBEngine {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	aliceID := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bobID := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	smsID := b.AddMessage(MessageOpt{
+		Subject:      "lunch plan",
+		Snippet:      "sushi lunch details",
+		MessageType:  "sms",
+		SentAt:       time.Date(2024, 4, 10, 10, 0, 0, 0, time.UTC),
+		SizeEstimate: 321,
+	})
+	emailID := b.AddMessage(MessageOpt{
+		Subject:      "lunch receipt",
+		Snippet:      "email lunch details",
+		MessageType:  "email",
+		SentAt:       time.Date(2024, 4, 11, 10, 0, 0, 0, time.UTC),
+		SizeEstimate: 999,
+	})
+	b.AddFrom(smsID, aliceID, "Alice")
+	b.AddTo(smsID, bobID, "Bob")
+	b.AddFrom(emailID, aliceID, "Alice")
+	b.AddTo(emailID, bobID, "Bob")
+	return b.BuildEngine()
+}
+
 // searchFast is a test helper that parses a query string and calls SearchFast.
 func searchFast(t *testing.T, engine *DuckDBEngine, queryStr string, filter MessageFilter) []MessageSummary {
 	t.Helper()
@@ -1121,6 +1148,54 @@ func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
 	require.NoError(err, "GetTotalStats")
 	assert.Equal(int64(1), stats.MessageCount, "MessageCount")
 	assert.Equal(int64(2000), stats.TotalSize, "TotalSize")
+}
+
+func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := newMessageTypeParquetEngine(t)
+	ctx := context.Background()
+
+	filterOnly, err := engine.SearchFast(ctx, search.Parse("message_type:sms"), MessageFilter{}, 100, 0)
+	require.NoError(err, "SearchFast message_type only")
+	require.Len(filterOnly, 1, "filter-only message_type search")
+	assert.Equal("sms", filterOnly[0].MessageType)
+	assert.Equal("lunch plan", filterOnly[0].Subject)
+
+	withText, err := engine.SearchFast(ctx, search.Parse("message_type:sms lunch"), MessageFilter{}, 100, 0)
+	require.NoError(err, "SearchFast message_type with text")
+	require.Len(withText, 1, "message_type should scope text search")
+	assert.Equal("sms", withText[0].MessageType)
+	assert.Equal("lunch plan", withText[0].Subject)
+}
+
+func TestDuckDBEngine_GetTotalStatsMessageTypeSearch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := newMessageTypeParquetEngine(t)
+
+	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{
+		SearchQuery: "message_type:sms",
+	})
+	require.NoError(err, "GetTotalStats")
+
+	assert.Equal(int64(1), stats.MessageCount, "message count")
+	assert.Equal(int64(321), stats.TotalSize, "total size")
+}
+
+func TestDuckDBEngine_AggregateMessageTypeSearch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := newMessageTypeParquetEngine(t)
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "message_type:sms"
+
+	rows, err := engine.Aggregate(context.Background(), ViewTime, opts)
+	require.NoError(err, "Aggregate")
+	require.Len(rows, 1, "rows")
+
+	assert.Equal(int64(1), rows[0].Count, "count")
+	assert.Equal(int64(321), rows[0].TotalSize, "total size")
 }
 
 // TestDuckDBEngine_ListMessages_DateFilter verifies that After/Before date filters
@@ -3266,6 +3341,13 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 		assertpkg.Equal(t, "Stale Hello", results[0].Subject)
 	})
 
+	t.Run("SearchFastMessageTypeEmail", func(t *testing.T) {
+		q := search.Parse("message_type:email Stale")
+		results, err := engine.SearchFast(ctx, q, MessageFilter{}, 100, 0)
+		requirepkg.NoError(t, err, "SearchFast message_type:email with stale Parquet schema")
+		requirepkg.Len(t, results, 2)
+	})
+
 	t.Run("SearchFastCount", func(t *testing.T) {
 		q := search.Parse("Stale")
 		count, err := engine.SearchFastCount(ctx, q, MessageFilter{})
@@ -3282,6 +3364,12 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 	t.Run("GetTotalStats", func(t *testing.T) {
 		stats, err := engine.GetTotalStats(ctx, StatsOptions{})
 		requirepkg.NoError(t, err, "GetTotalStats with stale Parquet schema")
+		assertpkg.Equal(t, int64(2), stats.MessageCount)
+	})
+
+	t.Run("GetTotalStatsMessageTypeEmail", func(t *testing.T) {
+		stats, err := engine.GetTotalStats(ctx, StatsOptions{SearchQuery: "message_type:email"})
+		requirepkg.NoError(t, err, "GetTotalStats message_type:email with stale Parquet schema")
 		assertpkg.Equal(t, int64(2), stats.MessageCount)
 	})
 

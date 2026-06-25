@@ -118,6 +118,11 @@ func translateVectorErr(err error) *mcp.CallToolResult {
 		return mcp.NewToolResultError(
 			"index_building: the initial vector index is still being built",
 		)
+	case errors.Is(err, vector.ErrIndexScopeMismatch):
+		return mcp.NewToolResultError(
+			"index_scope_mismatch: the vector index scope does not cover this query; " +
+				"add a matching message_type filter or rebuild embeddings for the requested scope",
+		)
 	case errors.Is(err, vector.ErrNoActiveGeneration):
 		return mcp.NewToolResultError(
 			"no_active_generation: vector search has no active index yet; " +
@@ -512,6 +517,25 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	active, err := h.backend.ActiveGeneration(ctx)
+	if err != nil {
+		if r := translateVectorErr(err); r != nil {
+			return r, nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
+	}
+	if h.vectorCfg.Enabled {
+		fingerprint := h.vectorCfg.GenerationFingerprint()
+		if fingerprint != "" && active.Fingerprint != fingerprint {
+			err := fmt.Errorf("%w: active=%q configured=%q",
+				vector.ErrIndexStale, active.Fingerprint, fingerprint)
+			if r := translateVectorErr(err); r != nil {
+				return r, nil
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
+		}
+	}
+
 	seed, err := h.backend.LoadVector(ctx, seedID)
 	if err != nil {
 		if r := translateVectorErr(err); r != nil {
@@ -520,17 +544,19 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(fmt.Sprintf("load seed vector: %v", err)), nil
 	}
 
-	active, err := h.backend.ActiveGeneration(ctx)
-	if err != nil {
-		if r := translateVectorErr(err); r != nil {
-			return r, nil
+	if h.vectorCfg.Enabled {
+		scope := h.vectorCfg.Embed.Scope.BuildScope()
+		if !scope.IsEmpty() {
+			filter.MessageTypes = append([]string(nil), scope.MessageTypes...)
 		}
-		return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
 	}
 
 	// +1 so we can drop the seed itself from results without coming up short.
 	hits, err := h.backend.Search(ctx, active.ID, seed, limit+1, filter)
 	if err != nil {
+		if r := translateVectorErr(err); r != nil {
+			return r, nil
+		}
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 

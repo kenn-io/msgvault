@@ -79,6 +79,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:            mainDB,
 			Dimension:     cfg.Vector.Embeddings.Dimension,
+			BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
 			SkipExtension: cfg.Vector.SkipExtensionCreate,
 		})
 		if err != nil {
@@ -110,10 +111,11 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 		}
 
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:      vecDBPath,
-			MainPath:  dsn,
-			Dimension: cfg.Vector.Embeddings.Dimension,
-			MainDB:    mainDB,
+			Path:       vecDBPath,
+			MainPath:   dsn,
+			Dimension:  cfg.Vector.Embeddings.Dimension,
+			MainDB:     mainDB,
+			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 		})
 		if err != nil {
 			_ = mainDB.Close()
@@ -147,6 +149,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 		KPerSignal:          cfg.Vector.Search.KPerSignal,
 		SubjectBoost:        cfg.Vector.Search.SubjectBoost,
 		Rebind:              dialect.Rebind,
+		BuildScope:          cfg.Vector.Embed.Scope.BuildScope(),
 	})
 
 	q := search.Parse(queryStr)

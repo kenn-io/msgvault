@@ -148,6 +148,36 @@ func TestFusedSearch_FTSOnly(t *testing.T) {
 	}
 }
 
+func TestFusedSearch_MessageTypeFilter(t *testing.T) {
+	f := newFusedFixture(t)
+	_, err := f.db.ExecContext(f.ctx, `ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`)
+	require.NoError(t, err, "add message_type")
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	f.seedMsg(t, 1, "lunch plan", "sms lunch details", 10, base, false)
+	f.seedMsg(t, 2, "lunch receipt", "email lunch details", 10, base.Add(time.Hour), false)
+	f.seedMsg(t, 3, "dinner plan", "sms dinner details", 10, base.Add(2*time.Hour), false)
+	_, err = f.db.ExecContext(f.ctx, `UPDATE messages SET message_type = CASE id WHEN 2 THEN 'email' ELSE 'sms' END`)
+	require.NoError(t, err, "seed message_type")
+	f.embedAll(t, map[int64][]float32{
+		1: unitVec(4, 0),
+		2: unitVec(4, 1),
+		3: unitVec(4, 2),
+	})
+
+	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		FTSTerms:   []string{"lunch"},
+		Generation: f.gen,
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
+	})
+	require.NoError(t, err, "FusedSearch")
+	assert.False(t, saturated, "saturated should be false")
+	require.Len(t, hits, 1, "message_type filter should exclude email FTS hits; hits=%+v", hits)
+	assert.Equal(t, int64(1), hits[0].MessageID)
+}
+
 func TestFusedSearch_ANNOnly(t *testing.T) {
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{

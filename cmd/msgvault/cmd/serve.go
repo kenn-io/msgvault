@@ -206,6 +206,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Store:            s,
 			Fingerprint:      vf.Cfg.GenerationFingerprint(),
 			BackstopInterval: vf.Cfg.Embed.BackstopInterval,
+			BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
 			Log:              logger,
 		}
 		schedule := cfg.Vector.Embed.Schedule.Cron

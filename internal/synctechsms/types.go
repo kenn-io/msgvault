@@ -160,4 +160,5 @@ type ImportSummary struct {
 	MMSImported         int
 	CallsImported       int
 	AttachmentsImported int
+	MessageIDs          []int64
 }

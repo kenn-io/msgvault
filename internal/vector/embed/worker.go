@@ -64,6 +64,7 @@ type WorkerDeps struct {
 	Store         WorkStore
 	Client        EmbeddingClient
 	Preprocess    PreprocessConfig
+	BuildScope    vector.BuildScope
 	MaxInputChars int
 	BatchSize     int
 	// beforeSkipStamp is a test hook for read-to-stamp race coverage.
@@ -309,7 +310,7 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			return res, fmt.Errorf("RunOnce: %w", err)
 		}
 		batchStart := time.Now()
-		ids, err := w.deps.Store.ScanForEmbedding(ctx, int64(gen), afterID, w.deps.BatchSize)
+		ids, err := w.scanForEmbedding(ctx, int64(gen), afterID)
 		if err != nil {
 			return res, fmt.Errorf("scan for embedding: %w", err)
 		}
@@ -550,6 +551,20 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 		}
 		w.reportProgress(completedRows, batchProcessed, batchChars, time.Since(batchStart))
 	}
+}
+
+func (w *Worker) scanForEmbedding(ctx context.Context, gen int64, afterID int64) ([]int64, error) {
+	scope := vector.NewBuildScope(w.deps.BuildScope.MessageTypes)
+	if scope.IsEmpty() {
+		return w.deps.Store.ScanForEmbedding(ctx, gen, afterID, w.deps.BatchSize)
+	}
+	scoped, ok := w.deps.Store.(interface {
+		ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string) ([]int64, error)
+	})
+	if !ok {
+		return nil, errors.New("work store does not support scoped embedding scans")
+	}
+	return scoped.ScanForEmbeddingScoped(ctx, gen, afterID, w.deps.BatchSize, scope.MessageTypes)
 }
 
 // advanceWatermark persists the per-gen forward-scan cursor to id after a

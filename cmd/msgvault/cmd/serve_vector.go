@@ -76,6 +76,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:          mainDB,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
+			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
 			SkipMigrate: readOnly,
 			// ReadOnly MUST track readOnly here: this is the MCP read-only
 			// path (store.OpenReadOnly). When set, Open performs no writes —
@@ -103,10 +104,11 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:      vecPath,
-			MainPath:  mainPath,
-			Dimension: cfg.Vector.Embeddings.Dimension,
-			MainDB:    mainDB,
+			Path:       vecPath,
+			MainPath:   mainPath,
+			Dimension:  cfg.Vector.Embeddings.Dimension,
+			MainDB:     mainDB,
+			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 			// Honor the read-only signal on SQLite too: when mainDB is a
 			// query-only handle (MCP), skip the embed_gen upgrade backfill,
 			// which would write through it. Migrate still runs (vectors.db
@@ -146,6 +148,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		},
 		MaxInputChars: cfg.Vector.Embeddings.MaxInputChars,
 		BatchSize:     cfg.Vector.Embeddings.BatchSize,
+		BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
 		// Rebind makes the worker's body-fetch + watermark SQL run on pgx.
 		// SQLiteDialect.Rebind is identity, so the SQLite path is unchanged.
 		Rebind:           dialect.Rebind,
@@ -162,7 +165,8 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		// placeholders. On PG those must become $N or pgx rejects them, so
 		// the serve/MCP hybrid engine (shared via vectorFeatures.HybridEngine)
 		// carries the dialect's Rebind. SQLite's Rebind is identity.
-		Rebind: dialect.Rebind,
+		Rebind:     dialect.Rebind,
+		BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 	})
 
 	// No sync-time enqueue: newly-persisted messages get embed_gen = NULL

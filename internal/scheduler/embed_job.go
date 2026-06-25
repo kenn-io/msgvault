@@ -34,6 +34,10 @@ type EmbedCoverage interface {
 	MissingCount(ctx context.Context, activeGen int64) (int64, error)
 }
 
+type ScopedEmbedCoverage interface {
+	MissingCountScoped(ctx context.Context, activeGen int64, messageTypes []string) (int64, error)
+}
+
 // Compile-time check that the production worker satisfies EmbedRunner.
 var _ EmbedRunner = (*embed.Worker)(nil)
 
@@ -81,6 +85,10 @@ type EmbedJob struct {
 	// incremental scan skips. Zero uses defaultBackstopInterval (24h).
 	// A negative value disables the auto-backstop entirely.
 	BackstopInterval time.Duration
+
+	// BuildScope limits coverage checks to the same message universe the
+	// worker scans for this generation. Empty means the full live corpus.
+	BuildScope vector.BuildScope
 
 	// Now returns the current time; overridable in tests to drive the
 	// backstop interval deterministically. nil uses time.Now.
@@ -182,7 +190,7 @@ func (j *EmbedJob) Run(ctx context.Context) {
 			"gen", target)
 		return
 	}
-	missing, err := j.Store.MissingCount(ctx, int64(target))
+	missing, err := j.missingCount(ctx, target)
 	if err != nil {
 		log.Warn("embed: coverage count after run failed", "gen", target, "error", err)
 		return
@@ -199,6 +207,17 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 	log.Info("embed: building generation activated", "gen", target)
+}
+
+func (j *EmbedJob) missingCount(ctx context.Context, target vector.GenerationID) (int64, error) {
+	scope := vector.NewBuildScope(j.BuildScope.MessageTypes)
+	if scope.IsEmpty() {
+		return j.Store.MissingCount(ctx, int64(target))
+	}
+	if scoped, ok := j.Store.(ScopedEmbedCoverage); ok {
+		return scoped.MissingCountScoped(ctx, int64(target), scope.MessageTypes)
+	}
+	return 0, errors.New("embed coverage store does not support scoped missing counts")
 }
 
 // maybeRunBackstop runs a full watermark-ignoring backstop pass on gen when

@@ -1100,6 +1100,31 @@ func TestGetTotalStatsWithSearchQuery_Combined(t *testing.T) {
 	assertpkg.Equal(t, int64(2000), stats.TotalSize, "SearchQuery+WithAttachments total size")
 }
 
+func TestSearchFastWithStats_MessageTypeStats(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	smsID := env.AddMessage(dbtest.MessageOpts{
+		Subject:      "Lunch via SMS",
+		SentAt:       "2024-04-01 10:00:00",
+		SizeEstimate: 321,
+	})
+	_, err := env.DB.Exec(`UPDATE messages SET message_type = 'sms' WHERE id = ?`, smsID)
+	require.NoError(err, "set sms message_type")
+
+	q := search.Parse("message_type:sms")
+	result, err := env.Engine.SearchFastWithStats(env.Ctx, q, "message_type:sms", MessageFilter{}, ViewSenders, 100, 0)
+	require.NoError(err, "SearchFastWithStats")
+	require.NotNil(result.Stats, "stats")
+
+	require.Len(result.Messages, 1, "messages")
+	assert.Equal(smsID, result.Messages[0].ID, "message id")
+	assert.Equal(int64(1), result.TotalCount, "total count")
+	assert.Equal(int64(1), result.Stats.MessageCount, "stats message count")
+	assert.Equal(int64(321), result.Stats.TotalSize, "stats total size")
+}
+
 func TestGetMessageRaw(t *testing.T) {
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")

@@ -407,7 +407,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		conv AS (
 			%s
 		)
-	`, msgCTE,
+		`, msgCTE,
 		e.parquetPath("message_recipients"),
 		pCTE,
 		e.parquetPath("labels"),
@@ -415,6 +415,45 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		e.parquetPath("attachments"),
 		srcCTE,
 		convCTE)
+}
+
+func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
+	var conditions []string
+	var args []any
+	var exact []string
+	includeEmail := false
+
+	for _, typ := range messageTypes {
+		typ = strings.TrimSpace(strings.ToLower(typ))
+		if typ == "" {
+			continue
+		}
+		if typ == "email" {
+			includeEmail = true
+			continue
+		}
+		exact = append(exact, typ)
+	}
+
+	col := alias + ".message_type"
+	if includeEmail {
+		conditions = append(conditions,
+			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))
+		args = append(args, "email")
+	}
+	if len(exact) > 0 {
+		placeholders := make([]string, len(exact))
+		for i, typ := range exact {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions,
+			fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ",")))
+	}
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return "(" + strings.Join(conditions, " OR ") + ")", args
 }
 
 // escapeILIKE escapes ILIKE wildcard characters (% and _) in user input.
@@ -485,6 +524,14 @@ func (e *DuckDBEngine) buildAggregateSearchConditions(searchQuery string, keyCol
 func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns ...string) ([]string, []any) {
 	var conditions []string
 	var args []any
+
+	if len(q.MessageTypes) > 0 {
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+	}
 
 	// from: filter - match sender email
 	for _, from := range q.FromAddrs {
@@ -578,12 +625,11 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		args = append(args, *q.SmallerThan)
 	}
 	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
 		}
-		conditions = append(conditions, fmt.Sprintf("msg.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	return conditions, args
@@ -882,8 +928,11 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	}
 
 	if filter.MessageType != "" {
-		conditions = append(conditions, "msg.message_type = ?")
-		args = append(args, filter.MessageType)
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", []string{filter.MessageType})
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
 	}
 
 	// Sender + sender-name filters - check both message_recipients (email)
@@ -1160,10 +1209,14 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 
 	var conditions []string
 	var args []any
+	hasExplicitMessageTypes := false
+	if opts.SearchQuery != "" {
+		q := search.Parse(opts.SearchQuery)
+		hasExplicitMessageTypes = len(q.MessageTypes) > 0
+	}
 
 	// Restrict to email messages only; NULL and '' handle pre-message_type data.
-	hasSearchMessageTypes := opts.SearchQuery != "" && len(search.Parse(opts.SearchQuery).MessageTypes) > 0
-	if !hasSearchMessageTypes {
+	if !hasExplicitMessageTypes {
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
 	conditions = append(conditions, store.LiveMessagesWhere("msg", opts.HideDeletedFromSource))
@@ -1638,6 +1691,14 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		}
 	}
 
+	if len(q.MessageTypes) > 0 {
+		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+	}
+
 	// Has attachment filter
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions, "m.has_attachments = 1")
@@ -1663,12 +1724,11 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		args = append(args, *q.SmallerThan)
 	}
 	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
+		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
 		}
-		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Full-text search: use ILIKE fallback (FTS5 not available via sqlite_scan)
@@ -1702,7 +1762,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
 			m.attachment_count,
-			m.deleted_from_source_at
+			m.deleted_from_source_at,
+			COALESCE(m.message_type, '')
 		FROM sqlite_db.messages m
 		LEFT JOIN sqlite_db.message_recipients mr_sender ON mr_sender.message_id = m.id AND mr_sender.recipient_type = 'from'
 		LEFT JOIN sqlite_db.participants p_sender ON p_sender.id = mr_sender.participant_id
@@ -1740,6 +1801,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			&msg.HasAttachments,
 			&msg.AttachmentCount,
 			&deletedAt,
+			&msg.MessageType,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -2460,11 +2522,17 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	var args []any
 
 	// Apply basic filter conditions (ignoring join flags for search - we handle those differently)
-	if len(q.MessageTypes) == 0 {
+	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
+	if len(q.MessageTypes) > 0 {
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
+	} else {
 		// Restrict to email messages only; NULL and '' handle pre-message_type data.
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}
-	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -2617,12 +2685,11 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		args = append(args, *q.SmallerThan)
 	}
 	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
 		}
-		conditions = append(conditions, fmt.Sprintf("msg.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Account filter
