@@ -494,6 +494,50 @@ func TestImportDYI_AttachmentStorageHashlessReimportRemovesStaleRealHashRow(t *t
 	assert.Empty(storagePath, "storage_path")
 }
 
+func TestImportDYI_AttachmentStorageFailureDoesNotAddPlaceholderBesideStoredAttachment(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	attachDir := t.TempDir()
+	opts := ImportOptions{
+		Me:             "test.user@facebook.messenger",
+		RootDir:        "testdata/json_with_media",
+		Format:         formatAuto,
+		AttachmentsDir: attachDir,
+		NoResume:       true,
+	}
+	_, err := ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var messageID int64
+	err = st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'inbox/bob_XYZ789__0'").Scan(&messageID)
+	require.NoError(err, "select imported message id")
+	png, err := os.ReadFile("testdata/json_with_media/your_activity_across_facebook/messages/inbox/bob_XYZ789/photos/tiny.png")
+	require.NoError(err)
+	wantHash := fmt.Sprintf("%x", sha256.Sum256(png))
+
+	badAttachRoot := filepath.Join(t.TempDir(), "attachments-file")
+	require.NoError(os.WriteFile(badAttachRoot, []byte("not a directory"), 0600), "write bad attachment root")
+	opts.AttachmentsDir = badAttachRoot
+	_, err = ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var count int
+	err = st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"), messageID).Scan(&count)
+	require.NoError(err, "count attachments")
+	require.Equal(1, count, "failed storage should not add a placeholder beside stored content")
+
+	var contentHash, storagePath string
+	var size int64
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT content_hash, storage_path, size FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&contentHash, &storagePath, &size)
+	require.NoError(err, "select stored attachment")
+	assert.Equal(wantHash, contentHash, "content_hash")
+	assert.NotEmpty(storagePath, "storage_path")
+	assert.Equal(int64(len(png)), size, "size")
+}
+
 func TestImportDYI_AttachmentStorageReimportRepairsRealHashEmptyPathRow(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

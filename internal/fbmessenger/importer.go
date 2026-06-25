@@ -700,6 +700,20 @@ func writeThreadToStore(
 			syntheticHash := fbAttachmentHash(att, ai)
 			hash := contentHash
 			storedContent := storagePath != "" && contentHash != ""
+			if !storedContent && contentHash != "" {
+				stored, err := hasStoredAttachment(st, messageID, contentHash)
+				if err != nil {
+					logger.Warn("fbmessenger: check stored attachment", "err", err)
+				} else if stored {
+					if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+						logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+					}
+					if err := deleteSyntheticPlaceholderAttachment(st, messageID, syntheticHash); err != nil {
+						logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
+					}
+					continue
+				}
+			}
 			if !storedContent {
 				hash = syntheticHash
 			} else if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
@@ -920,6 +934,20 @@ func deleteFailedStoredAttachmentByMetadata(st *store.Store, messageID int64, fi
 		  AND LENGTH(content_hash) = 64
 	`), messageID, filename, mimeType)
 	return err
+}
+
+func hasStoredAttachment(st *store.Store, messageID int64, contentHash string) (bool, error) {
+	var stored bool
+	err := st.DB().QueryRow(st.Rebind(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM attachments
+			WHERE message_id = ?
+			  AND content_hash = ?
+			  AND storage_path <> ''
+		)
+	`), messageID, contentHash).Scan(&stored)
+	return stored, err
 }
 
 // fbAttachmentHash derives a stable synthetic attachment key for an attachment
