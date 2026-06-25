@@ -173,9 +173,7 @@ func runEmbed(cmd *cobra.Command) error {
 			}
 			_, _ = fmt.Fprintf(out, "Generation %d activated.\n", gen)
 		} else {
-			_, _ = fmt.Fprintf(errOut,
-				"Generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume` again to finish, then it will activate automatically.\n",
-				gen, remaining)
+			_, _ = fmt.Fprint(errOut, remainingCoverageHint(gen, remaining))
 		}
 	}
 	return nil

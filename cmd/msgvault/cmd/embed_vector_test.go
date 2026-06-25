@@ -273,6 +273,14 @@ func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
 	requirepkg.Error(t, err, "expected abort error")
 }
 
+func TestRemainingCoverageHintMentionsBackstop(t *testing.T) {
+	got := remainingCoverageHint(7, 3)
+
+	assertpkg.Contains(t, got, "Generation 7 still has 3 message(s) needing embedding")
+	assertpkg.Contains(t, got, "msgvault embeddings resume --backstop")
+	assertpkg.NotContains(t, got, "resume` again")
+}
+
 func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {
 	assert := assertpkg.New(t)
 	var buf bytes.Buffer

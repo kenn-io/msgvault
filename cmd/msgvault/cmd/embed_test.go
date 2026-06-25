@@ -136,6 +136,7 @@ func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
 
 	require.Error(err)
 	assert.Contains(err.Error(), "needing embedding")
+	assert.Contains(err.Error(), "msgvault embeddings resume --backstop")
 }
 
 // TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck pins the

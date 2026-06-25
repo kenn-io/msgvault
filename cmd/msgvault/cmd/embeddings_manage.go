@@ -287,7 +287,7 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if row.MissingCount > 0 {
-			return fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume` or pass --force",
+			return fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
 				gen, row.MissingCount)
 		}
 	}
@@ -325,6 +325,12 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d activated.\n", gen)
 	return nil
+}
+
+func remainingCoverageHint(gen vector.GenerationID, remaining int64) string {
+	return fmt.Sprintf(
+		"Generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, then it will activate automatically.\n",
+		gen, remaining)
 }
 
 // openEmbeddingsMetadataDB opens the database that holds embedding generation
