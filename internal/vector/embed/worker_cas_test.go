@@ -260,34 +260,6 @@ func TestWorker_CASSelfBumpDoesNotBlockStamp(t *testing.T) {
 	assert.NotEqual(t, token, lmOf(t, f.MainDB, 1), "self-bump moved last_modified")
 }
 
-// casMissStore wraps a WorkStore and forces a CAS miss for a designated id by
-// bumping that id's last_modified IMMEDIATELY BEFORE delegating to the real
-// optimistic-CAS stamp. This simulates a concurrent content edit (e.g. an empty
-// message that just got real content via repair) landing in the worker's
-// read→stamp window for an EMPTY singleton — whose skip-mark never calls the
-// embedder, so the FakeClient's preReturn/OnEmbed hooks cannot inject the race.
-type casMissStore struct {
-	WorkStore
-
-	db     *sql.DB
-	missID int64
-}
-
-func (s *casMissStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, err error) {
-	for _, it := range items {
-		if it.ID == s.missID {
-			// Move last_modified off the worker's captured token so the CAS
-			// below matches 0 rows for this id (the concurrent-edit race).
-			_, err := s.db.ExecContext(ctx,
-				`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, it.ID)
-			if err != nil {
-				return missed, err
-			}
-		}
-	}
-	return s.WorkStore.SetEmbedGenIfUnchanged(ctx, items, target)
-}
-
 // TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark is the
 // fail-on-regression for the empty/skip-mark contiguity bug (Codex 129h
 // follow-up). Within a singleton drain, an EMPTY singleton (id 1) CAS-MISSES
@@ -320,10 +292,6 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '' WHERE message_id = 1`)
 	require.NoError(t, err, "blank body of msg 1")
 
-	// Wrap the store so msg 1's skip-mark CAS misses (simulates a concurrent
-	// repair landing in the read→stamp window). msg 2 is untouched.
-	casStore := &casMissStore{WorkStore: f.Store, db: f.MainDB, missID: 1}
-
 	// Force the downshift, then a genuine 4xx for msg 2 with NOTHING embedded:
 	//   - the whole-batch embedBatch call (msg 2's chunk; msg 1 is empty) 4xxs;
 	//   - singleton msg 1 is empty → no Embed call → skip branch (CAS misses);
@@ -331,15 +299,31 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
 		return nil, fmt.Errorf("embed: HTTP 400: blocked content: %w", ErrPermanent4xx)
 	}
+	missOnce := true
 
 	w := NewWorker(WorkerDeps{
 		Backend:                f.Backend,
 		VectorsDB:              f.VectorsDB,
 		MainDB:                 f.MainDB,
-		Store:                  casStore,
+		Store:                  f.Store,
 		Client:                 f.FakeClient,
 		BatchSize:              2,
 		MaxConsecutiveFailures: 1, // abort after the single all-drop failure (no busy re-scan)
+		beforeSkipStamp: func(ctx context.Context, ids []int64) {
+			if !missOnce {
+				return
+			}
+			for _, id := range ids {
+				if id != 1 {
+					continue
+				}
+				missOnce = false
+				_, err := f.MainDB.ExecContext(ctx,
+					`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
+				require.NoError(t, err, "force skip CAS miss")
+				return
+			}
+		},
 	})
 
 	// The drain is an all-drop (embeddedOK==0): RunOnce returns the wrapped
@@ -364,7 +348,6 @@ func TestWorker_Downshift_EmptySkipCASMissNotSkippedPastWatermark(t *testing.T) 
 	// pre-fix the watermark sat at 1 and a normal RunOnce scanned id > 1 only,
 	// so msg 1 was reachable solely via the backstop.
 	f.FakeClient.OnEmbed = nil
-	casStore.missID = -1 // stop forcing the miss
 	_, err = w.RunOnce(ctx, f.BuildingGen)
 	require.NoError(t, err, "follow-up normal RunOnce")
 	_, isNull1After := embedGenOf(t, f.MainDB, 1)

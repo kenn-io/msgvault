@@ -219,6 +219,45 @@ func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T)
 	assert.Empty(hits, "empty skip must not leave the message searchable")
 }
 
+func TestWorker_EmptyMessageCASMissDoesNotDeleteExistingEmbedding(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 2)
+	w := newTestWorker(f, 2)
+
+	_, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "initial RunOnce")
+
+	_, err = f.MainDB.Exec(`UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
+	require.NoError(err, "blank subject and invalidate msg 1")
+	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
+	require.NoError(err, "blank body msg 1")
+	_, err = f.MainDB.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 2`)
+	require.NoError(err, "invalidate msg 2 to force mixed batch embed")
+
+	f.FakeClient.preReturn = func() {
+		_, err := f.MainDB.Exec(`UPDATE messages SET subject = ?, embed_gen = NULL WHERE id = 1`, "repaired subject")
+		require.NoError(err, "race update subject")
+		_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = ? WHERE message_id = 1`, "repaired body")
+		require.NoError(err, "race update body")
+		_, err = f.MainDB.Exec(`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = 1`)
+		require.NoError(err, "force CAS token change")
+	}
+	res, err := w.RunBackstop(ctx, f.BuildingGen)
+	f.FakeClient.preReturn = nil
+	require.NoError(err, "RunBackstop with skip CAS miss")
+	assert.Equal(1, res.Succeeded, "only msg 2 is embedded and stamped")
+	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "CAS-missed msg 1 remains recoverable")
+
+	var vectorRows int64
+	err = f.VectorsDB.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT message_id) FROM embeddings WHERE generation_id = ?`,
+		int64(f.BuildingGen)).Scan(&vectorRows)
+	require.NoError(err, "raw vector row count after skip CAS miss")
+	assert.Equal(int64(2), vectorRows, "CAS-missed skip must not delete existing vectors")
+}
+
 // TestWorker_FallsBackToHTMLWhenBodyTextEmpty: an HTML-only message is
 // embedded via stripped HTML rather than a subject-only embedding.
 func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
