@@ -92,8 +92,8 @@ func withBodySearchContext(
 type searchMessageRow struct {
 	query.MessageSummary
 
-	ContextSnippets          []string `json:"context_snippets"`
-	ContextSnippetsTruncated bool     `json:"context_snippets_truncated"`
+	Matches          []messageMatch `json:"matches"`
+	MatchesTruncated bool           `json:"matches_truncated"`
 }
 
 type getMessageResp struct {
@@ -110,11 +110,11 @@ type getMessageResp struct {
 }
 
 type paginatedInMessageMatches struct {
-	Data     []inMessageMatch `json:"data"`
-	Total    int64            `json:"total"`
-	Returned int              `json:"returned"`
-	Offset   int              `json:"offset"`
-	HasMore  bool             `json:"has_more"`
+	Data     []messageMatch `json:"data"`
+	Total    int64          `json:"total"`
+	Returned int            `json:"returned"`
+	Offset   int            `json:"offset"`
+	HasMore  bool           `json:"has_more"`
 }
 
 type paginatedListMessages struct {
@@ -360,8 +360,8 @@ func TestSearchMessageBodies(t *testing.T) {
 		resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies, map[string]any{"query": "5.1k ohms"})
 		require.Len(resp.Data, 1, "data")
 		assert.Equal(int64(2), resp.Data[0].ID)
-		require.NotEmpty(resp.Data[0].ContextSnippets, "context_snippets")
-		assert.Contains(resp.Data[0].ContextSnippets[0], "5.1k")
+		require.NotEmpty(resp.Data[0].Matches, "matches")
+		assert.Contains(resp.Data[0].Matches[0].Snippet, "5.1k")
 		assert.Equal(int64(totalCountUnknown), resp.Total, "total=-1 for FTS")
 		assert.False(genericCalled, "generic Search must not handle search_message_bodies")
 	})
@@ -439,9 +439,9 @@ func TestSearchMessageBodies(t *testing.T) {
 		resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
 			newTestHandlers(fallback).searchMessageBodies, map[string]any{"query": "mismatchneedle"})
 		require.Len(resp.Data, 1, "fallback hit")
-		require.Len(resp.Data[0].ContextSnippets, 1, "fallback context")
-		assert.Equal(body[:searchContextChars], resp.Data[0].ContextSnippets[0])
-		assert.True(resp.Data[0].ContextSnippetsTruncated)
+		require.Len(resp.Data[0].Matches, 1, "fallback context")
+		assert.Equal(body[:searchContextChars], resp.Data[0].Matches[0].Snippet)
+		assert.True(resp.Data[0].MatchesTruncated)
 	})
 
 	t.Run("keeps dense-match context windows bounded and UTF-8 safe", func(t *testing.T) {
@@ -459,10 +459,10 @@ func TestSearchMessageBodies(t *testing.T) {
 		resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
 			newTestHandlers(dense).searchMessageBodies, map[string]any{"query": "a"})
 		require.Len(resp.Data, 1, "dense-match hit")
-		require.NotEmpty(resp.Data[0].ContextSnippets, "dense-match context")
-		for _, snippet := range resp.Data[0].ContextSnippets {
-			assert.LessOrEqual(len(snippet), searchContextChars, "bounded handler context")
-			assert.True(utf8.ValidString(snippet), "handler context must be valid UTF-8")
+		require.NotEmpty(resp.Data[0].Matches, "dense-match context")
+		for _, m := range resp.Data[0].Matches {
+			assert.LessOrEqual(len(m.Snippet), searchContextChars, "bounded handler context")
+			assert.True(utf8.ValidString(m.Snippet), "handler context must be valid UTF-8")
 		}
 	})
 
@@ -519,8 +519,8 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 		map[string]any{"query": "bodyonlyterm"})
 	require.Len(body.Data, 1, "body hit")
 	assert.Equal(messageID, body.Data[0].ID, "body hit ID")
-	require.NotEmpty(body.Data[0].ContextSnippets, "every hit has body context")
-	assert.Contains(body.Data[0].ContextSnippets[0], "bodyonlyterm")
+	require.NotEmpty(body.Data[0].Matches, "every hit has body context")
+	assert.Contains(body.Data[0].Matches[0].Snippet, "bodyonlyterm")
 }
 
 func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
@@ -609,10 +609,10 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 
 			require.Len(resp.Data, 1, "body hit")
 			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.Len(resp.Data[0].ContextSnippets, 1, "FTS hit context windows")
-			assert.Contains(resp.Data[0].ContextSnippets[0], tc.wantContext)
+			require.Len(resp.Data[0].Matches, 1, "FTS hit context windows")
+			assert.Contains(resp.Data[0].Matches[0].Snippet, tc.wantContext)
 			if tc.reject != "" {
-				assert.NotContains(resp.Data[0].ContextSnippets[0], tc.reject,
+				assert.NotContains(resp.Data[0].Matches[0].Snippet, tc.reject,
 					"context must start from an FTS token-prefix match")
 			}
 		})
@@ -644,10 +644,10 @@ func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing
 		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "resume"})
 	require.Len(resp.Data, 1, "body hit")
 	assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-	require.NotEmpty(resp.Data[0].ContextSnippets, "FTS hit context windows")
+	require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
 	assert.Condition(func() bool {
-		for _, snippet := range resp.Data[0].ContextSnippets {
-			if strings.Contains(snippet, "resume marker") {
+		for _, m := range resp.Data[0].Matches {
+			if strings.Contains(m.Snippet, "resume marker") {
 				return true
 			}
 		}
@@ -703,10 +703,10 @@ func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
 				map[string]any{"query": tc.query})
 			require.Len(resp.Data, 1, "body hit")
 			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.NotEmpty(resp.Data[0].ContextSnippets, "FTS hit context windows")
+			require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
 			assert.Condition(func() bool {
-				for _, snippet := range resp.Data[0].ContextSnippets {
-					if strings.Contains(snippet, tc.marker) {
+				for _, m := range resp.Data[0].Matches {
+					if strings.Contains(m.Snippet, tc.marker) {
 						return true
 					}
 				}
@@ -738,10 +738,10 @@ func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testin
 		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "strasse"})
 	require.Len(resp.Data, 1, "body hit")
 	assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-	require.NotEmpty(resp.Data[0].ContextSnippets, "FTS hit context windows")
+	require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
 	assert.Condition(func() bool {
-		for _, snippet := range resp.Data[0].ContextSnippets {
-			if strings.Contains(snippet, "strasse marker") {
+		for _, m := range resp.Data[0].Matches {
+			if strings.Contains(m.Snippet, "strasse marker") {
 				return true
 			}
 		}
@@ -786,10 +786,10 @@ func TestSearchMessageBodies_SQLiteContextPreservesUnicode61Diacritics(t *testin
 				newTestHandlers(engine).searchMessageBodies, map[string]any{"query": tc.query})
 			require.Len(resp.Data, 1, "body hit")
 			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.NotEmpty(resp.Data[0].ContextSnippets, "FTS hit context windows")
+			require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
 			assert.Condition(func() bool {
-				for _, snippet := range resp.Data[0].ContextSnippets {
-					if strings.Contains(snippet, marker) {
+				for _, m := range resp.Data[0].Matches {
+					if strings.Contains(m.Snippet, marker) {
 						return true
 					}
 				}
@@ -822,10 +822,10 @@ func TestSearchMessageBodies_PhraseContextSurvivesSnippetCap(t *testing.T) {
 	require.Len(resp.Data, 1, "phrase hit")
 	assert.Equal(messageID, resp.Data[0].ID, "phrase hit ID")
 	var foundPhrase bool
-	for _, snippet := range resp.Data[0].ContextSnippets {
-		foundPhrase = foundPhrase || strings.Contains(snippet, "alpha beta")
-		assert.LessOrEqual(len(snippet), searchContextChars, "bounded phrase context")
-		assert.True(utf8.ValidString(snippet), "phrase context must be valid UTF-8")
+	for _, m := range resp.Data[0].Matches {
+		foundPhrase = foundPhrase || strings.Contains(m.Snippet, "alpha beta")
+		assert.LessOrEqual(len(m.Snippet), searchContextChars, "bounded phrase context")
+		assert.True(utf8.ValidString(m.Snippet), "phrase context must be valid UTF-8")
 	}
 	assert.True(foundPhrase, "context snippets must include the matched phrase")
 }
@@ -850,12 +850,12 @@ func TestSearchMessageBodies_WidePhrasePreservesMatchedEndpoint(t *testing.T) {
 		newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())).searchMessageBodies,
 		map[string]any{"query": `"alpha beta"`})
 	require.Len(response.Data, 1, "wide phrase hit")
-	require.NotEmpty(response.Data[0].ContextSnippets, "wide phrase endpoint contexts")
-	assert.True(response.Data[0].ContextSnippetsTruncated,
+	require.NotEmpty(response.Data[0].Matches, "wide phrase endpoint contexts")
+	assert.True(response.Data[0].MatchesTruncated,
 		"a phrase wider than one snippet must advertise omitted context")
 	assert.Condition(func() bool {
-		for _, snippet := range response.Data[0].ContextSnippets {
-			if strings.Contains(snippet, "alpha") || strings.Contains(snippet, "beta") {
+		for _, m := range response.Data[0].Matches {
+			if strings.Contains(m.Snippet, "alpha") || strings.Contains(m.Snippet, "beta") {
 				return true
 			}
 		}
@@ -904,9 +904,9 @@ func TestSearchMessageBodies_LongBodyOutsideContextBudgetIsExplicitlyTruncated(t
 		newTestHandlers(query.NewEngine(f.Store.DB(), false)).searchMessageBodies,
 		map[string]any{"query": "needle"})
 	require.Len(response.Data, 1, "body hit")
-	assert.True(response.Data[0].ContextSnippetsTruncated,
+	assert.True(response.Data[0].MatchesTruncated,
 		"a bounded native fragment from a long body must advertise omitted context")
-	assert.Empty(response.Data[0].ContextSnippets,
+	assert.Empty(response.Data[0].Matches,
 		"a late match outside the request scan budget must not produce an unrelated fallback")
 }
 
@@ -932,8 +932,8 @@ func TestSearchMessageBodies_SQLiteOversizedLexemeDoesNotEscapeContextBudget(t *
 		newTestHandlers(query.NewEngine(f.Store.DB(), false)).searchMessageBodies,
 		map[string]any{"query": "a"})
 	require.Len(response.Data, 1, "body hit")
-	assert.True(response.Data[0].ContextSnippetsTruncated)
-	assert.Empty(response.Data[0].ContextSnippets,
+	assert.True(response.Data[0].MatchesTruncated)
+	assert.Empty(response.Data[0].Matches,
 		"a token cut by every bounded chunk must be omitted, not materialized whole")
 }
 
@@ -956,11 +956,11 @@ func TestSearchMessageBodies_DenseNativeMarkersStayBounded(t *testing.T) {
 		newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())).searchMessageBodies,
 		map[string]any{"query": "a"})
 	require.Len(response.Data, 1, "dense body hit")
-	require.NotEmpty(response.Data[0].ContextSnippets, "dense body context")
-	assert.True(response.Data[0].ContextSnippetsTruncated)
-	for _, snippet := range response.Data[0].ContextSnippets {
-		assert.LessOrEqual(len(snippet), searchContextChars)
-		assert.True(utf8.ValidString(snippet))
+	require.NotEmpty(response.Data[0].Matches, "dense body context")
+	assert.True(response.Data[0].MatchesTruncated)
+	for _, m := range response.Data[0].Matches {
+		assert.LessOrEqual(len(m.Snippet), searchContextChars)
+		assert.True(utf8.ValidString(m.Snippet))
 	}
 }
 
@@ -2797,6 +2797,8 @@ type fakeBackend struct {
 	buildingErr  error
 	stats        map[vector.GenerationID]vector.Stats
 	statsErr     error
+	chunkHits    map[int64][]vector.ChunkHit
+	chunkErr     error
 }
 
 func (f *fakeBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
@@ -2818,6 +2820,15 @@ func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []flo
 	f.searchGen = gen
 	f.searchFilter = filter
 	return f.searchHits, f.searchErr
+}
+func (f *fakeBackend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, messageID int64, _ []float32) ([]vector.ChunkHit, error) {
+	if f.chunkErr != nil {
+		return nil, f.chunkErr
+	}
+	if f.chunkHits != nil {
+		return f.chunkHits[messageID], nil
+	}
+	return nil, nil
 }
 func (f *fakeBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
 	f.fusedCalls++
@@ -2865,8 +2876,9 @@ func (f *fakeBackend) Stats(_ context.Context, gen vector.GenerationID) (vector.
 func (f *fakeBackend) Close() error { return nil }
 
 var (
-	_ vector.Backend       = (*fakeBackend)(nil)
-	_ vector.FusingBackend = (*fakeBackend)(nil)
+	_ vector.Backend             = (*fakeBackend)(nil)
+	_ vector.FusingBackend       = (*fakeBackend)(nil)
+	_ vector.ChunkScoringBackend = (*fakeBackend)(nil)
 )
 
 // similarResponse matches the JSON response shape of find_similar_messages.

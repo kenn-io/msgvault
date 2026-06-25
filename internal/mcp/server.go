@@ -227,6 +227,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 			"For full message body keyword search, use search_message_bodies instead. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 			"Vector search is configured: set mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
+			"Vector/hybrid hits include matches — embedded body chunks ranked by semantic similarity to the query (up to 5 per message). "+
 			"Vector/hybrid require free-text terms; filter-only queries must omit mode. "+
 			"total=-1 means the full match count is unknown — use has_more. "+
 			"Vector/hybrid ranking depth is capped by max_page_size_hybrid in config."),
@@ -245,14 +246,17 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		mcp.WithBoolean("explain",
 			mcp.Description("Include per-signal scores in the response (for debugging or ranking inspection)"),
 		),
+		mcp.WithNumber("min_score",
+			mcp.Description("Minimum chunk similarity score (0–1) for matches in vector/hybrid results (default 0)"),
+		),
 	)
 }
 
 func searchMessageBodiesTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchMessageBodies,
 		mcp.WithDescription("Search message bodies by keyword using exact body-only full-text search (FTS). Returns messages whose body text contains the search terms, "+
-			"plus context_snippets — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term. "+
-			"A hit outside the bounded context-extraction budget has no excerpt and sets context_snippets_truncated=true. "+
+			"plus matches — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term, with char_offset and line. "+
+			"A hit outside the bounded context-extraction budget has no excerpt and sets matches_truncated=true. "+
 			"Requires at least one free-text term; use search_messages for filter-only queries (from:, label:, etc.). "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
 			"(total is not available for body search; use has_more to detect more pages.)"),
@@ -325,7 +329,9 @@ func exportAttachmentTool() mcp.Tool {
 
 func searchInMessageTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchInMessage,
-		mcp.WithDescription("Find all occurrences of a term within one message body. Returns each match with a character-centered snippet, line number, and char_offset (byte offset into body_text). "+
+		mcp.WithDescription("Find matches within one message body. Default mode=keyword finds literal term occurrences. "+
+			"mode=vector scores each embedded chunk by semantic similarity to the query (best first, with score on each match). "+
+			"Each match includes char_offset (byte offset into body_text), snippet, and line. "+
 			"Use char_offset with get_message center_at to read a larger window around any match."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithNumber("id",
@@ -334,7 +340,14 @@ func searchInMessageTool() mcp.Tool {
 		),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Term to find in the message body"),
+			mcp.Description("Search query (keyword term or semantic query when mode=vector)"),
+		),
+		mcp.WithString("mode",
+			mcp.Description("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)"),
+			mcp.Enum("keyword", searchModeVector),
+		),
+		mcp.WithNumber("min_score",
+			mcp.Description("Minimum chunk similarity score (0–1) when mode=vector (default 0)"),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum matches to return (default 10)"),

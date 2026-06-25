@@ -42,6 +42,9 @@ type ResultMeta struct {
 	Generation    vector.Generation
 	PoolSaturated bool
 	ReturnedCount int
+	// QueryVector is the embedding of FreeText used for this search.
+	// Callers use it to score within-message chunks without re-embedding.
+	QueryVector []float32
 }
 
 // EmbeddingClient embeds free-text queries. The engine uses it once per
@@ -80,6 +83,25 @@ type Engine struct {
 // configuration into an Engine.
 func NewEngine(backend vector.Backend, mainDB *sql.DB, client EmbeddingClient, cfg Config) *Engine {
 	return &Engine{backend: backend, mainDB: mainDB, client: client, cfg: cfg}
+}
+
+// EmbedQuery embeds free text for within-message chunk scoring.
+func (e *Engine) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, errors.New("empty query")
+	}
+	vecs, err := e.client.Embed(ctx, []string{text})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("embed query: %w: %w", vector.ErrEmbeddingTimeout, err)
+		}
+		return nil, fmt.Errorf("embed query: %w", err)
+	}
+	if len(vecs) != 1 {
+		return nil, fmt.Errorf("embedder returned %d vectors, want 1", len(vecs))
+	}
+	return vecs[0], nil
 }
 
 // BuildFilter resolves a parsed Gmail-syntax query into a vector.Filter
@@ -148,6 +170,7 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 			Generation:    active,
 			ReturnedCount: len(fused),
 			PoolSaturated: len(fused) >= req.Limit,
+			QueryVector:   queryVec,
 		}, nil
 	}
 
@@ -193,6 +216,7 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 		Generation:    active,
 		ReturnedCount: len(hits),
 		PoolSaturated: saturated,
+		QueryVector:   queryVec,
 	}, nil
 }
 
