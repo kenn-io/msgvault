@@ -697,15 +697,22 @@ func writeThreadToStore(
 			if storagePath != "" {
 				summary.AttachmentsStored++
 			}
-			if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
-				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
-			}
 			hash := contentHash
+			syntheticHash := fbAttachmentHash(att, ai)
 			if hash == "" {
-				hash = fbAttachmentHash(att, ai)
+				hash = syntheticHash
 			}
 			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
+				continue
+			}
+			if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+			}
+			if contentHash != "" {
+				if err := deleteSyntheticPlaceholderAttachment(st, messageID, syntheticHash); err != nil {
+					logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
+				}
 			}
 		}
 
@@ -870,6 +877,16 @@ func deleteLegacyHashlessAttachment(st *store.Store, messageID int64) error {
 		  AND (content_hash IS NULL OR content_hash = '')
 		  AND storage_path = ''
 	`), messageID)
+	return err
+}
+
+func deleteSyntheticPlaceholderAttachment(st *store.Store, messageID int64, contentHash string) error {
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM attachments
+		WHERE message_id = ?
+		  AND content_hash = ?
+		  AND storage_path = ''
+	`), messageID, contentHash)
 	return err
 }
 
