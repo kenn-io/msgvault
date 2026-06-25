@@ -102,10 +102,10 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	}
 	format := strings.ToLower(opts.Format)
 	if format == "" {
-		format = "auto"
+		format = formatAuto
 	}
 	switch format {
-	case "auto", formatJSON, "html", "both":
+	case formatAuto, formatJSON, "html", "both":
 		// valid
 	default:
 		return nil, fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
@@ -275,7 +275,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 				effective = "html"
 			case "both":
 				// Keep as-is; "both" threads get both parsed.
-			case "auto":
+			case formatAuto:
 				if effective == "both" {
 					effective = formatJSON
 				}
@@ -702,6 +702,8 @@ func writeThreadToStore(
 			storedContent := storagePath != "" && contentHash != ""
 			if !storedContent {
 				hash = syntheticHash
+			} else if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
+				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
 			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
@@ -882,6 +884,16 @@ func deleteLegacyHashlessAttachment(st *store.Store, messageID int64) error {
 }
 
 func deleteSyntheticPlaceholderAttachment(st *store.Store, messageID int64, contentHash string) error {
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM attachments
+		WHERE message_id = ?
+		  AND content_hash = ?
+		  AND storage_path = ''
+	`), messageID, contentHash)
+	return err
+}
+
+func deleteFailedStoredAttachment(st *store.Store, messageID int64, contentHash string) error {
 	_, err := st.DB().Exec(st.Rebind(`
 		DELETE FROM attachments
 		WHERE message_id = ?

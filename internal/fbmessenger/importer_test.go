@@ -22,7 +22,7 @@ func importFixture(t *testing.T, st *store.Store, rootDir string) *ImportSummary
 	opts := ImportOptions{
 		Me:             "test.user@facebook.messenger",
 		RootDir:        rootDir,
-		Format:         "auto",
+		Format:         formatAuto,
 		AttachmentsDir: t.TempDir(),
 	}
 	summary, err := ImportDYI(context.Background(), st, opts)
@@ -239,7 +239,7 @@ func TestImportDYI_AttachmentStorage(t *testing.T) {
 	opts := ImportOptions{
 		Me:             "test.user@facebook.messenger",
 		RootDir:        "testdata/json_with_media",
-		Format:         "auto",
+		Format:         formatAuto,
 		AttachmentsDir: attachDir,
 	}
 	_, err := ImportDYI(context.Background(), st, opts)
@@ -272,7 +272,7 @@ func TestImportDYI_AttachmentStorageReimportMigratesLegacyEmptyHashRow(t *testin
 	opts := ImportOptions{
 		Me:       "test.user@facebook.messenger",
 		RootDir:  "testdata/json_with_media",
-		Format:   "auto",
+		Format:   formatAuto,
 		NoResume: true,
 	}
 	_, err := ImportDYI(context.Background(), st, opts)
@@ -320,7 +320,7 @@ func TestImportDYI_AttachmentStorageReimportRemovesSyntheticPlaceholder(t *testi
 	opts := ImportOptions{
 		Me:       "test.user@facebook.messenger",
 		RootDir:  "testdata/json_with_media",
-		Format:   "auto",
+		Format:   formatAuto,
 		NoResume: true,
 	}
 	_, err := ImportDYI(context.Background(), st, opts)
@@ -379,7 +379,7 @@ func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.
 	opts := ImportOptions{
 		Me:       "test.user@facebook.messenger",
 		RootDir:  "testdata/json_with_media",
-		Format:   "auto",
+		Format:   formatAuto,
 		NoResume: true,
 	}
 	_, err := ImportDYI(context.Background(), st, opts)
@@ -446,6 +446,54 @@ func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.
 	got, err := os.ReadFile(filepath.Join(goodAttachRoot, storagePath))
 	require.NoError(err, "stored file after recovery")
 	assert.Equal(string(png), string(got), "stored bytes after recovery")
+}
+
+func TestImportDYI_AttachmentStorageReimportRepairsRealHashEmptyPathRow(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	attachDir := t.TempDir()
+	opts := ImportOptions{
+		Me:       "test.user@facebook.messenger",
+		RootDir:  "testdata/json_with_media",
+		Format:   formatAuto,
+		NoResume: true,
+	}
+	_, err := ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var messageID int64
+	err = st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'inbox/bob_XYZ789__0'").Scan(&messageID)
+	require.NoError(err, "select imported message id")
+	png, err := os.ReadFile("testdata/json_with_media/your_activity_across_facebook/messages/inbox/bob_XYZ789/photos/tiny.png")
+	require.NoError(err)
+	wantHash := fmt.Sprintf("%x", sha256.Sum256(png))
+
+	_, err = st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ?"), messageID)
+	require.NoError(err, "delete current synthetic attachment")
+	require.NoError(st.UpsertAttachment(messageID, "tiny.png", "image/png", "", wantHash, 0), "seed real-hash empty-path attachment")
+
+	opts.AttachmentsDir = attachDir
+	_, err = ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var count int
+	err = st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"), messageID).Scan(&count)
+	require.NoError(err, "count attachments")
+	require.Equal(1, count, "real-hash empty-path row should be repaired, not duplicated")
+
+	var contentHash, storagePath string
+	var size int64
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT content_hash, storage_path, size FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&contentHash, &storagePath, &size)
+	require.NoError(err, "select repaired attachment")
+	assert.Equal(wantHash, contentHash, "content_hash")
+	assert.NotEmpty(storagePath, "storage_path")
+	assert.Equal(int64(len(png)), size, "size")
+	got, err := os.ReadFile(filepath.Join(attachDir, storagePath))
+	require.NoError(err, "stored file")
+	assert.Equal(string(png), string(got), "stored bytes")
 }
 
 func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
@@ -744,7 +792,7 @@ func TestImportDYI_IsFromMe(t *testing.T) {
 	_, err := ImportDYI(context.Background(), st, ImportOptions{
 		Me:             "test.user@facebook.messenger",
 		RootDir:        "testdata/json_simple",
-		Format:         "auto",
+		Format:         formatAuto,
 		AttachmentsDir: t.TempDir(),
 	})
 	require.NoError(err)
