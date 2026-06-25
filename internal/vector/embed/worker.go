@@ -424,7 +424,7 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 				if len(eb.empty) > 0 {
 					w.deps.Log.Warn("messages empty after preprocess", "gen", gen, "ids", eb.empty)
 				}
-				missed, serr := w.stampCovered(ctx, gen, skipIDs, eb.lastModified)
+				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
 				if serr != nil {
 					res.Failed += len(skipIDs)
 					w.deps.Log.Error("stamp skip set failed", "error", serr, "gen", gen, "ids", len(skipIDs))
@@ -470,9 +470,27 @@ func (w *Worker) run(ctx context.Context, gen vector.GenerationID, backstop bool
 			continue
 		}
 
-		// Step 2: stamp embed_gen for the embedded + skip sets (MainDB
-		// side). Safe to do after the upsert: the upsert is idempotent, so a
-		// crash before this stamp just re-does the batch next scan. Stamp
+		// Step 2: remove any stale embeddings for the skip set, then stamp
+		// embed_gen for the embedded + skip sets (MainDB side). The delete
+		// must precede the skip stamp: once embed_gen is stamped, coverage
+		// treats an empty/unembeddable row as complete and the worker will not
+		// revisit it to clean up old vectors.
+		if len(skipIDs) > 0 {
+			if err := w.deleteSkipped(ctx, gen, skipIDs); err != nil {
+				res.Failed += len(skipIDs)
+				w.deps.Log.Error("delete stale skipped embeddings failed", "gen", gen, "ids", len(skipIDs), "error", err)
+				consecutiveFailures++
+				lastErr = err
+				if consecutiveFailures >= w.deps.MaxConsecutiveFailures {
+					return res, fmt.Errorf("embed worker aborting after %d consecutive failures: %w",
+						consecutiveFailures, lastErr)
+				}
+				continue
+			}
+		}
+
+		// Safe to stamp after the upsert/delete: the upsert is idempotent, so
+		// a crash before this stamp just re-does the batch next scan. Stamp
 		// the union so embedded and skip-marked rows both drop out together.
 		stampIDs := append(append([]int64(nil), eb.embeddedIDs...), skipIDs...)
 		missed, serr := w.stampCovered(ctx, gen, stampIDs, eb.lastModified)
@@ -874,7 +892,7 @@ func (w *Worker) downshiftDrain(
 			// NOT break contiguity: there is no unstamped row to strand.
 			stampedThisID := true
 			if len(skip) > 0 {
-				missed, serr := w.stampCovered(ctx, gen, skip, eb.lastModified)
+				missed, serr := w.stampSkipped(ctx, gen, skip, eb.lastModified)
 				if serr != nil {
 					res.Failed += len(skip)
 					return embedded, embeddedOK, stamped, contiguousStampedID, fmt.Errorf("stamp skip: %w", serr)
@@ -983,7 +1001,7 @@ func (w *Worker) downshiftDrain(
 		// rejects is dropped (stamped) regardless of concurrent edits. (lm is
 		// still passed for the leading singletons that DID embed and recorded a
 		// token; for those a CAS miss leaves the row for the backstop.)
-		missed, serr := w.stampCovered(ctx, gen, deferredDrops, lm)
+		missed, serr := w.stampSkipped(ctx, gen, deferredDrops, lm)
 		if serr != nil {
 			res.Failed += len(deferredDrops)
 			// Some deferred drops are now unstamped; do not advance past the
@@ -1052,6 +1070,26 @@ func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids 
 		}
 	}
 	return missed, nil
+}
+
+func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any) (missed []int64, err error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := w.deleteSkipped(ctx, gen, ids); err != nil {
+		return nil, err
+	}
+	return w.stampCovered(ctx, gen, ids, lm)
+}
+
+func (w *Worker) deleteSkipped(ctx context.Context, gen vector.GenerationID, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := w.deps.Backend.Delete(ctx, gen, ids); err != nil {
+		return fmt.Errorf("delete stale skipped embeddings: %w", err)
+	}
+	return nil
 }
 
 // logCASMisses records the CAS-missed ids returned by stampCovered. A miss

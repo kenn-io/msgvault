@@ -182,6 +182,43 @@ func TestWorker_EmptyMessageSkipMarkedNotReprocessed(t *testing.T) {
 	assertpkg.Equal(t, callsBefore, f.FakeClient.calls, "no re-processing of skip-marked message")
 }
 
+func TestWorker_EmptyMessageDeletesExistingEmbeddingBeforeSkipMark(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+	f := newWorkerFixture(t, 1)
+	w := newTestWorker(f, 1)
+
+	_, err := w.RunOnce(ctx, f.BuildingGen)
+	require.NoError(err, "initial RunOnce")
+
+	embedded, err := f.Backend.EmbeddedMessageCount(ctx, f.BuildingGen)
+	require.NoError(err, "EmbeddedMessageCount before empty")
+	require.Equal(int64(1), embedded, "precondition: message has an embedding")
+
+	_, err = f.MainDB.Exec(`UPDATE messages SET subject = '', embed_gen = NULL WHERE id = 1`)
+	require.NoError(err, "blank subject and invalidate")
+	_, err = f.MainDB.Exec(`UPDATE message_bodies SET body_text = '', body_html = '' WHERE message_id = 1`)
+	require.NoError(err, "blank body")
+
+	res, err := w.RunBackstop(ctx, f.BuildingGen)
+	require.NoError(err, "RunBackstop after message became empty")
+	assert.Equal(0, res.Succeeded, "empty message is skip-marked, not embedded")
+	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "empty message is covered")
+
+	embedded, err = f.Backend.EmbeddedMessageCount(ctx, f.BuildingGen)
+	require.NoError(err, "EmbeddedMessageCount after empty")
+	assert.Equal(int64(0), embedded, "empty skip must not leave a counted embedding")
+
+	stats, err := f.Backend.Stats(ctx, f.BuildingGen)
+	require.NoError(err, "Stats after empty")
+	assert.Equal(int64(0), stats.EmbeddingCount, "empty skip must remove stale vector rows")
+
+	hits, err := f.Backend.Search(ctx, f.BuildingGen, []float32{1, 0, 0, 0}, 10, vector.Filter{})
+	require.NoError(err, "Search after empty")
+	assert.Empty(hits, "empty skip must not leave the message searchable")
+}
+
 // TestWorker_FallsBackToHTMLWhenBodyTextEmpty: an HTML-only message is
 // embedded via stripped HTML rather than a subject-only embedding.
 func TestWorker_FallsBackToHTMLWhenBodyTextEmpty(t *testing.T) {
