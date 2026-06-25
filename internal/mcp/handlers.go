@@ -29,19 +29,21 @@ const (
 	maxLimit               = 1000
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
-	defaultBodyChars       = 2000
-	bodyFormatAuto         = "auto"
-	bodyFormatText         = "text"
-	bodyFormatHTML         = "html"
+	maxContextSnippets     = 5
+	// searchContextChars is the max byte length of each matches[] snippet in
+	// search_message_bodies and search_in_message.
+	searchContextChars = 300
+	defaultBodyChars   = 2000
+	bodyFormatAuto     = "auto"
+	bodyFormatText     = "text"
+	bodyFormatHTML     = "html"
 	// maxBodyChars caps the body slice returned by get_message regardless of what
 	// the caller requests via max_chars. Prevents a single tool call from flooding
 	// the context window; callers page forward using offset.
 	maxBodyChars = 4000
-	// searchContextChars is the max byte length of each snippet in search_in_message.
-	searchContextChars = 300
 	// totalCountUnknown is returned when the backend cannot report a full match
-	// count (body FTS fallback, hybrid/vector ranking depth, or list_messages
-	// without a separate count query). Clients should use has_more for paging.
+	// count (hybrid/vector ranking depth, or list_messages without a separate
+	// count query). Clients should use has_more for paging.
 	totalCountUnknown = -1
 )
 
@@ -311,6 +313,18 @@ func (h *handlers) readAttachmentFile(contentHash string) ([]byte, error) {
 	return data, nil
 }
 
+// searchMessageItem carries a message summary plus body excerpts centered on
+// query terms. Used by search_message_bodies.
+type searchMessageItem struct {
+	query.MessageSummary
+
+	ContextSnippets          []string `json:"context_snippets,omitempty"`
+	ContextSnippetsTruncated bool     `json:"context_snippets_truncated,omitempty"`
+}
+
+// searchMessages searches message metadata only (subject, sender, recipients,
+// labels, dates). Use search_message_bodies for full-body keyword search.
+// Vector and hybrid modes are delegated to searchMessagesHybrid.
 func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
@@ -320,25 +334,21 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	mode, _ := args["mode"].(string)
-	if mode == "" {
-		mode = searchModeFTS
-	}
 	explain, _ := args["explain"].(bool)
 
 	if mode == searchModeVector || mode == searchModeHybrid {
 		return h.searchMessagesHybrid(ctx, args, queryStr, mode, explain)
 	}
 
-	if mode != searchModeFTS {
+	if mode != "" {
 		return mcp.NewToolResultError(
-			fmt.Sprintf("invalid mode %q: must be %s, %s, or %s", mode, searchModeFTS, searchModeVector, searchModeHybrid),
+			fmt.Sprintf("invalid mode %q: must be %s or %s (or omit for metadata search)", mode, searchModeVector, searchModeHybrid),
 		), nil
 	}
 
 	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
 
-	// Look up account filter
 	account, _ := args["account"].(string)
 	sourceID, err := h.getAccountID(ctx, account)
 	if err != nil {
@@ -355,23 +365,9 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 
 	filter := query.MessageFilter{SourceID: sourceID}
 
-	// Try fast search first (metadata only), fall back to full FTS.
 	results, err := h.engine.SearchFast(ctx, q, filter, limit, offset)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
-	}
-
-	// If fast search returns nothing and query has free text, try full FTS.
-	if len(results) == 0 && len(q.TextTerms) > 0 {
-		results, err = h.engine.Search(ctx, q, limit+1, offset)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
-		}
-		hasMore := len(results) > limit
-		if hasMore {
-			results = results[:limit]
-		}
-		return jsonResult(newPaginatedResponseNoTotal(results, offset, hasMore))
 	}
 
 	totalMatched, err := h.engine.SearchFastCount(ctx, q, filter)
@@ -403,6 +399,68 @@ func unsupportedSearchOperatorMessage(q *search.Query) string {
 		strings.Join(names, ", "),
 	)
 }
+
+// searchMessageBodies performs full-text search over message bodies and returns
+// context_snippets — short excerpts centered on each matched term. Requires at
+// least one free-text term; use search_messages for filter-only queries.
+func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+
+	queryStr, _ := args["query"].(string)
+	if queryStr == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+
+	limit := searchLimitArg(args)
+	offset := limitArg(args, "offset", 0)
+
+	account, _ := args["account"].(string)
+	sourceID, err := h.getAccountID(ctx, account)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	q := search.Parse(queryStr)
+	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
+		return mcp.NewToolResultError(msg), nil
+	}
+	if sourceID != nil {
+		q.AccountIDs = []int64{*sourceID}
+	}
+
+	if len(q.TextTerms) == 0 {
+		return mcp.NewToolResultError("search_message_bodies requires at least one free-text term; use search_messages for filter-only queries"), nil
+	}
+
+	results, err := h.engine.Search(ctx, q, limit+1, offset)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	data := make([]searchMessageItem, 0, len(results))
+	for _, r := range results {
+		item := searchMessageItem{MessageSummary: r}
+		msg, err := h.engine.GetMessage(ctx, r.ID)
+		if err == nil && msg != nil {
+			snippets := extractContextChar(msg.BodyText, q.TextTerms, searchContextChars)
+			if len(snippets) > maxContextSnippets {
+				item.ContextSnippetsTruncated = true
+				snippets = snippets[:maxContextSnippets]
+			}
+			item.ContextSnippets = snippets
+		}
+		data = append(data, item)
+	}
+
+	return jsonResult(newPaginatedResponseNoTotal(data, offset, hasMore))
+}
+
+// hybridScoreBreakdown exposes fused-score components for debugging.
 
 // hybridScoreBreakdown exposes fused-score components for debugging.
 // All score fields are pointer-typed so "not present in this signal"
@@ -449,7 +507,8 @@ type searchMessagesHybridResponse struct {
 // hybrid engine. Mirrors api/handlers.go handleHybridSearch: returns
 // descriptive errors when the engine is not configured or the index is
 // stale/building, otherwise returns RRF-ranked hits hydrated via
-// engine.GetMessage.
+// GetMessageSummariesByIDs (body omitted — use search_message_bodies or
+// search_in_message for body content).
 func (h *handlers) searchMessagesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr, mode string, explain bool,
@@ -481,11 +540,11 @@ func (h *handlers) searchMessagesHybrid(
 
 	// mode=vector|hybrid requires at least one free-text term; filter-only
 	// queries have no query vector to rank by. Callers that want pure
-	// structured filtering should use mode=fts instead.
+	// structured filtering should omit mode (metadata search).
 	if freeText == "" {
 		return mcp.NewToolResultError(
 			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; use mode=fts for filter-only queries",
+				" requires at least one free-text term; omit mode for metadata-only search",
 		), nil
 	}
 
@@ -511,7 +570,7 @@ func (h *handlers) searchMessagesHybrid(
 		if offset >= maxPage {
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"pagination_limit: offset %d exceeds hybrid ranking window (max %d); "+
-					"use mode=fts for deeper pagination",
+					"use search_messages (metadata) or search_message_bodies for deeper pagination",
 				offset, maxPage,
 			)), nil
 		}
@@ -1425,6 +1484,10 @@ func (h *handlers) listMessages(ctx context.Context, req mcp.CallToolRequest) (*
 	if filter.Before, err = getDateArg(args, "before"); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if v, ok := args["conversation_id"].(float64); ok && v != 0 {
+		v2 := int64(v)
+		filter.ConversationID = &v2
+	}
 
 	results, err := h.engine.ListMessages(ctx, filter)
 	if err != nil {
@@ -1523,7 +1586,11 @@ func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	return jsonResult(rows)
 }
 
-// intArg extracts a non-negative integer from a map, with a default.
+// limitArg extracts a non-negative integer limit from a map, with a default.
+// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
+// result sets.
+// intArg extracts a non-negative integer from args without the maxLimit clamp
+// used by limitArg. Suitable for body-text offsets and similar unbounded values.
 func intArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {
@@ -1535,9 +1602,6 @@ func intArg(args map[string]any, key string, def int) int {
 	return int(v)
 }
 
-// limitArg extracts a non-negative integer limit from a map, with a default.
-// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
-// result sets.
 func limitArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {
