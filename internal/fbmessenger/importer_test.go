@@ -372,6 +372,82 @@ func TestImportDYI_AttachmentStorageReimportRemovesSyntheticPlaceholder(t *testi
 	assert.Equal(string(png), string(got), "stored bytes")
 }
 
+func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{
+		Me:       "test.user@facebook.messenger",
+		RootDir:  "testdata/json_with_media",
+		Format:   "auto",
+		NoResume: true,
+	}
+	_, err := ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var messageID int64
+	err = st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'inbox/bob_XYZ789__0'").Scan(&messageID)
+	require.NoError(err, "select imported message id")
+
+	var placeholderHash string
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT content_hash FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&placeholderHash)
+	require.NoError(err, "select synthetic placeholder")
+	assertSyntheticAttachmentKey(t, placeholderHash)
+
+	png, err := os.ReadFile("testdata/json_with_media/your_activity_across_facebook/messages/inbox/bob_XYZ789/photos/tiny.png")
+	require.NoError(err)
+	wantHash := fmt.Sprintf("%x", sha256.Sum256(png))
+
+	badAttachRoot := filepath.Join(t.TempDir(), "attachments-file")
+	require.NoError(os.WriteFile(badAttachRoot, []byte("not a directory"), 0600), "write bad attachment root")
+	opts.AttachmentsDir = badAttachRoot
+	_, err = ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var count int
+	err = st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"), messageID).Scan(&count)
+	require.NoError(err, "count attachments after failed storage")
+	require.Equal(1, count, "failed storage should keep only the synthetic placeholder")
+
+	var contentHash, storagePath string
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT content_hash, storage_path FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&contentHash, &storagePath)
+	require.NoError(err, "select placeholder after failed storage")
+	assert.Equal(placeholderHash, contentHash, "content_hash after failed storage")
+	assert.Empty(storagePath, "storage_path after failed storage")
+
+	var realHashRows int
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?",
+	), messageID, wantHash).Scan(&realHashRows)
+	require.NoError(err, "count real-hash rows after failed storage")
+	assert.Equal(0, realHashRows, "failed storage must not record a real hash with empty storage_path")
+
+	goodAttachRoot := t.TempDir()
+	opts.AttachmentsDir = goodAttachRoot
+	_, err = ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	err = st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"), messageID).Scan(&count)
+	require.NoError(err, "count attachments after successful storage")
+	require.Equal(1, count, "successful storage should replace the synthetic placeholder")
+
+	var size int64
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT content_hash, storage_path, size FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&contentHash, &storagePath, &size)
+	require.NoError(err, "select stored attachment after recovery")
+	assert.Equal(wantHash, contentHash, "content_hash after recovery")
+	assert.NotEmpty(storagePath, "storage_path after recovery")
+	assert.Equal(int64(len(png)), size, "size after recovery")
+	got, err := os.ReadFile(filepath.Join(goodAttachRoot, storagePath))
+	require.NoError(err, "stored file after recovery")
+	assert.Equal(string(png), string(got), "stored bytes after recovery")
+}
+
 func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
