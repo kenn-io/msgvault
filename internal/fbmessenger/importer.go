@@ -858,13 +858,16 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 	return rel, contentHash, int(info.Size())
 }
 
-// fbAttachmentHash derives a stable synthetic content hash for an attachment
+const fbSyntheticAttachmentKeyPrefix = "fbmessenger:attachment:"
+
+// fbAttachmentHash derives a stable synthetic attachment key for an attachment
 // that has no real (content-derived) hash — e.g. the file is missing or no
 // attachments dir was configured. Without it, UpsertAttachment collapses every
 // hashless attachment on a message to a single row. Keyed on the export-relative
 // URI (present even when the file is missing), then AbsPath/Filename, with the
 // loop index as a last-resort tiebreaker, so re-importing the same export is
-// idempotent. It is NOT a hash of file bytes, so storage_path stays empty.
+// idempotent. The prefix prevents downstream export paths from mistaking it for
+// a SHA-256 hash of stored bytes, so storage_path stays empty.
 func fbAttachmentHash(att Attachment, idx int) string {
 	key := att.URI
 	if key == "" {
@@ -877,5 +880,5 @@ func fbAttachmentHash(att Attachment, idx int) string {
 		key = fmt.Sprintf("idx-%d", idx)
 	}
 	sum := sha256.Sum256([]byte("fbmessenger\x00" + key))
-	return hex.EncodeToString(sum[:])
+	return fbSyntheticAttachmentKeyPrefix + hex.EncodeToString(sum[:])
 }

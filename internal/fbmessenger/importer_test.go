@@ -42,6 +42,12 @@ func countMessages(t *testing.T, st *store.Store, where string) int {
 	return n
 }
 
+func assertSyntheticAttachmentKey(t *testing.T, got string) {
+	t.Helper()
+	assertpkg.Regexp(t, `^fbmessenger:attachment:[0-9a-f]{64}$`, got, "synthetic attachment key")
+	assertpkg.NotRegexp(t, `^[0-9a-f]{64}$`, got, "synthetic attachment key must not look like a real SHA-256 content hash")
+}
+
 func TestImportDYI_JSONSimple(t *testing.T) {
 	assert := assertpkg.New(t)
 	st := testutil.NewTestStore(t)
@@ -278,12 +284,13 @@ func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
 	})
 	require.NoError(err)
 	assert.False(summary.HardErrors, "HardErrors")
-	// Exactly one attachment row, with empty storage_path and content_hash.
+	// Exactly one attachment row with empty storage_path and a synthetic
+	// key that cannot be mistaken for a real content hash.
 	var sp, ch string
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: path escape not rejected")
-	assert.NotEmpty(ch, "content_hash: rejected attachment now gets a synthetic (non-content) hash")
+	assertSyntheticAttachmentKey(t, ch)
 }
 
 // TestImportDYI_AttachmentSymlinkRejected verifies that an attachment URI
@@ -327,7 +334,7 @@ func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: symlinked attachment not rejected")
-	assert.NotEmpty(ch, "content_hash: rejected attachment now gets a synthetic (non-content) hash")
+	assertSyntheticAttachmentKey(t, ch)
 	// The synthetic hash must never be the hash of the secret's contents.
 	leak := fmt.Sprintf("%x", sha256.Sum256([]byte("password=hunter2")))
 	assert.NotEqual(leak, ch, "content_hash must never be the secret's content hash")
@@ -365,14 +372,14 @@ func TestImportDYI_MissingAttachment(t *testing.T) {
 	err = st.DB().QueryRow("SELECT storage_path, content_hash FROM attachments LIMIT 1").Scan(&sp, &ch)
 	require.NoError(err)
 	assert.Empty(sp, "storage_path: missing attachment should have empty storage_path")
-	assert.NotEmpty(ch, "missing attachment now gets a synthetic (non-content) hash so siblings aren't dropped")
+	assertSyntheticAttachmentKey(t, ch)
 }
 
 // TestImportDYI_MultipleMissingAttachments verifies that a single message
 // with multiple missing photos records one attachment row per photo, rather
 // than collapsing them to a single hashless row. Each row gets a stable,
-// distinct synthetic content_hash while storage_path stays empty (no bytes
-// copied).
+// distinct synthetic key that is not a real content hash while storage_path
+// stays empty (no bytes copied).
 func TestImportDYI_MultipleMissingAttachments(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -398,13 +405,13 @@ func TestImportDYI_MultipleMissingAttachments(t *testing.T) {
 
 	rows, err := st.DB().Query("SELECT storage_path, content_hash FROM attachments ORDER BY id")
 	require.NoError(err)
-	defer rows.Close()
+	defer func() { require.NoError(rows.Close(), "close attachment rows") }()
 	var hashes []string
 	for rows.Next() {
 		var sp, ch string
 		require.NoError(rows.Scan(&sp, &ch))
 		assert.Empty(sp, "storage_path: missing attachment should have empty storage_path")
-		assert.NotEmpty(ch, "content_hash: missing attachment should have synthetic non-empty hash")
+		assertSyntheticAttachmentKey(t, ch)
 		hashes = append(hashes, ch)
 	}
 	require.NoError(rows.Err())
