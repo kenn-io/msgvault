@@ -697,12 +697,12 @@ func writeThreadToStore(
 			if storagePath != "" {
 				summary.AttachmentsStored++
 			}
+			if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+			}
 			hash := contentHash
 			if hash == "" {
 				hash = fbAttachmentHash(att, ai)
-				if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
-					logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
-				}
 			}
 			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
