@@ -28,8 +28,6 @@ func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
 
 func TestBackendSearchStructuredFilters(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
-	_, err := db.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`)
-	require.NoError(t, err, "add message_type")
 	gen := seedAndEmbed(t, b, db, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
@@ -37,7 +35,7 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 	})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
-	_, err = db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		UPDATE messages
 		   SET source_id = CASE id WHEN 1 THEN 10 WHEN 2 THEN 20 ELSE 30 END,
 		       message_type = CASE id WHEN 1 THEN 'email' WHEN 2 THEN 'sms' ELSE 'mms' END,
@@ -153,14 +151,12 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 
 func TestBackendSearchMessageTypeFilter(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
-	_, err := db.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'email'`)
-	require.NoError(t, err, "add message_type")
 	gen := seedAndEmbed(t, b, db, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
 		3: unitVec(4, 2),
 	})
-	_, err = db.ExecContext(ctx, `UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END`)
+	_, err := db.ExecContext(ctx, `UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END`)
 	require.NoError(t, err, "seed message_type")
 
 	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{MessageTypes: []string{"sms"}})
