@@ -20,7 +20,8 @@ import (
 )
 
 // openTestBackend opens a fresh in-memory-ish sqlitevec backend with a
-// single pre-seeded message so CreateGeneration has something to enqueue.
+// single pre-seeded message so the scan-and-fill worker has a message to
+// discover and embed.
 func openTestBackend(t *testing.T) *sqlitevec.Backend {
 	t.Helper()
 	ctx := context.Background()
@@ -272,130 +273,12 @@ func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
 	requirepkg.Error(t, err, "expected abort error")
 }
 
-// TestPickEmbedGeneration_ResumeReseedsUnseededBuilding regression-
-// guards the crash-window bug where a process that died between
-// inserting the building row and committing the initial seed would
-// leave the queue empty; a later `msgvault embeddings build` would then "drain"
-// zero rows and silently activate an unseeded generation. The resume
-// path must call EnsureSeeded on the matched build before returning,
-// reseeding pending_embeddings so the activation gate sees real work
-// (or the absence of any) instead of a vacuous empty queue.
-func TestPickEmbedGeneration_ResumeReseedsUnseededBuilding(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	ctx := context.Background()
-	b := openTestBackend(t)
+func TestRemainingCoverageHintMentionsBackstop(t *testing.T) {
+	got := remainingCoverageHint(7, 3)
 
-	// Step 1: create a building gen the normal way (which seeds + marks
-	// seeded_at).
-	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(err, "CreateGeneration")
-
-	// Step 2: simulate the crash window — clear pending_embeddings and
-	// blank seeded_at so the next resume must reseed. This mirrors the
-	// state after a process dies between the building-row insert and
-	// the seedPending commit.
-	_, err = b.DB().ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen))
-	require.NoError(err, "clear pending")
-	_, err = b.DB().ExecContext(ctx,
-		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	require.NoError(err, "clear seeded_at")
-
-	// Sanity: pending really is empty before the resume.
-	var pendingBefore int
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pendingBefore),
-		"count pending before")
-	require.Equal(0, pendingBefore, "pending count before resume = %d, want 0 (test setup wrong)", pendingBefore)
-
-	// Step 3: run pickEmbedGeneration on the resume path.
-	gotGen, rebuildInProgress, err := pickEmbedGeneration(ctx, b, embedGenerationOpts{
-		FullRebuild: false,
-		Model:       "fake",
-		Dimension:   4,
-		Fingerprint: "fake:4",
-		Stderr:      openStderrSink(t),
-	})
-	require.NoError(err, "pickEmbedGeneration")
-	assert.Equal(gen, gotGen, "gotGen mismatch")
-	assert.True(rebuildInProgress, "rebuildInProgress=false, want true")
-
-	// Step 4: pending_embeddings should now contain the message we
-	// seeded in openTestBackend (id=1). Without EnsureSeeded on the
-	// resume path, this would still be 0.
-	var pendingAfter int
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&pendingAfter),
-		"count pending after")
-	assert.Equal(1, pendingAfter, "pending count after resume = %d, want 1 (EnsureSeeded should have reseeded)", pendingAfter)
-	// And seeded_at should be set so a subsequent resume skips the work.
-	var seededAt sql.NullInt64
-	require.NoError(b.DB().QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt),
-		"read seeded_at")
-	assert.True(seededAt.Valid, "seeded_at still NULL after resume, want set")
-}
-
-// TestPickEmbedGeneration_ResumeRacesActivation regresses the case
-// where the `building` row flips to `active` between the
-// BuildingGeneration read and EnsureSeeded. Before the fix this
-// surfaced a fatal `ensure seeded: ... state="active"` error even
-// though a legitimate active generation (matching the configured
-// fingerprint) now existed. After the fix we fall through to the
-// active-generation lookup and top it up as a normal incremental
-// pass.
-func TestPickEmbedGeneration_ResumeRacesActivation(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	ctx := context.Background()
-	b := openTestBackend(t)
-
-	// Create the building generation as if the operator had just run
-	// `msgvault embeddings build --full-rebuild`. CreateGeneration seeds pending
-	// rows for id=1 via openTestBackend's seed message.
-	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(err, "CreateGeneration")
-	// Simulate the race: another actor (the daemon, or a concurrent
-	// `msgvault embeddings build` run that finished first) activated the
-	// generation. From this actor's perspective BuildingGeneration
-	// returned non-nil a moment ago, but the state has since flipped.
-	require.NoError(b.ActivateGeneration(ctx, gen, true), "ActivateGeneration")
-
-	// Intercepting the race is hard to do in a single-threaded test,
-	// but we can drive the same code path by calling
-	// pickEmbedGeneration with a backend that reports the now-active
-	// generation when BuildingGeneration is queried. We use a
-	// shim that wraps the real backend and overrides only
-	// BuildingGeneration.
-	shim := &buildingShim{Backend: b, forceBuilding: &vector.Generation{
-		ID: gen, Fingerprint: "fake:4", State: vector.GenerationBuilding,
-	}}
-
-	gotGen, rebuildInProgress, err := pickEmbedGeneration(ctx, shim, embedGenerationOpts{
-		FullRebuild: false,
-		Model:       "fake",
-		Dimension:   4,
-		Fingerprint: "fake:4",
-		Stderr:      openStderrSink(t),
-	})
-	require.NoError(err, "pickEmbedGeneration (race must be retryable, not fatal)")
-	assert.Equal(gen, gotGen, "same generation, but now active")
-	assert.False(rebuildInProgress, "rebuildInProgress=true, want false (now on the active path)")
-}
-
-// buildingShim wraps a real backend, overriding only BuildingGeneration
-// to return a forced value. Used by TestPickEmbedGeneration_ResumeRacesActivation
-// to simulate a stale read where the generation flipped to active
-// underneath us after BuildingGeneration returned.
-type buildingShim struct {
-	vector.Backend
-
-	forceBuilding *vector.Generation
-}
-
-func (s *buildingShim) BuildingGeneration(ctx context.Context) (*vector.Generation, error) {
-	return s.forceBuilding, nil
+	assertpkg.Contains(t, got, "Generation 7 still has 3 message(s) needing embedding")
+	assertpkg.Contains(t, got, "msgvault embeddings resume --backstop")
+	assertpkg.NotContains(t, got, "resume` again")
 }
 
 func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {

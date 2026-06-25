@@ -222,6 +222,36 @@ func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
 		"re-migrate must drop the legacy idx_embeddings_gen_msg")
 }
 
+// TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
+// drops the dead pending_embeddings queue table: the one-time upgrade backfill
+// (BackfillEmbedGenForUpgrade) must first consult it to preserve its legacy
+// re-embed signal. The drop moved to the writable Open path,
+// AFTER the backfill — see TestOpen_DropsDeadPendingEmbeddings and
+// TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal. Migrate runs on
+// read-only opens too, where dropping (before the signal is honored on a later
+// writable open) would be wrong.
+func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
+	db := openPGTestDB(t)
+	ctx := context.Background()
+	require.NoError(t, Migrate(ctx, db, 0, false), "first Migrate")
+
+	// Stand up a legacy pending_embeddings table, then re-migrate.
+	_, err := db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
+		generation_id BIGINT NOT NULL,
+		message_id    BIGINT NOT NULL
+	)`)
+	require.NoError(t, err, "create legacy pending_embeddings")
+	var reg *string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
+	require.NotNil(t, reg, "legacy table should exist before re-migrate")
+
+	require.NoError(t, Migrate(ctx, db, 0, false), "second Migrate")
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
+	assert.NotNil(t, reg, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+}
+
 // TestMigrate_SkipExtension (V5 / finding B3) asserts that the skipExtension
 // flag is HONORED — not merely that the schema objects exist (which would also
 // be true for an impl that ignored the flag and ran the harmless
@@ -257,7 +287,7 @@ func TestMigrate_SkipExtension(t *testing.T) {
 	assertHatchedDDL(t, tracer)
 
 	// Schema tables exist.
-	for _, table := range []string{"index_generations", "embeddings", "pending_embeddings", "embed_runs"} {
+	for _, table := range []string{"index_generations", "embeddings", "embed_watermark", "embed_runs"} {
 		var reg sql.NullString
 		require.NoError(t, db.QueryRowContext(ctx,
 			`SELECT to_regclass($1)::text`, table).Scan(&reg),
@@ -338,7 +368,8 @@ func assertCreateExtensionOutsideTx(t *testing.T, tracer *sqlTracer) {
 // TestOpen_SkipExtensionWiring (V5) pins the Options.SkipExtension wiring:
 // Open with SkipExtension:true must succeed and produce a working backend
 // (schema created without running CREATE EXTENSION). Distinct from
-// SkipMigrate, which suppresses all DDL.
+// SkipMigrate (suppresses CREATE EXTENSION + the heavy full migrate) and
+// ReadOnly (suppresses ALL writes).
 func TestOpen_SkipExtensionWiring(t *testing.T) {
 	db := openPGTestDB(t)
 	ctx := context.Background()
@@ -516,8 +547,6 @@ func TestSearch_FilteredInlineExists_MultiChunk(t *testing.T) {
 		{MessageID: 1, ChunkIndex: 1, Vector: unitVec(4, 2)},
 		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
 	}), "Upsert")
-	_, err = b.db.ExecContext(ctx, `DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen))
-	require.NoError(t, err, "clear pending")
 
 	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{SourceIDs: []int64{10}})
 	require.NoError(t, err, "Search")

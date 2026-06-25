@@ -100,6 +100,69 @@ func TestRecomputeConversationStats(t *testing.T) {
 	assert.Equal(3, count, "idempotency message_count")
 }
 
+// TestEmbedGen_OrphanImpossibleAndCoverage pins the scan-and-fill
+// embed_gen contract:
+//   - a freshly-upserted message has embed_gen NULL (column default), so
+//     CoverageCounts reports it as missing for any generation — the
+//     scan-and-fill worker picks it up with no enqueue step (orphan rows
+//     are impossible).
+//   - SetEmbedGen stamps it covered; CoverageCounts then reports it
+//     embedded.
+//   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) clears embed_gen
+//     when the embeddable subject text changes.
+func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "me@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "conv-1", "email_thread", "Subject")
+	require.NoError(err, "EnsureConversationWithType")
+
+	msg := &store.Message{
+		SourceID:        source.ID,
+		SourceMessageID: "m1",
+		ConversationID:  convID,
+		MessageType:     "email",
+		Subject:         sql.NullString{String: "hello", Valid: true},
+	}
+	id, err := st.UpsertMessage(msg)
+	require.NoError(err, "UpsertMessage")
+
+	const gen = int64(7)
+	ctx := t.Context()
+
+	// New row: embed_gen NULL by default -> reported missing for any gen.
+	var embedGen sql.NullInt64
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
+	assert.False(embedGen.Valid, "new message must have NULL embed_gen (no enqueue, no orphan)")
+
+	live, embedded, _, missing, err := st.CoverageCounts(ctx, gen)
+	require.NoError(err, "CoverageCounts (before stamp)")
+	assert.Equal(int64(1), live, "one live message")
+	assert.Equal(int64(0), embedded, "none embedded yet")
+	assert.Equal(int64(1), missing, "the new message is missing")
+
+	// Stamp it covered.
+	require.NoError(st.SetEmbedGen(ctx, []int64{id}, gen), "SetEmbedGen")
+	live, embedded, _, missing, err = st.CoverageCounts(ctx, gen)
+	require.NoError(err, "CoverageCounts (after stamp)")
+	assert.Equal(int64(1), live, "still one live message")
+	assert.Equal(int64(1), embedded, "now embedded")
+	assert.Equal(int64(0), missing, "nothing missing")
+
+	// Re-upsert the same message with changed embedding input: embed_gen must
+	// be cleared so the scan-and-fill worker re-embeds it.
+	msg.Subject = sql.NullString{String: "hello (edited)", Valid: true}
+	_, err = st.UpsertMessage(msg)
+	require.NoError(err, "re-UpsertMessage")
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
+	assert.False(embedGen.Valid, "subject change must clear embed_gen")
+}
+
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

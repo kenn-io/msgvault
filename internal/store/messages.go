@@ -188,6 +188,10 @@ func upsertMessageSQL(now string) string {
 		has_attachments, attachment_count, archived_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
 	ON CONFLICT(source_id, source_message_id) DO UPDATE SET
+		embed_gen = CASE
+			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '') THEN NULL
+			ELSE messages.embed_gen
+		END,
 		conversation_id = excluded.conversation_id,
 		rfc822_message_id = excluded.rfc822_message_id,
 		sent_at = excluded.sent_at,
@@ -247,14 +251,53 @@ func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullSt
 }
 
 func upsertMessageBody(q querier, messageID int64, bodyText, bodyHTML sql.NullString) error {
-	_, err := q.Exec(`
+	bodyChanged, err := messageBodyChanged(q, messageID, bodyText, bodyHTML)
+	if err != nil {
+		return err
+	}
+	_, err = q.Exec(`
 		INSERT INTO message_bodies (message_id, body_text, body_html)
 		VALUES (?, ?, ?)
 		ON CONFLICT(message_id) DO UPDATE SET
 			body_text = excluded.body_text,
 			body_html = excluded.body_html
 	`, messageID, bodyText, bodyHTML)
+	if err != nil {
+		return err
+	}
+	if !bodyChanged {
+		return nil
+	}
+	_, err = q.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ? AND embed_gen IS NOT NULL`, messageID)
 	return err
+}
+
+func messageBodyChanged(q querier, messageID int64, bodyText, bodyHTML sql.NullString) (bool, error) {
+	var oldText, oldHTML sql.NullString
+	err := q.QueryRow(`
+		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
+	`, messageID).Scan(&oldText, &oldHTML)
+	if errors.Is(err, sql.ErrNoRows) {
+		return embeddingBodyValue(bodyText, bodyHTML) != "", nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML), nil
+}
+
+func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
+	if v := nullStringValue(bodyText); v != "" {
+		return v
+	}
+	return mime.StripHTML(nullStringValue(bodyHTML))
+}
+
+func nullStringValue(ns sql.NullString) string {
+	if !ns.Valid {
+		return ""
+	}
+	return ns.String
 }
 
 // UpsertMessageRaw stores the compressed raw MIME data for a message.

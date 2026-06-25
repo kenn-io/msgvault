@@ -652,7 +652,7 @@ func (s *Store) SchemaStale() (bool, string, error) {
 		return false, "", fmt.Errorf("check schema version: %w", err)
 	}
 	if count == 0 {
-		return true, "conversations.conversation_type", nil
+		return true, "messages.embed_gen", nil
 	}
 	return false, "", nil
 }
@@ -723,6 +723,25 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Backfill last_modified for rows that predate the column. SQLite cannot
+	// ADD COLUMN with a non-constant default, so the legacy ADD COLUMN above
+	// leaves existing rows NULL; this one-shot UPDATE sets them to
+	// CURRENT_TIMESTAMP so the embed worker's CAS token is a comparable value
+	// (a NULL token would never satisfy `last_modified = ?` and the row would
+	// loop "needs embedding" forever). Idempotent and portable: on a fresh
+	// DB (or PostgreSQL, whose ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP
+	// backfills automatically) no rows are NULL, so this is a no-op. Run
+	// under runMaintenance so the full-table UPDATE on a large archive is not
+	// cut off by the pool-wide statement_timeout (no-op reset on SQLite).
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE messages SET last_modified = `+s.dialect.Now()+
+				` WHERE last_modified IS NULL`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("backfill last_modified: %w", err)
+	}
+
 	// Create FTS indexes that depend on columns just added by the legacy
 	// migrations (PostgreSQL's GIN index on messages.search_fts). No-op on
 	// SQLite. Must run after the migration loop above. [cr2-10]
@@ -735,6 +754,34 @@ func (s *Store) InitSchema() error {
 		return s.dialect.EnsureFTSIndex(tx)
 	}); err != nil {
 		return fmt.Errorf("ensure FTS index: %w", err)
+	}
+
+	// Create the last_modified maintenance triggers. Must run after the
+	// migration loop above adds the last_modified column on legacy DBs.
+	// SQLite is a no-op here (its triggers ride schema.sql); PostgreSQL
+	// creates them idempotently. Run under runMaintenance for consistency
+	// with EnsureFTSIndex (no statement_timeout cap on the DDL).
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		return s.dialect.EnsureTriggers(tx)
+	}); err != nil {
+		return fmt.Errorf("ensure last_modified triggers: %w", err)
+	}
+
+	// Drop the obsolete partial index over messages needing embedding. It was
+	// redundant with the per-generation embed watermark (the work-finder scan
+	// rides the messages PRIMARY KEY B-tree via `id > :watermark ORDER BY id`)
+	// and useless during a rebuild (old-gen leftovers carry a non-NULL embed_gen
+	// that an `embed_gen IS NULL` index never covers), while costing index
+	// maintenance on the two hottest write paths (message insert + embed_gen
+	// stamp). DROP IF EXISTS is idempotent and portable across SQLite/PG; it
+	// cleans up any dev DB that already created the index. Run under
+	// runMaintenance to match the original CREATE's transaction context.
+	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx,
+			`DROP INDEX IF EXISTS idx_messages_embed_gen`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("drop idx_messages_embed_gen: %w", err)
 	}
 
 	// Load the optional FTS schema, if the dialect keeps one separate.

@@ -104,10 +104,9 @@ Add to Claude Desktop config:
 		defer cancel()
 
 		// Build optional vector-search components. MCP runs as a
-		// query-only server, so the worker and enqueuer fields go
-		// unused — only Backend, HybridEngine, and VectorCfg reach
-		// the MCP layer.
-		vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, true)
+		// query-only server, so the Worker field goes unused — only
+		// Backend, HybridEngine, and Cfg reach the MCP layer.
+		vf, err := setupVectorFeatures(ctx, s, dbPath, true)
 		if err != nil {
 			return fmt.Errorf("vector features: %w", err)
 		}

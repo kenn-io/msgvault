@@ -155,8 +155,25 @@ CREATE TABLE IF NOT EXISTS messages (
     archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     indexing_version INTEGER DEFAULT 1,
 
+    -- Row-level last-modified watermark, maintained ENTIRELY by the
+    -- database (triggers below), never by application write paths. Used by
+    -- the embed worker as an optimistic-CAS token: it captures this value
+    -- when it reads a message's content and stamps embed_gen only if the
+    -- value is unchanged at stamp time, so a concurrent content edit
+    -- (e.g. repair-encoding) that lands between read and stamp leaves the
+    -- row unstamped and it is re-embedded with the corrected content.
+    last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
+
     -- Platform-specific metadata
     metadata JSON,
+
+    -- Vector-embedding watermark: the index generation this message's
+    -- embeddings were last written for. NULL means "needs embedding"
+    -- (new rows default to NULL); a value equal to the active/building
+    -- generation id means "covered". The scan-and-fill embed worker
+    -- finds work via (embed_gen IS NULL OR embed_gen <> <target>) and
+    -- stamps this column after a successful upsert (or skip).
+    embed_gen INTEGER,
 
     UNIQUE(source_id, source_message_id)
 );
@@ -268,6 +285,44 @@ CREATE TABLE IF NOT EXISTS message_bodies (
     body_text TEXT,
     body_html TEXT
 );
+
+-- ============================================================================
+-- LAST-MODIFIED TRIGGERS
+-- ============================================================================
+-- messages.last_modified is bumped to CURRENT_TIMESTAMP on ANY change to a
+-- message row OR any insert/update of its body row. This is a TRUE row-level
+-- last-modified (blanket, not column-specific): the embed worker uses it as an
+-- optimistic-CAS token, so it must move whenever any embeddable content could
+-- have changed. No application write path bumps it manually — the database
+-- owns it via these triggers. InitSchema re-execs schema.sql idempotently, so
+-- `IF NOT EXISTS` makes these safe on both fresh and existing databases.
+
+-- On messages: re-stamp last_modified after any UPDATE. The WHEN guard
+-- (OLD.last_modified = NEW.last_modified) prevents infinite recursion: the
+-- trigger's own UPDATE changes last_modified, so on the re-fire
+-- OLD.last_modified <> NEW.last_modified and WHEN evaluates false, regardless
+-- of the recursive_triggers pragma. It also yields to an explicit
+-- last_modified write in the original UPDATE rather than clobbering it.
+CREATE TRIGGER IF NOT EXISTS trg_messages_last_modified
+AFTER UPDATE ON messages FOR EACH ROW
+WHEN OLD.last_modified = NEW.last_modified
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- On message_bodies: a body change must bump the parent message's
+-- last_modified so the worker's CAS token covers body edits too.
+CREATE TRIGGER IF NOT EXISTS trg_message_bodies_last_modified_upd
+AFTER UPDATE ON message_bodies FOR EACH ROW
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_message_bodies_last_modified_ins
+AFTER INSERT ON message_bodies FOR EACH ROW
+BEGIN
+    UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
+END;
 
 -- Original message data (for re-parsing/export)
 CREATE TABLE IF NOT EXISTS message_raw (

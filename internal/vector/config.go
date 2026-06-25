@@ -208,6 +208,12 @@ func (s SearchConfig) MaxPageSizeHybridClamp() int {
 // embedding endpoint itself (e.g. scheduling).
 type EmbedConfig struct {
 	Schedule EmbedScheduleConfig `toml:"schedule"`
+	// BackstopInterval is how often the daemon embed job also runs a full
+	// watermark-ignoring backstop pass (recovering below-watermark
+	// stragglers from repair-encoding resets, transient errors, or crashes)
+	// in addition to the per-tick incremental scan. Zero uses the EmbedJob
+	// default (24h); a negative value disables the auto-backstop.
+	BackstopInterval time.Duration `toml:"backstop_interval"`
 }
 
 // EmbedScheduleConfig controls when the embed worker runs on its own

@@ -123,9 +123,9 @@ All notable changes to msgvault, grouped by release.
 **New features**
 
 - **Vector search (semantic and hybrid).** msgvault can now embed your archive using a configured OpenAI-compatible embedding endpoint (Ollama, llama.cpp `server`, LM Studio, etc.) and search it by meaning, not just keywords. `msgvault search --mode vector` runs pure semantic search; `--mode hybrid` fuses BM25 and vector similarity via Reciprocal Rank Fusion. Exposed through local CLI search (`msgvault search`), the HTTP API (`GET /api/v1/search?mode=vector|hybrid`), and the MCP server (`search_messages` mode argument plus a new `find_similar_messages` tool). See [Vector Search](/usage/vector-search/).
-- `msgvault build-embeddings` command to generate and maintain the local vector index. Incremental by default; `--full-rebuild` creates a new generation and atomically activates it once pending work drains. Same-model rebuilds keep answering against the previous active generation while the new one is built; model or dimension changes return `index_stale` until activation.
+- `msgvault build-embeddings` command to generate and maintain the local vector index. Incremental by default; `--full-rebuild` creates a new generation and atomically activates it once coverage reaches zero. Same-model rebuilds keep answering against the previous active generation while the new one is built, with active-generation top-ups frozen until activation; model or dimension changes return `index_stale` until activation.
 - Background embedding via the daemon scheduler. A new `[vector.embed.schedule]` config block drives the embed worker on cron and/or after every successful scheduled sync, so `msgvault serve` can keep the vector index current without manual intervention.
-- `/api/v1/stats` gains a `vector_search` sub-object reporting the active generation, any in-flight rebuild, and the total pending embedding queue depth.
+- `/api/v1/stats` gains a `vector_search` sub-object reporting the active generation, any in-flight rebuild, and the actionable missing embedding count for the generation the worker will target next.
 - `msgvault rebuild-fts` command to rebuild the SQLite FTS5 shadow table after corruption.
 
 **Improvements**

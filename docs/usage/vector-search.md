@@ -28,8 +28,8 @@ on your own machine or network.
 !!! note
     Vector indexing operates over msgvault's shared `messages` table. A
     full rebuild embeds every non-deleted message row, including imported
-    chat messages. Chat import commands do not auto-enqueue new rows into
-    an existing vector generation, so run
+    chat messages. Chat import commands do not run the embed worker after
+    import, so run
     `msgvault embeddings build --full-rebuild --yes` after importing
     local files or chat/text data if you want those messages in
     the vector index. Chat-specific preprocessing and ranking are not
@@ -200,18 +200,18 @@ messages, embed it:
 msgvault embeddings build --full-rebuild --yes
 ```
 
-This creates a new **building generation**, seeds the pending queue
-with every non-deleted message in your archive, drains the queue in
-batches through your configured embedder, and atomically activates
-the generation once every pending row has been embedded. During the
+This creates a new **building generation**, scans every non-deleted
+message in your archive, embeds missing rows in batches through your
+configured embedder, and atomically activates the generation once
+coverage reaches zero. During the
 first build, when no active generation exists yet, HTTP and MCP
 vector/hybrid search return `index_building`; use `mode=fts` for the
 interim.
 
 !!! tip
     You can interrupt and resume. Each invocation of `msgvault embeddings build`
-    processes whatever is currently pending and activates the generation
-    when the queue reaches zero. `Ctrl+C` is safe; run `msgvault embeddings build`
+    scans for messages still missing coverage and activates the generation
+    when coverage reaches zero. `Ctrl+C` is safe; run `msgvault embeddings build`
     again and it picks up from where it left off.
 
 The initial embed is the largest and longest operation. Runtime is
@@ -231,26 +231,28 @@ on how you run it.
 ### CLI workflow (manual syncs)
 
 If you run `msgvault sync-full` or `msgvault sync` (alias:
-`sync-incremental`) by hand, new Gmail and IMAP messages are
-**auto-enqueued** into every
-non-retired generation during the sync. In steady state that means the
-active generation; during a rebuild it means both the old active
-generation and the new building generation. Run
-`msgvault embeddings build` (no `--full-rebuild`) to drain the queue:
+`sync-incremental`) by hand, new Gmail and IMAP messages persist with
+`embed_gen = NULL`. In steady state, `msgvault embeddings build` scans
+those rows and tops up the active generation. During a rebuild, the
+worker targets the building generation first so it can activate; the old
+active generation keeps serving vector and hybrid search, but is frozen
+and will not receive top-ups until the build activates. Run
+`msgvault embeddings build` (no `--full-rebuild`) to continue the scan:
 
 ```bash
-# Sync new messages (auto-enqueues them for embedding)
+# Sync new messages (marks them as needing embedding)
 msgvault sync you@gmail.com
 
-# Drain the embedding queue into the active generation
+# Scan and embed missing rows for the active or building generation
 msgvault embeddings build
 ```
 
 `msgvault embeddings build` without `--full-rebuild` is a short, incremental
-operation: it picks up the configured active generation, drains any
-pending rows, and exits. `msgvault embeddings resume` is a synonym for this
-drain that never starts a full rebuild. You can schedule either via cron,
-run it after every sync, or chain it (`msgvault sync && msgvault embeddings build`).
+operation: it resumes a matching building generation if one exists,
+otherwise it tops up the configured active generation, and exits.
+`msgvault embeddings resume` is a synonym for this drain that never starts a
+full rebuild. You can schedule either via cron, run it after every sync, or
+chain it (`msgvault sync && msgvault embeddings build`).
 
 ### Daemon workflow (`msgvault serve`)
 
@@ -265,29 +267,53 @@ run_after_sync = true     # and opportunistically after every scheduled sync
 ```
 
 With `run_after_sync = true`, every successful scheduled sync
-triggers an immediate embed pass against the queue it just
-populated. The standalone cron ensures the queue drains even when
-syncs are quiet (e.g. overnight). An empty `cron = ""` disables the
+triggers an immediate embed pass over messages still missing coverage.
+The standalone cron ensures embedding catches up even when syncs are
+quiet (e.g. overnight). An empty `cron = ""` disables the
 standalone schedule (useful if you only want the post-sync
 trigger).
 
-### What auto-enqueues
+### What Triggers Embedding
 
-| Ingest path | Auto-enqueues? |
+| Ingest path | Runs the embed worker? |
 |---|---|
-| `sync-full` / `sync` (Gmail, IMAP) | Yes |
-| Scheduled syncs in `msgvault serve` | Yes |
+| Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
+| Scheduled syncs in `msgvault serve` | Yes, when `[vector.embed.schedule].run_after_sync = true` |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
 
-For ingest paths that do not auto-enqueue, running
+For ingest paths that do not immediately schedule embedding work, running
 `msgvault embeddings build --full-rebuild --yes` rebuilds the index over the
 full archive including the newly-imported messages. A same-model full
 rebuild is atomic from the searcher's perspective: vector and hybrid
 queries keep answering from the previous active generation until the
-new one is ready. If the rebuild changes the configured model or
+new one is ready. That previous active generation is intentionally frozen
+during the rebuild, so messages synced after the rebuild starts may not appear
+in vector or hybrid results until the building generation activates. If the
+rebuild changes the configured model or
 dimension, vector and hybrid queries return `index_stale` until the
 new generation activates.
+
+### CAS resolution (accepted single-user residual)
+
+When a message's text changes during embedding (for example
+`msgvault repair-encoding` rewriting a body while an embed run is in flight),
+the embed worker uses an optimistic compare-and-set on the message's
+`last_modified` timestamp to avoid stamping an embedding built from stale
+text: if `last_modified` moved between the worker reading the content and
+writing the coverage stamp, the stamp is skipped and the message is re-embedded
+on a later run.
+
+`last_modified` has **1-second resolution** (it is a `CURRENT_TIMESTAMP`
+default/trigger). A concurrent edit that lands in the *same whole second* as
+the worker's content read leaves `last_modified` unchanged, so the CAS can
+mark an embedding current even though it was built from the now-stale text.
+This sub-second window is an accepted residual for this single-user tool — an
+edit and an embed of the *same* message within the *same second* is rare. It
+self-recovers: the next edit to that message bumps `last_modified` (and
+`repair-encoding` clears its coverage stamp outright), and a full rebuild
+(`embeddings build --full-rebuild`) or the periodic full-scan backstop
+re-embeds it regardless.
 
 ## Search
 
@@ -399,9 +425,11 @@ curl -H "X-API-Key: ..." http://localhost:8080/api/v1/stats | jq .vector_search
 ```
 
 The `active_generation.message_count` should roughly match
-`total_messages`. `pending_embeddings_total` shows how many rows
-still need embedding (either because a rebuild is in flight or
-because recent syncs have not yet been drained).
+`total_messages` when no rebuild is in flight. During a rebuild it reports
+the frozen serving index, while `building_generation.progress` reports the
+replacement index. `missing_embeddings_total` shows how many live messages
+still need embedding for the generation the worker will target next: the
+building generation during a rebuild, otherwise the active generation.
 
 ## What Gets Embedded
 

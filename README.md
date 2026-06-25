@@ -116,6 +116,8 @@ msgvault can search your archive semantically using vector embeddings in additio
 
 A separate MCP tool, `find_similar_messages`, returns nearest neighbors for a seed message. See the [Vector Search guide](https://msgvault.io/usage/vector-search/) for setup, backfill, and troubleshooting.
 
+> **Run only one embedding process at a time.** Don't run `msgvault embeddings build`/`resume` or `repair-encoding` concurrently with a `msgvault serve` daemon — they write the same embedding state, and concurrent writers are not coordinated across processes.
+
 ## Importing from MBOX or Apple Mail
 
 Import email from providers that offer MBOX exports or from a local Apple Mail data directory:

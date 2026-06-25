@@ -100,7 +100,8 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 			size_estimate BIGINT,
 			sent_at TIMESTAMPTZ,
 			deleted_at TIMESTAMPTZ,
-			deleted_from_source_at TIMESTAMPTZ
+			deleted_from_source_at TIMESTAMPTZ,
+			embed_gen BIGINT
 		);
 		CREATE TABLE message_recipients (
 			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -148,9 +149,9 @@ func unitVec(dim, axis int) []float32 {
 
 // seedAndEmbed inserts any missing message rows, creates a building
 // generation sized to the first vector, upserts every supplied vector
-// as a chunk, and clears pending_embeddings for those rows so the
-// caller sees the "fully embedded" end state. Mirrors the sqlitevec
-// helper of the same name.
+// as a chunk, and stamps messages.embed_gen for those rows so the caller
+// sees the "fully embedded" end state (coverage complete). Mirrors the
+// sqlitevec helper of the same name.
 func seedAndEmbed(t *testing.T, b *Backend, db *sql.DB, vecs map[int64][]float32) vector.GenerationID {
 	t.Helper()
 	require.NotEmpty(t, vecs, "seedAndEmbed: no vectors supplied")
@@ -183,8 +184,10 @@ func seedAndEmbed(t *testing.T, b *Backend, db *sql.DB, vecs map[int64][]float32
 	}
 	require.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
 
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gid))
-	require.NoError(t, err, "clear pending")
+	for _, id := range ids {
+		_, err = db.ExecContext(ctx,
+			`UPDATE messages SET embed_gen = $1 WHERE id = $2`, int64(gid), id)
+		require.NoErrorf(t, err, "stamp embed_gen for msg %d", id)
+	}
 	return gid
 }

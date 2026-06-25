@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -14,7 +13,7 @@ import (
 // (nil, nil) when vector search is disabled, and a descriptive error
 // when the user enabled vector search in config but built the binary
 // without -tags sqlite_vec.
-func setupVectorFeatures(_ context.Context, _ *sql.DB, mainPath string, _ bool) (*vectorFeatures, error) {
+func setupVectorFeatures(_ context.Context, _ *store.Store, mainPath string, _ bool) (*vectorFeatures, error) {
 	if !cfg.Vector.Enabled {
 		return nil, nil //nolint:nilnil // vector disabled: callers nil-check vf; (nil, nil) means "no features, no error"
 	}

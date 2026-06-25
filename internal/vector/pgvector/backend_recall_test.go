@@ -89,10 +89,6 @@ func seedRecallCorpus(t *testing.T, b *Backend, db *sql.DB, multiChunks, singles
 	}
 	require.NoError(t, b.Upsert(ctx, gen, chunks), "Upsert")
 
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen))
-	require.NoError(t, err, "clear pending")
-
 	query := make([]float32, recallDim)
 	query[0] = 1
 	return gen, query
@@ -255,10 +251,6 @@ func seedDistinctNearQueryCorpus(t *testing.T, b *Backend, db *sql.DB, count int
 		})
 	}
 	require.NoError(t, b.Upsert(ctx, gen, chunks), "Upsert")
-
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = $1`, int64(gen))
-	require.NoError(t, err, "clear pending")
 
 	// ANALYZE so the planner has row-count statistics; without them it may
 	// mis-cost the HNSW index against the btree(+sort) alternatives and the

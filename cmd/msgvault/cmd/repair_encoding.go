@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"compress/zlib"
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -57,29 +58,15 @@ charset detection issues in the MIME parser.`,
 			return err
 		}
 
-		// Re-enqueue repaired messages for re-embedding so semantic
-		// results reflect the corrected text. setupVectorFeatures
-		// returns (nil, nil) when vector search is disabled or the
-		// binary was built without sqlite_vec; in those cases the
-		// pending_embeddings table is irrelevant and there's nothing
-		// to do.
+		// Reset embed_gen = NULL on repaired messages so the scan-and-fill
+		// embed worker re-embeds them with the corrected text on its next
+		// run (msgvault embeddings build / the serve daemon). This is the
+		// scan-and-fill replacement for the old re-enqueue step: clearing
+		// embed_gen makes the message read as "needs embedding" again.
+		// No-op when vector search is disabled — the column is harmless.
 		if len(reembedNeededIDs) > 0 {
-			vf, err := setupVectorFeatures(ctx, s.DB(), dbPath, false)
-			if err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: failed to open vectors.db for re-enqueue: %v\n", err)
-			} else if vf != nil {
-				if err := vf.Enqueuer.EnqueueMessages(ctx, reembedNeededIDs); err != nil {
-					fmt.Fprintf(os.Stderr,
-						"Warning: failed to re-enqueue %d messages for re-embedding: %v\n",
-						len(reembedNeededIDs), err)
-				} else {
-					fmt.Printf("Re-enqueued %d message(s) for re-embedding.\n",
-						len(reembedNeededIDs))
-				}
-				if closeErr := vf.Close(); closeErr != nil {
-					logger.Warn("closing vectors.db failed", "error", closeErr)
-				}
+			if err := repairResetEmbeddings(ctx, s, reembedNeededIDs); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}
 		}
 
@@ -94,6 +81,60 @@ charset detection issues in the MIME parser.`,
 		}
 		return nil
 	},
+}
+
+// repairResetEmbeddings marks the repaired messages for re-embedding and lowers
+// the scan-and-fill watermark so the next incremental embed run re-finds them.
+//
+// Ordering is load-bearing. The vector backend is opened FIRST, before
+// s.ResetEmbedGen clears embed_gen. Opening a writable backend runs the
+// one-time upgrade backfill as a side effect when its ledger is still unmarked;
+// that backfill stamps embed_gen=active on every already-embedded message. If
+// the reset ran first, a first-run backfill would re-stamp the just-NULLed
+// (previously-embedded) repaired messages back to active, silently undoing the
+// re-embed request. Opening first lets the backfill land and mark its ledger so
+// the subsequent reset sticks.
+//
+// When vector search is disabled, openVectorBackendForRepair returns a nil
+// backend and this still resets embed_gen (a harmless no-op on the main DB
+// column) while the watermark step short-circuits.
+func repairResetEmbeddings(ctx context.Context, s *store.Store, reembedNeededIDs []int64) error {
+	// 1. Open the vector backend up front. This triggers (and marks the
+	//    ledger for) the one-time upgrade backfill BEFORE we clear embed_gen.
+	//    nil backend + nil closeFn when vector search is disabled.
+	backend, closeFn, err := openVectorBackendForRepair(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to open vector backend for re-embedding: %w", err)
+	}
+	if closeFn != nil {
+		defer func() { _ = closeFn() }()
+	}
+
+	// 2. Clear embed_gen on the repaired messages — now post-backfill, so the
+	//    (already-marked) ledger cannot re-run and re-cover them.
+	if err := s.ResetEmbedGen(ctx, reembedNeededIDs); err != nil {
+		return fmt.Errorf("failed to mark %d repaired message(s) for re-embedding: %w",
+			len(reembedNeededIDs), err)
+	}
+	fmt.Printf("Marked %d message(s) for re-embedding.\n", len(reembedNeededIDs))
+
+	// 3. Lower the watermark below the smallest repaired id. Clearing embed_gen
+	//    is not enough on its own: an incremental embed run resumes from the
+	//    per-generation watermark and only scans ids ABOVE it, so a repaired
+	//    message whose id sits below the current watermark would never be
+	//    re-found (it would wait for a full-scan backstop, which the CLI
+	//    defaults off and serve can have disabled). No-op (nil backend) when
+	//    vector search is not configured.
+	minID := reembedNeededIDs[0]
+	for _, id := range reembedNeededIDs[1:] {
+		if id < minID {
+			minID = id
+		}
+	}
+	if err := lowerEmbedWatermarkForRepair(ctx, backend, minID); err != nil {
+		return fmt.Errorf("failed to lower embed watermark for repaired messages: %w", err)
+	}
+	return nil
 }
 
 // repairStats tracks repair statistics.
@@ -114,10 +155,10 @@ type repairStats struct {
 
 // repairEncoding runs all repair passes over s and returns the IDs of
 // messages whose embedding inputs (subject, body_text, or body_html)
-// were modified. Callers use that list to re-enqueue affected messages
-// for re-embedding so semantic search results don't stay stale against
-// the repaired text. Snippet-only repairs are NOT included because the
-// embedder doesn't read snippet.
+// were modified. Callers reset embed_gen to NULL (via s.ResetEmbedGen) on
+// those ids so the scan-and-fill worker re-embeds them and semantic search
+// results don't stay stale against the repaired text. Snippet-only repairs
+// are NOT included because the embedder doesn't read snippet.
 func repairEncoding(s *store.Store) (reembedNeededIDs []int64, err error) {
 	stats := &repairStats{}
 
@@ -273,9 +314,10 @@ func repairMessageFields(s *store.Store, stats *repairStats) (reembedNeededIDs [
 			}
 
 			// Any change to fields that feed the embedder (subject,
-			// body_text, body_html) invalidates prior embeddings and
-			// must trigger a re-enqueue. Snippet is not embedded, so
-			// snippet-only repairs are excluded.
+			// body_text, body_html) invalidates prior embeddings, so we
+			// reset embed_gen to NULL (via ResetEmbedGen) on these ids so
+			// the scan-and-fill worker re-embeds them. Snippet is not
+			// embedded, so snippet-only repairs are excluded.
 			if r.newSubject.Valid || r.newBody.Valid || r.newHTML.Valid {
 				reembedNeededIDs = append(reembedNeededIDs, r.id)
 			}

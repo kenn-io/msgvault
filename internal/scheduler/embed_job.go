@@ -2,20 +2,36 @@ package scheduler
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
+// defaultBackstopInterval is how often the daemon embed job runs a full
+// watermark-ignoring backstop pass when BackstopInterval is left zero.
+const defaultBackstopInterval = 24 * time.Hour
+
 // EmbedRunner is the subset of *embed.Worker that EmbedJob needs.
 // Tests satisfy it with a fake.
 type EmbedRunner interface {
 	RunOnce(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
+	// RunBackstop performs a full-scan pass that ignores the per-generation
+	// watermark, recovering below-watermark stragglers (repair-encoding
+	// resets, transient errors, crashes). Idempotent: already-covered rows
+	// are skipped by the scan predicate.
+	RunBackstop(ctx context.Context, gen vector.GenerationID) (embed.RunResult, error)
 	ReclaimStale(ctx context.Context) (int, error)
+}
+
+// EmbedCoverage is the subset of *store.Store the activation gate needs:
+// the count of live messages still needing embedding for a generation,
+// read from the main DB. Tests satisfy it with a fake.
+type EmbedCoverage interface {
+	MissingCount(ctx context.Context, activeGen int64) (int64, error)
 }
 
 // Compile-time check that the production worker satisfies EmbedRunner.
@@ -23,8 +39,9 @@ var _ EmbedRunner = (*embed.Worker)(nil)
 
 // EmbedJob runs the vector-embedding worker. Each invocation prefers
 // an in-flight rebuild for the configured fingerprint over the
-// existing active generation, drains its queue via RunOnce, and
-// activates it once pending hits zero. This mirrors the CLI
+// existing active generation, embeds its outstanding messages via
+// RunOnce, and activates once coverage is complete (no live message
+// still needs embedding). This mirrors the CLI
 // (cmd/msgvault/cmd/embed_vector.go pickEmbedGeneration) so a
 // daemon-only deployment can complete a `--full-rebuild` started by
 // the operator. Without the building-first preference, a daemon
@@ -40,18 +57,11 @@ type EmbedJob struct {
 	Backend vector.Backend
 	Log     *slog.Logger
 
-	// VectorsDB is the vectors.db handle, used to count remaining
-	// pending_embeddings for activation gating. May be nil; in that
-	// case the daemon will not auto-activate building generations.
-	VectorsDB *sql.DB
-
-	// Rebind translates ?-placeholders to the driver's native form for
-	// queries this job issues directly against VectorsDB (pendingCount).
-	// nil is treated as the identity (used by SQLite); the PostgreSQL
-	// serve path must wire in (&store.PostgreSQLDialect{}).Rebind so the
-	// activation-gate count runs on pgx — a bare ? is rejected by the
-	// pgx driver.
-	Rebind func(string) string
+	// Store provides the main-DB coverage count used for activation
+	// gating (how many live messages still need embedding for the
+	// building generation). May be nil; in that case the daemon will not
+	// auto-activate building generations.
+	Store EmbedCoverage
 
 	// Fingerprint is the configured generation fingerprint (typically
 	// vector.Config.GenerationFingerprint() — "model:dim:preprocess").
@@ -63,6 +73,33 @@ type EmbedJob struct {
 	// see pickTarget for why empty-fingerprint plus a present building
 	// is still refused.
 	Fingerprint string
+
+	// BackstopInterval controls how often Run also performs a full
+	// watermark-ignoring backstop pass (RunBackstop) in addition to the
+	// per-tick RunOnce. The backstop recovers below-watermark stragglers
+	// (repair-encoding NULL resets, transient errors, crashes) that the
+	// incremental scan skips. Zero uses defaultBackstopInterval (24h).
+	// A negative value disables the auto-backstop entirely.
+	BackstopInterval time.Duration
+
+	// Now returns the current time; overridable in tests to drive the
+	// backstop interval deterministically. nil uses time.Now.
+	Now func() time.Time
+
+	// lastBackstop maps each generation to the time its most recent backstop
+	// ran, used to gate the next one by BackstopInterval. Keyed per generation
+	// so that switching the target (e.g. the active gen recently backstopped,
+	// then a building gen selected) does not let one generation's recent
+	// backstop throttle a different generation's first backstop — which would
+	// otherwise delay recovery of a below-watermark straggler and block
+	// auto-activation for up to BackstopInterval. In-memory (not persisted): a
+	// daemon restart resets it, so the first tick after a restart runs one extra
+	// backstop per generation — harmless because RunBackstop is idempotent.
+	// Read/written only while the running lock is held, so it needs no separate
+	// guard. Lazily allocated in maybeRunBackstop so the zero value stays usable.
+	// Growth is negligible (a handful of generations over the tool's life), so
+	// no pruning is needed.
+	lastBackstop map[vector.GenerationID]time.Time
 
 	// running guards against overlapping Run calls (cron fires while a
 	// post-sync hook is still draining, etc). sync.Mutex.TryLock gives
@@ -98,20 +135,6 @@ func (j *EmbedJob) Run(ctx context.Context) {
 		return
 	}
 
-	// Guard against the CreateGeneration crash window: if a prior
-	// rebuild inserted the building row but died before committing
-	// the initial seed, the pending queue is empty and the daemon
-	// would happily "drain" it and activate an unseeded generation.
-	// EnsureSeeded is idempotent on already-seeded generations, so
-	// calling it on every resume is cheap and safe.
-	if isBuilding {
-		if err := j.Backend.EnsureSeeded(ctx, target); err != nil {
-			log.Warn("embed: ensure seeded failed; leaving building generation for CLI to resolve",
-				"gen", target, "error", err)
-			return
-		}
-	}
-
 	res, err := j.Worker.RunOnce(ctx, target)
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)
@@ -120,53 +143,106 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	log.Info("embed run complete",
 		"gen", target,
 		"building", isBuilding,
-		"claimed", res.Claimed,
+		"scanned", res.Claimed,
 		"succeeded", res.Succeeded,
 		"failed", res.Failed,
 		"truncated", res.Truncated,
 	)
 
+	// Periodic full backstop (~once per BackstopInterval). RunOnce only
+	// scans forward from the per-gen watermark, so below-watermark
+	// stragglers (repair-encoding NULL resets, transient errors, crashes)
+	// are otherwise only recovered by the manual `embeddings build
+	// --backstop`. Weaving it into this existing job gives `msgvault serve`
+	// users that recovery for free. The backstop reuses the same
+	// scan/embed/stamp path with the cursor pinned at 0, in modest
+	// non-locking batches, and is idempotent (already-covered rows are
+	// skipped) so it never re-embeds stamped messages.
+	j.maybeRunBackstop(ctx, target, log)
+
 	if !isBuilding {
 		return
 	}
-	// Activation gate: only flip the building generation to active
-	// when the queue has fully drained for it. Transient embed
-	// failures that the worker later recovers from must not block
-	// activation, but a generation with pending rows must not
-	// auto-activate either (it would expose an incomplete index).
+	// Activation gate: only flip the building generation to active when
+	// coverage is complete (no live message still needs embedding for it).
+	// Transient embed failures that the worker later recovers from must
+	// not block activation, but an incompletely-covered generation must
+	// not auto-activate either (it would expose an incomplete index).
 	//
-	// This check + ActivateGeneration is intentionally non-atomic.
-	// If sync.EnqueueMessages commits a new pending row between the
-	// pendingCount read and the activation call, activation still
-	// succeeds and the new row stays bound to the (now-active)
-	// generation. The next worker tick picks it up via the active-
-	// generation top-up path, so the system reaches consistency on
-	// the next run rather than blocking activation forever on a
-	// moving target. This is by design — at steady state every
-	// active generation has incremental rows showing up between
-	// runs, so the activation gate must not require a snapshot.
-	if j.VectorsDB == nil {
-		log.Debug("embed: building drained but VectorsDB not wired; skipping auto-activation",
+	// This check + ActivateGeneration is intentionally non-atomic on
+	// SQLite (cross-DB): a message synced between the coverage read and
+	// the activation call leaves embed_gen NULL on the now-active
+	// generation. The next worker tick (and the full-scan backstop) picks
+	// it up via the active-generation scan, so the system reaches
+	// consistency on the next run rather than blocking activation forever
+	// on a moving target. The backend re-asserts the gate (atomically on
+	// PG; via a Go pre-check on SQLite) inside ActivateGeneration.
+	if j.Store == nil {
+		log.Debug("embed: building covered but Store not wired; skipping auto-activation",
 			"gen", target)
 		return
 	}
-	remaining, err := j.pendingCount(ctx, target)
+	missing, err := j.Store.MissingCount(ctx, int64(target))
 	if err != nil {
-		log.Warn("embed: count pending after run failed", "gen", target, "error", err)
+		log.Warn("embed: coverage count after run failed", "gen", target, "error", err)
 		return
 	}
-	if remaining > 0 {
-		log.Info("embed: building generation still has pending rows; will retry next tick",
-			"gen", target, "remaining", remaining)
+	if missing > 0 {
+		log.Info("embed: building generation still has messages needing embedding; will retry next tick",
+			"gen", target, "remaining", missing)
 		return
 	}
-	// force=false: the pendingCount==0 check above is the scheduler's gate,
-	// and the backend re-asserts it atomically inside the activation tx.
+	// force=false: the missing==0 check above is the scheduler's gate,
+	// and the backend re-asserts it inside ActivateGeneration.
 	if err := j.Backend.ActivateGeneration(ctx, target, false); err != nil {
 		log.Warn("embed: activation failed", "gen", target, "error", err)
 		return
 	}
 	log.Info("embed: building generation activated", "gen", target)
+}
+
+// maybeRunBackstop runs a full watermark-ignoring backstop pass on gen when
+// BackstopInterval has elapsed since this generation's last one, then records
+// the time. The throttle is keyed per generation so a recent backstop of one
+// generation cannot suppress a different generation's first backstop. Called
+// with the running lock held (from Run), so lastBackstop needs no separate
+// guard. A negative BackstopInterval disables it; zero defaults to 24h. A
+// backstop failure is logged, not fatal — the next interval retries.
+func (j *EmbedJob) maybeRunBackstop(ctx context.Context, gen vector.GenerationID, log *slog.Logger) {
+	interval := j.BackstopInterval
+	if interval < 0 {
+		return // explicitly disabled
+	}
+	if interval == 0 {
+		interval = defaultBackstopInterval
+	}
+	now := time.Now
+	if j.Now != nil {
+		now = j.Now
+	}
+	t := now()
+	// First run for this generation (no recorded time) always runs a backstop;
+	// thereafter gate by the interval against this generation's own last run.
+	if last, ok := j.lastBackstop[gen]; ok && t.Sub(last) < interval {
+		return
+	}
+	res, err := j.Worker.RunBackstop(ctx, gen)
+	if err != nil {
+		log.Warn("embed backstop failed", "gen", gen, "error", err)
+		// Do not advance lastBackstop on failure so the next tick retries.
+		return
+	}
+	if j.lastBackstop == nil {
+		j.lastBackstop = make(map[vector.GenerationID]time.Time)
+	}
+	j.lastBackstop[gen] = t
+	log.Info("embed backstop complete",
+		"gen", gen,
+		"scanned", res.Claimed,
+		"succeeded", res.Succeeded,
+		"failed", res.Failed,
+		"truncated", res.Truncated,
+	)
 }
 
 // pickTarget returns the generation to drain plus an isBuilding flag
@@ -230,19 +306,4 @@ func (j *EmbedJob) pickTarget(ctx context.Context, log *slog.Logger) (vector.Gen
 		log.Warn("embed: active generation lookup failed", "error", err)
 		return 0, false, false
 	}
-}
-
-// pendingCount returns the number of pending_embeddings rows for gen.
-// Used by the activation gate.
-func (j *EmbedJob) pendingCount(ctx context.Context, gen vector.GenerationID) (int, error) {
-	rebind := j.Rebind
-	if rebind == nil {
-		rebind = func(q string) string { return q }
-	}
-	var n int
-	if err := j.VectorsDB.QueryRowContext(ctx,
-		rebind(`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`), int64(gen)).Scan(&n); err != nil {
-		return 0, err
-	}
-	return n, nil
 }

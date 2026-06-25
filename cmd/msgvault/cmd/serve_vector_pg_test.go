@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // openServePGSchema creates an isolated per-test schema on
@@ -64,12 +65,20 @@ func openServePGSchema(t *testing.T) (*sql.DB, string) {
 // TestSetupVectorFeatures_SucceedsOnPostgres is the inverse of the old
 // refusal test: with the pgvector backend compiled in, setupVectorFeatures
 // must succeed against a postgres:// DSN and wire up the backend, hybrid
-// engine, and enqueuer. Runs only with a live PG (MSGVAULT_TEST_DB).
+// engine, and worker. Runs only with a live PG (MSGVAULT_TEST_DB).
 func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 
-	db, dsn := openServePGSchema(t)
+	_, dsn := openServePGSchema(t)
+
+	// setupVectorFeatures now takes a *store.Store; open one over the
+	// schema-scoped DSN (which also runs the main-schema init).
+	st, err := store.Open(dsn)
+	require.NoError(t, err, "store.Open")
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema(), "InitSchema")
+	db := st.DB()
 
 	cfg = &config.Config{}
 	cfg.Vector.Enabled = true
@@ -79,7 +88,7 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 	cfg.Vector.Embeddings.Dimension = 768
 	cfg.Vector.Embeddings.BatchSize = 32
 
-	vf, err := setupVectorFeatures(context.Background(), db, dsn, false)
+	vf, err := setupVectorFeatures(context.Background(), st, dsn, false)
 	require.NoError(t, err, "setupVectorFeatures on postgres DSN must succeed with pgvector built in")
 	require.NotNil(t, vf, "vectorFeatures")
 	t.Cleanup(func() {
@@ -90,15 +99,13 @@ func TestSetupVectorFeatures_SucceedsOnPostgres(t *testing.T) {
 
 	assert.NotNil(t, vf.Backend, "Backend wired")
 	assert.NotNil(t, vf.HybridEngine, "HybridEngine wired")
-	assert.NotNil(t, vf.Enqueuer, "Enqueuer wired")
 	assert.NotNil(t, vf.Worker, "Worker wired")
-	assert.Same(t, db, vf.VectorsDB, "PG shares the main DB handle as the vectors DB")
 
-	// The pgvector schema was migrated into the isolated schema, so the
-	// enqueuer/worker can run against it. Smoke-test that the tables exist.
+	// The pgvector schema was migrated into the isolated schema. Smoke-test
+	// that the embedding tables exist.
 	var n int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM index_generations`).Scan(&n),
 		"index_generations must exist after setupVectorFeatures migrated the pgvector schema")
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pending_embeddings`).Scan(&n),
-		"pending_embeddings must exist after setupVectorFeatures migrated the pgvector schema")
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM embed_watermark`).Scan(&n),
+		"embed_watermark must exist after setupVectorFeatures migrated the pgvector schema")
 }

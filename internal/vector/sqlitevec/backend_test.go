@@ -56,34 +56,17 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 	require.Error(err, "ActiveGeneration should error after retire")
 }
 
-// pendingCount returns the number of pending_embeddings rows for a generation.
-func pendingCount(t *testing.T, b *Backend, gen vector.GenerationID) int {
+// missingCountSV returns the number of live messages still needing
+// embedding for gen (embed_gen <> gen) in the backend's main DB. This is
+// the scan-and-fill coverage count that replaced pending_embeddings.
+func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
-	var n int
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, int64(gen)).Scan(&n),
-		"count pending rows")
-	return n
-}
-
-// TestBackend_RetireGeneration_CleansPending pins the cr2-2/cr2-4 fix for the
-// explicit-retire path: RetireGeneration must DELETE the generation's
-// pending_embeddings rows in the same tx as the state flip. A retired
-// generation is never re-targeted by pickTarget, so leftover queue rows would
-// be orphaned forever and would violate the documented "retired generations
-// have zero pending items" stats invariant.
-func TestBackend_RetireGeneration_CleansPending(t *testing.T) {
-	b, ctx := newBackendForTest(t)
-
-	// CreateGeneration seeds one pending row (for msg id=1 in the test main DB).
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.Equal(t, 1, pendingCount(t, b, gen), "precondition: pending row present")
-
-	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, false), "RetireGeneration")
-
-	assertpkg.Equal(t, 0, pendingCount(t, b, gen),
-		"retire must delete the generation's pending_embeddings rows")
+	missing, err := b.hasMissingForGen(context.Background(), gen)
+	requirepkg.NoError(t, err, "hasMissingForGen")
+	if missing {
+		return 1
+	}
+	return 0
 }
 
 // genStateSV reads index_generations.state for a generation.
@@ -99,37 +82,31 @@ func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.Genera
 // TestBackend_RetireGeneration_ActiveGuard pins the retire-TOCTOU class-closing
 // fix: the active-gen guard lives ATOMICALLY inside RetireGeneration's tx.
 //   - force=false against the ACTIVE generation is refused with
-//     ErrRefuseRetireActive, leaving state='active' and its pending rows intact
-//     (no destructive reap of the now-serving generation).
-//   - force=true retires the active generation and reaps its pending rows.
+//     ErrRefuseRetireActive, leaving state='active'.
+//   - force=true retires the active generation.
 //   - force=false against a NON-active (building) generation retires fine.
 func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
-	// Build + force-activate genA, leaving an undrained pending row on it.
+	// Build + force-activate genA (force bypasses the coverage gate so the
+	// one unembedded test message does not block activation).
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
 	requirepkg.NoError(t, err, "CreateGeneration A")
 	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
 	requirepkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
 
-	// (1) Non-forced retire of the ACTIVE gen is refused atomically: sentinel
-	// error, state unchanged, pending rows NOT reaped.
+	// (1) Non-forced retire of the ACTIVE gen is refused atomically.
 	err = b.RetireGeneration(ctx, genA, false)
 	requirepkg.ErrorIs(t, err, vector.ErrRefuseRetireActive,
 		"non-forced retire of active gen must return ErrRefuseRetireActive")
 	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA),
 		"refused retire must leave the active gen's state unchanged")
-	assertpkg.Equal(t, 1, pendingCount(t, b, genA),
-		"refused retire must NOT reap the active gen's pending rows")
 
-	// (2) Forced retire succeeds: state flips to retired and pending is reaped.
+	// (2) Forced retire succeeds.
 	requirepkg.NoError(t, b.RetireGeneration(ctx, genA, true),
 		"forced retire of active gen must succeed")
 	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA),
 		"forced retire flips state to retired")
-	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
-		"forced retire reaps the gen's pending rows")
 
 	// (3) A NON-active (building) generation retires fine without force.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
@@ -141,39 +118,123 @@ func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 		"non-active gen retires to retired without force")
 }
 
-// TestBackend_ActivateGeneration_AutoRetireCleansPending pins the
-// cr2-3/cr2-4 fix for the auto-retire path: activating a new generation must
-// reap the demoted (now-retired) generation's pending_embeddings rows in the
-// same tx as the state flip.
-func TestBackend_ActivateGeneration_AutoRetireCleansPending(t *testing.T) {
+// TestBackend_ActivateGeneration_AutoRetires pins the auto-retire path:
+// activating a new generation demotes the previously-active one to
+// retired in the same tx as the state flip (RETURNING-id provable).
+func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
 	requirepkg.NoError(t, err, "CreateGeneration A")
-	// Force-activate A while it still has its seeded pending row (mimicking an
-	// undrained incremental queue row left on the active gen at re-embed time).
 	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, 1, pendingCount(t, b, genA), "precondition: pending row on active gen")
 
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
 	requirepkg.NoError(t, err, "CreateGeneration B")
 	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
 
-	assertpkg.Equal(t, 0, pendingCount(t, b, genA),
-		"auto-retire must delete the demoted generation's pending_embeddings rows")
-
-	// RETURNING-id provability: the demote folds into one
-	// `UPDATE ... WHERE state='active' RETURNING id` statement (SQLite 3.35+),
-	// so the id whose pending rows get reaped is exactly the row that flipped to
-	// retired. Assert the previously-active gen (genA) is the sole retired row
-	// AND that it is the one whose pending was reaped, while the new active gen
-	// (genB) is not retired. This pins that the RETURNING'd id == the reaped id
-	// == the previously-active generation.
 	retired := singleRetiredGenSV(t, b)
 	assertpkg.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
 	assertpkg.NotEqual(t, genB, retired, "the newly-activated gen must not be retired")
-	assertpkg.Equal(t, 0, pendingCount(t, b, retired),
-		"pending reaped for exactly the RETURNING'd (retired) id")
+}
+
+// TestBackend_ActivateGeneration_CoverageGate pins the scan-and-fill
+// activation gate: a generation with a live message still needing
+// embedding (embed_gen <> gen) is refused without force, and succeeds once
+// coverage is complete (or with force).
+func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration")
+	requirepkg.Equal(t, 1, missingCountSV(t, b, gen), "precondition: one missing message")
+
+	// Non-forced activate is refused while the message is unembedded.
+	err = b.ActivateGeneration(ctx, gen, false)
+	requirepkg.Error(t, err, "activate must be refused with missing coverage")
+	assertpkg.Contains(t, err.Error(), "needing embedding")
+
+	// Stamp the message as covered, then activation succeeds.
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	requirepkg.NoError(t, err, "stamp embed_gen")
+	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "covered now")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
+	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
+}
+
+// TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage pins that
+// activating an unknown or non-building generation WITHOUT --force returns
+// the lifecycle error (unknown generation / not in 'building' state), NOT
+// the misleading "messages needing embedding" coverage error. The coverage
+// predicate (embed_gen IS NULL OR embed_gen <> gen) is true for an unknown
+// gen id, so the lifecycle check must run first. The seeded test message
+// (id=1) stays unembedded so the coverage gate WOULD trip if checked first.
+func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	requirepkg.Equal(t, 1, missingCountSV(t, b, vector.GenerationID(999)),
+		"precondition: coverage gate would trip for any gen (message unembedded)")
+
+	// (a) Unknown gen id: lifecycle error (ErrUnknownGeneration), not coverage.
+	err := b.ActivateGeneration(ctx, vector.GenerationID(999), false)
+	requirepkg.Error(t, err, "activating unknown gen must fail")
+	requirepkg.ErrorIs(t, err, vector.ErrUnknownGeneration,
+		"unknown gen must return ErrUnknownGeneration, not coverage error")
+	assertpkg.NotContains(t, err.Error(), "needing embedding",
+		"unknown gen must NOT surface the coverage error")
+
+	// (b) Non-building (retired) gen id: lifecycle error, not coverage.
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
+	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
+	requirepkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
+
+	err = b.ActivateGeneration(ctx, gen, false)
+	requirepkg.Error(t, err, "activating retired gen must fail")
+	assertpkg.Contains(t, err.Error(), "not in 'building' state",
+		"retired gen must return the not-building lifecycle error")
+	assertpkg.NotContains(t, err.Error(), "needing embedding",
+		"retired gen must NOT surface the coverage error")
+}
+
+// TestBackend_SingleTargetRebuild pins the single-target invariant: while
+// a new generation B builds, the active generation A keeps serving
+// (stale-but-correct), and B only becomes active once its coverage is
+// complete — at which point A is retired in the same swap. There is no
+// dual-write fan-out; the per-message embed_gen names exactly one target.
+func TestBackend_SingleTargetRebuild(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+
+	// A: build, cover (force-activate to skip the gate for the one test
+	// message), and start serving.
+	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration A")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	active, err := b.ActiveGeneration(ctx)
+	requirepkg.NoError(t, err, "ActiveGeneration")
+	requirepkg.Equal(t, genA, active.ID, "A is serving")
+
+	// B: a new building generation for the same corpus. The message reads
+	// as missing for B (embed_gen still names A), but A keeps serving
+	// unchanged — stale-but-correct mid-rebuild.
+	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration B")
+	requirepkg.Equal(t, 1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
+	active, err = b.ActiveGeneration(ctx)
+	requirepkg.NoError(t, err, "ActiveGeneration mid-rebuild")
+	assertpkg.Equal(t, genA, active.ID, "A still serving while B builds")
+
+	// B's activation is refused until its coverage is complete.
+	requirepkg.Error(t, b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
+
+	// Cover the message for B (worker would do this after upsert), then
+	// activate B — the swap retires A and makes B the single serving gen.
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(genB))
+	requirepkg.NoError(t, err, "stamp embed_gen for B")
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
+
+	active, err = b.ActiveGeneration(ctx)
+	requirepkg.NoError(t, err, "ActiveGeneration after swap")
+	assertpkg.Equal(t, genB, active.ID, "B is the single serving gen after swap")
+	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
 }
 
 // singleRetiredGenSV returns the id of the one generation in state='retired',
@@ -188,16 +249,47 @@ func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
 	return vector.GenerationID(id)
 }
 
-func TestBackend_CreateGeneration_SeedsPending(t *testing.T) {
+// TestBackend_CreateGeneration_StampsSeededAt confirms CreateGeneration
+// stamps seeded_at so the activation gate's lifecycle check passes.
+func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	requirepkg.NoError(t, err, "Create")
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid,
-	).Scan(&n)
-	requirepkg.NoError(t, err, "count pending")
-	assertpkg.Equal(t, 1, n, "pending count")
+	var seededAt sql.NullInt64
+	requirepkg.NoError(t, b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gid)).Scan(&seededAt))
+	assertpkg.True(t, seededAt.Valid, "seeded_at stamped at creation")
+}
+
+// TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage pins
+// that a legacy/crashed generation whose seeded_at is NULL must still
+// activate WITHOUT --force as long as coverage is complete (missing==0).
+// The old seeded_at IS NOT NULL gate would have rejected it and pointed
+// users at `embeddings resume`, which cannot stamp seeded_at — making the
+// row unactivatable except via --force. Coverage is the real gate now.
+func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 768, "")
+	requirepkg.NoError(t, err, "CreateGeneration")
+
+	// Simulate a legacy/crashed generation: clear seeded_at.
+	_, err = b.db.ExecContext(ctx,
+		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
+	requirepkg.NoError(t, err, "clear seeded_at")
+	var seededAt sql.NullInt64
+	requirepkg.NoError(t, b.db.QueryRowContext(ctx,
+		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt))
+	requirepkg.False(t, seededAt.Valid, "precondition: seeded_at is NULL")
+
+	// Make coverage complete (worker would stamp this after upsert).
+	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	requirepkg.NoError(t, err, "stamp embed_gen")
+	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "precondition: coverage complete")
+
+	// Activation succeeds WITHOUT force despite seeded_at=NULL.
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false),
+		"NULL seeded_at + full coverage must activate without --force")
+	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling
@@ -229,87 +321,6 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 	_, err = b.CreateGeneration(ctx, "model-b", 768, "")
 	requirepkg.Error(t, err, "second Create with different fingerprint")
 	assertpkg.ErrorIs(t, err, vector.ErrBuildingInProgress)
-}
-
-// TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted is the
-// regression test for the "interrupted full rebuild re-embeds
-// everything" bug: after the worker has already embedded some messages
-// (Queue.Complete removed those rows from pending_embeddings), a
-// retry'd CreateGeneration must NOT push them back onto the queue. We
-// simulate this by manually removing a pending row, then calling
-// CreateGeneration again with the same fingerprint and asserting the
-// removed row is not re-enqueued.
-func TestBackend_CreateGeneration_ResumeDoesNotReseedCompleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	b, ctx := newBackendForTest(t)
-
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "first Create")
-
-	// Simulate Queue.Complete: remove the pending row for the only
-	// pre-seeded message (id=1) as if it were already embedded.
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ? AND message_id = ?`,
-		int64(gen), int64(1))
-	require.NoError(err, "delete pending")
-
-	// Resume: CreateGeneration must reuse the existing building gen
-	// and NOT re-enqueue the completed message.
-	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "resume Create")
-	assert.Equal(gen, resumed, "resumed gen should reuse existing")
-	var pending int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND message_id = 1`,
-		int64(gen)).Scan(&pending)
-	require.NoError(err, "count pending")
-	assert.Equal(0, pending, "resume re-seeded a completed message")
-}
-
-// TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration covers
-// the "crash between row insert and seed commit" path: a building row
-// exists but seeded_at is NULL because the previous attempt died
-// before the seed transaction committed. A naive resume would skip
-// seedPending, leave pending_embeddings empty, and let
-// `msgvault embeddings build` activate the unseeded generation — silently
-// replacing the prior active index with an empty one. The fix is to
-// re-run seedPending whenever seeded_at IS NULL on resume.
-func TestBackend_CreateGeneration_ResumeReseedsUnseededGeneration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	b, ctx := newBackendForTest(t)
-
-	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "first Create")
-	// Simulate the crash window: clear seeded_at AND wipe the seeded
-	// rows so the post-resume pending count is exactly what the resume
-	// re-seed would produce. Without this we couldn't distinguish
-	// "rows are present because resume re-seeded" from "rows are
-	// present because the original seed left them there".
-	_, err = b.db.ExecContext(ctx,
-		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	require.NoError(err, "clear seeded_at")
-	_, err = b.db.ExecContext(ctx,
-		`DELETE FROM pending_embeddings WHERE generation_id = ?`, int64(gen))
-	require.NoError(err, "clear pending")
-
-	resumed, err := b.CreateGeneration(ctx, "m", 768, "")
-	require.NoError(err, "resume Create")
-	assert.Equal(gen, resumed, "resumed gen should reuse existing")
-	var pending int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`,
-		int64(gen)).Scan(&pending)
-	require.NoError(err, "count pending")
-	assert.Equal(1, pending, "resume must re-seed an unseeded build")
-	// And seeded_at should now be populated so a second resume
-	// would correctly skip re-seeding.
-	var seededAt sql.NullInt64
-	err = b.db.QueryRowContext(ctx,
-		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt)
-	require.NoError(err, "read seeded_at")
-	assert.True(seededAt.Valid, "seeded_at still NULL after resume re-seed; second resume would re-seed again")
 }
 
 // TestBackend_ClaimOrInsertBuilding_RaceRecoversFromUniqueConstraint
@@ -347,107 +358,28 @@ func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
 	assert.Equal(gen1, gen2, "should reuse gen id")
 }
 
-// TestBackend_CreateGeneration_SeedCommitsVisibleFirst confirms the
-// new building row is committed *before* the seed pass runs, so a
-// concurrent Enqueuer can see the generation and dual-enqueue
-// newly-synced messages. Without this ordering there is a window
-// during which sync-side enqueues would be scoped only to the active
-// generation and the new build would be missing messages.
-//
-// The previous version of this test polled on a short loop and
-// passed even if visibility happened only AFTER CreateGeneration
-// returned, because <-done would block until the goroutine finished
-// and the polling loop would then see the committed row regardless.
-// We now seed many messages to make seedPending take measurable time
-// and require visibility to be observed strictly while the goroutine
-// is still in flight (done has not fired yet).
-func TestBackend_CreateGeneration_SeedCommitsVisibleFirst(t *testing.T) {
-	require := requirepkg.New(t)
-	ctx := context.Background()
-
-	// Build a backend whose main DB has many messages so seedPending
-	// has enough work that we can race a visibility poll against it.
-	// 5_000 rows is comfortably more than the one row in the standard
-	// helper and drives seedPending into the millisecond range even on
-	// a fast laptop — far longer than the polling interval below.
-	main := openMainDBWithOneMessage(t)
-	insert, err := main.PrepareContext(ctx, `INSERT INTO messages (id) VALUES (?)`)
-	require.NoError(err, "prepare insert")
-	defer func() { _ = insert.Close() }()
-	for i := int64(2); i <= 5000; i++ {
-		_, err := insert.ExecContext(ctx, i)
-		require.NoErrorf(err, "insert msg %d", i)
-	}
-
-	b, err := Open(ctx, Options{
-		Path:      filepath.Join(t.TempDir(), "vectors.db"),
-		Dimension: 768,
-		MainDB:    main,
-	})
-	require.NoError(err, "Open")
-	t.Cleanup(func() { _ = b.Close() })
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := b.CreateGeneration(ctx, "m", 768, "")
-		done <- err
-	}()
-
-	// Poll for visibility, but strictly while the goroutine is still
-	// in flight: every iteration first checks `done` via select-default,
-	// and a poll that fires after `done` is closed counts as a failure
-	// because we'd then be observing a row that was committed at any
-	// point — including after return. With 5000 messages to seed, we
-	// have hundreds of polling windows before CreateGeneration returns.
-	deadline := time.Now().Add(5 * time.Second)
-	var (
-		visibleInFlight bool
-		doneFiredFirst  bool
-	)
-poll:
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-done:
-			// Push the result back so the post-loop assertion can
-			// also read it. If we got here without observing the row
-			// yet, that is a failure.
-			done <- err
-			doneFiredFirst = true
-			break poll
-		default:
-		}
-		var id int64
-		qErr := b.db.QueryRowContext(ctx,
-			`SELECT id FROM index_generations WHERE state = 'building'`).Scan(&id)
-		if qErr == nil && id > 0 {
-			visibleInFlight = true
-			break poll
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	require.NoError(<-done, "CreateGeneration")
-	require.False(doneFiredFirst, "CreateGeneration returned before the building row became visible — commit was deferred to after seed")
-	require.True(visibleInFlight, "building generation was never visible while CreateGeneration was in flight")
-}
-
-func TestBackend_CreateGeneration_SkipsDeletedMessages(t *testing.T) {
+// TestBackend_CoverageGate_SkipsDeletedMessages verifies the coverage
+// gate's live-message predicate excludes soft-deleted rows: a backend
+// whose only message is deleted-from-source reports zero missing, so a
+// building generation can activate without force.
+func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := context.Background()
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	requirepkg.NoError(t, err, "Create")
-	var n int
-	_ = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid).Scan(&n)
-	assertpkg.Equal(t, 0, n, "pending count for deleted message")
+	missing, err := b.hasMissingForGen(ctx, gid)
+	requirepkg.NoError(t, err, "hasMissingForGen")
+	assertpkg.False(t, missing, "deleted-from-source message must not count as missing")
+	// With no live missing message, activation passes the coverage gate.
+	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
 }
 
-// TestBackend_SeedPending_SkipsDedupHidden verifies that seedPending
-// omits messages soft-deleted by dedup (deleted_at IS NOT NULL).
-func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
+// TestBackend_CoverageGate_SkipsDedupHidden verifies the coverage gate
+// excludes dedup-hidden messages (deleted_at IS NOT NULL): only the live
+// message counts toward "missing".
+func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
 	require := requirepkg.New(t)
-	t.Helper()
 	ctx := context.Background()
 
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -456,10 +388,10 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 	_, err = db.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
-		deleted_from_source_at DATETIME
+		deleted_from_source_at DATETIME,
+		embed_gen INTEGER
 	)`)
 	require.NoError(err, "create messages")
-	// Insert one live and one dedup-hidden message.
 	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(err, "insert live")
 	_, err = db.Exec(`INSERT INTO messages (id, deleted_at) VALUES (2, CURRENT_TIMESTAMP)`)
@@ -475,19 +407,17 @@ func TestBackend_SeedPending_SkipsDedupHidden(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	var n int
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ?`, gid).Scan(&n)
-	require.NoError(err, "count pending")
-	assertpkg.Equal(t, 1, n, "dedup-hidden message must be excluded")
+	// Stamp the dedup-hidden message as if covered for some other gen; it
+	// must still not count (it is dedup-hidden), and the live one must.
+	s, err := b.Stats(ctx, gid)
+	require.NoError(err, "Stats")
+	assertpkg.Equal(t, int64(1), s.PendingCount, "only the live message counts as missing")
 }
 
 // TestBackend_Upsert_WritesEmbeddingAndVector verifies Upsert's
 // contract: it writes the embeddings row and the dimension-specific
-// vec0 row, and explicitly does NOT touch pending_embeddings. The
-// queue is the sole owner of that table so that Queue.Complete's
-// token check can prevent a stale worker from wiping a newer worker's
-// claim.
+// vec0 row, and explicitly does NOT touch messages.embed_gen (the worker
+// stamps that after a successful upsert, in the main DB).
 func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -515,12 +445,12 @@ func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 	require.NoError(err, "count vectors_vec_d768")
 	assert.Equal(1, n, "vectors_vec_d768 count")
 
-	// Pending row is still present — the queue owns that table and
-	// only Queue.Complete may remove it.
-	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_embeddings WHERE generation_id = ? AND message_id = 1`, gid).Scan(&n)
-	require.NoError(err, "count pending")
-	assert.Equal(1, n, "Upsert must not touch pending_embeddings")
+	// embed_gen is untouched by Upsert — message 1 still reads as missing.
+	var embedGen sql.NullInt64
+	err = b.mainDB.QueryRowContext(ctx,
+		`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&embedGen)
+	require.NoError(err, "read embed_gen")
+	assert.False(embedGen.Valid, "Upsert must not stamp messages.embed_gen")
 }
 
 func TestBackend_Upsert_DimensionMismatch(t *testing.T) {
@@ -1393,7 +1323,8 @@ func TestBackend_Stats_PendingCountAfterCreate(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
-	// CreateGeneration seeds 1 pending row for the one pre-seeded message.
+	// The one live message is unembedded, so PendingCount (= missing for
+	// this gen, read from the main DB) is 1.
 	s, err := b.Stats(ctx, gid)
 	require.NoError(err, "Stats")
 	assert.Equal(int64(0), s.EmbeddingCount)

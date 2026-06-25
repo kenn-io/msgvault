@@ -1524,6 +1524,93 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 	assert.Equal("updated body", bodyText.String, "body_text")
 }
 
+func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-embed-gen").
+		WithSubject("Original subject").
+		WithSnippet("preview").
+		Build()
+	data := &store.MessagePersistData{
+		Message:  msg,
+		BodyText: sql.NullString{String: "original body", Valid: true},
+		RawMIME:  sampleRawMessage,
+	}
+
+	msgID, err := f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage first call")
+
+	const gen = int64(7)
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"precondition: message is stamped")
+
+	msg.Snippet = sql.NullString{String: "preview changed", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage unchanged embedding inputs")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"non-embedding metadata must not clear embed_gen")
+
+	data.BodyHTML = sql.NullString{String: "<p>rendering changed</p>", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed HTML with unchanged plaintext")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"HTML-only changes must not clear embed_gen while plaintext is the embedded body")
+
+	data.BodyText = sql.NullString{String: "updated body", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed body")
+	assert.False(readEmbedGen(t, f.Store, msgID).Valid, "body change must clear embed_gen")
+
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen after body change")
+	msg.Subject = sql.NullString{String: "Updated subject", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed subject")
+	assert.False(readEmbedGen(t, f.Store, msgID).Valid, "subject change must clear embed_gen")
+}
+
+func TestStore_PersistMessagePreservesEmbedGenForEquivalentHTMLFallback(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	msg := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("persist-html-only-embed-gen").
+		WithSubject("HTML only").
+		Build()
+	data := &store.MessagePersistData{
+		Message:  msg,
+		BodyHTML: sql.NullString{String: "<p>Rendered body</p>", Valid: true},
+		RawMIME:  sampleRawMessage,
+	}
+
+	msgID, err := f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage first call")
+
+	const gen = int64(7)
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{msgID}, gen), "SetEmbedGen")
+
+	data.BodyHTML = sql.NullString{String: "<div><span>Rendered body</span></div>", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage equivalent HTML fallback")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"markup-only HTML fallback changes must not clear embed_gen")
+}
+
+func readEmbedGen(t *testing.T, st *store.Store, msgID int64) sql.NullInt64 {
+	t.Helper()
+	var got sql.NullInt64
+	err := st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), msgID).Scan(&got)
+	requirepkg.NoError(t, err, "read embed_gen")
+	return got
+}
+
 // --- GetStatsForScope tests ---
 
 // makeSecondSource creates a second source and conversation in the same store as f.

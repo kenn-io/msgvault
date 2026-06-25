@@ -126,8 +126,13 @@ type Hit struct {
 // Stats reports the size of one generation (or 0 for totals).
 type Stats struct {
 	EmbeddingCount int64
-	PendingCount   int64
-	StorageBytes   int64
+	// PendingCount, under the scan-and-fill design, is the number of live
+	// messages still needing embedding for this generation (embed_gen <>
+	// gen), computed from the main DB rather than a queue table. It is 0
+	// for the aggregate (gen == 0) path. The name is retained for API
+	// stability; semantically it is now a "missing" count.
+	PendingCount int64
+	StorageBytes int64
 }
 
 // Backend is the minimum contract a vector store must implement.
@@ -142,19 +147,22 @@ type Backend interface {
 
 	// ActivateGeneration atomically retires the current active generation
 	// (if any, deleting its embeddings on backends that share an index
-	// graph) and promotes gen to active. The promotion enforces, inside the
-	// same transaction as the state flip, that gen is in state='building'
-	// and — unless force is true — that gen has finished seeding
-	// (seeded_at IS NOT NULL) and has zero pending embedding rows. force
-	// bypasses the seeded/pending gate (operator `--force`); the gate stays
-	// atomic so a concurrent enqueue cannot slip a pending row in between a
-	// caller's pre-check and the flip. On a gate failure the backend returns
-	// a precise error distinguishing pending vs unseeded vs not-building.
+	// graph) and promotes gen to active. The promotion enforces that gen is
+	// in state='building' and — unless force is true — that gen has full
+	// coverage (no live message still needs embedding for it, i.e.
+	// missing==0). On PG the coverage gate is folded into the same
+	// transaction as the state flip; on SQLite (cross-DB) it is a Go
+	// pre-check before the flip, with the full-scan backstop covering the
+	// TOCTOU window. force bypasses the coverage gate (operator `--force`).
+	// On a gate failure the backend returns a precise error distinguishing
+	// missing-coverage vs not-building.
 	ActivateGeneration(ctx context.Context, gen GenerationID, force bool) error
 
-	// RetireGeneration marks gen as retired, deleting its embeddings on
-	// backends that share an index graph (pgvector) and reaping its pending
-	// queue rows. Unless force is true, the state-flip UPDATE refuses to
+	// RetireGeneration marks gen as retired (a state flip on its
+	// index_generations row), and on backends that share an index graph
+	// (pgvector) also deletes the generation's embeddings so the shared HNSW
+	// graph stays generation-clean. (There is no pending queue to reap under
+	// scan-and-fill.) Unless force is true, the state-flip UPDATE refuses to
 	// retire a generation in state='active', returning ErrRefuseRetireActive
 	// WITHOUT deleting anything; the guard is enforced atomically inside the
 	// retire transaction so a concurrent activation between a caller's
@@ -173,23 +181,39 @@ type Backend interface {
 	Delete(ctx context.Context, gen GenerationID, messageIDs []int64) error
 	Stats(ctx context.Context, gen GenerationID) (Stats, error)
 
-	// EnsureSeeded guarantees that the building generation gen has had
-	// its initial pending_embeddings seed pass committed. If a prior
-	// CreateGeneration crashed between inserting the building row and
-	// committing the seed, the queue would be empty and a naive resume
-	// could "drain" zero rows and activate an unseeded index.
-	// EnsureSeeded re-runs the seed (idempotent — INSERT OR IGNORE) and
-	// stamps seeded_at when it commits. Call this on the resume path
-	// before draining the queue. Returns ErrUnknownGeneration if gen no
-	// longer exists in the index, and an error if gen is not in the
-	// `building` state.
-	EnsureSeeded(ctx context.Context, gen GenerationID) error
+	// EmbeddedMessageCount reports how many distinct LIVE, stamped
+	// (embed_gen == gen) messages actually have at least one embedding row
+	// for gen. This is the "embedded" leg of the coverage readout (live /
+	// embedded / blank / missing). It lives on the backend because the
+	// embeddings table is in vectors.db on SQLite (and the main DB on PG);
+	// only the backend holds that handle. The live+stamped intersection is
+	// REQUIRED for the coverage invariant to hold: SQLite intersects the
+	// vectors.db embedding ids against a live+stamped query on the main DB
+	// (cross-DB json_each, mirroring dropDeletedFromSource), while PostgreSQL
+	// uses a single JOIN to messages. Distinct from Stats.EmbeddingCount only
+	// in intent: this is the dedicated coverage helper and never folds the
+	// aggregate (gen == 0) path.
+	EmbeddedMessageCount(ctx context.Context, gen GenerationID) (int64, error)
 
 	// LoadVector returns the embedding for a specific message in the
 	// active generation. Returns ErrNoActiveGeneration if none exists, or
 	// a descriptive error if the message isn't embedded in the active
 	// generation.
 	LoadVector(ctx context.Context, messageID int64) ([]float32, error)
+
+	// ResetWatermarkBelow lowers the scan-and-fill forward-scan watermark
+	// for EVERY generation to at most minID-1 (clamped at 0), so the next
+	// incremental RunOnce re-scans from below minID and re-finds rows whose
+	// embed_gen was just reset to NULL (repair-encoding). Without it, a
+	// repaired message whose id sits BELOW the current watermark would never
+	// be re-found by an incremental scan (the scan applies `id > watermark`)
+	// and would only be recovered by a full-scan backstop. Lowering is a MIN
+	// against the stored watermark, so it never pushes the cursor FORWARD past
+	// unswept work; a row already at/below the watermark is left untouched.
+	// minID < 1 is a no-op. The watermark lives in vectors.db on SQLite and
+	// the main DB on PostgreSQL, so each backend implements it against its
+	// own handle/dialect. Idempotent.
+	ResetWatermarkBelow(ctx context.Context, minID int64) error
 
 	Close() error
 }
