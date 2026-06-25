@@ -399,6 +399,7 @@ func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.
 	png, err := os.ReadFile("testdata/json_with_media/your_activity_across_facebook/messages/inbox/bob_XYZ789/photos/tiny.png")
 	require.NoError(err)
 	wantHash := fmt.Sprintf("%x", sha256.Sum256(png))
+	require.NoError(st.UpsertAttachment(messageID, "tiny.png", "image/png", "", wantHash, 0), "seed stale real-hash empty-path attachment")
 
 	badAttachRoot := filepath.Join(t.TempDir(), "attachments-file")
 	require.NoError(os.WriteFile(badAttachRoot, []byte("not a directory"), 0600), "write bad attachment root")

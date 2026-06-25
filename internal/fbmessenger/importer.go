@@ -716,6 +716,10 @@ func writeThreadToStore(
 				if err := deleteSyntheticPlaceholderAttachment(st, messageID, syntheticHash); err != nil {
 					logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
 				}
+			} else if contentHash != "" {
+				if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
+					logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
+				}
 			}
 		}
 
