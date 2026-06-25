@@ -277,8 +277,8 @@ trigger).
 
 | Ingest path | Runs the embed worker? |
 |---|---|
-| `sync-full` / `sync` (Gmail, IMAP) | Yes |
-| Scheduled syncs in `msgvault serve` | Yes |
+| Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
+| Scheduled syncs in `msgvault serve` | Yes, when `[vector.embed.schedule].run_after_sync = true` |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
 
