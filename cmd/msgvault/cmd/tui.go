@@ -81,29 +81,13 @@ Remote Mode:
 		} else {
 			// Local mode - use local database
 			dbPath := cfg.DatabaseDSN()
-			s, err := store.Open(dbPath)
+			analyticsDir := cfg.AnalyticsDir()
+
+			s, err := openLocalTUIStore(dbPath, analyticsDir)
 			if err != nil {
-				return fmt.Errorf("open database: %w", err)
+				return err
 			}
 			defer func() { _ = s.Close() }()
-
-			// Ensure schema is up to date
-			if err := s.InitSchema(); err != nil {
-				return fmt.Errorf("init schema: %w", err)
-			}
-			if err := runStartupMigrations(s); err != nil {
-				return fmt.Errorf("startup migrations: %w", err)
-			}
-
-			// Build FTS index in background — TUI uses DuckDB/Parquet for
-			// aggregates and only needs FTS for deep search (Tab to switch).
-			if s.NeedsFTSBackfill() {
-				go func() {
-					_, _ = s.BackfillFTS(nil)
-				}()
-			}
-
-			analyticsDir := cfg.AnalyticsDir()
 
 			// The Parquet analytics cache is a SQLite → DuckDB ETL and
 			// has no meaning when the system of record is PostgreSQL —
@@ -114,25 +98,10 @@ Remote Mode:
 			if s.IsPostgreSQL() {
 				engine = query.NewEngine(s.DB(), true)
 			} else {
-				// Check if cache needs to be built/updated (unless forcing SQL or skipping)
-				if !forceSQL && !skipCacheBuild {
-					staleness := cacheNeedsBuild(dbPath, analyticsDir)
-					if staleness.NeedsBuild {
-						fmt.Printf("Building analytics cache (%s)...\n", staleness.Reason)
-						result, err := buildCache(dbPath, analyticsDir, staleness.FullRebuild)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: Failed to build cache: %v\n", err)
-							fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
-						} else if !result.Skipped {
-							fmt.Printf("Cached %d messages for fast queries.\n", result.ExportedCount)
-						}
-					}
-				}
-
 				// Determine query engine to use
 				if !forceSQL && query.HasCompleteParquetData(analyticsDir) {
 					// Use DuckDB for fast Parquet queries
-					var duckOpts query.DuckDBOptions
+					duckOpts := tuiDuckDBOptions()
 					if noSQLiteScanner {
 						duckOpts.DisableSQLiteScanner = true
 					}
@@ -153,6 +122,14 @@ Remote Mode:
 					}
 					engine = query.NewEngine(s.DB(), false)
 				}
+			}
+
+			// Build FTS index in background after cache/engine startup. The
+			// aggregate TUI path uses Parquet; FTS is only needed for deep search.
+			if s.NeedsFTSBackfill() {
+				go func() {
+					_, _ = s.BackfillFTS(nil)
+				}()
 			}
 		}
 
@@ -191,6 +168,51 @@ Remote Mode:
 	},
 }
 
+func openLocalTUIStore(dbPath, analyticsDir string) (*store.Store, error) {
+	s, err := openMigratedLocalStore(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.IsPostgreSQL() || forceSQL || skipCacheBuild {
+		return s, nil
+	}
+
+	if err := s.Close(); err != nil {
+		return nil, fmt.Errorf("close database before cache build: %w", err)
+	}
+
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if staleness.NeedsBuild {
+		fmt.Printf("Building analytics cache (%s)...\n", staleness.Reason)
+		result, err := buildCache(dbPath, analyticsDir, staleness.FullRebuild)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to build cache: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Falling back to SQLite (may be slow for large archives)\n")
+		} else if !result.Skipped {
+			fmt.Printf("Cached %d messages for fast queries.\n", result.ExportedCount)
+		}
+	}
+
+	return openMigratedLocalStore(dbPath)
+}
+
+func openMigratedLocalStore(dbPath string) (*store.Store, error) {
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := s.InitSchema(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	if err := runStartupMigrations(s); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("startup migrations: %w", err)
+	}
+	return s, nil
+}
+
 // cacheStaleness describes why the analytics cache needs a rebuild.
 type cacheStaleness struct {
 	NeedsBuild  bool
@@ -199,6 +221,10 @@ type cacheStaleness struct {
 	HasUpdated  bool // existing messages mutated since last build
 	FullRebuild bool // must rewrite all shards (not incremental)
 	Reason      string
+}
+
+func tuiDuckDBOptions() query.DuckDBOptions {
+	return query.DuckDBOptions{DisableSQLiteScanner: true}
 }
 
 // cacheNeedsBuild checks if the analytics cache needs to be built or
