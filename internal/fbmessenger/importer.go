@@ -700,8 +700,12 @@ func writeThreadToStore(
 			syntheticHash := fbAttachmentHash(att, ai)
 			hash := contentHash
 			storedContent := storagePath != "" && contentHash != ""
-			if !storedContent && contentHash != "" {
-				stored, err := hasStoredAttachment(st, messageID, contentHash)
+			existingContentHash := contentHash
+			if !storedContent && existingContentHash == "" {
+				existingContentHash = hashAttachmentSource(att)
+			}
+			if !storedContent && existingContentHash != "" {
+				stored, err := hasStoredAttachment(st, messageID, existingContentHash)
 				if err != nil {
 					logger.Warn("fbmessenger: check stored attachment", "err", err)
 				} else if stored {
@@ -889,6 +893,30 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 		return "", contentHash, 0
 	}
 	return rel, contentHash, int(info.Size())
+}
+
+func hashAttachmentSource(att Attachment) string {
+	if att.AbsPath == "" {
+		return ""
+	}
+	linfo, err := os.Lstat(att.AbsPath)
+	if err != nil || !linfo.Mode().IsRegular() {
+		return ""
+	}
+	f, err := os.Open(att.AbsPath)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 const fbSyntheticAttachmentKeyPrefix = "fbmessenger:attachment:"
