@@ -26,11 +26,13 @@ type StatsView struct {
 	// Omitted entirely when no build is running.
 	BuildingGeneration *BuildingSummary `json:"building_generation,omitempty"`
 
-	// MissingEmbeddingsTotal is the sum, across the active and building
-	// generations, of live messages still needing embedding for that
-	// generation (embed_gen <> gen), computed from the main DB rather than
-	// a queue table. Retired generations contribute zero. Replaces the
-	// former pending-embeddings queue total under the scan-and-fill design.
+	// MissingEmbeddingsTotal is the live-message count still needing embedding
+	// for the generation the worker will actually target next. When a rebuild
+	// is in flight, building-generation coverage is the actionable target and
+	// active-generation top-ups are intentionally frozen until activation.
+	// Without a building generation, it reports active-generation drift. Retired
+	// generations contribute zero. Replaces the former pending-embeddings queue
+	// total under the scan-and-fill design.
 	MissingEmbeddingsTotal int64 `json:"missing_embeddings_total"`
 }
 
@@ -84,6 +86,9 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 	}
 	out := &StatsView{Enabled: true}
 	var errs []error
+	var buildingExists bool
+	var activePending int64
+	var activeStatsOK bool
 
 	active, err := b.ActiveGeneration(ctx)
 	switch {
@@ -101,7 +106,8 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 				MessageCount: s.EmbeddingCount,
 				ActivatedAt:  formatTimePtr(active.ActivatedAt),
 			}
-			out.MissingEmbeddingsTotal += s.PendingCount
+			activePending = s.PendingCount
+			activeStatsOK = true
 		}
 	case errors.Is(err, ErrNoActiveGeneration):
 		// Leave ActiveGeneration nil; this is normal during first build.
@@ -113,6 +119,7 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 	if err != nil {
 		errs = append(errs, fmt.Errorf("building generation: %w", err))
 	} else if building != nil {
+		buildingExists = true
 		s, sErr := b.Stats(ctx, building.ID)
 		if sErr != nil {
 			errs = append(errs, fmt.Errorf("stats for building generation %d: %w", building.ID, sErr))
@@ -127,8 +134,11 @@ func CollectStats(ctx context.Context, b Backend) (*StatsView, error) {
 					Total: s.EmbeddingCount + s.PendingCount,
 				},
 			}
-			out.MissingEmbeddingsTotal += s.PendingCount
+			out.MissingEmbeddingsTotal = s.PendingCount
 		}
+	}
+	if !buildingExists && activeStatsOK {
+		out.MissingEmbeddingsTotal = activePending
 	}
 	return out, errors.Join(errs...)
 }

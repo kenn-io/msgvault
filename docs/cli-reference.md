@@ -659,7 +659,7 @@ msgvault embeddings <subcommand> [flags]
 | Subcommand | Description |
 |---|---|
 | `build` | Build or update the index. Incremental by default; `--full-rebuild` starts a new generation. |
-| `resume` | Drain the pending queue for the building or active generation. Always incremental. |
+| `resume` | Continue scan-and-fill embedding for the building or active generation. Always incremental. |
 | `list` | List index generations with their state, model, dimension, and pending count. |
 | `activate <generation-id>` | Activate a completed building generation, retiring the current active one. |
 | `retire <generation-id>` | Retire a generation. |
@@ -672,10 +672,10 @@ msgvault embeddings build [flags]
 
 | Flag | Description |
 |---|---|
-| `--full-rebuild` | Create a new index generation and rebuild from scratch. The new generation is activated atomically once pending work drains. Same-model rebuilds keep serving the previous active generation in the meantime; model or dimension changes return `index_stale` for vector/hybrid search until the new generation activates. |
+| `--full-rebuild` | Create a new index generation and rebuild from scratch. The new generation is activated atomically once coverage reaches zero. Same-model rebuilds keep serving the previous active generation in the meantime, but active-generation top-ups are frozen until activation; model or dimension changes return `index_stale` for vector/hybrid search until the new generation activates. |
 | `--yes` | Skip the confirmation prompt that `--full-rebuild` otherwise requires. |
 
-Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured model, otherwise drains the pending queue for the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
+Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured model, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
 
 ### embeddings resume
 
@@ -683,7 +683,7 @@ Without `--full-rebuild`, the command is incremental: it resumes any in-flight r
 msgvault embeddings resume
 ```
 
-Drain the pending queue and finish the current generation. If a generation matching the configured model is building, this embeds its remaining rows and activates it once the queue reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild.
+Continue embedding work and finish the current generation. If a generation matching the configured model is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild.
 
 ### embeddings list
 
@@ -699,12 +699,12 @@ Print one row per index generation: ID, state (`building`, `active`, or `retired
 msgvault embeddings activate <generation-id> [flags]
 ```
 
-Activate a completed building generation and retire the currently active one. By default this refuses to activate a generation that still has pending rows, has not finished seeding, or whose fingerprint does not match the current config.
+Activate a completed building generation and retire the currently active one. By default this refuses to activate a generation that still has messages missing coverage or whose fingerprint does not match the current config.
 
 | Flag | Description |
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
-| `--force` | Activate even with pending rows or a fingerprint mismatch. |
+| `--force` | Activate even with missing coverage or a fingerprint mismatch. |
 
 ### embeddings retire
 
