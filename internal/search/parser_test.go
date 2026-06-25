@@ -183,6 +183,32 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "MessageType",
+			tests: []testCase{
+				{
+					name:  "colon operator",
+					query: "message_type:sms lunch",
+					want: Query{
+						MessageTypes: []string{"sms"},
+						TextTerms:    []string{"lunch"},
+					},
+				},
+				{
+					name:  "equals operator",
+					query: "message_type=sms lunch",
+					want: Query{
+						MessageTypes: []string{"sms"},
+						TextTerms:    []string{"lunch"},
+					},
+				},
+				{
+					name:  "normalizes value",
+					query: "message_type:SMS",
+					want:  Query{MessageTypes: []string{"sms"}},
+				},
+			},
+		},
+		{
 			name: "HasAttachment",
 			tests: []testCase{
 				{

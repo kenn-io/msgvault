@@ -146,6 +146,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 | `newer_than:` | Relative date                        | `newer_than:7d`            |
 | `larger:`     | Minimum size                         | `larger:10M`               |
 | `smaller:`    | Maximum size                         | `smaller:100K`             |
+| `message_type:` | Message type                       | `message_type:sms`         |
 
 Bare words and `"quoted phrases"` perform full-text search across subject and body.
 

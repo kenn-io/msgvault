@@ -788,6 +788,9 @@ func buildSearchQueryString(q *search.Query) string {
 	for _, label := range q.Labels {
 		parts = append(parts, "label:"+label)
 	}
+	for _, typ := range q.MessageTypes {
+		parts = append(parts, "message_type:"+typ)
+	}
 	if q.HasAttachment != nil && *q.HasAttachment {
 		parts = append(parts, "has:attachment")
 	}

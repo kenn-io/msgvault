@@ -54,9 +54,18 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	}
 	defer func() { _ = conn.Close() }()
 
+	hasMessageType, err := sqliteColumnExists(ctx, conn, "messages", "message_type")
+	if err != nil {
+		return nil, false, err
+	}
+
 	sourceIDs, err := idsToJSON(req.Filter.SourceIDs)
 	if err != nil {
 		return nil, false, fmt.Errorf("encode source_ids: %w", err)
+	}
+	messageTypes, err := stringsToJSON(req.Filter.MessageTypes)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode message_types: %w", err)
 	}
 	senderGroupSQL, senderGroupArgs, err := senderGroupClauses(req.Filter.SenderGroups)
 	if err != nil {
@@ -141,8 +150,14 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 	// guarantees the ceiling's "is this message included" predicate
 	// stays bit-for-bit aligned with the live one without forcing
 	// callers (or the test suite) to keep two copies in sync.
+	messageTypeSQL := `AND (:message_types IS NULL OR 0)`
+	if hasMessageType {
+		messageTypeSQL = `AND (:message_types IS NULL OR m.message_type IN (SELECT value FROM json_each(:message_types)))`
+	}
+
 	filterWhere := fmt.Sprintf(`%s
        AND (:source_ids IS NULL OR m.source_id IN (SELECT value FROM json_each(:source_ids)))
+       %s
        %s
        %s
        %s
@@ -156,7 +171,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
              SELECT 1 FROM json_each(:subject_patterns) sp
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
        %s`,
-		store.LiveMessagesWhere("m", true), senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
+		store.LiveMessagesWhere("m", true), messageTypeSQL, senderGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL)
 
 	// buildQuery interpolates a fresh query string for a given chunkK,
 	// so the widening loop below can re-issue the fused CTE with a
@@ -262,6 +277,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	// named binds when its placeholder count check fails.
 	filterArgs := []any{
 		sql.Named("source_ids", sourceIDs),
+		sql.Named("message_types", messageTypes),
 		sql.Named("has_attachment", hasAttachment),
 		sql.Named("after", after),
 		sql.Named("before", before),
@@ -457,6 +473,44 @@ func idsToJSON(ids []int64) (sql.NullString, error) {
 		return sql.NullString{}, fmt.Errorf("marshal ids: %w", err)
 	}
 	return sql.NullString{Valid: true, String: string(buf)}, nil
+}
+
+// stringsToJSON encodes a string slice as a JSON array for json_each filters.
+func stringsToJSON(values []string) (sql.NullString, error) {
+	if len(values) == 0 {
+		return sql.NullString{}, nil
+	}
+	buf, err := json.Marshal(values)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("marshal strings: %w", err)
+	}
+	return sql.NullString{Valid: true, String: string(buf)}, nil
+}
+
+func sqliteColumnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan %s columns: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate %s columns: %w", table, err)
+	}
+	return false, nil
 }
 
 // senderGroupClauses produces the SQL fragment and named args for

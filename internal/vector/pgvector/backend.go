@@ -787,6 +787,28 @@ func int64Array(ids []int64) string {
 	return sb.String()
 }
 
+// textArray formats a string slice as a PostgreSQL array literal.
+// Bound via $N::text[].
+func textArray(values []string) string {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i, v := range values {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('"')
+		for _, r := range v {
+			if r == '"' || r == '\\' {
+				sb.WriteByte('\\')
+			}
+			sb.WriteRune(r)
+		}
+		sb.WriteByte('"')
+	}
+	sb.WriteByte('}')
+	return sb.String()
+}
+
 // parseVectorLiteral decodes pgvector's text output ("[1,2,3]") back
 // into a []float32 of length dim. Returns an error if the row reports
 // a different number of components — guards against accidentally

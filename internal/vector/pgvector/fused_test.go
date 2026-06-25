@@ -314,6 +314,32 @@ func TestFusedSearch_FilterBySource(t *testing.T) {
 	assert.False(t, saturated, "pool size 2 < KPerSignal 10 must not saturate")
 }
 
+func TestFusedSearch_FilterByMessageType(t *testing.T) {
+	f := newFusedFixture(t)
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	f.seedMsg(t, 1, "email topic", "topic body", 10, base, false)
+	f.seedMsg(t, 2, "sms topic", "topic body", 10, base.Add(time.Hour), false)
+	_, err := f.db.ExecContext(f.ctx,
+		`UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END WHERE id IN (1, 2)`)
+	require.NoError(t, err, "seed message_type")
+	f.embedAll(t, map[int64][]float32{
+		1: unitVec(4, 0),
+		2: unitVec(4, 1),
+	})
+
+	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: f.gen,
+		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(t, err, "FusedSearch")
+	assert.False(t, saturated, "saturated should be false")
+	assert.Equal(t, []int64{2}, fusedIDs(hits), "message_type=sms hits")
+}
+
 func TestFusedSearch_FilterByDateRange(t *testing.T) {
 	f := seedThree(t)
 	after := time.Date(2025, 1, 16, 0, 0, 0, 0, time.UTC) // exclude msg 1

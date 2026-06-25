@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1313,12 +1314,11 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	assertpkg.Equal(t, "invalid_view_type", errResp["error"], "error")
 }
 
-// TestSearchRejectsMessageTypeFilter guards against silently dropping
-// the message_type filter. MergeFilterIntoQuery does not propagate
-// MessageType, so accepting it in fast/deep search would let
-// /search/fast?q=hello&message_type=sms return unscoped results. Reject
-// until the search pipeline gains a message_type predicate.
-func TestSearchRejectsMessageTypeFilter(t *testing.T) {
+// TestSearchRejectsMessageTypeFilterParam guards against silently dropping
+// the message_type filter parameter. Fast/deep search support the parsed
+// message_type: operator, but parseMessageFilter's parameter form is still
+// list-search-only and must not be accepted as a no-op.
+func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/search/fast?q=hello&message_type=sms",
 		"/api/v1/search/deep?q=hello&message_type=sms",
@@ -1338,6 +1338,94 @@ func TestSearchRejectsMessageTypeFilter(t *testing.T) {
 			requirepkg.Equal(t, "unsupported_filter", errResp["error"], "error")
 		})
 	}
+}
+
+func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "fast", path: "/api/v1/search/fast?q=message_type:sms%20hello"},
+		{name: "deep", path: "/api/v1/search/deep?q=message_type:sms%20hello"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &querytest.MockEngine{
+				Stats: &query.TotalStats{},
+				SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					assertpkg.Equal(t, []string{"sms"}, q.MessageTypes, "fast MessageTypes")
+					return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+				},
+				SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					assertpkg.Equal(t, []string{"sms"}, q.MessageTypes, "deep MessageTypes")
+					return nil, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+
+			srv.Router().ServeHTTP(w, req)
+
+			requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		})
+	}
+}
+
+func TestRemoteSearchParsedMessageTypeThroughAPI(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := &querytest.MockEngine{
+		SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			assert.Equal([]string{"sms"}, q.MessageTypes, "MessageTypes")
+			assert.Equal([]string{"hello"}, q.TextTerms, "TextTerms")
+			return []query.MessageSummary{{
+				ID:          7,
+				Subject:     "hello",
+				MessageType: "sms",
+				SentAt:      time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			}}, nil
+		},
+		SearchFastWithStatsFunc: func(_ context.Context, q *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+			assert.Equal([]string{"sms"}, q.MessageTypes, "fast MessageTypes")
+			assert.Equal([]string{"hello"}, q.TextTerms, "fast TextTerms")
+			return &query.SearchFastResult{
+				Messages: []query.MessageSummary{{
+					ID:          8,
+					Subject:     "hello fast",
+					MessageType: "sms",
+					SentAt:      time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+				}},
+				TotalCount: 1,
+				Stats:      &query.TotalStats{MessageCount: 1},
+			}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	httpSrv := httptest.NewServer(srv.Router())
+	defer httpSrv.Close()
+
+	remoteEngine, err := remote.NewEngine(remote.Config{
+		URL:           httpSrv.URL,
+		AllowInsecure: true,
+	})
+	require.NoError(err, "NewEngine")
+
+	results, err := remoteEngine.Search(context.Background(), &search.Query{
+		TextTerms:    []string{"hello"},
+		MessageTypes: []string{"sms"},
+	}, 10, 0)
+	require.NoError(err, "remote Search")
+	require.Len(results, 1, "results")
+	assert.Equal("sms", results[0].MessageType, "MessageType")
+
+	fastResults, err := remoteEngine.SearchFast(context.Background(), &search.Query{
+		TextTerms:    []string{"hello"},
+		MessageTypes: []string{"sms"},
+	}, query.MessageFilter{}, 10, 0)
+	require.NoError(err, "remote SearchFast")
+	require.Len(fastResults, 1, "fast results")
+	assert.Equal("sms", fastResults[0].MessageType, "fast MessageType")
 }
 
 func TestHandleDeepSearch(t *testing.T) {
@@ -1636,6 +1724,42 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 	assertpkg.Equal(t, "missing_free_text", errResp.Error, "error")
 }
 
+func TestHandleSearch_VectorMessageTypeParamReachesFilter(t *testing.T) {
+	store := &mockStore{
+		messages: []APIMessage{{
+			ID:          42,
+			Subject:     "Lunch",
+			MessageType: "sms",
+			Snippet:     "grab lunch",
+		}},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 42, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=vector&message_type=sms", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertpkg.Equal(t, []string{"sms"}, backend.searchFilter.MessageTypes, "MessageTypes")
+}
+
 // TestHandleSearch_HybridResponseItemShape regression-guards the
 // hybrid response item shape: each result must be a MessageSummary
 // (snake-case fields shared with /api/v1/search FTS mode), not a
@@ -1875,11 +1999,12 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 // that need canned ANN hits set searchHits/searchErr; Stats and the
 // generation-resolution paths use the other fields.
 type fakeVectorBackend struct {
-	active     *vector.Generation
-	building   *vector.Generation
-	stats      vector.Stats
-	searchHits []vector.Hit
-	searchErr  error
+	active       *vector.Generation
+	building     *vector.Generation
+	stats        vector.Stats
+	searchHits   []vector.Hit
+	searchErr    error
+	searchFilter vector.Filter
 }
 
 func (f *fakeVectorBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
@@ -1904,8 +2029,9 @@ func (f *fakeVectorBackend) Upsert(_ context.Context, _ vector.GenerationID, _ [
 	return errors.New("not implemented")
 }
 func (f *fakeVectorBackend) Search(
-	_ context.Context, _ vector.GenerationID, _ []float32, _ int, _ vector.Filter,
+	_ context.Context, _ vector.GenerationID, _ []float32, _ int, filter vector.Filter,
 ) ([]vector.Hit, error) {
+	f.searchFilter = filter
 	return f.searchHits, f.searchErr
 }
 func (f *fakeVectorBackend) Delete(_ context.Context, _ vector.GenerationID, _ []int64) error {

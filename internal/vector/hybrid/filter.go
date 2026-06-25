@@ -92,6 +92,9 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if len(q.SubjectTerms) > 0 {
 		f.SubjectSubstrings = append([]string(nil), q.SubjectTerms...)
 	}
+	if len(q.MessageTypes) > 0 {
+		f.MessageTypes = append([]string(nil), q.MessageTypes...)
+	}
 	return f, nil
 }
 

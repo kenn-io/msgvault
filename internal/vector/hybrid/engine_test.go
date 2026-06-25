@@ -56,6 +56,7 @@ func newEngineFixture(t *testing.T) *engineFixture {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    message_type TEXT NOT NULL DEFAULT 'email',
     source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,

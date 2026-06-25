@@ -23,6 +23,7 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 	_, err := db.ExecContext(ctx, `
 		UPDATE messages
 		   SET source_id = CASE id WHEN 1 THEN 10 WHEN 2 THEN 20 ELSE 30 END,
+		       message_type = CASE id WHEN 1 THEN 'email' WHEN 2 THEN 'sms' ELSE 'mms' END,
 		       has_attachments = (id = 2),
 		       size_estimate = CASE id WHEN 1 THEN 100 WHEN 2 THEN 200 ELSE 300 END,
 		       sent_at = CASE id
@@ -85,6 +86,11 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 		{
 			name:   "has attachment",
 			filter: vector.Filter{HasAttachment: &yes},
+			want:   []int64{2},
+		},
+		{
+			name:   "message type",
+			filter: vector.Filter{MessageTypes: []string{"sms"}},
 			want:   []int64{2},
 		},
 		{

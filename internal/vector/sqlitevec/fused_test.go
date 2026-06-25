@@ -290,6 +290,41 @@ func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     subject TEXT,
+    message_type TEXT NOT NULL DEFAULT 'email',
+    source_id INTEGER,
+    sender_id INTEGER,
+    has_attachments INTEGER DEFAULT 0,
+    size_estimate INTEGER,
+    sent_at DATETIME,
+    deleted_at DATETIME,
+    deleted_from_source_at DATETIME
+);
+CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);
+CREATE TABLE message_labels (
+    message_id INTEGER NOT NULL,
+    label_id INTEGER NOT NULL,
+    PRIMARY KEY (message_id, label_id)
+);
+CREATE TABLE message_recipients (
+    id INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    recipient_type TEXT NOT NULL,
+    participant_id INTEGER NOT NULL
+);`
+	_, err = db.Exec(schema)
+	requirepkg.NoError(t, err, "schema")
+	return db
+}
+
+func openFusedMainWithoutMessageType(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", path)
+	requirepkg.NoError(t, err, "open main")
+	t.Cleanup(func() { _ = db.Close() })
+	schema := `
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    subject TEXT,
     source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
@@ -484,6 +519,105 @@ func TestFusedSearch_AfterBeforeBoundaries_TextDate(t *testing.T) {
 			assertpkg.Lenf(t, got, len(c.want), "got %d hits, want %d (got=%v want=%v)", len(got), len(c.want), got, c.want)
 		})
 	}
+}
+
+func TestFusedSearch_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	main := openFusedMainWithSchema(t, mainPath)
+
+	rows := []struct {
+		id          int64
+		messageType string
+	}{
+		{1, "email"},
+		{2, "sms"},
+		{3, "sms"},
+		{4, "mms"},
+	}
+	for _, r := range rows {
+		_, err := main.ExecContext(ctx,
+			`INSERT INTO messages (id, message_type) VALUES (?, ?)`,
+			r.id, r.messageType)
+		require.NoErrorf(err, "insert msg %d", r.id)
+		_, err = main.ExecContext(ctx,
+			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
+			r.id, "", "topic")
+		require.NoErrorf(err, "insert fts %d", r.id)
+	}
+
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(dir, "vectors.db"),
+		MainPath:  mainPath,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
+
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	requirepkg.NoError(t, err, "FusedSearch")
+
+	got := make(map[int64]bool, len(hits))
+	for _, h := range hits {
+		got[h.MessageID] = true
+	}
+	assertpkg.Equal(t, map[int64]bool{2: true, 3: true}, got, "message_type=sms hits")
+}
+
+func TestFusedSearch_LegacySchemaWithoutMessageType(t *testing.T) {
+	require := requirepkg.New(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	main := openFusedMainWithoutMessageType(t, mainPath)
+
+	_, err := main.ExecContext(ctx, `INSERT INTO messages (id, subject) VALUES (?, ?)`, 1, "legacy topic")
+	require.NoError(err, "insert message")
+	_, err = main.ExecContext(ctx,
+		`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
+		1, "legacy topic", "topic body")
+	require.NoError(err, "insert fts")
+
+	b, err := Open(ctx, Options{
+		Path:      filepath.Join(dir, "vectors.db"),
+		MainPath:  mainPath,
+		Dimension: 768,
+		MainDB:    main,
+	})
+	require.NoError(err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.Upsert(ctx, gid, []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(768, 0)},
+	}), "Upsert")
+	require.NoError(b.ActivateGeneration(ctx, gid, true), "Activate")
+
+	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		FTSTerms:   []string{"topic"},
+		Generation: gid,
+		KPerSignal: 10,
+		Limit:      10,
+		RRFK:       60,
+	})
+	require.NoError(err, "FusedSearch")
+	require.Len(hits, 1, "legacy message should still be searchable")
+	assertpkg.Equal(t, int64(1), hits[0].MessageID, "legacy hit")
 }
 
 // TestFusedSearch_SenderMatchesFromRecipientOnly confirms the sender

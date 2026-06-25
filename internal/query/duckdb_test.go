@@ -1035,6 +1035,94 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 	})
 }
 
+func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	emailMsg := b.AddMessage(MessageOpt{
+		Subject:     "lunch plans",
+		Snippet:     "lunch tacos",
+		MessageType: "email",
+	})
+	smsMsg := b.AddMessage(MessageOpt{
+		Subject:     "lunch plans",
+		Snippet:     "lunch sushi",
+		MessageType: "sms",
+	})
+
+	engine := b.BuildEngine()
+	results, err := engine.SearchFast(context.Background(), search.Parse("message_type:sms lunch"), MessageFilter{}, 100, 0)
+	require.NoError(err, "SearchFast")
+	require.Len(results, 1, "message_type:sms should scope the text search")
+	assert.Equal(smsMsg, results[0].ID, "ID")
+	assert.Equal("sms", results[0].MessageType, "MessageType")
+	assert.NotEqual(emailMsg, results[0].ID, "email message must not leak into sms search")
+}
+
+func TestDuckDBEngine_SearchFastWithStats_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "lunch plans",
+		Snippet:      "lunch tacos",
+		SizeEstimate: 1000,
+		MessageType:  "email",
+	})
+	smsMsg := b.AddMessage(MessageOpt{
+		Subject:      "lunch plans",
+		Snippet:      "lunch sushi",
+		SizeEstimate: 2000,
+		MessageType:  "sms",
+	})
+
+	engine := b.BuildEngine()
+	result, err := engine.SearchFastWithStats(
+		context.Background(),
+		search.Parse("message_type:sms lunch"),
+		"message_type:sms lunch",
+		MessageFilter{},
+		ViewSenders,
+		100,
+		0,
+	)
+	require.NoError(err, "SearchFastWithStats")
+	require.Len(result.Messages, 1, "message_type:sms should scope the search")
+	assert.Equal(smsMsg, result.Messages[0].ID, "ID")
+	require.NotNil(result.Stats, "Stats")
+	assert.Equal(int64(1), result.Stats.MessageCount, "Stats.MessageCount")
+	assert.Equal(int64(2000), result.Stats.TotalSize, "Stats.TotalSize")
+}
+
+func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "lunch plans",
+		Snippet:      "lunch tacos",
+		SizeEstimate: 1000,
+		MessageType:  "email",
+	})
+	b.AddMessage(MessageOpt{
+		Subject:      "lunch plans",
+		Snippet:      "lunch sushi",
+		SizeEstimate: 2000,
+		MessageType:  "sms",
+	})
+
+	engine := b.BuildEngine()
+	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{
+		SearchQuery: "message_type:sms lunch",
+	})
+	require.NoError(err, "GetTotalStats")
+	assert.Equal(int64(1), stats.MessageCount, "MessageCount")
+	assert.Equal(int64(2000), stats.TotalSize, "TotalSize")
+}
+
 // TestDuckDBEngine_ListMessages_DateFilter verifies that After/Before date filters
 // work with DuckDB's TIMESTAMP column (regression: VARCHAR params need CAST).
 func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {

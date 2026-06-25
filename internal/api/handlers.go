@@ -471,6 +471,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		mode = "fts"
 	}
 	explain := r.URL.Query().Get("explain") == "1"
+	parsedQuery := parseSearchQueryRequest(r, query)
+	parsedQuery.HideDeleted = true
 
 	if mode == "vector" || mode == "hybrid" {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -486,7 +488,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if maxPage := s.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && pageSize > maxPage {
 			pageSize = maxPage
 		}
-		s.handleHybridSearch(w, r, query, mode, explain, pageSize)
+		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, pageSize)
 		return
 	}
 
@@ -506,9 +508,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * pageSize
-
-	parsedQuery := search.Parse(query)
-	parsedQuery.HideDeleted = true
 
 	var (
 		messages []store.APIMessage
@@ -540,13 +539,26 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
+	parsed := search.Parse(query)
+	for _, raw := range r.URL.Query()["message_type"] {
+		for typ := range strings.SplitSeq(raw, ",") {
+			typ = strings.TrimSpace(strings.ToLower(typ))
+			if typ != "" {
+				parsed.MessageTypes = append(parsed.MessageTypes, typ)
+			}
+		}
+	}
+	return parsed
+}
+
 // handleHybridSearch runs vector or hybrid search via the configured
 // hybrid engine. Returns 503 when the engine is not configured or the
 // index is stale/building; otherwise returns RRF-ranked hits hydrated
 // through the message store.
 func (s *Server) handleHybridSearch(
 	w http.ResponseWriter, r *http.Request,
-	q, mode string, explain bool, pageSize int,
+	q string, parsed *search.Query, mode string, explain bool, pageSize int,
 ) {
 	if s.hybridEngine == nil {
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
@@ -556,7 +568,6 @@ func (s *Server) handleHybridSearch(
 	ctx := r.Context()
 	start := time.Now()
 
-	parsed := search.Parse(q)
 	freeText := strings.Join(parsed.TextTerms, " ")
 	// Vector/hybrid search requires text to embed; filter-only
 	// queries have no query vector to rank by. Callers that want
@@ -1727,14 +1738,14 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := parseMessageFilter(r)
+	q := search.Parse(queryStr)
 
 	// Reject filter fields that the search engines cannot honor.
 	// SenderName/RecipientName use display names that aren't indexed
 	// for search, ConversationID scoping isn't implemented, and
-	// EmptyValueTargets is an aggregate-only concept. MessageType is
-	// not propagated by MergeFilterIntoQuery — accepting it here would
-	// silently return unscoped results, so reject until the search
-	// pipeline gains a message_type predicate.
+	// EmptyValueTargets is an aggregate-only concept. The parsed
+	// message_type: operator is honored by the query engine; the
+	// filter parameter form is still list-search-only.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.ConversationID != nil || filter.HasEmptyTargets() ||
 		filter.MessageType != "" {
@@ -1764,8 +1775,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	} else if limit > maxPageSize {
 		limit = maxPageSize
 	}
-
-	q := search.Parse(queryStr)
 
 	result, err := s.engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
@@ -1802,12 +1811,12 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := parseMessageFilter(r)
+	q := search.Parse(queryStr)
 
-	// Reject filter fields that MergeFilterIntoQuery cannot represent
-	// in search.Query. Without this check the parameters parse
+	// Reject filter fields that this deep-search engine path cannot
+	// honor. Without this check the parameters parse
 	// successfully but silently do nothing, letting deep search
-	// escape the current drill-down scope. MessageType is one of these
-	// silently-dropped fields.
+	// escape the current drill-down scope.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.TimeRange.Period != "" || filter.ConversationID != nil ||
 		filter.HasEmptyTargets() || filter.MessageType != "" {
@@ -1829,7 +1838,6 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	q := search.Parse(queryStr)
 	merged := query.MergeFilterIntoQuery(q, filter)
 
 	// Fetch one extra row to determine has_more accurately.

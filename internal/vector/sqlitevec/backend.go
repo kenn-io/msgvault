@@ -1160,6 +1160,12 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 			args = append(args, id)
 		}
 	}
+	if len(f.MessageTypes) > 0 {
+		clauses = append(clauses, inStringClause("m.message_type", f.MessageTypes))
+		for _, typ := range f.MessageTypes {
+			args = append(args, typ)
+		}
+	}
 	// Sender filters: one EXISTS per group, AND'd across groups so
 	// repeated `from:` operators each become an independent
 	// message-level requirement. Each group matches solely against
@@ -1275,6 +1281,16 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 func inClause(col string, ids []int64) string {
 	placeholders := make([]string, len(ids))
 	for i := range ids {
+		placeholders[i] = "?"
+	}
+	return fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ","))
+}
+
+// inStringClause returns "col IN (?,?,?)" for string values. Caller must
+// append the values to the args slice in the same order.
+func inStringClause(col string, values []string) string {
+	placeholders := make([]string, len(values))
+	for i := range values {
 		placeholders[i] = "?"
 	}
 	return fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ","))
