@@ -1322,6 +1322,8 @@ func TestSearchRejectsMessageTypeFilter(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/search/fast?q=hello&message_type=sms",
 		"/api/v1/search/deep?q=hello&message_type=sms",
+		"/api/v1/search/fast?q=message_type:sms%20hello",
+		"/api/v1/search/deep?q=message_type:sms%20hello",
 	} {
 		t.Run(path, func(t *testing.T) {
 			engine := &querytest.MockEngine{}

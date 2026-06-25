@@ -1738,6 +1738,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := parseMessageFilter(r)
+	q := search.Parse(queryStr)
 
 	// Reject filter fields that the search engines cannot honor.
 	// SenderName/RecipientName use display names that aren't indexed
@@ -1747,7 +1748,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	// would silently return unscoped results.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.ConversationID != nil || filter.HasEmptyTargets() ||
-		filter.MessageType != "" {
+		filter.MessageType != "" || len(q.MessageTypes) > 0 {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Fast search does not support sender_name, recipient_name, "+
 				"conversation_id, empty_targets, or message_type filters")
@@ -1774,8 +1775,6 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	} else if limit > maxPageSize {
 		limit = maxPageSize
 	}
-
-	q := search.Parse(queryStr)
 
 	result, err := s.engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
@@ -1812,6 +1811,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := parseMessageFilter(r)
+	q := search.Parse(queryStr)
 
 	// Reject filter fields that this deep-search engine path cannot
 	// honor. Without this check the parameters parse
@@ -1819,7 +1819,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// escape the current drill-down scope.
 	if filter.SenderName != "" || filter.RecipientName != "" ||
 		filter.TimeRange.Period != "" || filter.ConversationID != nil ||
-		filter.HasEmptyTargets() || filter.MessageType != "" {
+		filter.HasEmptyTargets() || filter.MessageType != "" || len(q.MessageTypes) > 0 {
 		writeError(w, http.StatusBadRequest, "unsupported_filter",
 			"Deep search does not support sender_name, recipient_name, "+
 				"time_period, conversation_id, empty_targets, or "+
@@ -1838,7 +1838,6 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	q := search.Parse(queryStr)
 	merged := query.MergeFilterIntoQuery(q, filter)
 
 	// Fetch one extra row to determine has_more accurately.

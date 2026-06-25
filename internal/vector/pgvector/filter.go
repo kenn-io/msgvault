@@ -34,6 +34,9 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 	if len(f.SourceIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.source_id = ANY(%s::bigint[])", bind(int64Array(f.SourceIDs))))
 	}
+	if len(f.MessageTypes) > 0 {
+		clauses = append(clauses, fmt.Sprintf("m.message_type = ANY(%s::text[])", bind(textArray(f.MessageTypes))))
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue

@@ -95,6 +95,7 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 			source_id BIGINT,
 			sender_id BIGINT,
 			subject TEXT,
+			message_type TEXT NOT NULL DEFAULT 'email',
 			has_attachments BOOLEAN DEFAULT FALSE,
 			size_estimate BIGINT,
 			sent_at TIMESTAMPTZ,
