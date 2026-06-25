@@ -290,7 +290,7 @@ func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
 	if v := nullStringValue(bodyText); v != "" {
 		return v
 	}
-	return nullStringValue(bodyHTML)
+	return mime.StripHTML(nullStringValue(bodyHTML))
 }
 
 func nullStringValue(ns sql.NullString) string {
