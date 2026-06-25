@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -46,7 +47,14 @@ type DuckDBEngine struct {
 	// Used to gracefully handle stale cache files that lack newer columns
 	// (e.g. phone_number, attachment_count, sender_id, message_type added in PR #160).
 	// Map: table_name -> column_name -> exists_in_parquet
+	//
+	// Guarded by optColsMu because a long-running server (e.g. mcp-http) may
+	// have the analytics cache rebuilt underneath it by build-cache/sync. When
+	// that happens the column set can change, so optionalCols is re-probed on
+	// demand (see ensureFreshOptionalCols) rather than only at construction.
+	optColsMu    sync.RWMutex
 	optionalCols map[string]map[string]bool
+	cacheFP      string // fingerprint of the Parquet cache at last probe
 
 	// Search result cache: keeps the materialized temp table alive across
 	// pagination calls for the same search query, avoiding repeated Parquet scans.
@@ -164,6 +172,9 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	if len(missing) > 0 {
 		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault build-cache --full-rebuild' to update", missing)
 	}
+	// Record the cache fingerprint so ensureFreshOptionalCols can detect a
+	// later rebuild and re-probe instead of trusting this snapshot forever.
+	engine.cacheFP = engine.cacheFingerprint()
 
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
@@ -189,6 +200,10 @@ func (e *DuckDBEngine) Close() error {
 func (e *DuckDBEngine) QuerySQL(
 	ctx context.Context, sqlStr string,
 ) (*QueryResult, error) {
+	// Refresh views if the cache changed since startup, so the registered
+	// views match the current Parquet schema.
+	e.ensureFreshOptionalCols()
+
 	rows, err := e.db.QueryContext(ctx, sqlStr)
 	if err != nil {
 		return nil, fmt.Errorf("execute query: %w", err)
@@ -250,6 +265,8 @@ func (e *DuckDBEngine) probeParquetColumns(
 
 // hasCol returns true if the named column exists in the Parquet schema for the given table.
 func (e *DuckDBEngine) hasCol(table, col string) bool {
+	e.optColsMu.RLock()
+	defer e.optColsMu.RUnlock()
 	if e.optionalCols == nil {
 		return true // no probe data — assume present (backwards compatible)
 	}
@@ -258,6 +275,64 @@ func (e *DuckDBEngine) hasCol(table, col string) bool {
 		return true // table not probed — assume present
 	}
 	return tbl[col]
+}
+
+// cacheFingerprint computes a cheap signature of the analytics Parquet cache.
+// It combines, per probed table, the file count and each file's size and
+// modification time. When build-cache or sync rewrites the cache underneath a
+// long-running process the fingerprint changes, letting the engine detect that
+// its probed column set is stale. Pure filesystem stats — no DuckDB access.
+func (e *DuckDBEngine) cacheFingerprint() string {
+	var b strings.Builder
+	globs := []string{
+		filepath.Join(e.analyticsDir, datasetMessages, "*", "*.parquet"),
+		e.parquetPath(datasetParticipants),
+		e.parquetPath(datasetConversations),
+		e.parquetPath("sources"),
+	}
+	for _, g := range globs {
+		matches, _ := filepath.Glob(g)
+		fmt.Fprintf(&b, "%s#%d|", g, len(matches))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil {
+				fmt.Fprintf(&b, "%s=%d,%d;", m, fi.Size(), fi.ModTime().UnixNano())
+			}
+		}
+	}
+	return b.String()
+}
+
+// ensureFreshOptionalCols re-probes the Parquet schema (and re-registers the
+// SQL views) when the analytics cache has changed since the last probe. This
+// guards long-running engines (e.g. the mcp-http server) against a binder
+// error when build-cache rewrites the cache with a different column set:
+// without it, a stale "column present" verdict puts a now-absent column into a
+// SELECT * REPLACE list, which DuckDB rejects with
+// "Column ... in REPLACE list not found in FROM clause". Cheap on the common
+// no-change path (a handful of os.Stat calls).
+func (e *DuckDBEngine) ensureFreshOptionalCols() {
+	fp := e.cacheFingerprint()
+
+	e.optColsMu.RLock()
+	unchanged := fp == e.cacheFP
+	e.optColsMu.RUnlock()
+	if unchanged {
+		return
+	}
+
+	e.optColsMu.Lock()
+	defer e.optColsMu.Unlock()
+	if fp == e.cacheFP { // another goroutine refreshed while we waited
+		return
+	}
+
+	newCols := probeAllOptionalColumns(e.db, e.analyticsDir)
+	e.optionalCols = newCols
+	e.cacheFP = fp
+	if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
+		log.Printf("[warn] re-register views after analytics cache change: %v", err)
+	}
+	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 }
 
 // parquetCTEs returns common CTEs for reading all Parquet tables.
@@ -272,6 +347,10 @@ func (e *DuckDBEngine) hasCol(table, col string) bool {
 // are handled gracefully: if the Parquet file predates their addition, they
 // are synthesised with sensible defaults instead of causing a binder error.
 func (e *DuckDBEngine) parquetCTEs() string {
+	// Re-probe if build-cache/sync rewrote the cache underneath us, so the
+	// REPLACE list below never references a column the current Parquet lacks.
+	e.ensureFreshOptionalCols()
+
 	// --- messages CTE ---
 	msgReplace := []string{
 		"CAST(id AS BIGINT) AS id",
