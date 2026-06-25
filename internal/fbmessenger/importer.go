@@ -720,6 +720,8 @@ func writeThreadToStore(
 				if err := deleteFailedStoredAttachment(st, messageID, contentHash); err != nil {
 					logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 				}
+			} else if err := deleteFailedStoredAttachmentByMetadata(st, messageID, att.Filename, att.MimeType); err != nil {
+				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
 		}
 
@@ -904,6 +906,19 @@ func deleteFailedStoredAttachment(st *store.Store, messageID int64, contentHash 
 		  AND content_hash = ?
 		  AND storage_path = ''
 	`), messageID, contentHash)
+	return err
+}
+
+func deleteFailedStoredAttachmentByMetadata(st *store.Store, messageID int64, filename, mimeType string) error {
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM attachments
+		WHERE message_id = ?
+		  AND filename = ?
+		  AND mime_type = ?
+		  AND storage_path = ''
+		  AND content_hash <> ''
+		  AND LENGTH(content_hash) = 64
+	`), messageID, filename, mimeType)
 	return err
 }
 
