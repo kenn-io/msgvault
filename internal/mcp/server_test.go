@@ -354,7 +354,7 @@ func TestSearchMessageBodies(t *testing.T) {
 	}
 	h := newTestHandlers(eng)
 
-	t.Run("returns FTS results with context_snippets", func(t *testing.T) {
+	t.Run("returns FTS results with matches", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies, map[string]any{"query": "5.1k ohms"})
@@ -366,10 +366,35 @@ func TestSearchMessageBodies(t *testing.T) {
 		assert.False(genericCalled, "generic Search must not handle search_message_bodies")
 	})
 
+	t.Run("sets matches_truncated when excerpts exceed cap", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var body strings.Builder
+		for range 7 {
+			body.WriteString("needle")
+			body.WriteString(strings.Repeat("x", 400))
+		}
+		eng := &querytest.MockEngine{
+			SearchResults: []query.MessageSummary{
+				testutil.NewMessageSummary(3).WithSubject("Many hits").Build(),
+			},
+			Messages: map[int64]*query.MessageDetail{
+				3: testutil.NewMessageDetail(3).WithBodyText(body.String()).BuildPtr(),
+			},
+		}
+		h := newTestHandlers(eng)
+		resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies, map[string]any{"query": "needle"})
+		require.Len(resp.Data, 1)
+		assert.Len(resp.Data[0].Matches, maxContextSnippets)
+		assert.True(resp.Data[0].MatchesTruncated)
+	})
+
 	t.Run("requires free-text term", func(t *testing.T) {
 		r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{"query": "from:alice"})
 		txt := resultText(t, r)
-		assert.Contains(t, txt, "free-text term")
+		assert := assert.New(t)
+		assert.Contains(txt, "free-text term")
+		assert.Contains(txt, "metadata filters")
 	})
 
 	t.Run("rejects invalid typed operator values", func(t *testing.T) {
@@ -1856,6 +1881,30 @@ func TestGetStats_VectorEnabled(t *testing.T) {
 	assert.Nil(resp.VectorSearch.BuildingGeneration, "building_generation")
 }
 
+// toolPropertyDescription returns the description string for a tool input property.
+func toolPropertyDescription(t mcp.Tool, name string) string {
+	prop, ok := t.InputSchema.Properties[name].(map[string]any)
+	if !ok {
+		return ""
+	}
+	desc, _ := prop["description"].(string)
+	return desc
+}
+
+// TestAggregateTool_DocumentsTimeGranularity guards the group_by=time contract:
+// MCP always buckets by calendar year (the handler does not set TimeGranularity).
+func TestAggregateTool_DocumentsTimeGranularity(t *testing.T) {
+	tool := aggregateTool()
+	desc := tool.Description
+	groupByDesc := toolPropertyDescription(tool, "group_by")
+
+	assert := assert.New(t)
+	assert.Contains(desc, "calendar year", "tool description should document yearly time buckets")
+	assert.Contains(desc, "TotalUnique", "tool description should list response fields")
+	assert.Contains(groupByDesc, "calendar year", "group_by description should document yearly granularity")
+	assert.Contains(groupByDesc, `"2024"`, "group_by description should show example year key")
+}
+
 func TestAggregate(t *testing.T) {
 	eng := &querytest.MockEngine{
 		AggregateRows: []query.AggregateRow{
@@ -2998,8 +3047,78 @@ func TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T)
 }
 
 func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
+	assert := assert.New(t)
 	tool := findSimilarMessagesTool()
-	assert.Contains(t, tool.InputSchema.Properties, "message_type")
+	assert.Contains(tool.InputSchema.Properties, "message_type")
+}
+
+// TestSearchMessagesTool_DocumentsQuerySyntax guards the operator-support
+// contract so clients do not assume full Gmail compatibility.
+func TestSearchMessagesTool_DocumentsQuerySyntax(t *testing.T) {
+	assert := assert.New(t)
+	for _, vectorAvailable := range []bool{false, true} {
+		tool := searchMessagesTool(vectorAvailable)
+		desc := tool.Description
+		for _, want := range []string{
+			"cc:",
+			"bcc:",
+			"older_than:",
+			"Not supported: negation",
+			"subject, snippet",
+		} {
+			assert.Contains(desc, want, "vectorAvailable=%v: description missing %q", vectorAvailable, want)
+		}
+		assert.NotContains(desc, "Gmail-like", "vectorAvailable=%v: description should not over-promise Gmail compatibility", vectorAvailable)
+
+		queryDesc := toolPropertyDescription(tool, "query")
+		assert.Contains(queryDesc, "supported operators", "vectorAvailable=%v: query param should reference operator docs", vectorAvailable)
+	}
+}
+
+// TestSearchMessageBodiesTool_DocumentsQuerySyntax guards the query-syntax
+// contract so MCP clients know how body FTS interprets free-text terms.
+func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
+	assert := assert.New(t)
+	tool := searchMessageBodiesTool()
+
+	assert.Contains(tool.Description, "ANDed", "tool description should document implicit AND, got: %q", tool.Description)
+	assert.Contains(tool.Description, "double-quoted phrase", "tool description should document phrase matching, got: %q", tool.Description)
+	assert.Contains(tool.Description, "OR and NOT are not supported", "tool description should document missing boolean ops, got: %q", tool.Description)
+
+	queryDesc := toolPropertyDescription(tool, "query")
+	assert.Contains(queryDesc, "ANDed", "query param should document implicit AND, got: %q", queryDesc)
+	assert.Contains(queryDesc, "double quotes", "query param should document phrase matching, got: %q", queryDesc)
+	assert.Contains(queryDesc, "OR/NOT unsupported", "query param should document missing boolean ops, got: %q", queryDesc)
+}
+
+// TestSearchMessageBodiesTool_DocumentsFilterVsFreeText guards the contract
+// that Gmail operators are metadata filters and unrecognized word:value
+// tokens are literal body text.
+func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
+	assert := assert.New(t)
+	tool := searchMessageBodiesTool()
+
+	assert.Contains(tool.Description, "metadata filters", "tool description should distinguish filters from free text, got: %q", tool.Description)
+	assert.Contains(tool.Description, "Unrecognized word:value", "tool description should document literal colon tokens, got: %q", tool.Description)
+
+	queryDesc := toolPropertyDescription(tool, "query")
+	assert.Contains(queryDesc, "metadata filters", "query param should distinguish filters from free text, got: %q", queryDesc)
+	assert.Contains(queryDesc, "subject:test alone is rejected", "query param should warn subject: is not free text, got: %q", queryDesc)
+	assert.Contains(queryDesc, "Unrecognized word:value", "query param should document literal colon tokens, got: %q", queryDesc)
+}
+
+// TestSearchMessageBodiesTool_DocumentsMatchesTruncated guards the response-field
+// contract for when excerpt lists are capped.
+func TestSearchMessageBodiesTool_DocumentsMatchesTruncated(t *testing.T) {
+	assert := assert.New(t)
+	tool := searchMessageBodiesTool()
+
+	assert.Contains(tool.Description, "matches_truncated",
+		"tool description should document matches_truncated, got: %q", tool.Description)
+	assert.Contains(tool.Description, "search_in_message",
+		"tool description should point callers to search_in_message, got: %q", tool.Description)
+	assert.Contains(tool.Description, "get_message",
+		"tool description should point callers to get_message, got: %q", tool.Description)
 }
 
 func TestFindSimilarMessages_MissingID(t *testing.T) {

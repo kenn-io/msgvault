@@ -202,18 +202,34 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) e
 	}
 }
 
+// Shared search_messages schema text. The parser implements a subset of Gmail
+// syntax — not full Gmail compatibility. Keep this in sync with
+// internal/search/parser.go and the SearchFast → Search fallback in handlers.go.
+const (
+	searchMessagesOperatorDoc = "Supported operators: from:, to:, cc:, bcc:, subject:, label: (or l:), has:attachment, " +
+		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M). " +
+		"Bare domains on from:/to: match any address at that domain. Multiple terms are ANDed. " +
+		"Not supported: negation (-), OR, or parentheses grouping."
+	searchMessagesFreeTextDoc = "Without mode, free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
+		"Use search_message_bodies for full-body keyword search."
+	searchMessagesPaginationDoc = "Paginate with offset/limit (default limit 20, max 50). " +
+		"Response: data, total, returned, offset, has_more."
+)
+
 func searchMessagesTool(vectorAvailable bool) mcp.Tool {
+	searchIntro := "Search emails using a subset of Gmail query syntax (not full Gmail compatibility). " +
+		searchMessagesOperatorDoc + " " + searchMessagesFreeTextDoc + " "
+	queryDesc := "Search query (e.g. 'from:alice subject:meeting after:2024-01-01'). " +
+		"See tool description for supported operators and limitations."
+
 	if !vectorAvailable {
 		return mcp.NewTool(ToolSearchMessages,
-			mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-				"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
-				"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
-				"For full message body keyword search, use search_message_bodies instead. "+
-				"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more."),
+			mcp.WithDescription(searchIntro+searchMessagesPaginationDoc+
+				"For full message body keyword search, use search_message_bodies."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("query",
 				mcp.Required(),
-				mcp.Description("Gmail-style search query (e.g. 'from:alice subject:meeting after:2024-01-01')"),
+				mcp.Description(queryDesc),
 			),
 			withAccount(),
 			withLimit("20"),
@@ -221,11 +237,8 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		)
 	}
 	return mcp.NewTool(ToolSearchMessages,
-		mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-			"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
-			"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
-			"For full message body keyword search, use search_message_bodies instead. "+
-			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
+		mcp.WithDescription(searchIntro+searchMessagesPaginationDoc+
+			"For full message body keyword search, use search_message_bodies. "+
 			"Vector search is configured: set mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
 			"Vector/hybrid hits include matches — embedded body chunks ranked by semantic similarity to the query (up to 5 per message). "+
 			"Vector/hybrid require free-text terms; filter-only queries must omit mode. "+
@@ -234,7 +247,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Gmail-style search query (e.g. 'from:alice subject:meeting after:2024-01-01'); mode=vector|hybrid require at least one free-text term"),
+			mcp.Description(queryDesc+"; mode=vector|hybrid require at least one free-text term"),
 		),
 		withAccount(),
 		withLimit("20"),
@@ -254,16 +267,25 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 
 func searchMessageBodiesTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchMessageBodies,
-		mcp.WithDescription("Search message bodies by keyword using exact body-only full-text search (FTS). Returns messages whose body text contains the search terms, "+
+		mcp.WithDescription("Search message bodies by keyword using full-text search (FTS). Returns messages whose body text contains the search terms, "+
 			"plus matches — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term, with char_offset and line. "+
-			"A hit outside the bounded context-extraction budget has no excerpt and sets matches_truncated=true. "+
-			"Requires at least one free-text term; use search_messages for filter-only queries (from:, label:, etc.). "+
+			"When matches_truncated is true on a hit, more than 5 excerpts matched — use search_in_message or get_message to read the full body. "+
+			"Requires at least one free-text term (bare word or double-quoted phrase). "+
+			"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only and do not satisfy the free-text requirement; "+
+			"filter-only queries such as from:alice are rejected — use search_messages instead. "+
+			"Unrecognized word:value tokens (e.g. RXD2:V2) are treated as literal body text, not filters. "+
+			"Query syntax: space-separated words are ANDed (each must appear somewhere in the body); "+
+			"a double-quoted phrase is one exact phrase (e.g. \"RXD2 V2\"); OR and NOT are not supported. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
 			"(total is not available for body search; use has_more to detect more pages.)"),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Search query with at least one free-text term (e.g. 'quarterly report' or 'from:alice budget')"),
+			mcp.Description("Body keyword query with at least one free-text term (bare word or quoted phrase). "+
+				"Gmail operators (from:, subject:, etc.) are metadata filters, not body search — "+
+				"subject:test alone is rejected; combine with body terms (from:alice budget) or use search_messages for filter-only queries. "+
+				"Unrecognized word:value tokens (RXD2:V2) are literal text. "+
+				"Space-separated words are ANDed; double quotes match an exact phrase; OR/NOT unsupported."),
 		),
 		withAccount(),
 		withLimit("20"),
@@ -394,11 +416,12 @@ func getStatsTool() mcp.Tool {
 
 func aggregateTool() mcp.Tool {
 	return mcp.NewTool(ToolAggregate,
-		mcp.WithDescription("Get grouped statistics (e.g. top senders, domains, labels, or message volume over time)."),
+		mcp.WithDescription("Get grouped statistics (top senders, recipients, domains, labels, or message volume by calendar year). "+
+			"Returns a JSON array of objects with fields Key, Count, TotalSize, AttachmentSize, AttachmentCount, and TotalUnique."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("group_by",
 			mcp.Required(),
-			mcp.Description("Dimension to group by"),
+			mcp.Description("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\")."),
 			mcp.Enum("sender", "recipient", "domain", "label", "time"),
 		),
 		withAccount(),
