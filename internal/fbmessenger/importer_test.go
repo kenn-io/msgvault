@@ -375,6 +375,50 @@ func TestImportDYI_MissingAttachment(t *testing.T) {
 	assertSyntheticAttachmentKey(t, ch)
 }
 
+func TestImportDYI_MissingAttachmentReimportMigratesLegacyEmptyHashRow(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	tmp := t.TempDir()
+	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "missing_MIS")
+	require.NoError(os.MkdirAll(threadPath, 0755))
+	body := `{"participants":[{"name":"A"},{"name":"B"}],"messages":[
+{"sender_name":"A","timestamp_ms":1600000000000,"type":"Generic","photos":[{"uri":"messages/inbox/missing_MIS/photos/gone.png"}]}
+],"title":"x"}`
+	require.NoError(os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(body), 0644))
+	opts := ImportOptions{
+		Me:             "test.user@facebook.messenger",
+		RootDir:        tmp,
+		AttachmentsDir: t.TempDir(),
+		NoResume:       true,
+	}
+	_, err := ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var messageID int64
+	err = st.DB().QueryRow("SELECT id FROM messages WHERE source_message_id = 'inbox/missing_MIS__0'").Scan(&messageID)
+	require.NoError(err, "select imported message id")
+	_, err = st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ?"), messageID)
+	require.NoError(err, "delete current synthetic attachment")
+	require.NoError(st.UpsertAttachment(messageID, "gone.png", "", "", "", 0), "seed legacy empty-hash attachment")
+
+	_, err = ImportDYI(context.Background(), st, opts)
+	require.NoError(err)
+
+	var count int
+	err = st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ?"), messageID).Scan(&count)
+	require.NoError(err, "count attachments")
+	require.Equal(1, count, "legacy empty-hash row should not survive beside synthetic key")
+
+	var sp, ch string
+	err = st.DB().QueryRow(st.Rebind(
+		"SELECT storage_path, content_hash FROM attachments WHERE message_id = ?",
+	), messageID).Scan(&sp, &ch)
+	require.NoError(err, "select migrated attachment")
+	assert.Empty(sp, "storage_path")
+	assertSyntheticAttachmentKey(t, ch)
+}
+
 // TestImportDYI_MultipleMissingAttachments verifies that a single message
 // with multiple missing photos records one attachment row per photo, rather
 // than collapsing them to a single hashless row. Each row gets a stable,

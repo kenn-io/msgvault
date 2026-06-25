@@ -700,6 +700,9 @@ func writeThreadToStore(
 			hash := contentHash
 			if hash == "" {
 				hash = fbAttachmentHash(att, ai)
+				if err := deleteLegacyHashlessAttachment(st, messageID); err != nil {
+					logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+				}
 			}
 			if err := st.UpsertAttachment(messageID, att.Filename, att.MimeType, storagePath, hash, size); err != nil {
 				logger.Warn("fbmessenger: upsert attachment", "err", err)
@@ -859,6 +862,16 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 }
 
 const fbSyntheticAttachmentKeyPrefix = "fbmessenger:attachment:"
+
+func deleteLegacyHashlessAttachment(st *store.Store, messageID int64) error {
+	_, err := st.DB().Exec(st.Rebind(`
+		DELETE FROM attachments
+		WHERE message_id = ?
+		  AND (content_hash IS NULL OR content_hash = '')
+		  AND storage_path = ''
+	`), messageID)
+	return err
+}
 
 // fbAttachmentHash derives a stable synthetic attachment key for an attachment
 // that has no real (content-derived) hash — e.g. the file is missing or no
