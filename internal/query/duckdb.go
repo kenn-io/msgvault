@@ -577,6 +577,14 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		conditions = append(conditions, "msg.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
 	}
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions, fmt.Sprintf("msg.message_type IN (%s)", strings.Join(placeholders, ",")))
+	}
 
 	return conditions, args
 }
@@ -1653,6 +1661,14 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
 	}
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
+	}
 
 	// Full-text search: use ILIKE fallback (FTS5 not available via sqlite_scan)
 	// Only search subject/snippet; body is in separate table, use FTS for body search
@@ -2442,12 +2458,12 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	var conditions []string
 	var args []any
 
-	// Restrict to email messages only; NULL and '' handle pre-message_type data.
 	// Apply basic filter conditions (ignoring join flags for search - we handle those differently)
-	conditions = append(conditions,
-		emailOnlyFilterMsg,
-		store.LiveMessagesWhere("msg", filter.HideDeletedFromSource),
-	)
+	if len(q.MessageTypes) == 0 {
+		// Restrict to email messages only; NULL and '' handle pre-message_type data.
+		conditions = append(conditions, emailOnlyFilterMsg)
+	}
+	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
 	conditions, args = appendSourceFilter(conditions, args, "msg.", filter.SourceID, filter.SourceIDs)
 	if filter.After != nil {
 		conditions = append(conditions, "msg.sent_at >= CAST(? AS TIMESTAMP)")
@@ -2598,6 +2614,14 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	if q.SmallerThan != nil {
 		conditions = append(conditions, "msg.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
+	}
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions, fmt.Sprintf("msg.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Account filter

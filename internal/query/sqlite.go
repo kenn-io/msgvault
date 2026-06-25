@@ -1525,6 +1525,14 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 		conditions = append(conditions, "m.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
 	}
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
+	}
 
 	// Full-text search: use dialect FTS if available, fall back to LIKE.
 	if len(q.TextTerms) > 0 {

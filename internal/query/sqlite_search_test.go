@@ -94,6 +94,20 @@ func TestSearch_Filters(t *testing.T) {
 	}
 }
 
+func TestSearch_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	_, err := env.DB.Exec(`UPDATE messages SET message_type = ? WHERE id = ?`, "sms", int64(2))
+	require.NoError(err, "mark message as sms")
+
+	results := env.MustSearch(search.Parse("message_type:sms Hello"), 100, 0)
+	require.Len(results, 1, "message_type:sms should scope the text search")
+	assert.Equal(int64(2), results[0].ID, "ID")
+	assert.Equal("sms", results[0].MessageType, "MessageType")
+}
+
 func TestSearch_CaseInsensitiveFallback(t *testing.T) {
 	env := newTestEnv(t)
 

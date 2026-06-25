@@ -11,6 +11,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
@@ -93,4 +94,34 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.Equal("alice@example.com", s.FromEmail, "FromEmail")
 	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
 	assert.True(s.HasAttachments, "HasAttachments")
+}
+
+func TestEngineSearchSerializesMessageTypes(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
+		gotQuery := r.URL.Query().Get("q")
+		assert.Contains(gotQuery, "message_type:sms", "q should preserve parsed message_type filters")
+		assert.Contains(gotQuery, "lunch", "q should preserve text terms")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{},
+			"count":    0,
+			"has_more": false,
+			"offset":   0,
+			"limit":    10,
+			"query":    gotQuery,
+		})
+	}))
+	defer srv.Close()
+
+	store := &Store{baseURL: srv.URL, httpClient: srv.Client()}
+	engine := NewEngineFromStore(store)
+
+	_, err := engine.Search(context.Background(), &search.Query{
+		TextTerms:    []string{"lunch"},
+		MessageTypes: []string{"sms"},
+	}, 10, 0)
+	require.NoError(err, "Search")
 }

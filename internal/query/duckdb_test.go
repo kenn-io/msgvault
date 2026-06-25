@@ -1035,6 +1035,31 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 	})
 }
 
+func TestDuckDBEngine_SearchFast_MessageTypeFilter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	emailMsg := b.AddMessage(MessageOpt{
+		Subject:     "lunch plans",
+		Snippet:     "lunch tacos",
+		MessageType: "email",
+	})
+	smsMsg := b.AddMessage(MessageOpt{
+		Subject:     "lunch plans",
+		Snippet:     "lunch sushi",
+		MessageType: "sms",
+	})
+
+	engine := b.BuildEngine()
+	results, err := engine.SearchFast(context.Background(), search.Parse("message_type:sms lunch"), MessageFilter{}, 100, 0)
+	require.NoError(err, "SearchFast")
+	require.Len(results, 1, "message_type:sms should scope the text search")
+	assert.Equal(smsMsg, results[0].ID, "ID")
+	assert.Equal("sms", results[0].MessageType, "MessageType")
+	assert.NotEqual(emailMsg, results[0].ID, "email message must not leak into sms search")
+}
+
 // TestDuckDBEngine_ListMessages_DateFilter verifies that After/Before date filters
 // work with DuckDB's TIMESTAMP column (regression: VARCHAR params need CAST).
 func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
