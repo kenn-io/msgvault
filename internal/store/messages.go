@@ -278,13 +278,19 @@ func messageBodyChanged(q querier, messageID int64, bodyText, bodyHTML sql.NullS
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nullStringValue(bodyText) != "" || nullStringValue(bodyHTML) != "", nil
+		return embeddingBodyValue(bodyText, bodyHTML) != "", nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return nullStringValue(oldText) != nullStringValue(bodyText) ||
-		nullStringValue(oldHTML) != nullStringValue(bodyHTML), nil
+	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML), nil
+}
+
+func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
+	if v := nullStringValue(bodyText); v != "" {
+		return v
+	}
+	return nullStringValue(bodyHTML)
 }
 
 func nullStringValue(ns sql.NullString) string {

@@ -1555,6 +1555,12 @@ func TestStore_PersistMessageClearsEmbedGenWhenEmbeddingInputsChange(t *testing.
 	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
 		"non-embedding metadata must not clear embed_gen")
 
+	data.BodyHTML = sql.NullString{String: "<p>rendering changed</p>", Valid: true}
+	_, err = f.Store.PersistMessage(data)
+	require.NoError(err, "PersistMessage changed HTML with unchanged plaintext")
+	assert.Equal(sql.NullInt64{Int64: gen, Valid: true}, readEmbedGen(t, f.Store, msgID),
+		"HTML-only changes must not clear embed_gen while plaintext is the embedded body")
+
 	data.BodyText = sql.NullString{String: "updated body", Valid: true}
 	_, err = f.Store.PersistMessage(data)
 	require.NoError(err, "PersistMessage changed body")
