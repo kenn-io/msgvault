@@ -108,8 +108,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 //     are impossible).
 //   - SetEmbedGen stamps it covered; CoverageCounts then reports it
 //     embedded.
-//   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) does NOT clear
-//     embed_gen (R4: content-change re-embedding is out of scope).
+//   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) clears embed_gen
+//     when the embeddable subject text changes.
 func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -153,15 +153,14 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 	assert.Equal(int64(1), embedded, "now embedded")
 	assert.Equal(int64(0), missing, "nothing missing")
 
-	// Re-upsert the same message (ON CONFLICT DO UPDATE): embed_gen must
-	// be preserved (R4 — no content-change re-embedding via the write path).
+	// Re-upsert the same message with changed embedding input: embed_gen must
+	// be cleared so the scan-and-fill worker re-embeds it.
 	msg.Subject = sql.NullString{String: "hello (edited)", Valid: true}
 	_, err = st.UpsertMessage(msg)
 	require.NoError(err, "re-UpsertMessage")
 	require.NoError(st.DB().QueryRow(
 		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
-	assert.True(embedGen.Valid, "ON CONFLICT DO UPDATE must NOT clear embed_gen")
-	assert.Equal(gen, embedGen.Int64, "embed_gen unchanged by re-upsert")
+	assert.False(embedGen.Valid, "subject change must clear embed_gen")
 }
 
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
