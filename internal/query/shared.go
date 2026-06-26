@@ -19,15 +19,16 @@ const (
 	datasetMessages      = "messages"
 	datasetParticipants  = "participants"
 	datasetConversations = "conversations"
+	messageTypeEmail     = "email"
 )
 
 // emailOnlyFilterMsg is the SQL condition restricting to email messages with "msg." alias (DuckDB).
 // NULL and empty string handle old data where message_type was not yet populated.
-const emailOnlyFilterMsg = "(msg.message_type = 'email' OR msg.message_type IS NULL OR msg.message_type = '')"
+const emailOnlyFilterMsg = "(msg.message_type = '" + messageTypeEmail + "' OR msg.message_type IS NULL OR msg.message_type = '')"
 
 // emailOnlyFilterM is the SQL condition restricting to email messages with "m." alias (SQLite).
 // NULL and empty string handle old data where message_type was not yet populated.
-const emailOnlyFilterM = "(m.message_type = 'email' OR m.message_type IS NULL OR m.message_type = '')"
+const emailOnlyFilterM = "(m.message_type = '" + messageTypeEmail + "' OR m.message_type IS NULL OR m.message_type = '')"
 
 // participantNameExpr returns the SQL expression for a participant's display
 // label, falling back through display_name → phone_number → email_address.

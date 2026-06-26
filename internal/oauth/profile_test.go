@@ -29,6 +29,12 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 			wantEmail:  "user@gmail.com",
 		},
 		{
+			name:       "calendar primary id",
+			statusCode: http.StatusOK,
+			body:       `{"id":"user@gmail.com"}`,
+			wantEmail:  "user@gmail.com",
+		},
+		{
 			name:       "mismatch",
 			statusCode: http.StatusOK,
 			body:       `{"emailAddress":"other@gmail.com"}`,
@@ -82,4 +88,19 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 			assert.Equal(tt.wantEmail, got, "email")
 		})
 	}
+}
+
+func TestTokenProfileEndpointForScopes(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	calendar := tokenProfileEndpointForScopes(ScopesCalendar)
+	assert.Equal(defaultCalendarProfileURL, calendar.url, "Calendar-only grants validate through Calendar")
+	assert.Equal("Calendar API", calendar.serviceName, "Calendar-only service name")
+
+	gmail := tokenProfileEndpointForScopes(Scopes)
+	assert.Equal(defaultProfileURL, gmail.url, "Gmail grants keep Gmail profile validation")
+	assert.Equal("Gmail API", gmail.serviceName, "Gmail service name")
+
+	combined := tokenProfileEndpointForScopes(ScopesGmailCalendar)
+	assert.Equal(defaultProfileURL, combined.url, "combined Gmail+Calendar grants keep Gmail profile validation")
 }

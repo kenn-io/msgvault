@@ -313,6 +313,34 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 	assert.Equal(1, unstamped, "manual sync message remains discoverable by scan-and-fill")
 }
 
+func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	home := t.TempDir()
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = config.NewDefaultConfig()
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+
+	f := storetest.New(t)
+	xmlPath := filepath.Join(home, "sms.xml")
+	require.NoError(os.WriteFile(xmlPath, []byte(`<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="hello from local" read="1" status="-1" contact_name="Alice" />
+</smses>`), 0o600), "write sms fixture")
+	src := synctechDriveTestSource()
+	src.Backend = "local"
+	src.Path = xmlPath
+
+	err := runConfiguredSynctechSMSSourceWithStore(context.Background(), f.Store, src)
+
+	require.NoError(err, "configured synctech-sms import")
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	run := getOnlySyncRun(t, f.Store, source.ID)
+	assert.Equal(store.SyncStatusCompleted, run.Status, "sync status")
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+}
+
 type fakeSynctechDriveClient struct {
 	files           []synctechsms.DriveFile
 	downloads       map[string]string

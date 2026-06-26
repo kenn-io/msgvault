@@ -1369,6 +1369,44 @@ func TestCacheNeedsBuild(t *testing.T) {
 			wantBuild: false,
 		},
 		{
+			name: "CalendarOnly_NoMessagesParquet_NoRebuild",
+			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
+				db, err := sql.Open("sqlite3", dbPath)
+				requirepkg.NoError(t, err, "open db")
+				defer func() { _ = db.Close() }()
+				_, err = db.Exec(`
+					INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type)
+					VALUES (10, 1, 'calendar-10', datetime('now'), 'calendar_event')
+				`)
+				requirepkg.NoError(t, err, "insert calendar event")
+				writeSyncState(t, analyticsDir, 10)
+			},
+			wantBuild: false,
+		},
+		{
+			name: "SourceDeletedAndDedupHiddenSinceBuild_NeedsBuild",
+			setup: func(t *testing.T, dbPath, analyticsDir string) {
+				t.Helper()
+				stateTime := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+				db, err := sql.Open("sqlite3", dbPath)
+				requirepkg.NoError(t, err, "open db")
+				defer func() { _ = db.Close() }()
+				_, err = db.Exec(`
+					INSERT INTO messages (
+						id, source_id, source_message_id, sent_at,
+						deleted_from_source_at, deleted_at
+					)
+					VALUES (?, 1, 'msg5', ?, ?, ?)
+				`, 5, stateTime.Add(-time.Hour), stateTime.Add(time.Minute), stateTime.Add(time.Minute))
+				requirepkg.NoError(t, err, "insert deleted hidden message")
+				writeSyncStateAt(t, analyticsDir, 5, stateTime)
+				createFakeParquet(t, analyticsDir)
+			},
+			wantBuild:  true,
+			wantReason: "1 deletions",
+		},
+		{
 			name: "InvalidSyncState_NeedsBuild",
 			setup: func(t *testing.T, dbPath, analyticsDir string) {
 				t.Helper()

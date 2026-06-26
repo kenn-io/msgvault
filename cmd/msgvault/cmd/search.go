@@ -15,13 +15,14 @@ import (
 )
 
 var (
-	searchLimit      int
-	searchOffset     int
-	searchJSON       bool
-	searchAccount    string
-	searchCollection string
-	searchMode       string
-	searchExplain    bool
+	searchLimit        int
+	searchOffset       int
+	searchJSON         bool
+	searchAccount      string
+	searchCollection   string
+	searchMode         string
+	searchExplain      bool
+	searchMessageTypes []string
 )
 
 var searchCmd = &cobra.Command{
@@ -60,7 +61,7 @@ Examples:
 		// Join all args to form the query (allows unquoted multi-term searches)
 		queryStr := strings.Join(args, " ")
 
-		if queryStr == "" && searchAccount == "" && searchCollection == "" {
+		if queryStr == "" && searchAccount == "" && searchCollection == "" && len(searchMessageTypes) == 0 {
 			return usageErr(cmd, errors.New("provide a search query or --account/--collection flag"))
 		}
 
@@ -75,7 +76,7 @@ Examples:
 			if searchMode != "fts" {
 				return usageErr(cmd, errors.New("--mode is not supported in remote mode"))
 			}
-			return runRemoteSearch(queryStr)
+			return runRemoteSearch(remoteSearchQuery(queryStr, searchMessageTypes))
 		}
 
 		// Validate mode before any scope work so we fail fast on a typo.
@@ -205,6 +206,21 @@ func resolveSearchScope(account, collection string) (Scope, *store.Store, error)
 	return Scope{}, nil, nil
 }
 
+func remoteSearchQuery(queryStr string, messageTypes []string) string {
+	parts := make([]string, 0, 1+len(messageTypes))
+	if strings.TrimSpace(queryStr) != "" {
+		parts = append(parts, queryStr)
+	}
+	for _, typ := range messageTypes {
+		typ = strings.TrimSpace(typ)
+		if typ == "" {
+			continue
+		}
+		parts = append(parts, "message_type:"+typ)
+	}
+	return strings.Join(parts, " ")
+}
+
 // runRemoteSearch performs a search against the remote API.
 func runRemoteSearch(queryStr string) error {
 	fmt.Fprintf(os.Stderr, "Searching %s...", cfg.Remote.URL)
@@ -245,6 +261,7 @@ func runLocalSearch(cmd *cobra.Command, queryStr string, scope Scope, scopedStor
 	// emptiness check so a bare --account/--collection is enough to
 	// produce a non-empty query.
 	q := search.Parse(queryStr)
+	q.MessageTypes = append(q.MessageTypes, searchMessageTypes...)
 	if !scope.IsEmpty() {
 		q.AccountIDs = scope.SourceIDs()
 	}
@@ -435,6 +452,8 @@ func init() {
 	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
+	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,
+		"Limit results to message type(s), e.g. email, sms, calendar_event")
 }
 
 // ensureFTSIndex checks if the FTS search index needs to be built and

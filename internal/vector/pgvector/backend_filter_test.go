@@ -74,6 +74,11 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 		want   []int64
 	}{
 		{
+			name:   "message type",
+			filter: vector.Filter{MessageTypes: []string{"sms"}},
+			want:   []int64{2},
+		},
+		{
 			name:   "sender group",
 			filter: vector.Filter{SenderGroups: [][]int64{{100}}},
 			want:   []int64{2},

@@ -35,7 +35,34 @@ var buildCacheMu sync.Mutex
 // columns are added/removed/renamed in the COPY queries below so that
 // incremental builds automatically trigger a full rebuild instead of
 // producing Parquet files with mismatched schemas.
-const cacheSchemaVersion = 5 // v5: add conversation_type to conversations Parquet
+const cacheSchemaVersion = 6 // v6: exclude calendar_event rows + their junctions from the email Parquet
+
+func sentNonCalendarMessageWhere(alias string) string {
+	qualifier := ""
+	if alias != "" {
+		qualifier = alias + "."
+	}
+	return fmt.Sprintf(
+		"%ssent_at IS NOT NULL AND COALESCE(%smessage_type, '') <> 'calendar_event'",
+		qualifier, qualifier,
+	)
+}
+
+func exportableMessageWhere(alias string) string {
+	qualifier := ""
+	if alias != "" {
+		qualifier = alias + "."
+	}
+	return sentNonCalendarMessageWhere(alias) + " AND " + qualifier + "deleted_at IS NULL"
+}
+
+func cacheLiveMessageWhere(alias string) string {
+	qualifier := ""
+	if alias != "" {
+		qualifier = alias + "."
+	}
+	return exportableMessageWhere(alias) + " AND " + qualifier + "deleted_from_source_at IS NULL"
+}
 
 // syncState tracks the message and sync-run watermarks covered by the cache.
 type syncState struct {
@@ -161,6 +188,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	}
 
 	var maxMessageID sql.NullInt64
+	var maxExportableMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
 	// Use indexed query: id is PRIMARY KEY, sent_at has an index
 	maxIDQuery := `SELECT MAX(id) FROM messages WHERE sent_at IS NOT NULL`
@@ -169,6 +197,13 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			return nil, fmt.Errorf("get max message id: %w; close sqlite: %w", err, closeErr)
 		}
 		return nil, fmt.Errorf("get max message id: %w", err)
+	}
+	maxExportableIDQuery := "SELECT MAX(id) FROM messages WHERE " + exportableMessageWhere("")
+	if err := sqliteDB.QueryRow(maxExportableIDQuery).Scan(&maxExportableMessageID); err != nil {
+		if closeErr := sqliteDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("get max exportable message id: %w; close sqlite: %w", err, closeErr)
+		}
+		return nil, fmt.Errorf("get max exportable message id: %w", err)
 	}
 	var hasSyncRunsTable int
 	if err := sqliteDB.QueryRow(`
@@ -199,14 +234,18 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if maxMessageID.Valid {
 		maxID = maxMessageID.Int64
 	}
+	exportableMaxID := int64(0)
+	if maxExportableMessageID.Valid {
+		exportableMaxID = maxExportableMessageID.Int64
+	}
 
 	// Check for missing required parquet tables independently of whether
 	// new messages exist. A legacy cache might be missing tables (e.g.
 	// conversations) regardless of message count. Force full rebuild to
 	// avoid stale incr_*.parquet shards and ensure all tables are populated.
-	// Gate on maxID > 0: when the DB has zero messages, missing messages
-	// parquet is legitimate, not a sign of a broken cache.
-	if !fullRebuild && maxID > 0 && missingRequiredParquet(analyticsDir) {
+	// Gate on exportableMaxID > 0: when the DB has no email-analytics messages,
+	// missing messages parquet is legitimate, not a sign of a broken cache.
+	if !fullRebuild && exportableMaxID > 0 && missingRequiredParquet(analyticsDir) {
 		fmt.Println("Backfilling missing cache tables (full rebuild)...")
 		fullRebuild = true
 		lastMessageID = 0
@@ -263,6 +302,20 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		idFilter = fmt.Sprintf(" AND m.id > %d", lastMessageID)
 	}
 
+	// calendarJunctionExclusion keeps calendar-event junction rows (notably
+	// attendee participants in message_recipients) out of the email aggregate
+	// Parquet, matching the message_type exclusion on the messages COPY below.
+	// Without it, attendees would surface in Sender/Recipient/Domain aggregates
+	// even though their parent event rows are excluded, and the per-view counts
+	// would no longer reconcile with the email-gated stats header.
+	calendarJunctionExclusion := "TRY_CAST(message_id AS BIGINT) NOT IN (SELECT CAST(id AS BIGINT) FROM sqlite_db.messages WHERE COALESCE(message_type, '') = 'calendar_event')"
+	junctionFilter := func(incremental string) string {
+		if incremental != "" {
+			return incremental + " AND " + calendarJunctionExclusion
+		}
+		return " WHERE " + calendarJunctionExclusion
+	}
+
 	// Junction tables (message_recipients, message_labels, attachments) need
 	// unique filenames per batch because Parquet files cannot be appended to —
 	// DuckDB's COPY with APPEND silently overwrites a single file.
@@ -315,7 +368,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM sqlite_db.messages m
-		WHERE m.sent_at IS NOT NULL AND m.deleted_at IS NULL%s
+		WHERE `+exportableMessageWhere("m")+`%s
 	) TO '%s' (
 		FORMAT PARQUET,
 		PARTITION_BY (year),
@@ -333,6 +386,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if !fullRebuild && lastMessageID > 0 {
 		recipientsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
+	recipientsFilter = junctionFilter(recipientsFilter)
 	if err := runExport("message_recipients", fmt.Sprintf(`
 	COPY (
 		SELECT
@@ -356,6 +410,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if !fullRebuild && lastMessageID > 0 {
 		messageLabelsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
+	messageLabelsFilter = junctionFilter(messageLabelsFilter)
 	if err := runExport("message_labels", fmt.Sprintf(`
 	COPY (
 		SELECT
@@ -377,6 +432,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	if !fullRebuild && lastMessageID > 0 {
 		attachmentsFilter = fmt.Sprintf(" WHERE message_id > %d", lastMessageID)
 	}
+	attachmentsFilter = junctionFilter(attachmentsFilter)
 	if err := runExport(tableAttachments, fmt.Sprintf(`
 	COPY (
 		SELECT
@@ -469,19 +525,18 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 	fmt.Printf("  %-25s %s\n", "Total:", time.Since(buildStart).Round(time.Millisecond))
 
 	// Count exported messages and verify Parquet files actually exist.
-	// When maxID > 0 the export must be verifiable: a query failure or zero
-	// rows is treated as a hard stop so the state file is not written.
-	// When maxID == 0 (empty database) no message parquet is created, so
-	// the COUNT query will fail with "no files found" — that is expected
-	// and we skip the guard entirely.
+	// Calendar events are intentionally excluded from the email analytics
+	// export, so a database with only calendar_event rows has maxID > 0 but no
+	// message Parquet. Only require verifiable message rows when at least one
+	// exportable non-calendar message exists.
 	var exportedCount int64
-	if maxID > 0 {
+	if exportableMaxID > 0 {
 		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s/**/*.parquet', hive_partitioning=true)", escapedMessagesDir)
 		if err := db.QueryRow(countSQL).Scan(&exportedCount); err != nil {
 			return nil, fmt.Errorf("verify exported parquet rows: %w; cache state not updated", err)
 		}
 		if exportedCount == 0 {
-			return nil, fmt.Errorf("export produced 0 parquet rows from %d messages in database; cache state not updated", maxID)
+			return nil, fmt.Errorf("export produced 0 parquet rows from exportable messages through id %d; cache state not updated", exportableMaxID)
 		}
 	}
 

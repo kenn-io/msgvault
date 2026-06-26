@@ -292,7 +292,7 @@ func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing
 	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
-func TestBackend_ActivateCoverageScopesMessageTypes(t *testing.T) {
+func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 	ctx := context.Background()
 	main, err := sql.Open("sqlite3", ":memory:")
 	requirepkg.NoError(t, err, "open main")
@@ -324,15 +324,23 @@ func TestBackend_ActivateCoverageScopesMessageTypes(t *testing.T) {
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	requirepkg.NoError(t, err, "Create")
+	stats, err := b.Stats(ctx, gid)
+	requirepkg.NoError(t, err, "Stats")
+	assertpkg.Equal(t, int64(2), stats.PendingCount, "only scoped live messages should count as missing")
+
 	missing, err := b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen before stamp")
-	assertpkg.True(t, missing, "in-scope messages need embedding")
+	requirepkg.NoError(t, err, "hasMissingForGen")
+	assertpkg.True(t, missing, "scoped messages still need embeddings")
 
 	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
-	requirepkg.NoError(t, err, "stamp in-scope messages")
+	requirepkg.NoError(t, err, "stamp scoped messages")
+
+	stats, err = b.Stats(ctx, gid)
+	requirepkg.NoError(t, err, "Stats after stamp")
+	assertpkg.Equal(t, int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
 	missing, err = b.hasMissingForGen(ctx, gid)
 	requirepkg.NoError(t, err, "hasMissingForGen after stamp")
-	assertpkg.False(t, missing, "out-of-scope and deleted messages must not block scoped activation")
+	assertpkg.False(t, missing, "unscoped email must not block scoped activation")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling

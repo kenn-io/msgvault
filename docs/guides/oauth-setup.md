@@ -3,7 +3,7 @@ title: OAuth Setup
 description: Create OAuth credentials for Gmail (Google Cloud) or Microsoft 365 (Azure AD) and authorize msgvault.
 ---
 
-## Google (Gmail)
+## Google (Gmail and Calendar)
 
 msgvault requires OAuth credentials to access the Gmail API. This section walks through the complete setup.
 
@@ -13,11 +13,12 @@ msgvault requires OAuth credentials to access the Gmail API. This section walks 
 2. Create a new project or select an existing one
 3. Note your project ID
 
-### Step 2: Enable the Gmail API
+### Step 2: Enable Google APIs
 
 1. Navigate to **APIs & Services > Library**
 2. Search for "Gmail API"
 3. Click **Enable**
+4. If you will sync Google Calendar too, also search for "Google Calendar API" and click **Enable**
 
 ### Step 3: Configure OAuth Consent Screen
 
@@ -30,8 +31,9 @@ msgvault requires OAuth credentials to access the Gmail API. This section walks 
 4. Click **Save and Continue**
 5. On the **Data Access** page, click **Add or Remove Scopes**
 6. Add the scope: `https://www.googleapis.com/auth/gmail.modify`
-7. Save and continue through the remaining screens
-8. Under **Test users**, add all Gmail addresses you want to sync
+7. If you will sync Google Calendar too, add `https://www.googleapis.com/auth/calendar.readonly`
+8. Save and continue through the remaining screens
+9. Under **Test users**, add all Gmail addresses you want to sync
 
 !!! note
     The `gmail.modify` scope enables deletion features while sync operations remain read-only. When you first run `delete-staged`, msgvault will prompt you to upgrade to full `mail.google.com` access for batch deletion.
@@ -143,6 +145,7 @@ Workspace admins can avoid per-user browser OAuth by using a Google service acco
 3. In the Google Admin Console, authorize the service account client ID for:
    - `https://www.googleapis.com/auth/gmail.readonly`
    - `https://www.googleapis.com/auth/gmail.modify`
+   - `https://www.googleapis.com/auth/calendar.readonly` if you will sync Google Calendar
    - `https://mail.google.com/` if you will run `delete-staged --permanent`
 4. Store the key with owner-only permissions, for example `chmod 600 /path/to/workspace-service-account.json`.
 
@@ -168,6 +171,8 @@ msgvault add-account teammate@acme.com --oauth-app acme
 ```
 
 Service account mode validates the delegated Gmail profile and registers the source, but it does not create per-user token files. Do not combine service-account accounts with `--headless` or `--force`; delegated tokens are minted on demand.
+
+For Google Calendar with a service account, enable the Google Calendar API and authorize the `calendar.readonly` scope above. Then configure a `[[gcal]]` source and run `msgvault sync-calendar user@domain.com --oauth-app acme` (or let `msgvault serve` run the schedule). No browser token is created.
 
 ### Headless Server Setup
 

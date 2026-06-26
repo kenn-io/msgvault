@@ -292,6 +292,7 @@ type MessageOpts struct {
 	BccIDs         []int64 // participant IDs for 'bcc' recipients
 	SourceID       int64   // defaults to 1 if 0
 	ConversationID int64   // defaults to 1 if 0
+	MessageType    string  // defaults to "email" if empty
 }
 
 // AddMessage inserts a message with its from/to/cc recipients and returns the message ID.
@@ -334,9 +335,14 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 			"AddMessage: SourceID %d does not match conversation %d source_id %d", srcID, convID, convSourceID)
 	}
 
+	messageType := opts.MessageType
+	if messageType == "" {
+		messageType = "email"
+	}
+
 	_, err := tdb.DB.Exec(
-		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments) VALUES (?, ?, ?, ?, 'email', ?, ?, 'test', ?, ?)`,
-		id, convID, srcID, sourceMessageID, sentAt, opts.Subject, size, opts.HasAttachments,
+		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments) VALUES (?, ?, ?, ?, ?, ?, ?, 'test', ?, ?)`,
+		id, convID, srcID, sourceMessageID, messageType, sentAt, opts.Subject, size, opts.HasAttachments,
 	)
 	require.NoError(tdb.T, err, "AddMessage")
 

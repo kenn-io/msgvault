@@ -68,6 +68,28 @@ func TestImporterRejectsMissingOwnerPhone(t *testing.T) {
 	requirepkg.Error(t, err, "ImportPath returned nil error")
 }
 
+func TestImporterContinuesWhenFTSUpsertFails(t *testing.T) {
+	testutil.SkipIfPostgres(t, "drops SQLite's messages_fts virtual table; PostgreSQL FTS is a messages.search_fts column")
+	f := storetest.New(t)
+	if f.Store.FTS5Available() {
+		_, err := f.Store.DB().Exec(`DROP TABLE messages_fts`)
+		requirepkg.NoError(t, err, "drop FTS table")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
+</smses>`)
+
+	imp := NewImporter(f.Store, ImportOptions{
+		OwnerPhone: "+15550000001",
+		IncludeSMS: true,
+	})
+	summary, err := imp.ImportPath(dir)
+	requirepkg.NoError(t, err, "ImportPath")
+	assertpkg.Equal(t, 1, summary.SMSImported, "summary = %#v", summary)
+	assertMessageCount(t, f.Store, 1)
+}
+
 func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 	f := storetest.New(t)
 	dir := t.TempDir()
@@ -82,26 +104,6 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 	summary, err := imp.ImportPath(dir)
 	requirepkg.NoError(t, err, "ImportPath")
 	requirepkg.Equal(t, 1, summary.CallsImported)
-	assertMessageCount(t, f.Store, 1)
-}
-
-func TestImporterContinuesWhenFTSUpsertFails(t *testing.T) {
-	testutil.SkipIfPostgres(t, "drops the SQLite FTS virtual table to force UpsertFTS failure")
-	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`DROP TABLE messages_fts`)
-	requirepkg.NoError(t, err, "drop messages_fts")
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
-  <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
-</smses>`)
-
-	imp := NewImporter(f.Store, ImportOptions{
-		OwnerPhone: "+15550000001",
-		IncludeSMS: true,
-	})
-	summary, err := imp.ImportPath(dir)
-	requirepkg.NoError(t, err, "ImportPath should tolerate FTS indexing failure")
-	assertpkg.Equal(t, 1, summary.SMSImported, "summary = %#v", summary)
 	assertMessageCount(t, f.Store, 1)
 }
 

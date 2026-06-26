@@ -59,7 +59,7 @@ msgvault --help
 
 ## Configure OAuth
 
-Create a Google Cloud project, enable the Gmail API, and download your `client_secret.json`. See the full [OAuth Setup Guide](/guides/oauth-setup/).
+Create a Google Cloud project, enable the Gmail API, and download your `client_secret.json`. If you plan to archive Google Calendar, enable the Google Calendar API too. See the full [OAuth Setup Guide](/guides/oauth-setup/).
 
 ### Where to put config.toml
 
@@ -270,3 +270,17 @@ msgvault stats
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="lazy">
 </figure>
 See [Searching](/usage/searching/) and [Interactive TUI](/usage/tui/) for more.
+
+## Optional: Sync Google Calendar
+
+To archive Calendar events alongside email, authorize Calendar access and run a
+calendar sync:
+
+```bash
+msgvault add-calendar you@gmail.com
+msgvault sync-calendar you@gmail.com
+```
+
+Calendar sync is read-only. Events become searchable with
+`--message-type calendar_event`; see [Google Calendar](/usage/calendar/) for the
+full workflow, scheduled sync, and headless-server setup.
