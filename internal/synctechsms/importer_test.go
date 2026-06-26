@@ -7,6 +7,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -82,6 +83,60 @@ func TestImporterImportsCallWithBlankNumber(t *testing.T) {
 	requirepkg.NoError(t, err, "ImportPath")
 	requirepkg.Equal(t, 1, summary.CallsImported)
 	assertMessageCount(t, f.Store, 1)
+}
+
+func TestImporterContinuesWhenFTSUpsertFails(t *testing.T) {
+	testutil.SkipIfPostgres(t, "drops the SQLite FTS virtual table to force UpsertFTS failure")
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec(`DROP TABLE messages_fts`)
+	requirepkg.NoError(t, err, "drop messages_fts")
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
+</smses>`)
+
+	imp := NewImporter(f.Store, ImportOptions{
+		OwnerPhone: "+15550000001",
+		IncludeSMS: true,
+	})
+	summary, err := imp.ImportPath(dir)
+	requirepkg.NoError(t, err, "ImportPath should tolerate FTS indexing failure")
+	assertpkg.Equal(t, 1, summary.SMSImported, "summary = %#v", summary)
+	assertMessageCount(t, f.Store, 1)
+}
+
+func TestImporterReturnsMMSMessageIDWhenAttachmentImportFails(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
+  <mms date="1717214460000" msg_box="2" read="1" m_id="mms-attachment-fails" sub="null">
+    <parts>
+      <part seq="0" ct="text/plain" text="mms text" />
+      <part seq="1" ct="image/png" cl="image.png" data="aGVsbG8=" />
+    </parts>
+    <addrs>
+      <addr address="+15550000001" type="137" charset="106" />
+      <addr address="+15551234567" type="151" charset="106" />
+    </addrs>
+  </mms>
+</smses>`)
+
+	imp := NewImporter(f.Store, ImportOptions{
+		OwnerPhone:         "+15550000001",
+		AttachmentsDir:     filepath.Join(dir, "attachments"),
+		MaxAttachmentBytes: 1,
+		IncludeMMS:         true,
+		IncludeAttachments: true,
+	})
+	summary, err := imp.ImportPath(dir)
+	require.Error(err, "ImportPath")
+	assert.Contains(err.Error(), "exceeds maximum size", "ImportPath error")
+
+	assertMessageCount(t, f.Store, 1)
+	require.Len(summary.MessageIDs, 1, "summary message IDs")
+	assert.Positive(summary.MessageIDs[0], "summary message id")
 }
 
 // TestImporterMarksDraftsAsFromMe guards against regressing the

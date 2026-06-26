@@ -57,6 +57,7 @@ func runEmbed(cmd *cobra.Command) error {
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
 			DB:            s.DB(),
 			Dimension:     cfg.Vector.Embeddings.Dimension,
+			BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
 			SkipExtension: cfg.Vector.SkipExtensionCreate,
 		})
 		if err != nil {
@@ -76,10 +77,11 @@ func runEmbed(cmd *cobra.Command) error {
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
-			Path:      vecPath,
-			MainPath:  cfg.DatabaseDSN(),
-			Dimension: cfg.Vector.Embeddings.Dimension,
-			MainDB:    s.DB(),
+			Path:       vecPath,
+			MainPath:   cfg.DatabaseDSN(),
+			Dimension:  cfg.Vector.Embeddings.Dimension,
+			MainDB:     s.DB(),
+			BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 		})
 		if err != nil {
 			return fmt.Errorf("open vectors.db: %w", err)
@@ -116,7 +118,8 @@ func runEmbed(cmd *cobra.Command) error {
 	// "Pending" is now the count of live messages still needing work for
 	// this generation (embed_gen <> gen), read from the main DB coverage
 	// rather than a queue table.
-	missing, err := s.MissingCount(ctx, int64(gen))
+	scope := cfg.Vector.Embed.Scope.BuildScope()
+	missing, err := s.MissingCountScoped(ctx, int64(gen), scope.MessageTypes)
 	if err != nil {
 		return fmt.Errorf("coverage counts: %w", err)
 	}
@@ -138,6 +141,7 @@ func runEmbed(cmd *cobra.Command) error {
 		},
 		MaxInputChars:    cfg.Vector.Embeddings.MaxInputChars,
 		BatchSize:        cfg.Vector.Embeddings.BatchSize,
+		BuildScope:       scope,
 		Rebind:           rebind,
 		LastModifiedExpr: lastModifiedExpr,
 		TotalPending:     totalPending,
@@ -161,7 +165,7 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		_, _, _, remaining, err := s.CoverageCounts(ctx, int64(gen))
+		_, _, _, remaining, err := s.CoverageCountsScoped(ctx, int64(gen), scope.MessageTypes)
 		if err != nil {
 			return fmt.Errorf("coverage counts: %w", err)
 		}

@@ -262,6 +262,33 @@ func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
 	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
+func TestSearchMessages_HybridErrIndexScopeMismatch(t *testing.T) {
+	backend := &fakeBackend{
+		active: vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4:scope=mt-sms", State: vector.GenerationActive,
+		},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4:scope=mt-sms",
+		RRFK:                60,
+		KPerSignal:          10,
+		BuildScope:          vector.BuildScope{MessageTypes: []string{"sms"}},
+	})
+	h := &handlers{
+		engine:       &querytest.MockEngine{},
+		hybridEngine: engine,
+		backend:      backend,
+	}
+
+	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+		"query": "anything",
+		"mode":  searchModeVector,
+	})
+	txt := resultText(t, r)
+	assertpkg.Contains(t, txt, "index_scope_mismatch", "expected 'index_scope_mismatch' error, got: %s")
+}
+
 // realEmbedder returns a deterministic vector. Used for end-to-end
 // MCP hybrid tests that exercise the engine's embed → backend.Search
 // path; pickEmbedGeneration tests use stubEmbedder instead.
@@ -1465,19 +1492,23 @@ func TestStageDeletion(t *testing.T) {
 // optional fields so the get_stats tests can populate them. Methods
 // not otherwise configured return errors and should not be called.
 type fakeBackend struct {
-	loadVec     []float32
-	loadErr     error
-	active      vector.Generation
-	activeErr   error
-	searchHits  []vector.Hit
-	searchErr   error
-	building    *vector.Generation
-	buildingErr error
-	stats       map[vector.GenerationID]vector.Stats
-	statsErr    error
+	loadVec      []float32
+	loadErr      error
+	loadCalls    int
+	active       vector.Generation
+	activeErr    error
+	searchHits   []vector.Hit
+	searchErr    error
+	searchGen    vector.GenerationID
+	searchFilter vector.Filter
+	building     *vector.Generation
+	buildingErr  error
+	stats        map[vector.GenerationID]vector.Stats
+	statsErr     error
 }
 
 func (f *fakeBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
+	f.loadCalls++
 	return f.loadVec, f.loadErr
 }
 func (f *fakeBackend) ResetWatermarkBelow(_ context.Context, _ int64) error {
@@ -1489,7 +1520,9 @@ func (f *fakeBackend) EmbeddedMessageCount(_ context.Context, _ vector.Generatio
 func (f *fakeBackend) ActiveGeneration(_ context.Context) (vector.Generation, error) {
 	return f.active, f.activeErr
 }
-func (f *fakeBackend) Search(_ context.Context, _ vector.GenerationID, _ []float32, _ int, _ vector.Filter) ([]vector.Hit, error) {
+func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []float32, _ int, filter vector.Filter) ([]vector.Hit, error) {
+	f.searchGen = gen
+	f.searchFilter = filter
 	return f.searchHits, f.searchErr
 }
 func (f *fakeBackend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
@@ -1623,9 +1656,98 @@ func TestFindSimilarMessages_HappyPath(t *testing.T) {
 	assert.Equal(int64(300), resp.Messages[1].ID, "Messages[1].ID")
 }
 
-func TestFindSimilarMessages_NoActiveGeneration(t *testing.T) {
+func TestFindSimilarMessages_RejectsStaleScopedGeneration(t *testing.T) {
+	assert := assertpkg.New(t)
+	seed := []float32{1, 0, 0, 0}
+	cfg := vector.Config{Enabled: true}
+	cfg.Embeddings.Model = "nomic-embed"
+	cfg.Embeddings.Dimension = 4
+	cfg.Embed.Scope.MessageTypes = []string{"sms"}
 	fb := &fakeBackend{
-		loadErr: vector.ErrNoActiveGeneration,
+		loadVec: seed,
+		active: vector.Generation{
+			ID:          7,
+			Model:       "nomic-embed",
+			Dimension:   4,
+			Fingerprint: "nomic-embed:4",
+			State:       vector.GenerationActive,
+		},
+	}
+	h := &handlers{engine: &querytest.MockEngine{}, backend: fb, vectorCfg: cfg}
+
+	r := runToolExpectError(t, "find_similar_messages", h.findSimilarMessages, map[string]any{
+		"message_id": float64(100),
+	})
+	txt := resultText(t, r)
+
+	assert.Contains(txt, "index_stale", "expected stale scoped index rejection, got: %s", txt)
+	assert.Equal(vector.GenerationID(0), fb.searchGen, "Search should not run against a stale scoped index")
+}
+
+func TestFindSimilarMessages_ReportsStaleIndexBeforeMissingSeed(t *testing.T) {
+	assert := assertpkg.New(t)
+	cfg := vector.Config{Enabled: true}
+	cfg.Embeddings.Model = "nomic-embed"
+	cfg.Embeddings.Dimension = 4
+	cfg.Embed.Scope.MessageTypes = []string{"sms"}
+	fb := &fakeBackend{
+		loadErr: errors.New("seed vector missing"),
+		active: vector.Generation{
+			ID:          7,
+			Model:       "nomic-embed",
+			Dimension:   4,
+			Fingerprint: "nomic-embed:4",
+			State:       vector.GenerationActive,
+		},
+	}
+	h := &handlers{engine: &querytest.MockEngine{}, backend: fb, vectorCfg: cfg}
+
+	r := runToolExpectError(t, "find_similar_messages", h.findSimilarMessages, map[string]any{
+		"message_id": float64(100),
+	})
+	txt := resultText(t, r)
+
+	assert.Contains(txt, "index_stale", "expected stale index to be reported before seed lookup, got: %s", txt)
+	assert.Equal(0, fb.loadCalls, "LoadVector should not run before stale-index validation")
+}
+
+func TestFindSimilarMessages_AppliesConfiguredMessageTypeScope(t *testing.T) {
+	assert := assertpkg.New(t)
+	seed := []float32{1, 0, 0, 0}
+	cfg := vector.Config{Enabled: true}
+	cfg.Embeddings.Model = "nomic-embed"
+	cfg.Embeddings.Dimension = 4
+	cfg.Embed.Scope.MessageTypes = []string{"sms", "mms"}
+	fb := &fakeBackend{
+		loadVec: seed,
+		active: vector.Generation{
+			ID:          7,
+			Model:       "nomic-embed",
+			Dimension:   4,
+			Fingerprint: cfg.GenerationFingerprint(),
+			State:       vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 200, Score: 0.95, Rank: 1}},
+	}
+	eng := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			200: testutil.NewMessageDetail(200).WithSubject("related").BuildPtr(),
+		},
+	}
+	h := &handlers{engine: eng, backend: fb, vectorCfg: cfg}
+
+	_ = runTool[similarResponse](t, "find_similar_messages", h.findSimilarMessages, map[string]any{
+		"message_id": float64(100),
+	})
+
+	assert.Equal(vector.GenerationID(7), fb.searchGen, "Search generation")
+	assert.Equal([]string{"mms", "sms"}, fb.searchFilter.MessageTypes, "Search MessageTypes filter")
+}
+
+func TestFindSimilarMessages_NoActiveGeneration(t *testing.T) {
+	assert := assertpkg.New(t)
+	fb := &fakeBackend{
+		activeErr: vector.ErrNoActiveGeneration,
 	}
 	h := &handlers{engine: &querytest.MockEngine{}, backend: fb}
 
@@ -1633,7 +1755,8 @@ func TestFindSimilarMessages_NoActiveGeneration(t *testing.T) {
 		"message_id": float64(1),
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "no_active_generation", "expected 'no_active_generation' error, got: %s")
+	assert.Contains(txt, "no_active_generation", "expected 'no_active_generation' error, got: %s", txt)
+	assert.Equal(0, fb.loadCalls, "LoadVector should not run without an active generation")
 }
 
 func TestSearchByDomains(t *testing.T) {

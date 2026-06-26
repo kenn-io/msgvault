@@ -118,6 +118,8 @@ A separate MCP tool, `find_similar_messages`, returns nearest neighbors for a se
 
 > **Run only one embedding process at a time.** Don't run `msgvault embeddings build`/`resume` or `repair-encoding` concurrently with a `msgvault serve` daemon — they write the same embedding state, and concurrent writers are not coordinated across processes.
 
+Large archives can scope an embedding generation with `[vector.embed.scope] message_types = ["sms", "mms"]`. Scoped vector and hybrid searches must include a matching `message_type` filter so a partial index is never used as if it covered the whole archive.
+
 ## Importing from MBOX or Apple Mail
 
 Import email from providers that offer MBOX exports or from a local Apple Mail data directory:

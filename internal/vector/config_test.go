@@ -433,3 +433,18 @@ func TestConfig_GenerationFingerprint_IncludesEmbedPolicyVersion(t *testing.T) {
 	suffix := fmt.Sprintf(":e%d", embedPolicyVersion)
 	assertpkg.True(t, strings.HasSuffix(got, suffix), "GenerationFingerprint() = %q, want suffix %q", got, suffix)
 }
+
+func TestConfig_GenerationFingerprint_IncludesEmbedScope(t *testing.T) {
+	base := Config{
+		Embeddings: EmbeddingsConfig{Model: "m", Dimension: 8, MaxInputChars: 6000},
+	}
+	baseline := base.GenerationFingerprint()
+
+	scoped := base
+	scoped.Embed.Scope.MessageTypes = []string{"MMS", "sms", "sms"}
+
+	assertpkg.NotEqual(t, baseline, scoped.GenerationFingerprint(),
+		"GenerationFingerprint should change when embedding is scoped")
+	assertpkg.Contains(t, scoped.GenerationFingerprint(), ":smt-mms,sms",
+		"scope fingerprint should normalize and sort message types")
+}

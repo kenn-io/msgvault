@@ -148,7 +148,6 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 		})
 	}
 }
-
 func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

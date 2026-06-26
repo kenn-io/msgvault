@@ -165,6 +165,35 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	assert.Equal(len(results), meta.ReturnedCount)
 }
 
+func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
+	ctx := context.Background()
+	f := newEngineFixture(t)
+	f.Engine.cfg.BuildScope = vector.NewBuildScope([]string{"sms", "mms"})
+
+	_, _, err := f.Engine.Search(ctx, SearchRequest{
+		Mode:     ModeVector,
+		FreeText: "lunch",
+		Limit:    5,
+	})
+	requirepkg.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
+
+	_, _, err = f.Engine.Search(ctx, SearchRequest{
+		Mode:     ModeVector,
+		FreeText: "lunch",
+		Limit:    5,
+		Filter:   vector.Filter{MessageTypes: []string{"email"}},
+	})
+	requirepkg.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
+
+	_, _, err = f.Engine.Search(ctx, SearchRequest{
+		Mode:     ModeVector,
+		FreeText: "lunch",
+		Limit:    5,
+		Filter:   vector.Filter{MessageTypes: []string{"sms"}},
+	})
+	requirepkg.NoError(t, err)
+}
+
 // TestFTSTerms covers the FreeText → dialect-neutral term-slice
 // tokenizer directly (no DB needed). FreeText is split on whitespace
 // and terms the FTS5/tsquery tokenizers would drop entirely

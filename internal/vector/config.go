@@ -213,7 +213,8 @@ type EmbedConfig struct {
 	// stragglers from repair-encoding resets, transient errors, or crashes)
 	// in addition to the per-tick incremental scan. Zero uses the EmbedJob
 	// default (24h); a negative value disables the auto-backstop.
-	BackstopInterval time.Duration `toml:"backstop_interval"`
+	BackstopInterval time.Duration    `toml:"backstop_interval"`
+	Scope            EmbedScopeConfig `toml:"scope"`
 }
 
 // EmbedScheduleConfig controls when the embed worker runs on its own
@@ -221,6 +222,16 @@ type EmbedConfig struct {
 type EmbedScheduleConfig struct {
 	Cron         string `toml:"cron"`           // empty disables scheduled embedding
 	RunAfterSync bool   `toml:"run_after_sync"` // trigger after each successful sync
+}
+
+// EmbedScopeConfig limits which messages are included in newly-built
+// embedding generations. The zero value means the full corpus.
+type EmbedScopeConfig struct {
+	MessageTypes []string `toml:"message_types"`
+}
+
+func (s EmbedScopeConfig) BuildScope() BuildScope {
+	return NewBuildScope(s.MessageTypes)
 }
 
 // Fingerprint returns the "<model>:<dimension>" identifier for the
@@ -256,8 +267,12 @@ func (e EmbeddingsConfig) Fingerprint() string {
 // in, an active generation built under the old single-vector policy
 // would silently accept new chunked entries from an upgraded worker.
 func (c *Config) GenerationFingerprint() string {
-	return fmt.Sprintf("%s:%s:c%d:e%d",
+	fp := fmt.Sprintf("%s:%s:c%d:e%d",
 		c.Embeddings.Fingerprint(), c.Preprocess.Fingerprint(), c.Embeddings.MaxInputChars, embedPolicyVersion)
+	if scopeFP := c.Embed.Scope.BuildScope().Fingerprint(); scopeFP != "" {
+		fp = fmt.Sprintf("%s:s%s", fp, scopeFP)
+	}
+	return fp
 }
 
 // Validate returns a descriptive error if the config is unusable.

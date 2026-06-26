@@ -27,6 +27,7 @@ type Options struct {
 	SkipMigrate   bool
 	ReadOnly      bool
 	SkipExtension bool
+	BuildScope    vector.BuildScope
 }
 
 // Backend is a placeholder type so non-pgvector builds can compile

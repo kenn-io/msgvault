@@ -218,3 +218,63 @@ func TestCoverageSplit_NonLiveEmbeddedHoldsInvariant(t *testing.T) {
 	assert.Equal(live, embedded+blank+missingCount,
 		"invariant: live == embedded + blank + missing")
 }
+
+func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+
+	st := testutil.NewSQLiteTestStore(t)
+	b, err := Open(ctx, Options{
+		Path:       filepath.Join(t.TempDir(), "vectors.db"),
+		Dimension:  8,
+		MainDB:     st.DB(),
+		BuildScope: vector.NewBuildScope([]string{"sms"}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	source, err := st.GetOrCreateSource("gmail", "me@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	emailConvID, err := st.EnsureConversationWithType(source.ID, "conv-email", "email_thread", "Email")
+	require.NoError(err, "EnsureConversationWithType email")
+	smsConvID, err := st.EnsureConversationWithType(source.ID, "conv-sms", "sms_thread", "SMS")
+	require.NoError(err, "EnsureConversationWithType sms")
+
+	makeMsg := func(srcMsgID, typ string, convID int64) int64 {
+		m := &store.Message{
+			SourceID:        source.ID,
+			SourceMessageID: srcMsgID,
+			ConversationID:  convID,
+			MessageType:     typ,
+			Subject:         sql.NullString{String: "s-" + srcMsgID, Valid: true},
+		}
+		id, err := st.UpsertMessage(m)
+		require.NoErrorf(err, "UpsertMessage %s", srcMsgID)
+		return id
+	}
+	outOfScopeEmail := makeMsg("email-stamped", "email", emailConvID)
+	inScopeSMS := makeMsg("sms-stamped", "sms", smsConvID)
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: outOfScopeEmail, Vector: []float32{1, 0, 0, 0, 0, 0, 0, 0}},
+		{MessageID: inScopeSMS, Vector: []float32{0, 1, 0, 0, 0, 0, 0, 0}},
+	}), "Upsert embedded vectors")
+	require.NoError(st.SetEmbedGen(ctx, []int64{outOfScopeEmail, inScopeSMS}, int64(gen)), "stamp embedded")
+
+	live, stamped, _, missingCount, err := st.CoverageCountsScoped(ctx, int64(gen), []string{"sms"})
+	require.NoError(err, "CoverageCountsScoped")
+	embedded, err := b.EmbeddedMessageCount(ctx, gen)
+	require.NoError(err, "EmbeddedMessageCount")
+	blank := max(stamped-embedded, 0)
+
+	assert.Equal(int64(1), live, "only sms is in scope")
+	assert.Equal(int64(1), stamped, "only scoped stamped messages count")
+	assert.Equal(int64(1), embedded, "out-of-scope email vector excluded")
+	assert.Equal(int64(0), blank)
+	assert.Equal(int64(0), missingCount)
+	assert.Equal(live, embedded+blank+missingCount,
+		"invariant: live == embedded + blank + missing")
+}

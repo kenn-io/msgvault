@@ -139,6 +139,22 @@ func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
 	assert.Contains(err.Error(), "msgvault embeddings resume --backstop")
 }
 
+func TestFillCoverageUsesEmbeddingScope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
+	seedMainDBWithScopedCoverageMessages(t, dataDir)
+	withEmbeddingCommandConfigDataDir(t, dbPath, dataDir)
+	cfg.Vector.Embed.Scope.MessageTypes = []string{"sms"}
+
+	row := embeddingGenerationRow{ID: 2}
+	require.NoError(fillCoverage(t.Context(), &row))
+
+	assert.Equal(int64(1), row.LiveCount)
+	assert.Equal(int64(0), row.MissingCount)
+}
+
 // TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck pins the
 // CLI UX gate that runs against the committed metadata read BEFORE any
 // backend connection: retiring an active generation without --force-active
@@ -236,6 +252,38 @@ func seedMainDBWithLiveMessage(t *testing.T, dataDir string) {
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES (1, 1, 1, 'm1', 'email', NULL);
+`)
+	requirepkg.NoError(t, err)
+}
+
+func seedMainDBWithScopedCoverageMessages(t *testing.T, dataDir string) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	requirepkg.NoError(t, err)
+	defer func() { requirepkg.NoError(t, s.Close()) }()
+	requirepkg.NoError(t, s.InitSchema())
+	_, err = s.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
+	(1, 1, 1, 'email-missing', 'email', NULL),
+	(2, 2, 1, 'sms-stamped', 'sms', 2);
+`)
+	requirepkg.NoError(t, err)
+}
+
+func seedMainDBWithScopedFullCoverageMessages(t *testing.T, dataDir string) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	requirepkg.NoError(t, err)
+	defer func() { requirepkg.NoError(t, s.Close()) }()
+	requirepkg.NoError(t, s.InitSchema())
+	_, err = s.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
+	(1, 1, 1, 'email-stamped', 'email', 2),
+	(2, 2, 1, 'sms-stamped', 'sms', 2);
 `)
 	requirepkg.NoError(t, err)
 }

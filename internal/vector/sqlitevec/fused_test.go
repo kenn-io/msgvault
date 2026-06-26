@@ -287,11 +287,11 @@ func openFusedMainWithSchema(t *testing.T, path string) *sql.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	// sent_at is DATETIME (text) to match the production schema.
 	schema := `
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    subject TEXT,
-    message_type TEXT NOT NULL DEFAULT 'email',
-    source_id INTEGER,
+	CREATE TABLE messages (
+	    id INTEGER PRIMARY KEY,
+	    subject TEXT,
+	    message_type TEXT NOT NULL DEFAULT 'email',
+	    source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
@@ -322,10 +322,10 @@ func openFusedMainWithoutMessageType(t *testing.T, path string) *sql.DB {
 	requirepkg.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
 	schema := `
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    subject TEXT,
-    source_id INTEGER,
+	CREATE TABLE messages (
+	    id INTEGER PRIMARY KEY,
+	    subject TEXT,
+	    source_id INTEGER,
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,

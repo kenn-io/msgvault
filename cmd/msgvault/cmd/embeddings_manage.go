@@ -64,7 +64,8 @@ func fillCoverage(ctx context.Context, row *embeddingGenerationRow) error {
 		return fmt.Errorf("open main db for coverage: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	live, _, _, missing, err := s.CoverageCounts(ctx, int64(row.ID))
+	scope := cfg.Vector.Embed.Scope.BuildScope()
+	live, _, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,8 @@ func fillFullCoverage(ctx context.Context, backend vector.Backend, row *embeddin
 		return fmt.Errorf("open main db for coverage: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	live, stamped, _, missing, err := s.CoverageCounts(ctx, int64(row.ID))
+	scope := cfg.Vector.Embed.Scope.BuildScope()
+	live, stamped, _, missing, err := s.CoverageCountsScoped(ctx, int64(row.ID), scope.MessageTypes)
 	if err != nil {
 		return err
 	}
@@ -426,6 +428,7 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 			DB:          db,
 			Dimension:   cfg.Vector.Embeddings.Dimension,
 			SkipMigrate: true,
+			BuildScope:  cfg.Vector.Embed.Scope.BuildScope(),
 		})
 		if err != nil {
 			_ = db.Close()
@@ -460,10 +463,11 @@ func openEmbeddingsBackend(ctx context.Context) (vector.Backend, func(), error) 
 		return nil, nil, fmt.Errorf("open main db for embeddings backend: %w", err)
 	}
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
-		Path:      vecPath,
-		MainPath:  dsn,
-		Dimension: cfg.Vector.Embeddings.Dimension,
-		MainDB:    mainStore.DB(),
+		Path:       vecPath,
+		MainPath:   dsn,
+		Dimension:  cfg.Vector.Embeddings.Dimension,
+		MainDB:     mainStore.DB(),
+		BuildScope: cfg.Vector.Embed.Scope.BuildScope(),
 	})
 	if err != nil {
 		_ = mainStore.Close()

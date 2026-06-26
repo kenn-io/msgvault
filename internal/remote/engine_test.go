@@ -95,7 +95,6 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
 	assert.True(s.HasAttachments, "HasAttachments")
 }
-
 func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -124,4 +123,19 @@ func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 		MessageTypes: []string{"sms"},
 	}, 10, 0)
 	require.NoError(err, "Search")
+}
+
+func TestBuildSearchQueryStringIncludesMessageTypes(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	assert.Equal(
+		"message_type:sms",
+		buildSearchQueryString(search.Parse("message_type:sms")),
+		"filter-only message type query",
+	)
+	assert.Equal(
+		"lunch message_type:sms",
+		buildSearchQueryString(search.Parse("message_type:sms lunch")),
+		"message type with text term",
+	)
 }

@@ -39,6 +39,9 @@ type Options struct {
 	// per-dimension HNSW index on first migration. Optional; if zero
 	// the index is created on first CreateGeneration.
 	Dimension int
+	// BuildScope limits generation coverage to matching messages. Empty
+	// means the full corpus.
+	BuildScope vector.BuildScope
 	// SkipMigrate suppresses the privileged CREATE EXTENSION + full
 	// migrate. A WRITABLE open still applies the (extension-less) schema so
 	// the one-time upgrade lands — read-only-ness is now signalled by
@@ -74,7 +77,8 @@ type Options struct {
 // with the pgvector extension. The same *sql.DB also serves the main
 // msgvault schema (messages, message_recipients, message_labels).
 type Backend struct {
-	db *sql.DB
+	db    *sql.DB
+	scope vector.BuildScope
 }
 
 // Open verifies the database is reachable, applies the embedding schema
@@ -85,7 +89,10 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	if opts.DB == nil {
 		return nil, errors.New("pgvector.Open: Options.DB is required")
 	}
-	b := &Backend{db: opts.DB}
+	b := &Backend{
+		db:    opts.DB,
+		scope: vector.NewBuildScope(opts.BuildScope.MessageTypes),
+	}
 	if !opts.SkipMigrate {
 		// serve / build / search: full migrate incl. CREATE EXTENSION (the
 		// extension step is gated by SkipExtension for managed PG). The eager
@@ -252,12 +259,22 @@ func isUniqueViolation(err error) bool {
 // (embed_gen IS NULL OR embed_gen <> gen). Built once and reused by
 // ActivateGeneration (in-tx, single-DB on PG) and Stats. The $N ordinal
 // of the generation id is supplied by the caller.
-func missingForGenExistsClause(genArg string) string {
+func (b *Backend) missingForGenExistsClause(genArg string, firstScopeArg int) (string, []any) {
+	where := store.LiveMessagesWhere("", true)
+	args := make([]any, 0, len(b.scope.MessageTypes))
+	if !b.scope.IsEmpty() {
+		placeholders := make([]string, len(b.scope.MessageTypes))
+		for i, typ := range b.scope.MessageTypes {
+			placeholders[i] = "$" + strconv.Itoa(firstScopeArg+i)
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
 	return fmt.Sprintf(`EXISTS (
 		SELECT 1 FROM messages
 		 WHERE (embed_gen IS NULL OR embed_gen <> %s)
 		   AND %s
-	)`, genArg, store.LiveMessagesWhere("", true))
+	)`, genArg, where), args
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -321,18 +338,20 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 	// phase, which scan-and-fill no longer has, so a legacy/crashed gen with
 	// seeded_at=NULL but full coverage must be activatable. Coverage
 	// (missing==0) is the real gate.
+	missingClause, missingArgs := b.missingForGenExistsClause("$3", 5)
+	args := append([]any{now, now, int64(gen), force}, missingArgs...)
 	res, err := tx.ExecContext(ctx,
 		`UPDATE index_generations
 		    SET state = 'active', activated_at = $1, completed_at = COALESCE(completed_at, $2)
 		  WHERE id = $3 AND state = 'building'
-		    AND ($4 OR NOT `+missingForGenExistsClause("$3")+`)`,
-		now, now, int64(gen), force)
+		    AND ($4 OR NOT `+missingClause+`)`,
+		args...)
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return activateGateError(ctx, tx, gen, force)
+		return b.activateGateError(ctx, tx, gen, force)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit activate generation %d: %w", gen, err)
@@ -346,7 +365,7 @@ func (b *Backend) ActivateGeneration(ctx context.Context, gen vector.GenerationI
 // also satisfies the coverage predicate (embed_gen <> gen is true for an
 // unknown gen id), so checking coverage first would surface the misleading
 // "messages needing embedding" error instead of the real lifecycle reason.
-func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
+func (b *Backend) activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID, force bool) error {
 	var state vector.GenerationState
 	if err := tx.QueryRowContext(ctx,
 		`SELECT state FROM index_generations WHERE id = $1`, int64(gen)).Scan(&state); err != nil {
@@ -361,8 +380,10 @@ func activateGateError(ctx context.Context, tx *sql.Tx, gen vector.GenerationID,
 	// Gen exists and is building, so the only remaining reason the gated
 	// promote affected zero rows is the coverage term.
 	var missing bool
+	missingClause, missingArgs := b.missingForGenExistsClause("$1", 2)
+	args := append([]any{int64(gen)}, missingArgs...)
 	if err := tx.QueryRowContext(ctx,
-		`SELECT `+missingForGenExistsClause("$1"), int64(gen)).Scan(&missing); err != nil {
+		`SELECT `+missingClause, args...).Scan(&missing); err != nil {
 		return fmt.Errorf("check coverage for generation %d: %w", gen, err)
 	}
 	if missing && !force {
@@ -1206,9 +1227,9 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	return s, nil
 }
 
-// EmbeddedMessageCount returns the number of LIVE messages that are
-// stamped for gen (embed_gen = gen) AND actually have at least one vector
-// for the generation. Used by the coverage readout to split stamped
+// EmbeddedMessageCount returns the number of in-scope LIVE messages that
+// are stamped for gen (embed_gen = gen) AND actually have at least one
+// vector for the generation. Used by the coverage readout to split stamped
 // messages into embedded vs blank. Counts distinct messages (not chunk
 // rows) so a long, multi-chunk message counts once, matching the
 // EmbeddingCount semantic elsewhere.
@@ -1226,15 +1247,25 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 // live intersection is a single JOIN against messages, mirroring
 // store.LiveMessagesWhere's predicate.
 func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
+	where := `e.generation_id = $1
+		    AND m.embed_gen = $1
+		    AND ` + store.LiveMessagesWhere("m", true)
+	args := []any{int64(gen)}
+	if !b.scope.IsEmpty() {
+		placeholders := make([]string, len(b.scope.MessageTypes))
+		for i, typ := range b.scope.MessageTypes {
+			placeholders[i] = "$" + strconv.Itoa(2+i)
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND m.message_type IN (%s)", strings.Join(placeholders, ","))
+	}
 	var n int64
 	if err := b.db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		   JOIN messages m ON m.id = e.message_id
-		  WHERE e.generation_id = $1
-		    AND m.embed_gen = $1
-		    AND `+store.LiveMessagesWhere("m", true),
-		int64(gen)).Scan(&n); err != nil {
+		  WHERE `+where,
+		args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count embedded messages: %w", err)
 	}
 	return n, nil

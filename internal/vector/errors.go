@@ -64,4 +64,10 @@ var (
 	// "transient backend slow" response so clients can retry instead
 	// of treating it as a permanent failure.
 	ErrEmbeddingTimeout = errors.New("embedding request timed out")
+
+	// ErrIndexScopeMismatch is returned when a scoped embedding index
+	// is used without an equivalent structured filter. For example, an
+	// index built only for message_type=sms must not answer an unscoped
+	// vector query over email + SMS.
+	ErrIndexScopeMismatch = errors.New("index scope mismatch")
 )

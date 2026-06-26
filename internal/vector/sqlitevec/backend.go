@@ -28,10 +28,11 @@ var _ vector.Backend = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
-	Path      string
-	MainPath  string  // filesystem path to msgvault.db; required for FusedSearch
-	Dimension int     // default dimension for EnsureVectorTable at open
-	MainDB    *sql.DB // handle to the main msgvault.db
+	Path       string
+	MainPath   string            // filesystem path to msgvault.db; required for FusedSearch
+	Dimension  int               // default dimension for EnsureVectorTable at open
+	MainDB     *sql.DB           // handle to the main msgvault.db
+	BuildScope vector.BuildScope // empty means full corpus
 	// ReadOnly indicates the main DB handle (MainDB) was opened read-only
 	// — e.g. the MCP server's store.OpenReadOnly (_query_only=true). When
 	// set, Open SKIPS BackfillEmbedGenForUpgrade, which would otherwise
@@ -50,6 +51,7 @@ type Backend struct {
 	path     string  // filesystem path to vectors.db
 	mainPath string  // filesystem path to msgvault.db (for ATTACH)
 	dim      int
+	scope    vector.BuildScope
 	// readOnly is true when mainDB was opened read-only (MCP). The
 	// one-time upgrade backfill self-guards on it so it never writes
 	// through the read-only main handle. See Options.ReadOnly.
@@ -76,6 +78,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		path:     opts.Path,
 		mainPath: opts.MainPath,
 		dim:      opts.Dimension,
+		scope:    vector.NewBuildScope(opts.BuildScope.MessageTypes),
 		readOnly: opts.ReadOnly,
 	}
 	// Orphaned-stamp reset (vectors.db-recreate safety): clear embed_gen for
@@ -268,22 +271,33 @@ func isUniqueConstraintErr(err error) bool {
 // needs embedding for gen (embed_gen IS NULL OR embed_gen <> gen). This is
 // the scan-and-fill coverage gate. On SQLite the messages live in the main
 // DB while the generation lifecycle lives in vectors.db, so the gate
-// cannot be folded into the activation tx — ActivateGeneration runs this
-// Go pre-check against b.mainDB before its vectors.db tx (mirroring the
-// intentionally-non-atomic scheduler gate). The full-scan backstop covers
-// any TOCTOU window between this read and the flip.
+// cannot be folded into the activation tx.
 func (b *Backend) hasMissingForGen(ctx context.Context, gen vector.GenerationID) (bool, error) {
 	var exists int
+	where, args := b.missingCoverageWhere(int64(gen))
 	err := b.mainDB.QueryRowContext(ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM messages
-			 WHERE (embed_gen IS NULL OR embed_gen <> ?)
-			   AND `+store.LiveMessagesWhere("", true)+`
-		)`, int64(gen)).Scan(&exists)
+			 WHERE `+where+`
+		)`, args...).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check missing coverage for generation %d: %w", gen, err)
 	}
 	return exists == 1, nil
+}
+
+func (b *Backend) missingCoverageWhere(gen int64) (string, []any) {
+	where := "(embed_gen IS NULL OR embed_gen <> ?) AND " + store.LiveMessagesWhere("", true)
+	args := []any{gen}
+	if !b.scope.IsEmpty() {
+		placeholders := make([]string, len(b.scope.MessageTypes))
+		for i, typ := range b.scope.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
+	return where, args
 }
 
 // ActivateGeneration atomically retires the current active generation
@@ -1375,9 +1389,9 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	return s, nil
 }
 
-// EmbeddedMessageCount returns the number of LIVE messages that are
-// stamped for gen (embed_gen = gen) AND actually have at least one vector
-// for the generation. Used by the coverage readout to split stamped
+// EmbeddedMessageCount returns the number of in-scope LIVE messages that
+// are stamped for gen (embed_gen = gen) AND actually have at least one
+// vector for the generation. Used by the coverage readout to split stamped
 // messages into embedded vs blank. Counts distinct messages (not chunk
 // rows) so a long, multi-chunk message counts once, matching the
 // EmbeddingCount semantic elsewhere.
@@ -1434,18 +1448,27 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 		return 0, nil
 	}
 
-	// Step 2 (main.db): how many of those are live AND stamped for gen.
+	// Step 2 (main.db): how many of those are in-scope, live, AND stamped for gen.
 	blob, err := json.Marshal(ids)
 	if err != nil {
 		return 0, fmt.Errorf("encode embedded ids: %w", err)
 	}
+	where := `id IN (SELECT value FROM json_each(?))
+		    AND embed_gen = ?
+		    AND ` + store.LiveMessagesWhere("", true)
+	args := []any{string(blob), int64(gen)}
+	if !b.scope.IsEmpty() {
+		placeholders := make([]string, len(b.scope.MessageTypes))
+		for i, typ := range b.scope.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND message_type IN (%s)", strings.Join(placeholders, ","))
+	}
 	var n int64
 	if err := b.mainDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages
-		  WHERE id IN (SELECT value FROM json_each(?))
-		    AND embed_gen = ?
-		    AND `+store.LiveMessagesWhere("", true),
-		string(blob), int64(gen)).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM messages WHERE `+where,
+		args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count live embedded messages: %w", err)
 	}
 	return n, nil

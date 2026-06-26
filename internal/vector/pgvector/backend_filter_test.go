@@ -3,6 +3,7 @@
 package pgvector
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+func TestBuildPGFilterClausesMessageTypes(t *testing.T) {
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	clauses := buildPGFilterClauses(vector.Filter{MessageTypes: []string{"sms", "mms"}}, bind)
+
+	require.Len(t, clauses, 1)
+	assert.Equal(t, "m.message_type = ANY($1::text[])", clauses[0])
+	assert.Equal(t, []any{`{"sms","mms"}`}, args)
+}
 
 func TestBackendSearchStructuredFilters(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
@@ -104,6 +119,11 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 			want:   []int64{2},
 		},
 		{
+			name:   "message type",
+			filter: vector.Filter{MessageTypes: []string{"sms"}},
+			want:   []int64{2},
+		},
+		{
 			name:   "no match sentinel",
 			filter: vector.Filter{SenderGroups: [][]int64{{-1}}},
 			want:   nil,
@@ -127,6 +147,21 @@ func TestBackendSearchStructuredFilters(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBackendSearchMessageTypeFilter(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen := seedAndEmbed(t, b, db, map[int64][]float32{
+		1: unitVec(4, 0),
+		2: unitVec(4, 1),
+		3: unitVec(4, 2),
+	})
+	_, err := db.ExecContext(ctx, `UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END`)
+	require.NoError(t, err, "seed message_type")
+
+	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{MessageTypes: []string{"sms"}})
+	require.NoError(t, err, "Search")
+	assert.Equal(t, []int64{2, 3}, hitMessageIDs(hits))
 }
 
 func hitMessageIDs(hits []vector.Hit) []int64 {

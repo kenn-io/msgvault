@@ -292,6 +292,49 @@ func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing
 	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
+func TestBackend_ActivateCoverageScopesMessageTypes(t *testing.T) {
+	ctx := context.Background()
+	main, err := sql.Open("sqlite3", ":memory:")
+	requirepkg.NoError(t, err, "open main")
+	t.Cleanup(func() { _ = main.Close() })
+	_, err = main.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY,
+		message_type TEXT NOT NULL,
+		embed_gen INTEGER,
+		deleted_at DATETIME,
+		deleted_from_source_at DATETIME
+	)`)
+	requirepkg.NoError(t, err, "create messages")
+	_, err = main.Exec(`
+		INSERT INTO messages (id, message_type, deleted_from_source_at) VALUES
+		(1, 'email', NULL),
+		(2, 'sms', NULL),
+		(3, 'mms', NULL),
+		(4, 'sms', CURRENT_TIMESTAMP)`)
+	requirepkg.NoError(t, err, "insert messages")
+
+	b, err := Open(ctx, Options{
+		Path:       filepath.Join(t.TempDir(), "vectors.db"),
+		Dimension:  768,
+		MainDB:     main,
+		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
+	})
+	requirepkg.NoError(t, err, "Open")
+	t.Cleanup(func() { _ = b.Close() })
+
+	gid, err := b.CreateGeneration(ctx, "m", 768, "")
+	requirepkg.NoError(t, err, "Create")
+	missing, err := b.hasMissingForGen(ctx, gid)
+	requirepkg.NoError(t, err, "hasMissingForGen before stamp")
+	assertpkg.True(t, missing, "in-scope messages need embedding")
+
+	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
+	requirepkg.NoError(t, err, "stamp in-scope messages")
+	missing, err = b.hasMissingForGen(ctx, gid)
+	requirepkg.NoError(t, err, "hasMissingForGen after stamp")
+	assertpkg.False(t, missing, "out-of-scope and deleted messages must not block scoped activation")
+}
+
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling
 // CreateGeneration while a building row already exists with the same
 // fingerprint returns the existing id instead of failing on the unique
