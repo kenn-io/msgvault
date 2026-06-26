@@ -1227,9 +1227,9 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	return s, nil
 }
 
-// EmbeddedMessageCount returns the number of LIVE messages that are
-// stamped for gen (embed_gen = gen) AND actually have at least one vector
-// for the generation. Used by the coverage readout to split stamped
+// EmbeddedMessageCount returns the number of in-scope LIVE messages that
+// are stamped for gen (embed_gen = gen) AND actually have at least one
+// vector for the generation. Used by the coverage readout to split stamped
 // messages into embedded vs blank. Counts distinct messages (not chunk
 // rows) so a long, multi-chunk message counts once, matching the
 // EmbeddingCount semantic elsewhere.
@@ -1247,15 +1247,25 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 // live intersection is a single JOIN against messages, mirroring
 // store.LiveMessagesWhere's predicate.
 func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
+	where := `e.generation_id = $1
+		    AND m.embed_gen = $1
+		    AND ` + store.LiveMessagesWhere("m", true)
+	args := []any{int64(gen)}
+	if !b.scope.IsEmpty() {
+		placeholders := make([]string, len(b.scope.MessageTypes))
+		for i, typ := range b.scope.MessageTypes {
+			placeholders[i] = "$" + strconv.Itoa(2+i)
+			args = append(args, typ)
+		}
+		where += fmt.Sprintf(" AND m.message_type IN (%s)", strings.Join(placeholders, ","))
+	}
 	var n int64
 	if err := b.db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		   JOIN messages m ON m.id = e.message_id
-		  WHERE e.generation_id = $1
-		    AND m.embed_gen = $1
-		    AND `+store.LiveMessagesWhere("m", true),
-		int64(gen)).Scan(&n); err != nil {
+		  WHERE `+where,
+		args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count embedded messages: %w", err)
 	}
 	return n, nil

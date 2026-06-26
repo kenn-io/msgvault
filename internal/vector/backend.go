@@ -181,18 +181,18 @@ type Backend interface {
 	Delete(ctx context.Context, gen GenerationID, messageIDs []int64) error
 	Stats(ctx context.Context, gen GenerationID) (Stats, error)
 
-	// EmbeddedMessageCount reports how many distinct LIVE, stamped
+	// EmbeddedMessageCount reports how many distinct in-scope LIVE, stamped
 	// (embed_gen == gen) messages actually have at least one embedding row
 	// for gen. This is the "embedded" leg of the coverage readout (live /
 	// embedded / blank / missing). It lives on the backend because the
 	// embeddings table is in vectors.db on SQLite (and the main DB on PG);
-	// only the backend holds that handle. The live+stamped intersection is
-	// REQUIRED for the coverage invariant to hold: SQLite intersects the
-	// vectors.db embedding ids against a live+stamped query on the main DB
-	// (cross-DB json_each, mirroring dropDeletedFromSource), while PostgreSQL
-	// uses a single JOIN to messages. Distinct from Stats.EmbeddingCount only
-	// in intent: this is the dedicated coverage helper and never folds the
-	// aggregate (gen == 0) path.
+	// only the backend holds that handle. The live+stamped+scope intersection
+	// is REQUIRED for the coverage invariant to hold: SQLite intersects the
+	// vectors.db embedding ids against an in-scope live+stamped query on the
+	// main DB (cross-DB json_each, mirroring dropDeletedFromSource), while
+	// PostgreSQL uses a single JOIN to messages. Distinct from
+	// Stats.EmbeddingCount only in intent: this is the dedicated coverage
+	// helper and never folds the aggregate (gen == 0) path.
 	EmbeddedMessageCount(ctx context.Context, gen GenerationID) (int64, error)
 
 	// LoadVector returns the embedding for a specific message in the

@@ -272,6 +272,22 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 	requirepkg.NoError(t, err)
 }
 
+func seedMainDBWithScopedFullCoverageMessages(t *testing.T, dataDir string) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	requirepkg.NoError(t, err)
+	defer func() { requirepkg.NoError(t, s.Close()) }()
+	requirepkg.NoError(t, s.InitSchema())
+	_, err = s.DB().Exec(`
+INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
+INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
+INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES
+	(1, 1, 1, 'email-stamped', 'email', 2),
+	(2, 2, 1, 'sms-stamped', 'sms', 2);
+`)
+	requirepkg.NoError(t, err)
+}
+
 func withEmbeddingCommandConfig(t *testing.T, vecPath string) {
 	t.Helper()
 	oldCfg := cfg

@@ -90,3 +90,66 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 	assert.Equal(live, embeddedCount+blank+missing,
 		"invariant: live == embedded + blank + missing")
 }
+
+func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	ctx := context.Background()
+
+	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
+	b, err := Open(ctx, Options{
+		DB:         db,
+		Dimension:  8,
+		BuildScope: vector.NewBuildScope([]string{"sms"}),
+	})
+	require.NoError(err, "Open backend")
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO messages (id, message_type) VALUES
+			(1, 'email'),
+			(2, 'sms')
+		ON CONFLICT (id) DO UPDATE SET
+			message_type = EXCLUDED.message_type,
+			deleted_at = NULL,
+			deleted_from_source_at = NULL,
+			embed_gen = NULL`)
+	require.NoError(err, "seed scoped messages")
+
+	gen, err := b.CreateGeneration(ctx, "test-model", 8, "fp")
+	require.NoError(err, "CreateGeneration")
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0, 0, 0, 0, 0}},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0, 0, 0, 0, 0}},
+	}), "Upsert embedded vectors")
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id IN (1, 2)`, int64(gen))
+	require.NoError(err, "stamp embedded")
+
+	var live, stamped int64
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages
+		   WHERE message_type = 'sms'
+		     AND deleted_at IS NULL
+		     AND deleted_from_source_at IS NULL`).Scan(&live),
+		"count scoped live")
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages
+		   WHERE message_type = 'sms'
+		     AND embed_gen = $1
+		     AND deleted_at IS NULL
+		     AND deleted_from_source_at IS NULL`,
+		int64(gen)).Scan(&stamped), "count scoped stamped")
+	missing := live - stamped
+
+	embeddedCount, err := b.EmbeddedMessageCount(ctx, gen)
+	require.NoError(err, "EmbeddedMessageCount")
+	blank := max(stamped-embeddedCount, 0)
+
+	assert.Equal(int64(1), live, "only sms is in scope")
+	assert.Equal(int64(1), stamped, "only scoped stamped messages count")
+	assert.Equal(int64(1), embeddedCount, "out-of-scope email vector excluded")
+	assert.Equal(int64(0), blank)
+	assert.Equal(int64(0), missing)
+	assert.Equal(live, embeddedCount+blank+missing,
+		"invariant: live == embedded + blank + missing")
+}
