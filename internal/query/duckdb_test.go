@@ -2987,6 +2987,8 @@ func TestSearchCacheKeyFor(t *testing.T) {
 		args1     []any
 		conds2    []string
 		args2     []any
+		fp1       string
+		fp2       string
 		wantEqual bool
 	}{
 		{
@@ -3045,12 +3047,30 @@ func TestSearchCacheKeyFor(t *testing.T) {
 			args2:     []any{`%"quoted"%`},
 			wantEqual: true,
 		},
+		{
+			name:      "different fingerprints produce different keys",
+			conds1:    []string{"x = ?"},
+			args1:     []any{"foo"},
+			conds2:    []string{"x = ?"},
+			args2:     []any{"foo"},
+			fp1:       "fp-before",
+			fp2:       "fp-after",
+			wantEqual: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key1 := searchCacheKeyFor(tt.conds1, tt.args1)
-			key2 := searchCacheKeyFor(tt.conds2, tt.args2)
+			fp1 := tt.fp1
+			if fp1 == "" {
+				fp1 = "same-fingerprint"
+			}
+			fp2 := tt.fp2
+			if fp2 == "" {
+				fp2 = "same-fingerprint"
+			}
+			key1 := searchCacheKeyFor(tt.conds1, tt.args1, fp1)
+			key2 := searchCacheKeyFor(tt.conds2, tt.args2, fp2)
 			if tt.wantEqual {
 				assertpkg.Equal(t, key1, key2, "expected equal keys")
 			} else {

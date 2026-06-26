@@ -335,6 +335,12 @@ func (e *DuckDBEngine) ensureFreshOptionalCols() {
 	log.Printf("[info] analytics cache changed — re-probed Parquet optional columns")
 }
 
+func (e *DuckDBEngine) currentCacheFingerprint() string {
+	e.optColsMu.RLock()
+	defer e.optColsMu.RUnlock()
+	return e.cacheFP
+}
+
 // parquetCTEs returns common CTEs for reading all Parquet tables.
 // This is used by aggregate queries that need to join across tables.
 // parquetCTEs returns the WITH clause body that defines CTEs for all Parquet
@@ -2237,20 +2243,22 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 	return count, nil
 }
 
-// searchCacheKeyFor builds a deterministic cache key from search conditions and args.
-// Same query+filter always produces the same key. Uses JSON encoding to avoid
+// searchCacheKeyFor builds a deterministic cache key from search conditions,
+// args, and the Parquet cache fingerprint. Same query+filter over the same
+// analytics cache always produces the same key. Uses JSON encoding to avoid
 // ambiguity from delimiter collisions (e.g. args containing commas or pipes).
-func searchCacheKeyFor(conditions []string, args []any) string {
+func searchCacheKeyFor(conditions []string, args []any, cacheFP string) string {
 	// JSON marshaling is unambiguous: each element is quoted/escaped independently.
 	// Errors are impossible for string/int/float/bool args, but fall back to fmt.
 	key := struct {
-		C []string `json:"c"`
-		A []any    `json:"a"`
-	}{conditions, args}
+		C  []string `json:"c"`
+		A  []any    `json:"a"`
+		FP string   `json:"fp"`
+	}{conditions, args, cacheFP}
 	b, err := json.Marshal(key)
 	if err != nil {
 		// Fallback: should never happen with the types buildSearchConditions produces.
-		return fmt.Sprintf("%v#%v", conditions, args)
+		return fmt.Sprintf("%v#%v#%s", conditions, args, cacheFP)
 	}
 	return string(b)
 }
@@ -2441,8 +2449,14 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	e.searchCacheMu.Lock()
 	defer e.searchCacheMu.Unlock()
 
-	// Check cache: same conditions+args means same search, serve from cached table.
-	cacheKey := searchCacheKeyFor(conditions, args)
+	// Refresh before checking the search cache. A cache-hit page query may call
+	// parquetCTEs(), but that is too late to decide whether the already
+	// materialized temp table still represents the current Parquet data.
+	e.ensureFreshOptionalCols()
+
+	// Check cache: same conditions+args+Parquet fingerprint means same search,
+	// serve from cached table.
+	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint())
 	if cacheKey == e.searchCacheKey && e.searchCacheTable != "" {
 		// Retry stats if a previous attempt failed (transient error).
 		if e.searchCacheStats == nil {

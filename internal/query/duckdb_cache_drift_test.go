@@ -76,6 +76,52 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 	require.Len(t, agg, 1)
 }
 
+func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *testing.T) {
+	pb := newParquetBuilder(t).
+		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
+			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+		`).
+		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
+		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
+		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
+		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
+		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 100::BIGINT, 'x')`).
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '')`)
+
+	analyticsDir, cleanup := pb.build()
+	t.Cleanup(cleanup)
+
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(t, err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	ctx := context.Background()
+	q := search.Parse("SOFRA")
+
+	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.NoError(t, err, "SearchFastWithStats before rebuild")
+	require.Len(t, first.Messages, 1)
+	require.Equal(t, int64(1), first.TotalCount)
+	require.NotNil(t, first.Stats)
+	require.Equal(t, int64(1), first.Stats.MessageCount)
+
+	msgPath := filepath.Join(analyticsDir, "messages", "year=2024", "data.parquet")
+	rewriteParquetForTest(t, msgPath, messagesCols, `
+		(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1),
+		(2::BIGINT, 1::BIGINT, 'm2', 101::BIGINT, 'Another SOFRA', 'snip', TIMESTAMP '2024-01-16 10:00:00', 2000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+	`)
+
+	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.NoError(t, err, "SearchFastWithStats after rebuild")
+	require.Len(t, second.Messages, 2)
+	assert.Equal(t, int64(2), second.TotalCount)
+	require.NotNil(t, second.Stats)
+	assert.Equal(t, int64(2), second.Stats.MessageCount)
+	assert.Equal(t, "Another SOFRA", second.Messages[0].Subject)
+	assert.Equal(t, "Hello SOFRA", second.Messages[1].Subject)
+}
+
 // rewriteParquetForTest overwrites an existing Parquet file with a new schema
 // and rows, simulating an out-of-band cache rebuild.
 func rewriteParquetForTest(t *testing.T, path, columns, values string) {
