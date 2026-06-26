@@ -32,6 +32,27 @@ func newSyncer(t *testing.T, mock *gcal.MockAPI, opts Options) (*Syncer, *store.
 	return s, st
 }
 
+func TestRegisterCalendars_NormalizesAccountEmailInSourceIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	s, st := newSyncer(t, m, Options{AccountEmail: "Alice.Example@Example.COM"})
+
+	_, err := s.RegisterCalendars(context.Background())
+	require.NoError(err)
+
+	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	require.NoError(err)
+	assert.Equal("gcal", src.SourceType)
+
+	var cfg sourceConfig
+	require.True(src.SyncConfig.Valid, "SyncConfig")
+	require.NoError(json.Unmarshal([]byte(src.SyncConfig.String), &cfg))
+	assert.Equal("alice.example@example.com", cfg.AccountEmail)
+}
+
 // --- read-back helpers (direct SQL through the real store) ---
 
 type msgRow struct {

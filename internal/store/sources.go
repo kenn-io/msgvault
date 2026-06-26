@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrSourceNotFound is returned by GetSourceByID and GetSourceByIdentifier
@@ -139,6 +140,7 @@ func (s *Store) GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("list sources by type %q: %w", sourceType, err)
 	}
+	accountEmail = strings.TrimSpace(accountEmail)
 	var matched []*Source
 	for _, src := range all {
 		if !src.SyncConfig.Valid {
@@ -150,7 +152,7 @@ func (s *Store) GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*
 		if err := json.Unmarshal([]byte(src.SyncConfig.String), &cfg); err != nil {
 			continue
 		}
-		if cfg.AccountEmail == accountEmail {
+		if accountEmail != "" && strings.EqualFold(strings.TrimSpace(cfg.AccountEmail), accountEmail) {
 			matched = append(matched, src)
 		}
 	}

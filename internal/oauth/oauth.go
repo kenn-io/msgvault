@@ -278,7 +278,12 @@ func (m *Manager) authorize(
 		return err
 	}
 
-	return m.saveToken(email, token, m.config.Scopes)
+	grantedScopes := grantedScopesFromToken(token, m.config.Scopes)
+	if missing := missingScopes(m.config.Scopes, grantedScopes); len(missing) > 0 {
+		return fmt.Errorf("authorized token missing required OAuth scopes: %s", strings.Join(missing, ", "))
+	}
+
+	return m.saveToken(email, token, grantedScopes)
 }
 
 const (
@@ -431,6 +436,57 @@ func hasGmailProfileScope(scopes []string) bool {
 		}
 	}
 	return false
+}
+
+func grantedScopesFromToken(token *oauth2.Token, requested []string) []string {
+	var scopes []string
+	switch raw := token.Extra("scope").(type) {
+	case string:
+		scopes = strings.Fields(raw)
+	case []string:
+		scopes = raw
+	case []any:
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				scopes = append(scopes, s)
+			}
+		}
+	}
+	if len(scopes) == 0 {
+		scopes = requested
+	}
+	return normalizedScopeList(scopes)
+}
+
+func normalizedScopeList(scopes []string) []string {
+	out := make([]string, 0, len(scopes))
+	seen := map[string]struct{}{}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	return out
+}
+
+func missingScopes(required, granted []string) []string {
+	grantedSet := map[string]struct{}{}
+	for _, scope := range granted {
+		grantedSet[scope] = struct{}{}
+	}
+	var missing []string
+	for _, scope := range normalizedScopeList(required) {
+		if _, ok := grantedSet[scope]; !ok {
+			missing = append(missing, scope)
+		}
+	}
+	return missing
 }
 
 // sameGoogleAccount returns true if two email addresses belong to the
