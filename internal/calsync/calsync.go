@@ -148,7 +148,7 @@ func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error)
 		if !s.includeCalendar(cal) {
 			continue
 		}
-		src, err := s.store.GetOrCreateSource(gcal.SourceType, s.sourceIdentifier(cal))
+		src, err := s.getOrCreateCalendarSource(cal)
 		if err != nil {
 			return nil, fmt.Errorf("get/create source for %s: %w", cal.ID, err)
 		}
@@ -190,7 +190,7 @@ func (s *Syncer) listCalendars(ctx context.Context) ([]gcal.Calendar, error) {
 // replaying that token under a later unbounded request can skip or corrupt the
 // traversal.
 func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result *Result) error {
-	src, err := s.store.GetOrCreateSource(gcal.SourceType, s.sourceIdentifier(cal))
+	src, err := s.getOrCreateCalendarSource(cal)
 	if err != nil {
 		return fmt.Errorf("get/create source: %w", err)
 	}
@@ -453,6 +453,38 @@ func accessRoleRank(role string) int {
 // collisions when two accounts subscribe to the same shared calendar ID.
 func (s *Syncer) sourceIdentifier(cal gcal.Calendar) string {
 	return s.opts.AccountEmail + "/" + cal.ID
+}
+
+func (s *Syncer) getOrCreateCalendarSource(cal gcal.Calendar) (*store.Source, error) {
+	identifier := s.sourceIdentifier(cal)
+
+	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
+	if err != nil {
+		return nil, fmt.Errorf("find existing calendar sources: %w", err)
+	}
+
+	var migrate *store.Source
+	for _, src := range sources {
+		cfg := parseSourceConfig(src.SyncConfig)
+		if cfg.CalendarID != cal.ID {
+			continue
+		}
+		if src.Identifier == identifier {
+			return src, nil
+		}
+		if migrate == nil {
+			migrate = src
+		}
+	}
+	if migrate != nil {
+		if err := s.store.UpdateSourceIdentifier(migrate.ID, identifier); err != nil {
+			return nil, fmt.Errorf("migrate calendar source identifier: %w", err)
+		}
+		migrate.Identifier = identifier
+		return migrate, nil
+	}
+
+	return s.store.GetOrCreateSource(gcal.SourceType, identifier)
 }
 
 func normalizeAccountEmail(email string) string {
