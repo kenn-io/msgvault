@@ -256,6 +256,45 @@ func TestGetMessageWithAttachments(t *testing.T) {
 	assert.True(found, "expected to find doc.pdf attachment")
 }
 
+func TestGetMessageWithURLBackedAttachment(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	_, err := env.DB.Exec(`
+		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
+		VALUES (1, 'deck.pptx', 'reference', 0, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'https://sp/deck.pptx')
+	`)
+	require.NoError(err, "insert URL-backed attachment")
+
+	msg, err := env.Engine.GetMessage(env.Ctx, 1)
+	require.NoError(err, "GetMessage")
+	require.Len(msg.Attachments, 1)
+	assert.Equal("deck.pptx", msg.Attachments[0].Filename)
+	assert.Empty(msg.Attachments[0].ContentHash)
+	assert.Equal("https://sp/deck.pptx", msg.Attachments[0].URL)
+}
+
+func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	env := newTestEnv(t)
+
+	result, err := env.DB.Exec(`
+		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
+		VALUES (1, 'recording.mp4', 'video/mp4', 0, 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd', 'https://sp/recording.mp4')
+	`)
+	require.NoError(err, "insert URL-backed attachment")
+	attID, err := result.LastInsertId()
+	require.NoError(err, "LastInsertId")
+
+	att, err := env.Engine.GetAttachment(env.Ctx, attID)
+	require.NoError(err, "GetAttachment")
+	require.NotNil(att)
+	assert.Empty(att.ContentHash)
+	assert.Equal("https://sp/recording.mp4", att.URL)
+}
+
 func TestGetMessageBySourceID(t *testing.T) {
 	env := newTestEnv(t)
 

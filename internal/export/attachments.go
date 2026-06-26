@@ -63,6 +63,10 @@ func Attachments(zipFilename, attachmentsDir string, attachments []query.Attachm
 
 	usedNames := make(map[string]int)
 	for _, att := range attachments {
+		if att.URL != "" {
+			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: URL-backed attachment is available at %s", att.Filename, att.URL))
+			continue
+		}
 		if err := ValidateContentHash(att.ContentHash); err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			continue
@@ -265,6 +269,10 @@ func AttachmentsToDir(outputDir, attachmentsDir string, attachments []query.Atta
 	usedNames := make(map[string]int)
 
 	for _, att := range attachments {
+		if att.URL != "" {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: URL-backed attachment is available at %s", att.Filename, att.URL))
+			continue
+		}
 		if err := ValidateContentHash(att.ContentHash); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			continue

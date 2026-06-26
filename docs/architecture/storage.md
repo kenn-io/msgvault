@@ -49,7 +49,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `whatsapp`, `imessage`, `google_voice_text` |
+| `message_type` | TEXT | `email`, `whatsapp`, `imessage`, `google_voice_text`, `teams` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `subject` | TEXT | Message subject |

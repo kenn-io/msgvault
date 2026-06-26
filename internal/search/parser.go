@@ -23,7 +23,7 @@ type Query struct {
 	LargerThan    *int64     // larger: filter (bytes)
 	SmallerThan   *int64     // smaller: filter (bytes)
 	AccountIDs    []int64    // in: account filter (one or more source IDs)
-	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp)
+	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
 }
 

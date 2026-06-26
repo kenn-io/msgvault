@@ -106,7 +106,7 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 	assertpkg.Empty(t, results, "want 0 results after source delete")
 }
 
-func TestTextModeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
+func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	assert := assertpkg.New(t)
 	db, _ := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
@@ -114,7 +114,8 @@ func TestTextModeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
 
 	insertTextSearchMessage(t, db, 2, "sms", "sms body")
 	insertTextSearchMessage(t, db, 3, "mms", "mms body")
-	insertTextSearchMessage(t, db, 4, "synctech_sms_call", "missed call body")
+	insertTextSearchMessage(t, db, 4, "teams", "teams body")
+	insertTextSearchMessage(t, db, 5, "synctech_sms_call", "missed call body")
 
 	results, err := engine.TextSearch(ctx, "body", 10, 0)
 	requirepkg.NoError(t, err, "TextSearch")
@@ -124,11 +125,13 @@ func TestTextModeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
 	}
 	assert.Contains(types, "sms", "text mode should include sms")
 	assert.Contains(types, "mms", "text mode should include mms")
+	assert.Contains(types, "teams", "text mode should include teams")
 	assert.NotContains(types, "synctech_sms_call", "text mode should not include call log")
 }
 
-func TestIsTextMessageTypeIncludesMMSAndExcludesSynctechCalls(t *testing.T) {
+func TestIsTextMessageTypeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	assertpkg.True(t, IsTextMessageType("mms"), "mms should be a text message type")
+	assertpkg.True(t, IsTextMessageType("teams"), "teams should be a text message type")
 	assertpkg.False(t, IsTextMessageType("synctech_sms_call"), "synctech_sms_call should not be a text message type")
 }
 

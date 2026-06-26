@@ -163,6 +163,112 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 	assert.False(embedGen.Valid, "subject change must clear embed_gen")
 }
 
+func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "team-1/channel-1", "channel", "General")
+	require.NoError(err, "EnsureConversationWithType")
+
+	legacyParentID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	scopedParentID := insertStoreTestMessage(t, st, source.ID, convID, "channel:team-1:channel-1:m1")
+	childID := insertStoreTestMessage(t, st, source.ID, convID, "m2")
+	_, err = st.DB().Exec(
+		st.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`),
+		legacyParentID, childID,
+	)
+	require.NoError(err, "seed reply")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "channel:team-1:channel-1:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	var replyTo sql.NullInt64
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`),
+		childID,
+	).Scan(&replyTo)
+	require.NoError(err, "scan reply_to_message_id")
+	require.True(replyTo.Valid, "reply_to_message_id should remain set")
+	assert.Equal(scopedParentID, replyTo.Int64, "reply should point at scoped parent")
+
+	var legacyCount int
+	err = st.DB().QueryRow(
+		st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`),
+		legacyParentID,
+	).Scan(&legacyCount)
+	require.NoError(err, "legacy count")
+	assert.Equal(0, legacyCount, "legacy duplicate should be deleted")
+}
+
+func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
+	require := requirepkg.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err, "EnsureConversationWithType")
+	_ = insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	require.NoError(st.MarkMessageDeleted(source.ID, "m1"), "MarkMessageDeleted")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	assertSourceMessageIDNotDeleted(t, st, source.ID, "chat:19:x@thread.v2:m1")
+}
+
+func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) {
+	require := requirepkg.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err, "EnsureConversationWithType")
+	_ = insertStoreTestMessage(t, st, source.ID, convID, "chat:19:x@thread.v2:m1")
+	require.NoError(st.MarkMessageDeleted(source.ID, "chat:19:x@thread.v2:m1"), "MarkMessageDeleted")
+
+	require.NoError(
+		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		"MigrateSourceMessageID",
+	)
+
+	assertSourceMessageIDNotDeleted(t, st, source.ID, "chat:19:x@thread.v2:m1")
+}
+
+func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int64, sourceMessageID string) int64 {
+	t.Helper()
+	msg := &store.Message{
+		SourceID:        sourceID,
+		SourceMessageID: sourceMessageID,
+		ConversationID:  convID,
+		MessageType:     "teams",
+		SentAt:          sql.NullTime{Time: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), Valid: true},
+		Snippet:         sql.NullString{String: sourceMessageID, Valid: true},
+	}
+	id, err := st.UpsertMessage(msg)
+	requirepkg.NoError(t, err, "UpsertMessage "+sourceMessageID)
+	return id
+}
+
+func assertSourceMessageIDNotDeleted(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) {
+	t.Helper()
+	var deletedAt sql.NullTime
+	err := st.DB().QueryRow(
+		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		sourceID, sourceMessageID,
+	).Scan(&deletedAt)
+	requirepkg.NoError(t, err, "scan deleted_from_source_at")
+	assertpkg.False(t, deletedAt.Valid, "deleted_from_source_at should be cleared")
+}
+
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

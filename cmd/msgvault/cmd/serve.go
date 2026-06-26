@@ -15,7 +15,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -23,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
+	"go.kenn.io/msgvault/internal/teams"
 	"golang.org/x/oauth2"
 )
 
@@ -67,7 +70,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate config
-	if !cfg.OAuth.HasAnyConfig() {
+	if !hasServeOAuthConfig(cfg) {
 		return errOAuthNotConfigured()
 	}
 
@@ -306,6 +309,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func hasServeOAuthConfig(c *config.Config) bool {
+	if c == nil {
+		return false
+	}
+	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
+}
+
 // storeAPIAdapter adapts store.Store to the API store interfaces.
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
@@ -391,65 +401,98 @@ func (a *schedulerAdapter) Status() []api.AccountStatus {
 	return a.scheduler.Status()
 }
 
-// runScheduledSync performs a sync for a scheduled account. The
-// dispatch is by source_type: Gmail accounts run an incremental sync
-// using the Gmail History API; IMAP accounts run a full sync (already
-// deduplicated by message-id at the store layer, since IMAP has no
-// equivalent history API). Under scan-and-fill there is no enqueue step
-// — newly-ingested messages get embed_gen = NULL by column default, so
-// subsequent embed runs discover and pick them up by scanning; the sync
-// path therefore needs no vector-feature wiring.
+// runScheduledSync performs a sync for a scheduled account. It resolves
+// ALL syncable source rows for the identifier (gmail, imap, teams) and
+// dispatches each in turn. When no source row matches, it falls back to
+// the Gmail token-first workflow (tokens uploaded via API before the
+// source row exists) so that legacy deployments keep working.
 //
-// The identifier passed in is whatever the scheduler holds — for
-// Gmail this is the email address, for IMAP it's the full
-// `imaps://user@host:port` URL recorded by `add-imap`.
+// Under scan-and-fill there is no enqueue step — newly-ingested messages
+// get embed_gen = NULL by column default, so subsequent embed runs
+// discover and pick them up by scanning; the sync path therefore needs
+// no vector-feature wiring.
+//
+// Per-source errors are collected with errors.Join; the cache rebuild
+// runs once after all sources regardless of per-source errors.
+//
+// The identifier passed in is whatever the scheduler holds — for Gmail
+// this is the email address, for IMAP it's the full
+// `imaps://user@host:port` URL recorded by `add-imap`, for Teams it is
+// the UPN/email recorded by `add-o365`.
 func runScheduledSync(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error)) error {
 	logger.Info("starting scheduled sync", "identifier", identifier)
-	startTime := time.Now()
 
-	src, srcErr := findScheduledSyncSource(s, identifier)
+	srcs, srcErr := findScheduledSyncSources(s, identifier)
 	if srcErr != nil {
-		return fmt.Errorf("look up source for %s: %w", identifier, srcErr)
+		return fmt.Errorf("look up sources for %s: %w", identifier, srcErr)
 	}
 
-	// Source type drives dispatch. A nil source falls back to Gmail to
-	// preserve the token-first workflow (tokens uploaded via API before
-	// the source row exists).
-	sourceType := sourceTypeGmail
-	if src != nil {
-		sourceType = src.SourceType
+	// No source row found: fall back to the Gmail token-first workflow
+	// (preserves behaviour for tokens uploaded via API before the source
+	// row exists).
+	if len(srcs) == 0 {
+		startTime := time.Now()
+		summary, err := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr)
+		if err != nil {
+			return err
+		}
+		logger.Info("sync completed",
+			"identifier", identifier,
+			"source_type", sourceTypeGmail,
+			"messages_added", summary.MessagesAdded,
+			"duration", time.Since(startTime),
+		)
+		rebuildCacheAfterScheduledSync(ctx, identifier)
+		return nil
+	}
+
+	var errs []error
+	for _, src := range srcs {
+		startTime := time.Now()
+		sourceType := src.SourceType
 		if sourceType == "" {
 			sourceType = sourceTypeGmail
 		}
+
+		var (
+			summary *gmail.SyncSummary
+			err     error
+		)
+		switch sourceType {
+		case sourceTypeGmail:
+			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr)
+		case sourceTypeIMAP:
+			summary, err = runScheduledIMAPSync(ctx, src, s)
+		case sourceTypeTeams:
+			err = runScheduledTeamsSync(ctx, src, s)
+		default:
+			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
+			continue
+		}
+
+		if summary != nil {
+			logger.Info("sync completed",
+				"identifier", identifier,
+				"source_type", sourceType,
+				"messages_added", summary.MessagesAdded,
+				"duration", time.Since(startTime),
+			)
+		} else {
+			logger.Info("sync completed",
+				"identifier", identifier,
+				"source_type", sourceType,
+				"duration", time.Since(startTime),
+			)
+		}
 	}
 
-	var (
-		summary *gmail.SyncSummary
-		err     error
-	)
-	switch sourceType {
-	case sourceTypeGmail:
-		summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr)
-	case sourceTypeIMAP:
-		summary, err = runScheduledIMAPSync(ctx, src, s)
-	default:
-		return fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler (only gmail and imap)", identifier, sourceType)
-	}
-	if err != nil {
-		return err
-	}
-
-	logger.Info("sync completed",
-		"identifier", identifier,
-		"source_type", sourceType,
-		"messages_added", summary.MessagesAdded,
-		"duration", time.Since(startTime),
-	)
-
-	// Rebuild cache if stale (covers new messages and deletions).
+	// Rebuild cache once after all sources, regardless of per-source errors.
 	rebuildCacheAfterScheduledSync(ctx, identifier)
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // findScheduledSyncSource resolves the source row for a scheduler
@@ -470,6 +513,7 @@ func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, 
 		return nil, err
 	}
 	var imapSrc *store.Source
+	var teamsSrc *store.Source
 	for _, src := range sources {
 		switch src.SourceType {
 		case sourceTypeGmail:
@@ -478,9 +522,53 @@ func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, 
 			if imapSrc == nil {
 				imapSrc = src
 			}
+		case sourceTypeTeams:
+			if teamsSrc == nil {
+				teamsSrc = src
+			}
 		}
 	}
-	return imapSrc, nil
+	if imapSrc != nil {
+		return imapSrc, nil
+	}
+	return teamsSrc, nil
+}
+
+// findScheduledSyncSources resolves ALL syncable source rows for a
+// scheduler identifier. Returns at most one row per syncable type
+// (gmail, imap, teams), in that stable order. Non-syncable types
+// (mbox, apple-mail, etc.) are skipped.
+//
+// Returns an empty slice (not nil) when no syncable source matches —
+// callers should fall back to the Gmail token-first workflow.
+//
+// Matches against both sources.identifier and sources.display_name
+// (same semantics as findScheduledSyncSource).
+func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, error) {
+	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect first occurrence of each syncable type.
+	seen := make(map[string]*store.Source, 3)
+	for _, src := range rows {
+		switch src.SourceType {
+		case sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams:
+			if _, dup := seen[src.SourceType]; !dup {
+				seen[src.SourceType] = src
+			}
+		}
+	}
+
+	// Return in stable order: gmail, imap, teams.
+	var result []*store.Source
+	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeTeams} {
+		if src, ok := seen[t]; ok {
+			result = append(result, src)
+		}
+	}
+	return result, nil
 }
 
 // runScheduledGmailSync runs an incremental Gmail sync for the daemon.
@@ -601,4 +689,39 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
 	}
 	return summary, nil
+}
+
+// runScheduledTeamsSync runs a Teams sync for the daemon.
+func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store) error {
+	email := src.Identifier
+
+	// Seed the default identity and converge legacy migrations before
+	// syncing, for parity with the Gmail/IMAP daemon paths. add-teams
+	// already does both, so this is a no-op in the normal flow, but it
+	// ensures a Teams source created by another path still gets its
+	// "me" identity. Auto-default-identity must run BEFORE the legacy
+	// migration retry (see account_identity.go); serve is a daemon, so
+	// the confirmation message has no terminal and is discarded.
+	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier")
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
+	}
+
+	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(), cfg.TokensDir(), logger)
+	tokenFn, err := mgr.TokenSource(ctx, email)
+	if err != nil {
+		return err
+	}
+	qps := float64(cfg.Sync.RateLimitQPS)
+	if qps <= 0 {
+		qps = 5
+	}
+	client := teams.NewClient("https://graph.microsoft.com/v1.0", teams.TokenFunc(tokenFn), qps)
+	opts := teams.ImportOptions{
+		Email:           email,
+		AttachmentsDir:  cfg.AttachmentsDir(),
+		IncludeChannels: true,
+	}
+	_, err = teams.NewImporter(s, client).Import(ctx, opts)
+	return err
 }

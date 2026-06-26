@@ -6,6 +6,7 @@ const (
 	sourceTypeGmail = "gmail"
 	sourceTypeIMAP  = "imap"
 	sourceTypeMbox  = "mbox"
+	sourceTypeTeams = "teams"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under

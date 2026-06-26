@@ -54,8 +54,7 @@ make lint                     # Run linter
 ./msgvault sync-incremental you@gmail.com             # Incremental sync
 
 # TUI and analytics
-./msgvault tui                                        # Launch TUI
-./msgvault tui --account you@gmail.com                # Filter by account
+./msgvault tui                                        # Launch TUI (press 'a' inside to filter by account)
 ./msgvault tui --local                                # Force local (override remote config)
 ./msgvault build-cache                                # Build Parquet cache
 ./msgvault build-cache --full-rebuild                 # Full rebuild
@@ -67,6 +66,11 @@ make lint                     # Run linter
 ./msgvault import-emlx ~/Library/Mail                 # Explicit mail directory
 ./msgvault import-emlx --account me@gmail.com         # Specific account(s)
 ./msgvault import-emlx /path/to/dir --identifier me@gmail.com  # Manual fallback
+
+# Microsoft Teams (delegated Graph)
+./msgvault add-teams you@tenant.com          # Authorize Teams (browser OAuth)
+./msgvault sync-teams you@tenant.com         # Sync Teams chats + channels
+./msgvault sync-teams you@tenant.com --no-channels --limit 50
 
 # Daemon mode (NAS/server deployment)
 ./msgvault serve                                      # Start HTTP API + scheduled syncs

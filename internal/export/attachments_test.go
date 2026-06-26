@@ -163,6 +163,13 @@ func TestAttachmentsToDir(t *testing.T) {
 			wantErrors: 1,
 		},
 		{
+			name: "url backed attachment is reported as link",
+			setup: func(_ *testing.T, _ string) []query.AttachmentInfo {
+				return []query.AttachmentInfo{{Filename: "deck.pptx", URL: "https://sp/deck.pptx"}}
+			},
+			wantErrors: 1,
+		},
+		{
 			name: "missing content file is reported",
 			setup: func(_ *testing.T, _ string) []query.AttachmentInfo {
 				return []query.AttachmentInfo{{
@@ -443,6 +450,13 @@ func TestAttachments(t *testing.T) {
 				return []query.AttachmentInfo{{Filename: "file.txt", ContentHash: ""}}
 			},
 			wantSubstrings: []string{"file.txt: invalid content hash"},
+		},
+		{
+			name: "url backed attachment reports link",
+			setup: func(_ *testing.T, _ string) []query.AttachmentInfo {
+				return []query.AttachmentInfo{{Filename: "deck.pptx", URL: "https://sp/deck.pptx"}}
+			},
+			wantSubstrings: []string{"deck.pptx: URL-backed attachment is available at https://sp/deck.pptx"},
 		},
 		{
 			name: "single-char content hash is skipped",

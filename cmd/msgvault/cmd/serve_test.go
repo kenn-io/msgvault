@@ -118,6 +118,16 @@ client_secrets = "/path/to/secrets.json"
 	assertpkg.Empty(t, scheduled, "expected no scheduled accounts")
 }
 
+func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
+	assertpkg.True(t, hasServeOAuthConfig(&config.Config{
+		Microsoft: config.MicrosoftConfig{ClientID: "azure-client-id"},
+	}))
+}
+
+func TestServeOAuthValidationRejectsNoProviders(t *testing.T) {
+	assertpkg.False(t, hasServeOAuthConfig(&config.Config{}))
+}
+
 func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -402,6 +412,67 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 		}
 	}
 	assert.True(foundEmail, "identities = %+v, want one with Address=%q", identities, imapEmail)
+}
+
+// TestFindScheduledSyncSources verifies that the plural resolver returns
+// ALL syncable source types for an identifier (imap + teams together),
+// only the matching type for single-type identifiers, and an empty slice
+// for unknown identifiers.
+func TestFindScheduledSyncSources(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+
+	// Unknown identifier returns empty slice (not nil), enabling the
+	// Gmail token-first fallback in runScheduledSync.
+	got, err := findScheduledSyncSources(s, "missing@example.com")
+	require.NoError(err, "findScheduledSyncSources(missing)")
+	assert.Empty(got, "findScheduledSyncSources(missing) should be empty")
+
+	// An address that has BOTH an IMAP source (display_name lookup) and
+	// a Teams source must return both, in stable order imap then teams.
+	const (
+		imapID      = "imaps://nat@host@imap.example.com:993"
+		sharedEmail = "nat@x.com"
+	)
+	imapSrc, err := s.GetOrCreateSource("imap", imapID)
+	require.NoError(err, "create imap source")
+	require.NoError(s.UpdateSourceDisplayName(imapSrc.ID, sharedEmail), "set imap display_name")
+
+	teamsSrc, err := s.GetOrCreateSource("teams", sharedEmail)
+	require.NoError(err, "create teams source")
+
+	got, err = findScheduledSyncSources(s, sharedEmail)
+	require.NoError(err, "findScheduledSyncSources(imap+teams)")
+	require.Len(got, 2, "findScheduledSyncSources(imap+teams) should return 2 sources")
+	assert.Equal("imap", got[0].SourceType, "first source should be imap")
+	assert.Equal(imapSrc.ID, got[0].ID, "first source ID")
+	assert.Equal("teams", got[1].SourceType, "second source should be teams")
+	assert.Equal(teamsSrc.ID, got[1].ID, "second source ID")
+
+	// A gmail-only identifier returns exactly one gmail source.
+	const gmailAddr = "g@x.com"
+	gmailSrc, err := s.GetOrCreateSource("gmail", gmailAddr)
+	require.NoError(err, "create gmail source")
+
+	got, err = findScheduledSyncSources(s, gmailAddr)
+	require.NoError(err, "findScheduledSyncSources(gmail)")
+	require.Len(got, 1, "findScheduledSyncSources(gmail) should return 1 source")
+	assert.Equal("gmail", got[0].SourceType, "source should be gmail")
+	assert.Equal(gmailSrc.ID, got[0].ID, "gmail source ID")
+
+	// Non-syncable types (mbox) are ignored; returns empty.
+	const mboxAddr = "mbox-only@example.com"
+	_, err = s.GetOrCreateSource("mbox", mboxAddr)
+	require.NoError(err, "create mbox source")
+
+	got, err = findScheduledSyncSources(s, mboxAddr)
+	require.NoError(err, "findScheduledSyncSources(mbox-only)")
+	assert.Empty(got, "findScheduledSyncSources(mbox-only) should be empty")
 }
 
 func TestCronExpressionValidation(t *testing.T) {

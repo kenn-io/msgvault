@@ -151,6 +151,7 @@ type AttachmentInfo struct {
 	Filename string `json:"filename"`
 	MimeType string `json:"mime_type"`
 	Size     int64  `json:"size_bytes"`
+	URL      string `json:"url,omitempty"`
 }
 
 // SearchResult represents search results.
@@ -267,6 +268,7 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 			Filename: att.Filename,
 			MimeType: att.MimeType,
 			Size:     att.Size,
+			URL:      att.URL,
 		})
 	}
 

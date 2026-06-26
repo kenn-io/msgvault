@@ -975,16 +975,21 @@ func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string
 // GetAttachment retrieves attachment metadata by ID.
 func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*AttachmentInfo, error) {
 	var att AttachmentInfo
+	var storagePath string
 	err := e.queryRowContext(ctx, `
-		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, '')
+		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM attachments
 		WHERE id = ?
-	`, id).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash)
+	`, id).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath)
 	if err == sql.ErrNoRows {
 		return nil, nil //nolint:nilnil // Engine.GetAttachment uses (nil, nil) for not-found; callers branch on the nil result
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get attachment: %w", err)
+	}
+	if isURLStoragePath(storagePath) {
+		att.URL = storagePath
+		att.ContentHash = ""
 	}
 	return &att, nil
 }

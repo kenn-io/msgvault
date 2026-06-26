@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 
@@ -124,6 +125,73 @@ func (s *Store) UpdateMessageOnDedup(
 			return fmt.Errorf("update source_message_id: %w", err)
 		}
 		return replaceMessageLabelsTx(tx, messageID, labelIDs)
+	})
+}
+
+// MigrateSourceMessageID rewrites a legacy source_message_id to a new value
+// for one conversation. If the new ID already exists, dependents are repointed
+// and the legacy row is removed so future imports converge on the new key.
+func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySourceMessageID, newSourceMessageID string) error {
+	if legacySourceMessageID == "" || legacySourceMessageID == newSourceMessageID {
+		return nil
+	}
+	return s.withTx(func(tx *loggedTx) error {
+		var newID int64
+		err := tx.QueryRow(
+			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
+			sourceID, newSourceMessageID,
+		).Scan(&newID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("find migrated message id: %w", err)
+		}
+		if err == nil {
+			if _, err = tx.Exec(
+				`UPDATE messages SET deleted_from_source_at = NULL WHERE id = ?`,
+				newID,
+			); err != nil {
+				return fmt.Errorf("clear migrated message deletion marker: %w", err)
+			}
+
+			var legacyID int64
+			legacyErr := tx.QueryRow(
+				`SELECT id FROM messages
+				 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
+				sourceID, conversationID, legacySourceMessageID,
+			).Scan(&legacyID)
+			if legacyErr != nil && !errors.Is(legacyErr, sql.ErrNoRows) {
+				return fmt.Errorf("find legacy message id: %w", legacyErr)
+			}
+			if legacyErr == nil {
+				if _, err = tx.Exec(
+					`UPDATE messages SET reply_to_message_id = ?
+					 WHERE reply_to_message_id = ?`,
+					newID, legacyID,
+				); err != nil {
+					return fmt.Errorf("repoint legacy replies: %w", err)
+				}
+			}
+
+			_, err = tx.Exec(
+				`DELETE FROM messages
+				 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
+				sourceID, conversationID, legacySourceMessageID,
+			)
+			if err != nil {
+				return fmt.Errorf("delete legacy source_message_id: %w", err)
+			}
+			return nil
+		}
+
+		_, err = tx.Exec(
+			`UPDATE messages
+			 SET source_message_id = ?, deleted_from_source_at = NULL
+			 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
+			newSourceMessageID, sourceID, conversationID, legacySourceMessageID,
+		)
+		if err != nil {
+			return fmt.Errorf("migrate source_message_id: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -806,6 +874,17 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 		`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
 }
 
+// SetReplyTo links a channel reply to its parent by resolving the parent's
+// source_message_id to its internal messages.id within the same source.
+func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
+	_, err := s.db.Exec(s.dialect.Rebind(`
+		UPDATE messages SET reply_to_message_id =
+		  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
+		WHERE source_id = ? AND source_message_id = ?`),
+		sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
+	return err
+}
+
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
 	_, err := s.db.Exec(fmt.Sprintf(`
@@ -1256,6 +1335,134 @@ func (s *Store) RecomputeConversationStats(sourceID int64) error {
 	`, sourceID)
 	if err != nil {
 		return fmt.Errorf("recompute conversation stats: %w", err)
+	}
+	return nil
+}
+
+// ForEachTeamsHostedContentBody invokes fn with (messageID, bodyHTML) for every
+// message of the given source whose HTML body contains a hostedContents URL, so
+// callers can re-fetch inline media.
+func (s *Store) ForEachTeamsHostedContentBody(sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
+	return s.forEachHostedContentBody(`
+		SELECT mb.message_id, mb.body_html
+		FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id
+		WHERE m.source_id = ? AND mb.body_html LIKE '%hostedContents%'
+	`, sourceID, fn)
+}
+
+// ForEachTeamsIncompleteHostedContentBody is like ForEachTeamsHostedContentBody
+// but yields only messages whose number of distinct hostedContents references
+// in body_html exceeds the count of inline image files already stored for them
+// — i.e. messages whose inline media was not fully downloaded (transient fetch
+// failures). Used to retry just the gaps instead of re-fetching everything.
+func (s *Store) ForEachTeamsIncompleteHostedContentBody(sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
+	type bodyRow struct {
+		id   int64
+		body string
+	}
+	var buf []bodyRow
+
+	rows, err := s.db.Query(`
+		SELECT mb.message_id, mb.body_html,
+		       (SELECT COUNT(*) FROM attachments a
+		        WHERE a.message_id = mb.message_id
+		          AND a.storage_path NOT LIKE 'http%' AND a.storage_path != ''
+		          AND a.content_hash != '')
+		FROM message_bodies mb
+		JOIN messages m ON m.id = mb.message_id
+		WHERE m.source_id = ? AND mb.body_html LIKE '%hostedContents%'
+	`, sourceID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var messageID int64
+		var bodyHTML sql.NullString
+		var localAttachmentRows int
+		if err := rows.Scan(&messageID, &bodyHTML, &localAttachmentRows); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if !bodyHTML.Valid || bodyHTML.String == "" {
+			continue
+		}
+		if countDistinctHostedContentRefs(bodyHTML.String) > localAttachmentRows {
+			buf = append(buf, bodyRow{id: messageID, body: bodyHTML.String})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range buf {
+		if err := fn(r.id, r.body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var teamsHostedContentURLRe = regexp.MustCompile(`https?://[^"'\s)]+/hostedContents/[^"'\s)]+/\$value`)
+
+func countDistinctHostedContentRefs(bodyHTML string) int {
+	refs := teamsHostedContentURLRe.FindAllString(bodyHTML, -1)
+	if len(refs) == 0 {
+		return 0
+	}
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		seen[ref] = struct{}{}
+	}
+	return len(seen)
+}
+
+// forEachHostedContentBody runs query (a single ? = sourceID, selecting
+// message_id, body_html) and invokes fn per row. The matching rows are read
+// fully and the read cursor is closed BEFORE any callback runs: callers
+// typically write (e.g. UpsertAttachment) inside fn, and holding a streaming
+// read cursor open across those writes pins a second pooled connection and
+// contends for SQLite's single writer ("database is locked"). Returning an
+// error from fn stops iteration and is returned.
+func (s *Store) forEachHostedContentBody(query string, sourceID int64, fn func(messageID int64, bodyHTML string) error) error {
+	type bodyRow struct {
+		id   int64
+		body string
+	}
+	var buf []bodyRow
+
+	rows, err := s.db.Query(query, sourceID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var messageID int64
+		var bodyHTML sql.NullString
+		if err := rows.Scan(&messageID, &bodyHTML); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if !bodyHTML.Valid || bodyHTML.String == "" {
+			continue
+		}
+		buf = append(buf, bodyRow{id: messageID, body: bodyHTML.String})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	// Release the read cursor (and its connection) before the write callbacks.
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, r := range buf {
+		if err := fn(r.id, r.body); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1735,6 +1942,32 @@ func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, rea
 	return err
 }
 
+type ReactionRef struct {
+	ParticipantID int64
+	Type          string
+	Value         string
+	CreatedAt     time.Time
+}
+
+// ReplaceReactions replaces all reactions for a message atomically.
+func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
+			return err
+		}
+		for _, r := range reactions {
+			if r.ParticipantID == 0 {
+				continue
+			}
+			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.
 // Unlike UpsertMessageRaw (which hardcodes 'mime'), this accepts the format as a parameter.
 func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, format string) error {
@@ -1776,8 +2009,11 @@ func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) 
 		    WHERE m.id = a.message_id AND m.source_id = ?
 		  )
 		  AND a.content_hash IS NOT NULL
+		  AND a.content_hash != ''
 		  AND a.storage_path IS NOT NULL
 		  AND a.storage_path != ''
+		  AND a.storage_path NOT LIKE 'http://%'
+		  AND a.storage_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (
 		      SELECT 1 FROM attachments a2
 		      WHERE a2.content_hash = a.content_hash
@@ -1857,4 +2093,52 @@ func (s *Store) UpsertAttachment(messageID int64, filename, mimeType, storagePat
 		VALUES (?, ?, ?, ?, ?, ?, %s)
 	`, s.dialect.Now()), messageID, filename, mimeType, storagePath, contentHash, int64(size))
 	return err
+}
+
+// RecomputeMessageAttachmentStats refreshes the denormalized attachment flags
+// on one message from its current attachment rows.
+func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
+	_, err := s.db.Exec(`
+		UPDATE messages
+		SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
+		    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
+		WHERE id = ?
+	`, messageID, messageID, messageID)
+	return err
+}
+
+type AttachmentRef struct {
+	Filename    string
+	MimeType    string
+	StoragePath string
+	ContentHash string
+	Size        int
+}
+
+// ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
+// It intentionally leaves content-addressed local attachment paths (for example
+// downloaded inline media) untouched.
+func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ?
+			  AND (storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
+		`, messageID); err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.StoragePath == "" {
+				continue
+			}
+			if _, err := tx.Exec(fmt.Sprintf(`
+				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, %s)
+				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

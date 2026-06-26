@@ -515,6 +515,7 @@ func (e *Engine) GetMessage(ctx context.Context, id int64) (*query.MessageDetail
 			Filename: att.Filename,
 			MimeType: att.MimeType,
 			Size:     att.Size,
+			URL:      att.URL,
 		})
 	}
 
