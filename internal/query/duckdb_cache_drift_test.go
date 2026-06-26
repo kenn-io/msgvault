@@ -3,8 +3,10 @@ package query
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
@@ -122,6 +124,90 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *test
 	assert.Equal(t, "Hello SOFRA", second.Messages[1].Subject)
 }
 
+func TestDuckDBEngine_SearchFastWithStatsRebuildsStatsWhenAttachmentsChange(t *testing.T) {
+	pb := newParquetBuilder(t).
+		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
+			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
+		`).
+		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
+		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
+		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
+		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
+		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 100::BIGINT, 'x')`).
+		addTable("conversations", "conversations", "conversations.parquet", conversationsCols, `(100::BIGINT, 'thread100', '')`)
+
+	analyticsDir, cleanup := pb.build()
+	t.Cleanup(cleanup)
+
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(t, err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	ctx := context.Background()
+	q := search.Parse("SOFRA")
+
+	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.NoError(t, err, "SearchFastWithStats before attachments rebuild")
+	require.NotNil(t, first.Stats)
+	require.Len(t, first.Messages, 1)
+	require.Equal(t, int64(0), first.Stats.AttachmentCount)
+	require.Equal(t, 0, first.Messages[0].AttachmentCount)
+
+	attPath := filepath.Join(analyticsDir, "attachments", "attachments.parquet")
+	rewriteParquetForTest(t, attPath, attachmentsCols, `(1::BIGINT, 123::BIGINT, 'file.pdf')`)
+
+	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
+	require.NoError(t, err, "SearchFastWithStats after attachments rebuild")
+	require.NotNil(t, second.Stats)
+	require.Len(t, second.Messages, 1)
+	assert.Equal(t, int64(1), second.Stats.AttachmentCount)
+	assert.Equal(t, int64(123), second.Stats.AttachmentSize)
+	assert.Equal(t, 1, second.Messages[0].AttachmentCount)
+}
+
+func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
+	analyticsDir, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+
+	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	require.NoError(t, err, "NewDuckDBEngine")
+	t.Cleanup(func() { _ = engine.Close() })
+
+	for _, dir := range RequiredParquetDirs {
+		t.Run(dir, func(t *testing.T) {
+			before := engine.cacheFingerprint()
+			touchParquetForTest(t, firstRequiredParquetForTest(t, analyticsDir, dir))
+			after := engine.cacheFingerprint()
+			assert.NotEqual(t, before, after, "fingerprint should include %s", dir)
+		})
+	}
+}
+
+func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
+	staleCols := map[string]map[string]bool{datasetMessages: map[string]bool{"message_type": true}}
+	freshCols := map[string]map[string]bool{datasetMessages: map[string]bool{"message_type": false}}
+	fingerprints := []string{"before", "after", "after", "after"}
+	probeCalls := 0
+
+	cols, fp := stableOptionalColumns(func() string {
+		require.NotEmpty(t, fingerprints, "unexpected fingerprint call")
+		fp := fingerprints[0]
+		fingerprints = fingerprints[1:]
+		return fp
+	}, func() map[string]map[string]bool {
+		probeCalls++
+		if probeCalls == 1 {
+			return staleCols
+		}
+		return freshCols
+	})
+
+	assert.Equal(t, 2, probeCalls)
+	assert.Equal(t, freshCols, cols)
+	assert.Equal(t, "after", fp)
+}
+
 // rewriteParquetForTest overwrites an existing Parquet file with a new schema
 // and rows, simulating an out-of-band cache rebuild.
 func rewriteParquetForTest(t *testing.T, path, columns, values string) {
@@ -130,4 +216,29 @@ func rewriteParquetForTest(t *testing.T, path, columns, values string) {
 	require.NoError(t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	writeTableParquet(t, db, escapePath(path), columns, values, false)
+}
+
+func firstRequiredParquetForTest(t *testing.T, analyticsDir, dir string) string {
+	t.Helper()
+	patterns := []string{filepath.Join(analyticsDir, dir, "*.parquet")}
+	if dir == datasetMessages {
+		patterns = append([]string{filepath.Join(analyticsDir, dir, "*", "*.parquet")}, patterns...)
+	}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		require.NoError(t, err, "glob parquet files")
+		if len(matches) > 0 {
+			return matches[0]
+		}
+	}
+	require.FailNow(t, "required parquet file not found", "dir %s", dir)
+	return ""
+}
+
+func touchParquetForTest(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err, "stat parquet file")
+	modTime := info.ModTime().Add(time.Second)
+	require.NoError(t, os.Chtimes(path, modTime, modTime), "touch parquet file")
 }

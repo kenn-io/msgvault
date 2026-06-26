@@ -149,12 +149,9 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
 	// Old cache files may lack these columns; we'll supply defaults in parquetCTEs().
-	engine.optionalCols = map[string]map[string]bool{
-		datasetParticipants:  engine.probeParquetColumns(engine.parquetPath(datasetParticipants), false),
-		datasetMessages:      engine.probeParquetColumns(engine.parquetGlob(), true),
-		datasetConversations: engine.probeParquetColumns(engine.parquetPath(datasetConversations), false),
-		"sources":            engine.probeParquetColumns(engine.parquetPath("sources"), false),
-	}
+	engine.optionalCols, engine.cacheFP = stableOptionalColumns(engine.cacheFingerprint, func() map[string]map[string]bool {
+		return probeAllOptionalColumns(db, analyticsDir)
+	})
 	var missing []string
 	for _, col := range []struct{ table, col string }{
 		{datasetParticipants, "phone_number"},
@@ -172,10 +169,6 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 	if len(missing) > 0 {
 		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault build-cache --full-rebuild' to update", missing)
 	}
-	// Record the cache fingerprint so ensureFreshOptionalCols can detect a
-	// later rebuild and re-probe instead of trusting this snapshot forever.
-	engine.cacheFP = engine.cacheFingerprint()
-
 	// Register SQL views over Parquet files for raw SQL access.
 	// Pass the already-probed optionalCols to avoid a redundant schema probe.
 	if err := RegisterViewsWithColumns(db, analyticsDir, engine.optionalCols); err != nil {
@@ -255,14 +248,6 @@ func (e *DuckDBEngine) parquetPath(table string) string {
 	return filepath.Join(e.analyticsDir, table, "*.parquet")
 }
 
-// probeParquetColumns checks which columns exist in a Parquet table's files.
-// Delegates to the standalone probeColumns in views.go.
-func (e *DuckDBEngine) probeParquetColumns(
-	pathPattern string, hivePartitioning bool,
-) map[string]bool {
-	return probeColumns(e.db, pathPattern, hivePartitioning)
-}
-
 // hasCol returns true if the named column exists in the Parquet schema for the given table.
 func (e *DuckDBEngine) hasCol(table, col string) bool {
 	e.optColsMu.RLock()
@@ -278,19 +263,14 @@ func (e *DuckDBEngine) hasCol(table, col string) bool {
 }
 
 // cacheFingerprint computes a cheap signature of the analytics Parquet cache.
-// It combines, per probed table, the file count and each file's size and
+// It combines, per required table, the file count and each file's size and
 // modification time. When build-cache or sync rewrites the cache underneath a
 // long-running process the fingerprint changes, letting the engine detect that
-// its probed column set is stale. Pure filesystem stats — no DuckDB access.
+// its probed column set and materialized search cache are stale. Pure
+// filesystem stats — no DuckDB access.
 func (e *DuckDBEngine) cacheFingerprint() string {
 	var b strings.Builder
-	globs := []string{
-		filepath.Join(e.analyticsDir, datasetMessages, "*", "*.parquet"),
-		e.parquetPath(datasetParticipants),
-		e.parquetPath(datasetConversations),
-		e.parquetPath("sources"),
-	}
-	for _, g := range globs {
+	for _, g := range e.cacheFingerprintGlobs() {
 		matches, _ := filepath.Glob(g)
 		fmt.Fprintf(&b, "%s#%d|", g, len(matches))
 		for _, m := range matches {
@@ -300,6 +280,33 @@ func (e *DuckDBEngine) cacheFingerprint() string {
 		}
 	}
 	return b.String()
+}
+
+func (e *DuckDBEngine) cacheFingerprintGlobs() []string {
+	globs := make([]string, 0, len(RequiredParquetDirs))
+	for _, dir := range RequiredParquetDirs {
+		if dir == datasetMessages {
+			globs = append(globs, filepath.Join(e.analyticsDir, dir, "*", "*.parquet"))
+			continue
+		}
+		globs = append(globs, e.parquetPath(dir))
+	}
+	return globs
+}
+
+func stableOptionalColumns(
+	cacheFingerprint func() string,
+	probe func() map[string]map[string]bool,
+) (map[string]map[string]bool, string) {
+	for {
+		before := cacheFingerprint()
+		cols := probe()
+		after := cacheFingerprint()
+		if before == after {
+			return cols, after
+		}
+		log.Printf("[info] analytics cache changed during Parquet schema probe — retrying")
+	}
 }
 
 // ensureFreshOptionalCols re-probes the Parquet schema (and re-registers the
@@ -326,7 +333,9 @@ func (e *DuckDBEngine) ensureFreshOptionalCols() {
 		return
 	}
 
-	newCols := probeAllOptionalColumns(e.db, e.analyticsDir)
+	newCols, fp := stableOptionalColumns(e.cacheFingerprint, func() map[string]map[string]bool {
+		return probeAllOptionalColumns(e.db, e.analyticsDir)
+	})
 	e.optionalCols = newCols
 	e.cacheFP = fp
 	if err := RegisterViewsWithColumns(e.db, e.analyticsDir, newCols); err != nil {
