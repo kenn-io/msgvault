@@ -15,11 +15,12 @@ Archive a lifetime of email. Analytics and search in milliseconds, entirely offl
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against local data with no network access required.
 
-Currently supports Gmail and IMAP sync, plus offline imports from MBOX exports and Apple Mail (.emlx) directories.
+Currently supports Gmail, Google Calendar, and IMAP sync, plus offline imports from MBOX exports and Apple Mail (.emlx) directories.
 
 ## Features
 
 - **Full Gmail backup**: raw MIME, attachments, labels, and metadata
+- **Google Calendar sync**: archive events, organizers, and attendees; searchable alongside email
 - **IMAP sync**: archive mail from any standard IMAP server
 - **MBOX / Apple Mail import**: import email from MBOX exports or Apple Mail (.emlx) directories
 - **Interactive TUI**: drill-down analytics over your entire message history, powered by DuckDB over Parquet — connects to a remote `msgvault serve` instance or runs locally
@@ -87,6 +88,8 @@ msgvault tui
 | `add-account EMAIL` | Authorize a Gmail account (use `--headless` for servers) or add an IMAP account |
 | `sync-full EMAIL` | Full sync (`--limit N`, `--after`/`--before` for date ranges) |
 | `sync EMAIL` | Sync only new/changed messages |
+| `add-calendar EMAIL` | Authorize read-only Google Calendar access and register calendars |
+| `sync-calendar NAME\|EMAIL` | Sync Google Calendar events (full first run, then incremental) |
 | `tui` | Launch the interactive TUI (`--account` to filter, `--local` to force local) |
 | `search QUERY` | Search messages (`--account` to filter, `--json` for machine output) |
 | `show-message ID` | View full message details (`--json` for machine output) |
@@ -175,6 +178,27 @@ msgvault import-synctech-sms --owner-phone +15550000001 ~/Downloads/sms-backup.z
 
 SMS and MMS messages appear in text-message search. Call logs are imported as searchable call records with `message_type = synctech_sms_call`, so missed and outgoing calls do not mix into normal text threads.
 
+### Google Calendar
+
+Archive your calendars alongside email. Events become searchable (full-text and, when vector search is enabled, semantic) and join the same contact graph as your email, so organizers and attendees dedupe with the people you email.
+
+```bash
+# Authorize read-only Calendar access and register your calendars.
+# If the account already has Gmail access, the consent screen asks for
+# Gmail + Calendar together — keep BOTH checked so Gmail access is kept.
+msgvault add-calendar you@gmail.com
+
+# First run does a full sync; later runs are incremental.
+msgvault sync-calendar you@gmail.com
+msgvault sync-calendar you@gmail.com --full          # force a full re-sync
+msgvault sync-calendar you@gmail.com --all-calendars # include subscribed/holiday calendars
+
+# Find events
+msgvault search "standup" --message-type calendar_event
+```
+
+By default only calendars you own or can write to are synced (add `--all-calendars` for subscribed and holiday calendars). Calendar sync is read-only and never modifies your Google Calendar. Cancelled events are kept (marked cancelled), not deleted, so your archive preserves that a meeting once existed. The Calendar API must be enabled on your Google Cloud OAuth project.
+
 Msgvault stores Google OAuth refresh tokens under the Msgvault home directory with file permissions restricted to the current user. Tokens and client secrets are not written into `config.toml`, logs, README examples, or exported fixtures.
 
 ## Configuration
@@ -227,7 +251,7 @@ Workspace admins can use a Google service account with domain-wide delegation in
 service_account_key = "/secure/path/service-account.json"
 ```
 
-In Google Admin Console, authorize the service account client for `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.modify`. If you will run `delete-staged` with permanent deletion, also authorize `https://mail.google.com/`. Keep the key file owner-only, for example `chmod 600 /secure/path/service-account.json`.
+In Google Admin Console, authorize the service account client for `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.modify`. If you will archive Google Calendar, also authorize `https://www.googleapis.com/auth/calendar.readonly`. If you will run `delete-staged` with permanent deletion, also authorize `https://mail.google.com/`. Keep the key file owner-only, for example `chmod 600 /secure/path/service-account.json`.
 
 ```bash
 msgvault add-account you@acme.com --oauth-app acme
@@ -252,6 +276,11 @@ Configure scheduled syncs in `config.toml`:
 [[accounts]]
 email = "you@gmail.com"
 schedule = "0 2 * * *"   # 2am daily (cron)
+enabled = true
+
+[[gcal]]                  # scheduled Google Calendar sync
+email = "you@gmail.com"
+schedule = "0 */6 * * *" # every 6 hours
 enabled = true
 
 [server]

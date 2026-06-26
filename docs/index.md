@@ -18,9 +18,9 @@ search, and local AI workflows.
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
-Supports Gmail sync, IMAP, Microsoft 365, PST import, MBOX import, Apple Mail
-import, and chat/text import (WhatsApp, iMessage, Google Voice, Facebook
-Messenger, and SMS Backup & Restore).
+Supports Gmail sync, Google Calendar sync, IMAP, Microsoft 365, PST import, MBOX
+import, Apple Mail import, and chat/text import (WhatsApp, iMessage, Google Voice,
+Facebook Messenger, and SMS Backup & Restore).
 
 Read the [Introduction](/introduction/) to learn more about why this project
 was created.
@@ -69,6 +69,10 @@ disk that you own and control.
   <section>
     <h3>Full Email Backup</h3>
     <p>Downloads complete messages from Gmail or any IMAP server, including raw MIME, labels, metadata, and every attachment. Every PDF, photo, spreadsheet, and document you've ever received or sent is extracted and stored locally, deduplicated by content hash.</p>
+  </section>
+  <section>
+    <h3>Calendar Sync</h3>
+    <p>Archive Google Calendar alongside email. Events — including organizers, attendees, recurring series, and cancellations — become searchable by keyword and by meaning, and their participants dedupe with your email contacts. Read-only and incremental.</p>
   </section>
   <section>
     <h3>Lightning-Fast TUI</h3>

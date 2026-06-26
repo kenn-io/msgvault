@@ -197,7 +197,14 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 }
 
 func (e *Engine) validateBuildScope(filter vector.Filter) error {
-	scope := vector.NewBuildScope(e.cfg.BuildScope.MessageTypes)
+	return ValidateBuildScope(e.cfg.BuildScope, filter)
+}
+
+// ValidateBuildScope rejects filters that cannot safely answer from a scoped
+// embedding index. A non-empty build scope only covers those message types, so
+// callers must make the query scope explicit and compatible before running ANN.
+func ValidateBuildScope(buildScope vector.BuildScope, filter vector.Filter) error {
+	scope := vector.NewBuildScope(buildScope.MessageTypes)
 	if scope.IsEmpty() {
 		return nil
 	}

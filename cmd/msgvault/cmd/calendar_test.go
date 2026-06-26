@@ -1,0 +1,124 @@
+package cmd
+
+import (
+	"database/sql"
+	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func TestCalendarDateBounds(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+
+	t.Run("valid bounds map to RFC3339 UTC", func(t *testing.T) {
+		tmin, tmax, err := calendarDateBounds(cmd, "2024-01-15", "2024-12-31")
+		require.NoError(t, err)
+		assert.Equal(t, "2024-01-15T00:00:00Z", tmin)
+		assert.Equal(t, "2024-12-31T00:00:00Z", tmax)
+	})
+
+	t.Run("empty bounds yield empty strings", func(t *testing.T) {
+		tmin, tmax, err := calendarDateBounds(cmd, "", "")
+		require.NoError(t, err)
+		assert.Empty(t, tmin)
+		assert.Empty(t, tmax)
+	})
+
+	t.Run("invalid after is rejected", func(t *testing.T) {
+		_, _, err := calendarDateBounds(cmd, "01/15/2024", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--after")
+	})
+
+	t.Run("invalid before is rejected", func(t *testing.T) {
+		_, _, err := calendarDateBounds(cmd, "", "not-a-date")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--before")
+	})
+}
+
+func TestCalendarLabel(t *testing.T) {
+	assert.Equal(t, "Personal [primary]", calendarLabel(gcal.Calendar{ID: "primary", Summary: "Personal"}))
+	assert.Equal(t, "holidays@x", calendarLabel(gcal.Calendar{ID: "holidays@x"}))
+}
+
+func TestCalendarSyncUsesFullWhenSelectionCanExpandCalendars(t *testing.T) {
+	assert := assert.New(t)
+	existing := []*store.Source{calendarSourceWithSyncConfig(`{"calendar_id":"primary"}`)}
+	assert.False(calendarSyncShouldRunFullForSources(existing, false, false, "", nil, false),
+		"an unfiltered sync with registered calendars can use incremental")
+	assert.True(calendarSyncShouldRunFullForSources(existing, false, true, "", nil, false),
+		"--all-calendars must enumerate calendars even when one source already exists")
+	assert.True(calendarSyncShouldRunFullForSources(existing, false, false, "reader", nil, false),
+		"--min-access-role can add calendars not yet registered")
+	assert.False(calendarSyncShouldRunFullForSources(existing, false, false, "", []string{"primary"}, false),
+		"a requested calendar that is already registered can use incremental")
+	assert.True(calendarSyncShouldRunFullForSources(existing, false, false, "", []string{"primary", "shared@example.com"}, false),
+		"a configured calendar missing from registered sources needs a full registration sync")
+	assert.True(calendarSyncShouldRunFullForSources(existing, false, false, "", []string{"shared@example.com"}, false),
+		"--calendar can name a calendar not yet registered")
+	assert.True(calendarSyncShouldRunFullForSources(existing, true, false, "", nil, false),
+		"--full still forces a full sync")
+	assert.True(calendarSyncShouldRunFullForSources(nil, false, false, "", nil, false),
+		"first sync must enumerate calendars")
+	assert.True(calendarSyncShouldRunFullForSources([]*store.Source{calendarSourceWithSyncConfig(`{"account_email":"user@example.com"}`)}, false, false, "", nil, false),
+		"malformed registered calendar sources should self-heal with a full sync")
+	assert.True(calendarSyncShouldRunFullForSources(existing, false, false, "", []string{"primary"}, true),
+		"--after/--before must force a full sync so bounds are honored")
+}
+
+func TestCalendarSyncFullOnlyOptions(t *testing.T) {
+	assert := assert.New(t)
+	assert.False(calendarSyncHasFullOnlyOptions("", "", 0))
+	assert.True(calendarSyncHasFullOnlyOptions("2024-01-01T00:00:00Z", "", 0),
+		"--after must force full sync")
+	assert.True(calendarSyncHasFullOnlyOptions("", "2024-12-31T00:00:00Z", 0),
+		"--before must force full sync")
+	assert.True(calendarSyncHasFullOnlyOptions("", "", 10),
+		"--limit must force full sync")
+}
+
+func TestCalendarAddOAuthScopes(t *testing.T) {
+	assert.ElementsMatch(t, oauth.ScopesCalendar, calendarAddOAuthScopes(false),
+		"a new calendar-only account should request only Calendar")
+	assert.ElementsMatch(t, oauth.ScopesGmailCalendar, calendarAddOAuthScopes(true),
+		"an existing Gmail token must preserve Gmail while adding Calendar")
+}
+
+func calendarSourceWithSyncConfig(syncConfig string) *store.Source {
+	return &store.Source{SyncConfig: sql.NullString{String: syncConfig, Valid: true}}
+}
+
+func TestCalendarStoredOAuthAppUsesRegisteredSource(t *testing.T) {
+	sources := []*store.Source{
+		{OAuthApp: sql.NullString{}},
+		{OAuthApp: sql.NullString{String: "personal", Valid: true}},
+	}
+
+	assert.Equal(t, "personal", calendarStoredOAuthApp(sources))
+}
+
+func TestCalendarSyncNextCommandIncludesOAuthApp(t *testing.T) {
+	assert.Equal(t,
+		"msgvault sync-calendar --oauth-app personal user@example.com",
+		calendarSyncNextCommand("user@example.com", "personal"))
+	assert.Equal(t,
+		"msgvault sync-calendar user@example.com",
+		calendarSyncNextCommand("user@example.com", ""))
+}
+
+func TestCalendarCommandsRegistered(t *testing.T) {
+	have := map[string]bool{}
+	for _, c := range rootCmd.Commands() {
+		have[c.Name()] = true
+	}
+	assert.True(t, have["add-calendar"], "add-calendar should be registered")
+	assert.True(t, have["sync-calendar"], "sync-calendar should be registered")
+}

@@ -205,6 +205,13 @@ docker logs msgvault
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/status
 ```
 
+!!! tip "Archive Google Calendar too"
+    The same headless-token workflow archives Google Calendar. Authorize with
+    `msgvault add-calendar you@gmail.com` on a machine with a browser, copy the
+    token to the server (it now carries Gmail + Calendar), then add a `[[gcal]]`
+    entry with a cron `schedule` so the daemon syncs it. See
+    [Google Calendar](/usage/calendar/).
+
 After setup, your data directory contains:
 
 ```

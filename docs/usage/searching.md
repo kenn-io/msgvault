@@ -84,6 +84,22 @@ The two flags are mutually exclusive. Collection filters work in full-text, vect
 
 SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/architecture/search-ranking/).
 
+## Filtering by Message Type
+
+Archives can hold more than email — Google Calendar events, text messages, and
+call logs all live in the same database. Restrict a search to one kind with
+`--message-type`:
+
+```bash
+# Only Google Calendar events
+msgvault search "standup" --message-type calendar_event
+
+# Only SMS/MMS text messages
+msgvault search "dinner" --message-type sms
+```
+
+Values include `calendar_event`, `sms`, `mms`, and `synctech_sms_call`.
+
 ## JSON Output
 
 Add `--json` for machine-readable output:

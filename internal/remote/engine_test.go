@@ -124,7 +124,6 @@ func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	}, 10, 0)
 	require.NoError(err, "Search")
 }
-
 func TestBuildSearchQueryStringIncludesMessageTypes(t *testing.T) {
 	assert := assertpkg.New(t)
 
@@ -138,4 +137,36 @@ func TestBuildSearchQueryStringIncludesMessageTypes(t *testing.T) {
 		buildSearchQueryString(search.Parse("message_type:sms lunch")),
 		"message type with text term",
 	)
+}
+
+func TestEngineSearchForwardsMessageTypeOnlyTerms(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	called := false
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
+		assert.Equal("message_type:sms", r.URL.Query().Get("q"), "q")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query":    r.URL.Query().Get("q"),
+			"messages": []map[string]any{},
+			"count":    0,
+			"has_more": false,
+			"offset":   0,
+			"limit":    10,
+		})
+	}))
+	defer srv.Close()
+
+	store := &Store{baseURL: srv.URL, httpClient: srv.Client()}
+	engine := NewEngineFromStore(store)
+
+	msgs, err := engine.Search(context.Background(), &search.Query{
+		MessageTypes: []string{"sms"},
+	}, 10, 0)
+
+	require.NoError(err, "Search")
+	assert.Empty(msgs, "messages")
+	assert.True(called, "message_type-only searches must not be treated as empty")
 }

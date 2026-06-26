@@ -815,6 +815,64 @@ func TestDuckDBEngine_AggregateBySenderName_SearchByPhone(t *testing.T) {
 	assertpkg.Len(t, results, 1, "phone search should isolate the phone-only sender")
 }
 
+func TestDuckDBEngine_SearchFast_MessageTypeConflictReturnsNoMatches(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "zzducktypeterm email",
+		SentAt:       makeDate(1, 15),
+		SizeEstimate: 1000,
+		MessageType:  "email",
+	})
+	b.AddMessage(MessageOpt{
+		Subject:      "zzducktypeterm sms",
+		SentAt:       makeDate(1, 16),
+		SizeEstimate: 1000,
+		MessageType:  messageTypeSMS,
+	})
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	q := &search.Query{
+		TextTerms:    []string{"zzducktypeterm"},
+		MessageTypes: []string{"email"},
+	}
+	results, err := engine.SearchFast(context.Background(), q, MessageFilter{MessageType: messageTypeSMS}, 100, 0)
+
+	requirepkg.NoError(t, err)
+	assertpkg.Empty(t, results)
+	assertpkg.Equal(t, []string{"email"}, q.MessageTypes, "base query MessageTypes must not be mutated")
+}
+
+func TestDuckDBEngine_SearchFast_MessageTypeFilterReturnsScopedType(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	b.AddMessage(MessageOpt{
+		Subject:      "zzducktypeterm email",
+		SentAt:       makeDate(1, 15),
+		SizeEstimate: 1000,
+		MessageType:  "email",
+	})
+	b.AddMessage(MessageOpt{
+		Subject:      "zzducktypeterm sms",
+		SentAt:       makeDate(1, 16),
+		SizeEstimate: 1000,
+		MessageType:  messageTypeSMS,
+	})
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	q := &search.Query{
+		TextTerms:    []string{"zzducktypeterm"},
+		MessageTypes: []string{messageTypeSMS},
+	}
+	results, err := engine.SearchFast(context.Background(), q, MessageFilter{}, 100, 0)
+
+	requirepkg.NoError(t, err)
+	requirepkg.Len(t, results, 1)
+	assertpkg.Equal(t, messageTypeSMS, results[0].MessageType)
+}
+
 func TestDuckDBEngine_ListMessages_MatchEmptySenderName(t *testing.T) {
 	// Build Parquet data with a message that has no sender
 	b := NewTestDataBuilder(t)

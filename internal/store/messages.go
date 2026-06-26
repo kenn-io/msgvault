@@ -89,6 +89,41 @@ func (s *Store) MessageExistsBatch(sourceID int64, sourceMessageIDs []string) (m
 	return result, nil
 }
 
+// SetMessageMetadata writes the messages.metadata JSON/JSONB column for an
+// already-persisted message. The column exists in both dialects (schema.sql:
+// `metadata JSON`, schema_pg.sql: `metadata JSONB`) but the hot upsertMessageSQL
+// path never writes it, so non-email importers that need structured per-message
+// metadata (e.g. calendar events: end/all_day/status/recurrence) call this
+// immediately after UpsertMessage returns the id. Passing an invalid
+// sql.NullString writes SQL NULL, clearing the column. The dialect supplies the
+// JSONB cast on PG (?::JSONB) and a bare ? on SQLite, so a JSON string binds in
+// both backends.
+func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
+	_, err := s.db.Exec(fmt.Sprintf(`
+		UPDATE messages
+		SET metadata = %s
+		WHERE id = ?
+	`, s.dialect.JSONBindExpr()), metadata, messageID)
+	if err != nil {
+		return fmt.Errorf("set message metadata (id=%d): %w", messageID, err)
+	}
+	return err
+}
+
+// GetMessageMetadata reads the messages.metadata column for a message. It is
+// the read counterpart to SetMessageMetadata; importers use it to merge a flag
+// into existing metadata (e.g. flipping a calendar event to status=cancelled)
+// without losing the rest of the stored JSON. Returns an invalid NullString when
+// the column is NULL.
+func (s *Store) GetMessageMetadata(messageID int64) (sql.NullString, error) {
+	var meta sql.NullString
+	err := s.db.QueryRow(`SELECT metadata FROM messages WHERE id = ?`, messageID).Scan(&meta)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("get message metadata (id=%d): %w", messageID, err)
+	}
+	return meta, nil
+}
+
 // GetMessageIDByRFC822ID returns the internal ID of a message
 // with the given RFC822 Message-ID for this source, or 0 if
 // no match exists.
@@ -496,8 +531,30 @@ func replaceMessageRecipientsTx(tx *loggedTx, messageID int64, rs RecipientSet) 
 		return nil
 	}
 
+	// Collapse duplicate participants within this set. The table holds at most
+	// one row per (message_id, participant_id, recipient_type), so a participant
+	// repeated in one call — a calendar event listing the same attendee twice, or
+	// two address forms that resolve to the same participant — is redundant and
+	// would otherwise trip the UNIQUE constraint and abort the entire write. The
+	// first occurrence's display name wins.
+	seen := make(map[int64]struct{}, len(rs.ParticipantIDs))
+	ids := make([]int64, 0, len(rs.ParticipantIDs))
+	names := make([]string, 0, len(rs.ParticipantIDs))
+	for i, pid := range rs.ParticipantIDs {
+		if _, dup := seen[pid]; dup {
+			continue
+		}
+		seen[pid] = struct{}{}
+		ids = append(ids, pid)
+		name := ""
+		if i < len(rs.DisplayNames) {
+			name = rs.DisplayNames[i]
+		}
+		names = append(names, name)
+	}
+
 	return insertInChunks(tx, chunkInsert{
-		totalRows:    len(rs.ParticipantIDs),
+		totalRows:    len(ids),
 		valuesPerRow: 4,
 		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES ",
 	}, func(start, end int) ([]string, []any) {
@@ -505,11 +562,7 @@ func replaceMessageRecipientsTx(tx *loggedTx, messageID int64, rs RecipientSet) 
 		args := make([]any, 0, (end-start)*4)
 		for i := start; i < end; i++ {
 			values[i-start] = "(?, ?, ?, ?)"
-			displayName := ""
-			if i < len(rs.DisplayNames) {
-				displayName = rs.DisplayNames[i]
-			}
-			args = append(args, messageID, rs.ParticipantIDs[i], rs.Type, displayName)
+			args = append(args, messageID, ids[i], rs.Type, names[i])
 		}
 		return values, args
 	})

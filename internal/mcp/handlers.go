@@ -517,23 +517,18 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	active, err := h.backend.ActiveGeneration(ctx)
+	active, err := vector.ResolveActiveForFingerprint(ctx, h.backend, h.vectorCfg.GenerationFingerprint())
 	if err != nil {
 		if r := translateVectorErr(err); r != nil {
 			return r, nil
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
 	}
-	if h.vectorCfg.Enabled {
-		fingerprint := h.vectorCfg.GenerationFingerprint()
-		if fingerprint != "" && active.Fingerprint != fingerprint {
-			err := fmt.Errorf("%w: active=%q configured=%q",
-				vector.ErrIndexStale, active.Fingerprint, fingerprint)
-			if r := translateVectorErr(err); r != nil {
-				return r, nil
-			}
-			return mcp.NewToolResultError(fmt.Sprintf("active generation: %v", err)), nil
+	if err := hybrid.ValidateBuildScope(h.vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
+		if r := translateVectorErr(err); r != nil {
+			return r, nil
 		}
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	seed, err := h.backend.LoadVector(ctx, seedID)
@@ -542,13 +537,6 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 			return r, nil
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("load seed vector: %v", err)), nil
-	}
-
-	if h.vectorCfg.Enabled {
-		scope := h.vectorCfg.Embed.Scope.BuildScope()
-		if !scope.IsEmpty() {
-			filter.MessageTypes = append([]string(nil), scope.MessageTypes...)
-		}
 	}
 
 	// +1 so we can drop the seed itself from results without coming up short.
@@ -621,6 +609,9 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 	}
 	if srcID != nil {
 		f.SourceIDs = []int64{*srcID}
+	}
+	if messageType, _ := args["message_type"].(string); messageType != "" {
+		f.MessageTypes = vector.NewBuildScope([]string{messageType}).MessageTypes
 	}
 
 	if v, ok := args["has_attachment"].(bool); ok && v {

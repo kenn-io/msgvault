@@ -40,6 +40,7 @@ PUBLIC_MARKDOWN = {
     "setup.md",
     "troubleshooting.md",
     "usage/analytics.md",
+    "usage/calendar.md",
     "usage/chat.md",
     "usage/deduplication.md",
     "usage/deletion.md",

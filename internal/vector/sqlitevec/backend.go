@@ -1378,11 +1378,10 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 	// (e.g. management commands that open the backend without the main
 	// handle) reports 0 rather than failing Stats.
 	if gen != 0 && b.mainDB != nil {
+		missingWhere, missingArgs := b.missingCoverageWhere(int64(gen))
 		if err := b.mainDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM messages
-			  WHERE (embed_gen IS NULL OR embed_gen <> ?)
-			    AND `+store.LiveMessagesWhere("", true),
-			int64(gen)).Scan(&s.PendingCount); err != nil {
+			`SELECT COUNT(*) FROM messages WHERE `+missingWhere,
+			missingArgs...).Scan(&s.PendingCount); err != nil {
 			return s, fmt.Errorf("count missing: %w", err)
 		}
 	}

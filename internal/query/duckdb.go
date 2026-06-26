@@ -428,7 +428,7 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 		if typ == "" {
 			continue
 		}
-		if typ == "email" {
+		if typ == messageTypeEmail {
 			includeEmail = true
 			continue
 		}
@@ -439,7 +439,7 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 	if includeEmail {
 		conditions = append(conditions,
 			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))
-		args = append(args, "email")
+		args = append(args, messageTypeEmail)
 	}
 	if len(exact) > 0 {
 		placeholders := make([]string, len(exact))
@@ -1704,6 +1704,19 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.has_attachments = 1")
 	}
 
+	// message_type: filter — keep the non-delegated DuckDB fallback in sync
+	// with the SQLite FTS path so message_type scoping is honored regardless
+	// of which engine serves the search.
+	if len(q.MessageTypes) > 0 {
+		placeholders := make([]string, len(q.MessageTypes))
+		for i, typ := range q.MessageTypes {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions,
+			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
+	}
+
 	// Date range filters
 	if q.AfterDate != nil {
 		conditions = append(conditions, "m.sent_at >= CAST(? AS TIMESTAMP)")
@@ -2522,14 +2535,20 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	var args []any
 
 	// Apply basic filter conditions (ignoring join flags for search - we handle those differently)
-	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
-	if len(q.MessageTypes) > 0 {
-		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+	conditions = append(conditions,
+		store.LiveMessagesWhere("msg", filter.HideDeletedFromSource),
+	)
+	messageTypes, noMessageTypeMatches := scopedMessageTypes(q.MessageTypes, filter.MessageType)
+	switch {
+	case noMessageTypeMatches:
+		conditions = append(conditions, "1=0")
+	case len(messageTypes) > 0:
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", messageTypes)
 		if condition != "" {
 			conditions = append(conditions, condition)
 			args = append(args, conditionArgs...)
 		}
-	} else {
+	default:
 		// Restrict to email messages only; NULL and '' handle pre-message_type data.
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}

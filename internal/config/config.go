@@ -110,6 +110,7 @@ type Config struct {
 	Identity    IdentityConfig    `toml:"identity"`
 	Accounts    []AccountSchedule `toml:"accounts"`
 	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
+	GCal        []GCalSource      `toml:"gcal"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -273,6 +274,7 @@ func NewDefaultConfig() *Config {
 		},
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
+		GCal:        []GCalSource{},
 	}
 	cfg.Vector.ApplyDefaults()
 	return cfg
@@ -366,6 +368,7 @@ func Load(path, homeDir string) (*Config, error) {
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
 	cfg.applySynctechSMSDefaults()
+	cfg.applyGCalDefaults()
 
 	return cfg, nil
 }
@@ -564,6 +567,50 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 		}
 	}
 	return nil
+}
+
+// GCalSource is one configured Google Calendar sync target. Each entry is a
+// top-level [[gcal]] table.
+type GCalSource struct {
+	Name      string   `toml:"name"`      // identifier for sync-calendar <name>; defaults to Email
+	Email     string   `toml:"email"`     // the OAuth account = token key
+	OAuthApp  string   `toml:"oauth_app"` // optional named OAuth app
+	Calendars []string `toml:"calendars"` // optional calendarId filter; empty = owner+writer
+	Schedule  string   `toml:"schedule"`  // 5-field cron; empty = not daemon-scheduled
+	Enabled   bool     `toml:"enabled"`
+}
+
+// applyGCalDefaults normalizes [[gcal]] entries: a source with no name takes its
+// email, so `sync-calendar <email>` resolves it.
+func (c *Config) applyGCalDefaults() {
+	for i := range c.GCal {
+		if c.GCal[i].Name == "" {
+			c.GCal[i].Name = c.GCal[i].Email
+		}
+	}
+}
+
+// GetGCalSource returns the configured calendar source matching name or email
+// (case-insensitive), or nil.
+func (c *Config) GetGCalSource(name string) *GCalSource {
+	for _, src := range c.GCal {
+		if strings.EqualFold(src.Name, name) || strings.EqualFold(src.Email, name) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+// ScheduledGCalSources returns enabled calendar sources with a cron schedule.
+func (c *Config) ScheduledGCalSources() []GCalSource {
+	var out []GCalSource
+	for _, src := range c.GCal {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
 }
 
 func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {

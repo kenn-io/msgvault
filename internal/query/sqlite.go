@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1497,13 +1498,18 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 		}
 	}
 
+	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
+	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
+	// too, or `--mode=fts` search silently ignores message_type scoping for
+	// every non-email type. Mirrors the store/api.go IN(...) clause.
 	if len(q.MessageTypes) > 0 {
 		placeholders := make([]string, len(q.MessageTypes))
 		for i, typ := range q.MessageTypes {
 			placeholders[i] = "?"
 			args = append(args, strings.ToLower(typ))
 		}
-		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
+		conditions = append(conditions,
+			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
 	}
 
 	// Has attachment filter
@@ -1692,12 +1698,13 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.
-// Context filters are appended to existing query filters.
+// Most context filters are appended to existing query filters.
 //
 // Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
 // within each dimension (IN clause). Labels use per-term EXISTS subqueries
-// with AND semantics (message must have all labels). Context filters widen
-// the search within other constraints.
+// with AND semantics (message must have all labels). MessageType and date
+// filters are scoped intersections so an in-view search cannot widen outside
+// the current drill-down context.
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// Copy all fields from original query (preserves any future non-slice fields)
 	merged := *q
@@ -1711,6 +1718,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	merged.BccAddrs = append([]string(nil), q.BccAddrs...)
 	merged.SubjectTerms = append([]string(nil), q.SubjectTerms...)
 	merged.Labels = append([]string(nil), q.Labels...)
+	merged.MessageTypes = append([]string(nil), q.MessageTypes...)
 	// Deep-copy AccountIDs alongside the other slices so the merged
 	// query never aliases the original's slice header. Filter overrides
 	// below replace the deep-copied slice when set.
@@ -1743,6 +1751,17 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// Label filter - append to existing label: filters
 	if filter.Label != "" {
 		merged.Labels = append(merged.Labels, filter.Label)
+	}
+
+	// message_type filter - scope FTS search to the drill-down context's
+	// type (e.g. Texts mode → sms/mms). Without this, SearchFast within a
+	// type-scoped view would silently widen back to all message types.
+	if filter.MessageType != "" {
+		messageTypes, noMatches := scopedMessageTypes(merged.MessageTypes, filter.MessageType)
+		merged.MessageTypes = messageTypes
+		if noMatches {
+			merged.AccountIDs = []int64{}
+		}
 	}
 
 	// Attachment filter - set if context requires attachments
@@ -1799,6 +1818,23 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// contexts will not be scoped to the current view.
 
 	return &merged
+}
+
+func containsMessageType(types []string, want string) bool {
+	return slices.Contains(types, want)
+}
+
+func scopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
+	if filterType == "" {
+		return append([]string(nil), queryTypes...), false
+	}
+	if len(queryTypes) == 0 {
+		return []string{filterType}, false
+	}
+	if containsMessageType(queryTypes, filterType) {
+		return []string{filterType}, false
+	}
+	return []string{filterType}, true
 }
 
 // timePeriodToBounds converts a time period string to half-open date

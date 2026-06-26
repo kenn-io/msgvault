@@ -580,6 +580,38 @@ func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
 	assert.Error(err, "token should NOT exist under canonical %q", canonicalEmail)
 }
 
+func TestAuthorize_CalendarOnlyUsesCalendarProfileID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal("Bearer calendar-token", r.Header.Get("Authorization"), "Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"user@gmail.com"}`)
+		}))
+	defer srv.Close()
+
+	mgr := setupTestManager(t, ScopesCalendar)
+	mgr.profileURL = srv.URL
+	mgr.browserFlowFn = func(
+		_ context.Context, _ string, _ bool,
+	) (*oauth2.Token, error) {
+		return &oauth2.Token{
+			AccessToken: "calendar-token",
+			TokenType:   "Bearer",
+			Expiry:      time.Now().Add(time.Hour),
+		}, nil
+	}
+
+	require.NoError(mgr.Authorize(context.Background(), "user@gmail.com"), "Authorize")
+
+	loaded, err := mgr.loadTokenFile("user@gmail.com")
+	require.NoError(err, "loadTokenFile")
+	assert.Equal("calendar-token", loaded.AccessToken, "access token")
+	assert.ElementsMatch(ScopesCalendar, loaded.Scopes, "saved scopes")
+}
+
 // TestAuthorize_RejectsMismatch verifies that authorize() rejects
 // tokens where the profile email is for a different account and
 // does NOT persist a token file.

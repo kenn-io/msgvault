@@ -5,6 +5,22 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+**New features**
+
+- Google Calendar archive support via `msgvault add-calendar` and
+  `msgvault sync-calendar`, including read-only event sync, recurring series,
+  cancellations, scheduled `[[gcal]]` sync, and search with
+  `--message-type calendar_event`.
+
+**Improvements**
+
+- Scoped embedding generations can target selected message types, and local
+  full-text search now honors `--message-type` filters consistently.
+
+---
+
 ## 0.16.0
 <small>2026-06-18</small>
 
