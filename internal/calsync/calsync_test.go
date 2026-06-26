@@ -53,6 +53,33 @@ func TestRegisterCalendars_NormalizesAccountEmailInSourceIdentity(t *testing.T) 
 	assert.Equal("alice.example@example.com", cfg.AccountEmail)
 }
 
+func TestRegisterCalendars_ReusesMixedCaseCalendarSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	s, st := newSyncer(t, m, Options{AccountEmail: "Alice.Example@Example.COM"})
+
+	oldSrc, err := st.GetOrCreateSource(gcal.SourceType, "Alice.Example@Example.COM/primary")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncCursor(oldSrc.ID, "cursor-1"))
+	require.NoError(st.UpdateSourceSyncConfig(oldSrc.ID,
+		`{"account_email":"Alice.Example@Example.COM","calendar_id":"primary"}`))
+
+	_, err = s.RegisterCalendars(context.Background())
+	require.NoError(err)
+
+	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	require.NoError(err)
+	assert.Equal(oldSrc.ID, src.ID, "existing source row must be reused")
+	assert.Equal("cursor-1", src.SyncCursor.String, "existing cursor state must be preserved")
+
+	sources, err := st.ListSources(gcal.SourceType)
+	require.NoError(err)
+	assert.Len(sources, 1, "normalization must not create a duplicate gcal source")
+}
+
 // --- read-back helpers (direct SQL through the real store) ---
 
 type msgRow struct {
@@ -267,6 +294,37 @@ func TestFull_IdempotentReRun(t *testing.T) {
 	assert.Equal(2, countMessages(t, st, src.ID), "re-run must not duplicate rows")
 	again, _ := getMsg(t, st, src.ID, "e1")
 	assert.Equal(first.id, again.id, "message id stable across re-sync")
+}
+
+func TestFull_ReusesMixedCaseCalendarSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e1", "Meeting")}}
+	m.FullSyncToken["primary"] = "T1"
+	s, st := newSyncer(t, m, Options{AccountEmail: "Alice.Example@Example.COM"})
+
+	oldSrc, err := st.GetOrCreateSource(gcal.SourceType, "Alice.Example@Example.COM/primary")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(oldSrc.ID,
+		`{"account_email":"Alice.Example@Example.COM","calendar_id":"primary"}`))
+
+	res, err := s.Full(context.Background())
+	require.NoError(err)
+	assert.Equal(1, res.CalendarsSynced)
+	assert.Equal(1, res.EventsAdded)
+
+	src, err := st.GetSourceByIdentifier("alice.example@example.com/primary")
+	require.NoError(err)
+	assert.Equal(oldSrc.ID, src.ID, "full sync must reuse the existing source row")
+	assert.Equal("T1", src.SyncCursor.String, "cursor should advance on the reused source")
+	assert.Equal(1, countMessages(t, st, src.ID), "event should be stored under the reused source")
+
+	sources, err := st.ListSources(gcal.SourceType)
+	require.NoError(err)
+	assert.Len(sources, 1, "full sync must not create a duplicate gcal source")
 }
 
 func TestFull_AccessRoleFilter(t *testing.T) {
