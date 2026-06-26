@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -55,6 +57,58 @@ func TestResolveAccountFlag_ValidAccount(t *testing.T) {
 	require.NotNil(scope.Source, "expected Source to be populated")
 	assert.Equal(accountID, scope.Source.Identifier, "source identifier")
 	assert.Nil(scope.Collection, "expected Collection to be nil")
+}
+
+func TestResolveAccountFlag_IncludesCalendarSourcesForAccountEmail(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+
+	mkCalendarSource := func(identifier, accountEmail string) *store.Source {
+		t.Helper()
+		src, err := f.Store.GetOrCreateSource("gcal", identifier)
+		require.NoError(err, "GetOrCreateSource(%s)", identifier)
+		cfg, err := json.Marshal(map[string]string{
+			"account_email": accountEmail,
+			"calendar_id":   identifier,
+		})
+		require.NoError(err, "marshal sync_config")
+		require.NoError(f.Store.UpdateSourceSyncConfig(src.ID, string(cfg)), "UpdateSourceSyncConfig")
+		return src
+	}
+	primaryCal := mkCalendarSource("test@example.com/primary", "Test@Example.COM")
+	workCal := mkCalendarSource("test@example.com/work", "test@example.com")
+	otherCal := mkCalendarSource("other@example.com/primary", "other@example.com")
+
+	scope, err := ResolveAccountFlag(f.Store, accountID)
+	require.NoError(err)
+	require.NotNil(scope.Source, "direct Gmail source should still be available")
+	assert.Equal(f.Source.ID, scope.Source.ID, "source ID")
+	assert.ElementsMatch([]int64{f.Source.ID, primaryCal.ID, workCal.ID}, scope.SourceIDs())
+	assert.NotContains(scope.SourceIDs(), otherCal.ID, "other account calendar source")
+	assert.False(scope.IsCollection(), "calendar expansion should not masquerade as a collection")
+	assert.Equal(accountID, scope.DisplayName(), "display name")
+}
+
+func TestResolveAccountFlag_CalendarOnlyAccountEmail(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f := storetest.New(t)
+	cal, err := f.Store.GetOrCreateSource("gcal", "calendar-only@example.com/primary")
+	require.NoError(err, "GetOrCreateSource")
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": "Calendar.Only@Example.COM",
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+
+	scope, err := ResolveAccountFlag(f.Store, "calendar.only@example.com")
+	require.NoError(err)
+	assert.Nil(scope.Source, "calendar-only account has no single source")
+	assert.ElementsMatch([]int64{cal.ID}, scope.SourceIDs())
+	assert.False(scope.IsCollection(), "calendar-only account is still an account scope")
+	assert.Equal("calendar.only@example.com", scope.DisplayName())
 }
 
 func TestResolveCollectionFlag_ValidCollection(t *testing.T) {

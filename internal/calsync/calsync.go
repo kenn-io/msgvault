@@ -76,6 +76,7 @@ type Syncer struct {
 
 // New builds a Syncer.
 func New(client gcal.API, st *store.Store, opts Options) *Syncer {
+	opts.AccountEmail = normalizeAccountEmail(opts.AccountEmail)
 	return &Syncer{
 		client: client,
 		store:  st,
@@ -452,6 +453,10 @@ func accessRoleRank(role string) int {
 // collisions when two accounts subscribe to the same shared calendar ID.
 func (s *Syncer) sourceIdentifier(cal gcal.Calendar) string {
 	return s.opts.AccountEmail + "/" + cal.ID
+}
+
+func normalizeAccountEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // sourceConfigJSON builds the sync_config payload. account_email is the token

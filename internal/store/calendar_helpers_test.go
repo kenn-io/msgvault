@@ -114,3 +114,23 @@ func TestGetSourcesByTypeAndAccount(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(none)
 }
+
+func TestGetSourcesByTypeAndAccount_EmailCaseInsensitive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	src, err := st.GetOrCreateSource("gcal", "mixed@example.com/primary")
+	require.NoError(err)
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": "Mixed.Case@Example.COM",
+		"calendar_id":   "primary",
+	})
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(src.ID, string(cfg)))
+
+	got, err := st.GetSourcesByTypeAndAccount("gcal", "mixed.case@example.com")
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal(src.ID, got[0].ID)
+}
