@@ -51,6 +51,10 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 		if !s.includeCalendar(cal) {
 			continue
 		}
+		if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
+			recordErr(err)
+			continue
+		}
 
 		// No token yet → full sync.
 		if !src.SyncCursor.Valid || src.SyncCursor.String == "" {
