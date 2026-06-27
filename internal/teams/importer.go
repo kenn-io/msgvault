@@ -175,7 +175,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		}
 
 		since := state.ChatCursor(ch.ID)
-		msgs, _, err := imp.client.ListChatMessages(ctx, ch.ID, since, "")
+		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, since, opts.Limit)
 		if err != nil {
 			sum.Errors++
 			continue
@@ -210,7 +210,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				maxTime = t
 			}
 		}
-		truncated := opts.Limit > 0 && convCount < len(msgs)
+		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
 		if chatComplete && !truncated && !maxTime.IsZero() {
 			state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
 		}
@@ -263,6 +263,7 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			prevDelta := state.ChannelDelta(key)
 			var newDelta string
 			channelComplete := true
+			channelTruncated := false
 
 			// Phase 0: collect all messages for this channel into a single slice,
 			// deduped by ID. This ensures that when we link replies in phase 2,
@@ -275,79 +276,130 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					collected[idx] = gm
 					return
 				}
+				if opts.Limit > 0 && len(collected) >= opts.Limit {
+					channelTruncated = true
+					return
+				}
 				seen[gm.ID] = len(collected)
 				collected = append(collected, gm)
+			}
+			remainingLimit := func() int {
+				if opts.Limit <= 0 {
+					return 0
+				}
+				remaining := opts.Limit - len(collected)
+				if remaining < 0 {
+					return 0
+				}
+				return remaining
 			}
 
 			if prevDelta == "" {
 				// First run: backfill root messages + replies, then prime delta cursor.
-				roots, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID)
+				roots, rootsTruncated, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID, remainingLimit())
 				if lerr != nil {
 					sum.Errors++
 					continue
 				}
+				if rootsTruncated {
+					channelTruncated = true
+				}
 				for i := range roots {
 					addMsg(roots[i])
-					replies, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID)
+					replyLimit := remainingLimit()
+					if opts.Limit > 0 && replyLimit == 0 {
+						channelTruncated = true
+						break
+					}
+					replies, repliesTruncated, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID, replyLimit)
 					if rerr != nil {
 						sum.Errors++
 						channelComplete = false
 						continue
 					}
+					if repliesTruncated {
+						channelTruncated = true
+					}
 					for j := range replies {
 						addMsg(replies[j])
 					}
 				}
-				if channelComplete {
+				if channelComplete && !channelTruncated {
 					// Prime the delta cursor only after a complete roots+replies backfill.
-					deltaMessages, dl, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "")
+					deltaMessages, dl, deltaTruncated, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "", remainingLimit())
 					if derr != nil {
 						sum.Errors++
 					} else {
+						if deltaTruncated {
+							channelTruncated = true
+						}
 						for i := range deltaMessages {
 							addMsg(deltaMessages[i])
 						}
-						newDelta = dl
+						if !channelTruncated {
+							newDelta = dl
+						}
 					}
 				}
 			} else {
 				// Subsequent run: use stored delta link.
-				deltaMessages, dl, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, prevDelta)
+				deltaMessages, dl, deltaTruncated, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, prevDelta, remainingLimit())
 				if derr != nil {
 					// On 400/410, fall back to full re-page + re-prime.
-					roots, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID)
+					roots, rootsTruncated, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID, remainingLimit())
 					if lerr != nil {
 						sum.Errors++
 						continue
 					}
+					if rootsTruncated {
+						channelTruncated = true
+					}
 					for i := range roots {
 						addMsg(roots[i])
-						replies, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID)
+						replyLimit := remainingLimit()
+						if opts.Limit > 0 && replyLimit == 0 {
+							channelTruncated = true
+							break
+						}
+						replies, repliesTruncated, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID, replyLimit)
 						if rerr != nil {
 							sum.Errors++
 							channelComplete = false
 							continue
 						}
+						if repliesTruncated {
+							channelTruncated = true
+						}
 						for j := range replies {
 							addMsg(replies[j])
 						}
 					}
-					if channelComplete {
-						primeMessages, pdl, perr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "")
+					if channelComplete && !channelTruncated {
+						primeMessages, pdl, primeTruncated, perr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "", remainingLimit())
 						if perr != nil {
 							sum.Errors++
 						} else {
+							if primeTruncated {
+								channelTruncated = true
+							}
 							for i := range primeMessages {
 								addMsg(primeMessages[i])
 							}
-							newDelta = pdl
+							if !channelTruncated {
+								newDelta = pdl
+							}
 						}
 					}
 				} else {
+					if deltaTruncated {
+						channelTruncated = true
+					}
 					for i := range deltaMessages {
 						addMsg(deltaMessages[i])
 					}
-					newDelta = dl
+					if !channelTruncated {
+						newDelta = dl
+					}
 				}
 			}
 
@@ -389,7 +441,7 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				}
 			}
 
-			truncated := opts.Limit > 0 && convCount < len(collected)
+			truncated := channelTruncated || (opts.Limit > 0 && convCount < len(collected))
 			if !truncated && newDelta != "" {
 				state.SetChannelDelta(key, newDelta)
 			}

@@ -35,6 +35,21 @@ func TestMapMessageBasics(t *testing.T) {
 	assert.Contains(msg.Snippet.String, "hi there")
 }
 
+func TestMapMessageIgnoresContentlessGraphAttachments(t *testing.T) {
+	gm := &ChatMessage{
+		ID:                   "card1",
+		CreatedDateTime:      time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+		LastModifiedDateTime: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC),
+		Body:                 MessageBody{ContentType: "text", Content: "card only"},
+		Attachments:          []Attachment{{ContentType: "application/vnd.microsoft.card.adaptive", Name: "card"}},
+	}
+
+	msg, text := mapMessage(gm, 10, 20, chatSourceMessageID("chatA", gm.ID))
+	assert.False(t, msg.HasAttachments)
+	assert.Equal(t, 0, msg.AttachmentCount)
+	assert.Equal(t, "card only", text)
+}
+
 func TestCallRecordingParsing(t *testing.T) {
 	assert := assert.New(t)
 

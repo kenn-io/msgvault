@@ -152,18 +152,43 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 // pageThrough follows @odata.nextLink, decoding each page into []T, calling fn.
 // Returns the terminal @odata.deltaLink (empty for non-delta endpoints).
 func pageThrough[T any](ctx context.Context, c *Client, startURL string, fn func([]T)) (string, error) {
+	delta, _, err := pageThroughLimit(ctx, c, startURL, 0, fn)
+	return delta, err
+}
+
+// pageThroughLimit is pageThrough with an optional item cap. When limit is
+// positive, it stops before fetching a nextLink once enough items have been
+// delivered and reports whether unread items/pages remain.
+func pageThroughLimit[T any](ctx context.Context, c *Client, startURL string, limit int, fn func([]T)) (string, bool, error) {
 	url := startURL
+	delivered := 0
 	for {
 		var page listResponse[T]
 		if err := c.getJSON(ctx, url, &page); err != nil {
-			return "", err
+			return "", false, err
 		}
-		fn(page.Value)
+		values := page.Value
+		if limit > 0 {
+			remaining := limit - delivered
+			if remaining <= 0 {
+				return "", true, nil
+			}
+			if len(values) > remaining {
+				fn(values[:remaining])
+				return "", true, nil
+			}
+			if len(values) == remaining && page.NextLink != "" {
+				fn(values)
+				return "", true, nil
+			}
+		}
+		fn(values)
+		delivered += len(values)
 		if page.NextLink != "" {
 			url = page.NextLink
 			continue
 		}
-		return page.DeltaLink, nil
+		return page.DeltaLink, false, nil
 	}
 }
 
@@ -186,38 +211,38 @@ func (c *Client) ListChannels(ctx context.Context, teamID string) ([]Channel, er
 }
 
 // ListChatMessages: sinceISO empty = full backfill; non-empty = incremental.
-func (c *Client) ListChatMessages(ctx context.Context, chatID, sinceISO, _ string) ([]ChatMessage, string, error) {
+func (c *Client) ListChatMessages(ctx context.Context, chatID, sinceISO string, limit int) ([]ChatMessage, bool, error) {
 	url := "/me/chats/" + chatID + "/messages?$top=50"
 	if sinceISO != "" {
 		url += "&$filter=lastModifiedDateTime%20ge%20" + sinceISO + "&$orderby=lastModifiedDateTime%20desc"
 	}
 	var out []ChatMessage
-	_, err := pageThrough[ChatMessage](ctx, c, url, func(p []ChatMessage) { out = append(out, p...) })
-	return out, "", err
+	_, truncated, err := pageThroughLimit[ChatMessage](ctx, c, url, limit, func(p []ChatMessage) { out = append(out, p...) })
+	return out, truncated, err
 }
 
 // ChannelMessagesDelta drives the delta endpoint (or a stored deltaLink) to
 // completion, returning all messages and the new deltaLink.
-func (c *Client) ChannelMessagesDelta(ctx context.Context, teamID, channelID, deltaLink string) ([]ChatMessage, string, error) {
+func (c *Client) ChannelMessagesDelta(ctx context.Context, teamID, channelID, deltaLink string, limit int) ([]ChatMessage, string, bool, error) {
 	start := deltaLink
 	if start == "" {
 		start = "/teams/" + teamID + "/channels/" + channelID + "/messages/delta"
 	}
 	var out []ChatMessage
-	newDelta, err := pageThrough[ChatMessage](ctx, c, start, func(p []ChatMessage) { out = append(out, p...) })
-	return out, newDelta, err
+	newDelta, truncated, err := pageThroughLimit[ChatMessage](ctx, c, start, limit, func(p []ChatMessage) { out = append(out, p...) })
+	return out, newDelta, truncated, err
 }
 
-func (c *Client) ListChannelMessages(ctx context.Context, teamID, channelID string) ([]ChatMessage, error) {
+func (c *Client) ListChannelMessages(ctx context.Context, teamID, channelID string, limit int) ([]ChatMessage, bool, error) {
 	var out []ChatMessage
-	_, err := pageThrough[ChatMessage](ctx, c, "/teams/"+teamID+"/channels/"+channelID+"/messages?$top=50", func(p []ChatMessage) { out = append(out, p...) })
-	return out, err
+	_, truncated, err := pageThroughLimit[ChatMessage](ctx, c, "/teams/"+teamID+"/channels/"+channelID+"/messages?$top=50", limit, func(p []ChatMessage) { out = append(out, p...) })
+	return out, truncated, err
 }
 
-func (c *Client) ListReplies(ctx context.Context, teamID, channelID, messageID string) ([]ChatMessage, error) {
+func (c *Client) ListReplies(ctx context.Context, teamID, channelID, messageID string, limit int) ([]ChatMessage, bool, error) {
 	var out []ChatMessage
-	_, err := pageThrough[ChatMessage](ctx, c, "/teams/"+teamID+"/channels/"+channelID+"/messages/"+messageID+"/replies", func(p []ChatMessage) { out = append(out, p...) })
-	return out, err
+	_, truncated, err := pageThroughLimit[ChatMessage](ctx, c, "/teams/"+teamID+"/channels/"+channelID+"/messages/"+messageID+"/replies", limit, func(p []ChatMessage) { out = append(out, p...) })
+	return out, truncated, err
 }
 
 // GetUser fetches a user by object ID from the Graph /users endpoint,

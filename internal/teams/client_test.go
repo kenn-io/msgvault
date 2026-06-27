@@ -117,7 +117,7 @@ func TestListChatsAndMessages(t *testing.T) {
 	require.NoError(err)
 	require.Len(chats, 1)
 
-	msgs, _, err := c.ListChatMessages(context.Background(), chats[0].ID, "", "")
+	msgs, _, err := c.ListChatMessages(context.Background(), chats[0].ID, "", 0)
 	require.NoError(err)
 	require.Len(msgs, 1)
 	assert.Equal("m1", msgs[0].ID)
@@ -133,7 +133,7 @@ func TestListChatMessagesUsesInclusiveCursor(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
-	_, _, err := c.ListChatMessages(context.Background(), "19:x@thread.v2", "2025-01-01T00:00:00Z", "")
+	_, _, err := c.ListChatMessages(context.Background(), "19:x@thread.v2", "2025-01-01T00:00:00Z", 0)
 	require.NoError(t, err)
 
 	assert.Equal("lastModifiedDateTime ge 2025-01-01T00:00:00Z", filter)

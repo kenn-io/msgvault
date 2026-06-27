@@ -179,6 +179,52 @@ func TestInlineImageDownloaded(t *testing.T) {
 	assert.EqualValues(t, 0, sum.Errors)
 }
 
+func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:card@thread.v2","chatType":"oneOnOne","topic":"Card"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z",
+				 "body":{"contentType":"text","content":"card"},
+				 "attachments":[{"id":"card1","contentType":"application/vnd.microsoft.card.adaptive","name":"card"}]}
+			]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	_, err := imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+	})
+	require.NoError(err)
+
+	var hasAttachments bool
+	var messageAttachmentCount int
+	var actualAttachmentRows int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT m.has_attachments, m.attachment_count, COUNT(a.id)
+		FROM messages m
+		LEFT JOIN attachments a ON a.message_id = m.id
+		WHERE m.source_message_id = ?
+		GROUP BY m.id, m.has_attachments, m.attachment_count
+	`), chatSourceMessageID("19:card@thread.v2", "m1")).Scan(&hasAttachments, &messageAttachmentCount, &actualAttachmentRows))
+	assert.False(hasAttachments)
+	assert.Equal(0, messageAttachmentCount)
+	assert.Equal(0, actualAttachmentRows)
+}
+
 func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -432,6 +478,45 @@ func TestLimitedChatImportDoesNotAdvanceCursor(t *testing.T) {
 	assert.Empty(state.ChatCursor("19:limit@thread.v2"))
 }
 
+func TestLimitedChatImportStopsPaging(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	serverURL := ""
+	var secondPageRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:paged-limit@thread.v2","chatType":"oneOnOne","topic":"Paged"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/chats/19:paged-limit@thread.v2/messages":
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z","body":{"contentType":"text","content":"one"}}
+			],"@odata.nextLink":"` + serverURL + `/chat-page-2"}`))
+		case r.URL.Path == "/chat-page-2":
+			secondPageRequests++
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	sum, err := imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+		Limit:           1,
+	})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesAdded)
+	assert.Equal(0, secondPageRequests)
+}
+
 func TestChatMemberFetchFailureDoesNotAdvanceCursor(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -478,18 +563,10 @@ func TestRawArchiveFailureFailsImport(t *testing.T) {
 	srv := fakeChatGraph(t)
 	defer srv.Close()
 	st := testutil.NewTestStore(t)
-	_, err := st.DB().Exec(`
-		CREATE TRIGGER fail_teams_raw_archive
-		BEFORE INSERT ON message_raw
-		WHEN NEW.raw_format = 'teams_json'
-		BEGIN
-			SELECT RAISE(ABORT, 'raw archive blocked');
-		END
-	`)
-	require.NoError(err)
+	installFailingTeamsRawArchiveTrigger(t, st)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err = imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(context.Background(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -508,6 +585,40 @@ func TestRawArchiveFailureFailsImport(t *testing.T) {
 		WHERE source_id = ? AND status = 'failed'
 	`), src.ID).Scan(&failedRuns))
 	assert.Equal(1, failedRuns)
+}
+
+func installFailingTeamsRawArchiveTrigger(t *testing.T, st *store.Store) {
+	t.Helper()
+
+	var err error
+	if st.IsPostgreSQL() {
+		_, err = st.DB().Exec(`
+			CREATE OR REPLACE FUNCTION fail_teams_raw_archive()
+			RETURNS trigger AS $$
+			BEGIN
+				IF NEW.raw_format = 'teams_json' THEN
+					RAISE EXCEPTION 'raw archive blocked';
+				END IF;
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;
+
+			CREATE TRIGGER fail_teams_raw_archive
+			BEFORE INSERT ON message_raw
+			FOR EACH ROW
+			EXECUTE FUNCTION fail_teams_raw_archive();
+		`)
+	} else {
+		_, err = st.DB().Exec(`
+			CREATE TRIGGER fail_teams_raw_archive
+			BEFORE INSERT ON message_raw
+			WHEN NEW.raw_format = 'teams_json'
+			BEGIN
+				SELECT RAISE(ABORT, 'raw archive blocked');
+			END
+		`)
+	}
+	require.NoError(t, err)
 }
 
 func TestChatMessageIDsAreNamespacedByConversation(t *testing.T) {
@@ -595,6 +706,58 @@ func TestLimitedChannelImportDoesNotAdvanceDelta(t *testing.T) {
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
 	require.NoError(err)
+
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.Empty(state.ChannelDelta("team1/chanA"))
+}
+
+func TestLimitedChannelImportStopsPagingAndDeltaPrime(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	serverURL := ""
+	var secondPageRequests int
+	var deltaRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/channels"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+		case r.URL.Path == "/teams/team1/channels/chanA/messages":
+			_, _ = w.Write([]byte(`{"value":[
+				{"id":"c1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"one"}}
+			],"@odata.nextLink":"` + serverURL + `/channel-page-2"}`))
+		case r.URL.Path == "/channel-page-2":
+			secondPageRequests++
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/replies"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+			deltaRequests++
+			_, _ = w.Write([]byte(`{"value":[],"@odata.deltaLink":"` + serverURL + `/delta?token=next"}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesAdded)
+	assert.Equal(0, secondPageRequests)
+	assert.Equal(0, deltaRequests)
 
 	src, err := st.GetOrCreateSource("teams", "me@example.com")
 	require.NoError(err)

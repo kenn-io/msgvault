@@ -40,7 +40,12 @@ func mapMessage(gm *ChatMessage, conversationID, sourceID int64, sourceMessageID
 	if strings.EqualFold(gm.Body.ContentType, "html") {
 		text = htmlToText(gm.Body.Content)
 	}
-	attCount := len(gm.Attachments)
+	attCount := 0
+	for _, att := range gm.Attachments {
+		if att.ContentURL != "" {
+			attCount++
+		}
+	}
 	attCount += len(hostedRe.FindAllString(gm.Body.Content, -1))
 	if url, name, ok := gm.callRecording(); ok {
 		line := recordingLine(name, url)
