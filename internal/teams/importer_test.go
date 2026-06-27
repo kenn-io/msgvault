@@ -32,6 +32,8 @@ func fakeChatGraph(t *testing.T) *httptest.Server {
 		switch {
 		case r.URL.Path == "/me/chats":
 			_, _ = w.Write([]byte(`{"value":[{"id":"19:x@thread.v2","chatType":"oneOnOne","topic":"DM"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			_, _ = w.Write([]byte(`{"value":[]}`))
 		case strings.Contains(r.URL.Path, "/messages"):
 			_, _ = w.Write([]byte(`{"value":[
 			  {"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z",
@@ -175,6 +177,82 @@ func TestInlineImageDownloaded(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, sum.InlineImagesCopied)
 	assert.EqualValues(t, 0, sum.Errors)
+}
+
+func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	includeImage := true
+	serverURL := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/hostedContents/") && strings.HasSuffix(r.URL.Path, "/$value"):
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("PNGDATA"))
+		case r.URL.Path == "/me/chats":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:inline-edit@thread.v2","chatType":"oneOnOne","topic":"DM"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			w.Header().Set("Content-Type", "application/json")
+			body := `<p>edited</p>`
+			if includeImage {
+				body = `<div><img src="` + serverURL + `/chats/19:inline-edit@thread.v2/messages/m1/hostedContents/1/$value"></div>`
+			}
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z","body":{"contentType":"html","content":` + jsonString(t, body) + `}}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	attachmentsDir := t.TempDir()
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	_, err := imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+		AttachmentsDir:  attachmentsDir,
+		Full:            true,
+	})
+	require.NoError(err)
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM messages WHERE source_message_id = ?
+	`), chatSourceMessageID("19:inline-edit@thread.v2", "m1")).Scan(&messageID))
+	var attachmentCount int
+	require.NoError(st.DB().QueryRow(
+		st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
+		messageID,
+	).Scan(&attachmentCount))
+	require.Equal(1, attachmentCount)
+
+	includeImage = false
+	_, err = imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+		AttachmentsDir:  attachmentsDir,
+		Full:            true,
+	})
+	require.NoError(err)
+
+	var hasAttachments bool
+	var denormalizedCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT m.has_attachments, m.attachment_count, COUNT(a.id)
+		FROM messages m
+		LEFT JOIN attachments a ON a.message_id = m.id
+		WHERE m.id = ?
+		GROUP BY m.id, m.has_attachments, m.attachment_count
+	`), messageID).Scan(&hasAttachments, &denormalizedCount, &attachmentCount))
+	assert.False(hasAttachments)
+	assert.Equal(0, denormalizedCount)
+	assert.Equal(0, attachmentCount)
 }
 
 func jsonString(t *testing.T, s string) string {
@@ -352,6 +430,45 @@ func TestLimitedChatImportDoesNotAdvanceCursor(t *testing.T) {
 	state, err := LoadSyncState(run.CursorAfter.String)
 	require.NoError(err)
 	assert.Empty(state.ChatCursor("19:limit@thread.v2"))
+}
+
+func TestChatMemberFetchFailureDoesNotAdvanceCursor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[{"id":"19:memberfail@thread.v2","chatType":"group","topic":"Chat"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/members"):
+			http.Error(w, "members unavailable", http.StatusBadRequest)
+		case strings.Contains(r.URL.Path, "/messages"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"m1","createdDateTime":"2025-01-01T00:00:00Z","lastModifiedDateTime":"2025-01-01T00:00:00Z","body":{"contentType":"text","content":"hello"}}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	sum, err := imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+	})
+	require.NoError(err)
+	assert.EqualValues(1, sum.Errors)
+	assert.EqualValues(1, sum.MessagesAdded)
+
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(err)
+	require.True(run.CursorAfter.Valid)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.Empty(state.ChatCursor("19:memberfail@thread.v2"))
 }
 
 func TestChatMessageIDsAreNamespacedByConversation(t *testing.T) {

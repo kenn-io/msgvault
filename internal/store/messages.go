@@ -2108,11 +2108,53 @@ func (s *Store) RecomputeMessageAttachmentStats(messageID int64) error {
 }
 
 type AttachmentRef struct {
-	Filename    string
-	MimeType    string
-	StoragePath string
-	ContentHash string
-	Size        int
+	Filename           string
+	MimeType           string
+	StoragePath        string
+	ContentHash        string
+	Size               int
+	SourceAttachmentID string
+}
+
+// ReplaceMessageInlineAttachments replaces Teams-managed inline media rows for
+// a message. It removes both rows marked by the current source_attachment_id
+// scheme and legacy unmarked Teams inline rows produced before that marker was
+// added, while leaving URL-backed reference/recording attachments untouched.
+func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`
+			DELETE FROM attachments
+			WHERE message_id = ?
+			  AND (
+			    source_attachment_id LIKE 'teams:inline:%'
+			    OR (
+			      (source_attachment_id IS NULL OR source_attachment_id = '')
+			      AND storage_path != ''
+			      AND storage_path NOT LIKE 'http://%'
+			      AND storage_path NOT LIKE 'https://%'
+			      AND content_hash IS NOT NULL
+			      AND content_hash != ''
+			      AND COALESCE(filename, '') = ''
+			      AND COALESCE(mime_type, '') = ''
+			    )
+			  )
+		`, messageID); err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.StoragePath == "" || ref.ContentHash == "" {
+				continue
+			}
+			if _, err := tx.Exec(fmt.Sprintf(`
+				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, %s)
+				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
@@ -2132,10 +2174,10 @@ func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []Attachment
 				continue
 			}
 			if _, err := tx.Exec(fmt.Sprintf(`
-				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, %s)
+				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, %s)
 				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size)); err != nil {
+			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID); err != nil {
 				return err
 			}
 		}

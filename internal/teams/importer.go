@@ -155,6 +155,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Member fetch failure is non-fatal; we proceed with empty toRecips
 		// rather than aborting the chat import.
 		members, merr := imp.client.ListChatMembers(ctx, ch.ID)
+		chatComplete := true
 		var toRecips []recipientRef
 		if merr == nil {
 			toRecips = make([]recipientRef, 0, len(members))
@@ -169,6 +170,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				toRecips = append(toRecips, recipientRef{ID: pid, Name: m.DisplayName})
 			}
 		} else {
+			chatComplete = false
 			sum.Errors++
 		}
 
@@ -209,7 +211,7 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			}
 		}
 		truncated := opts.Limit > 0 && convCount < len(msgs)
-		if !truncated && !maxTime.IsZero() {
+		if chatComplete && !truncated && !maxTime.IsZero() {
 			state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
 		}
 		imp.enqueueEmbeddings(ctx, opts, sum, persistedIDs)
@@ -451,10 +453,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	if err := imp.store.UpsertMessageBody(messageID, sql.NullString{String: text, Valid: text != ""}, bodyHTML); err != nil {
 		return 0, false, err
 	}
-	inlineImagesCopied := false
-	if gm.Body.ContentType == "html" {
-		inlineImagesCopied = imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts.AttachmentsDir, sum)
-	}
+	inlineImagesChanged := imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts.AttachmentsDir, sum)
 	// Archive the exact original message JSON. gm.Raw is captured verbatim at
 	// decode time (ChatMessage.UnmarshalJSON), so it preserves every Graph field
 	// including ones we do not model; fall back to re-marshalling only if a
@@ -578,7 +577,7 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	} else {
 		sum.AttachmentsFound += int64(len(linkAttachments))
 	}
-	if inlineImagesCopied {
+	if inlineImagesChanged {
 		if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
 			sum.Errors++
 		}
@@ -659,15 +658,31 @@ func hostedFetchPath(baseURL, rawURL string) string {
 	return p
 }
 
-// downloadInlineImages scans bodyHTML for Graph hostedContents $value URLs,
-// downloads each one via the client, stores the bytes in content-addressed
-// storage under attachmentsDir, and records the attachment in the store.
+// downloadInlineImages scans bodyHTML for Graph hostedContents $value URLs and
+// replaces the message's Teams-managed inline attachment rows with the current
+// set. If any current hosted image cannot be fetched, existing rows are
+// preserved so a transient Graph failure does not erase already-downloaded
+// media.
 func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, bodyHTML, attachmentsDir string, sum *ImportSummary) bool {
+	raws := hostedRe.FindAllString(bodyHTML, -1)
+	if len(raws) == 0 {
+		if err := imp.store.ReplaceMessageInlineAttachments(messageID, nil); err != nil {
+			sum.Errors++
+			return false
+		}
+		return true
+	}
 	if attachmentsDir == "" {
 		return false
 	}
-	copied := false
-	for _, raw := range hostedRe.FindAllString(bodyHTML, -1) {
+
+	seen := make(map[string]struct{}, len(raws))
+	refs := make([]store.AttachmentRef, 0, len(raws))
+	for _, raw := range raws {
+		if _, ok := seen[raw]; ok {
+			continue
+		}
+		seen[raw] = struct{}{}
 		// Rewrite the absolute graph.microsoft.com URL to a path relative to
 		// the client's configured base URL so the request hits the correct host
 		// (e.g. an httptest server in tests, or production Graph in production)
@@ -675,12 +690,12 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 		fetchPath := hostedFetchPath(imp.client.BaseURL(), raw)
 		if fetchPath == "" {
 			sum.Errors++
-			continue
+			return false
 		}
 		data, derr := imp.client.GetRaw(ctx, fetchPath)
 		if derr != nil || len(data) == 0 {
 			sum.Errors++
-			continue
+			return false
 		}
 		att := &internalmime.Attachment{
 			Filename:    "",
@@ -690,16 +705,21 @@ func (imp *Importer) downloadInlineImages(ctx context.Context, messageID int64, 
 		storagePath, serr := export.StoreAttachmentFile(attachmentsDir, att)
 		if serr != nil || storagePath == "" {
 			sum.Errors++
-			continue
+			return false
 		}
-		if uerr := imp.store.UpsertAttachment(messageID, "", "", storagePath, att.ContentHash, len(data)); uerr != nil {
-			sum.Errors++
-			continue
-		}
-		copied = true
-		sum.InlineImagesCopied++
+		refs = append(refs, store.AttachmentRef{
+			StoragePath:        storagePath,
+			ContentHash:        att.ContentHash,
+			Size:               len(data),
+			SourceAttachmentID: "teams:inline:" + fetchPath,
+		})
 	}
-	return copied
+	if err := imp.store.ReplaceMessageInlineAttachments(messageID, refs); err != nil {
+		sum.Errors++
+		return false
+	}
+	sum.InlineImagesCopied += int64(len(refs))
+	return true
 }
 
 // identityOf extracts the primary Identity from an IdentitySet,
