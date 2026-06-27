@@ -467,7 +467,9 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		raw = marshaled
 	}
 	if len(raw) > 0 {
-		_ = imp.store.UpsertMessageRawWithFormat(messageID, raw, "teams_json")
+		if err := imp.store.UpsertMessageRawWithFormat(messageID, raw, "teams_json"); err != nil {
+			return 0, false, fmt.Errorf("archive teams message raw: %w", err)
+		}
 	}
 	senderName := ""
 	if id := identityOf(gm.From); id != nil {

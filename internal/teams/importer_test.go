@@ -471,6 +471,45 @@ func TestChatMemberFetchFailureDoesNotAdvanceCursor(t *testing.T) {
 	assert.Empty(state.ChatCursor("19:memberfail@thread.v2"))
 }
 
+func TestRawArchiveFailureFailsImport(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	srv := fakeChatGraph(t)
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	_, err := st.DB().Exec(`
+		CREATE TRIGGER fail_teams_raw_archive
+		BEFORE INSERT ON message_raw
+		WHEN NEW.raw_format = 'teams_json'
+		BEGIN
+			SELECT RAISE(ABORT, 'raw archive blocked');
+		END
+	`)
+	require.NoError(err)
+
+	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
+	_, err = imp.Import(context.Background(), ImportOptions{
+		Email:           "me@example.com",
+		IncludeChannels: false,
+	})
+	require.Error(err)
+	assert.Contains(err.Error(), "archive teams message raw")
+
+	src, err := st.GetOrCreateSource("teams", "me@example.com")
+	require.NoError(err)
+	_, err = st.GetLastSuccessfulSync(src.ID)
+	require.ErrorIs(err, store.ErrSyncRunNotFound)
+
+	var failedRuns int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*)
+		FROM sync_runs
+		WHERE source_id = ? AND status = 'failed'
+	`), src.ID).Scan(&failedRuns))
+	assert.Equal(1, failedRuns)
+}
+
 func TestChatMessageIDsAreNamespacedByConversation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
