@@ -33,6 +33,15 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 		}
 	}
 
+	if s.shouldPersistOAuthApp() {
+		for _, src := range sources {
+			cfg := parseSourceConfig(src.SyncConfig)
+			if err := s.updateCalendarSourceOAuthApp(src.ID, cfg.CalendarID); err != nil {
+				recordErr(err)
+			}
+		}
+	}
+
 	for _, src := range sources {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -49,10 +58,6 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 			TimeZone:   cfg.TimeZone,
 		}
 		if !s.includeCalendar(cal) {
-			continue
-		}
-		if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
-			recordErr(err)
 			continue
 		}
 
