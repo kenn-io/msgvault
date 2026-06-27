@@ -24,6 +24,9 @@ import (
 //
 // The engine must detect the cache change and re-probe instead of crashing.
 func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	// Pre-rebuild: current schema (message_type, sender_id, attachment_count present).
 	const newMessagesCols = messagesCols
 	// Post-rebuild: old schema written by a stale cache builder (no new columns).
@@ -45,17 +48,17 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()
 
 	// Startup probe sees the new schema.
-	require.True(t, engine.hasCol("messages", "message_type"),
+	require.True(engine.hasCol("messages", "message_type"),
 		"message_type should be detected as present in the initial schema")
 	res, err := engine.SearchFast(ctx, search.Parse("SOFRA"), MessageFilter{}, 10, 0)
-	require.NoError(t, err, "SearchFast before rebuild")
-	require.Len(t, res, 1)
+	require.NoError(err, "SearchFast before rebuild")
+	require.Len(res, 1)
 
 	// build-cache rewrites the messages Parquet with the OLD schema underneath
 	// the running engine — message_type/sender_id/attachment_count disappear.
@@ -66,19 +69,22 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 
 	// Must re-probe and succeed rather than fail with the REPLACE binder error.
 	res, err = engine.SearchFast(ctx, search.Parse("SOFRA"), MessageFilter{}, 10, 0)
-	require.NoError(t, err, "SearchFast after cache rebuilt underneath engine")
-	require.Len(t, res, 1)
-	assert.Equal(t, "Hello SOFRA", res[0].Subject)
-	assert.False(t, engine.hasCol("messages", "message_type"),
+	require.NoError(err, "SearchFast after cache rebuilt underneath engine")
+	require.Len(res, 1)
+	assert.Equal("Hello SOFRA", res[0].Subject)
+	assert.False(engine.hasCol("messages", "message_type"),
 		"message_type should be re-probed as absent after the rebuild")
 
 	// Aggregate (the other reported-broken path) must also recover.
 	agg, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-	require.NoError(t, err, "Aggregate after cache rebuilt underneath engine")
-	require.Len(t, agg, 1)
+	require.NoError(err, "Aggregate after cache rebuilt underneath engine")
+	require.Len(agg, 1)
 }
 
 func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
 			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
@@ -95,18 +101,18 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *test
 	t.Cleanup(cleanup)
 
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()
 	q := search.Parse("SOFRA")
 
 	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(t, err, "SearchFastWithStats before rebuild")
-	require.Len(t, first.Messages, 1)
-	require.Equal(t, int64(1), first.TotalCount)
-	require.NotNil(t, first.Stats)
-	require.Equal(t, int64(1), first.Stats.MessageCount)
+	require.NoError(err, "SearchFastWithStats before rebuild")
+	require.Len(first.Messages, 1)
+	require.Equal(int64(1), first.TotalCount)
+	require.NotNil(first.Stats)
+	require.Equal(int64(1), first.Stats.MessageCount)
 
 	msgPath := filepath.Join(analyticsDir, "messages", "year=2024", "data.parquet")
 	rewriteParquetForTest(t, msgPath, messagesCols, `
@@ -115,16 +121,19 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsCacheWhenParquetChanges(t *test
 	`)
 
 	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(t, err, "SearchFastWithStats after rebuild")
-	require.Len(t, second.Messages, 2)
-	assert.Equal(t, int64(2), second.TotalCount)
-	require.NotNil(t, second.Stats)
-	assert.Equal(t, int64(2), second.Stats.MessageCount)
-	assert.Equal(t, "Another SOFRA", second.Messages[0].Subject)
-	assert.Equal(t, "Hello SOFRA", second.Messages[1].Subject)
+	require.NoError(err, "SearchFastWithStats after rebuild")
+	require.Len(second.Messages, 2)
+	assert.Equal(int64(2), second.TotalCount)
+	require.NotNil(second.Stats)
+	assert.Equal(int64(2), second.Stats.MessageCount)
+	assert.Equal("Another SOFRA", second.Messages[0].Subject)
+	assert.Equal("Hello SOFRA", second.Messages[1].Subject)
 }
 
 func TestDuckDBEngine_SearchFastWithStatsRebuildsStatsWhenAttachmentsChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	pb := newParquetBuilder(t).
 		addTable("messages", "messages/year=2024", "data.parquet", messagesCols, `
 			(1::BIGINT, 1::BIGINT, 'm1', 100::BIGINT, 'Hello SOFRA', 'snip', TIMESTAMP '2024-01-15 10:00:00', 1000::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, 'email', 2024, 1)
@@ -141,37 +150,40 @@ func TestDuckDBEngine_SearchFastWithStatsRebuildsStatsWhenAttachmentsChange(t *t
 	t.Cleanup(cleanup)
 
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()
 	q := search.Parse("SOFRA")
 
 	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(t, err, "SearchFastWithStats before attachments rebuild")
-	require.NotNil(t, first.Stats)
-	require.Len(t, first.Messages, 1)
-	require.Equal(t, int64(0), first.Stats.AttachmentCount)
-	require.Equal(t, 0, first.Messages[0].AttachmentCount)
+	require.NoError(err, "SearchFastWithStats before attachments rebuild")
+	require.NotNil(first.Stats)
+	require.Len(first.Messages, 1)
+	require.Equal(int64(0), first.Stats.AttachmentCount)
+	require.Equal(0, first.Messages[0].AttachmentCount)
 
 	attPath := filepath.Join(analyticsDir, "attachments", "attachments.parquet")
 	rewriteParquetForTest(t, attPath, attachmentsCols, `(1::BIGINT, 123::BIGINT, 'file.pdf')`)
 
 	second, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
-	require.NoError(t, err, "SearchFastWithStats after attachments rebuild")
-	require.NotNil(t, second.Stats)
-	require.Len(t, second.Messages, 1)
-	assert.Equal(t, int64(1), second.Stats.AttachmentCount)
-	assert.Equal(t, int64(123), second.Stats.AttachmentSize)
-	assert.Equal(t, 1, second.Messages[0].AttachmentCount)
+	require.NoError(err, "SearchFastWithStats after attachments rebuild")
+	require.NotNil(second.Stats)
+	require.Len(second.Messages, 1)
+	assert.Equal(int64(1), second.Stats.AttachmentCount)
+	assert.Equal(int64(123), second.Stats.AttachmentSize)
+	assert.Equal(1, second.Messages[0].AttachmentCount)
 }
 
 func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	analyticsDir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
 	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
-	require.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, dir := range RequiredParquetDirs {
@@ -179,19 +191,22 @@ func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
 			before := engine.cacheFingerprint()
 			touchParquetForTest(t, firstRequiredParquetForTest(t, analyticsDir, dir))
 			after := engine.cacheFingerprint()
-			assert.NotEqual(t, before, after, "fingerprint should include %s", dir)
+			assert.NotEqual(before, after, "fingerprint should include %s", dir)
 		})
 	}
 }
 
 func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	staleCols := map[string]map[string]bool{datasetMessages: map[string]bool{"message_type": true}}
 	freshCols := map[string]map[string]bool{datasetMessages: map[string]bool{"message_type": false}}
 	fingerprints := []string{"before", "after", "after", "after"}
 	probeCalls := 0
 
 	cols, fp := stableOptionalColumns(func() string {
-		require.NotEmpty(t, fingerprints, "unexpected fingerprint call")
+		require.NotEmpty(fingerprints, "unexpected fingerprint call")
 		fp := fingerprints[0]
 		fingerprints = fingerprints[1:]
 		return fp
@@ -203,9 +218,9 @@ func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
 		return freshCols
 	})
 
-	assert.Equal(t, 2, probeCalls)
-	assert.Equal(t, freshCols, cols)
-	assert.Equal(t, "after", fp)
+	assert.Equal(2, probeCalls)
+	assert.Equal(freshCols, cols)
+	assert.Equal("after", fp)
 }
 
 // rewriteParquetForTest overwrites an existing Parquet file with a new schema
