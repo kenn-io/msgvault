@@ -59,11 +59,24 @@ func newAddCalendarCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			email := args[0]
 			ctx := cmd.Context()
+			oauthAppExplicit := cmd.Flags().Changed("oauth-app")
 			if err := calsync.ValidateMinAccessRole(calAddMinRole); err != nil {
 				return usageErr(cmd, err)
 			}
 
-			secretsPath, err := cfg.OAuth.ClientSecretsFor(calAddOAuthApp)
+			st, err := openCalendarStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = st.Close() }()
+
+			appDecision, err := calendarAddOAuthAppDecision(st, email, calAddOAuthApp, oauthAppExplicit)
+			if err != nil {
+				return err
+			}
+			oauthApp := appDecision.OAuthApp
+
+			secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
 			if err != nil {
 				return err
 			}
@@ -73,6 +86,7 @@ func newAddCalendarCmd() *cobra.Command {
 			}
 			hasToken := mgr.HasToken(email)
 			hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
+			tokenReusable := calendarAddTokenReusable(mgr, email, appDecision)
 
 			// A headless host cannot complete Google's browser consent, and the
 			// OAuth device flow does not support Calendar scopes. If this account
@@ -81,8 +95,8 @@ func newAddCalendarCmd() *cobra.Command {
 			// browser or touching the existing Gmail token. Once the dual-scope
 			// token is copied in, re-running add-calendar --headless skips this
 			// and registers the calendars (an API call that needs no browser).
-			if calAddHeadless && (!hasToken || !hasCalendarScope) {
-				oauth.PrintCalendarHeadlessInstructions(email, cfg.TokensDir(), calAddOAuthApp)
+			if calAddHeadless && (!hasToken || !hasCalendarScope || !tokenReusable) {
+				oauth.PrintCalendarHeadlessInstructions(email, cfg.TokensDir(), oauthApp)
 				return nil
 			}
 
@@ -113,15 +127,14 @@ func newAddCalendarCmd() *cobra.Command {
 					}
 					return err
 				}
+			case !tokenReusable:
+				fmt.Printf("OAuth app for %s requires reauthorization. Authorizing...\n", email)
+				if err := mgr.Authorize(ctx, email); err != nil {
+					return wrapOAuthError(err)
+				}
 			}
 
-			st, err := openCalendarStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = st.Close() }()
-
-			client, err := buildCalendarClient(ctx, email, calAddOAuthApp, interactiveStdin())
+			client, err := buildCalendarClient(ctx, email, oauthApp, interactiveStdin())
 			if err != nil {
 				return err
 			}
@@ -129,7 +142,7 @@ func newAddCalendarCmd() *cobra.Command {
 
 			syncer := calsync.New(client, st, calsync.Options{
 				AccountEmail:  email,
-				OAuthApp:      calAddOAuthApp,
+				OAuthApp:      oauthApp,
 				Calendars:     calAddCalendars,
 				AllCalendars:  calAddAll,
 				MinAccessRole: calAddMinRole,
@@ -149,7 +162,7 @@ func newAddCalendarCmd() *cobra.Command {
 			for _, c := range cals {
 				fmt.Printf("  - %s (%s)\n", calendarLabel(c), c.AccessRole)
 			}
-			fmt.Printf("\nNext: %s\n", calendarSyncNextCommand(email, calAddOAuthApp))
+			fmt.Printf("\nNext: %s\n", calendarSyncNextCommand(email, oauthApp))
 			return nil
 		},
 	}
@@ -373,6 +386,55 @@ func calendarStoredOAuthApp(sources []*store.Source) string {
 		}
 	}
 	return ""
+}
+
+type calendarAddOAuthApp struct {
+	OAuthApp         string
+	BindingChanged   bool
+	NeedsClientCheck bool
+}
+
+type calendarTokenClientMatcher interface {
+	HasToken(email string) bool
+	TokenMatchesClient(email string) bool
+}
+
+func calendarAddOAuthAppDecision(st *store.Store, email, requestedApp string, explicit bool) (calendarAddOAuthApp, error) {
+	sources, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+	if err != nil {
+		return calendarAddOAuthApp{}, fmt.Errorf("load registered calendar sources for %s: %w", email, err)
+	}
+
+	resolvedApp := requestedApp
+	if !explicit && resolvedApp == "" {
+		resolvedApp = calendarStoredOAuthApp(sources)
+	}
+
+	bindingChanged := false
+	if explicit {
+		for _, src := range sources {
+			if sourceOAuthApp(src) != requestedApp {
+				bindingChanged = true
+				break
+			}
+		}
+	}
+
+	return calendarAddOAuthApp{
+		OAuthApp:         resolvedApp,
+		BindingChanged:   bindingChanged,
+		NeedsClientCheck: bindingChanged || explicit || resolvedApp != "",
+	}, nil
+}
+
+func calendarAddTokenReusable(mgr calendarTokenClientMatcher, email string, app calendarAddOAuthApp) bool {
+	if !mgr.HasToken(email) {
+		return false
+	}
+	if app.NeedsClientCheck {
+		return mgr.TokenMatchesClient(email)
+	}
+	return true
 }
 
 func calendarSyncNextCommand(email, oauthApp string) string {
