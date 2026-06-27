@@ -409,6 +409,72 @@ func TestIncremental_CancellationRetainsRow(t *testing.T) {
 	assert.Equal("T2", src2.SyncCursor.String, "cursor advanced after incremental")
 }
 
+func TestIncremental_PersistsExplicitOAuthAppBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		initialApp sql.NullString
+		requestApp string
+		wantApp    string
+		wantAppSet bool
+		deltaID    string
+		nextToken  string
+	}{
+		{
+			name:       "sets named app",
+			requestApp: "new-app",
+			wantApp:    "new-app",
+			wantAppSet: true,
+			deltaID:    "named-delta",
+			nextToken:  "T2",
+		},
+		{
+			name:       "clears to default app",
+			initialApp: sql.NullString{String: "old-app", Valid: true},
+			requestApp: "",
+			wantAppSet: false,
+			deltaID:    "clear-delta",
+			nextToken:  "T3",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			m := gcal.NewMockAPI()
+			m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+			m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e1", "Initial")}}
+			m.FullSyncToken["primary"] = "T1"
+
+			s, st := newSyncer(t, m, Options{})
+			_, err := s.Full(context.Background())
+			require.NoError(err)
+			src := primarySource(t, st)
+			if tc.initialApp.Valid {
+				require.NoError(st.UpdateSourceOAuthApp(src.ID, tc.initialApp))
+			}
+
+			m.IncEvents["T1"] = [][]gcal.Event{{timedEvent(tc.deltaID, "Delta")}}
+			m.IncNextToken["T1"] = tc.nextToken
+
+			incremental := New(m, st, Options{
+				AccountEmail: testAccount,
+				OAuthApp:     tc.requestApp,
+				OAuthAppSet:  true,
+			}).WithLogger(quietLogger())
+
+			res, err := incremental.Incremental(context.Background())
+			require.NoError(err)
+			assert.Equal(1, res.CalendarsSynced)
+
+			src, err = st.GetSourceByIdentifier(testAccount + "/primary")
+			require.NoError(err)
+			assert.Equal(tc.nextToken, src.SyncCursor.String)
+			assert.Equal(tc.wantAppSet, src.OAuthApp.Valid)
+			assert.Equal(tc.wantApp, src.OAuthApp.String)
+		})
+	}
+}
+
 func TestIncremental_410TriggersFullResync(t *testing.T) {
 	m := gcal.NewMockAPI()
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}

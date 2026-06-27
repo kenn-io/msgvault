@@ -129,6 +129,42 @@ func TestCalendarAddOAuthAppDecisionInheritsStoredBinding(t *testing.T) {
 	assert.True(decision.NeedsClientCheck)
 }
 
+func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "client_secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600))
+
+	savedCfg, savedLogger := cfg, logger
+	savedAddHeadless, savedAddOAuthApp := calAddHeadless, calAddOAuthApp
+	defer func() {
+		cfg, logger = savedCfg, savedLogger
+		calAddHeadless, calAddOAuthApp = savedAddHeadless, savedAddOAuthApp
+	}()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	addCmd := newAddCalendarCmd()
+	addCmd.SetArgs([]string{"--headless", "Alice.Example@Example.COM"})
+
+	getOutput := captureStdout(t)
+	err := addCmd.Execute()
+	out := getOutput()
+
+	require.NoError(err)
+	assert.Contains(out, "msgvault add-calendar alice.example@example.com",
+		"headless instructions must use the normalized token key")
+	assert.Contains(out, "alice.example@example.com.json",
+		"token copy path must use the normalized token filename")
+	assert.NotContains(out, "Alice.Example@Example.COM")
+}
+
 func TestCalendarAddOAuthAppDecisionDetectsExplicitRebind(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -146,6 +182,19 @@ func TestCalendarAddOAuthAppDecisionDetectsExplicitRebind(t *testing.T) {
 	assert.Equal("new-app", decision.OAuthApp)
 	assert.True(decision.BindingChanged)
 	assert.True(decision.NeedsClientCheck)
+}
+
+func TestCalendarSyncOAuthAppDecisionRespectsExplicitDefault(t *testing.T) {
+	assert := assert.New(t)
+
+	existing := []*store.Source{
+		{OAuthApp: sql.NullString{String: "old-app", Valid: true}},
+	}
+
+	decision := calendarSyncOAuthAppDecision(existing, "", true)
+
+	assert.Empty(decision.OAuthApp)
+	assert.True(decision.OAuthAppSet, "explicit --oauth-app= must clear rather than inherit")
 }
 
 func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) {

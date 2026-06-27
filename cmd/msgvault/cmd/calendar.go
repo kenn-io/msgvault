@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -57,9 +58,12 @@ func newAddCalendarCmd() *cobra.Command {
 			"screen so Gmail access is not dropped.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			email := args[0]
+			email := normalizeCalendarAccountEmail(args[0])
 			ctx := cmd.Context()
 			oauthAppExplicit := cmd.Flags().Changed("oauth-app")
+			if email == "" {
+				return usageErr(cmd, errors.New("account email is required"))
+			}
 			if err := calsync.ValidateMinAccessRole(calAddMinRole); err != nil {
 				return usageErr(cmd, err)
 			}
@@ -143,6 +147,7 @@ func newAddCalendarCmd() *cobra.Command {
 			syncer := calsync.New(client, st, calsync.Options{
 				AccountEmail:  email,
 				OAuthApp:      oauthApp,
+				OAuthAppSet:   oauthAppExplicit || appDecision.BindingChanged,
 				Calendars:     calAddCalendars,
 				AllCalendars:  calAddAll,
 				MinAccessRole: calAddMinRole,
@@ -187,13 +192,19 @@ func newSyncCalendarCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			email := args[0]
-			oauthApp := calSyncOAuthApp
+			email := normalizeCalendarAccountEmail(args[0])
+			oauthAppExplicit := cmd.Flags().Changed("oauth-app")
+			oauthAppProvided := oauthAppExplicit
+			oauthApp := ""
+			if oauthAppProvided {
+				oauthApp = calSyncOAuthApp
+			}
 			calendars := calSyncCalendars
 			if src := cfg.GetGCalSource(args[0]); src != nil {
-				email = src.Email
-				if oauthApp == "" {
+				email = normalizeCalendarAccountEmail(src.Email)
+				if !oauthAppProvided && src.OAuthApp != "" {
 					oauthApp = src.OAuthApp
+					oauthAppProvided = true
 				}
 				if len(calendars) == 0 {
 					calendars = src.Calendars
@@ -225,9 +236,8 @@ func newSyncCalendarCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 			}
-			if oauthApp == "" {
-				oauthApp = calendarStoredOAuthApp(existing)
-			}
+			appDecision := calendarSyncOAuthAppDecision(existing, oauthApp, oauthAppProvided)
+			oauthApp = appDecision.OAuthApp
 
 			client, err := buildCalendarClient(ctx, email, oauthApp, interactiveStdin())
 			if err != nil {
@@ -238,6 +248,7 @@ func newSyncCalendarCmd() *cobra.Command {
 			syncer := calsync.New(client, st, calsync.Options{
 				AccountEmail:  email,
 				OAuthApp:      oauthApp,
+				OAuthAppSet:   appDecision.OAuthAppSet,
 				Calendars:     calendars,
 				AllCalendars:  calSyncAll,
 				MinAccessRole: calSyncMinRole,
@@ -282,6 +293,7 @@ func calendarAddOAuthScopes(preserveGmail bool) []string {
 }
 
 func newCalendarOAuthManager(clientSecretsPath, account string) (*oauth.Manager, error) {
+	account = normalizeCalendarAccountEmail(account)
 	probe, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauth.ScopesCalendar)
 	if err != nil {
 		return nil, err
@@ -371,6 +383,7 @@ func hasAnyScope(scopes []string, candidates []string) bool {
 }
 
 func calendarEscalationScopesForAccount(account string, clientSecretsPath string) ([]string, error) {
+	account = normalizeCalendarAccountEmail(account)
 	mgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauth.ScopesGmailCalendar)
 	if err != nil {
 		return nil, fmt.Errorf("create oauth manager: %w", err)
@@ -388,6 +401,10 @@ func calendarStoredOAuthApp(sources []*store.Source) string {
 	return ""
 }
 
+func normalizeCalendarAccountEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 type calendarAddOAuthApp struct {
 	OAuthApp         string
 	BindingChanged   bool
@@ -400,6 +417,7 @@ type calendarTokenClientMatcher interface {
 }
 
 func calendarAddOAuthAppDecision(st *store.Store, email, requestedApp string, explicit bool) (calendarAddOAuthApp, error) {
+	email = normalizeCalendarAccountEmail(email)
 	sources, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
 	if err != nil {
 		return calendarAddOAuthApp{}, fmt.Errorf("load registered calendar sources for %s: %w", email, err)
@@ -437,6 +455,18 @@ func calendarAddTokenReusable(mgr calendarTokenClientMatcher, email string, app 
 	return true
 }
 
+type calendarSyncOAuthApp struct {
+	OAuthApp    string
+	OAuthAppSet bool
+}
+
+func calendarSyncOAuthAppDecision(existing []*store.Source, requestedApp string, provided bool) calendarSyncOAuthApp {
+	if provided {
+		return calendarSyncOAuthApp{OAuthApp: requestedApp, OAuthAppSet: true}
+	}
+	return calendarSyncOAuthApp{OAuthApp: calendarStoredOAuthApp(existing)}
+}
+
 func calendarSyncNextCommand(email, oauthApp string) string {
 	if oauthApp != "" {
 		return "msgvault sync-calendar --oauth-app " + oauthApp + " " + email
@@ -467,6 +497,7 @@ func openCalendarStore() (*store.Store, error) {
 // it preserves Gmail only for existing Gmail/legacy tokens; Calendar-only tokens
 // stay Calendar-only. The limiter is sized for the Calendar per-user budget.
 func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, interactive bool) (gcal.API, error) {
+	accountEmail = normalizeCalendarAccountEmail(accountEmail)
 	var tokenSource oauth2.TokenSource
 
 	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(oauthApp); saKeyPath != "" {
@@ -504,25 +535,30 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 // Store. The first run full-syncs (and registers calendars); later runs are
 // incremental. Embedding is picked up later by scan-and-fill via embed_gen=NULL.
 func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCalSource) error {
-	if src.Email == "" {
+	email := normalizeCalendarAccountEmail(src.Email)
+	if email == "" {
 		return fmt.Errorf("gcal source %q email is required", src.Name)
 	}
-	client, err := buildCalendarClient(ctx, src.Email, src.OAuthApp, false)
+
+	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+	if err != nil {
+		return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
+	}
+	appDecision := calendarSyncOAuthAppDecision(existing, src.OAuthApp, src.OAuthApp != "")
+
+	client, err := buildCalendarClient(ctx, email, appDecision.OAuthApp, false)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
 	syncer := calsync.New(client, st, calsync.Options{
-		AccountEmail: src.Email,
-		OAuthApp:     src.OAuthApp,
+		AccountEmail: email,
+		OAuthApp:     appDecision.OAuthApp,
+		OAuthAppSet:  appDecision.OAuthAppSet,
 		Calendars:    src.Calendars,
 	}).WithLogger(logger)
 
-	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, src.Email)
-	if err != nil {
-		return fmt.Errorf("load registered calendar sources for %s: %w", src.Email, err)
-	}
 	if calendarSyncShouldRunFullForSources(existing, false, false, "", src.Calendars, false) {
 		_, err = syncer.Full(ctx)
 	} else {

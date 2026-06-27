@@ -39,8 +39,12 @@ type Options struct {
 	// lookup and is stored in each source's sync_config. Never the source
 	// identifier.
 	AccountEmail string
-	// OAuthApp is the named OAuth app binding to persist on new sources (""=default).
+	// OAuthApp is the named OAuth app binding to persist on touched sources
+	// (""=default when OAuthAppSet is true).
 	OAuthApp string
+	// OAuthAppSet means OAuthApp was explicitly selected and should be written
+	// even when it is empty, which clears a prior named-app binding.
+	OAuthAppSet bool
 	// Calendars restricts sync to these calendar IDs (empty = access-role filter).
 	Calendars []string
 	// AllCalendars includes reader/freeBusyReader calendars (default: owner+writer).
@@ -155,10 +159,8 @@ func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error)
 		if err := s.store.UpdateSourceSyncConfig(src.ID, s.sourceConfigJSON(cal)); err != nil {
 			return nil, fmt.Errorf("write sync config for %s: %w", cal.ID, err)
 		}
-		if s.opts.OAuthApp != "" {
-			if err := s.store.UpdateSourceOAuthApp(src.ID, sql.NullString{String: s.opts.OAuthApp, Valid: true}); err != nil {
-				return nil, fmt.Errorf("write oauth app for %s: %w", cal.ID, err)
-			}
+		if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
+			return nil, err
 		}
 		registered = append(registered, cal)
 	}
@@ -197,10 +199,8 @@ func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result
 	if err := s.store.UpdateSourceSyncConfig(src.ID, s.sourceConfigJSON(cal)); err != nil {
 		return fmt.Errorf("write sync config: %w", err)
 	}
-	if s.opts.OAuthApp != "" {
-		if err := s.store.UpdateSourceOAuthApp(src.ID, sql.NullString{String: s.opts.OAuthApp, Valid: true}); err != nil {
-			return fmt.Errorf("write oauth app: %w", err)
-		}
+	if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
+		return err
 	}
 
 	// Resume an interrupted run from its checkpoint, then ALWAYS StartSync. We do
@@ -485,6 +485,21 @@ func (s *Syncer) getOrCreateCalendarSource(cal gcal.Calendar) (*store.Source, er
 	}
 
 	return s.store.GetOrCreateSource(gcal.SourceType, identifier)
+}
+
+func (s *Syncer) updateCalendarSourceOAuthApp(sourceID int64, calendarID string) error {
+	if !s.shouldPersistOAuthApp() {
+		return nil
+	}
+	binding := sql.NullString{String: s.opts.OAuthApp, Valid: s.opts.OAuthApp != ""}
+	if err := s.store.UpdateSourceOAuthApp(sourceID, binding); err != nil {
+		return fmt.Errorf("write oauth app for %s: %w", calendarID, err)
+	}
+	return nil
+}
+
+func (s *Syncer) shouldPersistOAuthApp() bool {
+	return s.opts.OAuthAppSet || s.opts.OAuthApp != ""
 }
 
 func normalizeAccountEmail(email string) string {
