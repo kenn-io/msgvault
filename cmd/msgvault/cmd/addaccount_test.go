@@ -14,6 +14,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -367,6 +368,64 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 
 	err = root.ExecuteContext(ctx)
 	require.Error(err, "mismatched token should be rejected with explicit --oauth-app \"\"")
+}
+
+// TestAddAccount_EmbeddedDefaultRejectsMismatchedToken verifies that the
+// no-config embedded fallback does not silently reuse a token minted by a
+// different OAuth client.
+func TestAddAccount_EmbeddedDefaultRejectsMismatchedToken(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+	tokenData, err := json.Marshal(map[string]string{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "wrong-client.apps.googleusercontent.com",
+	})
+	require.NoError(err, "marshal token")
+	require.NoError(os.WriteFile(
+		filepath.Join(tokensDir, "user@example.com.json"),
+		tokenData, 0600,
+	), "write token")
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedOAuthApp := oauthAppName
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	err = root.ExecuteContext(ctx)
+	require.Error(err, "embedded client should reject a token minted by another OAuth client")
 }
 
 // TestAddAccount_ExplicitDefaultAcceptsMatchingToken verifies that
@@ -1026,4 +1085,63 @@ func TestAddAccount_ForceServiceAccountReturnsActionableError(t *testing.T) {
 	err := root.Execute()
 	requirepkg.Error(t, err, "expected --force service account error")
 	requirepkg.ErrorContains(t, err, "service accounts do not use --force")
+}
+
+func TestAddAccount_ResolverBranches(t *testing.T) {
+	tests := []struct {
+		name        string
+		appName     string
+		setup       func(t *testing.T, cfg *config.Config)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "named BYO with client_secrets",
+			appName: "acme",
+			setup: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
+				path := writeStubClientSecrets(t, cfg.Data.DataDir, "acme.json")
+				cfg.OAuth.Apps = map[string]config.OAuthApp{"acme": {ClientSecrets: path}}
+			},
+			wantErr: false,
+		},
+		{
+			name:        "named app without client_secrets",
+			appName:     "missing",
+			setup:       func(t *testing.T, cfg *config.Config) { t.Helper() },
+			wantErr:     true,
+			errContains: "missing",
+		},
+		{
+			name:    "global BYO",
+			appName: "",
+			setup: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
+				cfg.OAuth.ClientSecrets = writeStubClientSecrets(t, cfg.Data.DataDir, "default.json")
+			},
+			wantErr: false,
+		},
+		{
+			name:    "no config falls through to embedded",
+			appName: "",
+			setup:   func(t *testing.T, cfg *config.Config) { t.Helper() },
+			wantErr: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := requirepkg.New(t)
+			cfg := newTestConfig(t)
+			tc.setup(t, cfg)
+			_, err := resolveOAuthManager(cfg, tc.appName, oauth.Scopes, slog.Default())
+			if tc.wantErr {
+				require.Error(err, "expected error")
+				if tc.errContains != "" {
+					require.ErrorContains(err, tc.errContains)
+				}
+				return
+			}
+			require.NoError(err, "resolveOAuthManager")
+		})
+	}
 }

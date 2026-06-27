@@ -1006,73 +1006,6 @@ func TestOAuthConfig_ServiceAccountKeyFor(t *testing.T) {
 	}
 }
 
-func TestOAuthConfig_HasAnyConfig(t *testing.T) {
-	tests := []struct {
-		name   string
-		config OAuthConfig
-		want   bool
-	}{
-		{
-			name:   "empty config",
-			config: OAuthConfig{},
-			want:   false,
-		},
-		{
-			name:   "default only",
-			config: OAuthConfig{ClientSecrets: "/path/to/default.json"},
-			want:   true,
-		},
-		{
-			name: "named app only",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"acme": {ClientSecrets: "/path/to/acme.json"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "named app with empty path",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"acme": {ClientSecrets: ""},
-				},
-			},
-			want: false,
-		},
-		{
-			name:   "default service account only",
-			config: OAuthConfig{ServiceAccountKey: "/path/to/service-account.json"},
-			want:   true,
-		},
-		{
-			name: "named service account only",
-			config: OAuthConfig{
-				Apps: map[string]OAuthApp{
-					"workspace": {ServiceAccountKey: "/path/to/workspace.json"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "mixed oauth and service account",
-			config: OAuthConfig{
-				ClientSecrets: "/path/to/default.json",
-				Apps: map[string]OAuthApp{
-					"workspace": {ServiceAccountKey: "/path/to/workspace.json"},
-				},
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, tt.config.HasAnyConfig())
-		})
-	}
-}
-
 func TestLoadWithNamedOAuthApps(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -1112,9 +1045,6 @@ client_secrets = "/absolute/personal.json"
 	personal, ok := cfg.OAuth.Apps["personal"]
 	require.True(ok, "Apps[personal] not found")
 	assert.Equal("/absolute/personal.json", personal.ClientSecrets)
-
-	// HasAnyConfig should be true
-	assert.True(cfg.OAuth.HasAnyConfig())
 }
 
 func TestLoadExpandsVectorDBPath(t *testing.T) {
@@ -1303,9 +1233,6 @@ client_secrets = "/path/to/acme.json"
 
 	// Default should be empty
 	assert.Empty(cfg.OAuth.ClientSecrets)
-
-	// HasAnyConfig should still be true
-	assert.True(cfg.OAuth.HasAnyConfig())
 
 	// ClientSecretsFor("") should fail
 	_, err = cfg.OAuth.ClientSecretsFor("")

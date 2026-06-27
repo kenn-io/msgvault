@@ -204,20 +204,6 @@ func (o *OAuthConfig) ServiceAccountKeyFor(name string) string {
 	return ""
 }
 
-// HasAnyConfig returns true if any OAuth configuration exists
-// (default or named apps).
-func (o *OAuthConfig) HasAnyConfig() bool {
-	if o.ClientSecrets != "" || o.ServiceAccountKey != "" {
-		return true
-	}
-	for _, app := range o.Apps {
-		if app.ClientSecrets != "" || app.ServiceAccountKey != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
 	ClientID string `toml:"client_id"`

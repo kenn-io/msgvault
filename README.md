@@ -69,15 +69,21 @@ conda install -c conda-forge msgvault
 
 ## Quick Start
 
-> **Prerequisites:** You need a Google Cloud OAuth credential before adding an account.
-> Follow the **[OAuth Setup Guide](https://msgvault.io/guides/oauth-setup/)** to create one (~5 minutes).
-
-```bash
+```sh
+# Initialize the database
 msgvault init-db
-msgvault add-account you@gmail.com          # opens browser for OAuth
-msgvault sync-full you@gmail.com --limit 100
+
+# Add a Gmail account — opens your browser for consent
+msgvault add-account you@gmail.com
+
+# Sync mail
+msgvault sync-full you@gmail.com
+
+# Browse the archive
 msgvault tui
 ```
+
+No Google Cloud Console setup required: msgvault ships with a verified OAuth client.
 
 ## Commands
 
@@ -183,14 +189,29 @@ All data lives in `~/.msgvault/` by default (override with `MSGVAULT_HOME`).
 
 ```toml
 # ~/.msgvault/config.toml
-[oauth]
-client_secrets = "/path/to/client_secret.json"
-
 [sync]
 rate_limit_qps = 5
 ```
 
-See the [Configuration Guide](https://msgvault.io/configuration/) for all options.
+See the [Configuration Guide](https://msgvault.io/configuration/) for all options. To override the embedded OAuth client, see [Advanced: bring your own OAuth client](#advanced-bring-your-own-oauth-client) below.
+
+### Advanced: bring your own OAuth client
+
+The default flow uses msgvault's centralized verified OAuth client. You only need your own Cloud project if:
+
+- Your Workspace organization prohibits authorizing third-party OAuth apps
+- You prefer your own Cloud project's third-party-access listing to show
+- You need your own Gmail API quota for very large mailboxes
+- You want a fallback before msgvault's centralized client finishes Google verification
+
+Follow the [OAuth setup guide](https://msgvault.io/guides/oauth-setup/) to create a Desktop OAuth client, then add it to `~/.msgvault/config.toml`:
+
+```toml
+[oauth]
+client_secrets = "/path/to/client_secret.json"
+```
+
+Use `--oauth-app NAME` for per-account named-app routing — see the OAuth setup guide for details.
 
 ### Multiple OAuth Apps (Google Workspace)
 

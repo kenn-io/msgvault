@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -531,6 +532,49 @@ func TestNewCallbackHandler(t *testing.T) {
 	}
 }
 
+func TestCallbackHandlerAccessDenied(t *testing.T) {
+	mgr := &Manager{logger: slog.Default()}
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	handler := mgr.newCallbackHandler("expected-state", codeChan, errChan)
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?error=access_denied&state=expected-state", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	select {
+	case err := <-errChan:
+		requirepkg.ErrorIs(t, err, errAccessDenied)
+	default:
+		requirepkg.Fail(t, "callback handler did not send an error")
+	}
+}
+
+func TestCallbackHandlerEscapesErrorResponse(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	mgr := &Manager{logger: slog.Default()}
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	handler := mgr.newCallbackHandler("expected-state", codeChan, errChan)
+
+	const rawError = "<script>alert(1)</script>"
+	req := httptest.NewRequest(http.MethodGet, "/callback?error=%3Cscript%3Ealert(1)%3C%2Fscript%3E&state=expected-state", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	select {
+	case err := <-errChan:
+		require.ErrorContains(err, rawError)
+	default:
+		require.Fail("callback handler did not send an error")
+	}
+
+	body := rec.Body.String()
+	assert.Contains(body, "Error: &lt;script&gt;alert(1)&lt;/script&gt;")
+	assert.NotContains(body, rawError)
+}
+
 // TestAuthorize_SavesUnderOriginalIdentifier exercises the real
 // authorize() method end-to-end (with injected browserFlow and
 // profile server) to verify the token is saved under the original
@@ -785,4 +829,63 @@ func TestValidateBrowserURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScopesEmbedded(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	want := []string{
+		"https://www.googleapis.com/auth/gmail.readonly",
+		"https://www.googleapis.com/auth/gmail.modify",
+		"https://mail.google.com/",
+	}
+	require.Len(ScopesEmbedded, len(want), "ScopesEmbedded length")
+	assert.Equal(want, ScopesEmbedded, "ScopesEmbedded")
+}
+
+func TestAuthorizeEmbeddedFallbackMessage(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tokensDir := t.TempDir()
+	mgr := &Manager{
+		config:     &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
+		tokensDir:  tokensDir,
+		logger:     slog.Default(),
+		isEmbedded: true,
+		browserFlowFn: func(ctx context.Context, email string, launchBrowser bool) (*oauth2.Token, error) {
+			return nil, errAccessDenied
+		},
+	}
+
+	var buf bytes.Buffer
+	origStdout := stdout
+	stdout = &buf
+	defer func() { stdout = origStdout }()
+
+	err := mgr.Authorize(context.Background(), "u@example.com")
+	require.ErrorIs(err, errAccessDenied, "Authorize")
+	assert.Contains(buf.String(), "still in Google's verification")
+}
+
+func TestAuthorizeNonEmbeddedNoFallback(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	mgr := &Manager{
+		config:    &oauth2.Config{ClientID: "x", ClientSecret: "y", Scopes: []string{"s"}},
+		tokensDir: t.TempDir(),
+		logger:    slog.Default(),
+		// isEmbedded: false (default)
+		browserFlowFn: func(ctx context.Context, email string, launchBrowser bool) (*oauth2.Token, error) {
+			return nil, errAccessDenied
+		},
+	}
+
+	var buf bytes.Buffer
+	origStdout := stdout
+	stdout = &buf
+	defer func() { stdout = origStdout }()
+
+	err := mgr.Authorize(context.Background(), "u@example.com")
+	require.ErrorIs(err, errAccessDenied, "Authorize")
+	assert.NotContains(buf.String(), "still in Google's verification")
 }

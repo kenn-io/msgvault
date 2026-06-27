@@ -491,29 +491,19 @@ Examples:
 		// buildAPIClient uses standard scopes; deletion may need elevated ones.
 		// Service-account flows get scopes via the JWT assertion (no stored
 		// token), so the scope-escalation prompt only applies to browser OAuth.
-		var clientSecretsPath string
 		if src.SourceType == sourceTypeGmail {
-			if !cfg.OAuth.HasAnyConfig() {
-				return errOAuthNotConfigured()
-			}
 			appName := sourceOAuthApp(src)
 			isServiceAccount := cfg.OAuth.ServiceAccountKeyFor(appName) != ""
 
 			if !isServiceAccount {
-				clientSecretsPath, err = cfg.OAuth.ClientSecretsFor(appName)
-				if err != nil {
-					return err
-				}
-
 				needsBatchDelete := deletePermanent
 				if needsBatchDelete {
-					requiredScopes := oauth.ScopesDeletion
-					oauthMgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, requiredScopes)
+					oauthMgr, err := resolveOAuthManager(cfg, appName, oauth.ScopesDeletion, logger)
 					if err != nil {
-						return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
+						return err
 					}
 					if !oauthMgr.HasScope(account, "https://mail.google.com/") && oauthMgr.HasScopeMetadata(account) {
-						if err := promptScopeEscalation(ctx, oauthMgr, account, needsBatchDelete, clientSecretsPath); err != nil {
+						if err := promptScopeEscalation(ctx, oauthMgr, account, needsBatchDelete, appName); err != nil {
 							if errors.Is(err, errUserCanceled) {
 								return nil
 							}
@@ -526,19 +516,11 @@ Examples:
 
 		// Build API client — reuses the same factory as sync.
 		getOAuthMgr := func(appName string) (*oauth.Manager, error) {
-			secretsPath := clientSecretsPath
-			if secretsPath == "" {
-				var err error
-				secretsPath, err = cfg.OAuth.ClientSecretsFor(appName)
-				if err != nil {
-					return nil, err
-				}
-			}
 			scopes := oauth.Scopes
 			if deletePermanent {
 				scopes = oauth.ScopesDeletion
 			}
-			return oauth.NewManagerWithScopes(secretsPath, cfg.TokensDir(), logger, scopes)
+			return resolveOAuthManager(cfg, appName, scopes, logger)
 		}
 		// For permanent deletion (not trash), service-account flows need the
 		// elevated mail.google.com scope; trash-only uses the standard set.
@@ -602,7 +584,7 @@ Examples:
 					if mgrErr != nil {
 						return mgrErr
 					}
-					if err := promptScopeEscalation(ctx, oauthMgr, account, !useTrash, clientSecretsPath); err != nil {
+					if err := promptScopeEscalation(ctx, oauthMgr, account, !useTrash, sourceOAuthApp(src)); err != nil {
 						if errors.Is(err, errUserCanceled) {
 							return nil
 						}
@@ -745,7 +727,7 @@ var errUserCanceled = errors.New("user canceled scope escalation")
 // promptScopeEscalation prompts the user to re-authorize with elevated scopes.
 // It deletes the old token, runs the OAuth browser flow, and returns nil on
 // success. The caller should re-create the OAuth manager after this returns.
-func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account string, batchDelete bool, clientSecretsPath string) error {
+func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account string, batchDelete bool, appName string) error {
 	fmt.Println("\n" + strings.Repeat("=", 70))
 	fmt.Println("PERMISSION UPGRADE REQUIRED")
 	fmt.Println(strings.Repeat("=", 70))
@@ -795,9 +777,9 @@ func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account
 	fmt.Println("Starting OAuth flow...")
 	fmt.Println()
 
-	newMgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, requiredScopes)
+	newMgr, err := resolveOAuthManager(cfg, appName, requiredScopes, logger)
 	if err != nil {
-		return fmt.Errorf("create oauth manager: %w", err)
+		return err
 	}
 
 	if err := newMgr.Authorize(ctx, account); err != nil {

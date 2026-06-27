@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -196,8 +195,7 @@ func sanitizeArgs(args []string) []string {
 			redactNext = false
 			continue
 		}
-		if before, _, ok := strings.Cut(a, "="); ok {
-			key := before
+		if key, _, found := strings.Cut(a, "="); found {
 			if sensitive[key] {
 				out = append(out, key+"=<redacted>")
 				continue
@@ -322,81 +320,6 @@ func silenceUsageInRunE(cmd *cobra.Command) {
 	}
 }
 
-// oauthSetupHint returns help text for OAuth configuration issues,
-// using the actual config file path so it's clear on all platforms.
-func oauthSetupHint() string {
-	configPath := "<config file>"
-	if cfg != nil {
-		configPath = cfg.ConfigFilePath()
-	}
-	hint := fmt.Sprintf(`
-To use msgvault, you need a Google Cloud OAuth credential:
-  1. Follow the setup guide: https://msgvault.io/guides/oauth-setup/
-  2. Download the client_secret.json file
-  3. Create or edit %s:
-       [oauth]
-       client_secrets = "/path/to/client_secret.json"`, configPath)
-	if cfg != nil && len(cfg.OAuth.Apps) > 0 {
-		hint += "\n\nNamed OAuth apps are configured. " +
-			"Use 'add-account <email> --oauth-app <name>' to bind an account."
-	}
-	return hint
-}
-
-// errOAuthNotConfigured returns a helpful error when OAuth client secrets are missing.
-// It also searches for client_secret*.json files in common locations.
-func errOAuthNotConfigured() error {
-	// Check common locations for client_secret*.json
-	hint := tryFindClientSecrets()
-	if hint != "" {
-		return fmt.Errorf("OAuth client secrets not configured.%s", hint)
-	}
-	return fmt.Errorf("OAuth client secrets not configured.%s", oauthSetupHint())
-}
-
-// tryFindClientSecrets looks for client_secret*.json in common locations
-// and returns a hint if found.
-func tryFindClientSecrets() string {
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, "Downloads", "client_secret*.json"),
-		"client_secret*.json",
-	}
-	if cfg != nil {
-		candidates = append(candidates, filepath.Join(cfg.HomeDir, "client_secret*.json"))
-	}
-
-	for _, pattern := range candidates {
-		matches, _ := filepath.Glob(pattern)
-		if len(matches) > 0 {
-			configPath := "<config file>"
-			if cfg != nil {
-				configPath = cfg.ConfigFilePath()
-			}
-			return fmt.Sprintf(`
-
-Found OAuth credentials at: %s
-
-To use this file, add to %s:
-  [oauth]
-  client_secrets = %q
-
-Or copy the file to your msgvault home directory:
-  cp %q ~/.msgvault/client_secret.json`, matches[0], configPath, matches[0], matches[0])
-		}
-	}
-	return ""
-}
-
-// wrapOAuthError wraps an oauth/client-secrets error with setup instructions
-// if the root cause is a missing or unreadable secrets file.
-func wrapOAuthError(err error) error {
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
-		return fmt.Errorf("OAuth client secrets file not accessible.%s", oauthSetupHint())
-	}
-	return err
-}
-
 // isAuthInvalidError returns true if the error indicates the OAuth token is
 // permanently invalid (expired or revoked), as opposed to a transient failure
 // like a network error or context cancellation.
@@ -489,7 +412,8 @@ func getTokenSourceWithReauth(
 
 // oauthManagerCache returns a resolver function that lazily creates and
 // caches oauth.Manager instances keyed by app name. The cache is safe
-// for concurrent use (serve runs scheduled syncs in goroutines).
+// for concurrent use (serve runs scheduled syncs in goroutines). The
+// underlying resolution is delegated to resolveOAuthManager.
 func oauthManagerCache() func(appName string) (*oauth.Manager, error) {
 	var mu sync.Mutex
 	managers := map[string]*oauth.Manager{}
@@ -499,13 +423,9 @@ func oauthManagerCache() func(appName string) (*oauth.Manager, error) {
 		if mgr, ok := managers[appName]; ok {
 			return mgr, nil
 		}
-		secretsPath, err := cfg.OAuth.ClientSecretsFor(appName)
+		mgr, err := resolveOAuthManager(cfg, appName, oauth.Scopes, logger)
 		if err != nil {
 			return nil, err
-		}
-		mgr, err := oauth.NewManager(secretsPath, cfg.TokensDir(), logger)
-		if err != nil {
-			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 		}
 		managers[appName] = mgr
 		return mgr, nil

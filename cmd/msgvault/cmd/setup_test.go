@@ -33,6 +33,8 @@ func TestCreateNASBundle(t *testing.T) {
 	configStr := string(configData)
 	assert.Contains(configStr, apiKey, "config.toml should contain the API key")
 	assert.Contains(configStr, "0.0.0.0", "config.toml should bind to 0.0.0.0")
+	assert.Contains(configStr, "[oauth]", "config.toml should contain [oauth] section when secrets are provided")
+	assert.Contains(configStr, `client_secrets = "/data/client_secret.json"`, "config.toml should set client_secrets")
 
 	// Verify config.toml has secure permissions
 	// Windows doesn't support Unix file permissions.
@@ -58,21 +60,28 @@ func TestCreateNASBundle(t *testing.T) {
 }
 
 func TestCreateNASBundle_NoSecrets(t *testing.T) {
+	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
 	err := createNASBundle(bundleDir, "key", "", 8080)
-	requirepkg.NoError(t, err, "createNASBundle")
+	require.NoError(err, "createNASBundle")
 
 	// config.toml and docker-compose.yml should exist
 	_, err = os.Stat(filepath.Join(bundleDir, "config.toml"))
-	requirepkg.NoError(t, err, "config.toml should exist")
+	require.NoError(err, "config.toml should exist")
 	_, err = os.Stat(filepath.Join(bundleDir, "docker-compose.yml"))
-	requirepkg.NoError(t, err, "docker-compose.yml should exist")
+	require.NoError(err, "docker-compose.yml should exist")
 
 	// client_secret.json should NOT exist (no source path given)
 	_, err = os.Stat(filepath.Join(bundleDir, "client_secret.json"))
 	assert.True(os.IsNotExist(err), "client_secret.json should not exist when no secrets path given")
+
+	// config.toml should NOT contain [oauth] section when no secrets provided;
+	// the NAS instance falls back to the embedded verified OAuth client.
+	configBytes, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
+	require.NoError(err, "read bundle config")
+	assert.NotContains(string(configBytes), "[oauth]", "config.toml should not contain [oauth] section when no secrets provided")
 }
 
 func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
@@ -95,7 +104,9 @@ func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
 	// config.toml should reference /data/client_secret.json
 	cfgData, err := os.ReadFile(filepath.Join(bundleDir, "config.toml"))
 	require.NoError(err, "read config.toml")
-	assert.Contains(string(cfgData), `/data/client_secret.json`, "config.toml should reference /data/client_secret.json")
+	cfgStr := string(cfgData)
+	assert.Contains(cfgStr, "[oauth]", "config.toml should contain [oauth] section when secrets are provided")
+	assert.Contains(cfgStr, `/data/client_secret.json`, "config.toml should reference /data/client_secret.json")
 }
 
 func TestCreateNASBundle_InvalidSecretPath(t *testing.T) {

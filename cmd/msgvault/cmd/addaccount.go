@@ -58,7 +58,6 @@ Examples:
 		// Resolve which client secrets to use
 		resolvedApp := oauthAppName
 		oauthAppExplicit := cmd.Flags().Changed("oauth-app")
-		var clientSecretsPath string
 
 		// Initialize database (in case it's new)
 		dbPath := cfg.DatabaseDSN()
@@ -174,19 +173,11 @@ Examples:
 			return nil
 		}
 
-		// Resolve client secrets path (standard OAuth flow)
-		clientSecretsPath, err = cfg.OAuth.ClientSecretsFor(resolvedApp)
+		// Build the OAuth manager. resolveOAuthManager handles named BYO,
+		// global BYO, and the embedded fallback automatically.
+		oauthMgr, err := resolveOAuthManager(cfg, resolvedApp, oauth.Scopes, logger)
 		if err != nil {
-			if !cfg.OAuth.HasAnyConfig() {
-				return errOAuthNotConfigured()
-			}
 			return err
-		}
-
-		// Create OAuth manager
-		oauthMgr, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
-		if err != nil {
-			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 		}
 
 		// If --force, delete existing token so we re-authorize
@@ -204,10 +195,10 @@ Examples:
 		// If a valid token exists, check if we can reuse it.
 		// Validate the token's client identity when any named app is
 		// involved — whether from an explicit flag, a binding change,
-		// or inherited from the DB. A mismatched token would fail on
-		// next refresh.
+		// inherited from the DB — or when falling back to the embedded
+		// client. A mismatched token would fail on next refresh.
 		needsClientCheck := bindingChanged || oauthAppExplicit ||
-			resolvedApp != ""
+			resolvedApp != "" || oauthMgr.UsesEmbeddedClient()
 		tokenReusable := !forceReauth && oauthMgr.HasToken(email) &&
 			(!needsClientCheck || oauthMgr.TokenMatchesClient(email))
 		if tokenReusable {
