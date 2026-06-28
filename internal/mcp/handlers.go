@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -27,6 +28,14 @@ const (
 	maxLimit               = 1000
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
+	defaultBodyChars       = 2000
+	bodyFormatAuto         = "auto"
+	bodyFormatText         = "text"
+	bodyFormatHTML         = "html"
+	// maxBodyChars caps the body slice returned by get_message regardless of what
+	// the caller requests via max_chars. Prevents a single tool call from flooding
+	// the context window; callers page forward using offset.
+	maxBodyChars = 4000
 	// totalCountUnknown is returned when the backend cannot report a full match
 	// count (body FTS fallback, hybrid/vector ranking depth, or list_messages
 	// without a separate count query). Clients should use has_more for paging.
@@ -644,6 +653,109 @@ func (h *handlers) filterFromFindSimilarArgs(ctx context.Context, args map[strin
 	return f, nil
 }
 
+// bodyByteSliceRange returns a UTF-8-safe subslice of body[start:end] and the
+// adjusted byte offsets actually used. adjEnd is exclusive; callers use it for
+// has_more and sequential paging via offset += body_returned.
+func bodyByteSliceRange(body string, start, end int) (text string, adjStart, adjEnd int) {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(body) {
+		end = len(body)
+	}
+	if start >= len(body) {
+		return "", len(body), len(body)
+	}
+	if start >= end {
+		return oneRuneSlice(body, start)
+	}
+
+	adjStart, adjEnd = start, end
+	for adjStart < adjEnd && !utf8.RuneStart(body[adjStart]) {
+		adjStart++
+	}
+	for adjEnd > adjStart && adjEnd < len(body) && !utf8.RuneStart(body[adjEnd]) {
+		adjEnd--
+	}
+	for adjEnd > adjStart {
+		s := body[adjStart:adjEnd]
+		if utf8.ValidString(s) {
+			return s, adjStart, adjEnd
+		}
+		adjEnd--
+	}
+	return oneRuneSlice(body, adjStart)
+}
+
+// oneRuneSlice returns a single rune starting at or after start so tiny windows
+// and mid-rune offsets still advance sequential paging.
+func oneRuneSlice(body string, start int) (text string, adjStart, adjEnd int) {
+	adjStart = start
+	for adjStart < len(body) && !utf8.RuneStart(body[adjStart]) {
+		adjStart++
+	}
+	if adjStart >= len(body) {
+		return "", len(body), len(body)
+	}
+	_, size := utf8.DecodeRuneInString(body[adjStart:])
+	if size <= 0 {
+		return "", adjStart, adjStart
+	}
+	adjEnd = min(len(body), adjStart+size)
+	return body[adjStart:adjEnd], adjStart, adjEnd
+}
+
+// bodyByteSlice returns body[start:end], nudging boundaries inward so the
+// result is always valid UTF-8. MCP body APIs use byte offsets; without
+// this, a window can split a multibyte rune (emoji, CJK, accented letters).
+func bodyByteSlice(body string, start, end int) string {
+	text, _, _ := bodyByteSliceRange(body, start, end)
+	return text
+}
+
+// contextWindow returns byte offsets [start, end) for a window of up to
+// contextChars bytes centered on a match at pos with byte length termLen.
+func contextWindow(bodyLen, pos, termLen, contextChars int) (start, end int) {
+	start = pos - (contextChars-termLen)/2
+	end = start + contextChars
+	if start < 0 {
+		start = 0
+		end = min(bodyLen, contextChars)
+	} else if end > bodyLen {
+		end = bodyLen
+		start = max(0, end-contextChars)
+	}
+	return start, end
+}
+
+type getMessageResponse struct {
+	ID                   int64                  `json:"id"`
+	SourceMessageID      string                 `json:"source_message_id"`
+	ConversationID       int64                  `json:"conversation_id"`
+	SourceConversationID string                 `json:"source_conversation_id"`
+	Subject              string                 `json:"subject"`
+	MessageType          string                 `json:"message_type,omitempty"`
+	Snippet              string                 `json:"snippet"`
+	SentAt               time.Time              `json:"sent_at"`
+	ReceivedAt           *time.Time             `json:"received_at,omitempty"`
+	DeletedAt            *time.Time             `json:"deleted_at,omitempty"`
+	SizeEstimate         int64                  `json:"size_estimate"`
+	HasAttachments       bool                   `json:"has_attachments"`
+	From                 []query.Address        `json:"from"`
+	To                   []query.Address        `json:"to"`
+	Cc                   []query.Address        `json:"cc"`
+	Bcc                  []query.Address        `json:"bcc"`
+	BodyText             string                 `json:"body_text"`
+	BodyHTML             string                 `json:"body_html"`
+	BodyFormat           string                 `json:"body_format,omitempty"`
+	BodyLength           int                    `json:"body_length"`
+	BodyReturned         int                    `json:"body_returned"`
+	Offset               int                    `json:"offset"`
+	HasMore              bool                   `json:"has_more"`
+	Labels               []string               `json:"labels"`
+	Attachments          []query.AttachmentInfo `json:"attachments"`
+}
+
 func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
@@ -656,8 +768,87 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("message not found: %v", err)), nil
 	}
+	if msg == nil {
+		return mcp.NewToolResultError("message not found"), nil
+	}
 
-	return jsonResult(msg)
+	maxChars := intArg(args, "max_chars", defaultBodyChars)
+	if maxChars <= 0 {
+		maxChars = defaultBodyChars
+	} else if maxChars > maxBodyChars {
+		maxChars = maxBodyChars
+	}
+
+	requestedBodyFormat, _ := args["body_format"].(string)
+	if requestedBodyFormat == "" {
+		requestedBodyFormat = bodyFormatAuto
+	}
+
+	fullBody := msg.BodyText
+	bodyFormat := bodyFormatText
+	switch requestedBodyFormat {
+	case bodyFormatAuto:
+		if fullBody == "" && msg.BodyHTML != "" {
+			fullBody = msg.BodyHTML
+			bodyFormat = bodyFormatHTML
+		}
+	case bodyFormatText:
+	case bodyFormatHTML:
+		fullBody = msg.BodyHTML
+		bodyFormat = bodyFormatHTML
+	default:
+		return mcp.NewToolResultError("body_format must be one of auto, text, html"), nil
+	}
+	bodyLen := len(fullBody)
+
+	var start, end int
+	fullBodyRequested, _ := args["full_body"].(bool)
+	if fullBodyRequested {
+		start, end = 0, bodyLen
+	} else if centerAt := intArg(args, "center_at", -1); centerAt >= 0 {
+		// Center the window on the given byte offset. contextWindow handles
+		// clamping to body boundaries.
+		start, end = contextWindow(bodyLen, centerAt, 0, maxChars)
+	} else {
+		start = min(intArg(args, "offset", 0), bodyLen)
+		end = min(start+maxChars, bodyLen)
+	}
+
+	bodySlice, sliceStart, sliceEnd := bodyByteSliceRange(fullBody, start, end)
+	bodyText := bodySlice
+	bodyHTML := ""
+	if bodyFormat == bodyFormatHTML {
+		bodyText = ""
+		bodyHTML = bodySlice
+	}
+
+	return jsonResult(getMessageResponse{
+		ID:                   msg.ID,
+		SourceMessageID:      msg.SourceMessageID,
+		ConversationID:       msg.ConversationID,
+		SourceConversationID: msg.SourceConversationID,
+		Subject:              msg.Subject,
+		MessageType:          msg.MessageType,
+		Snippet:              msg.Snippet,
+		SentAt:               msg.SentAt,
+		ReceivedAt:           msg.ReceivedAt,
+		DeletedAt:            msg.DeletedAt,
+		SizeEstimate:         msg.SizeEstimate,
+		HasAttachments:       msg.HasAttachments,
+		From:                 msg.From,
+		To:                   msg.To,
+		Cc:                   msg.Cc,
+		Bcc:                  msg.Bcc,
+		BodyText:             bodyText,
+		BodyHTML:             bodyHTML,
+		BodyFormat:           bodyFormat,
+		BodyLength:           bodyLen,
+		BodyReturned:         len(bodySlice),
+		Offset:               sliceStart,
+		HasMore:              sliceEnd < bodyLen,
+		Labels:               msg.Labels,
+		Attachments:          msg.Attachments,
+	})
 }
 
 const maxAttachmentSize = 50 * 1024 * 1024 // 50MB
@@ -941,6 +1132,18 @@ func (h *handlers) aggregate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	return jsonResult(rows)
+}
+
+// intArg extracts a non-negative integer from a map, with a default.
+func intArg(args map[string]any, key string, def int) int {
+	v, ok := args[key].(float64)
+	if !ok {
+		return def
+	}
+	if math.IsNaN(v) || v < 0 || math.IsInf(v, 1) || v > float64(math.MaxInt) {
+		return def
+	}
+	return int(v)
 }
 
 // limitArg extracts a non-negative integer limit from a map, with a default.

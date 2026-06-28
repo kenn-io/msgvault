@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	assertpkg "github.com/stretchr/testify/assert"
@@ -63,6 +64,19 @@ type paginatedListMessages struct {
 	Returned int                    `json:"returned"`
 	Offset   int                    `json:"offset"`
 	HasMore  bool                   `json:"has_more"`
+}
+
+type getMessageResp struct {
+	ID             int64  `json:"id"`
+	Subject        string `json:"subject"`
+	BodyText       string `json:"body_text"`
+	BodyHTML       string `json:"body_html"`
+	BodyFormat     string `json:"body_format"`
+	BodyLength     int    `json:"body_length"`
+	BodyReturned   int    `json:"body_returned"`
+	Offset         int    `json:"offset"`
+	HasMore        bool   `json:"has_more"`
+	ConversationID int64  `json:"conversation_id"`
 }
 
 // newTestHandlers creates a handlers instance with the given mock engine.
@@ -600,6 +614,54 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 	assert.False(resp2.HasMore, "has_more page 2")
 }
 
+func TestBodyByteSlice(t *testing.T) {
+	t.Run("ascii unchanged", func(t *testing.T) {
+		body := "hello world"
+		assertpkg.Equal(t, "hello", bodyByteSlice(body, 0, 5))
+	})
+
+	t.Run("does not split multibyte rune", func(t *testing.T) {
+		body := "café"
+		s := bodyByteSlice(body, 0, 4)
+		assertpkg.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
+		assertpkg.Equal(t, "caf", s)
+	})
+
+	t.Run("emoji not bisected", func(t *testing.T) {
+		body := strings.Repeat("a", 10) + "😀" + strings.Repeat("b", 10)
+		emojiStart := 10
+		s := bodyByteSlice(body, emojiStart, emojiStart+2)
+		assertpkg.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
+		wide := bodyByteSlice(body, emojiStart, emojiStart+4)
+		assertpkg.True(t, utf8.ValidString(wide))
+		assertpkg.Equal(t, "😀", wide)
+	})
+
+	t.Run("returns adjusted offsets for paging", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		body := "aaa😀bbb"
+		text, adjStart, adjEnd := bodyByteSliceRange(body, 0, 5)
+		assert.Equal("aaa", text)
+		assert.Equal(0, adjStart)
+		assert.Equal(3, adjEnd)
+
+		text2, adjStart2, adjEnd2 := bodyByteSliceRange(body, 3, 8)
+		assert.True(utf8.ValidString(text2))
+		assert.Equal(3, adjStart2)
+		assert.Equal("😀b", text2)
+		assert.Equal(8, adjEnd2)
+	})
+
+	t.Run("tiny window returns one rune", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		body := "aaa😀bbb"
+		text, adjStart, adjEnd := bodyByteSliceRange(body, 3, 4)
+		assert.Equal("😀", text)
+		assert.Equal(3, adjStart)
+		assert.Equal(7, adjEnd)
+	})
+}
+
 func TestSearchMessages_UnknownMode(t *testing.T) {
 	h := newTestHandlers(&querytest.MockEngine{})
 
@@ -620,9 +682,225 @@ func TestGetMessage(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("found", func(t *testing.T) {
-		msg := runTool[query.MessageDetail](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
-		assertpkg.Equal(t, "Test Message", msg.Subject, "subject")
-		assertpkg.Equal(t, "thread-xyz", msg.SourceConversationID, "SourceConversationID")
+		assert := assertpkg.New(t)
+		msg := runTool[getMessageResp](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
+		assert.Equal("Test Message", msg.Subject, "subject")
+		assert.Equal("Hello world", msg.BodyText, "body_text")
+		assert.Empty(msg.BodyHTML, "body_html stripped")
+		assert.Equal("text", msg.BodyFormat, "body_format")
+		assert.Equal(11, msg.BodyLength, "body_length")
+		assert.Equal(11, msg.BodyReturned, "body_returned")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("html-only body returns html slice", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		htmlBody := "<p>Hello <strong>world</strong></p>"
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				57: testutil.NewMessageDetail(57).WithBodyText("").WithBodyHTML(htmlBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{"id": float64(57)})
+		assert.Empty(msg.BodyText, "body_text")
+		assert.Equal(htmlBody, msg.BodyHTML, "body_html")
+		assert.Equal("html", msg.BodyFormat, "body_format")
+		assert.Equal(len(htmlBody), msg.BodyLength, "body_length")
+		assert.Equal(len(htmlBody), msg.BodyReturned, "body_returned")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("html format selects html from mixed body", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		htmlBody := "<p>Hello <strong>HTML</strong></p>"
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				58: testutil.NewMessageDetail(58).
+					WithBodyText("Hello text").
+					WithBodyHTML(htmlBody).
+					BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":          float64(58),
+			"body_format": "html",
+		})
+		assert.Empty(msg.BodyText, "body_text")
+		assert.Equal(htmlBody, msg.BodyHTML, "body_html")
+		assert.Equal("html", msg.BodyFormat, "body_format")
+		assert.Equal(len(htmlBody), msg.BodyLength, "body_length")
+		assert.Equal(len(htmlBody), msg.BodyReturned, "body_returned")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("truncates long body", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		longBody := strings.Repeat("x", 5000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				50: testutil.NewMessageDetail(50).WithBodyText(longBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{"id": float64(50)})
+		assert.Equal(5000, msg.BodyLength, "body_length")
+		assert.Equal(2000, msg.BodyReturned, "body_returned")
+		assert.Len(msg.BodyText, 2000, "truncated body_text")
+		assert.True(msg.HasMore, "has_more")
+	})
+
+	t.Run("full_body returns complete selected body", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		longBody := strings.Repeat("x", 5000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				59: testutil.NewMessageDetail(59).WithBodyText(longBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(59),
+			"full_body": true,
+			"max_chars": float64(10),
+			"offset":    float64(2000),
+			"center_at": float64(3000),
+		})
+		assert.Equal(longBody, msg.BodyText, "body_text")
+		assert.Equal("text", msg.BodyFormat, "body_format")
+		assert.Equal(5000, msg.BodyLength, "body_length")
+		assert.Equal(5000, msg.BodyReturned, "body_returned")
+		assert.Equal(0, msg.Offset, "offset")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("offset pagination", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		body := strings.Repeat("a", 3000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				51: testutil.NewMessageDetail(51).WithBodyText(body).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":     float64(51),
+			"offset": float64(2000),
+		})
+		assert.Equal(2000, msg.Offset, "offset")
+		assert.Equal(1000, msg.BodyReturned, "body_returned")
+		assert.Len(msg.BodyText, 1000, "second page length")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("center_at mid-body", func(t *testing.T) {
+		body := strings.Repeat("a", 1000) + "KEYWORD" + strings.Repeat("z", 1000)
+		matchOffset := 1000
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				52: testutil.NewMessageDetail(52).WithBodyText(body).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(52),
+			"center_at": float64(matchOffset),
+			"max_chars": float64(200),
+		})
+		assertpkg.Contains(t, msg.BodyText, "KEYWORD")
+		assertpkg.LessOrEqual(t, msg.Offset, matchOffset, "window starts before match")
+		assertpkg.LessOrEqual(t, len(msg.BodyText), 200, "respects max_chars")
+	})
+
+	t.Run("center_at near start", func(t *testing.T) {
+		body := "KEYWORD" + strings.Repeat("z", 1000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				53: testutil.NewMessageDetail(53).WithBodyText(body).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(53),
+			"center_at": float64(0),
+			"max_chars": float64(200),
+		})
+		assertpkg.Contains(t, msg.BodyText, "KEYWORD")
+		assertpkg.Equal(t, 0, msg.Offset, "starts at body start")
+	})
+
+	t.Run("max_chars above cap clamps to 4000", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		longBody := strings.Repeat("x", 5000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				54: testutil.NewMessageDetail(54).WithBodyText(longBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(54),
+			"max_chars": float64(5000),
+		})
+		assert.Equal(4000, msg.BodyReturned, "body_returned")
+		assert.Len(msg.BodyText, 4000, "clamped body_text")
+		assert.True(msg.HasMore, "has_more")
+	})
+
+	t.Run("max_chars zero uses default", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		longBody := strings.Repeat("x", 5000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				55: testutil.NewMessageDetail(55).WithBodyText(longBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(55),
+			"max_chars": float64(0),
+		})
+		assert.Equal(2000, msg.BodyReturned, "body_returned")
+		assert.Len(msg.BodyText, 2000, "default body_text")
+		assert.True(msg.HasMore, "has_more")
+	})
+
+	t.Run("nil message without error", func(t *testing.T) {
+		eng2 := &querytest.MockEngine{
+			GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+				return nil, nil //nolint:nilnil // mirrors Engine.GetMessage not-found contract
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		runToolExpectError(t, "get_message", h2.getMessage, map[string]any{"id": float64(42)})
+	})
+
+	t.Run("utf8 sequential paging", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		body := strings.Repeat("a", 10) + "😀" + strings.Repeat("b", 10)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				56: testutil.NewMessageDetail(56).WithBodyText(body).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+
+		var parts []string
+		offset := 0
+		for {
+			msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+				"id":        float64(56),
+				"offset":    float64(offset),
+				"max_chars": float64(5),
+			})
+			parts = append(parts, msg.BodyText)
+			if !msg.HasMore {
+				break
+			}
+			offset += msg.BodyReturned
+		}
+		assert.Equal(body, strings.Join(parts, ""), "rejoined pages")
 	})
 
 	errorCases := []struct {
@@ -640,6 +918,15 @@ func TestGetMessage(t *testing.T) {
 			runToolExpectError(t, "get_message", h.getMessage, tt.args)
 		})
 	}
+}
+
+func TestGetMessageToolDescriptionDoesNotReferenceFutureTools(t *testing.T) {
+	tool := getMessageTool()
+	assertpkg.NotContains(t, tool.Description, "search_in_message")
+	centerAt := tool.InputSchema.Properties["center_at"]
+	raw, err := json.Marshal(centerAt)
+	requirepkg.NoError(t, err, "marshal center_at schema")
+	assertpkg.NotContains(t, string(raw), "search_in_message")
 }
 
 func TestGetStats_VectorDisabled(t *testing.T) {

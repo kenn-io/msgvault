@@ -234,11 +234,32 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 
 func getMessageTool() mcp.Tool {
 	return mcp.NewTool(ToolGetMessage,
-		mcp.WithDescription("Get full message details including body text, recipients, labels, and attachments by message ID."),
+		mcp.WithDescription("Get message details including recipients, labels, attachments, and a slice of the message body. "+
+			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
+			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
+			"To read sequentially: call again with offset += body_returned. "+
+			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
+			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources)."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithNumber("id",
 			mcp.Required(),
 			mcp.Description("Message ID"),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided."),
+		),
+		mcp.WithNumber("center_at",
+			mcp.Description("Byte offset from the start of the selected body to center the window on. Takes precedence over offset."),
+		),
+		mcp.WithNumber("max_chars",
+			mcp.Description("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default."),
+		),
+		mcp.WithString("body_format",
+			mcp.Description("Which body representation to page: auto (default, plain text when available, HTML fallback), text, or html."),
+			mcp.Enum(bodyFormatAuto, bodyFormatText, bodyFormatHTML),
+		),
+		mcp.WithBoolean("full_body",
+			mcp.Description("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
 		),
 	)
 }
