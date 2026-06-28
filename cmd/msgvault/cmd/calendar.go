@@ -589,6 +589,9 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 		if err != nil {
 			return nil, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 		}
+		if err := requireCalendarTokenForSync(mgr, accountEmail); err != nil {
+			return nil, err
+		}
 		tokenSource, err = getTokenSourceWithReauth(ctx, mgr, accountEmail, interactive)
 		if err != nil {
 			return nil, err
@@ -599,6 +602,25 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 		gcal.WithLogger(logger),
 		gcal.WithRateLimiter(gmail.NewRateLimiterWithCapacity(10, 8)),
 	), nil
+}
+
+func requireCalendarTokenForSync(mgr *oauth.Manager, accountEmail string) error {
+	if !mgr.HasToken(accountEmail) {
+		return calendarTokenActionError(accountEmail)
+	}
+	if !mgr.HasScopeMetadata(accountEmail) || !mgr.HasScope(accountEmail, oauth.ScopeCalendarReadonly) {
+		return calendarTokenActionError(accountEmail)
+	}
+	return nil
+}
+
+func calendarTokenActionError(accountEmail string) error {
+	return fmt.Errorf(
+		"calendar access for %s is not authorized; run 'msgvault add-calendar %s' to grant %s",
+		accountEmail,
+		accountEmail,
+		oauth.ScopeCalendarReadonly,
+	)
 }
 
 // runConfiguredGCalSync runs one configured [[gcal]] source. It is shared by the

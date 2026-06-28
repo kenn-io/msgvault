@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -95,6 +96,29 @@ func TestCalendarAddOAuthScopes(t *testing.T) {
 		"a new calendar-only account should request only Calendar")
 	assert.ElementsMatch(t, oauth.ScopesGmailCalendar, calendarAddOAuthScopes(true),
 		"an existing Gmail token must preserve Gmail while adding Calendar")
+}
+
+func TestBuildCalendarClientRejectsLegacyTokenWithoutCalendarScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	tokenPath, restore := seedTokenEnv(t, legacyTokenJSON)
+	defer restore()
+
+	before, err := os.ReadFile(tokenPath)
+	require.NoError(err, "read seeded token")
+
+	client, err := buildCalendarClient(context.Background(), scopeEscalationAccount, "", false)
+	if client != nil {
+		defer func() { _ = client.Close() }()
+	}
+
+	require.Error(err)
+	require.ErrorContains(err, "add-calendar")
+	require.ErrorContains(err, oauth.ScopeCalendarReadonly)
+	after, readErr := os.ReadFile(tokenPath)
+	require.NoError(readErr, "read token after rejected client build")
+	assert.Equal(string(before), string(after), "legacy token must not be rewritten with Calendar metadata")
 }
 
 func calendarSourceWithSyncConfig(syncConfig string) *store.Source {

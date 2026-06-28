@@ -117,6 +117,14 @@ func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions)
 	}
 	if len(sources) == 1 {
 		scope.Source = sources[0]
+		if opts.includeCalendarSources && sources[0].SourceType != gcal.SourceType &&
+			!store.EqualIdentifier(sources[0].Identifier, input) {
+			resolvedCalendarSources, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, sources[0].Identifier)
+			if err != nil {
+				return scope, fmt.Errorf("look up calendar sources for %q: %w", sources[0].Identifier, err)
+			}
+			calendarSources = appendUniqueSources(calendarSources, resolvedCalendarSources)
+		}
 		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, sources[0].ID)
 		return scope, nil
 	}
@@ -158,6 +166,27 @@ func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*st
 
 func emailAccountSource(src *store.Source) bool {
 	return src != nil && src.SourceType != sourceTypeCalendar
+}
+
+func appendUniqueSources(dst []*store.Source, srcs []*store.Source) []*store.Source {
+	seen := make(map[int64]struct{}, len(dst)+len(srcs))
+	for _, src := range dst {
+		if src == nil {
+			continue
+		}
+		seen[src.ID] = struct{}{}
+	}
+	for _, src := range srcs {
+		if src == nil {
+			continue
+		}
+		if _, ok := seen[src.ID]; ok {
+			continue
+		}
+		seen[src.ID] = struct{}{}
+		dst = append(dst, src)
+	}
+	return dst
 }
 
 func sourceIDsExcept(sources []*store.Source, exclude int64) []int64 {

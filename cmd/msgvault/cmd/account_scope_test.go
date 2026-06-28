@@ -90,6 +90,28 @@ func TestResolveAccountFlag_IncludesCalendarSourcesForAccountEmail(t *testing.T)
 	assert.Equal(accountID, scope.DisplayName(), "display name")
 }
 
+func TestResolveAccountFlag_IncludesCalendarSourcesForDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+	require.NoError(f.Store.UpdateSourceDisplayName(f.Source.ID, "Work"), "UpdateSourceDisplayName")
+
+	cal, err := f.Store.GetOrCreateSource("gcal", accountID+"/primary")
+	require.NoError(err, "GetOrCreateSource")
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": accountID,
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+
+	scope, err := ResolveAccountFlag(f.Store, "Work")
+	require.NoError(err)
+	require.NotNil(scope.Source, "display-name lookup should resolve the Gmail source")
+	assert.Equal(f.Source.ID, scope.Source.ID, "source ID")
+	assert.ElementsMatch([]int64{f.Source.ID, cal.ID}, scope.SourceIDs())
+}
+
 func TestResolveAccountFlag_CalendarOnlyAccountEmail(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
