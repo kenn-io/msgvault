@@ -146,6 +146,27 @@ func TestCalendarAddOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	assert.True(decision.NeedsClientCheck)
 }
 
+func TestCalendarAddOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := newCalendarDecisionStore(t)
+	gmailSrc, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
+	calendarSrc, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(calendarSrc.ID,
+		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
+
+	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "", false)
+	require.NoError(err)
+
+	assert.Empty(decision.OAuthApp)
+	assert.False(decision.BindingChanged)
+	assert.False(decision.NeedsClientCheck)
+}
+
 func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -230,6 +251,28 @@ func TestCalendarSyncOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)
+	assert.False(decision.OAuthAppSet)
+}
+
+func TestCalendarSyncOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := newCalendarDecisionStore(t)
+	gmailSrc, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
+	calendarSrc, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(calendarSrc.ID,
+		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
+	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, "user@acme.com")
+	require.NoError(err)
+
+	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", existing, "", false)
+	require.NoError(err)
+
+	assert.Empty(decision.OAuthApp)
 	assert.False(decision.OAuthAppSet)
 }
 

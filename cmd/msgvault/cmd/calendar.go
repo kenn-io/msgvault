@@ -412,6 +412,9 @@ func calendarStoredAccountOAuthApp(st *store.Store, email string, calendarSource
 	if app := calendarStoredOAuthApp(calendarSources); app != "" {
 		return app, nil
 	}
+	if len(calendarSources) > 0 {
+		return "", nil
+	}
 	src, err := calendarGmailSourceForAccount(st, email)
 	if errors.Is(err, errGmailSourceNotFound) {
 		return "", nil
