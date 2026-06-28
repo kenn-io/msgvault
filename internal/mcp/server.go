@@ -258,6 +258,9 @@ func getMessageTool() mcp.Tool {
 			mcp.Description("Which body representation to page: auto (default, plain text when available, HTML fallback), text, or html."),
 			mcp.Enum(bodyFormatAuto, bodyFormatText, bodyFormatHTML),
 		),
+		mcp.WithBoolean("full_body",
+			mcp.Description("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+		),
 	)
 }
 

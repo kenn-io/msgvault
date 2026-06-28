@@ -751,6 +751,30 @@ func TestGetMessage(t *testing.T) {
 		assert.True(msg.HasMore, "has_more")
 	})
 
+	t.Run("full_body returns complete selected body", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		longBody := strings.Repeat("x", 5000)
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				59: testutil.NewMessageDetail(59).WithBodyText(longBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":        float64(59),
+			"full_body": true,
+			"max_chars": float64(10),
+			"offset":    float64(2000),
+			"center_at": float64(3000),
+		})
+		assert.Equal(longBody, msg.BodyText, "body_text")
+		assert.Equal("text", msg.BodyFormat, "body_format")
+		assert.Equal(5000, msg.BodyLength, "body_length")
+		assert.Equal(5000, msg.BodyReturned, "body_returned")
+		assert.Equal(0, msg.Offset, "offset")
+		assert.False(msg.HasMore, "has_more")
+	})
+
 	t.Run("offset pagination", func(t *testing.T) {
 		assert := assertpkg.New(t)
 		body := strings.Repeat("a", 3000)

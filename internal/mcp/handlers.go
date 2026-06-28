@@ -802,7 +802,10 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	bodyLen := len(fullBody)
 
 	var start, end int
-	if centerAt := intArg(args, "center_at", -1); centerAt >= 0 {
+	fullBodyRequested, _ := args["full_body"].(bool)
+	if fullBodyRequested {
+		start, end = 0, bodyLen
+	} else if centerAt := intArg(args, "center_at", -1); centerAt >= 0 {
 		// Center the window on the given byte offset. contextWindow handles
 		// clamping to body boundaries.
 		start, end = contextWindow(bodyLen, centerAt, 0, maxChars)
