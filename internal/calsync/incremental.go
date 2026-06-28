@@ -57,7 +57,7 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 			Primary:    cfg.Primary,
 			TimeZone:   cfg.TimeZone,
 		}
-		if !s.includeCalendar(cal) {
+		if !s.includeRegisteredCalendar(cal) {
 			continue
 		}
 

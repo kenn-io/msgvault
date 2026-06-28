@@ -412,6 +412,13 @@ func (s *Syncer) includeCalendar(cal gcal.Calendar) bool {
 	return accessRoleRank(cal.AccessRole) >= accessRoleRank(s.minAccessRole())
 }
 
+func (s *Syncer) includeRegisteredCalendar(cal gcal.Calendar) bool {
+	if s.includeCalendar(cal) {
+		return true
+	}
+	return !cal.Deleted && cal.AccessRole == "" && len(s.opts.Calendars) == 0
+}
+
 func (s *Syncer) minAccessRole() string {
 	if s.opts.MinAccessRole != "" {
 		return s.opts.MinAccessRole
