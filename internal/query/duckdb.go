@@ -1704,19 +1704,6 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.has_attachments = 1")
 	}
 
-	// message_type: filter — keep the non-delegated DuckDB fallback in sync
-	// with the SQLite FTS path so message_type scoping is honored regardless
-	// of which engine serves the search.
-	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
-		}
-		conditions = append(conditions,
-			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
-	}
-
 	// Date range filters
 	if q.AfterDate != nil {
 		conditions = append(conditions, "m.sent_at >= CAST(? AS TIMESTAMP)")
@@ -1735,13 +1722,6 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	if q.SmallerThan != nil {
 		conditions = append(conditions, "m.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
-	}
-	if len(q.MessageTypes) > 0 {
-		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
-		if condition != "" {
-			conditions = append(conditions, condition)
-			args = append(args, conditionArgs...)
-		}
 	}
 
 	// Full-text search: use ILIKE fallback (FTS5 not available via sqlite_scan)

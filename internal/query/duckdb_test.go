@@ -2,7 +2,10 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -1225,6 +1228,47 @@ func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
 	require.Len(withText, 1, "message_type should scope text search")
 	assert.Equal("sms", withText[0].MessageType)
 	assert.Equal("lunch plan", withText[0].Subject)
+}
+
+func TestDuckDBEngine_SearchFallbackMessageTypeEmailIncludesLegacyRows(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open sqlite")
+	schema, err := os.ReadFile("../store/schema.sql")
+	require.NoError(err, "read schema")
+	_, err = db.Exec(string(schema))
+	require.NoError(err, "create schema")
+	_, err = db.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'test@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (1, 1, 'thread1', 'email_thread', 'Legacy Thread');
+		INSERT INTO messages (
+			id, conversation_id, source_id, source_message_id, message_type,
+			sent_at, subject, snippet, size_estimate, has_attachments, attachment_count
+		) VALUES
+			(1, 1, 1, 'legacy-empty', '', '2024-04-10 10:00:00', 'ducklegacy empty', 'ducklegacy', 100, 0, 0),
+			(2, 1, 1, 'typed-email', 'email', '2024-04-11 10:00:00', 'ducklegacy typed', 'ducklegacy', 100, 0, 0),
+			(3, 1, 1, 'typed-sms', 'sms', '2024-04-12 10:00:00', 'ducklegacy sms', 'ducklegacy', 100, 0, 0);
+	`)
+	require.NoError(err, "seed sqlite")
+	require.NoError(db.Close(), "close sqlite")
+
+	engine, err := NewDuckDBEngine("", dbPath, nil)
+	require.NoError(err, "NewDuckDBEngine")
+	defer func() { _ = engine.Close() }()
+	if !engine.hasSQLite() {
+		t.Skip("DuckDB sqlite_scanner extension unavailable")
+	}
+
+	results, err := engine.Search(context.Background(), search.Parse("message_type:email ducklegacy"), 100, 0)
+	require.NoError(err, "Search")
+
+	assertMessageIDs(t, results, []int64{1, 2})
+	assert.Len(results, 2)
 }
 
 func TestDuckDBEngine_GetTotalStatsMessageTypeSearch(t *testing.T) {
