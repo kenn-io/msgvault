@@ -187,6 +187,32 @@ func TestIncremental_AppliesAccessRoleSelection(t *testing.T) {
 	assert.Equal("H1", holidays.SyncCursor.String, "skipped reader calendar cursor must not advance")
 }
 
+func TestIncremental_MissingAccessRoleOnRegisteredSourceStillSyncs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.IncEvents["T1"] = [][]gcal.Event{{timedEvent("legacy-delta", "Legacy delta")}}
+	m.IncNextToken["T1"] = "T2"
+
+	s, st := newSyncer(t, m, Options{AccountEmail: testAccount})
+	src, err := st.GetOrCreateSource(gcal.SourceType, testAccount+"/legacy")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(src.ID,
+		`{"account_email":"alice@example.com","calendar_id":"legacy"}`))
+	require.NoError(st.UpdateSourceSyncCursor(src.ID, "T1"))
+
+	res, err := s.Incremental(context.Background())
+
+	require.NoError(err)
+	assert.Equal(1, res.CalendarsSynced, "legacy registered source should not be filtered by missing access_role")
+	assert.Equal(1, res.EventsAdded)
+	src, err = st.GetSourceByIdentifier(testAccount + "/legacy")
+	require.NoError(err)
+	assert.Equal("T2", src.SyncCursor.String)
+	assert.Equal(1, countMessages(t, st, src.ID))
+}
+
 func TestFull_FTSFailureDoesNotAbortCalendarSync(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

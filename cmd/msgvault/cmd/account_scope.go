@@ -60,9 +60,28 @@ func (s Scope) DisplayName() string {
 	return ""
 }
 
+type accountScopeOptions struct {
+	includeCalendarSources bool
+	sourceFilter           func(*store.Source) bool
+}
+
 // ResolveAccountFlag resolves the value of an --account flag.
 // It rejects collection names with a hint to use --collection.
 func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
+	return resolveAccountFlag(st, input, accountScopeOptions{
+		includeCalendarSources: true,
+	})
+}
+
+// ResolveEmailAccountFlag resolves an account for commands that operate only
+// on email-like source rows and must not expand into Calendar sources.
+func ResolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
+	return resolveAccountFlag(st, input, accountScopeOptions{
+		sourceFilter: emailAccountSource,
+	})
+}
+
+func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions) (Scope, error) {
 	scope := Scope{Input: input}
 	if input == "" {
 		return scope, nil
@@ -73,9 +92,15 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 	if err != nil {
 		return scope, fmt.Errorf("look up source for %q: %w", input, err)
 	}
-	calendarSources, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, input)
-	if err != nil {
-		return scope, fmt.Errorf("look up calendar sources for %q: %w", input, err)
+	if opts.sourceFilter != nil {
+		sources = filterSources(sources, opts.sourceFilter)
+	}
+	var calendarSources []*store.Source
+	if opts.includeCalendarSources {
+		calendarSources, err = st.GetSourcesByTypeAndAccount(gcal.SourceType, input)
+		if err != nil {
+			return scope, fmt.Errorf("look up calendar sources for %q: %w", input, err)
+		}
 	}
 	if len(sources) > 1 {
 		names := make([]string, 0, len(sources))
@@ -119,6 +144,20 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 		"no account found for %q (try 'msgvault list-accounts')",
 		input,
 	)
+}
+
+func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*store.Source {
+	filtered := sources[:0]
+	for _, src := range sources {
+		if keep(src) {
+			filtered = append(filtered, src)
+		}
+	}
+	return filtered
+}
+
+func emailAccountSource(src *store.Source) bool {
+	return src != nil && src.SourceType != sourceTypeCalendar
 }
 
 func sourceIDsExcept(sources []*store.Source, exclude int64) []int64 {

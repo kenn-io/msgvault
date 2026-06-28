@@ -149,7 +149,7 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 	)
 	switch {
 	case dedupAccount != "":
-		scope, err := ResolveAccountFlag(st, dedupAccount)
+		scope, err := ResolveEmailAccountFlag(st, dedupAccount)
 		if err != nil {
 			return err
 		}
@@ -163,7 +163,10 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		accountSourceIDs = scope.SourceIDs()
+		accountSourceIDs, err = dedupEligibleSourceIDs(st, scope.SourceIDs())
+		if err != nil {
+			return err
+		}
 		if len(accountSourceIDs) == 0 {
 			return fmt.Errorf("--collection %q has no member accounts", dedupCollection)
 		}
@@ -262,6 +265,9 @@ func runDeduplicatePerSource(
 	anyRan := false
 	var executedBatches []string
 	for _, src := range sources {
+		if !emailAccountSource(src) {
+			continue
+		}
 		cfgScoped := cfgBase
 		cfgScoped.AccountSourceIDs = []int64{src.ID}
 		cfgScoped.Account = src.Identifier
@@ -377,6 +383,21 @@ func runDeduplicatePerSource(
 		printAccumulatedUndoHint(executedBatches)
 	}
 	return nil
+}
+
+func dedupEligibleSourceIDs(st *store.Store, sourceIDs []int64) ([]int64, error) {
+	ids := make([]int64, 0, len(sourceIDs))
+	for _, id := range sourceIDs {
+		src, err := st.GetSourceByID(id)
+		if err != nil {
+			return nil, fmt.Errorf("load source %d: %w", id, err)
+		}
+		if !emailAccountSource(src) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // printAccumulatedUndoHint prints the multi-batch undo recipe for an
