@@ -29,6 +29,9 @@ const (
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
 	defaultBodyChars       = 2000
+	bodyFormatAuto         = "auto"
+	bodyFormatText         = "text"
+	bodyFormatHTML         = "html"
 	// maxBodyChars caps the body slice returned by get_message regardless of what
 	// the caller requests via max_chars. Prevents a single tool call from flooding
 	// the context window; callers page forward using offset.
@@ -776,18 +779,32 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		maxChars = maxBodyChars
 	}
 
+	requestedBodyFormat, _ := args["body_format"].(string)
+	if requestedBodyFormat == "" {
+		requestedBodyFormat = bodyFormatAuto
+	}
+
 	fullBody := msg.BodyText
-	bodyFormat := "text"
-	if fullBody == "" && msg.BodyHTML != "" {
+	bodyFormat := bodyFormatText
+	switch requestedBodyFormat {
+	case bodyFormatAuto:
+		if fullBody == "" && msg.BodyHTML != "" {
+			fullBody = msg.BodyHTML
+			bodyFormat = bodyFormatHTML
+		}
+	case bodyFormatText:
+	case bodyFormatHTML:
 		fullBody = msg.BodyHTML
-		bodyFormat = "html"
+		bodyFormat = bodyFormatHTML
+	default:
+		return mcp.NewToolResultError("body_format must be one of auto, text, html"), nil
 	}
 	bodyLen := len(fullBody)
 
 	var start, end int
 	if centerAt := intArg(args, "center_at", -1); centerAt >= 0 {
-		// Center the window on the given byte offset (e.g. char_offset from
-		// search_in_message). contextWindow handles clamping to body boundaries.
+		// Center the window on the given byte offset. contextWindow handles
+		// clamping to body boundaries.
 		start, end = contextWindow(bodyLen, centerAt, 0, maxChars)
 	} else {
 		start = min(intArg(args, "offset", 0), bodyLen)
@@ -797,7 +814,7 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	bodySlice, sliceStart, sliceEnd := bodyByteSliceRange(fullBody, start, end)
 	bodyText := bodySlice
 	bodyHTML := ""
-	if bodyFormat == "html" {
+	if bodyFormat == bodyFormatHTML {
 		bodyText = ""
 		bodyHTML = bodySlice
 	}

@@ -711,6 +711,30 @@ func TestGetMessage(t *testing.T) {
 		assert.False(msg.HasMore, "has_more")
 	})
 
+	t.Run("html format selects html from mixed body", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		htmlBody := "<p>Hello <strong>HTML</strong></p>"
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				58: testutil.NewMessageDetail(58).
+					WithBodyText("Hello text").
+					WithBodyHTML(htmlBody).
+					BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{
+			"id":          float64(58),
+			"body_format": "html",
+		})
+		assert.Empty(msg.BodyText, "body_text")
+		assert.Equal(htmlBody, msg.BodyHTML, "body_html")
+		assert.Equal("html", msg.BodyFormat, "body_format")
+		assert.Equal(len(htmlBody), msg.BodyLength, "body_length")
+		assert.Equal(len(htmlBody), msg.BodyReturned, "body_returned")
+		assert.False(msg.HasMore, "has_more")
+	})
+
 	t.Run("truncates long body", func(t *testing.T) {
 		assert := assertpkg.New(t)
 		longBody := strings.Repeat("x", 5000)
