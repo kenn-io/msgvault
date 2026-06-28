@@ -118,6 +118,65 @@ func TestFull_DuplicateAttendeesDoNotCollide(t *testing.T) {
 		"a duplicate attendee collapses to a single 'to' row")
 }
 
+func TestFull_NormalizesCalendarParticipantEmails(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+	m.FullEvents["primary"] = [][]gcal.Event{{
+		{
+			ID:        "case1",
+			Status:    gcal.StatusConfirmed,
+			Summary:   "Case normalization",
+			Organizer: gcal.Person{Email: "ALICE@Example.COM", DisplayName: "Alice API", Self: true},
+			Start:     gcal.EventDateTime{DateTime: time.Date(2024, 5, 1, 16, 0, 0, 0, time.UTC)},
+			End:       gcal.EventDateTime{DateTime: time.Date(2024, 5, 1, 16, 30, 0, 0, time.UTC)},
+			Attendees: []gcal.Attendee{
+				{Email: " Bob@Example.COM ", DisplayName: "Bob API"},
+			},
+		},
+	}}
+	m.FullSyncToken["primary"] = "T1"
+
+	s, st := newSyncer(t, m, Options{})
+	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	require.NoError(err)
+	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	require.NoError(err)
+
+	_, err = s.Full(context.Background())
+	require.NoError(err)
+
+	src := primarySource(t, st)
+	row, ok := getMsg(t, st, src.ID, "case1")
+	require.True(ok)
+	require.True(row.senderID.Valid, "organizer should set sender_id")
+	assert.Equal(aliceID, row.senderID.Int64, "organizer must reuse lower-case email participant")
+	assert.True(row.isFromMe, "normalized organizer email should still match account email")
+	assert.Equal([]string{"alice@example.com"}, recipientEmails(t, st, row.id, "from"))
+	assert.Equal([]string{"bob@example.com"}, recipientEmails(t, st, row.id, "to"))
+	assert.Equal(bobID, recipientParticipantID(t, st, row.id, "to"),
+		"attendee must reuse lower-case email participant")
+
+	var participantCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM participants WHERE LOWER(TRIM(email_address)) IN ('alice@example.com', 'bob@example.com')`,
+	).Scan(&participantCount))
+	assert.Equal(2, participantCount, "calendar sync must not create casing-only duplicate participants")
+
+	meta := parseMeta(t, row)
+	assert.Equal("alice@example.com", meta["organizer_email"])
+
+	if st.FTS5Available() && !st.IsPostgreSQL() {
+		var fromAddr, toAddr string
+		require.NoError(st.DB().QueryRow(
+			`SELECT from_addr, to_addr FROM messages_fts WHERE message_id = ?`, row.id).Scan(&fromAddr, &toAddr))
+		assert.Equal("alice@example.com", fromAddr)
+		assert.Equal("bob@example.com", toAddr)
+	}
+}
+
 // TestFull_BoundedSyncDoesNotAdvanceCursor is the regression (from the
 // adversarial audit) for silent data loss when a time-bounded full sync
 // (--after/--before) established an incremental baseline scoped to only that
