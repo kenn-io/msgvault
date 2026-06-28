@@ -744,6 +744,7 @@ type getMessageResponse struct {
 	Bcc                  []query.Address        `json:"bcc"`
 	BodyText             string                 `json:"body_text"`
 	BodyHTML             string                 `json:"body_html"`
+	BodyFormat           string                 `json:"body_format,omitempty"`
 	BodyLength           int                    `json:"body_length"`
 	BodyReturned         int                    `json:"body_returned"`
 	Offset               int                    `json:"offset"`
@@ -776,6 +777,11 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	fullBody := msg.BodyText
+	bodyFormat := "text"
+	if fullBody == "" && msg.BodyHTML != "" {
+		fullBody = msg.BodyHTML
+		bodyFormat = "html"
+	}
 	bodyLen := len(fullBody)
 
 	var start, end int
@@ -788,7 +794,13 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		end = min(start+maxChars, bodyLen)
 	}
 
-	bodyText, sliceStart, sliceEnd := bodyByteSliceRange(fullBody, start, end)
+	bodySlice, sliceStart, sliceEnd := bodyByteSliceRange(fullBody, start, end)
+	bodyText := bodySlice
+	bodyHTML := ""
+	if bodyFormat == "html" {
+		bodyText = ""
+		bodyHTML = bodySlice
+	}
 
 	return jsonResult(getMessageResponse{
 		ID:                   msg.ID,
@@ -808,9 +820,10 @@ func (h *handlers) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		Cc:                   msg.Cc,
 		Bcc:                  msg.Bcc,
 		BodyText:             bodyText,
-		BodyHTML:             "",
+		BodyHTML:             bodyHTML,
+		BodyFormat:           bodyFormat,
 		BodyLength:           bodyLen,
-		BodyReturned:         len(bodyText),
+		BodyReturned:         len(bodySlice),
 		Offset:               sliceStart,
 		HasMore:              sliceEnd < bodyLen,
 		Labels:               msg.Labels,

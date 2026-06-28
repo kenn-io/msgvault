@@ -71,6 +71,7 @@ type getMessageResp struct {
 	Subject        string `json:"subject"`
 	BodyText       string `json:"body_text"`
 	BodyHTML       string `json:"body_html"`
+	BodyFormat     string `json:"body_format"`
 	BodyLength     int    `json:"body_length"`
 	BodyReturned   int    `json:"body_returned"`
 	Offset         int    `json:"offset"`
@@ -686,8 +687,27 @@ func TestGetMessage(t *testing.T) {
 		assert.Equal("Test Message", msg.Subject, "subject")
 		assert.Equal("Hello world", msg.BodyText, "body_text")
 		assert.Empty(msg.BodyHTML, "body_html stripped")
+		assert.Equal("text", msg.BodyFormat, "body_format")
 		assert.Equal(11, msg.BodyLength, "body_length")
 		assert.Equal(11, msg.BodyReturned, "body_returned")
+		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("html-only body returns html slice", func(t *testing.T) {
+		assert := assertpkg.New(t)
+		htmlBody := "<p>Hello <strong>world</strong></p>"
+		eng2 := &querytest.MockEngine{
+			Messages: map[int64]*query.MessageDetail{
+				57: testutil.NewMessageDetail(57).WithBodyText("").WithBodyHTML(htmlBody).BuildPtr(),
+			},
+		}
+		h2 := newTestHandlers(eng2)
+		msg := runTool[getMessageResp](t, "get_message", h2.getMessage, map[string]any{"id": float64(57)})
+		assert.Empty(msg.BodyText, "body_text")
+		assert.Equal(htmlBody, msg.BodyHTML, "body_html")
+		assert.Equal("html", msg.BodyFormat, "body_format")
+		assert.Equal(len(htmlBody), msg.BodyLength, "body_length")
+		assert.Equal(len(htmlBody), msg.BodyReturned, "body_returned")
 		assert.False(msg.HasMore, "has_more")
 	})
 
@@ -850,6 +870,15 @@ func TestGetMessage(t *testing.T) {
 			runToolExpectError(t, "get_message", h.getMessage, tt.args)
 		})
 	}
+}
+
+func TestGetMessageToolDescriptionDoesNotReferenceFutureTools(t *testing.T) {
+	tool := getMessageTool()
+	assertpkg.NotContains(t, tool.Description, "search_in_message")
+	centerAt := tool.InputSchema.Properties["center_at"]
+	raw, err := json.Marshal(centerAt)
+	requirepkg.NoError(t, err, "marshal center_at schema")
+	assertpkg.NotContains(t, string(raw), "search_in_message")
 }
 
 func TestGetStats_VectorDisabled(t *testing.T) {
