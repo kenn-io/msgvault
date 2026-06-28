@@ -339,6 +339,11 @@ func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string) bool {
 	if !mgr.HasScopeMetadata(email) {
 		return true
 	}
+	for _, scope := range oauth.ScopesDeletion {
+		if mgr.HasScope(email, scope) {
+			return true
+		}
+	}
 	for _, scope := range oauth.Scopes {
 		if !mgr.HasScope(email, scope) {
 			return false
