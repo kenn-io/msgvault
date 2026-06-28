@@ -129,6 +129,23 @@ func TestCalendarAddOAuthAppDecisionInheritsStoredBinding(t *testing.T) {
 	assert.True(decision.NeedsClientCheck)
 }
 
+func TestCalendarAddOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := newCalendarDecisionStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
+
+	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "", false)
+	require.NoError(err)
+
+	assert.Equal("acme", decision.OAuthApp)
+	assert.False(decision.BindingChanged)
+	assert.True(decision.NeedsClientCheck)
+}
+
 func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -186,15 +203,34 @@ func TestCalendarAddOAuthAppDecisionDetectsExplicitRebind(t *testing.T) {
 
 func TestCalendarSyncOAuthAppDecisionRespectsExplicitDefault(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 
+	st := newCalendarDecisionStore(t)
 	existing := []*store.Source{
 		{OAuthApp: sql.NullString{String: "old-app", Valid: true}},
 	}
 
-	decision := calendarSyncOAuthAppDecision(existing, "", true)
+	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", existing, "", true)
+	require.NoError(err)
 
 	assert.Empty(decision.OAuthApp)
 	assert.True(decision.OAuthAppSet, "explicit --oauth-app= must clear rather than inherit")
+}
+
+func TestCalendarSyncOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := newCalendarDecisionStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
+
+	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", nil, "", false)
+	require.NoError(err)
+
+	assert.Equal("acme", decision.OAuthApp)
+	assert.False(decision.OAuthAppSet)
 }
 
 func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) {
@@ -232,10 +268,26 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 func TestCalendarSyncNextCommandIncludesOAuthApp(t *testing.T) {
 	assert.Equal(t,
 		"msgvault sync-calendar --oauth-app personal user@example.com",
-		calendarSyncNextCommand("user@example.com", "personal"))
+		calendarSyncNextCommand("user@example.com", "personal", calendarSyncNextOptions{}))
 	assert.Equal(t,
 		"msgvault sync-calendar user@example.com",
-		calendarSyncNextCommand("user@example.com", ""))
+		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{}))
+}
+
+func TestCalendarSyncNextCommandIncludesSelectionFlags(t *testing.T) {
+	assert := assert.New(t)
+
+	assert.Equal(
+		"msgvault sync-calendar --oauth-app personal --all-calendars user@example.com",
+		calendarSyncNextCommand("user@example.com", "personal", calendarSyncNextOptions{AllCalendars: true}))
+	assert.Equal(
+		"msgvault sync-calendar --min-access-role reader user@example.com",
+		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{MinAccessRole: "reader"}))
+	assert.Equal(
+		"msgvault sync-calendar --calendar primary --calendar team@example.com user@example.com",
+		calendarSyncNextCommand("user@example.com", "", calendarSyncNextOptions{
+			Calendars: []string{"primary", "team@example.com"},
+		}))
 }
 
 func TestCalendarCommandsRegistered(t *testing.T) {
