@@ -240,7 +240,7 @@ func fetchParticipantsShared(ctx context.Context, db *sql.DB, rebind rebindFunc,
 // rebind rewrites the ? placeholders for the driver in use.
 func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
-		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, '')
+		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM %sattachments
 		WHERE message_id = ?
 	`, tablePrefix)), msg.ID)
@@ -251,13 +251,22 @@ func fetchAttachmentsShared(ctx context.Context, db *sql.DB, rebind rebindFunc, 
 
 	for rows.Next() {
 		var att AttachmentInfo
-		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash); err != nil {
+		var storagePath string
+		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath); err != nil {
 			return err
+		}
+		if isURLStoragePath(storagePath) {
+			att.URL = storagePath
+			att.ContentHash = ""
 		}
 		msg.Attachments = append(msg.Attachments, att)
 	}
 
 	return rows.Err()
+}
+
+func isURLStoragePath(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
 
 // extractBodyFromRawShared extracts text body from compressed MIME data.

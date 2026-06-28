@@ -146,7 +146,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 | `newer_than:` | Relative date                        | `newer_than:7d`            |
 | `larger:`     | Minimum size                         | `larger:10M`               |
 | `smaller:`    | Maximum size                         | `smaller:100K`             |
-| `message_type:` | Message type                       | `message_type:sms`         |
+| `message_type:` | Message type                       | `message_type:teams`       |
 
 Bare words and `"quoted phrases"` perform full-text search across subject and body.
 
@@ -267,10 +267,8 @@ msgvault version
 
 ```bash
 # Launch the TUI (auto-builds analytics cache if needed)
+# Press 'a' inside the TUI to filter by account
 msgvault tui
-
-# Filter by account
-msgvault tui --account user@gmail.com
 
 # Force local database (override remote config)
 msgvault tui --local

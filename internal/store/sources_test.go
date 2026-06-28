@@ -277,6 +277,15 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 		"", "emptypathhash", 40)
 	require.NoError(err, "upsert empty-path attachment")
 
+	// URL-backed attachment rows are links, not local files to clean up.
+	urlBackedMsg := f.CreateMessage("msg-url-backed")
+	_, err = f.Store.DB().Exec(
+		f.Store.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+		 VALUES (?, 'deck.pptx', 'reference', 'https://sp/deck.pptx', '', 0, CURRENT_TIMESTAMP)`),
+		urlBackedMsg,
+	)
+	require.NoError(err, "insert URL-backed attachment")
+
 	// Two messages in the default source referencing the same unique hash
 	// should collapse to a single storage_path in the result.
 	dupMsg := f.CreateMessage("msg-dup-hash")

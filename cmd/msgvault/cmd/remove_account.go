@@ -163,6 +163,18 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 				tokenPath, err,
 			)
 		}
+	case sourceTypeTeams:
+		graphMgr := microsoft.NewGraphManager(
+			cfg.Microsoft.ClientID,
+			cfg.Microsoft.EffectiveTenantID(),
+			cfg.TokensDir(),
+			logger,
+		)
+		if err := graphMgr.DeleteToken(source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not remove Microsoft Graph token: %v\n", err,
+			)
+		}
 	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {
 			imapCfg, parseErr := imaplib.ConfigFromJSON(source.SyncConfig.String)

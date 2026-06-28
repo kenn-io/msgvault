@@ -169,7 +169,11 @@ func outputMessageText(msg *query.MessageDetail) error {
 	if len(msg.Attachments) > 0 {
 		fmt.Println("\nAttachments:")
 		for _, att := range msg.Attachments {
-			fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+			if att.URL != "" {
+				fmt.Printf("  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
+			} else {
+				fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+			}
 		}
 	}
 
@@ -215,6 +219,9 @@ func outputMessageJSON(msg *query.MessageDetail) error {
 			"mime_type":    att.MimeType,
 			"size":         att.Size,
 			"content_hash": att.ContentHash,
+		}
+		if att.URL != "" {
+			attachments[i]["url"] = att.URL
 		}
 	}
 
@@ -299,7 +306,11 @@ func outputRemoteMessageText(msg *store.APIMessage) error {
 	if len(msg.Attachments) > 0 {
 		fmt.Println("\nAttachments:")
 		for _, att := range msg.Attachments {
-			fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+			if att.URL != "" {
+				fmt.Printf("  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
+			} else {
+				fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+			}
 		}
 	}
 
@@ -326,6 +337,9 @@ func outputRemoteMessageJSON(msg *store.APIMessage) error {
 			"filename":  att.Filename,
 			"mime_type": att.MimeType,
 			"size":      att.Size,
+		}
+		if att.URL != "" {
+			attachments[i]["url"] = att.URL
 		}
 	}
 

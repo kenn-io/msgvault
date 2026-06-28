@@ -14,7 +14,7 @@ var _ TextEngine = (*DuckDBEngine)(nil)
 
 // textTypeFilter returns a SQL condition restricting to text message types.
 func textTypeFilter() string {
-	return "msg.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')"
+	return "msg.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text','teams')"
 }
 
 // textSenderJoin resolves the sending participant (p_sender) for each text
@@ -444,7 +444,7 @@ func (e *DuckDBEngine) TextSearch(
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE messages_fts MATCH ?
-		  AND m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text')
+		  AND m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text','teams')
 		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?

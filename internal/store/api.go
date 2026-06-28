@@ -62,6 +62,7 @@ type APIAttachment struct {
 	Filename string
 	MimeType string
 	Size     int64
+	URL      string
 }
 
 // ListMessages returns a paginated list of messages with batch-loaded recipients and labels.
@@ -209,12 +210,16 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	}
 
 	// Get attachments
-	attRows, err := s.db.Query("SELECT filename, mime_type, size FROM attachments WHERE message_id = ?", id)
+	attRows, err := s.db.Query("SELECT filename, mime_type, size, storage_path FROM attachments WHERE message_id = ?", id)
 	if err == nil {
 		defer func() { _ = attRows.Close() }()
 		for attRows.Next() {
 			var att APIAttachment
-			if err := attRows.Scan(&att.Filename, &att.MimeType, &att.Size); err == nil {
+			var storagePath string
+			if err := attRows.Scan(&att.Filename, &att.MimeType, &att.Size, &storagePath); err == nil {
+				if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
+					att.URL = storagePath
+				}
 				m.Attachments = append(m.Attachments, att)
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -410,6 +411,47 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 
 	_, err = os.Stat(tokenPath)
 	assertpkg.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
+}
+
+func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	_, err = s.GetOrCreateSource("teams", "tok@example.com")
+	require.NoError(err, "create source")
+	_ = s.Close()
+
+	mgr := microsoft.NewGraphManager("client-id", "", tokensDir, nil)
+	tokenPath := mgr.TokenPath("tok@example.com")
+	require.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600), "write teams token")
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		Microsoft: config.MicrosoftConfig{
+			ClientID: "client-id",
+		},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountCmd())
+	root.SetArgs([]string{
+		"remove-account", "tok@example.com", "--yes", "--type", "teams",
+	})
+
+	require.NoError(root.Execute(), "remove-account")
+
+	_, err = os.Stat(tokenPath)
+	assertpkg.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {

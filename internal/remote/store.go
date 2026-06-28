@@ -192,6 +192,7 @@ type attachmentResponse struct {
 	Filename string `json:"filename"`
 	MimeType string `json:"mime_type"`
 	Size     int64  `json:"size_bytes"`
+	URL      string `json:"url,omitempty"`
 }
 
 // listMessagesResponse matches the API list messages response.
@@ -301,6 +302,7 @@ func (s *Store) GetMessage(id int64) (*store.APIMessage, error) {
 			Filename: a.Filename,
 			MimeType: a.MimeType,
 			Size:     a.Size,
+			URL:      a.URL,
 		}
 	}
 	msg.Attachments = attachments
