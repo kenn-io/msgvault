@@ -391,6 +391,21 @@ func (m *mockReauthorizer) AuthorizeManual(ctx context.Context, email string) er
 	return nil
 }
 
+type preservingMockReauthorizer struct {
+	*mockReauthorizer
+
+	preserveFn             func(ctx context.Context, email string) error
+	authorizePreserveCount int
+}
+
+func (m *preservingMockReauthorizer) AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error {
+	m.authorizePreserveCount++
+	if m.preserveFn != nil {
+		return m.preserveFn(ctx, email)
+	}
+	return nil
+}
+
 // fakeTokenSource implements extOAuth2.TokenSource for tests.
 type fakeTokenSource struct{}
 
@@ -573,4 +588,23 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		requirepkg.Error(t, err)
 		assertpkg.ErrorContains(t, err, "interactive terminal")
 	})
+}
+
+func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
+	invalidGrant := &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
+	base := &mockReauthorizer{hasTokenVal: true}
+	m := &preservingMockReauthorizer{mockReauthorizer: base}
+	base.tokenSourceFn = func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+		if base.tokenSourceCall == 1 {
+			return nil, fmt.Errorf("refresh: %w", invalidGrant)
+		}
+		return fakeTokenSource{}, nil
+	}
+
+	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true)
+
+	requirepkg.NoError(t, err)
+	assertpkg.NotNil(t, ts)
+	assertpkg.Equal(t, 1, m.authorizePreserveCount, "scope-preserving reauth call count")
+	assertpkg.Equal(t, 0, m.authorizeManualCount, "plain reauth call count")
 }

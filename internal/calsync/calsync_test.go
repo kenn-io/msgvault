@@ -546,6 +546,78 @@ func TestIncremental_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T
 	}
 }
 
+func TestRegisterCalendars_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T) {
+	m, st := seedCalendarOAuthBindingFixture(t)
+
+	register := New(m, st, Options{
+		AccountEmail: testAccount,
+		OAuthApp:     "new-app",
+		OAuthAppSet:  true,
+		Calendars:    []string{"primary"},
+	}).WithLogger(quietLogger())
+
+	registered, err := register.RegisterCalendars(context.Background())
+	require.NoError(t, err)
+	require.Len(t, registered, 1)
+
+	assertCalendarOAuthApp(t, st, "primary", sql.NullString{String: "new-app", Valid: true})
+	assertCalendarOAuthApp(t, st, "holidays", sql.NullString{String: "new-app", Valid: true})
+}
+
+func TestFull_PersistsExplicitOAuthAppBindingBeforeSelection(t *testing.T) {
+	m, st := seedCalendarOAuthBindingFixture(t)
+	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e2", "Primary resync")}}
+	m.FullSyncToken["primary"] = "P2"
+
+	full := New(m, st, Options{
+		AccountEmail: testAccount,
+		OAuthApp:     "",
+		OAuthAppSet:  true,
+		Calendars:    []string{"primary"},
+	}).WithLogger(quietLogger())
+
+	res, err := full.Full(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.CalendarsSynced)
+
+	assertCalendarOAuthApp(t, st, "primary", sql.NullString{})
+	assertCalendarOAuthApp(t, st, "holidays", sql.NullString{})
+}
+
+func seedCalendarOAuthBindingFixture(t *testing.T) (*gcal.MockAPI, *store.Store) {
+	t.Helper()
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{
+		{ID: "primary", AccessRole: "owner"},
+		{ID: "holidays", AccessRole: "reader"},
+	}
+	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e1", "Initial")}}
+	m.FullEvents["holidays"] = [][]gcal.Event{{timedEvent("h1", "Holiday")}}
+	m.FullSyncToken["primary"] = "P1"
+	m.FullSyncToken["holidays"] = "H1"
+
+	s, st := newSyncer(t, m, Options{AllCalendars: true})
+	_, err := s.Full(context.Background())
+	require.NoError(t, err)
+
+	primary, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	require.NoError(t, err)
+	holidays, err := st.GetSourceByIdentifier(testAccount + "/holidays")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceOAuthApp(primary.ID, sql.NullString{String: "old-app", Valid: true}))
+	require.NoError(t, st.UpdateSourceOAuthApp(holidays.ID, sql.NullString{String: "old-app", Valid: true}))
+
+	return m, st
+}
+
+func assertCalendarOAuthApp(t *testing.T, st *store.Store, calendarID string, want sql.NullString) {
+	t.Helper()
+	src, err := st.GetSourceByIdentifier(testAccount + "/" + calendarID)
+	require.NoError(t, err)
+	assert.Equal(t, want.Valid, src.OAuthApp.Valid, "oauth_app validity for %s", calendarID)
+	assert.Equal(t, want.String, src.OAuthApp.String, "oauth_app value for %s", calendarID)
+}
+
 func TestIncremental_410TriggersFullResync(t *testing.T) {
 	m := gcal.NewMockAPI()
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}

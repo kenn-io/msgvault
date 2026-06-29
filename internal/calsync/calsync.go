@@ -107,6 +107,9 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 	if err := ValidateMinAccessRole(s.opts.MinAccessRole); err != nil {
 		return Result{}, err
 	}
+	if err := s.updateExistingCalendarSourceOAuthApps(); err != nil {
+		return Result{}, err
+	}
 	cals, err := s.listCalendars(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("enumerate calendars: %w", err)
@@ -141,6 +144,9 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 // registered calendars.
 func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error) {
 	if err := ValidateMinAccessRole(s.opts.MinAccessRole); err != nil {
+		return nil, err
+	}
+	if err := s.updateExistingCalendarSourceOAuthApps(); err != nil {
 		return nil, err
 	}
 	cals, err := s.listCalendars(ctx)
@@ -501,6 +507,23 @@ func (s *Syncer) updateCalendarSourceOAuthApp(sourceID int64, calendarID string)
 	binding := sql.NullString{String: s.opts.OAuthApp, Valid: s.opts.OAuthApp != ""}
 	if err := s.store.UpdateSourceOAuthApp(sourceID, binding); err != nil {
 		return fmt.Errorf("write oauth app for %s: %w", calendarID, err)
+	}
+	return nil
+}
+
+func (s *Syncer) updateExistingCalendarSourceOAuthApps() error {
+	if !s.shouldPersistOAuthApp() {
+		return nil
+	}
+	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
+	if err != nil {
+		return fmt.Errorf("enumerate calendar sources: %w", err)
+	}
+	for _, src := range sources {
+		cfg := parseSourceConfig(src.SyncConfig)
+		if err := s.updateCalendarSourceOAuthApp(src.ID, cfg.CalendarID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -257,6 +257,31 @@ func (m *Manager) AuthorizeManual(ctx context.Context, email string) error {
 	return m.authorize(ctx, email, false)
 }
 
+// AuthorizeManualPreservingGrantedScopes reauthorizes with the manager's
+// required scopes plus any scopes already recorded on the token file.
+func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error {
+	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
+	return scoped.AuthorizeManual(ctx, email)
+}
+
+func (m *Manager) withScopes(scopes []string) *Manager {
+	scoped := *m
+	config := *m.config
+	config.Scopes = normalizedScopeList(scopes)
+	scoped.config = &config
+	return &scoped
+}
+
+func scopesWithPreservedGrants(required, granted []string) []string {
+	scopes := append([]string(nil), required...)
+	for _, scope := range granted {
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	return normalizedScopeList(scopes)
+}
+
 func (m *Manager) authorize(
 	ctx context.Context, email string, launchBrowser bool,
 ) error {
