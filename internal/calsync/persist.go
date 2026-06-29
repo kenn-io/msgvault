@@ -134,10 +134,8 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		return 0, fmt.Errorf("set metadata: %w", err)
 	}
 
-	if body != "" {
-		if err := s.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
-			return 0, fmt.Errorf("upsert body: %w", err)
-		}
+	if err := s.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}); err != nil {
+		return 0, fmt.Errorf("upsert body: %w", err)
 	}
 
 	raw := []byte(ev.Raw)

@@ -261,6 +261,48 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	}
 }
 
+func TestFull_ClearsBodyWhenEventBodyBecomesEmpty(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	m := gcal.NewMockAPI()
+	m.Calendars = []gcal.Calendar{{ID: "primary", Summary: "Personal", AccessRole: "owner"}}
+	m.FullEvents["primary"] = [][]gcal.Event{{
+		{
+			ID:          "e1",
+			Status:      gcal.StatusConfirmed,
+			Summary:     "Planning",
+			Description: "Bring notes",
+			Organizer:   gcal.Person{Email: testAccount, Self: true},
+		},
+	}}
+	m.FullSyncToken["primary"] = "TOKEN1"
+
+	s, st := newSyncer(t, m, Options{})
+	_, err := s.Full(context.Background())
+	require.NoError(err)
+	src := primarySource(t, st)
+	row, ok := getMsg(t, st, src.ID, "e1")
+	require.True(ok, "event e1 should be persisted")
+	assert.Contains(bodyText(t, st, row.id), "Bring notes")
+
+	m.FullEvents["primary"] = [][]gcal.Event{{
+		{
+			ID:        "e1",
+			Status:    gcal.StatusConfirmed,
+			Organizer: gcal.Person{Email: testAccount, Self: true},
+		},
+	}}
+	m.FullSyncToken["primary"] = "TOKEN2"
+
+	_, err = s.Full(context.Background())
+	require.NoError(err)
+
+	row, ok = getMsg(t, st, src.ID, "e1")
+	require.True(ok, "event e1 should still be persisted")
+	assert.Empty(bodyText(t, st, row.id), "body_text must be cleared when the event body becomes empty")
+	assert.False(row.snippet.Valid, "snippet should clear with an empty event body")
+}
+
 func recipientParticipantID(t *testing.T, st *store.Store, msgID int64, typ string) int64 {
 	t.Helper()
 	var id int64
