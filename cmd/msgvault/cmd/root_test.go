@@ -591,6 +591,9 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 }
 
 func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
 	invalidGrant := &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
 	base := &mockReauthorizer{hasTokenVal: true}
 	m := &preservingMockReauthorizer{mockReauthorizer: base}
@@ -603,8 +606,8 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 
 	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true)
 
-	requirepkg.NoError(t, err)
-	assertpkg.NotNil(t, ts)
-	assertpkg.Equal(t, 1, m.authorizePreserveCount, "scope-preserving reauth call count")
-	assertpkg.Equal(t, 0, m.authorizeManualCount, "plain reauth call count")
+	require.NoError(err)
+	assert.NotNil(ts)
+	assert.Equal(1, m.authorizePreserveCount, "scope-preserving reauth call count")
+	assert.Equal(0, m.authorizeManualCount, "plain reauth call count")
 }
