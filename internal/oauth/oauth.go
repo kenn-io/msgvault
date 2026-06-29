@@ -38,7 +38,26 @@ var ScopesDeletion = []string{
 	"https://mail.google.com/",
 }
 
+// ScopeCalendarReadonly is the read-only Calendar scope: it covers both
+// calendarList enumeration and event reads, so an archival tool needs nothing
+// finer-grained.
+const ScopeCalendarReadonly = "https://www.googleapis.com/auth/calendar.readonly"
+
+// ScopesCalendar is the opt-in scope set for calendar sync.
+var ScopesCalendar = []string{
+	ScopeCalendarReadonly,
+}
+
+// ScopesGmailCalendar bundles the normal Gmail scopes with Calendar for
+// re-consent. Re-authorizing uses ApprovalForce with no include_granted_scopes,
+// which REPLACES (not unions) the granted scope set — so an existing Gmail
+// account opting into calendar must re-consent with BOTH scope families or it
+// silently loses Gmail access. Always pass this bundle (never ScopesCalendar
+// alone) when escalating an account that already has Gmail.
+var ScopesGmailCalendar = append(append([]string{}, Scopes...), ScopesCalendar...)
+
 const defaultProfileURL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+const defaultCalendarProfileURL = "https://www.googleapis.com/calendar/v3/users/me/calendarList/primary"
 
 // TokenMismatchError is returned when the authorized Google account
 // does not match the expected email. Callers can inspect Expected
@@ -60,7 +79,7 @@ type Manager struct {
 	config     *oauth2.Config
 	tokensDir  string
 	logger     *slog.Logger
-	profileURL string // Gmail profile endpoint; overridden in tests
+	profileURL string // profile endpoint override for tests
 
 	// browserFlowFn overrides browserFlow in tests to avoid starting
 	// a real HTTP server and browser. When nil, the real browserFlow
@@ -149,6 +168,65 @@ func PrintHeadlessInstructions(email, tokensDir, oauthApp string) {
 	fmt.Println()
 }
 
+// PrintCalendarHeadlessInstructions prints setup instructions for adding
+// Calendar access on a headless server. As with Gmail, Google's device flow
+// does not support Calendar scopes, so the operator must authorize on a machine
+// with a browser and copy the token file to the server. Calendar re-consent
+// REPLACES the granted scopes, so the browser machine must keep existing
+// permissions plus Calendar checked or access is dropped.
+// tokensDir should be the configured tokens directory (e.g., cfg.TokensDir()).
+func PrintCalendarHeadlessInstructions(email, tokensDir, oauthApp string) {
+	tokenFile := sanitizeEmail(email) + ".json"
+	tokenPath := filepath.Join(tokensDir, tokenFile)
+
+	addCmd := "    msgvault add-calendar " + email
+	syncCmd := "    msgvault sync-calendar " + email
+	if oauthApp != "" {
+		addCmd += " --oauth-app " + oauthApp
+		syncCmd += " --oauth-app " + oauthApp
+	}
+
+	fmt.Println()
+	fmt.Println("=== Headless Server Calendar Setup ===")
+	fmt.Println()
+	fmt.Println("A headless server cannot complete Google's browser consent, and the OAuth")
+	fmt.Println("device flow does not support Calendar scopes. Authorize on a machine with a")
+	fmt.Println("browser and copy the token to your server.")
+	fmt.Println()
+	fmt.Println("Step 0: If this account already has a token on the headless server, copy")
+	fmt.Println("        that existing token to the browser machine first. This lets")
+	fmt.Println("        add-calendar preserve Drive or other previously granted scopes:")
+	fmt.Println()
+	fmt.Printf("    mkdir -p %s\n", shellQuote(tokensDir))
+	fmt.Printf("    scp user@server:%s %s\n", shellQuote(tokenPath), shellQuote(tokenPath))
+	fmt.Println()
+	fmt.Println("        Skip this step only when no token exists yet.")
+	fmt.Println()
+	fmt.Println("Step 1: On a machine with a browser (using the SAME client_secret.json as the")
+	fmt.Println("        server), run:")
+	fmt.Println()
+	fmt.Println(addCmd)
+	fmt.Println()
+	fmt.Println("        On the consent screen, keep all existing permissions plus Calendar")
+	fmt.Println("        checked — re-consent REPLACES scopes, so unchecking an existing")
+	fmt.Println("        permission would drop that access.")
+	fmt.Println()
+	fmt.Println("Step 2: Copy the token file to your headless server, replacing the existing one:")
+	fmt.Println()
+	fmt.Printf("    ssh user@server mkdir -p %s\n", shellQuote(tokensDir))
+	fmt.Printf("    scp %s user@server:%s\n", shellQuote(tokenPath), shellQuote(tokenPath))
+	fmt.Println()
+	fmt.Println("Step 3: On the headless server, register the calendars (no browser needed)")
+	fmt.Println("        and sync:")
+	fmt.Println()
+	fmt.Println(addCmd)
+	fmt.Println(syncCmd)
+	fmt.Println()
+	fmt.Println("The copied token carries Calendar plus the existing Google permissions,")
+	fmt.Println("so current sync jobs keep working.")
+	fmt.Println()
+}
+
 // sanitizeEmail sanitizes an email for use in a filename.
 func sanitizeEmail(email string) string {
 	safe := strings.ReplaceAll(email, "/", "_")
@@ -179,6 +257,31 @@ func (m *Manager) AuthorizeManual(ctx context.Context, email string) error {
 	return m.authorize(ctx, email, false)
 }
 
+// AuthorizeManualPreservingGrantedScopes reauthorizes with the manager's
+// required scopes plus any scopes already recorded on the token file.
+func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error {
+	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
+	return scoped.AuthorizeManual(ctx, email)
+}
+
+func (m *Manager) withScopes(scopes []string) *Manager {
+	scoped := *m
+	config := *m.config
+	config.Scopes = normalizedScopeList(scopes)
+	scoped.config = &config
+	return &scoped
+}
+
+func scopesWithPreservedGrants(required, granted []string) []string {
+	scopes := append([]string(nil), required...)
+	for _, scope := range granted {
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	return normalizedScopeList(scopes)
+}
+
 func (m *Manager) authorize(
 	ctx context.Context, email string, launchBrowser bool,
 ) error {
@@ -200,7 +303,12 @@ func (m *Manager) authorize(
 		return err
 	}
 
-	return m.saveToken(email, token, m.config.Scopes)
+	grantedScopes := grantedScopesFromToken(token, m.config.Scopes)
+	if missing := missingScopes(m.config.Scopes, grantedScopes); len(missing) > 0 {
+		return fmt.Errorf("authorized token missing required OAuth scopes: %s", strings.Join(missing, ", "))
+	}
+
+	return m.saveToken(email, token, grantedScopes)
 }
 
 const (
@@ -308,21 +416,102 @@ func (m *Manager) browserFlow(
 
 const resolveTimeout = 10 * time.Second
 
-// resolveTokenEmail calls the Gmail profile API to confirm that
+// resolveTokenEmail calls a Google profile endpoint to confirm that
 // the token belongs to an account matching the expected email.
-// Returns the canonical (primary) Gmail address for the account,
+// Returns the canonical Google account email when available,
 // which may differ from the input when the user supplies an alias
 // or secondary login address. The token is never persisted by this
 // function — the caller decides what to do on success or failure.
 func (m *Manager) resolveTokenEmail(
 	ctx context.Context, email string, token *oauth2.Token,
 ) (string, error) {
-	profileURL := m.profileURL
-	if profileURL == "" {
-		profileURL = defaultProfileURL
+	endpoint := tokenProfileEndpointForScopes(m.config.Scopes)
+	if m.profileURL != "" {
+		endpoint.url = m.profileURL
 	}
 	ts := m.config.TokenSource(ctx, token)
-	return fetchTokenProfileEmail(ctx, ts, profileURL, email, tokenProfileErrorOAuth)
+	return fetchTokenProfileEmailFromEndpoint(ctx, ts, endpoint, email, tokenProfileErrorOAuth)
+}
+
+type tokenProfileEndpoint struct {
+	url         string
+	serviceName string
+}
+
+func tokenProfileEndpointForScopes(scopes []string) tokenProfileEndpoint {
+	if slices.Contains(scopes, ScopeCalendarReadonly) && !hasGmailProfileScope(scopes) {
+		return tokenProfileEndpoint{
+			url:         defaultCalendarProfileURL,
+			serviceName: "Calendar API",
+		}
+	}
+	return tokenProfileEndpoint{
+		url:         defaultProfileURL,
+		serviceName: "Gmail API",
+	}
+}
+
+func hasGmailProfileScope(scopes []string) bool {
+	if slices.Contains(scopes, "https://mail.google.com/") {
+		return true
+	}
+	for _, scope := range Scopes {
+		if slices.Contains(scopes, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func grantedScopesFromToken(token *oauth2.Token, requested []string) []string {
+	var scopes []string
+	switch raw := token.Extra("scope").(type) {
+	case string:
+		scopes = strings.Fields(raw)
+	case []string:
+		scopes = raw
+	case []any:
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				scopes = append(scopes, s)
+			}
+		}
+	}
+	if len(scopes) == 0 {
+		scopes = requested
+	}
+	return normalizedScopeList(scopes)
+}
+
+func normalizedScopeList(scopes []string) []string {
+	out := make([]string, 0, len(scopes))
+	seen := map[string]struct{}{}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	return out
+}
+
+func missingScopes(required, granted []string) []string {
+	grantedSet := map[string]struct{}{}
+	for _, scope := range granted {
+		grantedSet[scope] = struct{}{}
+	}
+	var missing []string
+	for _, scope := range normalizedScopeList(required) {
+		if _, ok := grantedSet[scope]; !ok {
+			missing = append(missing, scope)
+		}
+	}
+	return missing
 }
 
 // sameGoogleAccount returns true if two email addresses belong to the
@@ -448,6 +637,16 @@ func (m *Manager) HasScope(email string, scope string) bool {
 		return false
 	}
 	return slices.Contains(tf.Scopes, scope)
+}
+
+// GrantedScopes returns a copy of the stored scope metadata for the account.
+// Legacy tokens or missing token files return nil.
+func (m *Manager) GrantedScopes(email string) []string {
+	tf, err := m.loadTokenFile(email)
+	if err != nil || len(tf.Scopes) == 0 {
+		return nil
+	}
+	return append([]string(nil), tf.Scopes...)
 }
 
 // saveToken saves a token for the given email with the specified scopes.
@@ -682,11 +881,24 @@ func fetchTokenProfileEmail(
 	email string,
 	mode tokenProfileErrorMode,
 ) (string, error) {
+	return fetchTokenProfileEmailFromEndpoint(ctx, ts, tokenProfileEndpoint{
+		url:         profileURL,
+		serviceName: "gmail API",
+	}, email, mode)
+}
+
+func fetchTokenProfileEmailFromEndpoint(
+	ctx context.Context,
+	ts oauth2.TokenSource,
+	endpoint tokenProfileEndpoint,
+	email string,
+	mode tokenProfileErrorMode,
+) (string, error) {
 	valCtx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
 	client := oauth2.NewClient(valCtx, ts)
-	req, err := http.NewRequestWithContext(valCtx, http.MethodGet, profileURL, nil)
+	req, err := http.NewRequestWithContext(valCtx, http.MethodGet, endpoint.url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create profile request: %w", err)
 	}
@@ -707,15 +919,17 @@ func fetchTokenProfileEmail(
 		if mode == tokenProfileErrorOAuth {
 			return "", fmt.Errorf(
 				"could not verify token belongs to %s: "+
-					"Gmail API returned HTTP %d: %s "+
+					"%s returned HTTP %d: %s "+
 					"(re-run the command to try again)",
-				email, resp.StatusCode, string(body))
+				email, endpoint.serviceName, resp.StatusCode, string(body))
 		}
-		return "", fmt.Errorf("gmail API returned HTTP %d for %s: %s", resp.StatusCode, email, string(body))
+		return "", fmt.Errorf("%s returned HTTP %d for %s: %s", endpoint.serviceName, resp.StatusCode, email, string(body))
 	}
 
 	var profile struct {
 		EmailAddress string `json:"emailAddress"`
+		Email        string `json:"email"`
+		ID           string `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
 		if mode == tokenProfileErrorOAuth {
@@ -727,11 +941,28 @@ func fetchTokenProfileEmail(
 		return "", fmt.Errorf("parse profile for %s: %w", email, err)
 	}
 
-	if !sameGoogleAccount(email, profile.EmailAddress) {
-		return "", &TokenMismatchError{Expected: email, Actual: profile.EmailAddress}
+	profileEmail := profile.EmailAddress
+	if profileEmail == "" {
+		profileEmail = profile.Email
+	}
+	if profileEmail == "" {
+		profileEmail = profile.ID
+	}
+	if profileEmail == "" {
+		if mode == tokenProfileErrorOAuth {
+			return "", fmt.Errorf(
+				"could not verify token belongs to %s: "+
+					"profile response did not include an email address "+
+					"(re-run the command to try again)", email)
+		}
+		return "", fmt.Errorf("parse profile for %s: response did not include an email address", email)
 	}
 
-	return profile.EmailAddress, nil
+	if !sameGoogleAccount(email, profileEmail) {
+		return "", &TokenMismatchError{Expected: email, Actual: profileEmail}
+	}
+
+	return profileEmail, nil
 }
 
 // ValidateTokenEmail calls the Gmail profile API to confirm that the token

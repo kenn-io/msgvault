@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -30,6 +31,27 @@ func TestDeduplicateMutualExclusion(t *testing.T) {
 	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
+}
+
+func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+
+	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
+	require.NoError(err, "GetOrCreateSource calendar")
+	cfg, err := json.Marshal(map[string]string{
+		"account_email": accountID,
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal sync_config")
+	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+
+	scope, err := ResolveEmailAccountFlag(f.Store, accountID)
+	require.NoError(err)
+
+	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
+	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
 }
 
 // TestDeduplicateCollectionResolution confirms that --collection resolves

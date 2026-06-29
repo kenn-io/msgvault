@@ -14,6 +14,7 @@ import (
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -127,6 +128,142 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddAccount_CalendarOnlyTokenRequiresGmailReauth(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+	tokenData, err := json.Marshal(map[string]any{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+		"scopes":        oauth.ScopesCalendar,
+	})
+	require.NoError(err, "marshal token")
+	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write secrets")
+
+	savedCfg, savedLogger, savedOAuthApp := cfg, logger, oauthAppName
+	defer func() { cfg, logger, oauthAppName = savedCfg, savedLogger, savedOAuthApp }()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testCmd := &cobra.Command{
+		Use: "add-account <email>", Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	err = root.ExecuteContext(ctx)
+	require.Error(err, "calendar-only token must trigger Gmail reauthorization")
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+	src, err := findGmailSource(s, "user@example.com")
+	require.ErrorIs(err, errGmailSourceNotFound)
+	require.Nil(src)
+}
+
+func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "msgvault.db")
+
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	require.NoError(os.MkdirAll(tokensDir, 0700), "mkdir tokens")
+	tokenData, err := json.Marshal(map[string]any{
+		"access_token":  "fake-access",
+		"refresh_token": "fake-refresh",
+		"token_type":    "Bearer",
+		"client_id":     "test.apps.googleusercontent.com",
+		"scopes":        oauth.ScopesDeletion,
+	})
+	require.NoError(err, "marshal token")
+	require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@example.com.json"), tokenData, 0600), "write token")
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write secrets")
+
+	savedCfg, savedLogger, savedOAuthApp := cfg, logger, oauthAppName
+	savedHeadless, savedForceReauth := headless, forceReauth
+	savedDisplayName, savedNoDefault := accountDisplayName, noDefaultIdentityAddAccount
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		oauthAppName = savedOAuthApp
+		headless = savedHeadless
+		forceReauth = savedForceReauth
+		accountDisplayName = savedDisplayName
+		noDefaultIdentityAddAccount = savedNoDefault
+	}()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testCmd := &cobra.Command{
+		Use: "add-account <email>", Args: cobra.ExactArgs(1),
+		RunE: addAccountCmd.RunE,
+	}
+	testCmd.Flags().StringVar(&oauthAppName, "oauth-app", "", "")
+	testCmd.Flags().BoolVar(&headless, "headless", false, "")
+	testCmd.Flags().BoolVar(&forceReauth, "force", false, "")
+	testCmd.Flags().StringVar(&accountDisplayName, "display-name", "", "")
+	testCmd.Flags().BoolVar(&noDefaultIdentityAddAccount, "no-default-identity", false, "")
+
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com", "--no-default-identity"})
+
+	require.NoError(root.ExecuteContext(ctx))
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+	src, err := findGmailSource(s, "user@example.com")
+	require.NoError(err, "find gmail source")
+	require.NotNil(src, "expected Gmail source to be registered")
+}
+
+func TestAddAccountOAuthScopesForTokenPreservesExistingCalendarGrant(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	assert.ElementsMatch(oauth.Scopes, addAccountOAuthScopesForToken(false, nil),
+		"new and legacy-token Gmail auth should request only Gmail scopes")
+	assert.ElementsMatch(append(append([]string{}, oauth.Scopes...), oauth.ScopeCalendarReadonly),
+		addAccountOAuthScopesForToken(true, oauth.ScopesCalendar),
+		"Calendar-only tokens should reauthorize with Gmail while preserving Calendar")
 }
 
 // TestAddAccount_RebindWithExistingToken verifies that switching

@@ -92,10 +92,10 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 	_, err := db.Exec(`
 		CREATE TABLE messages (
 			id BIGINT PRIMARY KEY,
+			message_type TEXT NOT NULL DEFAULT 'email',
 			source_id BIGINT,
 			sender_id BIGINT,
 			subject TEXT,
-			message_type TEXT NOT NULL DEFAULT 'email',
 			has_attachments BOOLEAN DEFAULT FALSE,
 			size_estimate BIGINT,
 			sent_at TIMESTAMPTZ,

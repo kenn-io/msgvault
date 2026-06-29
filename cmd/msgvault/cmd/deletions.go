@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -513,7 +514,7 @@ Examples:
 						return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 					}
 					if !oauthMgr.HasScope(account, "https://mail.google.com/") && oauthMgr.HasScopeMetadata(account) {
-						if err := promptScopeEscalation(ctx, oauthMgr, account, needsBatchDelete, clientSecretsPath); err != nil {
+						if err := promptDeletionScopeEscalation(ctx, account, needsBatchDelete, clientSecretsPath); err != nil {
 							if errors.Is(err, errUserCanceled) {
 								return nil
 							}
@@ -598,11 +599,7 @@ Examples:
 							account,
 						)
 					}
-					oauthMgr, mgrErr := getOAuthMgr(sourceOAuthApp(src))
-					if mgrErr != nil {
-						return mgrErr
-					}
-					if err := promptScopeEscalation(ctx, oauthMgr, account, !useTrash, clientSecretsPath); err != nil {
+					if err := promptDeletionScopeEscalation(ctx, account, !useTrash, clientSecretsPath); err != nil {
 						if errors.Is(err, errUserCanceled) {
 							return nil
 						}
@@ -742,35 +739,38 @@ func limitManifests(manifests []*deletion.Manifest, maxN int) []*deletion.Manife
 // errUserCanceled is returned when the user declines scope escalation.
 var errUserCanceled = errors.New("user canceled scope escalation")
 
-// promptScopeEscalation prompts the user to re-authorize with elevated scopes.
-// It deletes the old token, runs the OAuth browser flow, and returns nil on
-// success. The caller should re-create the OAuth manager after this returns.
-func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account string, batchDelete bool, clientSecretsPath string) error {
+// promptScopeEscalation is the generic re-consent flow. It explains why a
+// permission upgrade is needed (headline + bodyLines), asks the user, and on
+// "yes" re-authorizes with requiredScopes, returning nil on success. The caller
+// should re-create its OAuth manager afterward.
+//
+// The existing token is NOT deleted up front. Authorize runs a fresh consent and
+// only overwrites the token file (atomically) AFTER the new grant is validated
+// for the right account; on any cancellation or failure it returns an error
+// without touching the existing file. Deleting first — as this flow used to —
+// would, on a headless host with no reachable browser, leave the account with no
+// token at all and break its scheduled syncs. So on success the new token
+// replaces the old in place, and on failure the old token is left intact.
+//
+// requiredScopes MUST list EVERY scope the account still needs, not just the new
+// one: browserFlow uses ApprovalForce with no include_granted_scopes, so
+// re-consent REPLACES the granted scope set. Omitting a previously-granted scope
+// silently drops it (e.g. dropping Gmail when adding Calendar).
+func promptScopeEscalation(
+	ctx context.Context,
+	account string,
+	requiredScopes []string,
+	headline string,
+	bodyLines []string,
+	cancelHint string,
+	clientSecretsPath string,
+) error {
 	fmt.Println("\n" + strings.Repeat("=", 70))
-	fmt.Println("PERMISSION UPGRADE REQUIRED")
+	fmt.Println(headline)
 	fmt.Println(strings.Repeat("=", 70))
 	fmt.Println()
-
-	var requiredScopes []string
-	if !batchDelete {
-		fmt.Println("Trash deletion requires Gmail modify permissions.")
-		fmt.Println()
-		fmt.Println("Your current OAuth token doesn't include the gmail.modify scope.")
-		fmt.Println("To proceed, msgvault needs to re-authorize with modify access.")
-		requiredScopes = oauth.Scopes
-	} else {
-		fmt.Println("Batch deletion requires elevated Gmail permissions.")
-		fmt.Println()
-		fmt.Println("Your current OAuth token was granted with limited permissions that")
-		fmt.Println("don't include batch delete. To proceed, msgvault needs to:")
-		fmt.Println()
-		fmt.Println("  1. Delete your existing OAuth token")
-		fmt.Println("  2. Re-authorize with full Gmail access (mail.google.com scope)")
-		fmt.Println()
-		fmt.Println("This elevated permission allows msgvault to permanently delete")
-		fmt.Println("messages in bulk. You can revoke access anytime at:")
-		fmt.Println("  https://myaccount.google.com/permissions")
-		requiredScopes = oauth.ScopesDeletion
+	for _, line := range bodyLines {
+		fmt.Println(line)
 	}
 	fmt.Println()
 
@@ -778,21 +778,19 @@ func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account
 	var response string
 	_, _ = fmt.Scanln(&response)
 	if response != "y" && response != "Y" {
-		if batchDelete {
-			fmt.Println("Cancelled. Drop --permanent to use trash deletion without elevated permissions.")
+		if cancelHint != "" {
+			fmt.Println(cancelHint)
 		} else {
 			fmt.Println("Cancelled.")
 		}
 		return errUserCanceled
 	}
 
-	// Delete old token and re-authorize
-	fmt.Println("\nDeleting old token...")
-	if err := oauthMgr.DeleteToken(account); err != nil {
-		return fmt.Errorf("delete token: %w", err)
-	}
-
-	fmt.Println("Starting OAuth flow...")
+	// Re-authorize with the upgraded scope set. We deliberately do NOT delete
+	// the existing token first: Authorize overwrites it atomically only after a
+	// successful, validated grant, so the old token survives a cancelled or
+	// failed flow (e.g. on a headless host).
+	fmt.Println("\nStarting OAuth flow...")
 	fmt.Println()
 
 	newMgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, requiredScopes)
@@ -806,6 +804,69 @@ func promptScopeEscalation(ctx context.Context, oauthMgr *oauth.Manager, account
 
 	fmt.Println("\nAuthorization successful!")
 	return nil
+}
+
+// promptDeletionScopeEscalation is the deletion-specific wrapper that maps the
+// batchDelete bool to the right scopes/copy and delegates to the generic helper.
+func promptDeletionScopeEscalation(ctx context.Context, account string, batchDelete bool, clientSecretsPath string) error {
+	requiredScopes, err := deletionEscalationScopesForAccount(account, batchDelete, clientSecretsPath)
+	if err != nil {
+		return err
+	}
+	var bodyLines []string
+	var cancelHint string
+	if !batchDelete {
+		bodyLines = []string{
+			"Trash deletion requires Gmail modify permissions.",
+			"",
+			"Your current OAuth token doesn't include the gmail.modify scope.",
+			"To proceed, msgvault needs to re-authorize with modify access.",
+		}
+		cancelHint = "Cancelled."
+	} else {
+		bodyLines = []string{
+			"Batch deletion requires elevated Gmail permissions.",
+			"",
+			"Your current OAuth token was granted with limited permissions that",
+			"don't include batch delete. To proceed, msgvault will re-authorize",
+			"this account with full Gmail access (mail.google.com scope). Your",
+			"existing token keeps working until the new grant succeeds.",
+			"",
+			"This elevated permission allows msgvault to permanently delete",
+			"messages in bulk. You can revoke access anytime at:",
+			"  https://myaccount.google.com/permissions",
+		}
+		cancelHint = "Cancelled. Drop --permanent to use trash deletion without elevated permissions."
+	}
+	return promptScopeEscalation(ctx, account, requiredScopes,
+		"PERMISSION UPGRADE REQUIRED", bodyLines, cancelHint, clientSecretsPath)
+}
+
+func deletionEscalationScopesForAccount(account string, batchDelete bool, clientSecretsPath string) ([]string, error) {
+	mgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauth.ScopesGmailCalendar)
+	if err != nil {
+		return nil, fmt.Errorf("create oauth manager: %w", err)
+	}
+	return deletionEscalationScopes(batchDelete, mgr.GrantedScopes(account)), nil
+}
+
+func deletionEscalationScopes(batchDelete bool, existingScopes []string) []string {
+	required := oauth.Scopes
+	if batchDelete {
+		required = oauth.ScopesDeletion
+	}
+	scopes := append([]string(nil), existingScopes...)
+	for _, scope := range required {
+		scopes = appendScopeIfMissing(scopes, scope)
+	}
+	return scopes
+}
+
+func appendScopeIfMissing(scopes []string, scope string) []string {
+	if slices.Contains(scopes, scope) {
+		return scopes
+	}
+	return append(scopes, scope)
 }
 
 // isInsufficientScopeError checks if an error is due to missing OAuth scopes.

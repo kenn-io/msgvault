@@ -183,8 +183,18 @@ Examples:
 			return err
 		}
 
-		// Create OAuth manager
-		oauthMgr, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+		// Create OAuth manager. If a scoped token already exists, preserve those
+		// grants when reauthorizing for Gmail; Google replacement consent would
+		// otherwise drop Calendar/Drive scopes from the shared token file.
+		scopeProbe, err := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+		if err != nil {
+			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
+		}
+		oauthScopes := addAccountOAuthScopesForToken(
+			scopeProbe.HasScopeMetadata(email),
+			scopeProbe.GrantedScopes(email),
+		)
+		oauthMgr, err := oauth.NewManagerWithScopes(clientSecretsPath, cfg.TokensDir(), logger, oauthScopes)
 		if err != nil {
 			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 		}
@@ -209,7 +219,8 @@ Examples:
 		needsClientCheck := bindingChanged || oauthAppExplicit ||
 			resolvedApp != ""
 		tokenReusable := !forceReauth && oauthMgr.HasToken(email) &&
-			(!needsClientCheck || oauthMgr.TokenMatchesClient(email))
+			(!needsClientCheck || oauthMgr.TokenMatchesClient(email)) &&
+			addAccountTokenHasGmailScopes(oauthMgr, email)
 		if tokenReusable {
 			source, err := s.GetOrCreateSource(sourceTypeGmail, email)
 			if err != nil {
@@ -311,6 +322,34 @@ Examples:
 
 		return nil
 	},
+}
+
+func addAccountOAuthScopesForToken(hasScopeMetadata bool, existingScopes []string) []string {
+	if !hasScopeMetadata {
+		return append([]string(nil), oauth.Scopes...)
+	}
+	scopes := append([]string(nil), existingScopes...)
+	for _, scope := range oauth.Scopes {
+		scopes = appendScopeIfMissing(scopes, scope)
+	}
+	return scopes
+}
+
+func addAccountTokenHasGmailScopes(mgr *oauth.Manager, email string) bool {
+	if !mgr.HasScopeMetadata(email) {
+		return true
+	}
+	for _, scope := range oauth.ScopesDeletion {
+		if mgr.HasScope(email, scope) {
+			return true
+		}
+	}
+	for _, scope := range oauth.Scopes {
+		if !mgr.HasScope(email, scope) {
+			return false
+		}
+	}
+	return true
 }
 
 func findGmailSource(

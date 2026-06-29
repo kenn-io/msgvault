@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -347,8 +348,11 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 	}
 
 	if filter.MessageType != "" {
-		conditions = append(conditions, prefix+"message_type = ?")
-		args = append(args, filter.MessageType)
+		condition, conditionArgs := sqliteMessageTypeCondition(tableAlias, []string{filter.MessageType})
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
+		}
 	}
 
 	// Sender + sender-name filters — check both message_recipients (email)
@@ -587,6 +591,9 @@ func (e *SQLiteEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	optsConds, optsArgs := optsToFilterConditions(e.dialect, opts, "m.")
 	filterConditions = append(filterConditions, optsConds...)
 	args = append(args, optsArgs...)
+	if !aggregateHasExplicitMessageType(filter, opts) {
+		filterConditions = append(filterConditions, emailOnlyFilterM)
+	}
 
 	searchJoins, searchConds, searchArgs :=
 		e.buildAggregateSearchParts(ctx, opts.SearchQuery, groupBy)
@@ -602,6 +609,9 @@ func (e *SQLiteEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 // Aggregate performs grouping based on the provided ViewType.
 func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
 	conditions, args := optsToFilterConditions(e.dialect, opts, "m.")
+	if !aggregateHasExplicitMessageType(MessageFilter{}, opts) {
+		conditions = append(conditions, emailOnlyFilterM)
+	}
 
 	searchJoins, searchConds, searchArgs :=
 		e.buildAggregateSearchParts(ctx, opts.SearchQuery, groupBy)
@@ -611,6 +621,58 @@ func (e *SQLiteEngine) Aggregate(ctx context.Context, groupBy ViewType, opts Agg
 	return e.executeAggregate(
 		ctx, groupBy, opts, searchJoins, conditions, args,
 	)
+}
+
+func aggregateHasExplicitMessageType(filter MessageFilter, opts AggregateOptions) bool {
+	if filter.MessageType != "" {
+		return true
+	}
+	if opts.SearchQuery == "" {
+		return false
+	}
+	return len(search.Parse(opts.SearchQuery).MessageTypes) > 0
+}
+
+func sqliteMessageTypeCondition(alias string, messageTypes []string) (string, []any) {
+	var conditions []string
+	var args []any
+	var exact []string
+	includeEmail := false
+
+	for _, typ := range messageTypes {
+		typ = strings.TrimSpace(strings.ToLower(typ))
+		if typ == "" {
+			continue
+		}
+		if typ == messageTypeEmail {
+			includeEmail = true
+			continue
+		}
+		exact = append(exact, typ)
+	}
+
+	col := "message_type"
+	if alias != "" {
+		col = alias + ".message_type"
+	}
+	if includeEmail {
+		conditions = append(conditions,
+			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))
+		args = append(args, messageTypeEmail)
+	}
+	if len(exact) > 0 {
+		placeholders := make([]string, len(exact))
+		for i, typ := range exact {
+			placeholders[i] = "?"
+			args = append(args, typ)
+		}
+		conditions = append(conditions,
+			fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ",")))
+	}
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return "(" + strings.Join(conditions, " OR ") + ")", args
 }
 
 // buildAggregateSearchParts parses a search query for aggregate views
@@ -1502,13 +1564,16 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 		}
 	}
 
+	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
+	// API path (store/api.go) honors q.MessageTypes; the FTS query path must
+	// too, or `--mode=fts` search silently ignores message_type scoping for
+	// every non-email type.
 	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, strings.ToLower(typ))
+		condition, conditionArgs := sqliteMessageTypeCondition("m", q.MessageTypes)
+		if condition != "" {
+			conditions = append(conditions, condition)
+			args = append(args, conditionArgs...)
 		}
-		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Has attachment filter
@@ -1540,14 +1605,6 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 	if q.SmallerThan != nil {
 		conditions = append(conditions, "m.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
-	}
-	if len(q.MessageTypes) > 0 {
-		placeholders := make([]string, len(q.MessageTypes))
-		for i, typ := range q.MessageTypes {
-			placeholders[i] = "?"
-			args = append(args, typ)
-		}
-		conditions = append(conditions, fmt.Sprintf("m.message_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Full-text search: use dialect FTS if available, fall back to LIKE.
@@ -1697,12 +1754,13 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.
-// Context filters are appended to existing query filters.
+// Most context filters are appended to existing query filters.
 //
 // Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
 // within each dimension (IN clause). Labels use per-term EXISTS subqueries
-// with AND semantics (message must have all labels). Context filters widen
-// the search within other constraints.
+// with AND semantics (message must have all labels). MessageType and date
+// filters are scoped intersections so an in-view search cannot widen outside
+// the current drill-down context.
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// Copy all fields from original query (preserves any future non-slice fields)
 	merged := *q
@@ -1716,6 +1774,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	merged.BccAddrs = append([]string(nil), q.BccAddrs...)
 	merged.SubjectTerms = append([]string(nil), q.SubjectTerms...)
 	merged.Labels = append([]string(nil), q.Labels...)
+	merged.MessageTypes = append([]string(nil), q.MessageTypes...)
 	// Deep-copy AccountIDs alongside the other slices so the merged
 	// query never aliases the original's slice header. Filter overrides
 	// below replace the deep-copied slice when set.
@@ -1748,6 +1807,17 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// Label filter - append to existing label: filters
 	if filter.Label != "" {
 		merged.Labels = append(merged.Labels, filter.Label)
+	}
+
+	// message_type filter - scope FTS search to the drill-down context's
+	// type (e.g. Texts mode → sms/mms). Without this, SearchFast within a
+	// type-scoped view would silently widen back to all message types.
+	if filter.MessageType != "" {
+		messageTypes, noMatches := scopedMessageTypes(merged.MessageTypes, filter.MessageType)
+		merged.MessageTypes = messageTypes
+		if noMatches {
+			merged.AccountIDs = []int64{}
+		}
 	}
 
 	// Attachment filter - set if context requires attachments
@@ -1804,6 +1874,23 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// contexts will not be scoped to the current view.
 
 	return &merged
+}
+
+func containsMessageType(types []string, want string) bool {
+	return slices.Contains(types, want)
+}
+
+func scopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
+	if filterType == "" {
+		return append([]string(nil), queryTypes...), false
+	}
+	if len(queryTypes) == 0 {
+		return []string{filterType}, false
+	}
+	if containsMessageType(queryTypes, filterType) {
+		return []string{filterType}, false
+	}
+	return []string{filterType}, true
 }
 
 // timePeriodToBounds converts a time period string to half-open date

@@ -522,7 +522,7 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 		if typ == "" {
 			continue
 		}
-		if typ == "email" {
+		if typ == messageTypeEmail {
 			includeEmail = true
 			continue
 		}
@@ -533,7 +533,7 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 	if includeEmail {
 		conditions = append(conditions,
 			fmt.Sprintf("(%s = ? OR %s IS NULL OR %s = '')", col, col, col))
-		args = append(args, "email")
+		args = append(args, messageTypeEmail)
 	}
 	if len(exact) > 0 {
 		placeholders := make([]string, len(exact))
@@ -1817,13 +1817,6 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		conditions = append(conditions, "m.size_estimate < ?")
 		args = append(args, *q.SmallerThan)
 	}
-	if len(q.MessageTypes) > 0 {
-		condition, conditionArgs := duckDBMessageTypeCondition("m", q.MessageTypes)
-		if condition != "" {
-			conditions = append(conditions, condition)
-			args = append(args, conditionArgs...)
-		}
-	}
 
 	// Full-text search: use ILIKE fallback (FTS5 not available via sqlite_scan)
 	// Only search subject/snippet; body is in separate table, use FTS for body search
@@ -2624,14 +2617,20 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	var args []any
 
 	// Apply basic filter conditions (ignoring join flags for search - we handle those differently)
-	conditions = append(conditions, store.LiveMessagesWhere("msg", filter.HideDeletedFromSource))
-	if len(q.MessageTypes) > 0 {
-		condition, conditionArgs := duckDBMessageTypeCondition("msg", q.MessageTypes)
+	conditions = append(conditions,
+		store.LiveMessagesWhere("msg", filter.HideDeletedFromSource),
+	)
+	messageTypes, noMessageTypeMatches := scopedMessageTypes(q.MessageTypes, filter.MessageType)
+	switch {
+	case noMessageTypeMatches:
+		conditions = append(conditions, "1=0")
+	case len(messageTypes) > 0:
+		condition, conditionArgs := duckDBMessageTypeCondition("msg", messageTypes)
 		if condition != "" {
 			conditions = append(conditions, condition)
 			args = append(args, conditionArgs...)
 		}
-	} else {
+	default:
 		// Restrict to email messages only; NULL and '' handle pre-message_type data.
 		conditions = append(conditions, emailOnlyFilterMsg)
 	}

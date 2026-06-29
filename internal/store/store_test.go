@@ -806,6 +806,28 @@ func TestStore_ReplaceMessageRecipients_Empty(t *testing.T) {
 	f.AssertRecipientCount(msgID, "to", 0)
 }
 
+// TestStore_ReplaceMessageRecipients_DuplicateParticipants is the regression for
+// the production crash where one recipient set contained the same participant
+// twice (e.g. a calendar event listing the same attendee twice, or two address
+// forms resolving to one participant). The plain INSERT tripped the
+// UNIQUE(message_id, participant_id, recipient_type) constraint and aborted the
+// write. Duplicates must collapse to a single row instead of erroring.
+func TestStore_ReplaceMessageRecipients_DuplicateParticipants(t *testing.T) {
+	f := storetest.New(t)
+
+	msgID := f.CreateMessage("msg-dup-recip")
+	pid1 := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	pid2 := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+
+	// alice appears twice; this must not error and must store one row per
+	// distinct participant.
+	err := f.Store.ReplaceMessageRecipients(msgID, "to",
+		[]int64{pid1, pid1, pid2}, []string{"Alice", "Alice (dup)", "Bob"})
+	requirepkg.NoError(t, err, "duplicate participant IDs must not error")
+
+	f.AssertRecipientCount(msgID, "to", 2)
+}
+
 func TestStore_GetActiveSync_NoSync(t *testing.T) {
 	f := storetest.New(t)
 	f.AssertNoActiveSync()

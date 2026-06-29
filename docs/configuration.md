@@ -236,6 +236,29 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 | `stable_after` | `10m` | How long Drive files must remain unchanged before import |
 | `oauth_app` | — | Named Google OAuth app to use |
 
+### Google Calendar Sources
+
+Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault add-calendar`.
+
+```toml
+[[gcal]]
+name = "primary"                 # optional; defaults to email
+email = "you@gmail.com"          # OAuth account = token key
+oauth_app = ""                   # optional named OAuth app
+calendars = []                   # optional calendarId filter; empty = owner+writer
+schedule = "0 */6 * * *"         # 5-field cron, no seconds
+enabled = true
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | email | Source name used by `sync-calendar <name>` and scheduler logs |
+| `email` | (required) | Google account that owns the token (the token key) |
+| `oauth_app` | — | Named Google OAuth app to use |
+| `calendars` | — | Specific calendar IDs to sync; empty syncs owned/writable calendars |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `enabled` | `false` | Whether the source is daemon-scheduled |
+
 ### `[vector]`
 
 Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.

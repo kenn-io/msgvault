@@ -2,9 +2,13 @@ package cmd
 
 import (
 	"database/sql"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -55,6 +59,7 @@ func resetSearchFlags() {
 	searchJSON = false
 	searchMode = "fts"
 	searchExplain = false
+	searchMessageTypes = nil
 	// Cobra remembers per-flag `Changed` state on the global searchCmd
 	// across test invocations. Without clearing it, mutually-exclusive
 	// pairs (--account / --collection) trip when a subsequent test only
@@ -107,6 +112,46 @@ func TestSearchCmd_AccountFlagRejectsRemoteMode(t *testing.T) {
 	err := root.Execute()
 	requirepkg.Error(t, err, "expected error when --account used in remote mode")
 	assertpkg.ErrorContains(t, err, "not supported in remote mode")
+}
+
+func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertpkg.Equal(t, "/api/v1/search", r.URL.Path, "path")
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		err := json.NewEncoder(w).Encode(map[string]any{
+			"query":     gotQuery,
+			"total":     0,
+			"page":      1,
+			"page_size": 50,
+			"messages":  []map[string]any{},
+		})
+		assertpkg.NoError(t, err, "write response")
+	}))
+	defer srv.Close()
+
+	cfg = &config.Config{}
+	cfg.Remote.URL = srv.URL
+	cfg.Remote.AllowInsecure = true
+	useLocal = false
+
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--message-type", "sms", "lunch"})
+
+	err := root.Execute()
+	requirepkg.NoError(t, err, "message-type remote search should be forwarded")
+	assertpkg.Contains(t, gotQuery, "message_type:sms", "remote query should include flag scope")
+	assertpkg.Contains(t, gotQuery, "lunch", "remote query should keep search terms")
 }
 
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
@@ -167,6 +212,58 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 
 	assert.Contains(out, "Alice msg", "expected Alice's message in output")
 	assert.NotContains(out, "Bob msg", "Bob's message should be filtered out")
+}
+
+func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/msgvault.db"
+
+	s, err := store.Open(dbPath)
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "create source")
+	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
+	require.NoError(err, "create email conversation")
+	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
+	require.NoError(err, "create calendar conversation")
+	_, err = s.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: emailConv,
+		SourceMessageID: "email-1", MessageType: "email",
+		Subject: sql.NullString{String: "Email hello", Valid: true},
+		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err, "insert email")
+	_, err = s.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: calendarConv,
+		SourceMessageID: "calendar-1", MessageType: "calendar_event",
+		Subject: sql.NullString{String: "Calendar planning", Valid: true},
+		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err, "insert calendar event")
+	require.NoError(s.Close(), "close store")
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg; resetSearchFlags() }()
+
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	done := captureStdout(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{
+		"search", "--message-type", "calendar_event", "--json",
+	})
+	err = root.Execute()
+	out := done()
+	require.NoError(err, "message-type search failed")
+	assert.Contains(out, "Calendar planning", "expected calendar event in output")
+	assert.NotContains(out, "Email hello", "email message must be filtered out")
 }
 
 func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {

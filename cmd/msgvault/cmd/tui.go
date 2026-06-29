@@ -276,11 +276,10 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	}
 	defer func() { _ = db.Close() }()
 
-	var maxID int64
+	var maxLiveID int64
 	err = db.DB().QueryRow(`
 		SELECT COALESCE(MAX(id), 0) FROM messages
-		WHERE deleted_from_source_at IS NULL AND sent_at IS NOT NULL
-	`).Scan(&maxID)
+		WHERE ` + cacheLiveMessageWhere("")).Scan(&maxLiveID)
 	if err != nil {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
@@ -288,7 +287,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		}
 	}
 
-	if maxID == 0 && state.LastMessageID == 0 {
+	if maxLiveID == 0 && !hasParquetData {
 		return cacheStaleness{}
 	}
 
@@ -304,8 +303,8 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	var reasons []string
 	result := cacheStaleness{}
 
-	if maxID > state.LastMessageID {
-		newCount := maxID - state.LastMessageID
+	if maxLiveID > state.LastMessageID {
+		newCount := maxLiveID - state.LastMessageID
 		result.HasNew = true
 		reasons = append(reasons,
 			fmt.Sprintf("%d new messages", newCount))
@@ -317,6 +316,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		SELECT COUNT(*) FROM messages
 		WHERE deleted_from_source_at IS NOT NULL
 		  AND deleted_from_source_at >= ?
+		  AND `+sentNonCalendarMessageWhere("")+`
 	`, syncAtStr).Scan(&deletedSinceBuild)
 	if err != nil {
 		return cacheStaleness{
@@ -345,6 +345,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		WHERE deleted_at IS NOT NULL
 		  AND deleted_at >= ?
 		  AND deleted_from_source_at IS NULL
+		  AND `+sentNonCalendarMessageWhere("")+`
 	`, syncAtStr).Scan(&hiddenSinceBuild)
 	if err != nil {
 		return cacheStaleness{

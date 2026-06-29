@@ -200,6 +200,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Warn about enabled calendar sources with no schedule: they are never
+	// daemon-synced, so once a manual sync seeds the source row its freshness
+	// drifts stale and the freshness monitor eventually alarms RED.
+	for _, src := range cfg.GCal {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("gcal source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Name, "email", src.Email,
+				"hint", `set a cron schedule (e.g. "0 */6 * * *") on the [[gcal]] entry`)
+		}
+	}
+
+	for _, src := range cfg.ScheduledGCalSources() {
+		source := src
+		jobName := "gcal:" + source.Name
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: func(ctx context.Context) error {
+				return runConfiguredGCalSync(ctx, s, source)
+			},
+		}); err != nil {
+			logger.Error("failed to schedule gcal source", "source", source.Name, "error", err)
+		} else {
+			logger.Info("scheduled gcal source", "source", source.Name, "schedule", source.Schedule)
+		}
+	}
+
 	// Register the embed job (cron-driven plus optional post-sync hook).
 	// Only when vector search is enabled and wired.
 	if vf != nil {

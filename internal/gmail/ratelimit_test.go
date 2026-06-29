@@ -174,6 +174,53 @@ func (f *rlFixture) acquireAsync(ctx context.Context, t *testing.T, op Operation
 	}
 }
 
+func TestNewRateLimiterWithCapacity_BurstCapped(t *testing.T) {
+	assert := assert.New(t)
+	clk := newMockClock()
+	rl := newRateLimiterWithCapacity(clk, 10, 8)
+
+	// Bucket starts at the explicit capacity, NOT Gmail's DefaultCapacity (250).
+	assert.InDelta(10.0, rl.Available(), 1e-9, "initial capacity")
+
+	// Exactly 10 cost-1 ops drain the bucket without blocking.
+	for i := range 10 {
+		assert.True(rl.TryAcquire(OpEventsList), "op %d should acquire", i)
+	}
+	// The 11th must fail — proving the burst is capped at 10, not 250.
+	assert.False(rl.TryAcquire(OpEventsList), "11th op must be throttled (no 250-burst)")
+
+	// Refill is 8 tok/s: after 1s, ~8 tokens return.
+	clk.Advance(1 * time.Second)
+	assert.InDelta(8.0, rl.Available(), 1e-9, "after 1s at 8 tok/s")
+
+	// Saturates at capacity, never above.
+	clk.Advance(10 * time.Second)
+	assert.InDelta(10.0, rl.Available(), 1e-9, "saturated at capacity")
+}
+
+func TestNewRateLimiterWithCapacity_Clamps(t *testing.T) {
+	clk := newMockClock()
+	rl := newRateLimiterWithCapacity(clk, 0, 0.0)
+	assert.InDelta(t, 1.0, rl.Available(), 1e-9, "capacity clamps to >=1")
+
+	rl.mu.Lock()
+	refill := rl.refillRate
+	rl.mu.Unlock()
+	assert.InDelta(t, MinQPS, refill, 1e-9, "refillRate clamps to MinQPS")
+}
+
+func TestNewRateLimiterWithCapacity_NilClockPanics(t *testing.T) {
+	assert.Panics(t, func() {
+		newRateLimiterWithCapacity(nil, 10, 8)
+	}, "newRateLimiterWithCapacity(nil, ...) should panic")
+}
+
+func TestCalendarOperationCost(t *testing.T) {
+	for _, op := range []Operation{OpCalendarListList, OpEventsList, OpEventsGet} {
+		assert.Equal(t, 1, op.Cost(), "calendar op %d cost", op)
+	}
+}
+
 func TestOperationCost(t *testing.T) {
 	tests := []struct {
 		op   Operation

@@ -418,6 +418,10 @@ type tokenReauthorizer interface {
 	AuthorizeManual(ctx context.Context, email string) error
 }
 
+type scopePreservingReauthorizer interface {
+	AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error
+}
+
 // getTokenSourceWithReauth tries to get a token source for the given email.
 // If the token exists but is expired/revoked (invalid_grant), it automatically
 // deletes the old token and re-initiates the OAuth browser flow.
@@ -462,7 +466,7 @@ func getTokenSourceWithReauth(
 	// account needs authorization and can select the correct one.
 	// AuthorizeManual validates the token and atomically saves it,
 	// so the old token is only overwritten after validation succeeds.
-	if authErr := mgr.AuthorizeManual(ctx, email); authErr != nil {
+	if authErr := authorizeManualForReauth(ctx, mgr, email); authErr != nil {
 		var mismatch *oauth.TokenMismatchError
 		if errors.As(authErr, &mismatch) {
 			return nil, fmt.Errorf(
@@ -485,6 +489,13 @@ func getTokenSourceWithReauth(
 	}
 
 	return tokenSource, nil
+}
+
+func authorizeManualForReauth(ctx context.Context, mgr tokenReauthorizer, email string) error {
+	if preserving, ok := mgr.(scopePreservingReauthorizer); ok {
+		return preserving.AuthorizeManualPreservingGrantedScopes(ctx, email)
+	}
+	return mgr.AuthorizeManual(ctx, email)
 }
 
 // oauthManagerCache returns a resolver function that lazily creates and

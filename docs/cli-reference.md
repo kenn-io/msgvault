@@ -135,6 +135,45 @@ msgvault sync [email]
 
 ---
 
+## add-calendar
+
+Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.
+
+```bash
+msgvault add-calendar <email> [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--oauth-app` | Named OAuth app to use |
+| `--headless` | Print token-copy instructions for a headless host instead of opening a browser |
+| `--all-calendars` | Include reader/freeBusyReader (subscribed, holiday) calendars |
+| `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
+| `--calendars` | Comma-separated calendar IDs to register |
+
+---
+
+## sync-calendar
+
+Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and embedded for semantic search when vector search is enabled. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only.
+
+```bash
+msgvault sync-calendar <name|email> [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--full` | Force a full sync (ignore stored sync tokens) |
+| `--limit` | Max events per calendar (0 = unlimited) |
+| `--after` / `--before` | Bound a full sync to a date range (`YYYY-MM-DD`); full sync only |
+| `--calendar` | Restrict to specific calendar IDs |
+| `--all-calendars` | Include reader/freeBusyReader calendars |
+| `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
+| `--oauth-app` | Named OAuth app to use |
+| `--noresume` | Do not resume an interrupted full sync |
+
+---
+
 ## import-mbox
 
 Import a local MBOX archive into msgvault.

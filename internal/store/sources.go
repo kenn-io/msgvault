@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrSourceNotFound is returned by GetSourceByID and GetSourceByIdentifier
@@ -120,6 +122,41 @@ func (s *Store) GetSourcesByDisplayName(displayName string) ([]*Source, error) {
 		sources = append(sources, src)
 	}
 	return sources, rows.Err()
+}
+
+// GetSourcesByTypeAndAccount returns every source of the given source_type
+// whose sync_config JSON carries the given account_email.
+//
+// Config-driven sources (calendar, and any future per-account fan-out) decouple
+// their per-source identifier — a natural key like a calendarId — from the
+// OAuth account/token key, which lives in sync_config.account_email. A single
+// account may own many sources (e.g. several calendars), all sharing one token
+// file. Filtering happens in Go after a typed list query so it stays
+// dialect-portable (no SQLite json_extract vs PG ->> divergence); the set of one
+// account's sources is small, so this is not a hot path. A source whose
+// sync_config is NULL or unparseable is skipped rather than aborting the scan.
+func (s *Store) GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*Source, error) {
+	all, err := s.ListSources(sourceType)
+	if err != nil {
+		return nil, fmt.Errorf("list sources by type %q: %w", sourceType, err)
+	}
+	accountEmail = strings.TrimSpace(accountEmail)
+	var matched []*Source
+	for _, src := range all {
+		if !src.SyncConfig.Valid {
+			continue
+		}
+		var cfg struct {
+			AccountEmail string `json:"account_email"`
+		}
+		if err := json.Unmarshal([]byte(src.SyncConfig.String), &cfg); err != nil {
+			continue
+		}
+		if accountEmail != "" && strings.EqualFold(strings.TrimSpace(cfg.AccountEmail), accountEmail) {
+			matched = append(matched, src)
+		}
+	}
+	return matched, nil
 }
 
 // RemoveSource deletes a source and all its associated data.

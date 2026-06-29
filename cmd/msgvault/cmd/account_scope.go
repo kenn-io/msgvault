@@ -4,20 +4,22 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // Scope is the result of resolving a user-supplied --account or
 // --collection flag against the store.
 type Scope struct {
-	Input      string
-	Source     *store.Source
-	Collection *store.CollectionWithSources
+	Input               string
+	Source              *store.Source
+	Collection          *store.CollectionWithSources
+	AdditionalSourceIDs []int64
 }
 
 // IsEmpty reports whether the scope resolved to nothing.
 func (s Scope) IsEmpty() bool {
-	return s.Source == nil && s.Collection == nil
+	return s.Source == nil && s.Collection == nil && len(s.AdditionalSourceIDs) == 0
 }
 
 // IsCollection reports whether the scope refers to a collection.
@@ -31,7 +33,16 @@ func (s Scope) SourceIDs() []int64 {
 	case s.Collection != nil:
 		return append([]int64(nil), s.Collection.SourceIDs...)
 	case s.Source != nil:
-		return []int64{s.Source.ID}
+		ids := make([]int64, 0, 1+len(s.AdditionalSourceIDs))
+		ids = append(ids, s.Source.ID)
+		for _, id := range s.AdditionalSourceIDs {
+			if id != s.Source.ID {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	case len(s.AdditionalSourceIDs) > 0:
+		return append([]int64(nil), s.AdditionalSourceIDs...)
 	}
 	return nil
 }
@@ -43,13 +54,34 @@ func (s Scope) DisplayName() string {
 		return s.Collection.Name
 	case s.Source != nil:
 		return s.Source.Identifier
+	case len(s.AdditionalSourceIDs) > 0:
+		return s.Input
 	}
 	return ""
+}
+
+type accountScopeOptions struct {
+	includeCalendarSources bool
+	sourceFilter           func(*store.Source) bool
 }
 
 // ResolveAccountFlag resolves the value of an --account flag.
 // It rejects collection names with a hint to use --collection.
 func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
+	return resolveAccountFlag(st, input, accountScopeOptions{
+		includeCalendarSources: true,
+	})
+}
+
+// ResolveEmailAccountFlag resolves an account for commands that operate only
+// on email-like source rows and must not expand into Calendar sources.
+func ResolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
+	return resolveAccountFlag(st, input, accountScopeOptions{
+		sourceFilter: emailAccountSource,
+	})
+}
+
+func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions) (Scope, error) {
 	scope := Scope{Input: input}
 	if input == "" {
 		return scope, nil
@@ -59,6 +91,16 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 	sources, err := st.GetSourcesByIdentifierOrDisplayName(input)
 	if err != nil {
 		return scope, fmt.Errorf("look up source for %q: %w", input, err)
+	}
+	if opts.sourceFilter != nil {
+		sources = filterSources(sources, opts.sourceFilter)
+	}
+	var calendarSources []*store.Source
+	if opts.includeCalendarSources {
+		calendarSources, err = st.GetSourcesByTypeAndAccount(gcal.SourceType, input)
+		if err != nil {
+			return scope, fmt.Errorf("look up calendar sources for %q: %w", input, err)
+		}
 	}
 	if len(sources) > 1 {
 		names := make([]string, 0, len(sources))
@@ -75,6 +117,19 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 	}
 	if len(sources) == 1 {
 		scope.Source = sources[0]
+		if opts.includeCalendarSources && sources[0].SourceType != gcal.SourceType &&
+			!store.EqualIdentifier(sources[0].Identifier, input) {
+			resolvedCalendarSources, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, sources[0].Identifier)
+			if err != nil {
+				return scope, fmt.Errorf("look up calendar sources for %q: %w", sources[0].Identifier, err)
+			}
+			calendarSources = appendUniqueSources(calendarSources, resolvedCalendarSources)
+		}
+		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, sources[0].ID)
+		return scope, nil
+	}
+	if len(calendarSources) > 0 {
+		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, 0)
 		return scope, nil
 	}
 
@@ -97,6 +152,60 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 		"no account found for %q (try 'msgvault list-accounts')",
 		input,
 	)
+}
+
+func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*store.Source {
+	filtered := sources[:0]
+	for _, src := range sources {
+		if keep(src) {
+			filtered = append(filtered, src)
+		}
+	}
+	return filtered
+}
+
+func emailAccountSource(src *store.Source) bool {
+	return src != nil && src.SourceType != sourceTypeCalendar
+}
+
+func appendUniqueSources(dst []*store.Source, srcs []*store.Source) []*store.Source {
+	seen := make(map[int64]struct{}, len(dst)+len(srcs))
+	for _, src := range dst {
+		if src == nil {
+			continue
+		}
+		seen[src.ID] = struct{}{}
+	}
+	for _, src := range srcs {
+		if src == nil {
+			continue
+		}
+		if _, ok := seen[src.ID]; ok {
+			continue
+		}
+		seen[src.ID] = struct{}{}
+		dst = append(dst, src)
+	}
+	return dst
+}
+
+func sourceIDsExcept(sources []*store.Source, exclude int64) []int64 {
+	ids := make([]int64, 0, len(sources))
+	seen := map[int64]struct{}{}
+	if exclude != 0 {
+		seen[exclude] = struct{}{}
+	}
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		if _, ok := seen[src.ID]; ok {
+			continue
+		}
+		seen[src.ID] = struct{}{}
+		ids = append(ids, src.ID)
+	}
+	return ids
 }
 
 // ResolveCollectionFlag resolves the value of a --collection flag.

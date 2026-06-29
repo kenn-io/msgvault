@@ -153,6 +153,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool, sc
 	})
 
 	q := search.Parse(queryStr)
+	q.MessageTypes = append(q.MessageTypes, searchMessageTypes...)
 
 	filter, err := hybrid.BuildFilter(ctx, mainDB, dialect.Rebind, q)
 	if err != nil {

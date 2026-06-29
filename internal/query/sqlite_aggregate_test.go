@@ -67,6 +67,91 @@ func TestAggregations(t *testing.T) {
 	}
 }
 
+func TestAggregateDefaultExcludesCalendarEvents(t *testing.T) {
+	env := newTestEnv(t)
+	calendarSenderID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("calendar@example.com"),
+		DisplayName: new("Calendar Sender"),
+		Domain:      "example.com",
+	})
+	env.AddMessage(dbtest.MessageOpts{
+		Subject:     "Calendar event",
+		SentAt:      "2024-05-01 10:00:00",
+		FromID:      calendarSenderID,
+		MessageType: "calendar_event",
+	})
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "Aggregate(ViewSenders)")
+	assertpkg.NotContains(t, aggRowMap(t, rows), "calendar@example.com",
+		"default aggregates should exclude calendar events")
+
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "message_type:calendar_event"
+	rows, err = env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
+	requirepkg.NoError(t, err, "Aggregate(ViewSenders, message_type:calendar_event)")
+	assertAggRows(t, rows, []aggExpectation{{Key: "calendar@example.com", Count: 1}})
+}
+
+func TestSubAggregateDefaultExcludesCalendarEvents(t *testing.T) {
+	env := newTestEnv(t)
+	aliceID := env.MustLookupParticipant("alice@example.com")
+	calendarRecipientID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("calendar-recipient@example.com"),
+		DisplayName: new("Calendar Recipient"),
+		Domain:      "example.com",
+	})
+	env.AddMessage(dbtest.MessageOpts{
+		Subject:     "Calendar event",
+		SentAt:      "2024-05-01 10:00:00",
+		FromID:      aliceID,
+		ToIDs:       []int64{calendarRecipientID},
+		MessageType: "calendar_event",
+	})
+
+	rows, err := env.Engine.SubAggregate(env.Ctx,
+		MessageFilter{Sender: "alice@example.com"}, ViewRecipients, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "SubAggregate(default)")
+	assertpkg.NotContains(t, aggRowMap(t, rows), "calendar-recipient@example.com",
+		"default subaggregates should exclude calendar events")
+
+	rows, err = env.Engine.SubAggregate(env.Ctx,
+		MessageFilter{Sender: "alice@example.com", MessageType: "calendar_event"},
+		ViewRecipients, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "SubAggregate(message_type:calendar_event)")
+	assertAggRows(t, rows, []aggExpectation{{Key: "calendar-recipient@example.com", Count: 1}})
+}
+
+func TestAggregateExplicitEmailMessageTypeIncludesLegacyRows(t *testing.T) {
+	env := newTestEnv(t)
+	legacySenderID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("legacy@example.com"),
+		DisplayName: new("Legacy Sender"),
+		Domain:      "example.com",
+	})
+	bobID := env.MustLookupParticipant("bob@company.org")
+	legacyMessageID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "Legacy email",
+		SentAt:  "2024-05-01 10:00:00",
+		FromID:  legacySenderID,
+		ToIDs:   []int64{bobID},
+	})
+	_, err := env.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
+	requirepkg.NoError(t, err, "clear message_type")
+
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "message_type:email"
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
+	requirepkg.NoError(t, err, "Aggregate(ViewSenders, message_type:email)")
+	assertRowsContain(t, rows, []aggExpectation{{Key: "legacy@example.com", Count: 1}})
+
+	rows, err = env.Engine.SubAggregate(env.Ctx,
+		MessageFilter{Sender: "legacy@example.com", MessageType: "email"},
+		ViewRecipients, DefaultAggregateOptions())
+	requirepkg.NoError(t, err, "SubAggregate(MessageType=email)")
+	assertAggRows(t, rows, []aggExpectation{{Key: "bob@company.org", Count: 1}})
+}
+
 func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 	env := newTestEnv(t)
 
