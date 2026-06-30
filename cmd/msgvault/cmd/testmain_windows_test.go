@@ -12,6 +12,7 @@ import (
 const windowsCommandPackageTimeout = 20 * time.Minute
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	raiseWindowsCommandPackageTimeout()
 	os.Exit(m.Run())
 }
