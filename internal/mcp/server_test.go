@@ -139,6 +139,13 @@ func TestSearchMessages(t *testing.T) {
 	t.Run("missing query", func(t *testing.T) {
 		runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{})
 	})
+
+	t.Run("unsupported Gmail list operator rejected", func(t *testing.T) {
+		r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{"query": "list:(alerts.example.com)"})
+		txt := resultText(t, r)
+		assertpkg.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
+		assertpkg.Contains(t, txt, "list:", "expected list operator context, got: %s")
+	})
 }
 
 func TestSearchFallbackToFTS(t *testing.T) {
@@ -1683,6 +1690,19 @@ func TestStageDeletion(t *testing.T) {
 		)
 		txt := resultText(t, r)
 		assertpkg.Contains(t, txt, "not both", "expected mutual exclusion error, got: %s")
+	})
+
+	t.Run("query with unsupported Gmail list operator rejected", func(t *testing.T) {
+		dataDir := t.TempDir()
+		h := &handlers{engine: eng, dataDir: dataDir}
+
+		r := runToolExpectError(
+			t, "stage_deletion", h.stageDeletion,
+			map[string]any{"query": "list:(alerts.example.com)"},
+		)
+		txt := resultText(t, r)
+		assertpkg.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
+		assertpkg.Contains(t, txt, "list:", "expected list operator context, got: %s")
 	})
 
 	t.Run("no filters rejected", func(t *testing.T) {

@@ -75,6 +75,9 @@ and `list_messages` default to `limit = 20` and cap it at 50. When a
 backend cannot report a full result count, `total` is `-1`; use
 `has_more` as the pagination signal. `list_messages` uses this
 `total = -1` shape because it does not run a separate count query.
+`search_messages` accepts msgvault's local subset of Gmail-like syntax.
+Gmail-only operators such as `list:` are rejected because msgvault does
+not index `List-ID` locally; use Gmail-side validation for those checks.
 
 `find_similar_messages` is only registered when the server starts with vector search configured. `search_messages` is always available, but `mode=vector` and `mode=hybrid` return `vector_not_enabled` when the server is not configured for vector search. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. Use `mode=fts` for deeper pagination or adjust that config cap.
 

@@ -25,6 +25,19 @@ type Query struct {
 	AccountIDs    []int64    // in: account filter (one or more source IDs)
 	MessageTypes  []string   // message_type filter (e.g. sms, mms, whatsapp, teams)
 	HideDeleted   bool       // exclude messages where deleted_from_source_at IS NOT NULL
+
+	// UnsupportedOperators records recognized Gmail operators that msgvault
+	// does not implement locally. The original token is still kept as a text
+	// term for backwards-compatible callers; front doors that need strict
+	// validation can reject the query before searching.
+	UnsupportedOperators []UnsupportedOperator
+}
+
+// UnsupportedOperator describes a parsed operator that is known to be Gmail
+// syntax but is not supported by msgvault's local search engine.
+type UnsupportedOperator struct {
+	Name  string
+	Token string
 }
 
 // IsEmpty returns true if the query has no search criteria.
@@ -188,6 +201,11 @@ var operators = map[string]operatorFn{
 	},
 }
 
+var unsupportedOperators = map[string]bool{
+	"list":    true,
+	"list-id": true,
+}
+
 // Parser holds configuration for query parsing.
 type Parser struct {
 	Now func() time.Time // Time source (mockable for testing)
@@ -230,6 +248,12 @@ func (p *Parser) Parse(queryStr string) *Query {
 			if handler, ok := operators[op]; ok {
 				handler(q, value, now)
 			} else {
+				if unsupportedOperators[op] {
+					q.UnsupportedOperators = append(q.UnsupportedOperators, UnsupportedOperator{
+						Name:  op,
+						Token: token,
+					})
+				}
 				q.TextTerms = append(q.TextTerms, token)
 			}
 			continue

@@ -193,7 +193,8 @@ func ServeHTTPWithOptions(ctx context.Context, opts ServeOptions, addr string) e
 func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 	if !vectorAvailable {
 		return mcp.NewTool(ToolSearchMessages,
-			mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+			mcp.WithDescription("Search emails using a subset of Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+				"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
 				"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 				"(This server is not configured for vector search; only keyword FTS is available.)"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -207,7 +208,8 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 		)
 	}
 	return mcp.NewTool(ToolSearchMessages,
-		mcp.WithDescription("Search emails using Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+		mcp.WithDescription("Search emails using a subset of Gmail-like query syntax. Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text. "+
+			"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
 			"All modes paginate via offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 			"total=-1 means the full match count is unknown — use has_more. "+
 			"Vector/hybrid ranking depth is capped by max_page_size_hybrid in config; beyond that use mode=fts. "+

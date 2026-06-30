@@ -14,6 +14,11 @@ msgvault search <query>
 
 ## Search Operators
 
+msgvault supports a local subset of Gmail-like search syntax. Gmail-only
+operators that depend on fields msgvault does not index locally, such as
+`list:` / `List-ID`, are not available in local search or MCP search. Use a
+Gmail connector query when you need Gmail itself to evaluate those operators.
+
 | Operator | Description | Example |
 |---|---|---|
 | `from:` | Sender address | `from:alice@example.com` |

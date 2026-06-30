@@ -257,6 +257,9 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	q := search.Parse(queryStr)
+	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
+		return mcp.NewToolResultError(msg), nil
+	}
 	if sourceID != nil {
 		q.AccountIDs = []int64{*sourceID}
 	}
@@ -288,6 +291,28 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	return jsonResult(newPaginatedResponse(results, totalMatched, offset))
+}
+
+func unsupportedSearchOperatorMessage(q *search.Query) string {
+	if len(q.UnsupportedOperators) == 0 {
+		return ""
+	}
+
+	names := make([]string, 0, len(q.UnsupportedOperators))
+	seen := make(map[string]bool, len(q.UnsupportedOperators))
+	for _, op := range q.UnsupportedOperators {
+		name := op.Name + ":"
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
+		}
+	}
+
+	return fmt.Sprintf(
+		"unsupported_search_operator: %s is Gmail-only syntax; msgvault does not index List-ID locally. "+
+			"Use the Gmail connector for List-ID validation, or use msgvault-supported operators.",
+		strings.Join(names, ", "),
+	)
 }
 
 // hybridScoreBreakdown exposes fused-score components for debugging.
@@ -355,6 +380,9 @@ func (h *handlers) searchMessagesHybrid(
 	offset := limitArg(args, "offset", 0)
 
 	parsed := search.Parse(queryStr)
+	if msg := unsupportedSearchOperatorMessage(parsed); msg != "" {
+		return mcp.NewToolResultError(msg), nil
+	}
 	freeText := strings.Join(parsed.TextTerms, " ")
 
 	// mode=vector|hybrid requires at least one free-text term; filter-only
@@ -1211,6 +1239,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	if hasQuery {
 		// Query-based search
 		q := search.Parse(queryStr)
+		if msg := unsupportedSearchOperatorMessage(q); msg != "" {
+			return mcp.NewToolResultError(msg), nil
+		}
 		if sourceID != nil {
 			q.AccountIDs = []int64{*sourceID}
 		}
