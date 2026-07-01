@@ -92,6 +92,52 @@ func TestServeStatusPrintsVectorLine(t *testing.T) {
 	}
 }
 
+func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","vector":{"status":"initializing"}}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+	port, err := strconv.Atoi(portText)
+	require.NoError(err, "parse listener port")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:             host,
+			runtimePort:             strconv.Itoa(port),
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd.SetContext(context.Background())
+	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
+
+	out := stdout.String()
+	assert.Contains(out, "msgvault running at", "status shows the running daemon")
+	assert.Contains(out, "vector:  initializing", "status includes daemon vector health")
+	assert.Empty(stderr.String(), "status must not write to stderr")
+}
+
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
 	cmd, stdout, stderr := lifecycleTestCommand()
 
