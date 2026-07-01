@@ -669,7 +669,7 @@ import (
 )
 
 func TestPrecheckVectorFeaturesDisabled(t *testing.T) {
-	c := config.Default() // or &config.Config{} — match how serve_test.go builds configs
+	c := config.NewDefaultConfig() // or &config.Config{} — match how serve_test.go builds configs
 	c.Vector.Enabled = false
 	withTestConfig(t, c)
 
@@ -677,7 +677,7 @@ func TestPrecheckVectorFeaturesDisabled(t *testing.T) {
 }
 
 func TestPrecheckVectorFeaturesRejectsBadCron(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	// Fill the minimum valid [vector] config the way TestSetupVectorFeatures_*
 	// tests do (endpoint/model/dimension), then break only the cron:
@@ -690,7 +690,7 @@ func TestPrecheckVectorFeaturesRejectsBadCron(t *testing.T) {
 }
 
 func TestPrecheckVectorFeaturesRejectsInvalidConfig(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	// leave required embeddings fields empty so Validate() fails
 	withTestConfig(t, c)
@@ -846,7 +846,7 @@ func waitForVectorStatus(t *testing.T, srv *api.Server, want api.VectorStatus) s
 }
 
 func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = false
 	withTestConfig(t, c)
 
@@ -855,7 +855,7 @@ func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 }
 
 func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	withTestConfig(t, c)
 
@@ -878,7 +878,7 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 }
 
 func TestStartVectorInitReportsError(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	withTestConfig(t, c)
 
@@ -895,7 +895,7 @@ func TestStartVectorInitReportsError(t *testing.T) {
 }
 
 func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	withTestConfig(t, c)
 
@@ -929,7 +929,7 @@ func TestStartVectorInitHoldsWorkTracker(t *testing.T) {
 }
 
 func TestStartVectorInitAbortsQuietlyOnCancel(t *testing.T) {
-	c := config.Default()
+	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	withTestConfig(t, c)
 

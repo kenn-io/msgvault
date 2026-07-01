@@ -24,8 +24,13 @@ does not need it.
 2. When `cfg.Vector.Enabled`, run only cheap validation synchronously so
    misconfiguration still fails startup fast:
    - `cfg.Vector.Validate()`
-   - the "binary built without `-tags sqlite_vec`" check (the stub build's
-     error path)
+   - embed-cron validation (`scheduler.ValidateCronExpr` when a schedule is set)
+   - the "binary built without vector support" stub-build error path
+   - a dialect-aware backend-availability check: a `postgres://` DSN requires
+     the pgvector tag compiled in (`pgvector.Available()`), a SQLite path
+     requires the sqlite_vec tag (`sqlitevec.Available()`); either mismatch
+     fails fast with rebuild guidance instead of surfacing later in the
+     background init goroutine.
    This is a new per-build-tag `precheckVectorFeatures` function with the
    same build-tag split as `setupVectorFeatures`.
 3. Start the API server on the reserved listener with vector status

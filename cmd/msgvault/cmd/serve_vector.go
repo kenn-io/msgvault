@@ -21,11 +21,12 @@ import (
 // precheckVectorFeatures validates vector configuration cheaply so runServe
 // can fail fast on misconfiguration while deferring the expensive backend
 // open/migrate/backfill to the background init task. Returns nil when
-// vector search is disabled. mainPath is used to fail fast when it is a
-// postgres:// DSN but this binary lacks the pgvector build tag — the one
-// "binary built without support" case the cheap precheck can still catch
-// synchronously, since setupVectorFeatures would otherwise only discover
-// it later inside the background init goroutine.
+// vector search is disabled. mainPath drives a dialect-aware build-tag
+// check that fails fast on the "binary built without backend support" case
+// the cheap precheck can catch synchronously: a postgres:// DSN needs the
+// pgvector tag, a SQLite path needs the sqlite_vec tag. Without this,
+// setupVectorFeatures would only discover the gap later inside the
+// background init goroutine.
 func precheckVectorFeatures(mainPath string) error {
 	if !cfg.Vector.Enabled {
 		return nil
@@ -33,6 +34,11 @@ func precheckVectorFeatures(mainPath string) error {
 	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
 		return errors.New("vector search is enabled in config but this binary was built without vector support; " +
 			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"` " +
+			"or set [vector] enabled = false")
+	}
+	if !store.IsPostgresURL(mainPath) && !sqlitevec.Available() {
+		return errors.New("vector search is enabled in config but this binary was built without sqlite-vec support; " +
+			"to use vector search on SQLite, rebuild with `go build -tags \"fts5 sqlite_vec\"` or `make build`, " +
 			"or set [vector] enabled = false")
 	}
 	if err := cfg.Vector.Validate(); err != nil {
