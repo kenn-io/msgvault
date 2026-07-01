@@ -34,14 +34,17 @@ func (s *Server) SetVectorFeatures(engine *hybrid.Engine, backend vector.Backend
 }
 
 // SetVectorInitError marks the vector subsystem as failed. The daemon keeps
-// serving; vector endpoints return 503 carrying the message.
+// serving; vector endpoints return 503 carrying the message. Calling with a
+// nil error is a programmer error — there is nothing to report — and is a
+// no-op: it does not flip the status to error or touch any existing state.
 func (s *Server) SetVectorInitError(err error) {
+	if err == nil {
+		return
+	}
 	s.vectorMu.Lock()
 	defer s.vectorMu.Unlock()
 	s.vectorStatus = VectorStatusError
-	if err != nil {
-		s.vectorErr = err.Error()
-	}
+	s.vectorErr = err.Error()
 }
 
 // VectorStatus returns the vector subsystem status and, when the status is

@@ -85,6 +85,18 @@ func TestSetVectorInitErrorTransitionsToError(t *testing.T) {
 	assert.Contains(t, errMsg, "migration exploded")
 }
 
+func TestSetVectorInitErrorNilIsNoOp(t *testing.T) {
+	opts := testServerOptions(t, nil)
+	opts.VectorStatus = VectorStatusInitializing
+	srv := NewServerWithOptions(opts)
+
+	srv.SetVectorInitError(nil)
+
+	status, errMsg := srv.VectorStatus()
+	assert.Equal(t, VectorStatusInitializing, status)
+	assert.Empty(t, errMsg)
+}
+
 func TestSetVectorFeaturesConcurrentReads(t *testing.T) {
 	opts := testServerOptions(t, nil)
 	opts.VectorStatus = VectorStatusInitializing
@@ -173,6 +185,7 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 		{"initializing", VectorStatusInitializing, nil, &VectorHealth{Status: "initializing"}},
 		{"error carries message", VectorStatusError, errors.New("migration exploded"),
 			&VectorHealth{Status: "error", Error: "migration exploded"}},
+		{"ready", VectorStatusReady, nil, &VectorHealth{Status: "ready"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -199,17 +212,30 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 }
 
 func TestStatsReportsVectorStatus(t *testing.T) {
-	srv, _ := newTestServerWithMockStore(t)
-	srv.vectorMu.Lock()
-	srv.vectorStatus = VectorStatusInitializing
-	srv.vectorMu.Unlock()
+	tests := []struct {
+		name   string
+		status VectorStatus
+	}{
+		{"initializing", VectorStatusInitializing},
+		{"ready", VectorStatusReady},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			srv, _ := newTestServerWithMockStore(t)
+			srv.vectorMu.Lock()
+			srv.vectorStatus = tt.status
+			srv.vectorMu.Unlock()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-	rec := httptest.NewRecorder()
-	srv.Router().ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+			rec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	var body StatsResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	assert.Equal(t, "initializing", body.VectorStatus)
+			require.Equal(http.StatusOK, rec.Code)
+			var body StatsResponse
+			require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(string(tt.status), body.VectorStatus)
+		})
+	}
 }
