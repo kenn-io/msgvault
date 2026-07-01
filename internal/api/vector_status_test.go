@@ -119,6 +119,8 @@ func TestSimilarSearchStatusAware503(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			opts := testServerOptions(t, nil)
 			opts.VectorStatus = tt.status
 			srv := NewServerWithOptions(opts)
@@ -130,14 +132,14 @@ func TestSimilarSearchStatusAware503(t *testing.T) {
 			rec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(rec, req)
 
-			require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+			require.Equal(http.StatusServiceUnavailable, rec.Code)
 			var body struct {
 				Error   string `json:"error"`
 				Message string `json:"message"`
 			}
-			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-			assert.Equal(t, tt.wantCode, body.Error)
-			assert.Contains(t, body.Message, tt.wantMessage)
+			require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(tt.wantCode, body.Error)
+			assert.Contains(body.Message, tt.wantMessage)
 		})
 	}
 }
@@ -174,6 +176,8 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			opts := testServerOptions(t, nil)
 			opts.VectorStatus = tt.status
 			srv := NewServerWithOptions(opts)
@@ -185,11 +189,11 @@ func TestHealthReportsVectorStatus(t *testing.T) {
 			rec := httptest.NewRecorder()
 			srv.Router().ServeHTTP(rec, req)
 
-			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(http.StatusOK, rec.Code)
 			var body HealthResponse
-			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-			assert.Equal(t, "ok", body.Status)
-			assert.Equal(t, tt.wantVector, body.Vector)
+			require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal("ok", body.Status)
+			assert.Equal(tt.wantVector, body.Vector)
 		})
 	}
 }
