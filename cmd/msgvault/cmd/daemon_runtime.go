@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -24,6 +25,7 @@ const (
 	runtimePort             = "port"
 	runtimeAPIVersion       = "api_version"
 	runtimeAPISchemaVersion = "api_schema_version"
+	runtimeAuthFingerprint  = "auth_fingerprint"
 	runtimeCreateTime       = "create_time"
 	runtimeShutdownToken    = "shutdown_token"
 	daemonProbeTick         = 250 * time.Millisecond
@@ -41,7 +43,7 @@ func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
-func writeDaemonRuntime(dataDir string, host string, port int, version string) (string, string, error) {
+func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (string, string, error) {
 	shutdownToken, err := newDaemonShutdownToken()
 	if err != nil {
 		return "", "", fmt.Errorf("create shutdown token: %w", err)
@@ -56,6 +58,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string) (
 		runtimePort:             strconv.Itoa(port),
 		runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 		runtimeAPISchemaVersion: api.APISchemaVersion,
+		runtimeAuthFingerprint:  daemonAPIKeyFingerprint(apiKey),
 		runtimeShutdownToken:    shutdownToken,
 	}
 	if createTime, ok := processCreateTimeMillis(os.Getpid()); ok {
@@ -66,6 +69,14 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string) (
 		return "", "", fmt.Errorf("write daemon runtime record: %w", err)
 	}
 	return path, shutdownToken, nil
+}
+
+func daemonAPIKeyFingerprint(apiKey string) string {
+	if apiKey == "" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(apiKey))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func newDaemonShutdownToken() (string, error) {

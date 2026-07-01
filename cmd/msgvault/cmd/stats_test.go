@@ -210,7 +210,9 @@ func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		statsRequests.Add(1)
+		if !isLocalDaemonAuthProbe(r) {
+			statsRequests.Add(1)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"total_messages": 3,
@@ -248,6 +250,17 @@ func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, statsRequests
+}
+
+func registerStatsProbeHandler(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_messages":0}`))
+	})
+}
+
+func isLocalDaemonAuthProbe(r *http.Request) bool {
+	return r.Header.Get(localDaemonAuthProbeHeader) == localDaemonAuthProbeValue
 }
 
 func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.Server) {

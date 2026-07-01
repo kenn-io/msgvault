@@ -140,6 +140,27 @@ func TestOperationGateMiddlewareSkipsLogCLIRunAndRestoresBody(t *testing.T) {
 	assert.Equal(0, done, "done calls")
 }
 
+func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: false}
+	handlerCalled := false
+	handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	body := `{"args":["logs"],"padding":"` + strings.Repeat("x", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(body))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusRequestEntityTooLarge, resp.Code, "status")
+	assert.False(handlerCalled, "handler should not receive oversized classification body")
+	begin, done := gate.counts()
+	assert.Equal(0, begin, "begin calls")
+	assert.Equal(0, done, "done calls")
+}
+
 func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	assert := assert.New(t)
 	gate := &recordingOperationGate{allow: true}

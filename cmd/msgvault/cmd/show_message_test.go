@@ -96,6 +96,7 @@ func messageHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		Service: daemonService,
 		Version: Version,
 	}))
+	registerStatsProbeHandler(mux)
 	mux.HandleFunc("/api/v1/cli/message", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -135,6 +136,7 @@ func messageHTTPNotFoundDaemon(t *testing.T) *httptest.Server {
 		Service: daemonService,
 		Version: Version,
 	}))
+	registerStatsProbeHandler(mux)
 	mux.HandleFunc("/api/v1/cli/message", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"not_found","message":"Message not found"}`))

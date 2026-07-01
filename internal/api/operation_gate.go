@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 )
+
+const cliRunGateInspectionMaxBytes = 1 << 20
+
+var errCLIRunGateInspectionBodyTooLarge = errors.New("cli run request body is too large to inspect before routing")
 
 // OperationGate serializes daemon-owned mutating work.
 type OperationGate interface {
@@ -140,7 +145,16 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !operationGateRequest(r) {
+			shouldGate, err := operationGateRequest(r)
+			if err != nil {
+				if errors.Is(err, errCLIRunGateInspectionBodyTooLarge) {
+					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+					return
+				}
+				http.Error(w, "request body unreadable", http.StatusBadRequest)
+				return
+			}
+			if !shouldGate {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -155,42 +169,49 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 	}
 }
 
-func operationGateRequest(r *http.Request) bool {
+func operationGateRequest(r *http.Request) (bool, error) {
 	if r.URL.Path == DaemonShutdownPath {
-		return false
+		return false, nil
 	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return false
+		return false, nil
 	}
-	if r.URL.Path == "/api/v1/cli/run" && cliRunRequestSkipsOperationGate(r) {
-		return false
+	if r.URL.Path == "/api/v1/cli/run" {
+		skip, err := cliRunRequestSkipsOperationGate(r)
+		if err != nil {
+			return false, err
+		}
+		if skip {
+			return false, nil
+		}
 	}
-	return true
+	return true, nil
 }
 
-func cliRunRequestSkipsOperationGate(r *http.Request) bool {
+func cliRunRequestSkipsOperationGate(r *http.Request) (bool, error) {
 	if r == nil || r.Body == nil {
-		return false
+		return false, nil
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, cliRunGateInspectionMaxBytes+1))
 	if err != nil {
-		return false
+		return false, err
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) > cliRunGateInspectionMaxBytes {
+		return false, errCLIRunGateInspectionBodyTooLarge
+	}
 
 	var req struct {
 		Args []string `json:"args"`
 	}
-	if err := json.Unmarshal(body, &req); err != nil || len(req.Args) == 0 {
-		return false
+	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
+		switch req.Args[0] {
+		case "logs":
+			return true, nil
+		}
 	}
-	switch req.Args[0] {
-	case "logs":
-		return true
-	default:
-		return false
-	}
+	return false, nil
 }
 
 func (s *Server) beginOperationGateWork(ctx context.Context) (func(), bool) {

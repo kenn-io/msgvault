@@ -137,9 +137,10 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       strconv.Itoa(port),
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeHost:            host,
+			runtimePort:            strconv.Itoa(port),
+			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
 		},
 	})
 	require.NoError(
@@ -158,6 +159,114 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal(int64(7), stats.MessageCount)
 	assert.Equal(localCfg.Server.APIKey, gotAPIKey)
+}
+
+func TestOpenHTTPStoreRejectsLocalDaemonWithStaleServerAPIKey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	localCfg := lifecycleTestConfig(dataDir)
+	localCfg.Server.APIKey = "new-local-daemon-secret"
+	withStoreResolverConfig(t, localCfg)
+
+	var statsCalled bool
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
+		statsCalled = true
+		assert.Equal(localCfg.Server.APIKey, r.Header.Get("X-Api-Key"), "auth probe uses current server api key")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized","message":"Invalid or missing API key"}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+	port, err := strconv.Atoi(portText)
+	require.NoError(err, "parse listener port")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:            host,
+			runtimePort:            strconv.Itoa(port),
+			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	st, _, err := OpenHTTPStore(context.Background())
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.Error(err, "OpenHTTPStore should reject a daemon using stale authentication")
+	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
+	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.True(statsCalled, "runtime reuse should probe an authenticated endpoint")
+}
+
+func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	localCfg := lifecycleTestConfig(dataDir)
+	localCfg.Server.APIKey = "new-local-daemon-secret"
+	withStoreResolverConfig(t, localCfg)
+
+	var statsCalled bool
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		statsCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_messages":7}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+	port, err := strconv.Atoi(portText)
+	require.NoError(err, "parse listener port")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:            host,
+			runtimePort:            strconv.Itoa(port),
+			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint("old-local-daemon-secret"),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	st, _, err := OpenHTTPStore(context.Background())
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.Error(err, "OpenHTTPStore should reject a daemon started with a different api key")
+	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
+	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.False(statsCalled, "runtime reuse should reject stale auth metadata before routed requests")
 }
 
 func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {

@@ -159,7 +159,7 @@ func TestDirectWriterOwnsArchive_FalseWhenDaemonRecordPresent(t *testing.T) {
 
 	// A live daemon advertises a runtime record; simulate one for this
 	// (alive) test process so liveDaemonRecords observes it.
-	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test")
+	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test", "")
 	require.NoError(
 		err, "write daemon runtime record")
 

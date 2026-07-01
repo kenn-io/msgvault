@@ -79,9 +79,10 @@ func TestOpenTUIEngineLocalFlagUsesLocalDaemonHTTP(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 		Metadata: map[string]string{
-			runtimeHost:       host,
-			runtimePort:       strconv.Itoa(port),
-			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+			runtimeHost:            host,
+			runtimePort:            strconv.Itoa(port),
+			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint(localCfg.Server.APIKey),
 		},
 	})
 	require.NoError(
@@ -128,6 +129,10 @@ func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {
 		Service: daemonService,
 		Version: Version,
 	}))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_messages":42}`))
+	})
 	mux.HandleFunc("/api/v1/cli/accounts", func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")

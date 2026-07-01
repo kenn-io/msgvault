@@ -20,7 +20,7 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert := assert.New(t)
 	dataDir := t.TempDir()
 
-	path, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test")
+	path, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
 	require.NoError(err, "writeDaemonRuntime")
 	require.NotEmpty(shutdownToken, "shutdown token")
 	t.Cleanup(func() { removeDaemonRuntime(dataDir) })
@@ -36,6 +36,7 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert.Equal(strconv.Itoa(8123), rec.Metadata[runtimePort], "port metadata")
 	assert.Equal(strconv.Itoa(daemonAPIVersion), rec.Metadata[runtimeAPIVersion], "api version metadata")
 	assert.Equal(api.APISchemaVersion, rec.Metadata[runtimeAPISchemaVersion], "api schema metadata")
+	assert.Equal(daemonAPIKeyFingerprint("test-api-key"), rec.Metadata[runtimeAuthFingerprint], "api key fingerprint metadata")
 	assert.Equal(shutdownToken, rec.Metadata[runtimeShutdownToken], "shutdown token metadata")
 }
 

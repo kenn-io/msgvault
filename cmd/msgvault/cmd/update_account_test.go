@@ -26,6 +26,7 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 	}))
+	registerStatsProbeHandler(mux)
 	mux.HandleFunc("/api/v1/cli/account", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
 		requests.Add(1)
