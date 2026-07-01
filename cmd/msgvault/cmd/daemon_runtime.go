@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -16,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/update"
+	"golang.org/x/crypto/argon2"
 )
 
 const (
@@ -30,6 +30,8 @@ const (
 	runtimeShutdownToken    = "shutdown_token"
 	daemonProbeTick         = 250 * time.Millisecond
 )
+
+var daemonAuthFingerprintSalt = []byte("msgvault-daemon-auth-fingerprint-v1")
 
 type DaemonRuntime struct {
 	Record           daemon.RuntimeRecord
@@ -75,8 +77,8 @@ func daemonAPIKeyFingerprint(apiKey string) string {
 	if apiKey == "" {
 		return "none"
 	}
-	sum := sha256.Sum256([]byte(apiKey))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	key := argon2.IDKey([]byte(apiKey), daemonAuthFingerprintSalt, 1, 8*1024, 1, 32)
+	return "argon2id:v1:" + hex.EncodeToString(key)
 }
 
 func newDaemonShutdownToken() (string, error) {

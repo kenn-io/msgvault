@@ -244,7 +244,7 @@ func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Conf
 	if err := localDaemonAuthIdentityError(url, rt, c); err != nil {
 		return err
 	}
-	if c.Server.APIKey == "" {
+	if c.Server.APIKey == "" && daemonRuntimeAuthFingerprint(rt) == daemonAPIKeyFingerprint("") {
 		return nil
 	}
 	if ctx == nil {
@@ -294,10 +294,7 @@ func localDaemonAuthIdentityError(url string, rt *DaemonRuntime, c *config.Confi
 		return nil
 	}
 	want := daemonAPIKeyFingerprint(c.Server.APIKey)
-	got := ""
-	if rt.Record.Metadata != nil {
-		got = rt.Record.Metadata[runtimeAuthFingerprint]
-	}
+	got := daemonRuntimeAuthFingerprint(rt)
 	if got == "" && c.Server.APIKey == "" {
 		return nil
 	}
@@ -305,6 +302,13 @@ func localDaemonAuthIdentityError(url string, rt *DaemonRuntime, c *config.Confi
 		return localDaemonAPIKeyMismatchError(url)
 	}
 	return nil
+}
+
+func daemonRuntimeAuthFingerprint(rt *DaemonRuntime) string {
+	if rt == nil || rt.Record.Metadata == nil {
+		return ""
+	}
+	return rt.Record.Metadata[runtimeAuthFingerprint]
 }
 
 func localDaemonAPIKeyMismatchError(url string) error {

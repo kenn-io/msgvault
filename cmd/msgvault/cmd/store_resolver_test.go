@@ -269,6 +269,59 @@ func TestOpenHTTPStoreRejectsLocalDaemonWithChangedServerAPIKeyFingerprint(t *te
 	assert.False(statsCalled, "runtime reuse should reject stale auth metadata before routed requests")
 }
 
+func TestOpenHTTPStoreRejectsLegacyLocalDaemonAfterServerAPIKeyRemoved(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	localCfg := lifecycleTestConfig(dataDir)
+	withStoreResolverConfig(t, localCfg)
+
+	var statsCalled bool
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
+		statsCalled = true
+		assert.Empty(r.Header.Get("X-Api-Key"), "removed api key should probe without credentials")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized","message":"Invalid or missing API key"}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+	port, err := strconv.Atoi(portText)
+	require.NoError(err, "parse listener port")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:       host,
+			runtimePort:       strconv.Itoa(port),
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+		},
+	})
+	require.NoError(err, "write runtime")
+
+	st, _, err := OpenHTTPStore(context.Background())
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.Error(err, "OpenHTTPStore should reject a legacy daemon that still requires an api key")
+	assert.Contains(err.Error(), "api_key", "error names the key mismatch")
+	assert.Contains(err.Error(), "msgvault serve restart", "error gives a daemon lifecycle remedy")
+	assert.True(statsCalled, "missing auth metadata should be verified with a live probe")
+}
+
 func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(
