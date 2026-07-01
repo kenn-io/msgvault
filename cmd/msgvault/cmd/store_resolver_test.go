@@ -26,7 +26,7 @@ func TestOpenHTTPStoreUsesConfiguredRemoteWithoutDaemonAutostart(t *testing.T) {
 			AllowInsecure: true,
 		},
 	})
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow(t, "configured remote must not start a local daemon")
 		return nil, errors.New("unreachable")
 	})
@@ -61,7 +61,7 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	var started bool
-	stubStartServeBackgroundProcess(t, func(c *config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(c *config.Config, _ backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		started = true
 		assert.Equal(dataDir, c.Data.DataDir)
 		return &backgroundServeProcess{
@@ -367,7 +367,7 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("never policy must not start over a compatible daemon")
 		return nil, errors.New("unreachable")
 	})
@@ -398,7 +398,7 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 
 	waitCh := make(chan error)
 	var started bool
-	stubStartServeBackgroundProcess(t, func(got *config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(got *config.Config, _ backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		started = true
 		assert.Equal(dataDir, got.Data.DataDir)
 		return &backgroundServeProcess{

@@ -423,7 +423,7 @@ func TestCreateSubsetFailsFastWhenArchiveOwned(t *testing.T) {
 func TestOpenHTTPStoreFailsWhenDirectWriterOwnsArchive(t *testing.T) {
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow(t, "must not spawn a daemon while a writer owns the archive")
 		return nil, errors.New("unreachable")
 	})

@@ -208,7 +208,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 		return rt, nil
 	}
 
-	proc, err := startServeBackgroundProcessForRun(c)
+	proc, err := startServeBackgroundProcessForRun(c, backgroundServeStartOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("start background daemon: %w", err)
 	}

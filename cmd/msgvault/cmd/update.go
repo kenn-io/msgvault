@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -60,6 +61,7 @@ official release over a dev build.`,
 		}
 		currentExe, _ = filepath.EvalSymlinks(currentExe)
 		binDir := filepath.Dir(currentExe)
+		installExecutablePath := filepath.Join(binDir, updateExecutableName())
 
 		fmt.Println("\nInstall location:")
 		fmt.Printf("  %s\n", binDir)
@@ -106,7 +108,9 @@ official release over a dev build.`,
 			loadDaemonConfigForUpdate,
 			stopLocalDaemonsForUpdate,
 			update.PerformUpdate,
-			restartDaemonAfterUpdate,
+			func(c *config.Config, result updateDaemonStopResult) error {
+				return restartDaemonAfterUpdate(c, result, installExecutablePath)
+			},
 		); err != nil {
 			return err
 		}
@@ -202,12 +206,19 @@ func stopLocalDaemonsForUpdate(c *config.Config) (updateDaemonStopResult, error)
 	return result, nil
 }
 
-func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult) error {
+func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, executablePath string) error {
 	if !result.Stopped {
 		return nil
 	}
 	cmd := &cobra.Command{Use: "msgvault update daemon-restart"}
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	return runServeStart(cmd, c)
+	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{ExecutablePath: executablePath})
+}
+
+func updateExecutableName() string {
+	if runtime.GOOS == "windows" {
+		return "msgvault.exe"
+	}
+	return "msgvault"
 }

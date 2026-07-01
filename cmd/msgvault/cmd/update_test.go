@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,4 +207,42 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 	require.NoError(err, "stop local daemons")
 	assert.True(result.Stopped, "stopped")
 	assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
+}
+
+func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	installedExe := filepath.Join(t.TempDir(), "bin", updateExecutableName())
+	waitCh := make(chan error)
+	var gotExecutable string
+
+	stubStartServeBackgroundProcess(t, func(
+		_ *config.Config,
+		opts backgroundServeStartOptions,
+	) (*backgroundServeProcess, error) {
+		gotExecutable = opts.ExecutablePath
+		return &backgroundServeProcess{
+			PID:     990,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 990},
+			Host:   net.IPv4(127, 0, 0, 1).String(),
+			Port:   9090,
+		}, true, nil
+	})
+
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true}, installedExe)
+
+	require.NoError(err, "restart daemon")
+	assert.Equal(installedExe, gotExecutable, "restart executable")
 }

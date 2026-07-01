@@ -119,6 +119,10 @@ type backgroundDaemonStartPreparation struct {
 	Reusable *DaemonRuntime
 }
 
+type backgroundServeStartOptions struct {
+	ExecutablePath string
+}
+
 func prepareBackgroundDaemonStart(
 	c *config.Config,
 	incompatibleGuidance string,
@@ -151,6 +155,10 @@ func incompatibleDaemonError(err error, guidance string) error {
 }
 
 func runServeStart(cmd *cobra.Command, c *config.Config) error {
+	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{})
+}
+
+func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgroundServeStartOptions) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
@@ -174,7 +182,7 @@ func runServeStart(cmd *cobra.Command, c *config.Config) error {
 		return nil
 	}
 
-	proc, err := startServeBackgroundProcessForRun(c)
+	proc, err := startServeBackgroundProcessForRun(c, opts)
 	if err != nil {
 		return fmt.Errorf("start background daemon: %w", err)
 	}
@@ -398,10 +406,14 @@ type backgroundServeProcess struct {
 	Wait    <-chan error
 }
 
-func startServeBackgroundProcess(c *config.Config) (*backgroundServeProcess, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("find executable: %w", err)
+func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
+	exe := opts.ExecutablePath
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("find executable: %w", err)
+		}
 	}
 	logPath := filepath.Join(c.Data.DataDir, "serve.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

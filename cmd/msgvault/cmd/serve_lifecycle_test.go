@@ -251,7 +251,7 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 		require.Fail("older CLI must not stop a newer daemon")
 		return nil
 	})
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("older CLI must not start over a newer daemon")
 		return nil, errors.New("unreachable")
 	})
@@ -294,7 +294,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 		return nil
 	})
 	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
 			PID:     777,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -351,7 +351,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		require.FailNow("never policy must not stop a compatible daemon")
 		return errors.New("unreachable")
 	})
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("never policy must not start over a compatible daemon")
 		return nil, errors.New("unreachable")
 	})
@@ -396,7 +396,7 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 		return nil
 	})
 	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
 			PID:     779,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -453,7 +453,7 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 		require.FailNow("older CLI must not stop a newer incompatible daemon")
 		return errors.New("unreachable")
 	})
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("older CLI must not start over a newer incompatible daemon")
 		return nil, errors.New("unreachable")
 	})
@@ -470,7 +470,7 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
 	dataDir := t.TempDir()
 	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
 			PID:     778,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -620,7 +620,7 @@ func stubStopDaemonRuntimeForUpgrade(
 
 func stubStartServeBackgroundProcess(
 	t *testing.T,
-	fn func(*config.Config) (*backgroundServeProcess, error),
+	fn func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error),
 ) {
 	t.Helper()
 	old := startServeBackgroundProcessForRun
