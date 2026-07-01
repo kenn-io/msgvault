@@ -56,8 +56,6 @@ func (h *vectorInitHandle) CloseFeatures() {
 // success the components are installed into apiServer and the embed job is
 // registered; on failure the daemon keeps serving with vector endpoints
 // reporting the error.
-//
-//nolint:unparam // s is always nil until Task 6 wires runServe's real *store.Store into this call
 func startVectorInit(
 	ctx context.Context,
 	s *store.Store,

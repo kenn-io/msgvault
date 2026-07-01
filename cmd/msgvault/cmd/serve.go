@@ -159,30 +159,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	idleTracker := newDaemonIdleTracker(cfg, cancel)
 	operationGate := api.NewSerialOperationGate()
 
-	// Build optional vector-search components. Returns (nil, nil) when
-	// cfg.Vector.Enabled is false, or an error when enabled but the
-	// binary was built without -tags sqlite_vec.
-	if cfg.Vector.Enabled {
-		logger.Info("daemon startup step",
-			"step", "init_vector_backend",
-			"detail", "may run vector schema migrations and embed_gen backfill on large archives")
-	} else {
-		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
-	}
-	vf, err := setupVectorFeatures(ctx, s, dbPath, false)
-	if err != nil {
+	// Vector misconfiguration still fails startup fast; the expensive
+	// backend open/migrate/backfill runs in the background after the API
+	// server is listening (startVectorInit below), so the TUI and other
+	// clients are not blocked by vector maintenance.
+	if err := precheckVectorFeatures(dbPath); err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
-	if cfg.Vector.Enabled {
-		logger.Info("daemon startup step complete", "step", "init_vector_backend")
+	if !cfg.Vector.Enabled {
+		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
 	}
-	defer func() {
-		if vf != nil && vf.Close != nil {
-			if closeErr := vf.Close(); closeErr != nil {
-				logger.Warn("closing vectors.db failed", "error", closeErr)
-			}
-		}
-	}()
 
 	logger.Info("daemon startup step", "step", "init_analytics_engine")
 	engine, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
@@ -196,9 +182,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create sync function for the scheduler. Under scan-and-fill the
 	// Syncer no longer needs an enqueuer — newly-ingested messages get
-	// embed_gen = NULL by column default and the embed worker (wired
-	// separately below from vf) discovers them on its next run, so the
-	// sync path no longer threads vf.
+	// embed_gen = NULL by column default and the embed worker (registered
+	// by the background startVectorInit) discovers them on its next run, so
+	// the sync path no longer threads the vector features.
 	syncFunc := func(ctx context.Context, email string) error {
 		return runScheduledSync(ctx, email, s, getOAuthMgr)
 	}
@@ -261,30 +247,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Register the embed job (cron-driven plus optional post-sync hook).
-	// Only when vector search is enabled and wired.
-	if vf != nil {
-		embedJob := &scheduler.EmbedJob{
-			Worker:           vf.Worker,
-			Backend:          vf.Backend,
-			Store:            s,
-			Fingerprint:      vf.Cfg.GenerationFingerprint(),
-			BackstopInterval: vf.Cfg.Embed.BackstopInterval,
-			BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
-			Log:              logger,
-		}
-		schedule := cfg.Vector.Embed.Schedule.Cron
-		if err := sched.SetEmbedJob(
-			embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync,
-		); err != nil {
-			return fmt.Errorf("register embed job: %w", err)
-		}
-		logger.Info("embed scheduled",
-			"cron", schedule,
-			"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync,
-		)
-	}
-
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -311,10 +273,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		IdleTracker:   idleTracker,
 		OperationGate: operationGate,
 	}
-	if vf != nil {
-		apiOpts.HybridEngine = vf.HybridEngine
-		apiOpts.Backend = vf.Backend
-		apiOpts.VectorCfg = vf.Cfg
+	if cfg.Vector.Enabled {
+		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer := api.NewServerWithOptions(apiOpts)
 
@@ -333,6 +293,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go idleTracker.Run(ctx)
 		logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
 	}
+
+	vectorInit := startVectorInit(
+		ctx, s, dbPath,
+		combineWorkTrackers(idleTracker, operationGate),
+		apiServer, sched,
+	)
 
 	fmt.Printf("msgvault daemon started\n")
 	fmt.Printf("  API server: http://%s\n", apiAddr)
@@ -362,11 +328,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("context cancelled")
 	}
 
+	// Stop background work first: vector init honors ctx, so cancelling
+	// lets the operation-gate drain inside shutdownServeRuntime complete.
+	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
 	if err := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate); err != nil {
 		logger.Error("daemon shutdown error", "error", err)
 		return err
+	}
+	if vectorInit.WaitTimeout(serveOperationDrainTimeout) {
+		vectorInit.CloseFeatures()
+	} else {
+		logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
 	}
 	if serverStartupErr != nil {
 		return fmt.Errorf("API server: %w", serverStartupErr)
