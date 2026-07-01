@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -15,6 +16,26 @@ import (
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+// precheckVectorFeatures validates vector configuration cheaply so runServe
+// can fail fast on misconfiguration while deferring the expensive backend
+// open/migrate/backfill to the background init task. Returns nil when
+// vector search is disabled. The mainPath parameter is unused in vector
+// builds; the stub build uses it to pick the right rebuild guidance.
+func precheckVectorFeatures(_ string) error {
+	if !cfg.Vector.Enabled {
+		return nil
+	}
+	if err := cfg.Vector.Validate(); err != nil {
+		return fmt.Errorf("vector config: %w", err)
+	}
+	if cronExpr := cfg.Vector.Embed.Schedule.Cron; cronExpr != "" {
+		if err := scheduler.ValidateCronExpr(cronExpr); err != nil {
+			return fmt.Errorf("invalid embed cron expression %q: %w", cronExpr, err)
+		}
+	}
+	return nil
+}
 
 // setupVectorFeatures builds the vector backend, hybrid engine, and embed
 // worker used by the serve daemon and the MCP command. The backend is

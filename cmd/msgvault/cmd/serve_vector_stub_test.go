@@ -30,3 +30,19 @@ func TestSetupVectorFeatures_EnabledWithoutTag(t *testing.T) {
 		assert.Contains(t, msg, want)
 	}
 }
+
+// TestPrecheckVectorFeatures_Stub verifies the untagged precheck mirrors
+// setupVectorFeatures's gate: nil when vector search is disabled, and the
+// same build-unsupported error (mentioning sqlite_vec) when enabled.
+func TestPrecheckVectorFeatures_Stub(t *testing.T) {
+	c := &config.Config{}
+	c.Vector.Enabled = false
+	withTestConfig(t, c)
+
+	assert.NoError(t, precheckVectorFeatures("/tmp/x.db"), "disabled: precheck should be a no-op")
+
+	c.Vector.Enabled = true
+	err := precheckVectorFeatures("/tmp/x.db")
+	require.Error(t, err, "enabled without vector build tags")
+	assert.Contains(t, err.Error(), "sqlite_vec")
+}
