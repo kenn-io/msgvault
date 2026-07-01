@@ -23,15 +23,23 @@ type vectorInitHandle struct {
 	vf   *vectorFeatures
 }
 
-// WaitTimeout blocks until the init goroutine finishes or d elapses.
-// Returns false on timeout.
-func (h *vectorInitHandle) WaitTimeout(d time.Duration) bool {
+// WaitContext blocks until the init goroutine finishes or ctx is done.
+// Returns true if the goroutine finished, false if ctx ended first.
+func (h *vectorInitHandle) WaitContext(ctx context.Context) bool {
 	select {
 	case <-h.done:
 		return true
-	case <-time.After(d):
+	case <-ctx.Done():
 		return false
 	}
+}
+
+// WaitTimeout blocks until the init goroutine finishes or d elapses.
+// Returns false on timeout.
+func (h *vectorInitHandle) WaitTimeout(d time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return h.WaitContext(ctx)
 }
 
 // CloseFeatures closes the vector backend if the init goroutine opened one.

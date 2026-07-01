@@ -54,6 +54,21 @@ func waitForVectorStatus(t *testing.T, srv *api.Server, want api.VectorStatus) s
 	return ""
 }
 
+func TestVectorInitHandleWaitContextReturnsTrueWhenFinished(t *testing.T) {
+	h := &vectorInitHandle{done: make(chan struct{})}
+	close(h.done)
+	assert.True(t, h.WaitContext(context.Background()),
+		"finished init should report done")
+}
+
+func TestVectorInitHandleWaitContextReturnsFalseWhenCancelled(t *testing.T) {
+	h := &vectorInitHandle{done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.False(t, h.WaitContext(ctx),
+		"a done context must stop the wait before init finishes")
+}
+
 func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = false

@@ -338,7 +338,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Wait for the background vector init regardless of the shutdown
 	// outcome: the deferred s.Close() must not run under a still-running
 	// init goroutine, and vectors.db needs closing whenever init finished.
-	if vectorInit.WaitTimeout(serveOperationDrainTimeout) {
+	// Bound the wait by the time REMAINING on shutdownCtx rather than a
+	// fresh full drain window — shutdownServeRuntime already consumed part
+	// of it, and `serve stop` budgets only one drain window before it kills
+	// the daemon (serveStopGraceTimeout).
+	if vectorInit.WaitContext(shutdownCtx) {
 		vectorInit.CloseFeatures()
 	} else {
 		logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
