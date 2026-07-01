@@ -242,6 +242,32 @@ func BuildHandler(opts Options) (*Result, error) {
 	return res, nil
 }
 
+// ResolveConsoleLevel decides whether the stderr fallback handler
+// should be quieter than the default INFO. When file logging is
+// disabled the handler writes structured text straight to stderr,
+// which is noise for an interactive user. In that case — and only
+// when the user has not asked for a specific level (no --verbose,
+// no --log-level, no [log].level) and stderr is a real terminal —
+// the console defaults to WARN so routine INFO startup/exit lines
+// stay out of the way.
+//
+// It returns nil when the level should be left unchanged. Keeping
+// this a pure function (the caller passes the terminal check as a
+// bool) makes every branch unit-testable without a real TTY. The
+// terminal condition is what preserves INFO for the background
+// daemon child, whose stderr is redirected to serve.log (not a
+// terminal) and whose startup lines are parsed by the autostart
+// progress reporter.
+func ResolveConsoleLevel(
+	explicitLevel string, verbose, fileDisabled, stderrIsTerminal bool,
+) *slog.Level {
+	if verbose || explicitLevel != "" || !fileDisabled || !stderrIsTerminal {
+		return nil
+	}
+	lv := slog.LevelWarn
+	return &lv
+}
+
 // newRunID returns a 6-byte hex string for attaching to every log
 // record in this process. The alphabet and length are picked to
 // stay short enough to eyeball in a shared log file but wide

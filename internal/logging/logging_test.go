@@ -157,3 +157,61 @@ func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 	// Attr fan-out should include run_id in both.
 	assert.Contains(jsonBuf.String(), "abc123", "json handler lost run_id")
 }
+
+func TestResolveConsoleLevel(t *testing.T) {
+	warn := slog.LevelWarn
+	tests := []struct {
+		name             string
+		explicitLevel    string
+		verbose          bool
+		fileDisabled     bool
+		stderrIsTerminal bool
+		want             *slog.Level
+	}{
+		{
+			name:             "terminal file-disabled no-explicit → warn",
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             &warn,
+		},
+		{
+			name:             "not a terminal → unchanged",
+			fileDisabled:     true,
+			stderrIsTerminal: false,
+			want:             nil,
+		},
+		{
+			name:             "file logging enabled → unchanged",
+			fileDisabled:     false,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+		{
+			name:             "explicit level wins",
+			explicitLevel:    "info",
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+		{
+			name:             "verbose wins",
+			verbose:          true,
+			fileDisabled:     true,
+			stderrIsTerminal: true,
+			want:             nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveConsoleLevel(
+				tt.explicitLevel, tt.verbose, tt.fileDisabled, tt.stderrIsTerminal,
+			)
+			if tt.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, *tt.want, *got)
+		})
+	}
+}

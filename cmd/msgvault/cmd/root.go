@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
@@ -108,6 +109,20 @@ in a single binary.`,
 		// File logging is opt-in: requires [log].enabled,
 		// [log].dir, or --log-file. --no-log-file overrides.
 		fileDisabled := noLogFile || (logFile == "" && !cfg.Log.Enabled && cfg.Log.Dir == "")
+
+		// When the stderr fallback is the only sink and the user
+		// hasn't asked for a level, quiet routine INFO noise on an
+		// interactive terminal. The terminal check preserves INFO
+		// for the background daemon child (stderr → serve.log).
+		if levelOverride == nil {
+			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
+				isatty.IsCygwinTerminal(os.Stderr.Fd())
+			if consoleLevel := logging.ResolveConsoleLevel(
+				levelString, verbose, fileDisabled, stderrIsTerminal,
+			); consoleLevel != nil {
+				levelOverride = consoleLevel
+			}
+		}
 
 		// Close a previous log handler if tests re-enter
 		// PersistentPreRunE without going through ExecuteContext.
