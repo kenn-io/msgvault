@@ -226,10 +226,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 		ctx, c.Data.DataDir, proc.Wait, localDaemonAutoStartReadyTimeout,
 	)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"server exited before becoming ready: %w\nLogs: %s",
-			err, proc.LogPath,
-		)
+		return nil, backgroundServeStartupError(err, proc)
 	}
 	if !ready {
 		return nil, fmt.Errorf(
@@ -238,6 +235,23 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 		)
 	}
 	return rt, nil
+}
+
+func backgroundServeStartupError(err error, proc *backgroundServeProcess) error {
+	if proc == nil {
+		return fmt.Errorf("server exited before becoming ready: %w", err)
+	}
+	lastLog := latestDaemonLogLine(proc.LogPath)
+	if lastLog != "" {
+		return fmt.Errorf(
+			"server exited before becoming ready: %w\nLast log: %s\nLogs: %s",
+			err, lastLog, proc.LogPath,
+		)
+	}
+	return fmt.Errorf(
+		"server exited before becoming ready: %w\nLogs: %s",
+		err, proc.LogPath,
+	)
 }
 
 func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess) func() {

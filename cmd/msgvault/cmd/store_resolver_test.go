@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -136,6 +137,42 @@ func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	assert.Contains(stderr, "pid 4242")
 	assert.Contains(stderr, "Logs: /tmp/msgvault-serve.log")
 	assert.Contains(stderr, "Waiting for daemon readiness")
+}
+
+func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	logPath := filepath.Join(dataDir, "serve.log")
+	require.NoError(os.WriteFile(logPath, []byte("Error: API server address unavailable at 127.0.0.1:8080\n"), 0o600), "write serve log")
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     4242,
+			LogPath: logPath,
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return nil, false, errors.New("exit status 1")
+	})
+
+	st, _, err := OpenHTTPStore(context.Background())
+	if st != nil {
+		t.Cleanup(func() { _ = st.Close() })
+	}
+
+	require.Error(err, "OpenHTTPStore")
+	assert.Contains(err.Error(), "exit status 1")
+	assert.Contains(err.Error(), "Last log: Error: API server address unavailable at 127.0.0.1:8080")
+	assert.Contains(err.Error(), "Logs: "+logPath)
 }
 
 func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {

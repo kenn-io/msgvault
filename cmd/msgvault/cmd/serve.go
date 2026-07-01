@@ -109,6 +109,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if bindAddr == "" {
 		bindAddr = defaultDaemonBindAddr
 	}
+	apiListener, err := listenServeAPI(bindAddr, cfg.Server.APIPort)
+	if err != nil {
+		return err
+	}
+	listenerReserved := true
+	defer func() {
+		if listenerReserved {
+			_ = apiListener.Close()
+		}
+	}()
 
 	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, cfg.Server.APIPort, Version)
 	if err != nil {
@@ -309,10 +319,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiServer := api.NewServerWithOptions(apiOpts)
 
 	// Start API server in goroutine
-	logger.Info("daemon startup step", "step", "start_api_server", "bind", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.Server.APIPort)))
+	apiAddr := apiListener.Addr().String()
+	logger.Info("daemon startup step", "step", "start_api_server", "bind", apiAddr)
 	serverErr := make(chan error, 1)
+	listenerReserved = false
 	go func() {
-		if err := apiServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := apiServer.StartOnListener(apiListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
@@ -323,7 +335,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("msgvault daemon started\n")
-	fmt.Printf("  API server: http://%s\n", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.Server.APIPort)))
+	fmt.Printf("  API server: http://%s\n", apiAddr)
 	fmt.Printf("  Scheduled accounts: %d\n", count)
 	fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
 	fmt.Println()
@@ -337,6 +349,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Wait for shutdown signal or server error
+	var serverStartupErr error
 	select {
 	case sig := <-sigChan:
 		logger.Info("received shutdown signal", "signal", sig)
@@ -344,6 +357,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	case err := <-serverErr:
 		logger.Error("API server error", "error", err)
 		fmt.Printf("\nAPI server error: %v\n", err)
+		serverStartupErr = err
 	case <-ctx.Done():
 		logger.Info("context cancelled")
 	}
@@ -354,8 +368,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Error("daemon shutdown error", "error", err)
 		return err
 	}
+	if serverStartupErr != nil {
+		return fmt.Errorf("API server: %w", serverStartupErr)
+	}
 
 	return nil
+}
+
+func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+	if bindAddr == "" {
+		bindAddr = defaultDaemonBindAddr
+	}
+	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("API server address unavailable at %s: %w", addr, err)
+	}
+	return ln, nil
 }
 
 func daemonStartupDatabaseLabel(dsn string) string {

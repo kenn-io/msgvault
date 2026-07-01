@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,32 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "runServe did not stop after context cancellation")
 	}
+}
+
+func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ln, err := net.Listen("tcp", net.JoinHostPort(defaultDaemonBindAddr, "0"))
+	require.NoError(err, "reserve API port")
+	t.Cleanup(func() { _ = ln.Close() })
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	require.True(ok, "listener address must be TCP")
+
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	cfg = lifecycleTestConfig(dataDir)
+	cfg.Server.APIPort = addr.Port
+	t.Cleanup(func() { cfg = oldCfg })
+
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(context.Background())
+	err = runServe(cmd, nil)
+
+	require.Error(err, "runServe")
+	assert.Contains(err.Error(), "API server address unavailable")
+	assert.Contains(err.Error(), net.JoinHostPort(defaultDaemonBindAddr, strconv.Itoa(addr.Port)))
+	assert.NoFileExists(filepath.Join(dataDir, "msgvault.db"), "serve must not touch the archive when the API port is unavailable")
 }
 
 type recordingServeAPIServer struct {

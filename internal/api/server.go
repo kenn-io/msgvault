@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -86,6 +87,7 @@ type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, e
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
 	DaemonShutdownPath       = "/api/daemon/shutdown"
+	defaultBindAddr          = "127.0.0.1"
 	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
 	// #nosec G101
 	DaemonShutdownTokenHeader = "X-Msgvault-Daemon-Token"
@@ -192,15 +194,29 @@ func (s *Server) setupRouter() http.Handler {
 // Start begins listening for HTTP requests.
 // Returns an error if the security posture is invalid.
 func (s *Server) Start() error {
-	if err := s.cfg.Server.ValidateSecure(); err != nil {
-		return err
-	}
-
 	bindAddr := s.cfg.Server.BindAddr
 	if bindAddr == "" {
-		bindAddr = "127.0.0.1"
+		bindAddr = defaultBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(s.cfg.Server.APIPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	return s.StartOnListener(ln)
+}
+
+// StartOnListener serves HTTP requests on an already-bound listener. The serve
+// daemon uses this to reserve its configured API port before expensive archive
+// startup work begins.
+func (s *Server) StartOnListener(ln net.Listener) error {
+	if ln == nil {
+		return errors.New("nil listener")
+	}
+	if err := s.cfg.Server.ValidateSecure(); err != nil {
+		_ = ln.Close()
+		return err
+	}
 
 	if s.cfg.Server.APIKey == "" {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
@@ -213,15 +229,15 @@ func (s *Server) Start() error {
 	writeBudget := max(s.requestTimeout, DaemonLongRequestTimeout)
 	writeTimeout := writeBudget + 5*time.Second
 	s.server = &http.Server{
-		Addr:         addr,
+		Addr:         ln.Addr().String(),
 		Handler:      s.router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	s.logger.Info("starting API server", "addr", addr)
-	return s.server.ListenAndServe()
+	s.logger.Info("starting API server", "addr", ln.Addr().String())
+	return s.server.Serve(ln)
 }
 
 // Shutdown gracefully shuts down the server.

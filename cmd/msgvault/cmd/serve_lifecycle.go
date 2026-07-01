@@ -190,10 +190,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 		cmd.Context(), c.Data.DataDir, proc.Wait, backgroundServeReadyTimeout,
 	)
 	if err != nil {
-		return fmt.Errorf(
-			"server exited before becoming ready: %w\nLogs: %s",
-			err, proc.LogPath,
-		)
+		return backgroundServeStartupError(err, proc)
 	}
 	if ready {
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("running", rt, proc.PID))
