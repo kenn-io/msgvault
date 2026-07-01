@@ -51,3 +51,30 @@ func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 	assert.NotContains(err.Error(), "SQLite-only",
 		"the old up-front SQLite-only refusal must be gone")
 }
+
+// TestPrecheckVectorFeatures_PostgresWithoutPgvectorTag verifies the cheap
+// precheck fails fast when vector search is enabled against a postgres://
+// mainPath but the binary was built with sqlite_vec and WITHOUT the
+// pgvector tag. Before this check, a misconfigured PG + vector setup only
+// failed later, in the background init goroutine (status=error), instead
+// of at daemon startup. This test only compiles under sqlite_vec &&
+// !pgvector: under a pgvector-tagged build, pgvector.Available() is true
+// and this precheck must NOT fail, so the assertion would be wrong there.
+func TestPrecheckVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = true
+	c.Vector.Embeddings.Endpoint = "http://localhost:11434/v1/embeddings"
+	c.Vector.Embeddings.Model = "test-model"
+	c.Vector.Embeddings.Dimension = 768
+	withTestConfig(t, c)
+
+	err := precheckVectorFeatures("postgres://user@host/db")
+	require.Error(err, "precheck must fail fast for postgres mainPath without pgvector tag")
+	assert.Contains(err.Error(), "pgvector",
+		"error should point at the missing pgvector build tag")
+	assert.Contains(err.Error(), "enabled = false",
+		"error should mention the config escape hatch")
+}

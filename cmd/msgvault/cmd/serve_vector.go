@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -20,11 +21,19 @@ import (
 // precheckVectorFeatures validates vector configuration cheaply so runServe
 // can fail fast on misconfiguration while deferring the expensive backend
 // open/migrate/backfill to the background init task. Returns nil when
-// vector search is disabled. The mainPath parameter is unused in vector
-// builds; the stub build uses it to pick the right rebuild guidance.
-func precheckVectorFeatures(_ string) error {
+// vector search is disabled. mainPath is used to fail fast when it is a
+// postgres:// DSN but this binary lacks the pgvector build tag — the one
+// "binary built without support" case the cheap precheck can still catch
+// synchronously, since setupVectorFeatures would otherwise only discover
+// it later inside the background init goroutine.
+func precheckVectorFeatures(mainPath string) error {
 	if !cfg.Vector.Enabled {
 		return nil
+	}
+	if store.IsPostgresURL(mainPath) && !pgvector.Available() {
+		return errors.New("vector search is enabled in config but this binary was built without vector support; " +
+			"to use vector search on PostgreSQL, rebuild with `go build -tags \"fts5 sqlite_vec pgvector\"` " +
+			"or set [vector] enabled = false")
 	}
 	if err := cfg.Vector.Validate(); err != nil {
 		return fmt.Errorf("vector config: %w", err)
