@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -185,8 +186,15 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		require.NoError(err, "read generated temp file %s", name)
 		want, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
 		require.NoError(err, "read checked-in generated file %s", name)
-		assert.Equal(t, string(want), string(got), "%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
+		assert.Equal(t,
+			normalizeGeneratedGo(want),
+			normalizeGeneratedGo(got),
+			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
+}
+
+func normalizeGeneratedGo(src []byte) string {
+	return strings.ReplaceAll(string(src), "\r\n", "\n")
 }
 
 func generatedGoFiles(dir string) ([]string, error) {
