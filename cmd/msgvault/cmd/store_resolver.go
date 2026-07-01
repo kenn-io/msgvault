@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -195,13 +196,23 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 		_, _ = fmt.Fprintf(os.Stderr,
 			"Another msgvault daemon start is in progress; waiting up to %s for readiness.\n",
 			localDaemonAutoStartReadyTimeout)
-		if rt := waitForUsableBackgroundRuntime(ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout); rt != nil {
+		rt, acquiredLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
+			ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if rt != nil {
 			if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
 				return nil, err
 			}
 			return rt, nil
 		}
-		return nil, errors.New("msgvault daemon start is already in progress")
+		if acquiredLock != nil {
+			launchLock = acquiredLock
+		} else {
+			return nil, errors.New("msgvault daemon start is already in progress")
+		}
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
@@ -430,18 +441,40 @@ func localDaemonAPIKeyMismatchError(url string) error {
 	)
 }
 
-func waitForUsableBackgroundRuntime(ctx context.Context, dataDir string, policy string, timeout time.Duration) *DaemonRuntime {
-	rt, ready, _ := waitForDaemonRuntime(
-		ctx,
-		dataDir,
-		timeout,
-		func(rt *DaemonRuntime) bool {
-			return rt != nil && !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, policy)
-		},
-		nil,
-	)
-	if !ready {
-		return nil
+func waitForUsableBackgroundRuntimeOrLaunchLock(
+	ctx context.Context,
+	dataDir string,
+	policy string,
+	timeout time.Duration,
+) (*DaemonRuntime, *flock.Flock, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return rt
+	if timeout <= 0 {
+		timeout = localDaemonAutoStartReadyTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(daemonProbeTick)
+	defer ticker.Stop()
+
+	for {
+		rt, err := findCompatibleDaemonRuntimeContext(ctx, dataDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		if rt != nil && !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, policy) {
+			return rt, nil, nil
+		}
+		if lock, ok := acquireBackgroundLaunchLock(dataDir); ok {
+			return nil, lock, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-ticker.C:
+		case <-timer.C:
+			return nil, nil, nil
+		}
+	}
 }

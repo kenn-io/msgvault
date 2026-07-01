@@ -175,6 +175,57 @@ func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
 	assert.Contains(err.Error(), "Logs: "+logPath)
 }
 
+func TestOpenHTTPStoreTakesOverWhenConcurrentDaemonStartExits(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	heldLock, ok := acquireBackgroundLaunchLock(dataDir)
+	require.True(ok, "test should hold background launch lock")
+	t.Cleanup(func() { _ = heldLock.Unlock() })
+	time.AfterFunc(50*time.Millisecond, func() {
+		_ = heldLock.Unlock()
+	})
+
+	started := make(chan struct{})
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		close(started)
+		return &backgroundServeProcess{
+			PID:     4242,
+			LogPath: filepath.Join(dataDir, "serve.log"),
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 4242},
+			Host:   "127.0.0.1",
+			Port:   9911,
+			API:    daemonAPIVersion,
+		}, true, nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	st, info, err := OpenHTTPStore(ctx)
+	require.NoError(err, "OpenHTTPStore")
+	t.Cleanup(func() { _ = st.Close() })
+
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		require.Fail("local daemon was not started after launch lock released")
+	}
+}
+
 func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(
