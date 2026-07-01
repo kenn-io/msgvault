@@ -252,7 +252,7 @@ func backgroundServeStartupError(err error, proc *backgroundServeProcess) error 
 	if proc == nil {
 		return fmt.Errorf("server exited before becoming ready: %w", err)
 	}
-	lastLog := latestDaemonLogLine(proc.LogPath)
+	lastLog := humanizeDaemonLogLine(latestDaemonLogLine(proc.LogPath))
 	if lastLog != "" {
 		return fmt.Errorf(
 			"server exited before becoming ready: %w\nLast log: %s\nLogs: %s",
@@ -301,7 +301,7 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 			line := latestDaemonLogLine(proc.LogPath)
 			switch {
 			case line != "" && line != lastLine:
-				_, _ = fmt.Fprintf(os.Stderr, "Daemon startup (%s): %s\n", elapsed, line)
+				_, _ = fmt.Fprintf(os.Stderr, "Daemon startup (%s): %s\n", elapsed, humanizeDaemonLogLine(line))
 				lastLine = line
 			case proc.LogPath != "":
 				_, _ = fmt.Fprintf(os.Stderr,
@@ -319,6 +319,94 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 		close(done)
 		<-finished
 	}
+}
+
+// humanizeDaemonLogLine turns a logfmt serve.log line into something
+// readable for an interactive user. It keeps the msg value, appends
+// the step (underscores replaced by spaces), and appends any error,
+// dropping time/level/run_id and everything else. On any parse
+// trouble it returns the raw line so no information is hidden.
+func humanizeDaemonLogLine(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return line
+	}
+	fields, ok := parseLogfmt(line)
+	if !ok {
+		return line
+	}
+	msg, hasMsg := fields["msg"]
+	if !hasMsg || msg == "" {
+		return line
+	}
+	var sb strings.Builder
+	sb.WriteString(msg)
+	if step := fields["step"]; step != "" {
+		sb.WriteString(": ")
+		sb.WriteString(strings.ReplaceAll(step, "_", " "))
+	}
+	if errVal := fields["error"]; errVal != "" {
+		sb.WriteString(" : ")
+		sb.WriteString(errVal)
+	}
+	return sb.String()
+}
+
+// parseLogfmt is a tolerant parser for slog's text output: space
+// separated key=value pairs where values may be bare or double
+// quoted with backslash escapes. It returns ok=false when the input
+// isn't logfmt-shaped (e.g. a token with no '='), so callers can
+// fall back to the raw line.
+func parseLogfmt(line string) (map[string]string, bool) {
+	fields := map[string]string{}
+	i, n := 0, len(line)
+	for i < n {
+		for i < n && line[i] == ' ' {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		keyStart := i
+		for i < n && line[i] != '=' && line[i] != ' ' {
+			i++
+		}
+		if i >= n || line[i] != '=' {
+			return nil, false
+		}
+		key := line[keyStart:i]
+		i++ // consume '='
+		var val string
+		if i < n && line[i] == '"' {
+			i++
+			var sb strings.Builder
+			for i < n {
+				c := line[i]
+				if c == '\\' && i+1 < n {
+					sb.WriteByte(line[i+1])
+					i += 2
+					continue
+				}
+				if c == '"' {
+					i++
+					break
+				}
+				sb.WriteByte(c)
+				i++
+			}
+			val = sb.String()
+		} else {
+			valStart := i
+			for i < n && line[i] != ' ' {
+				i++
+			}
+			val = line[valStart:i]
+		}
+		if key != "" {
+			fields[key] = val
+		}
+	}
+	return fields, true
 }
 
 func latestDaemonLogLine(path string) string {
