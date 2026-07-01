@@ -67,9 +67,6 @@ type Server struct {
 	sqlQueryRunner SQLQueryRunner
 	shutdownToken  string
 	shutdownFunc   func()
-	hybridEngine   *hybrid.Engine
-	vectorCfg      vector.Config
-	backend        vector.Backend
 	scheduler      SyncScheduler
 	logger         *slog.Logger
 	requestTimeout time.Duration
@@ -80,6 +77,15 @@ type Server struct {
 	idleTracker    *IdleTracker
 	operationGate  OperationGate
 	cfgMu          sync.RWMutex // protects cfg.Accounts
+	// vectorMu guards the vector subsystem state: the daemon installs
+	// hybridEngine/backend/vectorCfg from a background init goroutine
+	// after the server is already handling requests.
+	vectorMu     sync.RWMutex
+	hybridEngine *hybrid.Engine
+	vectorCfg    vector.Config
+	backend      vector.Backend
+	vectorStatus VectorStatus
+	vectorErr    string
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
@@ -104,10 +110,15 @@ type ServerOptions struct {
 	HybridEngine   *hybrid.Engine
 	VectorCfg      vector.Config
 	Backend        vector.Backend
-	Scheduler      SyncScheduler
-	Logger         *slog.Logger
-	IdleTracker    *IdleTracker
-	OperationGate  OperationGate
+	// VectorStatus is the initial vector subsystem status. Zero value
+	// derives it: ready when Backend is non-nil, disabled otherwise. The
+	// serve daemon passes VectorStatusInitializing and installs the
+	// components later via SetVectorFeatures.
+	VectorStatus  VectorStatus
+	Scheduler     SyncScheduler
+	Logger        *slog.Logger
+	IdleTracker   *IdleTracker
+	OperationGate OperationGate
 	// RequestTimeout caps each request by adding a deadline to the request
 	// context. Zero defaults to 60s. The underlying http.Server's WriteTimeout
 	// is set to RequestTimeout + 5s so handlers that honor cancellation can
@@ -150,6 +161,14 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		daemonVersion:  opts.DaemonVersion,
 		idleTracker:    opts.IdleTracker,
 		operationGate:  opts.OperationGate,
+	}
+	s.vectorStatus = opts.VectorStatus
+	if s.vectorStatus == "" {
+		if opts.Backend != nil {
+			s.vectorStatus = VectorStatusReady
+		} else {
+			s.vectorStatus = VectorStatusDisabled
+		}
 	}
 	s.router = s.setupRouter()
 	return s
