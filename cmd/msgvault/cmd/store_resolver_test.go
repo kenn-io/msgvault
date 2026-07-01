@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -77,7 +79,7 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 		timeout time.Duration,
 	) (*DaemonRuntime, bool, error) {
 		assert.Equal(dataDir, gotDataDir)
-		assert.Equal(30*time.Second, timeout)
+		assert.Greater(timeout, 30*time.Second)
 		require.NoError(t, ctx.Err())
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 4242},
@@ -93,6 +95,47 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	assert.True(started, "local daemon should be started")
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal("http://127.0.0.1:9911", info.URL)
+}
+
+func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	waitCh := make(chan error)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		return &backgroundServeProcess{
+			PID:     4242,
+			LogPath: "/tmp/msgvault-serve.log",
+			Wait:    waitCh,
+		}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(
+		context.Context,
+		string,
+		<-chan error,
+		time.Duration,
+	) (*DaemonRuntime, bool, error) {
+		return &DaemonRuntime{
+			Record: daemon.RuntimeRecord{PID: 4242},
+			Host:   "127.0.0.1",
+			Port:   9911,
+			API:    daemonAPIVersion,
+		}, true, nil
+	})
+
+	var st *daemonclient.Client
+	var err error
+	stderr := captureStderrDuring(t, func() {
+		st, _, err = OpenHTTPStore(context.Background())
+	})
+	require.NoError(err, "OpenHTTPStore")
+	t.Cleanup(func() { _ = st.Close() })
+
+	assert.Contains(stderr, "Starting local msgvault daemon")
+	assert.Contains(stderr, "pid 4242")
+	assert.Contains(stderr, "Logs: /tmp/msgvault-serve.log")
+	assert.Contains(stderr, "Waiting for daemon readiness")
 }
 
 func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
@@ -414,7 +457,7 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 		timeout time.Duration,
 	) (*DaemonRuntime, bool, error) {
 		assert.Equal(dataDir, gotDataDir)
-		assert.Equal(30*time.Second, timeout)
+		assert.Greater(timeout, 30*time.Second)
 		require.NoError(t, ctx.Err())
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 4242},
@@ -448,4 +491,23 @@ func remoteStoreTimeoutForTest(t *testing.T, st *daemonclient.Client) time.Durat
 	t.Helper()
 	require.NotNil(t, st, "daemon client")
 	return st.Timeout()
+}
+
+func captureStderrDuring(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err, "create stderr pipe")
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = old })
+
+	fn()
+
+	require.NoError(t, w.Close(), "close stderr writer")
+	os.Stderr = old
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err, "read stderr")
+	require.NoError(t, r.Close(), "close stderr reader")
+	return buf.String()
 }

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -16,9 +18,12 @@ import (
 )
 
 const (
-	localDaemonAuthProbeTimeout = 2 * time.Second
-	localDaemonAuthProbeHeader  = "X-Msgvault-Local-Daemon-Probe"
-	localDaemonAuthProbeValue   = "auth"
+	localDaemonAuthProbeTimeout        = 2 * time.Second
+	localDaemonAuthProbeHeader         = "X-Msgvault-Local-Daemon-Probe"
+	localDaemonAuthProbeValue          = "auth"
+	localDaemonAutoStartReadyTimeout   = 30 * time.Minute
+	localDaemonStartupProgressDelay    = 2 * time.Second
+	localDaemonStartupProgressInterval = 10 * time.Second
 )
 
 // runStartupMigrations pulls legacy identity addresses from the global config
@@ -187,7 +192,10 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 
 	launchLock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
 	if !ok {
-		if rt := waitForUsableBackgroundRuntime(ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, 30*time.Second); rt != nil {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"Another msgvault daemon start is in progress; waiting up to %s for readiness.\n",
+			localDaemonAutoStartReadyTimeout)
+		if rt := waitForUsableBackgroundRuntime(ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout); rt != nil {
 			if err := probeLocalDaemonAuth(ctx, rt, c); err != nil {
 				return nil, err
 			}
@@ -212,8 +220,10 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	if err != nil {
 		return nil, fmt.Errorf("start background daemon: %w", err)
 	}
+	stopProgress := reportLocalDaemonStartup(ctx, proc)
+	defer stopProgress()
 	rt, ready, err := waitForBackgroundServeReadyForRun(
-		ctx, c.Data.DataDir, proc.Wait, 30*time.Second,
+		ctx, c.Data.DataDir, proc.Wait, localDaemonAutoStartReadyTimeout,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -223,11 +233,98 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	}
 	if !ready {
 		return nil, fmt.Errorf(
-			"msgvault daemon did not become ready within 30s (pid %d)\nLogs: %s",
-			proc.PID, proc.LogPath,
+			"msgvault daemon did not become ready within %s (pid %d)\nLogs: %s",
+			localDaemonAutoStartReadyTimeout, proc.PID, proc.LogPath,
 		)
 	}
 	return rt, nil
+}
+
+func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess) func() {
+	if proc == nil {
+		return func() {}
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "Starting local msgvault daemon (pid %d).\n", proc.PID)
+	if proc.LogPath != "" {
+		_, _ = fmt.Fprintf(os.Stderr, "Logs: %s\n", proc.LogPath)
+	}
+	_, _ = fmt.Fprintf(os.Stderr,
+		"Waiting for daemon readiness; startup may run database, vector, or analytics migrations on large archives. Timeout: %s.\n",
+		localDaemonAutoStartReadyTimeout)
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		timer := time.NewTimer(localDaemonStartupProgressDelay)
+		defer timer.Stop()
+		started := time.Now()
+		lastLine := ""
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-timer.C:
+			}
+
+			elapsed := time.Since(started).Round(time.Second)
+			line := latestDaemonLogLine(proc.LogPath)
+			switch {
+			case line != "" && line != lastLine:
+				_, _ = fmt.Fprintf(os.Stderr, "Daemon startup (%s): %s\n", elapsed, line)
+				lastLine = line
+			case proc.LogPath != "":
+				_, _ = fmt.Fprintf(os.Stderr,
+					"Still waiting for local msgvault daemon (%s elapsed). Logs: %s\n",
+					elapsed, proc.LogPath)
+			default:
+				_, _ = fmt.Fprintf(os.Stderr,
+					"Still waiting for local msgvault daemon (%s elapsed).\n",
+					elapsed)
+			}
+			timer.Reset(localDaemonStartupProgressInterval)
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func latestDaemonLogLine(path string) string {
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	const maxTailBytes int64 = 32 * 1024
+	start := max(st.Size()-maxTailBytes, 0)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, rawLine := range slices.Backward(lines) {
+		if line := strings.TrimSpace(rawLine); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func probeLocalDaemonAuth(ctx context.Context, rt *DaemonRuntime, c *config.Config) error {

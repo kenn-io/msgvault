@@ -107,7 +107,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	bindAddr := cfg.Server.BindAddr
 	if bindAddr == "" {
-		bindAddr = "127.0.0.1"
+		bindAddr = defaultDaemonBindAddr
 	}
 
 	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, cfg.Server.APIPort, Version)
@@ -122,15 +122,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Open database
 	dbPath := cfg.DatabaseDSN()
+	logger.Info("daemon startup step", "step", "open_archive_database", "database", daemonStartupDatabaseLabel(dbPath))
 	s, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = s.Close() }()
+	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
+	logger.Info("daemon startup step", "step", "init_archive_schema")
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	logger.Info("daemon startup step complete", "step", "init_archive_schema")
 	// Legacy [identity] migration is deferred to the first scheduled sync's
 	// runPostSourceCreateMigrations call, which fires AFTER that sync's
 	// confirmDefaultIdentity. Calling the migration here would race
@@ -148,9 +152,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build optional vector-search components. Returns (nil, nil) when
 	// cfg.Vector.Enabled is false, or an error when enabled but the
 	// binary was built without -tags sqlite_vec.
+	if cfg.Vector.Enabled {
+		logger.Info("daemon startup step",
+			"step", "init_vector_backend",
+			"detail", "may run vector schema migrations and embed_gen backfill on large archives")
+	} else {
+		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
+	}
 	vf, err := setupVectorFeatures(ctx, s, dbPath, false)
 	if err != nil {
 		return fmt.Errorf("vector features: %w", err)
+	}
+	if cfg.Vector.Enabled {
+		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}
 	defer func() {
 		if vf != nil && vf.Close != nil {
@@ -160,11 +174,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	logger.Info("daemon startup step", "step", "init_analytics_engine")
 	engine, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = engine.Close() }()
+	logger.Info("daemon startup step complete", "step", "init_analytics_engine")
 
 	getOAuthMgr := oauthManagerCache()
 
@@ -293,6 +309,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiServer := api.NewServerWithOptions(apiOpts)
 
 	// Start API server in goroutine
+	logger.Info("daemon startup step", "step", "start_api_server", "bind", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.Server.APIPort)))
 	serverErr := make(chan error, 1)
 	go func() {
 		if err := apiServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -339,6 +356,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func daemonStartupDatabaseLabel(dsn string) string {
+	if store.IsPostgresURL(dsn) {
+		return "postgres://<redacted>"
+	}
+	return dsn
 }
 
 func shutdownServeRuntime(

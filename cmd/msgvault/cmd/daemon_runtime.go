@@ -21,6 +21,7 @@ import (
 const (
 	daemonService           = "msgvault"
 	daemonAPIVersion        = 1
+	defaultDaemonBindAddr   = "127.0.0.1"
 	runtimeHost             = "host"
 	runtimePort             = "port"
 	runtimeAPIVersion       = "api_version"
@@ -322,7 +323,7 @@ func processCreateTimeMatches(pid int, recordedMillis string) bool {
 func probeHostForDial(host string) string {
 	switch host {
 	case "", "0.0.0.0":
-		return "127.0.0.1"
+		return defaultDaemonBindAddr
 	case "::":
 		return "::1"
 	default:
