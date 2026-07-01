@@ -123,7 +123,7 @@ func TestOpenAPIArtifactUpToDate(t *testing.T) {
 
 	want, err := os.ReadFile(openAPIArtifactPath)
 	require.NoError(t, err, "read api/openapi.yaml; run `make api-generate` to regenerate")
-	assert.Equal(t, string(want), string(got), "api/openapi.yaml is stale; run `make api-generate`")
+	assert.Equal(t, normalizeGeneratedArtifact(want), normalizeGeneratedArtifact(got), "api/openapi.yaml is stale; run `make api-generate`")
 }
 
 func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
@@ -132,7 +132,7 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 
 	want, err := os.ReadFile(openAPIClientArtifactPath)
 	require.NoError(t, err, "read pkg/client/openapi.yaml; run `make api-generate` to regenerate")
-	assert.Equal(t, string(want), string(got), "pkg/client/openapi.yaml is stale; run `make api-generate`")
+	assert.Equal(t, normalizeGeneratedArtifact(want), normalizeGeneratedArtifact(got), "pkg/client/openapi.yaml is stale; run `make api-generate`")
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
@@ -187,13 +187,13 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		want, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
 		require.NoError(err, "read checked-in generated file %s", name)
 		assert.Equal(t,
-			normalizeGeneratedGo(want),
-			normalizeGeneratedGo(got),
+			normalizeGeneratedArtifact(want),
+			normalizeGeneratedArtifact(got),
 			"%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
 }
 
-func normalizeGeneratedGo(src []byte) string {
+func normalizeGeneratedArtifact(src []byte) string {
 	return strings.ReplaceAll(string(src), "\r\n", "\n")
 }
 
