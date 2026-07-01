@@ -179,6 +179,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 		case "/api/v1/text/aggregates":
 			assert.Equal("labels", r.URL.Query().Get("view_type"), "view_type")
 			assert.Equal("family", r.URL.Query().Get("search_query"), "search_query")
+			assert.Empty(r.URL.Query().Get("time_granularity"), "unset time granularity")
 			writeJSONResponse(t, w, map[string]any{
 				"view_type": "labels",
 				"rows": []map[string]any{
@@ -251,6 +252,35 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	require.NotNil(stats, "stats")
 	assert.Equal(int64(3), stats.MessageCount)
 	assert.Equal(int64(45), stats.AttachmentSize)
+}
+
+func TestEngineTextAggregatePreservesExplicitYearGranularity(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/text/aggregates", r.URL.Path, "path")
+		assert.Equal("time", r.URL.Query().Get("view_type"), "view_type")
+		assert.Equal("year", r.URL.Query().Get("time_granularity"), "time_granularity")
+		writeJSONResponse(t, w, map[string]any{
+			"view_type": "time",
+			"rows": []map[string]any{
+				{"key": "2026", "count": 3, "total_size": 123},
+			},
+		})
+	})
+
+	engine := NewEngineAdapter(store)
+	textEngine, ok := any(engine).(query.TextEngine)
+	require.True(ok, "daemon engine must satisfy TextEngine")
+
+	rows, err := textEngine.TextAggregate(context.Background(), query.TextViewTime, query.TextAggregateOptions{
+		TimeGranularity:    query.TimeYear,
+		TimeGranularitySet: true,
+	})
+	require.NoError(err, "TextAggregate")
+	require.Len(rows, 1, "rows")
+	assert.Equal("2026", rows[0].Key)
 }
 
 func textMessagesResponseJSON(body string) map[string]any {

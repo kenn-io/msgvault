@@ -1924,6 +1924,7 @@ func parseTextAggregateOptions(r *http.Request) query.TextAggregateOptions {
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {
 		opts.TimeGranularity = parseTimeGranularity(v)
+		opts.TimeGranularitySet = true
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
 		opts.SearchQuery = v

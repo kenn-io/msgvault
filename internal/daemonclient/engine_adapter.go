@@ -302,12 +302,19 @@ func textAggregateQuery(viewType query.TextViewType, opts query.TextAggregateOpt
 		Sort:            optionalString(textSortFieldToString(opts.SortField)),
 		Direction:       optionalString(sortDirectionToString(opts.SortDirection)),
 		Limit:           optionalPositiveInt64(opts.Limit),
-		TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
+		TimeGranularity: optionalTextAggregateTimeGranularity(opts),
 		SourceID:        copyInt64(opts.SourceID),
 		SearchQuery:     optionalString(opts.SearchQuery),
 		After:           optionalTimeRFC3339(opts.After),
 		Before:          optionalTimeRFC3339(opts.Before),
 	}
+}
+
+func optionalTextAggregateTimeGranularity(opts query.TextAggregateOptions) *string {
+	if !opts.HasTimeGranularity() {
+		return nil
+	}
+	return optionalString(timeGranularityToString(opts.TimeGranularity))
 }
 
 func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) *generated.FastSearchQuery {

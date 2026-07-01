@@ -84,7 +84,25 @@ type TextAggregateOptions struct {
 	SortDirection   SortDirection
 	Limit           int
 	TimeGranularity TimeGranularity
-	SearchQuery     string
+	// TimeGranularitySet distinguishes an explicit TimeYear from an omitted
+	// granularity, since TimeYear is the enum zero value.
+	TimeGranularitySet bool
+	SearchQuery        string
+}
+
+// HasTimeGranularity reports whether a text aggregate request explicitly
+// selected a time granularity.
+func (opts TextAggregateOptions) HasTimeGranularity() bool {
+	return opts.TimeGranularitySet || opts.TimeGranularity != TimeYear
+}
+
+// EffectiveTimeGranularity returns the text aggregate granularity after
+// applying the API-compatible default.
+func (opts TextAggregateOptions) EffectiveTimeGranularity() TimeGranularity {
+	if !opts.HasTimeGranularity() {
+		return TimeMonth
+	}
+	return opts.TimeGranularity
 }
 
 // TextStatsOptions configures a text stats query.

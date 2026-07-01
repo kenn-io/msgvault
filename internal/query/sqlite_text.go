@@ -313,7 +313,7 @@ func (e *SQLiteEngine) TextAggregate(
 	viewType TextViewType,
 	opts TextAggregateOptions,
 ) ([]AggregateRow, error) {
-	dim, err := textAggSQLiteDimension(viewType, opts.TimeGranularity)
+	dim, err := textAggSQLiteDimension(viewType, opts.EffectiveTimeGranularity())
 	if err != nil {
 		return nil, err
 	}

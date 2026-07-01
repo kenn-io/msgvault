@@ -258,7 +258,7 @@ func (e *DuckDBEngine) TextAggregate(
 	viewType TextViewType,
 	opts TextAggregateOptions,
 ) ([]AggregateRow, error) {
-	def, err := textAggViewDef(viewType, opts.TimeGranularity)
+	def, err := textAggViewDef(viewType, opts.EffectiveTimeGranularity())
 	if err != nil {
 		return nil, err
 	}
