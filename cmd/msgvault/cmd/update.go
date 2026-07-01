@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/update"
 )
 
@@ -97,8 +100,15 @@ official release over a dev build.`,
 			}
 		}
 
-		if err := update.PerformUpdate(info, progressFn); err != nil {
-			return fmt.Errorf("update failed: %w", err)
+		if err := performUpdateWithDaemonLifecycle(
+			info,
+			progressFn,
+			loadDaemonConfigForUpdate,
+			stopLocalDaemonsForUpdate,
+			update.PerformUpdate,
+			restartDaemonAfterUpdate,
+		); err != nil {
+			return err
 		}
 
 		fmt.Printf("\nUpdated to %s\n", info.LatestVersion)
@@ -111,4 +121,93 @@ func init() {
 	updateCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
 	updateCmd.Flags().BoolP("force", "f", false, "replace dev build with latest official release")
 	rootCmd.AddCommand(updateCmd)
+}
+
+type updateDaemonStopResult struct {
+	Stopped bool
+}
+
+func performUpdateWithDaemonLifecycle(
+	info *update.UpdateInfo,
+	progressFn func(downloaded, total int64),
+	loadDaemonConfig func() (*config.Config, error),
+	stopDaemons func(*config.Config) (updateDaemonStopResult, error),
+	perform func(*update.UpdateInfo, func(int64, int64)) error,
+	restartDaemon func(*config.Config, updateDaemonStopResult) error,
+) error {
+	daemonCfg, err := loadDaemonConfig()
+	if err != nil {
+		return fmt.Errorf("loading daemon config before update: %w", err)
+	}
+	stopResult, err := stopDaemons(daemonCfg)
+	if err != nil {
+		if stopResult.Stopped {
+			if restartErr := restartDaemon(daemonCfg, stopResult); restartErr != nil {
+				return fmt.Errorf(
+					"stopping daemon before update: %w (also failed to restart daemon: %w)",
+					err, restartErr,
+				)
+			}
+		}
+		return fmt.Errorf("stopping daemon before update: %w", err)
+	}
+
+	if err := perform(info, progressFn); err != nil {
+		if stopResult.Stopped {
+			if restartErr := restartDaemon(daemonCfg, stopResult); restartErr != nil {
+				return fmt.Errorf(
+					"update failed: %w (also failed to restart daemon: %w)",
+					err, restartErr,
+				)
+			}
+		}
+		return fmt.Errorf("update failed: %w", err)
+	}
+
+	if stopResult.Stopped {
+		if err := restartDaemon(daemonCfg, stopResult); err != nil {
+			return fmt.Errorf("restarting daemon after update: %w", err)
+		}
+	}
+	return nil
+}
+
+func loadDaemonConfigForUpdate() (*config.Config, error) {
+	c, err := config.Load(cfgFile, homeDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.EnsureHomeDir(); err != nil {
+		return nil, fmt.Errorf("create data directory %s: %w", c.HomeDir, err)
+	}
+	return c, nil
+}
+
+func stopLocalDaemonsForUpdate(c *config.Config) (updateDaemonStopResult, error) {
+	var result updateDaemonStopResult
+	if c == nil {
+		return result, errors.New("nil config")
+	}
+	records, err := listLiveDaemonRuntimeRecords(c.Data.DataDir)
+	if err != nil {
+		return result, err
+	}
+	for _, rec := range records {
+		rt := daemonRuntimeFromRecord(rec)
+		if err := stopDaemonRuntimeForUpgrade(*c, rt); err != nil {
+			return result, err
+		}
+		result.Stopped = true
+	}
+	return result, nil
+}
+
+func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult) error {
+	if !result.Stopped {
+		return nil
+	}
+	cmd := &cobra.Command{Use: "msgvault update daemon-restart"}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	return runServeStart(cmd, c)
 }
