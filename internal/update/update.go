@@ -417,8 +417,6 @@ func extractTarGz(archivePath, destDir string) error {
 
 	tr := tar.NewReader(gzr)
 	for {
-		// codeql[go/zipslip] -- every tar entry name is passed through
-		// sanitizeTarPath before any filesystem operation.
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -439,13 +437,16 @@ func extractTarGz(archivePath, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
+			// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return err
 			}
 		case tar.TypeReg:
+			// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
+			// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 			outFile, err := os.Create(target)
 			if err != nil {
 				return err
@@ -455,6 +456,7 @@ func extractTarGz(archivePath, destDir string) error {
 				return err
 			}
 			_ = outFile.Close()
+			// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil { //nolint:gosec // tar header mode from our own release archive
 				return err
 			}
@@ -513,8 +515,6 @@ func extractZip(archivePath, destDir string) error {
 	}
 	defer func() { _ = r.Close() }()
 
-	// codeql[go/zipslip] -- every zip entry name is passed through
-	// sanitizeTarPath before any filesystem operation.
 	for _, f := range r.File {
 		target, err := sanitizeTarPath(absDestDir, f.Name)
 		if err != nil {
@@ -522,12 +522,14 @@ func extractZip(archivePath, destDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
+			// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return err
 			}
 			continue
 		}
 
+		// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
@@ -537,6 +539,7 @@ func extractZip(archivePath, destDir string) error {
 			return fmt.Errorf("open zip entry %q: %w", f.Name, err)
 		}
 
+		// codeql[go/zipslip] -- target was anchored by sanitizeTarPath.
 		outFile, err := os.Create(target)
 		if err != nil {
 			_ = rc.Close()
