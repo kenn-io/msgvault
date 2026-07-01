@@ -27,7 +27,7 @@ You can also stage deletions through the [MCP server](/usage/chat/) by asking an
 - *"Stage all messages from noreply@linkedin.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
-The MCP `stage_deletion` tool creates a local manifest file, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/usage/chat/#staged-deletion-via-mcp) for details.
+The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/usage/chat/#staged-deletion-via-mcp) for details.
 
 ## Staging Steps
 

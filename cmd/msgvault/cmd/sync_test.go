@@ -25,6 +25,13 @@ const fakeClientSecrets = `{
   }
 }`
 
+func runSyncFullLocalForTest(cmd *cobra.Command, args []string) error {
+	if err := validateSyncFullFlags(cmd); err != nil {
+		return err
+	}
+	return runSyncFullLocal(cmd, args)
+}
+
 // TestSyncCmd_DuplicateIdentifierRoutesCorrectly verifies that when
 // Gmail and IMAP sources share the same identifier, the single-arg
 // sync path resolves both and routes each to the correct backend.
@@ -84,7 +91,7 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncIncrementalCmd.RunE,
+		RunE: runSyncIncrementalLocal,
 	}
 
 	root := newTestRootCmd()
@@ -149,7 +156,7 @@ func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncIncrementalCmd.RunE,
+		RunE: runSyncIncrementalLocal,
 	}
 
 	root := newTestRootCmd()
@@ -202,8 +209,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testCmd := &cobra.Command{
@@ -261,7 +268,7 @@ func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync-full [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncFullCmd.RunE,
+		RunE: runSyncFullLocalForTest,
 	}
 
 	root := newTestRootCmd()
@@ -296,8 +303,8 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := requirepkg.New(t)
@@ -439,7 +446,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 	testCmd := &cobra.Command{
 		Use:  "sync-full [email]",
 		Args: cobra.MaximumNArgs(1),
-		RunE: syncFullCmd.RunE,
+		RunE: runSyncFullLocalForTest,
 	}
 
 	root := newTestRootCmd()
@@ -510,7 +517,7 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			testCmd := &cobra.Command{
 				Use:  "sync-full [email]",
 				Args: cobra.MaximumNArgs(1),
-				RunE: syncFullCmd.RunE,
+				RunE: runSyncFullLocalForTest,
 			}
 
 			root := newTestRootCmd()
@@ -535,8 +542,8 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 		name string
 		runE func(*cobra.Command, []string) error
 	}{
-		{"sync", syncIncrementalCmd.RunE},
-		{"sync-full", syncFullCmd.RunE},
+		{"sync", runSyncIncrementalLocal},
+		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := requirepkg.New(t)

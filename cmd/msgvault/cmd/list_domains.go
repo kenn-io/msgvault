@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 var listDomainsCmd = &cobra.Command{
@@ -21,45 +18,7 @@ Examples:
   msgvault list-domains --after 2024-01-01
   msgvault list-domains --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts, err := parseCommonFlags()
-		if err != nil {
-			return err
-		}
-
-		// Open database
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-		defer func() { _ = s.Close() }()
-
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-
-		// Create query engine
-		engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
-
-		// Execute aggregation
-		results, err := engine.Aggregate(cmd.Context(), query.ViewDomains, opts)
-		if err != nil {
-			return query.HintRepairEncoding(fmt.Errorf("aggregate by domain: %w", err))
-		}
-
-		if len(results) == 0 {
-			fmt.Println("No domains found.")
-			return nil
-		}
-
-		if aggJSON {
-			return outputAggregateJSON(results)
-		}
-		outputAggregateTable(results, "Domain")
-		return nil
+		return runAggregateListCommand(cmd, query.ViewDomains, "No domains found.", "Domain", "domain")
 	},
 }
 

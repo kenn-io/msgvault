@@ -3,22 +3,30 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/spf13/cobra"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestServeConfigParsing(t *testing.T) {
@@ -124,8 +132,249 @@ func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
 	}))
 }
 
-func TestServeOAuthValidationRejectsNoProviders(t *testing.T) {
+func TestServeOAuthValidationReportsNoProviders(t *testing.T) {
 	assertpkg.False(t, hasServeOAuthConfig(&config.Config{}))
+}
+
+func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	cfg = lifecycleTestConfig(dataDir)
+	cfg.Server.APIPort = freeTCPPort(t)
+	t.Cleanup(func() { cfg = oldCfg })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServe(cmd, nil)
+	}()
+
+	waitForServeHealth(t, cfg.Server.APIPort, errCh)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		requirepkg.NoError(t, err, "runServe")
+	case <-time.After(5 * time.Second):
+		requirepkg.FailNow(t, "runServe did not stop after context cancellation")
+	}
+}
+
+type recordingServeAPIServer struct {
+	events *[]string
+}
+
+func (s recordingServeAPIServer) Shutdown(context.Context) error {
+	*s.events = append(*s.events, "api-shutdown")
+	return nil
+}
+
+type recordingServeScheduler struct {
+	events *[]string
+	ctx    context.Context
+}
+
+func (s recordingServeScheduler) Stop() context.Context {
+	*s.events = append(*s.events, "scheduler-stop")
+	return s.ctx
+}
+
+type recordingServeGate struct {
+	events *[]string
+}
+
+func (g recordingServeGate) StartDrain() {
+	*g.events = append(*g.events, "gate-start-drain")
+}
+
+func (g recordingServeGate) Wait(context.Context) error {
+	*g.events = append(*g.events, "gate-wait")
+	return nil
+}
+
+func TestShutdownServeRuntimeDrainsGateAroundHTTPAndScheduler(t *testing.T) {
+	doneCtx, done := context.WithCancel(context.Background())
+	done()
+	events := []string{}
+
+	err := shutdownServeRuntime(
+		context.Background(),
+		io.Discard,
+		recordingServeAPIServer{events: &events},
+		recordingServeScheduler{events: &events, ctx: doneCtx},
+		recordingServeGate{events: &events},
+	)
+
+	requirepkg.NoError(t, err, "shutdownServeRuntime")
+	assertpkg.Equal(t, []string{
+		"gate-start-drain",
+		"api-shutdown",
+		"scheduler-stop",
+		"gate-wait",
+	}, events, "shutdown order")
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	requirepkg.NoError(t, err, "listen on free port")
+	defer func() { requirepkg.NoError(t, ln.Close(), "close listener") }()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	requirepkg.True(t, ok, "listener address must be TCP")
+	return addr.Port
+}
+
+func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			requirepkg.NoError(t, err, "runServe exited before health was ready")
+			requirepkg.FailNow(t, "runServe exited before health was ready")
+		default:
+		}
+		resp, err := http.Get(url) //nolint:gosec // local test server
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	requirepkg.FailNow(t, "serve health endpoint did not become ready")
+}
+
+func TestRunDaemonSQLQueryRebuildsStaleCacheOutOfProcess(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	c := lifecycleTestConfig(dataDir)
+	s, err := store.Open(c.DatabaseDSN())
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+	engine := query.NewEngine(s.DB(), false)
+	defer func() { _ = engine.Close() }()
+
+	sentinel := errors.New("subprocess sentinel")
+	var called bool
+	var gotFullRebuild bool
+	old := buildCacheSubprocessForRun
+	buildCacheSubprocessForRun = func(_ context.Context, fullRebuild bool) error {
+		called = true
+		gotFullRebuild = fullRebuild
+		return sentinel
+	}
+	t.Cleanup(func() { buildCacheSubprocessForRun = old })
+
+	_, err = runDaemonSQLQuery(context.Background(), c, s, engine, "select 1")
+
+	require.Error(err, "query should fail with subprocess sentinel")
+	require.ErrorIs(err, sentinel, "error")
+	assert.True(called, "subprocess rebuild should be called")
+	assert.True(gotFullRebuild, "missing cache should request full rebuild")
+}
+
+func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineSQL
+	c.Analytics.AutoBuildCache = true
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		require.FailNow("engine=sql must not build analytics cache")
+		return nil
+	})
+
+	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	require.NoError(err, "openDaemonAnalyticsEngine")
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(&query.SQLiteEngine{}, engine)
+}
+
+func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = false
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		require.FailNow("auto_build_cache=false must not build analytics cache")
+		return nil
+	})
+
+	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	require.NoError(err, "openDaemonAnalyticsEngine")
+	defer func() { _ = engine.Close() }()
+
+	assert.IsType(&query.SQLiteEngine{}, engine)
+}
+
+func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	var gotFullRebuild bool
+	stubBuildCacheSubprocess(t, func(_ context.Context, fullRebuild bool) error {
+		gotFullRebuild = fullRebuild
+		require.FailNow("auto mode must not block daemon startup on cache build")
+		return nil
+	})
+
+	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	require.NoError(err, "auto mode should start with live SQL when cache is missing")
+	defer func() { _ = engine.Close() }()
+
+	assert.False(gotFullRebuild, "startup should not request a synchronous cache rebuild")
+	assert.IsType(&query.SQLiteEngine{}, engine)
+}
+
+func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
+	require := requirepkg.New(t)
+	c, s := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineDuckDB
+	c.Analytics.AutoBuildCache = true
+	sentinel := errors.New("build failed")
+	stubBuildCacheSubprocess(t, func(context.Context, bool) error {
+		return sentinel
+	})
+
+	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	if engine != nil {
+		_ = engine.Close()
+	}
+
+	require.Error(err, "duckdb mode should fail when the required cache build fails")
+	require.ErrorIs(err, sentinel, "error")
+}
+
+func openTestDaemonAnalyticsStore(t *testing.T) (*config.Config, *store.Store) {
+	t.Helper()
+	c := lifecycleTestConfig(t.TempDir())
+	s, err := store.Open(c.DatabaseDSN())
+	requirepkg.NoError(t, err, "open store")
+	t.Cleanup(func() { _ = s.Close() })
+	requirepkg.NoError(t, s.InitSchema(), "init schema")
+	return c, s
+}
+
+func stubBuildCacheSubprocess(
+	t *testing.T,
+	fn func(context.Context, bool) error,
+) {
+	t.Helper()
+	old := buildCacheSubprocessForRun
+	buildCacheSubprocessForRun = fn
+	t.Cleanup(func() { buildCacheSubprocessForRun = old })
 }
 
 func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
@@ -186,6 +435,112 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 }
 
+func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	defer func() { _ = s.Close() }()
+	require.NoError(s.InitSchema(), "init schema")
+
+	adapter := &storeAPIAdapter{store: s}
+	srv := api.NewServer(
+		&config.Config{
+			Identity: config.IdentityConfig{Addresses: []string{"alice@example.com"}},
+			Server:   config.ServerConfig{APIPort: 8080},
+		},
+		adapter,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/init-db", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Notice string `json:"notice"`
+		Stats  struct {
+			TotalMessages int64 `json:"total_messages"`
+			TotalAccounts int64 `json:"total_accounts"`
+		} `json:"stats"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Contains(resp.Notice, "legacy [identity] config", "migration notice")
+	assert.Equal(int64(0), resp.Stats.TotalMessages, "messages")
+	assert.Equal(int64(0), resp.Stats.TotalAccounts, "accounts")
+}
+
+func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	f := storetest.New(t)
+	keepID := f.CreateMessage("keep")
+	dropID := f.CreateMessage("drop")
+	_, err := f.Store.MergeDuplicates(keepID, []int64{dropID}, "batch-a")
+	require.NoError(err, "merge duplicate")
+
+	adapter := &storeAPIAdapter{store: f.Store}
+	srv := api.NewServer(
+		&config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		adapter,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+
+	planReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped/plan",
+		strings.NewReader(`{"batch_ids":["batch-a"]}`),
+	)
+	planReq.Header.Set("Content-Type", "application/json")
+	planResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(planResp, planReq)
+
+	require.Equal(http.StatusOK, planResp.Code, "plan body: %s", planResp.Body.String())
+	var plan struct {
+		Total      int64 `json:"total"`
+		BatchCount int64 `json:"batch_count"`
+		Batches    []struct {
+			ID    string `json:"id"`
+			Count int64  `json:"count"`
+		} `json:"batches"`
+	}
+	require.NoError(json.NewDecoder(planResp.Body).Decode(&plan), "decode plan")
+	assert.Equal(int64(1), plan.Total, "plan total")
+	assert.Equal(int64(1), plan.BatchCount, "plan batch count")
+	require.Len(plan.Batches, 1, "plan batches")
+
+	executeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		strings.NewReader(`{
+			"batch_ids":["batch-a"],
+			"no_backup": true,
+			"expected_total": 1,
+			"expected_batch_count": 1,
+			"expected_batches": [{"id":"batch-a", "count":1}]
+		}`),
+	)
+	executeReq.Header.Set("Content-Type", "application/json")
+	executeResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(executeResp, executeReq)
+
+	require.Equal(http.StatusOK, executeResp.Code, "execute body: %s", executeResp.Body.String())
+	var executed struct {
+		Deleted    int64 `json:"deleted"`
+		BatchCount int64 `json:"batch_count"`
+	}
+	require.NoError(json.NewDecoder(executeResp.Body).Decode(&executed), "decode execute")
+	assert.Equal(int64(1), executed.Deleted, "deleted")
+	assert.Equal(int64(1), executed.BatchCount, "execute batch count")
+}
+
 // TestSetupVectorFeatures_Disabled verifies that when
 // cfg.Vector.Enabled is false, setupVectorFeatures returns (nil, nil)
 // regardless of build tag. Runs under both tagged and untagged builds.
@@ -198,69 +553,6 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
 	requirepkg.NoError(t, err, "setupVectorFeatures")
 	assertpkg.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
-}
-
-// TestFindScheduledSyncSource verifies that the scheduler's
-// source-resolution helper picks gmail over imap and ignores rows of
-// non-syncable source types (mbox, apple-mail, etc.). Regression for
-// the daemon-mode IMAP dispatch (#329).
-func TestFindScheduledSyncSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	tmpDir := t.TempDir()
-	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err, "open store")
-	defer func() { _ = s.Close() }()
-	require.NoError(s.InitSchema(), "init schema")
-
-	// No rows: returns nil, allowing the Gmail token-first fallback.
-	got, err := findScheduledSyncSource(s, "missing@example.com")
-	require.NoError(err, "findScheduledSyncSource(missing)")
-	assert.Nil(got, "findScheduledSyncSource(missing) should be nil")
-
-	// IMAP source created by add-imap: identifier is the imaps:// URL,
-	// display_name is the user-facing email. Both lookups must resolve
-	// to the same row.
-	const imapID = "imaps://user@example.com@imap.example.com:993"
-	const imapEmail = "user@example.com"
-	imapSrc, err := s.GetOrCreateSource("imap", imapID)
-	require.NoError(err, "create imap source")
-	require.NoError(s.UpdateSourceDisplayName(imapSrc.ID, imapEmail), "set imap display_name")
-
-	got, err = findScheduledSyncSource(s, imapID)
-	require.NoError(err, "findScheduledSyncSource(imap by identifier)")
-	require.NotNil(got, "findScheduledSyncSource(imap by identifier) should not be nil")
-	require.Equal("imap", got.SourceType, "findScheduledSyncSource(imap by identifier) SourceType")
-
-	// Lookup by display_name (the typical config.toml `email = "..."`
-	// shape) must also resolve the IMAP source — otherwise the daemon
-	// falls back to Gmail and produces a misleading token error.
-	got, err = findScheduledSyncSource(s, imapEmail)
-	require.NoError(err, "findScheduledSyncSource(imap by display_name)")
-	require.NotNil(got, "findScheduledSyncSource(imap by display_name) should not be nil")
-	require.Equal("imap", got.SourceType, "findScheduledSyncSource(imap by display_name) SourceType")
-
-	// Identifier shared by an unsyncable mbox row + a gmail row:
-	// gmail wins, the unsyncable row is ignored.
-	const sharedID = "shared@example.com"
-	_, err = s.GetOrCreateSource("mbox", sharedID)
-	require.NoError(err, "create mbox source")
-	_, err = s.GetOrCreateSource("gmail", sharedID)
-	require.NoError(err, "create gmail source")
-	got, err = findScheduledSyncSource(s, sharedID)
-	require.NoError(err, "findScheduledSyncSource(shared)")
-	require.NotNil(got, "findScheduledSyncSource(shared) should not be nil")
-	require.Equal("gmail", got.SourceType, "findScheduledSyncSource(shared) SourceType")
-
-	// Identifier with only an unsyncable row: returns nil so the
-	// dispatcher's Gmail fallback fires and produces a Gmail-shaped
-	// error (rather than misclassifying as imap).
-	const mboxID = "mbox-only@example.com"
-	_, err = s.GetOrCreateSource("mbox", mboxID)
-	require.NoError(err, "create mbox source")
-	got, err = findScheduledSyncSource(s, mboxID)
-	require.NoError(err, "findScheduledSyncSource(mbox-only)")
-	assert.Nil(got, "findScheduledSyncSource(mbox-only) should be nil")
 }
 
 // TestRunScheduledIMAPSync_NoCredentials verifies that the IMAP path

@@ -1,17 +1,13 @@
 package cmd
 
 import (
-	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"runtime"
 	"strings"
 
-	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -41,121 +37,42 @@ Output formats:
 
 Examples:
   msgvault query "SELECT from_email, COUNT(*) AS n FROM v_messages GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-  msgvault query --format csv "SELECT * FROM v_senders ORDER BY message_count DESC"
-  msgvault query --format table "SELECT name, message_count FROM v_labels"`,
+	msgvault query --format csv "SELECT * FROM v_senders ORDER BY message_count DESC"
+	msgvault query --format table "SELECT name, message_count FROM v_labels"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dbPath := cfg.DatabaseDSN()
-		analyticsDir := cfg.AnalyticsDir()
-
-		staleness := cacheNeedsBuild(dbPath, analyticsDir)
-		if staleness.NeedsBuild {
-			fmt.Fprintf(os.Stderr,
-				"Building analytics cache (%s)...\n",
-				staleness.Reason)
-			result, err := buildCache(
-				dbPath, analyticsDir, staleness.FullRebuild,
-			)
-			if err != nil {
-				return fmt.Errorf("build cache: %w", err)
-			}
-			if !result.Skipped {
-				fmt.Fprintf(os.Stderr,
-					"Cached %d messages.\n",
-					result.ExportedCount)
-			}
-		}
-
-		if !query.HasCompleteParquetData(analyticsDir) {
-			return errors.New("analytics cache is empty — sync some " +
-				"messages first")
-		}
-
-		return executeQuery(
-			analyticsDir, args[0], queryFormat, os.Stdout,
-		)
+		return runHTTPQuery(cmd, args[0])
 	},
 }
 
-// executeQuery opens an in-memory DuckDB, registers views over
-// the Parquet files in analyticsDir, runs the SQL, and writes
-// the results in the requested format.
-func executeQuery(
-	analyticsDir, sqlStr, format string, w io.Writer,
-) error {
-	db, err := sql.Open("duckdb", "")
+func runHTTPQuery(cmd *cobra.Command, sqlStr string) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return fmt.Errorf("open duckdb: %w", err)
+		return err
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = st.Close() }()
 
-	db.SetMaxOpenConns(1)
-
-	threads := runtime.GOMAXPROCS(0)
-	if _, err := db.Exec(
-		fmt.Sprintf("SET threads = %d", threads),
-	); err != nil {
-		return fmt.Errorf("set threads: %w", err)
-	}
-
-	if err := query.RegisterViews(db, analyticsDir); err != nil {
-		return fmt.Errorf("register views: %w", err)
-	}
-
-	rows, err := db.Query(sqlStr)
+	result, err := st.RunSQLQuery(cmd.Context(), sqlStr)
 	if err != nil {
-		return fmt.Errorf("execute query: %w", err)
+		return fmt.Errorf("query: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	return writeQueryResult(cmd.OutOrStdout(), result, queryFormat)
+}
 
-	cols, err := rows.Columns()
-	if err != nil {
-		return fmt.Errorf("get columns: %w", err)
+func writeQueryResult(w io.Writer, result *query.QueryResult, format string) error {
+	if result == nil {
+		return errors.New("nil query result")
 	}
-
-	var allRows [][]any
-	for rows.Next() {
-		row, scanErr := scanRow(cols, rows)
-		if scanErr != nil {
-			return scanErr
-		}
-		allRows = append(allRows, row)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate rows: %w", err)
-	}
-
 	switch format {
 	case outputFormatJSON:
-		return writeJSON(w, cols, allRows)
+		return writeJSON(w, result.Columns, result.Rows)
 	case "csv":
-		return writeCSV(w, cols, allRows)
+		return writeCSV(w, result.Columns, result.Rows)
 	case "table":
-		return writeTable(w, cols, allRows)
+		return writeTable(w, result.Columns, result.Rows)
 	default:
 		return fmt.Errorf("unknown format %q (use json, csv, or table)", format)
 	}
-}
-
-// scanRow scans a single row into a slice of interface{} values,
-// converting []byte to string for clean serialization.
-func scanRow(
-	cols []string, rows *sql.Rows,
-) ([]any, error) {
-	vals := make([]any, len(cols))
-	ptrs := make([]any, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
-	if err := rows.Scan(ptrs...); err != nil {
-		return nil, fmt.Errorf("scan row: %w", err)
-	}
-	for i, v := range vals {
-		if b, ok := v.([]byte); ok {
-			vals[i] = string(b)
-		}
-	}
-	return vals, nil
 }
 
 func writeJSON(
@@ -205,8 +122,7 @@ func writeCSV(
 
 // nil error return mirrors writeJSON/writeCSV so the format switch can
 // `return writeTable(...)` uniformly; text printing never fails.
-//
-//nolint:unparam // symmetry with error-returning writeJSON/writeCSV siblings
+
 func writeTable(
 	w io.Writer, cols []string, rows [][]any,
 ) error {

@@ -48,7 +48,7 @@ func TestCollection_CRUD(t *testing.T) {
 
 	// Duplicate name rejected
 	_, err = st.CreateCollection("work", "", []int64{f.Source.ID})
-	require.Error(err, "expected error for duplicate name")
+	require.ErrorIs(err, store.ErrCollectionExists, "expected error for duplicate name")
 
 	// Remove source
 	err = st.RemoveSourcesFromCollection("work", []int64{src2.ID})

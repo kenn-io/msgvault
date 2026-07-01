@@ -329,5 +329,5 @@ func promptYesNo(reader *bufio.Reader, prompt string) bool {
 	fmt.Printf("%s [Y/n]: ", prompt)
 	response, _ := reader.ReadString('\n')
 	response = strings.ToLower(strings.TrimSpace(response))
-	return response == "" || response == "y" || response == "yes"
+	return response == "" || isYesAnswer(response)
 }

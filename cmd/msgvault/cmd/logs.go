@@ -28,8 +28,10 @@ var (
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View and tail msgvault's structured log files",
-	Long: `Show msgvault's structured log output from the on-disk JSON logs
-written to <data dir>/logs.
+	Long: `Show msgvault's structured log output from the selected daemon's
+on-disk JSON logs written to <data dir>/logs. With [remote].url configured,
+this shows the remote daemon's logs; otherwise it starts or contacts the
+local daemon.
 
 By default this prints the last 50 lines of today's log file in a
 compact, human-friendly format (level + run_id + message + the
@@ -50,6 +52,10 @@ Examples:
 }
 
 func runLogsCmd(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
 	dir := cfg.LogsDir()
 
 	if logsPath {

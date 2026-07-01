@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
@@ -22,6 +23,13 @@ func TestServerConfigDefaults(t *testing.T) {
 	// Check server defaults
 	assertpkg.Equal(t, 8080, cfg.Server.APIPort)
 	assertpkg.Empty(t, cfg.Server.APIKey)
+}
+
+func TestAnalyticsConfigDefaults(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	assertpkg.Equal(t, AnalyticsEngineAuto, cfg.Analytics.Engine)
+	assertpkg.True(t, cfg.Analytics.AutoBuildCache)
 }
 
 func TestAccountScheduleEmpty(t *testing.T) {
@@ -74,6 +82,113 @@ enabled = false
 	assert.Equal("test@gmail.com", cfg.Accounts[0].Email)
 	assert.Equal("0 2 * * *", cfg.Accounts[0].Schedule)
 	assert.True(cfg.Accounts[0].Enabled)
+}
+
+func TestLoadWithServerDaemonIdleTimeout(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tmpDir := t.TempDir()
+
+	configContent := `
+[server]
+daemon_idle_timeout = "6h"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err, "Load()")
+
+	assert.Equal(6*time.Hour, cfg.Server.DaemonIdleTimeout)
+}
+
+func TestServerDaemonAutoRestartDefault(t *testing.T) {
+	cfg := NewDefaultConfig()
+
+	assertpkg.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
+}
+
+func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configContent := `
+[server]
+daemon_auto_restart = "always"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	cfg, err := Load(configPath, "")
+	requirepkg.NoError(t, err, "Load()")
+
+	assertpkg.Equal(t, DaemonAutoRestartAlways, cfg.Server.DaemonAutoRestart)
+}
+
+func TestLoadWithInvalidServerDaemonAutoRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configContent := `
+[server]
+daemon_auto_restart = "sometimes"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	_, err := Load(configPath, "")
+
+	requirepkg.Error(t, err, "Load()")
+	assertpkg.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
+}
+
+func TestLoadWithAnalyticsConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configContent := `
+[analytics]
+engine = "SQL"
+auto_build_cache = false
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	cfg, err := Load(configPath, "")
+	requirepkg.NoError(t, err, "Load()")
+
+	assertpkg.Equal(t, AnalyticsEngineSQL, cfg.Analytics.Engine)
+	assertpkg.False(t, cfg.Analytics.AutoBuildCache)
+}
+
+func TestLoadWithInvalidAnalyticsEngine(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configContent := `
+[analytics]
+engine = "sqlite"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	_, err := Load(configPath, "")
+	requirepkg.Error(t, err, "Load()")
+	assertpkg.Contains(t, err.Error(), "invalid [analytics] engine")
+}
+
+func TestServerDaemonIdleTimeoutDefaultAndZero(t *testing.T) {
+	assert := assertpkg.New(t)
+	cfg := NewDefaultConfig()
+	assert.Equal(20*time.Minute, cfg.Server.DaemonIdleTimeout)
+
+	tmpDir := t.TempDir()
+	configContent := `
+[server]
+daemon_idle_timeout = "0s"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+
+	loaded, err := Load(configPath, "")
+	requirepkg.NoError(t, err, "Load()")
+	assert.Equal(time.Duration(0), loaded.Server.DaemonIdleTimeout)
 }
 
 func TestScheduledAccounts(t *testing.T) {

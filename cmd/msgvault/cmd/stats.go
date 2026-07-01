@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -18,137 +18,110 @@ var statsCmd = &cobra.Command{
 	Short: "Show database statistics",
 	Long: `Show statistics about the email archive.
 
-Uses remote server if [remote].url is configured, otherwise uses local database.
-Use --local to force local database.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		scoped := statsAccount != "" || statsCollection != ""
-
-		if IsRemoteMode() {
-			if statsAccount != "" {
-				return usageErr(cmd, errors.New("--account is not supported in remote mode"))
-			}
-			if statsCollection != "" {
-				return usageErr(cmd, errors.New("--collection is not supported in remote mode"))
-			}
-		}
-
-		// Scoped stats require a local store for scope resolution and GetStatsForScope.
-		if scoped {
-			st, err := openLocalStoreAndInit()
-			if err != nil {
-				return fmt.Errorf("open store: %w", err)
-			}
-			defer func() { _ = st.Close() }()
-
-			var scope Scope
-			if statsAccount != "" {
-				scope, err = ResolveAccountFlag(st, statsAccount)
-				if err != nil {
-					return err
-				}
-				if scope.IsEmpty() {
-					return fmt.Errorf("--account %q resolved to zero sources", statsAccount)
-				}
-			} else {
-				scope, err = ResolveCollectionFlag(st, statsCollection)
-				if err != nil {
-					return err
-				}
-				if scope.IsEmpty() {
-					return fmt.Errorf("--collection %q has no member accounts", statsCollection)
-				}
-			}
-
-			sourceIDs := scope.SourceIDs()
-			// A collection with zero member sources resolves to a non-nil
-			// Scope (Collection set, Source nil) so IsEmpty above is false,
-			// but SourceIDs is empty. GetStatsForScope treats an empty
-			// slice as "unscoped" and would silently return archive-wide
-			// counts. Reject explicitly with the same shape as the
-			// IsEmpty branch above.
-			if len(sourceIDs) == 0 {
-				return fmt.Errorf("--collection %q has no member accounts", statsCollection)
-			}
-			dbStats, err := st.GetStatsForScope(sourceIDs)
-			if err != nil {
-				logger.Warn("stats failed", "error", err.Error())
-				return fmt.Errorf("get stats: %w", err)
-			}
-			logger.Info("stats",
-				tableMessages, dbStats.MessageCount,
-				"threads", dbStats.ThreadCount,
-				tableAttachments, dbStats.AttachmentCount,
-				tableLabels, dbStats.LabelCount,
-				"accounts", dbStats.SourceCount,
-				"db_bytes", dbStats.DatabaseSize,
-			)
-
-			if statsAccount != "" {
-				fmt.Printf("Stats for account %q:\n", scope.DisplayName())
-			} else {
-				n := len(sourceIDs)
-				suffix := "s"
-				if n == 1 {
-					suffix = ""
-				}
-				fmt.Printf("Stats for collection %q (%d account%s):\n",
-					scope.DisplayName(), n, suffix)
-			}
-
-			printStats(dbStats)
-			fmt.Printf("\nNote: Size is global (not scoped).\n")
-			return nil
-		}
-
-		// Unscoped: route remote to OpenStore (HTTP path), local to
-		// openLocalStoreAndInit so InitSchema and runStartupMigrations
-		// run consistently with every other command.
-		var (
-			s   MessageStore
-			err error
-		)
-		if IsRemoteMode() {
-			s, err = OpenStore()
-		} else {
-			s, err = openLocalStoreAndInit()
-		}
-		if err != nil {
-			return fmt.Errorf("open store: %w", err)
-		}
-		defer func() { _ = s.Close() }()
-
-		dbStats, err := s.GetStats()
-		if err != nil {
-			logger.Warn("stats failed", "error", err.Error())
-			return fmt.Errorf("get stats: %w", err)
-		}
-		logger.Info("stats",
-			tableMessages, dbStats.MessageCount,
-			"threads", dbStats.ThreadCount,
-			tableAttachments, dbStats.AttachmentCount,
-			tableLabels, dbStats.LabelCount,
-			"accounts", dbStats.SourceCount,
-			"db_bytes", dbStats.DatabaseSize,
-		)
-
-		if IsRemoteMode() {
-			fmt.Printf("Remote: %s\n", cfg.Remote.URL)
-		} else {
-			fmt.Printf("Database: %s\n", cfg.DatabaseDSN())
-		}
-
-		printStats(dbStats)
-		return nil
-	},
+Uses configured remote server or the local daemon by default.
+Use --local to use the local daemon even when a remote is configured.`,
+	RunE: runStats,
 }
 
-func printStats(s *store.Stats) {
-	fmt.Printf("  Messages:    %d\n", s.MessageCount)
-	fmt.Printf("  Threads:     %d\n", s.ThreadCount)
-	fmt.Printf("  Attachments: %d\n", s.AttachmentCount)
-	fmt.Printf("  Labels:      %d\n", s.LabelCount)
-	fmt.Printf("  Accounts:    %d\n", s.SourceCount)
-	fmt.Printf("  Size:        %.2f MB\n", float64(s.DatabaseSize)/(1024*1024))
+func runStats(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
+	scoped := statsAccount != "" || statsCollection != ""
+
+	if scoped {
+		return runHTTPScopedStats(cmd, out)
+	}
+
+	s, info, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	dbStats, err := s.GetStats()
+	if err != nil {
+		logger.Warn("stats failed", "error", err.Error())
+		return fmt.Errorf("get stats: %w", err)
+	}
+	logger.Info("stats",
+		tableMessages, dbStats.MessageCount,
+		"threads", dbStats.ThreadCount,
+		tableAttachments, dbStats.AttachmentCount,
+		tableLabels, dbStats.LabelCount,
+		"accounts", dbStats.SourceCount,
+		"db_bytes", dbStats.DatabaseSize,
+	)
+
+	if info.Kind == HTTPStoreConfiguredRemote {
+		_, _ = fmt.Fprintf(out, "Remote: %s\n", info.URL)
+	} else {
+		_, _ = fmt.Fprintf(out, "Database: %s\n", cfg.DatabaseDSN())
+	}
+
+	printStats(out, dbStats)
+	return nil
+}
+
+func runHTTPScopedStats(cmd *cobra.Command, out io.Writer) error {
+	s, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	resp, err := s.GetCLIStats(cmd.Context(), statsAccount, statsCollection)
+	if err != nil {
+		logger.Warn("stats failed", "error", err.Error())
+		return fmt.Errorf("get stats: %w", err)
+	}
+	logger.Info("stats",
+		tableMessages, resp.Stats.MessageCount,
+		"threads", resp.Stats.ThreadCount,
+		tableAttachments, resp.Stats.AttachmentCount,
+		tableLabels, resp.Stats.LabelCount,
+		"accounts", resp.Stats.SourceCount,
+		"db_bytes", resp.Stats.DatabaseSize,
+	)
+
+	label := resp.ScopeLabel
+	if label == "" {
+		if statsAccount != "" {
+			label = statsAccount
+		} else {
+			label = statsCollection
+		}
+	}
+	printScopedStats(out, resp.Stats, statsAccount != "", label, resp.ScopeSourceCount)
+	return nil
+}
+
+func printScopedStats(
+	w io.Writer,
+	s *store.Stats,
+	accountScope bool,
+	label string,
+	sourceCount int,
+) {
+	if accountScope {
+		_, _ = fmt.Fprintf(w, "Stats for account %q:\n", label)
+	} else {
+		suffix := "s"
+		if sourceCount == 1 {
+			suffix = ""
+		}
+		_, _ = fmt.Fprintf(w, "Stats for collection %q (%d account%s):\n",
+			label, sourceCount, suffix)
+	}
+	printStats(w, s)
+	_, _ = fmt.Fprintln(w, "\nNote: Size is global (not scoped).")
+}
+
+func printStats(w io.Writer, s *store.Stats) {
+	_, _ = fmt.Fprintf(w, "  Messages:    %d\n", s.MessageCount)
+	_, _ = fmt.Fprintf(w, "  Threads:     %d\n", s.ThreadCount)
+	_, _ = fmt.Fprintf(w, "  Attachments: %d\n", s.AttachmentCount)
+	_, _ = fmt.Fprintf(w, "  Labels:      %d\n", s.LabelCount)
+	_, _ = fmt.Fprintf(w, "  Accounts:    %d\n", s.SourceCount)
+	_, _ = fmt.Fprintf(w, "  Size:        %.2f MB\n", float64(s.DatabaseSize)/(1024*1024))
 }
 
 func init() {

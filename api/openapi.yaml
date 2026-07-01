@@ -1,0 +1,5173 @@
+components:
+  schemas:
+    AccountInfo:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        last_sync_at:
+          type: string
+        next_sync_at:
+          type: string
+        schedule:
+          type: string
+      required:
+        - id
+        - email
+        - enabled
+      type: object
+    AccountListResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AccountListResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        accounts:
+          items:
+            $ref: "#/components/schemas/AccountInfo"
+          type:
+            - array
+            - "null"
+      required:
+        - accounts
+      type: object
+    AccountStatus:
+      additionalProperties: true
+      properties:
+        email:
+          type: string
+        last_error:
+          type: string
+        last_run:
+          format: date-time
+          type: string
+        next_run:
+          format: date-time
+          type: string
+        running:
+          type: boolean
+        schedule:
+          type: string
+      required:
+        - email
+        - running
+        - next_run
+        - schedule
+      type: object
+    AddAccountRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddAccountRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        email:
+          type: string
+        enabled:
+          type: boolean
+        schedule:
+          type: string
+      required:
+        - email
+        - schedule
+        - enabled
+      type: object
+    AddRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        identifier:
+          type: string
+        signal:
+          type: string
+      required:
+        - account
+        - identifier
+        - signal
+      type: object
+    AddResult:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddResult.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        identifier:
+          type: string
+        outcome:
+          type: string
+        signal:
+          type: string
+      required:
+        - account
+        - identifier
+        - signal
+        - outcome
+      type: object
+    Address:
+      additionalProperties: true
+      properties:
+        Email:
+          type: string
+        Name:
+          type: string
+      required:
+        - Email
+        - Name
+      type: object
+    AggregateResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AggregateResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/AggregateRowJSON"
+          type:
+            - array
+            - "null"
+        view_type:
+          type: string
+      required:
+        - view_type
+        - rows
+      type: object
+    AggregateRowJSON:
+      additionalProperties: true
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_size:
+          format: int64
+          type: integer
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        total_size:
+          format: int64
+          type: integer
+        total_unique:
+          format: int64
+          type: integer
+      required:
+        - key
+        - count
+        - total_size
+        - attachment_size
+        - attachment_count
+        - total_unique
+      type: object
+    ApiHTTPError:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApiHTTPError.json
+          format: uri
+          readOnly: true
+          type: string
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    AttachmentInfo:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AttachmentInfo.json
+          format: uri
+          readOnly: true
+          type: string
+        content_hash:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - id
+        - filename
+        - mime_type
+        - size_bytes
+      type: object
+    BuildingSummary:
+      additionalProperties: true
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        progress:
+          $ref: "#/components/schemas/Progress"
+        started_at:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - progress
+      type: object
+    CLIAddCalendarPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIAddCalendarPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        email:
+          type: string
+        headless:
+          type: boolean
+        oauth_app:
+          type: string
+        oauth_app_explicit:
+          type: boolean
+      required:
+        - email
+      type: object
+    CLIAddCalendarPlanResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIAddCalendarPlanResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        body_lines:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        cancel_hint:
+          type: string
+        headline:
+          type: string
+        needs_scope_escalation:
+          type: boolean
+      required:
+        - needs_scope_escalation
+      type: object
+    CLICacheBuildEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLICacheBuildEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIDeduplicatePlanItem:
+      additionalProperties: true
+      properties:
+        backfilled_count:
+          format: int64
+          type: integer
+        duplicate_messages:
+          format: int64
+          type: integer
+        needs_confirmation:
+          type: boolean
+        plan_fingerprint:
+          type: string
+        scope_is_collection:
+          type: boolean
+        scope_label:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        stdout:
+          type: string
+      required:
+        - needs_confirmation
+      type: object
+    CLIDeduplicatePlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIDeduplicatePlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        collection:
+          type: string
+        content_hash:
+          type: boolean
+        delete_dups_from_source_server:
+          type: boolean
+        prefer:
+          type: string
+      type: object
+    CLIDeduplicatePlanResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIDeduplicatePlanResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        footer_stdout:
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/CLIDeduplicatePlanItem"
+          type:
+            - array
+            - "null"
+        prefix_stdout:
+          type: string
+      required:
+        - items
+      type: object
+    CLIDeleteStagedPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIDeleteStagedPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        batch_id:
+          type: string
+        dry_run:
+          type: boolean
+        list:
+          type: boolean
+        permanent:
+          type: boolean
+        remote_delete_enabled:
+          type: boolean
+        "yes":
+          type: boolean
+      type: object
+    CLIDeleteStagedPlanResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIDeleteStagedPlanResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        blocked_error:
+          type: string
+        confirmation_mode:
+          type: string
+        needs_confirmation:
+          type: boolean
+        needs_execution:
+          type: boolean
+        needs_scope_escalation:
+          type: boolean
+        plan_fingerprint:
+          type: string
+        planned_batch_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        remote_delete_env_var:
+          type: string
+        scope_escalation_body_lines:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        scope_escalation_cancel_hint:
+          type: string
+        scope_escalation_headline:
+          type: string
+        stdout:
+          type: string
+      required:
+        - needs_execution
+        - needs_confirmation
+      type: object
+    CLIDeletionManifestResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIDeletionManifestResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+      required:
+        - id
+        - message_count
+      type: object
+    CLIEmbeddingsPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIEmbeddingsPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        force:
+          type: boolean
+        generation_id:
+          format: int64
+          type: integer
+        operation:
+          type: string
+      required:
+        - operation
+        - generation_id
+      type: object
+    CLIEmbeddingsPlanResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIEmbeddingsPlanResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        needs_confirmation:
+          type: boolean
+        prompt:
+          type: string
+      required:
+        - needs_confirmation
+      type: object
+    CLIQueryMessageSummary:
+      additionalProperties: true
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        bcc:
+          items:
+            $ref: "#/components/schemas/Address"
+          type:
+            - array
+            - "null"
+        body_text:
+          type: string
+        cc:
+          items:
+            $ref: "#/components/schemas/Address"
+          type:
+            - array
+            - "null"
+        conversation_id:
+          format: int64
+          type: integer
+        conversation_title:
+          type: string
+        deleted_at:
+          format: date-time
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_type:
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        size_estimate:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_conversation_id:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            $ref: "#/components/schemas/Address"
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - source_message_id
+        - conversation_id
+        - source_conversation_id
+        - subject
+        - snippet
+        - from_email
+        - from_name
+        - sent_at
+        - size_estimate
+        - has_attachments
+        - attachment_count
+        - labels
+      type: object
+    CLIRepairEncodingEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIRepairEncodingEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIRunEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIRunEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIRunRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIRunRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        args:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        cwd:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - args
+      type: object
+    CLISyncEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLISyncEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIVerifyEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CLIVerifyEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CacheStats:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CacheStats.json
+          format: uri
+          readOnly: true
+          type: string
+        attachment_size_bytes:
+          format: int64
+          type: integer
+        last_message_id:
+          format: int64
+          type: integer
+        last_sync_at:
+          format: date-time
+          type: string
+        max_year:
+          format: int64
+          type: integer
+        min_year:
+          format: int64
+          type: integer
+        sources:
+          format: int64
+          type: integer
+        status:
+          type: string
+        total_messages:
+          format: int64
+          type: integer
+        total_size_bytes:
+          format: int64
+          type: integer
+        unique_domains:
+          format: int64
+          type: integer
+        unique_senders:
+          format: int64
+          type: integer
+        warnings:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - status
+      type: object
+    CliAccountResponse:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          format: int64
+          type: integer
+        last_sync:
+          format: date-time
+          type:
+            - string
+            - "null"
+        message_count:
+          format: int64
+          type: integer
+        type:
+          type: string
+      required:
+        - id
+        - email
+        - type
+        - display_name
+        - message_count
+        - last_sync
+      type: object
+    CliAccountsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliAccountsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        accounts:
+          items:
+            $ref: "#/components/schemas/CliAccountResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - accounts
+      type: object
+    CliCollectionEnvelope:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliCollectionEnvelope.json
+          format: uri
+          readOnly: true
+          type: string
+        collection:
+          $ref: "#/components/schemas/CliCollectionResponse"
+      required:
+        - collection
+      type: object
+    CliCollectionResponse:
+      additionalProperties: true
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        name:
+          type: string
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+        sources:
+          items:
+            $ref: "#/components/schemas/CliCollectionSourceResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - name
+        - created_at
+        - source_ids
+        - message_count
+      type: object
+    CliCollectionSourceResponse:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+      required:
+        - id
+        - identifier
+      type: object
+    CliCollectionsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliCollectionsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        collections:
+          items:
+            $ref: "#/components/schemas/CliCollectionResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - collections
+      type: object
+    CliDeleteDedupedBatchResponse:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        id:
+          type: string
+      required:
+        - id
+        - count
+      type: object
+    CliDeleteDedupedExecuteRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliDeleteDedupedExecuteRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        all_hidden:
+          type: boolean
+        batch_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        expected_batch_count:
+          format: int64
+          type: integer
+        expected_batches:
+          items:
+            $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
+          type: array
+        expected_total:
+          format: int64
+          type: integer
+        no_backup:
+          type: boolean
+      required:
+        - expected_total
+        - expected_batch_count
+        - expected_batches
+      type: object
+    CliDeleteDedupedExecuteResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliDeleteDedupedExecuteResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        backup_path:
+          type: string
+        batch_count:
+          format: int64
+          type: integer
+        deleted:
+          format: int64
+          type: integer
+      required:
+        - deleted
+        - batch_count
+      type: object
+    CliDeleteDedupedPlanRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliDeleteDedupedPlanRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        all_hidden:
+          type: boolean
+        batch_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      type: object
+    CliDeleteDedupedPlanResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliDeleteDedupedPlanResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        batch_count:
+          format: int64
+          type: integer
+        batches:
+          items:
+            $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
+          type:
+            - array
+            - "null"
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - batch_count
+      type: object
+    CliIdentitiesResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliIdentitiesResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        rows:
+          items:
+            $ref: "#/components/schemas/CliIdentityRowResponse"
+          type:
+            - array
+            - "null"
+      required:
+        - rows
+      type: object
+    CliIdentityRowResponse:
+      additionalProperties: true
+      properties:
+        account:
+          type: string
+        confirmed_at:
+          format: date-time
+          type: string
+        identifier:
+          type: string
+        none:
+          type: boolean
+        signals:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+      required:
+        - account
+        - source_id
+        - source_type
+        - signals
+      type: object
+    CliInitDBResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliInitDBResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        notice:
+          type: string
+        stats:
+          $ref: "#/components/schemas/StatsResponse"
+      required:
+        - stats
+      type: object
+    CliMessageAddress:
+      additionalProperties: true
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+      required:
+        - email
+        - name
+      type: object
+    CliMessageAttachment:
+      additionalProperties: true
+      properties:
+        content_hash:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - id
+        - filename
+        - mime_type
+        - size
+        - content_hash
+      type: object
+    CliMessageResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliMessageResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        attachments:
+          items:
+            $ref: "#/components/schemas/CliMessageAttachment"
+          type:
+            - array
+            - "null"
+        bcc:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          type:
+            - array
+            - "null"
+        body_html:
+          type: string
+        body_text:
+          type: string
+        cc:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          type:
+            - array
+            - "null"
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        from:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          type:
+            - array
+            - "null"
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_type:
+          type: string
+        received_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        sent_at:
+          format: date-time
+          type: string
+        size_estimate:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_conversation_id:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - source_message_id
+        - conversation_id
+        - source_conversation_id
+        - subject
+        - snippet
+        - sent_at
+        - received_at
+        - deleted_at
+        - size_estimate
+        - has_attachments
+        - from
+        - to
+        - cc
+        - bcc
+        - labels
+        - attachments
+        - body_text
+        - body_html
+      type: object
+    CliRebuildFTSEvent:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliRebuildFTSEvent.json
+          format: uri
+          readOnly: true
+          type: string
+        done:
+          format: int64
+          type: integer
+        error:
+          type: string
+        indexed:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CliSearchResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliSearchResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        index_built:
+          type: boolean
+        indexed_messages:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          type:
+            - array
+            - "null"
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+      required:
+        - results
+      type: object
+    CliStatsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CliStatsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+        stats:
+          $ref: "#/components/schemas/StatsResponse"
+      required:
+        - stats
+      type: object
+    CreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        accounts:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        name:
+          type: string
+      required:
+        - name
+        - accounts
+      type: object
+    DeepSearchResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DeepSearchResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+        query:
+          type: string
+      required:
+        - query
+        - messages
+        - count
+        - has_more
+        - offset
+        - limit
+      type: object
+    ErrorResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ErrorResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    Execution:
+      additionalProperties: false
+      properties:
+        completed_at:
+          format: date-time
+          type: string
+        failed:
+          format: int64
+          type: integer
+        failed_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        last_processed_index:
+          format: int64
+          type: integer
+        method:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        succeeded:
+          format: int64
+          type: integer
+      required:
+        - started_at
+        - method
+        - succeeded
+        - failed
+        - last_processed_index
+      type: object
+    FilteredMessagesResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/FilteredMessagesResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    Filters:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        after:
+          type: string
+        before:
+          type: string
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        recipients:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        sender_domains:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        senders:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      type: object
+    GenerationSummary:
+      additionalProperties: true
+      properties:
+        activated_at:
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - fingerprint
+        - state
+        - message_count
+      type: object
+    GmailIDsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GmailIDsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        gmail_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - gmail_ids
+      type: object
+    HealthResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/HealthResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
+    HybridGenerationSummary:
+      additionalProperties: true
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - fingerprint
+        - state
+      type: object
+    HybridSearchItem:
+      additionalProperties: true
+      properties:
+        bcc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        cc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_type:
+          type: string
+        score:
+          $ref: "#/components/schemas/ScoreBreakdown"
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    HybridSearchResponse:
+      additionalProperties: true
+      properties:
+        generation:
+          $ref: "#/components/schemas/HybridGenerationSummary"
+        mode:
+          type: string
+        pool_saturated:
+          type: boolean
+        query:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/HybridSearchItem"
+          type:
+            - array
+            - "null"
+        returned:
+          format: int64
+          type: integer
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+        took_ms:
+          format: int64
+          type: integer
+      required:
+        - query
+        - mode
+        - returned
+        - pool_saturated
+        - generation
+        - took_ms
+        - results
+      type: object
+    Manifest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Manifest.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        description:
+          type: string
+        execution:
+          $ref: "#/components/schemas/Execution"
+        filters:
+          $ref: "#/components/schemas/Filters"
+        gmail_ids:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        id:
+          type: string
+        status:
+          type: string
+        summary:
+          $ref: "#/components/schemas/Summary"
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - id
+        - created_at
+        - created_by
+        - description
+        - filters
+        - gmail_ids
+        - status
+      type: object
+    MessageDetail:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MessageDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        attachments:
+          items:
+            $ref: "#/components/schemas/AttachmentInfo"
+          type:
+            - array
+            - "null"
+        bcc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        body:
+          type: string
+        body_html:
+          type: string
+        cc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_type:
+          type: string
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - body
+        - attachments
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    MessageListResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MessageListResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        page:
+          format: int64
+          type: integer
+        page_size:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - page
+        - page_size
+        - messages
+      type: object
+    MessageSummary:
+      additionalProperties: true
+      properties:
+        bcc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        cc:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        message_type:
+          type: string
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    MutationResult:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MutationResult.json
+          format: uri
+          readOnly: true
+          type: string
+        name:
+          type: string
+        source_count:
+          format: int64
+          type: integer
+      required:
+        - name
+      type: object
+    PingInfo:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PingInfo.json
+          format: uri
+          readOnly: true
+          type: string
+        ok:
+          type: boolean
+        pid:
+          format: int64
+          type: integer
+        service:
+          type: string
+        version:
+          type: string
+      required:
+        - ok
+      type: object
+    Progress:
+      additionalProperties: true
+      properties:
+        done:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - done
+        - total
+      type: object
+    QueryRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/QueryRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        sql:
+          type: string
+      required:
+        - sql
+      type: object
+    QueryResult:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/QueryResult.json
+          format: uri
+          readOnly: true
+          type: string
+        columns:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        row_count:
+          format: int64
+          type: integer
+        rows:
+          items:
+            items: {}
+            type:
+              - array
+              - "null"
+          type:
+            - array
+            - "null"
+      required:
+        - columns
+        - rows
+        - row_count
+      type: object
+    RemoveRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemoveRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        identifier:
+          type: string
+      required:
+        - account
+        - identifier
+      type: object
+    RemoveResult:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RemoveResult.json
+          format: uri
+          readOnly: true
+          type: string
+        account:
+          type: string
+        identifier:
+          type: string
+        no_identity:
+          type: boolean
+        removed:
+          format: int64
+          type: integer
+      required:
+        - account
+        - identifier
+        - removed
+      type: object
+    SchedulerStatusResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SchedulerStatusResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        accounts:
+          items:
+            $ref: "#/components/schemas/AccountStatus"
+          type:
+            - array
+            - "null"
+        running:
+          type: boolean
+      required:
+        - running
+        - accounts
+      type: object
+    ScoreBreakdown:
+      additionalProperties: true
+      properties:
+        bm25:
+          format: double
+          type: number
+        rrf:
+          format: double
+          type: number
+        subject_boosted:
+          type: boolean
+        vector:
+          format: double
+          type: number
+      type: object
+    SearchFastResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SearchFastResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        query:
+          type: string
+        stats:
+          $ref: "#/components/schemas/TotalStatsResponse"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - query
+        - messages
+        - total_count
+      type: object
+    SearchResult:
+      additionalProperties: true
+      properties:
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        page:
+          format: int64
+          type: integer
+        page_size:
+          format: int64
+          type: integer
+        query:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - query
+        - total
+        - page
+        - page_size
+        - messages
+      type: object
+    SenderCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        sender:
+          type: string
+      required:
+        - sender
+        - count
+      type: object
+    SimilarSearchResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SimilarSearchResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        generation:
+          $ref: "#/components/schemas/HybridGenerationSummary"
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          type:
+            - array
+            - "null"
+        returned:
+          format: int64
+          type: integer
+        seed_message_id:
+          format: int64
+          type: integer
+      required:
+        - seed_message_id
+        - returned
+        - generation
+        - messages
+      type: object
+    SourceStatus:
+      additionalProperties: true
+      properties:
+        active_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        display_name:
+          type:
+            - string
+            - "null"
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        last_successful_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        last_sync_at:
+          type:
+            - string
+            - "null"
+        latest_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        source_type:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - source_type
+        - identifier
+        - display_name
+        - last_sync_at
+        - updated_at
+        - active_sync
+        - latest_sync
+        - last_successful_sync
+      type: object
+    SourceStatusResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SourceStatusResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        sources:
+          items:
+            $ref: "#/components/schemas/SourceStatus"
+          type:
+            - array
+            - "null"
+      required:
+        - sources
+      type: object
+    SourcesRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SourcesRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        accounts:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - accounts
+      type: object
+    StatsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/StatsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        database_size_bytes:
+          format: int64
+          type: integer
+        total_accounts:
+          format: int64
+          type: integer
+        total_attachments:
+          format: int64
+          type: integer
+        total_labels:
+          format: int64
+          type: integer
+        total_messages:
+          format: int64
+          type: integer
+        total_threads:
+          format: int64
+          type: integer
+        vector_search:
+          $ref: "#/components/schemas/StatsView"
+      required:
+        - total_messages
+        - total_threads
+        - total_accounts
+        - total_labels
+        - total_attachments
+        - database_size_bytes
+      type: object
+    StatsView:
+      additionalProperties: true
+      properties:
+        active_generation:
+          $ref: "#/components/schemas/GenerationSummary"
+        building_generation:
+          $ref: "#/components/schemas/BuildingSummary"
+        enabled:
+          type: boolean
+        missing_embeddings_total:
+          format: int64
+          type: integer
+      required:
+        - enabled
+        - active_generation
+        - missing_embeddings_total
+      type: object
+    StatusMessageResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/StatusMessageResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - message
+      type: object
+    Summary:
+      additionalProperties: false
+      properties:
+        accounts:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        date_range:
+          items:
+            type: string
+          maxItems: 2
+          minItems: 2
+          type:
+            - array
+            - "null"
+        message_count:
+          format: int64
+          type: integer
+        top_senders:
+          items:
+            $ref: "#/components/schemas/SenderCount"
+          type:
+            - array
+            - "null"
+        total_size_bytes:
+          format: int64
+          type: integer
+      required:
+        - message_count
+        - total_size_bytes
+        - date_range
+        - accounts
+        - top_senders
+      type: object
+    SyncRunItemStatus:
+      additionalProperties: true
+      properties:
+        created_at:
+          type: string
+        error_kind:
+          type: string
+        error_message:
+          type: string
+        phase:
+          type: string
+        source_message_id:
+          type: string
+      required:
+        - source_message_id
+        - phase
+        - error_kind
+        - error_message
+        - created_at
+      type: object
+    SyncRunStatus:
+      additionalProperties: true
+      properties:
+        completed_at:
+          type:
+            - string
+            - "null"
+        cursor_after:
+          type:
+            - string
+            - "null"
+        cursor_before:
+          type:
+            - string
+            - "null"
+        error_message:
+          type:
+            - string
+            - "null"
+        errors_count:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        item_errors:
+          items:
+            $ref: "#/components/schemas/SyncRunItemStatus"
+          type:
+            - array
+            - "null"
+        messages_added:
+          format: int64
+          type: integer
+        messages_processed:
+          format: int64
+          type: integer
+        messages_updated:
+          format: int64
+          type: integer
+        skipped_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        started_at:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - source_id
+        - started_at
+        - completed_at
+        - status
+        - messages_processed
+        - messages_added
+        - messages_updated
+        - errors_count
+        - error_message
+        - cursor_before
+        - cursor_after
+      type: object
+    TokenUploadRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TokenUploadRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        access_token:
+          type: string
+        client_id:
+          type: string
+        expiry:
+          format: date-time
+          type: string
+        refresh_token:
+          type: string
+        scopes:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        tenant_id:
+          type: string
+        token_type:
+          type: string
+      required:
+        - refresh_token
+      type: object
+    TotalStatsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TotalStatsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        account_count:
+          format: int64
+          type: integer
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_size:
+          format: int64
+          type: integer
+        label_count:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        total_size:
+          format: int64
+          type: integer
+      required:
+        - message_count
+        - total_size
+        - attachment_count
+        - attachment_size
+        - label_count
+        - account_count
+      type: object
+    UpdateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/UpdateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+      required:
+        - email
+        - display_name
+      type: object
+    UpdateResult:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/UpdateResult.json
+          format: uri
+          readOnly: true
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+      required:
+        - email
+        - display_name
+      type: object
+  securitySchemes:
+    apiKey:
+      in: header
+      name: X-Api-Key
+      type: apiKey
+info:
+  title: msgvault API
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /api/ping:
+    get:
+      operationId: daemonPing
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PingInfo"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Daemon discovery ping
+      tags:
+        - Daemon
+  /api/v1/accounts:
+    get:
+      operationId: listAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List configured accounts
+      tags:
+        - API
+    post:
+      operationId: addAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddAccountRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add an account
+      tags:
+        - API
+  /api/v1/aggregates:
+    get:
+      operationId: getAggregates
+      parameters:
+        - description: Aggregate view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get aggregate rows
+      tags:
+        - API
+  /api/v1/aggregates/sub:
+    get:
+      operationId: getSubAggregates
+      parameters:
+        - description: Aggregate view type
+          in: query
+          name: view_type
+          required: true
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get nested aggregate rows
+      tags:
+        - API
+  /api/v1/attachments/{id}:
+    get:
+      operationId: getAttachment
+      parameters:
+        - description: Attachment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentInfo"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get attachment metadata
+      tags:
+        - API
+  /api/v1/auth/token/{email}:
+    post:
+      operationId: uploadToken
+      parameters:
+        - description: Account email address
+          in: path
+          name: email
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenUploadRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Upload an OAuth token
+      tags:
+        - API
+  /api/v1/cli/account:
+    post:
+      operationId: updateCLIAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Update an account for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/accounts:
+    get:
+      operationId: listCLIAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliAccountsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List accounts for CLI output
+      tags:
+        - API
+  /api/v1/cli/add-calendar/plan:
+    post:
+      operationId: planCLIAddCalendar
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIAddCalendarPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIAddCalendarPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI Calendar account setup
+      tags:
+        - API
+  /api/v1/cli/attachment:
+    get:
+      operationId: getCLIAttachment
+      parameters:
+        - description: Attachment SHA-256 content hash
+          in: query
+          name: content_hash
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one attachment for CLI export
+      tags:
+        - API
+  /api/v1/cli/build-cache:
+    post:
+      operationId: buildCLICache
+      parameters:
+        - description: Rebuild all cache files from scratch
+          in: query
+          name: full_rebuild
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLICacheBuildEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Build the CLI analytics cache
+      tags:
+        - API
+  /api/v1/cli/cache-stats:
+    get:
+      operationId: getCLICacheStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheStats"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get CLI-compatible analytics cache statistics
+      tags:
+        - API
+  /api/v1/cli/collection:
+    get:
+      operationId: getCLICollection
+      parameters:
+        - description: Collection name
+          in: query
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliCollectionEnvelope"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one collection for CLI output
+      tags:
+        - API
+  /api/v1/cli/collections:
+    get:
+      operationId: listCLICollections
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliCollectionsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List collections for CLI output
+      tags:
+        - API
+    post:
+      operationId: createCLICollection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Create a collection for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/collections/{name}:
+    delete:
+      operationId: deleteCLICollection
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Delete a CLI collection
+      tags:
+        - CLI
+  /api/v1/cli/collections/{name}/sources:
+    delete:
+      operationId: removeCLICollectionSources
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Remove accounts from a CLI collection
+      tags:
+        - CLI
+    patch:
+      operationId: addCLICollectionSources
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Add accounts to a CLI collection
+      tags:
+        - CLI
+  /api/v1/cli/deduplicate/plan:
+    post:
+      operationId: planCLIDeduplicate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIDeduplicatePlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeduplicatePlanResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Plan interactive deduplication for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-deduped:
+    post:
+      operationId: executeCLIDeleteDeduped
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliDeleteDedupedExecuteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliDeleteDedupedExecuteResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Delete dedup-hidden messages for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-deduped/plan:
+    post:
+      operationId: planCLIDeleteDeduped
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliDeleteDedupedPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliDeleteDedupedPlanResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Plan deletion of dedup-hidden messages for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-staged/plan:
+    post:
+      operationId: planCLIDeleteStaged
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIDeleteStagedPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeleteStagedPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI staged deletion execution
+      tags:
+        - API
+  /api/v1/cli/deletion-manifests:
+    post:
+      operationId: createCLIDeletionManifest
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Manifest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeletionManifestResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a staged deletion manifest
+      tags:
+        - API
+  /api/v1/cli/embeddings/plan:
+    post:
+      operationId: planCLIEmbeddings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIEmbeddingsPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIEmbeddingsPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI embeddings management
+      tags:
+        - API
+  /api/v1/cli/identities:
+    delete:
+      operationId: removeCLIIdentity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoveResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Remove a confirmed identifier from an account identity
+      tags:
+        - CLI
+    get:
+      operationId: listCLIIdentities
+      parameters:
+        - description: Restrict to a single account
+          explode: false
+          in: query
+          name: account
+          schema:
+            description: Restrict to a single account
+            type: string
+        - description: Restrict to all member accounts of one collection
+          explode: false
+          in: query
+          name: collection
+          schema:
+            description: Restrict to all member accounts of one collection
+            type: string
+        - description: For account scope, return only the primary source instead of related sources
+          explode: false
+          in: query
+          name: primary_only
+          schema:
+            description: For account scope, return only the primary source instead of related sources
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliIdentitiesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: List confirmed account identities
+      tags:
+        - CLI
+    post:
+      operationId: addCLIIdentity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Add a confirmed identifier to an account identity
+      tags:
+        - CLI
+  /api/v1/cli/init-db:
+    post:
+      operationId: initCLIArchive
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliInitDBResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Initialize the archive for CLI use
+      tags:
+        - API
+  /api/v1/cli/message:
+    get:
+      operationId: getCLIMessage
+      parameters:
+        - description: Message numeric ID or source message ID
+          in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliMessageResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one message for CLI output
+      tags:
+        - API
+  /api/v1/cli/message/raw:
+    get:
+      operationId: getCLIMessageRaw
+      parameters:
+        - description: Message numeric ID or source message ID
+          in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            message/rfc822:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one raw message for CLI export
+      tags:
+        - API
+  /api/v1/cli/rebuild-fts:
+    post:
+      operationId: rebuildCLIFTS
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CliRebuildFTSEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Rebuild the CLI full-text search index
+      tags:
+        - API
+  /api/v1/cli/repair-encoding:
+    post:
+      operationId: repairEncodingCLI
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIRepairEncodingEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Repair CLI archive encoding
+      tags:
+        - API
+  /api/v1/cli/run:
+    post:
+      operationId: runCLI
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIRunRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIRunEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run an allowlisted CLI command
+      tags:
+        - API
+  /api/v1/cli/search:
+    get:
+      operationId: searchCLI
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Message type filter; repeat or comma-separate for multiple values
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages for CLI output
+      tags:
+        - API
+  /api/v1/cli/stats:
+    get:
+      operationId: getCLIStats
+      parameters:
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get CLI-compatible archive statistics
+      tags:
+        - API
+  /api/v1/cli/sync:
+    post:
+      operationId: syncCLI
+      parameters:
+        - description: Account email or display name to sync
+          in: query
+          name: email
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLISyncEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run CLI incremental sync
+      tags:
+        - API
+  /api/v1/cli/sync-full:
+    post:
+      operationId: syncFullCLI
+      parameters:
+        - description: Account email or display name to sync
+          in: query
+          name: email
+          schema:
+            type: string
+        - description: Gmail search query
+          in: query
+          name: query
+          schema:
+            type: string
+        - description: Only messages on or after this YYYY-MM-DD date
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Only messages before this YYYY-MM-DD date
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Maximum messages to sync
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Ignore checkpoints and start fresh
+          in: query
+          name: noresume
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLISyncEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run CLI full sync
+      tags:
+        - API
+  /api/v1/cli/verify:
+    post:
+      operationId: verifyCLI
+      parameters:
+        - description: Account email to verify
+          in: query
+          name: email
+          required: true
+          schema:
+            type: string
+        - description: Number of messages to sample for MIME verification
+          in: query
+          name: sample
+          schema:
+            format: int64
+            type: integer
+        - description: Skip SQLite integrity check
+          in: query
+          name: skip_db_check
+          schema:
+            type: boolean
+        - description: Emit JSON summary output
+          in: query
+          name: json
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIVerifyEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/messages:
+    get:
+      operationId: listMessages
+      parameters:
+        - description: One-based page number
+          in: query
+          name: page
+          schema:
+            format: int64
+            type: integer
+        - description: Page size
+          in: query
+          name: page_size
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List messages
+      tags:
+        - API
+  /api/v1/messages/filter:
+    get:
+      operationId: filterMessages
+      parameters:
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilteredMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List filtered messages
+      tags:
+        - API
+  /api/v1/messages/gmail-ids:
+    get:
+      operationId: getGmailIDsByFilter
+      parameters:
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailIDsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List Gmail message IDs matching a filter
+      tags:
+        - API
+  /api/v1/messages/{id}:
+    get:
+      operationId: getMessage
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageDetail"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/inline:
+    get:
+      operationId: getMessageInlinePart
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Inline MIME Content-ID
+          in: query
+          name: cid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/query:
+    post:
+      operationId: runQuery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run an aggregate query
+      tags:
+        - API
+  /api/v1/scheduler/status:
+    get:
+      operationId: getSchedulerStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get scheduler status
+      tags:
+        - API
+  /api/v1/search:
+    get:
+      operationId: searchMessages
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: "Search mode: fts, vector, or hybrid"
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: One-based page number
+          in: query
+          name: page
+          schema:
+            format: int64
+            type: integer
+        - description: Page size
+          in: query
+          name: page_size
+          schema:
+            format: int64
+            type: integer
+        - description: Include score explanation when mode is vector or hybrid
+          in: query
+          name: explain
+          schema:
+            type: boolean
+        - description: Message type filter; repeat or comma-separate for multiple values
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SearchResult"
+                  - $ref: "#/components/schemas/HybridSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages
+      tags:
+        - API
+  /api/v1/search/deep:
+    get:
+      operationId: deepSearch
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeepSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run deep aggregate search
+      tags:
+        - API
+  /api/v1/search/domains:
+    get:
+      operationId: searchMessagesByDomains
+      parameters:
+        - description: Comma-separated participant domains
+          in: query
+          name: domains
+          required: true
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilteredMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages by participant domains
+      tags:
+        - API
+  /api/v1/search/fast:
+    get:
+      operationId: fastSearch
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Stats grouping view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchFastResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run fast aggregate search
+      tags:
+        - API
+  /api/v1/search/similar:
+    get:
+      operationId: findSimilarMessages
+      parameters:
+        - description: Seed message ID
+          in: query
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Account email or configured source identifier
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Only include messages with attachments
+          in: query
+          name: has_attachment
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimilarSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find messages similar to a seed message
+      tags:
+        - API
+  /api/v1/sources/status:
+    get:
+      operationId: listSourceStatus
+      parameters:
+        - description: Restrict to one source type
+          in: query
+          name: source_type
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List source sync status
+      tags:
+        - API
+  /api/v1/stats:
+    get:
+      operationId: getStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get archive statistics
+      tags:
+        - API
+  /api/v1/stats/total:
+    get:
+      operationId: getTotalStats
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Aggregate view type for grouping
+          in: query
+          name: group_by
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotalStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get aggregate totals
+      tags:
+        - API
+  /api/v1/sync/{account}:
+    post:
+      operationId: triggerSync
+      parameters:
+        - description: Account email or configured source identifier
+          in: path
+          name: account
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Accepted
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Trigger account sync
+      tags:
+        - API
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Health check
+      tags:
+        - System
+    head:
+      operationId: headHealth
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Error
+      summary: Health check
+      tags:
+        - System

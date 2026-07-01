@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,18 +15,24 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
-	"go.kenn.io/msgvault/internal/remote"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -83,6 +91,41 @@ func newTestServerWithMockStore(t *testing.T) (*Server, *mockStore) {
 	return srv, store
 }
 
+func newCLIHandlerTestServer(st *mockStore) *Server {
+	return NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+}
+
+func servePOSTTestRequest(srv *Server, target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, target, nil)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+	return resp
+}
+
+func requireNDJSONResponse(t *testing.T, resp *httptest.ResponseRecorder) {
+	t.Helper()
+
+	requirepkg.Equal(t, http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assertpkg.Contains(t, resp.Header().Get("Content-Type"), "application/x-ndjson", "content type")
+}
+
+func decodeNDJSONEvents[T any](t *testing.T, body io.Reader) []T {
+	t.Helper()
+
+	var events []T
+	dec := json.NewDecoder(body)
+	for {
+		var event T
+		err := dec.Decode(&event)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		requirepkg.NoError(t, err, "decode event")
+		events = append(events, event)
+	}
+	return events
+}
+
 func TestHandleStats(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -112,6 +155,1862 @@ func TestHandleStats(t *testing.T) {
 	require.NoError(json.Unmarshal(bodyBytes, &raw), "decode raw")
 	_, exists := raw["vector_search"]
 	assert.False(exists, "vector_search key present in JSON; want omitted entirely (raw=%s)", string(raw["vector_search"]))
+}
+
+func TestHandleCLIStatsCollectionScope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	_, err = st.CreateCollection("Important", "important mail", []int64{src.ID})
+	require.NoError(err, "CreateCollection")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats?collection=Important", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp cliStatsResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("Important", resp.ScopeLabel, "scope label")
+	assert.Equal(1, resp.ScopeSourceCount, "scope source count")
+	assert.Equal(int64(1), resp.Stats.TotalAccounts, "scoped account count")
+	assert.Equal(int64(0), resp.Stats.TotalMessages, "scoped message count")
+}
+
+func TestHandleCLIStatsAccountScopeIncludesAssociatedCalendarSources(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	gmail, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource gmail")
+	calendar, err := st.GetOrCreateSource(gcal.SourceType, "alice@example.com/primary")
+	require.NoError(err, "GetOrCreateSource calendar")
+	require.NotEqual(gmail.ID, calendar.ID, "fixture source IDs")
+	calendarConfig, err := json.Marshal(map[string]string{
+		"account_email": "alice@example.com",
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal calendar config")
+	require.NoError(st.UpdateSourceSyncConfig(calendar.ID, string(calendarConfig)), "UpdateSourceSyncConfig")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats?account=alice@example.com", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp cliStatsResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("alice@example.com", resp.ScopeLabel, "scope label")
+	assert.Equal(2, resp.ScopeSourceCount, "scope source count")
+	assert.Equal(int64(2), resp.Stats.TotalAccounts, "scoped account count")
+}
+
+func TestHandleCLIStatsAccountLookupErrorReturnsInternal(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv, st := newTestServerWithMockStore(t)
+	st.sourcesByLookupErr = errors.New("source index unavailable")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats?account=alice@example.com", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusInternalServerError, w.Code, "status: %s", w.Body.String())
+
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error response")
+	assert.Equal("internal_error", resp.Error, "error code")
+	assert.Equal("Failed to resolve CLI scope", resp.Message, "error message")
+}
+
+func TestHandleCLICreateDeletionManifest(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	manifest := deletion.NewManifest("tui selection", []string{"gid1", "gid2"})
+	manifest.CreatedBy = "tui"
+	var saved *deletion.Manifest
+	st := &mockStore{
+		saveManifestFunc: func(_ context.Context, got *deletion.Manifest) error {
+			saved = got
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	body, err := json.Marshal(manifest)
+	require.NoError(err, "marshal manifest")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/deletion-manifests", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	require.NotNil(saved, "saved manifest")
+	assert.Equal(manifest.ID, saved.ID)
+	assert.Equal("tui selection", saved.Description)
+	assert.Equal([]string{"gid1", "gid2"}, saved.GmailIDs)
+	assert.Equal(deletion.StatusPending, saved.Status)
+
+	var decoded CLIDeletionManifestResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &decoded), "decode response")
+	assert.Equal(manifest.ID, decoded.ID)
+	assert.Equal(2, decoded.MessageCount)
+}
+
+func TestHandleCLIIdentities(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource alice")
+	oldMbox, err := st.GetOrCreateSource("mbox", "old-mbox")
+	require.NoError(err, "GetOrCreateSource old mbox")
+	require.NoError(st.AddAccountIdentity(alice.ID, "alice@example.com", "manual"), "AddAccountIdentity")
+	_, err = st.CreateCollection("IdentityScope", "identity test", []int64{alice.ID, oldMbox.ID})
+	require.NoError(err, "CreateCollection")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/identities?collection=IdentityScope", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp cliIdentitiesResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Rows, 2, "rows")
+
+	assert.Equal("alice@example.com", resp.Rows[0].Account, "identity account")
+	assert.Equal(alice.ID, resp.Rows[0].SourceID, "identity source ID")
+	assert.Equal("gmail", resp.Rows[0].SourceType, "identity source type")
+	assert.Equal("alice@example.com", resp.Rows[0].Identifier, "identity identifier")
+	assert.Equal([]string{"manual"}, resp.Rows[0].Signals, "identity signals")
+	require.NotNil(resp.Rows[0].ConfirmedAt, "identity confirmed_at")
+	assert.False(resp.Rows[0].None, "identity none")
+
+	assert.Equal("old-mbox", resp.Rows[1].Account, "none account")
+	assert.Equal(oldMbox.ID, resp.Rows[1].SourceID, "none source ID")
+	assert.Equal("mbox", resp.Rows[1].SourceType, "none source type")
+	assert.Empty(resp.Rows[1].Identifier, "none identifier")
+	assert.Empty(resp.Rows[1].Signals, "none signals")
+	assert.Nil(resp.Rows[1].ConfirmedAt, "none confirmed_at")
+	assert.True(resp.Rows[1].None, "none flag")
+}
+
+func TestHandleCLIIdentitiesPrimaryOnlyAccount(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource alice")
+	cal, err := st.GetOrCreateSource(gcal.SourceType, "alice@example.com/primary")
+	require.NoError(err, "GetOrCreateSource calendar")
+	calendarConfig, err := json.Marshal(map[string]string{
+		"account_email": "alice@example.com",
+		"calendar_id":   "primary",
+	})
+	require.NoError(err, "marshal calendar config")
+	require.NoError(st.UpdateSourceSyncConfig(cal.ID, string(calendarConfig)), "UpdateSourceSyncConfig")
+	require.NoError(st.AddAccountIdentity(alice.ID, "alice@example.com", "manual"), "AddAccountIdentity alice")
+	require.NoError(st.AddAccountIdentity(cal.ID, "calendar-self@example.com", "manual"), "AddAccountIdentity calendar")
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/cli/identities?account=alice@example.com&primary_only=true",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+	var resp cliIdentitiesResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Rows, 1, "rows")
+	assert.Equal(alice.ID, resp.Rows[0].SourceID, "primary source ID")
+	assert.Equal("alice@example.com", resp.Rows[0].Account, "primary account")
+	assert.Equal("alice@example.com", resp.Rows[0].Identifier, "primary identifier")
+}
+
+func TestHandleCLIIdentityAddAndRemove(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource alice")
+
+	addReq := strings.NewReader(`{
+		"account": "alice@example.com",
+		"identifier": "extra@example.com",
+		"signal": "manual"
+	}`)
+	addHTTPReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities", addReq)
+	addResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(addResp, addHTTPReq)
+
+	assert.Equal(http.StatusOK, addResp.Code, "add status: %s", addResp.Body.String())
+	var addOut cliIdentityAddResponse
+	require.NoError(json.NewDecoder(addResp.Body).Decode(&addOut), "decode add response")
+	assert.Equal("alice@example.com", addOut.Account, "add account")
+	assert.Equal("extra@example.com", addOut.Identifier, "add identifier")
+	assert.Equal("manual", addOut.Signal, "add signal")
+	assert.Equal("added", addOut.Outcome, "add outcome")
+
+	identities, err := st.ListAccountIdentities(alice.ID)
+	require.NoError(err, "ListAccountIdentities after add")
+	require.Len(identities, 1, "identities after add")
+	assert.Equal("extra@example.com", identities[0].Address, "stored address")
+
+	removeReq := strings.NewReader(`{
+		"account": "alice@example.com",
+		"identifier": "extra@example.com"
+	}`)
+	removeHTTPReq := httptest.NewRequest(http.MethodDelete, "/api/v1/cli/identities", removeReq)
+	removeResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(removeResp, removeHTTPReq)
+
+	assert.Equal(http.StatusOK, removeResp.Code, "remove status: %s", removeResp.Body.String())
+	var removeOut cliIdentityRemoveResponse
+	require.NoError(json.NewDecoder(removeResp.Body).Decode(&removeOut), "decode remove response")
+	assert.Equal("alice@example.com", removeOut.Account, "remove account")
+	assert.Equal("extra@example.com", removeOut.Identifier, "remove identifier")
+	assert.Equal(int64(1), removeOut.Removed, "removed")
+	assert.True(removeOut.NoIdentity, "no identity warning flag")
+
+	identities, err = st.ListAccountIdentities(alice.ID)
+	require.NoError(err, "ListAccountIdentities after remove")
+	assert.Empty(identities, "identities after remove")
+}
+
+func TestHandleCLICollectionMutations(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	alice, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource alice")
+	bob, err := st.GetOrCreateSource("imap", "bob@example.com")
+	require.NoError(err, "GetOrCreateSource bob")
+
+	createReq := strings.NewReader(`{
+		"name": "Team",
+		"accounts": ["alice@example.com"]
+	}`)
+	createHTTPReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/collections", createReq)
+	createResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(createResp, createHTTPReq)
+
+	assert.Equal(http.StatusOK, createResp.Code, "create status: %s", createResp.Body.String())
+	var createOut struct {
+		Name        string `json:"name"`
+		SourceCount int    `json:"source_count"`
+	}
+	require.NoError(json.NewDecoder(createResp.Body).Decode(&createOut), "decode create response")
+	assert.Equal("Team", createOut.Name, "create name")
+	assert.Equal(1, createOut.SourceCount, "create source count")
+
+	coll, err := st.GetCollectionByName("Team")
+	require.NoError(err, "GetCollectionByName after create")
+	assert.Equal([]int64{alice.ID}, coll.SourceIDs, "created sources")
+
+	addReq := strings.NewReader(`{"accounts":["bob@example.com"]}`)
+	addHTTPReq := httptest.NewRequest(http.MethodPatch, "/api/v1/cli/collections/Team/sources", addReq)
+	addResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(addResp, addHTTPReq)
+
+	assert.Equal(http.StatusOK, addResp.Code, "add status: %s", addResp.Body.String())
+	var addOut struct {
+		Name        string `json:"name"`
+		SourceCount int    `json:"source_count"`
+	}
+	require.NoError(json.NewDecoder(addResp.Body).Decode(&addOut), "decode add response")
+	assert.Equal("Team", addOut.Name, "add name")
+	assert.Equal(1, addOut.SourceCount, "add source count")
+
+	coll, err = st.GetCollectionByName("Team")
+	require.NoError(err, "GetCollectionByName after add")
+	assert.Equal([]int64{alice.ID, bob.ID}, coll.SourceIDs, "sources after add")
+
+	removeReq := strings.NewReader(`{"accounts":["alice@example.com"]}`)
+	removeHTTPReq := httptest.NewRequest(http.MethodDelete, "/api/v1/cli/collections/Team/sources", removeReq)
+	removeResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(removeResp, removeHTTPReq)
+
+	assert.Equal(http.StatusOK, removeResp.Code, "remove status: %s", removeResp.Body.String())
+	var removeOut struct {
+		Name        string `json:"name"`
+		SourceCount int    `json:"source_count"`
+	}
+	require.NoError(json.NewDecoder(removeResp.Body).Decode(&removeOut), "decode remove response")
+	assert.Equal("Team", removeOut.Name, "remove name")
+	assert.Equal(1, removeOut.SourceCount, "remove source count")
+
+	coll, err = st.GetCollectionByName("Team")
+	require.NoError(err, "GetCollectionByName after remove")
+	assert.Equal([]int64{bob.ID}, coll.SourceIDs, "sources after remove")
+
+	deleteHTTPReq := httptest.NewRequest(http.MethodDelete, "/api/v1/cli/collections/Team", nil)
+	deleteResp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(deleteResp, deleteHTTPReq)
+
+	assert.Equal(http.StatusOK, deleteResp.Code, "delete status: %s", deleteResp.Body.String())
+	var deleteOut struct {
+		Name string `json:"name"`
+	}
+	require.NoError(json.NewDecoder(deleteResp.Body).Decode(&deleteOut), "decode delete response")
+	assert.Equal("Team", deleteOut.Name, "delete name")
+
+	_, err = st.GetCollectionByName("Team")
+	require.ErrorIs(err, store.ErrCollectionNotFound, "collection deleted")
+}
+
+func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusOK, resp.Code, "openapi status: %s", resp.Body.String())
+	var doc map[string]any
+	require.NoError(json.NewDecoder(resp.Body).Decode(&doc), "decode openapi")
+	assert.Equal("3.1.0", doc["openapi"], "openapi version")
+
+	paths, ok := doc["paths"].(map[string]any)
+	require.True(ok, "paths object")
+	identityPath, ok := paths["/api/v1/cli/identities"].(map[string]any)
+	require.True(ok, "identity path present")
+
+	for _, method := range []string{"get", "post", "delete"} {
+		op, ok := identityPath[method].(map[string]any)
+		require.True(ok, "identity %s operation present", method)
+		assert.Contains(op, "operationId", "identity %s operation id", method)
+		assert.Contains(op, "responses", "identity %s responses", method)
+	}
+}
+
+func TestOpenAPIExportsServerRouteTable(t *testing.T) {
+	require := requirepkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "openapi status: %s", resp.Body.String())
+	var doc struct {
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	require.NoError(json.NewDecoder(resp.Body).Decode(&doc), "decode openapi")
+
+	expected := map[string][]string{
+		"/health":                                {"get", "head"},
+		daemon.DefaultPingPath:                   {"get"},
+		"/api/v1/stats":                          {"get"},
+		"/api/v1/cli/init-db":                    {"post"},
+		"/api/v1/cli/stats":                      {"get"},
+		"/api/v1/cli/search":                     {"get"},
+		"/api/v1/cli/accounts":                   {"get"},
+		"/api/v1/cli/build-cache":                {"post"},
+		"/api/v1/cli/cache-stats":                {"get"},
+		"/api/v1/cli/sync":                       {"post"},
+		"/api/v1/cli/sync-full":                  {"post"},
+		"/api/v1/cli/verify":                     {"post"},
+		"/api/v1/cli/repair-encoding":            {"post"},
+		"/api/v1/cli/message":                    {"get"},
+		"/api/v1/cli/message/raw":                {"get"},
+		"/api/v1/cli/attachment":                 {"get"},
+		"/api/v1/cli/collections":                {"get", "post"},
+		"/api/v1/cli/collections/{name}":         {"delete"},
+		"/api/v1/cli/collections/{name}/sources": {"patch", "delete"},
+		"/api/v1/cli/collection":                 {"get"},
+		"/api/v1/cli/identities":                 {"get", "post", "delete"},
+		"/api/v1/cli/deduplicate/plan":           {"post"},
+		"/api/v1/cli/delete-deduped":             {"post"},
+		"/api/v1/cli/delete-deduped/plan":        {"post"},
+		"/api/v1/cli/rebuild-fts":                {"post"},
+		"/api/v1/messages":                       {"get"},
+		"/api/v1/messages/{id}":                  {"get"},
+		"/api/v1/messages/{id}/inline":           {"get"},
+		"/api/v1/search":                         {"get"},
+		"/api/v1/query":                          {"post"},
+		"/api/v1/aggregates":                     {"get"},
+		"/api/v1/aggregates/sub":                 {"get"},
+		"/api/v1/messages/filter":                {"get"},
+		"/api/v1/messages/gmail-ids":             {"get"},
+		"/api/v1/stats/total":                    {"get"},
+		"/api/v1/search/fast":                    {"get"},
+		"/api/v1/search/deep":                    {"get"},
+		"/api/v1/accounts":                       {"get", "post"},
+		"/api/v1/sources/status":                 {"get"},
+		"/api/v1/sync/{account}":                 {"post"},
+		"/api/v1/scheduler/status":               {"get"},
+		"/api/v1/auth/token/{email}":             {"post"},
+	}
+
+	for path, methods := range expected {
+		operations, ok := doc.Paths[path]
+		require.True(ok, "path %s present", path)
+		for _, method := range methods {
+			require.Contains(operations, method, "%s %s present", method, path)
+		}
+	}
+
+	successResponses := map[string]map[string][]string{
+		"/api/v1/accounts": {
+			"post": {"200", "201"},
+		},
+		"/api/v1/sync/{account}": {
+			"post": {"202"},
+		},
+		"/api/v1/auth/token/{email}": {
+			"post": {"201"},
+		},
+	}
+	for path, methods := range successResponses {
+		operations := doc.Paths[path]
+		for method, statuses := range methods {
+			op, ok := operations[method].(map[string]any)
+			require.True(ok, "%s %s operation object", method, path)
+			responses, ok := op["responses"].(map[string]any)
+			require.True(ok, "%s %s responses object", method, path)
+			for _, status := range statuses {
+				require.Contains(responses, status, "%s %s success status", method, path)
+			}
+		}
+	}
+
+	collectionCreate, ok := doc.Paths["/api/v1/cli/collections"]["post"].(map[string]any)
+	require.True(ok, "collection create operation object")
+	responses, ok := collectionCreate["responses"].(map[string]any)
+	require.True(ok, "collection create responses object")
+	require.Contains(responses, "404", "collection create unresolved account response")
+}
+
+func TestCLIInitDBRunsStartupMigrationsAndReturnsStats(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{
+		Identity: config.IdentityConfig{Addresses: []string{"alice@example.com"}},
+		Server:   config.ServerConfig{APIPort: 8080},
+	}
+	srv := NewServer(cfg, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/init-db", nil)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "init-db status: %s", resp.Body.String())
+
+	var out cliInitDBResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode response")
+	assert.Contains(out.Notice, "legacy [identity] config", "migration notice")
+	assert.Equal(int64(0), out.Stats.TotalMessages, "messages")
+	assert.Equal(int64(0), out.Stats.TotalThreads, "threads")
+	assert.Equal(int64(0), out.Stats.TotalAccounts, "accounts")
+}
+
+func TestCLICacheStatsReportsMissingCacheThroughDaemon(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{
+		Data:   config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{APIPort: 8080},
+	}
+	srv := NewServer(cfg, st, nil, testLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/cache-stats", nil)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "cache-stats status: %s", resp.Body.String())
+	var out cliCacheStatsResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode response")
+	assert.Equal("no_cache_files", out.Status, "status")
+}
+
+func TestHandleCLIBuildCacheStreamsOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotFullRebuild bool
+	st := &mockStore{
+		buildCacheFunc: func(_ context.Context, fullRebuild bool, emit func(CLICacheBuildEvent) error) error {
+			gotFullRebuild = fullRebuild
+			require.NoError(emit(CLICacheBuildEvent{Type: "stdout", Data: "Building cache...\n"}), "emit stdout")
+			require.NoError(emit(CLICacheBuildEvent{Type: "stderr", Data: "Warning: using CSV fallback\n"}), "emit stderr")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/build-cache?full_rebuild=true")
+
+	requireNDJSONResponse(t, resp)
+	assert.True(gotFullRebuild, "full rebuild")
+
+	events := decodeNDJSONEvents[CLICacheBuildEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal(CLICacheBuildEvent{Type: "stdout", Data: "Building cache...\n"}, events[0], "stdout event")
+	assert.Equal(CLICacheBuildEvent{Type: "stderr", Data: "Warning: using CSV fallback\n"}, events[1], "stderr event")
+	assert.Equal(CLICacheBuildEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
+}
+
+func TestHandleCLISyncFullStreamsOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLISyncRequest
+	st := &mockStore{
+		syncFunc: func(_ context.Context, req CLISyncRequest, emit func(CLISyncEvent) error) error {
+			gotReq = req
+			require.NoError(emit(CLISyncEvent{Type: "stdout", Data: "Starting full sync\n"}), "emit stdout")
+			require.NoError(emit(CLISyncEvent{Type: "stderr", Data: "sync warning\n"}), "emit stderr")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(
+		srv,
+		"/api/v1/cli/sync-full?email=alice@example.com&query=from%3Abob&after=2024-01-01&before=2024-12-31&limit=25&noresume=true",
+	)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(CLISyncRequest{
+		Full:     true,
+		Email:    "alice@example.com",
+		Query:    "from:bob",
+		NoResume: true,
+		Before:   "2024-12-31",
+		After:    "2024-01-01",
+		Limit:    25,
+	}, gotReq, "sync request")
+
+	events := decodeNDJSONEvents[CLISyncEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal(CLISyncEvent{Type: "stdout", Data: "Starting full sync\n"}, events[0], "stdout event")
+	assert.Equal(CLISyncEvent{Type: "stderr", Data: "sync warning\n"}, events[1], "stderr event")
+	assert.Equal(CLISyncEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
+}
+
+func TestHandleCLIVerifyStreamsOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIVerifyRequest
+	st := &mockStore{
+		verifyFunc: func(_ context.Context, req CLIVerifyRequest, emit func(CLIVerifyEvent) error) error {
+			gotReq = req
+			require.NoError(emit(CLIVerifyEvent{Type: "stdout", Data: "Verifying archive\n"}), "emit stdout")
+			require.NoError(emit(CLIVerifyEvent{Type: "stderr", Data: "verify warning\n"}), "emit stderr")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(
+		srv,
+		"/api/v1/cli/verify?email=alice@example.com&sample=25&skip_db_check=true&json=true",
+	)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(CLIVerifyRequest{
+		Email:       "alice@example.com",
+		SampleSize:  25,
+		SkipDBCheck: true,
+		JSON:        true,
+	}, gotReq, "verify request")
+
+	events := decodeNDJSONEvents[CLIVerifyEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal(CLIVerifyEvent{Type: "stdout", Data: "Verifying archive\n"}, events[0], "stdout event")
+	assert.Equal(CLIVerifyEvent{Type: "stderr", Data: "verify warning\n"}, events[1], "stderr event")
+	assert.Equal(CLIVerifyEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
+}
+
+func TestHandleCLIRepairEncodingStreamsOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	st := &mockStore{
+		repairFunc: func(_ context.Context, emit func(CLIRepairEncodingEvent) error) error {
+			require.NoError(emit(CLIRepairEncodingEvent{Type: "stdout", Data: "Scanning messages\n"}), "emit stdout")
+			require.NoError(emit(CLIRepairEncodingEvent{Type: "stderr", Data: "repair warning\n"}), "emit stderr")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/repair-encoding")
+
+	requireNDJSONResponse(t, resp)
+	events := decodeNDJSONEvents[CLIRepairEncodingEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal(CLIRepairEncodingEvent{Type: "stdout", Data: "Scanning messages\n"}, events[0], "stdout event")
+	assert.Equal(CLIRepairEncodingEvent{Type: "stderr", Data: "repair warning\n"}, events[1], "stderr event")
+	assert.Equal(CLIRepairEncodingEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
+}
+
+func TestHandleCLIRunStreamsGenericCommandOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIRunRequest
+	st := &mockStore{
+		runFunc: func(_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
+			gotReq = req
+			require.NoError(emit(CLIRunEvent{Type: "stdout", Data: "Removing account\n"}), "emit stdout")
+			require.NoError(emit(CLIRunEvent{Type: "stderr", Data: "remove warning\n"}), "emit stderr")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"args":["remove-account","alice@example.com","--yes"],"env":{"MSGVAULT_IMAP_PASSWORD":"secret"},"cwd":"/caller"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(CLIRunRequest{
+		Args: []string{"remove-account", "alice@example.com", "--yes"},
+		Env:  map[string]string{"MSGVAULT_IMAP_PASSWORD": "secret"},
+		Cwd:  "/caller",
+	}, gotReq, "run request")
+
+	events := decodeNDJSONEvents[CLIRunEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal(CLIRunEvent{Type: "stdout", Data: "Removing account\n"}, events[0], "stdout event")
+	assert.Equal(CLIRunEvent{Type: "stderr", Data: "remove warning\n"}, events[1], "stderr event")
+	assert.Equal(CLIRunEvent{Type: cliStreamEventTypeComplete}, events[2], "complete event")
+}
+
+func TestHandleCLIRunAllowsLegacyBuildEmbeddingsCommand(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIRunRequest
+	st := &mockStore{
+		runFunc: func(_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
+			gotReq = req
+			require.NoError(emit(CLIRunEvent{Type: "stdout", Data: "Building generation 2\n"}), "emit stdout")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"args":["build-embeddings","--backstop"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(CLIRunRequest{
+		Args: []string{"build-embeddings", "--backstop"},
+	}, gotReq, "run request")
+
+	events := decodeNDJSONEvents[CLIRunEvent](t, resp.Body)
+	require.Len(events, 2, "events")
+	assert.Equal(CLIRunEvent{Type: "stdout", Data: "Building generation 2\n"}, events[0], "stdout event")
+	assert.Equal(CLIRunEvent{Type: cliStreamEventTypeComplete}, events[1], "complete event")
+}
+
+func TestHandleCLIRunAllowsLogsCommand(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIRunRequest
+	st := &mockStore{
+		runFunc: func(_ context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
+			gotReq = req
+			require.NoError(emit(CLIRunEvent{Type: "stdout", Data: "recent log\n"}), "emit stdout")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"args":["logs","--lines=10"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	requireNDJSONResponse(t, resp)
+	assert.Equal(CLIRunRequest{
+		Args: []string{"logs", "--lines=10"},
+	}, gotReq, "run request")
+
+	events := decodeNDJSONEvents[CLIRunEvent](t, resp.Body)
+	require.Len(events, 2, "events")
+	assert.Equal(CLIRunEvent{Type: "stdout", Data: "recent log\n"}, events[0], "stdout event")
+	assert.Equal(CLIRunEvent{Type: cliStreamEventTypeComplete}, events[1], "complete event")
+}
+
+func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	canceled := false
+	st := &mockStore{
+		runFunc: func(ctx context.Context, req CLIRunRequest, emit func(CLIRunEvent) error) error {
+			assert.Equal([]string{"deduplicate", "--dry-run"}, req.Args, "args")
+			time.Sleep(40 * time.Millisecond)
+			if err := ctx.Err(); err != nil {
+				canceled = true
+				return err
+			}
+			return emit(CLIRunEvent{Type: cliStreamEventTypeComplete})
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:          st,
+		Logger:         testLogger(),
+		RequestTimeout: 5 * time.Millisecond,
+	})
+
+	body := strings.NewReader(`{"args":["deduplicate","--dry-run"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.False(canceled, "cli runner context should not use the standard request timeout")
+	assert.Contains(resp.Body.String(), `"type":"complete"`, "body")
+}
+
+func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	st := &mockStore{
+		runFunc: func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
+			requirepkg.FailNow(t, "disallowed env should not reach runner")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"args":["add-imap"],"env":{"PATH":"/tmp/bin"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+	assert.Contains(resp.Body.String(), "env_not_allowed", "error body")
+}
+
+func TestHandleCLIAddCalendarPlanReturnsPrompt(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIAddCalendarPlanRequest
+	st := &mockStore{
+		planCalendarFunc: func(_ context.Context, req CLIAddCalendarPlanRequest) (CLIAddCalendarPlanResponse, error) {
+			gotReq = req
+			return CLIAddCalendarPlanResponse{
+				NeedsScopeEscalation: true,
+				Headline:             "CALENDAR ACCESS REQUIRED",
+				BodyLines:            []string{"Calendar sync needs read-only Calendar access."},
+				CancelHint:           "Cancelled. Calendar was not added.",
+			}, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"email":"alice@example.com","oauth_app":"acme","oauth_app_explicit":true,"headless":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/add-calendar/plan", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.Equal(CLIAddCalendarPlanRequest{
+		Email:            "alice@example.com",
+		OAuthApp:         "acme",
+		OAuthAppExplicit: true,
+		Headless:         false,
+	}, gotReq, "plan request")
+
+	var got CLIAddCalendarPlanResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&got), "decode response")
+	assert.True(got.NeedsScopeEscalation, "needs scope escalation")
+	assert.Equal("CALENDAR ACCESS REQUIRED", got.Headline, "headline")
+	assert.Equal([]string{"Calendar sync needs read-only Calendar access."}, got.BodyLines, "body lines")
+	assert.Equal("Cancelled. Calendar was not added.", got.CancelHint, "cancel hint")
+}
+
+func TestHandleCLIEmbeddingsPlanReturnsPrompt(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIEmbeddingsPlanRequest
+	st := &mockStore{
+		planEmbedsFunc: func(_ context.Context, req CLIEmbeddingsPlanRequest) (CLIEmbeddingsPlanResponse, error) {
+			gotReq = req
+			return CLIEmbeddingsPlanResponse{
+				NeedsConfirmation: true,
+				Prompt:            "Activate generation 2 (fp)? ",
+			}, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"operation":"activate","generation_id":2,"force":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/embeddings/plan", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.Equal(CLIEmbeddingsPlanRequest{
+		Operation:    "activate",
+		GenerationID: 2,
+		Force:        true,
+	}, gotReq, "plan request")
+
+	var got CLIEmbeddingsPlanResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&got), "decode response")
+	assert.True(got.NeedsConfirmation, "needs confirmation")
+	assert.Equal("Activate generation 2 (fp)? ", got.Prompt, "prompt")
+}
+
+func TestHandleCLIDeleteStagedPlanReturnsPrompt(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIDeleteStagedPlanRequest
+	st := &mockStore{
+		planDeleteFunc: func(_ context.Context, req CLIDeleteStagedPlanRequest) (CLIDeleteStagedPlanResponse, error) {
+			gotReq = req
+			return CLIDeleteStagedPlanResponse{
+				Stdout:                    "Deletion Summary:\n",
+				NeedsExecution:            true,
+				NeedsConfirmation:         true,
+				ConfirmationMode:          "trash",
+				PlannedBatchIDs:           []string{"batch-123"},
+				PlanFingerprint:           "fp-handler",
+				NeedsScopeEscalation:      true,
+				ScopeEscalationHeadline:   "PERMISSION UPGRADE REQUIRED",
+				ScopeEscalationBodyLines:  []string{"Batch deletion requires elevated Gmail permissions."},
+				ScopeEscalationCancelHint: "Cancelled.",
+				RemoteDeleteEnvVar:        "MSGVAULT_ENABLE_REMOTE_DELETE",
+			}, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"batch_id":"batch-123","permanent":false,"yes":false,"dry_run":false,"list":false,"account":"alice@example.com","remote_delete_enabled":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/delete-staged/plan", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.Equal(CLIDeleteStagedPlanRequest{
+		BatchID:             "batch-123",
+		Account:             "alice@example.com",
+		RemoteDeleteEnabled: true,
+	}, gotReq, "plan request")
+
+	var got CLIDeleteStagedPlanResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&got), "decode response")
+	assert.Equal("Deletion Summary:\n", got.Stdout, "stdout")
+	assert.True(got.NeedsExecution, "needs execution")
+	assert.True(got.NeedsConfirmation, "needs confirmation")
+	assert.Equal("trash", got.ConfirmationMode, "confirmation mode")
+	assert.Equal([]string{"batch-123"}, got.PlannedBatchIDs, "planned batch ids")
+	assert.Equal("fp-handler", got.PlanFingerprint, "plan fingerprint")
+	assert.True(got.NeedsScopeEscalation, "needs scope escalation")
+	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
+	assert.Equal([]string{"Batch deletion requires elevated Gmail permissions."}, got.ScopeEscalationBodyLines, "scope body")
+	assert.Equal("Cancelled.", got.ScopeEscalationCancelHint, "scope cancel hint")
+	assert.Equal("MSGVAULT_ENABLE_REMOTE_DELETE", got.RemoteDeleteEnvVar, "remote delete env")
+}
+
+func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	var gotReq CLIDeduplicatePlanRequest
+	st := &mockStore{
+		planDedupFunc: func(_ context.Context, req CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error) {
+			gotReq = req
+			return CLIDeduplicatePlanResponse{
+				PrefixStdout: "No --account specified; deduping each source independently.\n\n",
+				Items: []CLIDeduplicatePlanItem{
+					{
+						SourceID:          42,
+						ScopeLabel:        "alice@example.com",
+						Stdout:            "Duplicate groups found: 1\n",
+						DuplicateMessages: 2,
+						BackfilledCount:   3,
+						PlanFingerprint:   "fp-dedup",
+						NeedsConfirmation: true,
+					},
+				},
+			}, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"account":"alice@example.com","prefer":"gmail,mbox","content_hash":true,"delete_dups_from_source_server":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/deduplicate/plan", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	assert.Equal(CLIDeduplicatePlanRequest{
+		Account:                    "alice@example.com",
+		Prefer:                     "gmail,mbox",
+		ContentHash:                true,
+		DeleteDupsFromSourceServer: true,
+	}, gotReq, "plan request")
+
+	var got CLIDeduplicatePlanResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&got), "decode response")
+	assert.Equal("No --account specified; deduping each source independently.\n\n", got.PrefixStdout, "prefix")
+	require.Len(got.Items, 1, "items")
+	assert.Equal(int64(42), got.Items[0].SourceID, "source id")
+	assert.Equal("fp-dedup", got.Items[0].PlanFingerprint, "fingerprint")
+	assert.True(got.Items[0].NeedsConfirmation, "needs confirmation")
+}
+
+func TestHandleCLIDeduplicatePlanRequestErrorUsesAPIEnvelope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	st := &mockStore{
+		planDedupFunc: func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error) {
+			return CLIDeduplicatePlanResponse{}, opserr.NotFound(errors.New(`no account found for "missing@example.com"`))
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/deduplicate/plan",
+		strings.NewReader(`{"account":"missing@example.com"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+	assert.Contains(resp.Header().Get("Content-Type"), "application/json", "content type")
+	assert.NotContains(resp.Header().Get("Content-Type"), "application/problem+json", "problem details must not leak")
+
+	var out ErrorResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode error response")
+	assert.Equal("deduplicate_plan_failed", out.Error, "error code")
+	assert.Equal(`no account found for "missing@example.com"`, out.Message, "error message")
+}
+
+func TestHandleCLIDeduplicatePlanInvalidCollectionUsesAPIEnvelope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	st := &mockStore{
+		planDedupFunc: func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error) {
+			return CLIDeduplicatePlanResponse{}, opserr.Invalid(errors.New(`--collection "calendars" has no member accounts`))
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/deduplicate/plan",
+		strings.NewReader(`{"collection":"calendars"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+	assert.Contains(resp.Header().Get("Content-Type"), "application/json", "content type")
+
+	var out ErrorResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode error response")
+	assert.Equal("deduplicate_plan_failed", out.Error, "error code")
+	assert.Equal(`--collection "calendars" has no member accounts`, out.Message, "error message")
+}
+
+func TestHandleCLIRunRejectsDisallowedCommand(t *testing.T) {
+	assert := assertpkg.New(t)
+
+	st := &mockStore{
+		runFunc: func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
+			requirepkg.FailNow(t, "disallowed command should not reach runner")
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	body := strings.NewReader(`{"args":["serve","restart"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "status")
+	assert.Contains(resp.Body.String(), "command is not allowed", "error")
+}
+
+func TestCLIDeleteDedupedPlansAndExecutesThroughDaemon(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	f := storetest.New(t)
+	keepA := createAPIDedupMessage(t, f, "keep-a", "dedup-api-a")
+	dropA := createAPIDedupMessage(t, f, "drop-a", "dedup-api-a")
+	keepB := createAPIDedupMessage(t, f, "keep-b", "dedup-api-b")
+	dropB := createAPIDedupMessage(t, f, "drop-b", "dedup-api-b")
+	_, err := f.Store.MergeDuplicates(keepA, []int64{dropA}, "batch-a")
+	require.NoError(err, "merge batch-a")
+	_, err = f.Store.MergeDuplicates(keepB, []int64{dropB}, "batch-b")
+	require.NoError(err, "merge batch-b")
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+
+	planReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped/plan",
+		strings.NewReader(`{"batch_ids":["batch-a","batch-b"]}`),
+	)
+	planReq.Header.Set("Content-Type", "application/json")
+	planResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(planResp, planReq)
+
+	require.Equal(http.StatusOK, planResp.Code, "plan status: %s", planResp.Body.String())
+	var plan cliDeleteDedupedPlanResponse
+	require.NoError(json.NewDecoder(planResp.Body).Decode(&plan), "decode plan")
+	assert.Equal(int64(2), plan.Total, "plan total")
+	assert.Equal(int64(2), plan.BatchCount, "plan batch count")
+	require.Len(plan.Batches, 2, "plan batches")
+	assert.Equal("batch-a", plan.Batches[0].ID, "batch-a id")
+	assert.Equal(int64(1), plan.Batches[0].Count, "batch-a count")
+	assert.Equal("batch-b", plan.Batches[1].ID, "batch-b id")
+	assert.Equal(int64(1), plan.Batches[1].Count, "batch-b count")
+
+	executeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		strings.NewReader(`{
+			"batch_ids":["batch-a","batch-b"],
+			"no_backup": true,
+			"expected_total": 2,
+			"expected_batch_count": 2,
+			"expected_batches": [
+				{"id":"batch-a", "count": 1},
+				{"id":"batch-b", "count": 1}
+			]
+		}`),
+	)
+	executeReq.Header.Set("Content-Type", "application/json")
+	executeResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(executeResp, executeReq)
+
+	require.Equal(http.StatusOK, executeResp.Code, "execute status: %s", executeResp.Body.String())
+	var executed cliDeleteDedupedExecuteResponse
+	require.NoError(json.NewDecoder(executeResp.Body).Decode(&executed), "decode execute")
+	assert.Equal(int64(2), executed.Deleted, "deleted")
+	assert.Equal(int64(2), executed.BatchCount, "execute batch count")
+
+	var count int
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id IN (?, ?)"),
+		dropA,
+		dropB,
+	).Scan(&count)
+	require.NoError(err, "count deleted rows")
+	assert.Equal(0, count, "deduped rows should be deleted")
+}
+
+func TestCLIDeleteDedupedRejectsChangedBatchPlan(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	f := storetest.New(t)
+	keepA := createAPIDedupMessage(t, f, "keep-a", "dedup-api-change-a")
+	dropA := createAPIDedupMessage(t, f, "drop-a", "dedup-api-change-a")
+	keepB := createAPIDedupMessage(t, f, "keep-b", "dedup-api-change-b")
+	dropB := createAPIDedupMessage(t, f, "drop-b", "dedup-api-change-b")
+	_, err := f.Store.MergeDuplicates(keepA, []int64{dropA}, "batch-a")
+	require.NoError(err, "merge batch-a")
+	_, err = f.Store.MergeDuplicates(keepB, []int64{dropB}, "batch-b")
+	require.NoError(err, "merge batch-b")
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+
+	executeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		strings.NewReader(`{
+			"batch_ids":["batch-a","batch-b"],
+			"no_backup": true,
+			"expected_total": 2,
+			"expected_batch_count": 2,
+			"expected_batches": [
+				{"id":"batch-a", "count": 2},
+				{"id":"batch-b", "count": 0}
+			]
+		}`),
+	)
+	executeReq.Header.Set("Content-Type", "application/json")
+	executeResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(executeResp, executeReq)
+
+	assert.Equal(http.StatusConflict, executeResp.Code, "execute status: %s", executeResp.Body.String())
+
+	var count int
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id IN (?, ?)"),
+		dropA,
+		dropB,
+	).Scan(&count)
+	require.NoError(err, "count rows after rejected execute")
+	assert.Equal(2, count, "deduped rows should remain when plan changes")
+}
+
+func TestCLIDeleteDedupedRequiresExpectedBatchesForBatchExecute(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	f := storetest.New(t)
+	keepA := createAPIDedupMessage(t, f, "keep-a", "dedup-api-require-a")
+	dropA := createAPIDedupMessage(t, f, "drop-a", "dedup-api-require-a")
+	keepB := createAPIDedupMessage(t, f, "keep-b", "dedup-api-require-b")
+	dropB := createAPIDedupMessage(t, f, "drop-b", "dedup-api-require-b")
+	_, err := f.Store.MergeDuplicates(keepA, []int64{dropA}, "batch-a")
+	require.NoError(err, "merge batch-a")
+	_, err = f.Store.MergeDuplicates(keepB, []int64{dropB}, "batch-b")
+	require.NoError(err, "merge batch-b")
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+
+	executeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/delete-deduped",
+		strings.NewReader(`{
+			"batch_ids":["batch-a","batch-b"],
+			"no_backup": true,
+			"expected_total": 2,
+			"expected_batch_count": 2
+		}`),
+	)
+	executeReq.Header.Set("Content-Type", "application/json")
+	executeResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(executeResp, executeReq)
+
+	assert.Equal(http.StatusBadRequest, executeResp.Code, "execute status: %s", executeResp.Body.String())
+
+	var count int
+	err = f.Store.DB().QueryRow(
+		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id IN (?, ?)"),
+		dropA,
+		dropB,
+	).Scan(&count)
+	require.NoError(err, "count rows after rejected execute")
+	assert.Equal(2, count, "deduped rows should remain without expected batch counts")
+}
+
+func createAPIDedupMessage(t *testing.T, f *storetest.Fixture, sourceMessageID, rfc822ID string) int64 {
+	t.Helper()
+	id, err := f.Store.UpsertMessage(&store.Message{
+		ConversationID:  f.ConvID,
+		SourceID:        f.Source.ID,
+		SourceMessageID: sourceMessageID,
+		RFC822MessageID: sql.NullString{String: rfc822ID, Valid: rfc822ID != ""},
+		MessageType:     "email",
+		SizeEstimate:    1000,
+	})
+	requirepkg.NoError(t, err, "upsert dedup test message")
+	return id
+}
+
+func TestHandleCLIIdentityAddPreservesErrorEnvelope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/identities",
+		strings.NewReader(`{"identifier":"extra@example.com","signal":"manual"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "add error status: %s", resp.Body.String())
+	assert.Contains(resp.Header().Get("Content-Type"), "application/json", "content type")
+	assert.NotContains(resp.Header().Get("Content-Type"), "application/problem+json", "problem details must not leak")
+
+	var out ErrorResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode error response")
+	assert.Equal("invalid_identity", out.Error, "error code")
+	assert.Equal("account is required", out.Message, "error message")
+}
+
+func TestHandleCLIIdentityAddMissingAccountUsesNotFoundCode(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/identities",
+		strings.NewReader(`{
+			"account":"missing@example.com",
+			"identifier":"extra@example.com",
+			"signal":"manual"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusBadRequest, resp.Code, "add error status: %s", resp.Body.String())
+	var out ErrorResponse
+	require.NoError(json.NewDecoder(resp.Body).Decode(&out), "decode error response")
+	assert.Equal("identity_not_found", out.Error, "error code")
+	assert.Contains(out.Message, `no account found for "missing@example.com"`, "error message")
+}
+
+func TestOperationErrorPoliciesDocumentNotFoundStatus(t *testing.T) {
+	assert := assertpkg.New(t)
+	srv := &Server{logger: testLogger()}
+
+	collectionErr := srv.operationError(
+		opserr.Wrap(opserr.KindNotFound, errors.New("missing collection")),
+		collectionOperationErrorPolicy,
+		"collection failed",
+	)
+	assert.Equal(http.StatusNotFound, collectionErr.GetStatus(), "collection not found status")
+	assert.Equal("not_found", collectionErr.ErrorResponse.Error, "collection error code")
+	assert.Equal("missing collection", collectionErr.Message, "collection message")
+
+	identityErr := srv.operationError(
+		opserr.Wrap(opserr.KindNotFound, errors.New("missing identity")),
+		identityOperationErrorPolicy,
+		"identity failed",
+	)
+	assert.Equal(http.StatusBadRequest, identityErr.GetStatus(), "identity not found status")
+	assert.Equal("identity_not_found", identityErr.ErrorResponse.Error, "identity error code")
+	assert.Equal("missing identity", identityErr.Message, "identity message")
+
+	scopeErr := srv.operationError(
+		opserr.Wrap(opserr.KindNotFound, errors.New("missing scope")),
+		scopeOperationErrorPolicy,
+		"scope failed",
+	)
+	assert.Equal(http.StatusBadRequest, scopeErr.GetStatus(), "scope not found status")
+	assert.Equal("invalid_scope", scopeErr.ErrorResponse.Error, "scope error code")
+	assert.Equal("missing scope", scopeErr.Message, "scope message")
+}
+
+func TestResolveCLIStatsScopeRejectsMutuallyExclusiveScope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+
+	_, err := resolveCLIStatsScope(st, "alice@example.com", "team")
+
+	require.Error(err, "resolveCLIStatsScope")
+	assert.Equal(opserr.KindInvalid, opserr.KindOf(err), "error kind")
+	assert.Equal("account and collection are mutually exclusive", err.Error(), "error message")
+}
+
+func TestHandleCLISearchCollectionScope(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	_, err = st.CreateCollection("Important", "important mail", []int64{src.ID})
+	require.NoError(err, "CreateCollection")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?collection=Important&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp struct {
+		Results          []json.RawMessage `json:"results"`
+		ScopeLabel       string            `json:"scope_label"`
+		ScopeSourceCount int               `json:"scope_source_count"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("Important", resp.ScopeLabel, "scope label")
+	assert.Equal(1, resp.ScopeSourceCount, "scope source count")
+	assert.Empty(resp.Results, "results")
+}
+
+func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := &mockStore{
+		needsFTSBackfill: true,
+		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
+			time.Sleep(40 * time.Millisecond)
+			return 12, nil
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(ctx context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:          st,
+		Engine:         engine,
+		Logger:         testLogger(),
+		RequestTimeout: 5 * time.Millisecond,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp struct {
+		Results []struct {
+			Subject string `json:"subject"`
+		} `json:"results"`
+		IndexBuilt      bool  `json:"index_built"`
+		IndexedMessages int64 `json:"indexed_messages"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.True(resp.IndexBuilt, "index built")
+	assert.Equal(int64(12), resp.IndexedMessages, "indexed messages")
+	require.Len(resp.Results, 1, "results")
+	assert.Equal("match", resp.Results[0].Subject, "subject")
+}
+
+func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := &mockStore{
+		rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
+			progress(2, 4)
+			progress(4, 4)
+			return 3, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+
+	requireNDJSONResponse(t, resp)
+	events := decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
+	require.Len(events, 3, "events")
+	assert.Equal("progress", events[0].Type, "first event type")
+	assert.Equal(int64(2), events[0].Done, "first done")
+	assert.Equal(int64(4), events[0].Total, "first total")
+	assert.Equal("progress", events[1].Type, "second event type")
+	assert.Equal(int64(4), events[1].Done, "second done")
+	assert.Equal(int64(4), events[1].Total, "second total")
+	assert.Equal(cliStreamEventTypeComplete, events[2].Type, "final event type")
+	assert.Equal(int64(3), events[2].Indexed, "indexed")
+}
+
+func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	releaseComplete := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseComplete)
+		})
+	}
+	defer release()
+
+	st := &mockStore{
+		rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
+			progress(2, 4)
+			<-releaseComplete
+			progress(4, 4)
+			return 3, nil
+		},
+	}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	httpSrv := httptest.NewServer(srv.Router())
+	t.Cleanup(httpSrv.Close)
+
+	respCh := make(chan *http.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		//nolint:bodyclose // The test closes the streaming body after decoding it.
+		resp, err := http.Post(httpSrv.URL+"/api/v1/cli/rebuild-fts", "application/json", nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		respCh <- resp
+	}()
+
+	var resp *http.Response
+	select {
+	case resp = <-respCh:
+	case err := <-errCh:
+		require.NoError(err, "post rebuild-fts")
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow("rebuild-fts response did not flush before completion")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(http.StatusOK, resp.StatusCode, "status")
+
+	decodeCh := make(chan cliRebuildFTSEvent, 1)
+	decodeErrCh := make(chan error, 1)
+	dec := json.NewDecoder(resp.Body)
+	go func() {
+		var event cliRebuildFTSEvent
+		if err := dec.Decode(&event); err != nil {
+			decodeErrCh <- err
+			return
+		}
+		decodeCh <- event
+	}()
+
+	var event cliRebuildFTSEvent
+	select {
+	case event = <-decodeCh:
+	case err := <-decodeErrCh:
+		require.NoError(err, "decode first progress event")
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow("rebuild-fts progress event was not flushed before completion")
+	}
+	assert.Equal("progress", event.Type, "event type")
+	assert.Equal(int64(2), event.Done, "done")
+	assert.Equal(int64(4), event.Total, "total")
+
+	release()
+	for {
+		var next cliRebuildFTSEvent
+		err := dec.Decode(&next)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(err, "decode remaining event")
+		if next.Type == "complete" {
+			assert.Equal(int64(3), next.Indexed, "indexed")
+			return
+		}
+	}
+	require.FailNow("missing complete event")
+}
+
+func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	gate := NewSerialOperationGate()
+	releaseGate, ok := gate.BeginWork()
+	require.True(ok, "occupy operation gate")
+	defer releaseGate()
+
+	st := &mockStore{
+		rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
+			progress(1, 1)
+			return 1, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:          st,
+		Logger:         testLogger(),
+		OperationGate:  gate,
+		RequestTimeout: 5 * time.Millisecond,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
+	resp := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(resp, req)
+		close(done)
+	}()
+
+	time.Sleep(40 * time.Millisecond)
+	releaseGate()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow("rebuild-fts request did not complete after gate release")
+	}
+	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+}
+
+func TestHandleCLIAccountsReturnsSourceCounts(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	require.NoError(st.UpdateSourceDisplayName(src.ID, "Alice"), "UpdateSourceDisplayName")
+	convID, err := st.EnsureConversation(src.ID, "thread-1", "")
+	require.NoError(err, "EnsureConversation")
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID:        src.ID,
+		ConversationID:  convID,
+		SourceMessageID: "msg-1",
+		MessageType:     "email",
+		Subject:         sql.NullString{String: "Hello", Valid: true},
+	})
+	require.NoError(err, "UpsertMessage")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp struct {
+		Accounts []struct {
+			ID           int64  `json:"id"`
+			Email        string `json:"email"`
+			Type         string `json:"type"`
+			DisplayName  string `json:"display_name"`
+			MessageCount int64  `json:"message_count"`
+		} `json:"accounts"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Accounts, 1, "accounts")
+	assert.Equal(src.ID, resp.Accounts[0].ID, "ID")
+	assert.Equal("alice@example.com", resp.Accounts[0].Email, "Email")
+	assert.Equal("gmail", resp.Accounts[0].Type, "Type")
+	assert.Equal("Alice", resp.Accounts[0].DisplayName, "DisplayName")
+	assert.Equal(int64(1), resp.Accounts[0].MessageCount, "MessageCount")
+}
+
+func TestHandleCLIUpdateAccountDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/account",
+		strings.NewReader(`{"email":"alice@example.com","display_name":"Work"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("alice@example.com", resp.Email, "email")
+	assert.Equal("Work", resp.DisplayName, "display name")
+
+	updated, err := st.GetSourceByID(src.ID)
+	require.NoError(err, "GetSourceByID")
+	assert.True(updated.DisplayName.Valid, "stored display name valid")
+	assert.Equal("Work", updated.DisplayName.String, "stored display name")
+}
+
+func TestHandleCLIUpdateAccountResolvesCurrentDisplayName(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	require.NoError(st.UpdateSourceDisplayName(src.ID, "Personal"), "UpdateSourceDisplayName")
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/cli/account",
+		strings.NewReader(`{"email":"Personal","display_name":"Work"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("alice@example.com", resp.Email, "email")
+	assert.Equal("Work", resp.DisplayName, "display name")
+
+	updated, err := st.GetSourceByIdentifier("alice@example.com")
+	require.NoError(err, "GetSourceByIdentifier")
+	assert.Equal("Work", updated.DisplayName.String, "stored display name")
+}
+
+func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(src.ID, "thread-1", "")
+	require.NoError(err, "EnsureConversation")
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID:        src.ID,
+			ConversationID:  convID,
+			SourceMessageID: "gmail-42",
+			MessageType:     "email",
+			Subject:         sql.NullString{String: "Hello", Valid: true},
+			SentAt:          sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		},
+		BodyText: sql.NullString{String: "Body text", Valid: true},
+	})
+	require.NoError(err, "PersistMessage")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message?id=gmail-42", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+
+	var resp struct {
+		ID              int64  `json:"id"`
+		SourceMessageID string `json:"source_message_id"`
+		Subject         string `json:"subject"`
+		BodyText        string `json:"body_text"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal(int64(1), resp.ID, "ID")
+	assert.Equal("gmail-42", resp.SourceMessageID, "SourceMessageID")
+	assert.Equal("Hello", resp.Subject, "Subject")
+	assert.Equal("Body text", resp.BodyText, "BodyText")
+}
+
+func TestHandleCLIMessageRawResolvesSourceMessageID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(src.ID, "thread-raw", "")
+	require.NoError(err, "EnsureConversation")
+	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID:        src.ID,
+			ConversationID:  convID,
+			SourceMessageID: "gmail-raw",
+			MessageType:     "email",
+			Subject:         sql.NullString{String: "Raw", Valid: true},
+			SentAt:          sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		},
+		RawMIME: raw,
+	})
+	require.NoError(err, "PersistMessage")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/raw?id=gmail-raw", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+	assert.Equal("message/rfc822", w.Header().Get("Content-Type"), "Content-Type")
+	assert.Equal("gmail-raw", w.Header().Get("X-Msgvault-Source-Message-Id"), "SourceMessageID")
+	assert.Equal(raw, w.Body.Bytes(), "raw")
+}
+
+func TestHandleCLIMessageRawMissingMessageUsesStableErrorCode(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/raw?id=missing", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusNotFound, w.Code, "status")
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("message_not_found", resp.Error, "error code")
+}
+
+func TestHandleCLIMessageRawMissingRawUsesStableErrorCode(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	st := testutil.NewTestStore(t)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	defer func() { _ = engine.Close() }()
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(src.ID, "thread-no-raw", "")
+	require.NoError(err, "EnsureConversation")
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID:        src.ID,
+			ConversationID:  convID,
+			SourceMessageID: "gmail-no-raw",
+			MessageType:     "email",
+			Subject:         sql.NullString{String: "No raw", Valid: true},
+			SentAt:          sql.NullTime{Time: time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		},
+	})
+	require.NoError(err, "PersistMessage")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/raw?id=gmail-no-raw", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusNotFound, w.Code, "status")
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("raw_message_not_found", resp.Error, "error code")
+}
+
+func TestHandleCLIAttachmentReturnsContentAddressedBytes(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
+	data := []byte("attachment bytes")
+	attachmentDir := filepath.Join(dataDir, "attachments", contentHash[:2])
+	require.NoError(os.MkdirAll(attachmentDir, 0o755), "create attachment dir")
+	require.NoError(os.WriteFile(filepath.Join(attachmentDir, contentHash), data, 0o600), "write attachment")
+
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{
+			Data: config.DataConfig{DataDir: dataDir},
+		},
+		Logger: testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/attachment?content_hash="+contentHash, nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status")
+	assert.Equal("application/octet-stream", w.Header().Get("Content-Type"), "Content-Type")
+	assert.Equal(contentHash, w.Header().Get("X-Msgvault-Content-Hash"), "ContentHash")
+	assert.Equal(data, w.Body.Bytes(), "data")
 }
 
 func TestHandleListMessages(t *testing.T) {
@@ -320,14 +2219,15 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: {
-				ID:       42,
-				Subject:  "HTML Email",
-				From:     []query.Address{{Email: "sender@example.com", Name: "Sender"}},
-				To:       []query.Address{{Email: "rcpt@example.com"}},
-				SentAt:   time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
-				Labels:   []string{"INBOX"},
-				BodyText: "plain fallback",
-				BodyHTML: "<p>Hello</p>",
+				ID:              42,
+				SourceMessageID: "source-42",
+				Subject:         "HTML Email",
+				From:            []query.Address{{Email: "sender@example.com", Name: "Sender"}},
+				To:              []query.Address{{Email: "rcpt@example.com"}},
+				SentAt:          time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+				Labels:          []string{"INBOX"},
+				BodyText:        "plain fallback",
+				BodyHTML:        "<p>Hello</p>",
 			},
 		},
 	}
@@ -343,6 +2243,7 @@ func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	assert.Equal("plain fallback", resp["body"], "body")
 	assert.Equal("<p>Hello</p>", resp["body_html"], "body_html")
+	assert.Equal("source-42", resp["source_message_id"], "source_message_id")
 	assert.Equal("HTML Email", resp["subject"], "subject")
 	assert.Equal("Sender <sender@example.com>", resp["from"], "from")
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
@@ -404,6 +2305,47 @@ func TestHandleSearch(t *testing.T) {
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assertpkg.Equal(t, "Test", resp.Query, "query")
+}
+
+func TestHandleSearchPlainTextAccountScopeUsesStructuredSearch(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv, st := newTestServerWithMockStore(t)
+	st.sourcesByLookup = map[string][]*store.Source{
+		"alice@example.com": {
+			{ID: 77, SourceType: "gmail", Identifier: "alice@example.com"},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=lunch&account=alice@example.com", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal(int32(0), st.searchMessagesCalls.Load(), "SearchMessages calls")
+	assert.Equal(int32(1), st.searchMessagesQueryCalls.Load(), "SearchMessagesQuery calls")
+	require.NotNil(st.searchMessagesQueryLast, "structured query")
+	assert.Equal([]int64{77}, st.searchMessagesQueryLast.AccountIDs, "AccountIDs")
+}
+
+func TestHandleSearchAccountLookupErrorReturnsInternal(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv, st := newTestServerWithMockStore(t)
+	st.sourcesByLookupErr = errors.New("source index unavailable")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=lunch&account=alice@example.com", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusInternalServerError, w.Code, "status: %s", w.Body.String())
+
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error response")
+	assert.Equal("internal_error", resp.Error, "error code")
+	assert.Equal("Failed to resolve CLI scope", resp.Message, "error message")
 }
 
 func TestHandleTriggerSync(t *testing.T) {
@@ -607,6 +2549,33 @@ func TestGetMessageCcBccInResponse(t *testing.T) {
 	assert.Equal("cc@example.com", resp.Cc[0], "cc[0]")
 	require.Len(resp.Bcc, 1, "bcc")
 	assert.Equal("bcc@example.com", resp.Bcc[0], "bcc[0]")
+}
+
+func TestGetMessageIncludesAttachmentID(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	srv, ms := newTestServerWithMockStore(t)
+	ms.messages[0].HasAttachments = true
+	ms.messages[0].Attachments = []APIAttachment{{
+		ID:          77,
+		Filename:    "report.pdf",
+		MimeType:    "application/pdf",
+		Size:        1234,
+		ContentHash: "hash-77",
+		URL:         "/api/v1/attachments/77",
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status")
+
+	var resp MessageDetail
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+
+	require.Len(resp.Attachments, 1, "attachments")
+	assert.Equal(int64(77), resp.Attachments[0].ID, "attachment id")
 }
 
 func TestHandleUploadToken(t *testing.T) {
@@ -1117,6 +3086,125 @@ func TestHandleFilteredMessages(t *testing.T) {
 	require.Equal("sms", msg["message_type"], "response message_type")
 }
 
+func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	var gotFilter query.MessageFilter
+	engine := &querytest.MockEngine{
+		GetGmailIDsByFilterFunc: func(_ context.Context, filter query.MessageFilter) ([]string, error) {
+			gotFilter = filter
+			return []string{"gm-1", "gm-2"}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?sender=alice@example.com&message_type=email", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal("alice@example.com", gotFilter.Sender, "sender filter")
+	assert.Equal("email", gotFilter.MessageType, "message type filter")
+
+	var resp struct {
+		GmailIDs []string `json:"gmail_ids"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal([]string{"gm-1", "gm-2"}, resp.GmailIDs, "gmail_ids")
+}
+
+func TestHandleGetAttachmentUsesQueryEngine(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	engine := &querytest.MockEngine{
+		Attachments: map[int64]*query.AttachmentInfo{
+			42: {
+				ID:          42,
+				Filename:    "report.pdf",
+				MimeType:    "application/pdf",
+				Size:        12345,
+				ContentHash: "hash-42",
+			},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/42", nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+
+	var resp AttachmentInfo
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal(int64(42), resp.ID, "id")
+	assert.Equal("report.pdf", resp.Filename, "filename")
+	assert.Equal("application/pdf", resp.MimeType, "mime_type")
+	assert.Equal(int64(12345), resp.Size, "size")
+	assert.Equal("hash-42", resp.ContentHash, "content_hash")
+}
+
+func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	var gotDomains []string
+	var gotAfter, gotBefore *time.Time
+	var gotLimit, gotOffset int
+	engine := &querytest.MockEngine{
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+			gotDomains = domains
+			gotAfter = after
+			gotBefore = before
+			gotLimit = limit
+			gotOffset = offset
+			return []query.MessageSummary{
+				{
+					ID:        1,
+					Subject:   "First",
+					FromEmail: "alice@example.com",
+					SentAt:    time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+				},
+				{
+					ID:        2,
+					Subject:   "Second",
+					FromEmail: "bob@test.org",
+					SentAt:    time.Date(2024, 1, 16, 10, 30, 0, 0, time.UTC),
+				},
+			}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/search/domains?domains=example.com,%20test.org&after=2024-01-01&before=2024-02-01&limit=1&offset=3",
+		nil,
+	)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal([]string{"example.com", "test.org"}, gotDomains, "domains")
+	require.NotNil(gotAfter, "after")
+	assert.Equal("2024-01-01", gotAfter.Format("2006-01-02"), "after")
+	require.NotNil(gotBefore, "before")
+	assert.Equal("2024-02-01", gotBefore.Format("2006-01-02"), "before")
+	assert.Equal(2, gotLimit, "fetch limit should probe one extra row")
+	assert.Equal(3, gotOffset, "offset")
+
+	var resp FilteredMessagesResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal(1, resp.Count, "count")
+	assert.True(resp.HasMore, "has_more")
+	assert.Equal(3, resp.Offset, "offset")
+	assert.Equal(1, resp.Limit, "limit")
+	require.Len(resp.Messages, 1, "messages")
+	assert.Equal(int64(1), resp.Messages[0].ID, "message id")
+}
+
 func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
 	require := requirepkg.New(t)
 	deletedAt := time.Date(2026, 3, 18, 15, 0, 0, 0, time.UTC)
@@ -1405,7 +3493,7 @@ func TestRemoteSearchParsedMessageTypeThroughAPI(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Router())
 	defer httpSrv.Close()
 
-	remoteEngine, err := remote.NewEngine(remote.Config{
+	remoteEngine, err := daemonclient.NewEngine(daemonclient.Config{
 		URL:           httpSrv.URL,
 		AllowInsecure: true,
 	})
@@ -1513,6 +3601,44 @@ func TestHandleQuery(t *testing.T) {
 	assert.Equal(1, result.RowCount, "row_count")
 	require.Len(result.Columns, 1, "columns")
 	assert.Equal("from_email", result.Columns[0], "columns[0]")
+}
+
+func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{APIPort: 8080},
+	}
+	var gotSQL string
+	srv := NewServerWithOptions(ServerOptions{
+		Config: cfg,
+		Engine: &querytest.MockEngine{},
+		Logger: testLogger(),
+		SQLQueryRunner: func(_ context.Context, sql string) (*query.QueryResult, error) {
+			gotSQL = sql
+			return &query.QueryResult{
+				Columns:  []string{"subject"},
+				Rows:     [][]any{{"Hello"}},
+				RowCount: 1,
+			}, nil
+		},
+	})
+
+	body := `{"sql": "SELECT subject FROM messages LIMIT 1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/query", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal("SELECT subject FROM messages LIMIT 1", gotSQL, "sql")
+
+	var result query.QueryResult
+	require.NoError(json.NewDecoder(w.Body).Decode(&result), "decode response")
+	assert.Equal([]string{"subject"}, result.Columns, "columns")
+	assert.Equal(1, result.RowCount, "row_count")
 }
 
 func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
@@ -1640,24 +3766,17 @@ func (blockingEmbedder) Embed(ctx context.Context, _ []string) ([][]float32, err
 	return nil, ctx.Err()
 }
 
-// TestHandleSearch_HybridEmbeddingTimeoutFiresChi regresses the
-// concern that chi/v5's request Timeout middleware would preempt our
-// structured 503 embedding_timeout response. chi v5's Timeout is a
-// "gentle" cancellation: it wraps the request context with a deadline
-// and, in a deferred function, conditionally writes a 504 — but only
-// AFTER the inline handler returns. Because handlers run inline (not
-// in a separate goroutine via http.TimeoutHandler), our handler sees
-// ctx.DeadlineExceeded from the embed call, the engine wraps it as
-// vector.ErrEmbeddingTimeout, the handler writes 503 embedding_timeout
-// JSON, and chi's deferred WriteHeader(504) is a no-op against the
-// already-written response.
+// TestHandleSearch_HybridEmbeddingTimeoutReturnsStructuredError regresses the
+// concern that request timeout handling could preempt our structured 503
+// embedding_timeout response. The server timeout middleware must cancel the
+// request context without using http.TimeoutHandler-style preemption. The
+// handler sees ctx.DeadlineExceeded from the embed call, the engine wraps it as
+// vector.ErrEmbeddingTimeout, and the handler writes 503 embedding_timeout JSON.
 //
-// The test sets a tight RequestTimeout so the chi middleware fires
-// during the embed call. If a future chi version switches to a
-// preemptive timeout (or http.TimeoutHandler is reintroduced), this
-// test will fail because the response would be a bare 504 instead of
-// the structured 503.
-func TestHandleSearch_HybridEmbeddingTimeoutFiresChi(t *testing.T) {
+// The test sets a tight RequestTimeout so cancellation fires during the embed
+// call. If http.TimeoutHandler-style preemption is introduced, this test will
+// fail because the response would be a bare 504 instead of the structured 503.
+func TestHandleSearch_HybridEmbeddingTimeoutReturnsStructuredError(t *testing.T) {
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -1684,7 +3803,7 @@ func TestHandleSearch_HybridEmbeddingTimeoutFiresChi(t *testing.T) {
 	var errResp ErrorResponse
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assertpkg.Equal(t, "embedding_timeout", errResp.Error,
-		"error (chi may have preempted with a bare 504)")
+		"error (timeout handling may have preempted with a bare 504)")
 }
 
 // TestHandleSearch_HybridFilterOnlyReturnsBadRequest regression-guards
@@ -1760,6 +3879,82 @@ func TestHandleSearch_VectorMessageTypeParamReachesFilter(t *testing.T) {
 	assertpkg.Equal(t, []string{"sms"}, backend.searchFilter.MessageTypes, "MessageTypes")
 }
 
+func TestHandleSearch_VectorAccountParamReachesFilter(t *testing.T) {
+	store := &mockStore{
+		messages: []APIMessage{{ID: 42, Subject: "Lunch"}},
+		sourcesByLookup: map[string][]*store.Source{
+			"alice@example.com": {
+				{ID: 77, SourceType: "gmail", Identifier: "alice@example.com"},
+			},
+		},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 42, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=vector&account=alice@example.com", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertpkg.Equal(t, []int64{77}, backend.searchFilter.SourceIDs, "SourceIDs")
+}
+
+func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
+	store := &mockStore{
+		messages: []APIMessage{{ID: 42, Subject: "Lunch"}},
+		collections: map[string]*store.CollectionWithSources{
+			"Important": {
+				Collection: store.Collection{
+					ID:   3,
+					Name: "Important",
+				},
+				SourceIDs: []int64{77, 88},
+			},
+		},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 42, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search?q=lunch&mode=vector&collection=Important", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assertpkg.Equal(t, []int64{77, 88}, backend.searchFilter.SourceIDs, "SourceIDs")
+}
+
 // TestHandleSearch_HybridResponseItemShape regression-guards the
 // hybrid response item shape: each result must be a MessageSummary
 // (snake-case fields shared with /api/v1/search FTS mode), not a
@@ -1775,7 +3970,9 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 			ID:             42,
 			ConversationID: 7,
 			Subject:        "Quarterly Plan",
-			From:           "alice@example.com",
+			From:           "Alice <alice@example.com>",
+			FromEmail:      "alice@example.com",
+			FromName:       "Alice",
 			To:             []string{"bob@example.com"},
 			Cc:             []string{"carol@example.com"},
 			SentAt:         time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
@@ -1822,6 +4019,7 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 	// Required MessageSummary fields. Score must be ABSENT (no explain=1).
 	wantKeys := []string{
 		"id", "conversation_id", "subject", "from", "to", "cc",
+		"from_email", "from_name",
 		"sent_at", "deleted_at", "snippet", "labels",
 		"has_attachments", "size_bytes",
 	}
@@ -1834,8 +4032,54 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 	assert.Equal(int64(42), int64(id), "id")
 	subj, _ := got["subject"].(string)
 	assert.Equal("Quarterly Plan", subj, "subject")
+	fromEmail, _ := got["from_email"].(string)
+	assert.Equal("alice@example.com", fromEmail, "from_email")
+	fromName, _ := got["from_name"].(string)
+	assert.Equal("Alice", fromName, "from_name")
 	hasA, _ := got["has_attachments"].(bool)
 	assert.True(hasA, "has_attachments")
+}
+
+func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
+	store := &mockStore{
+		messages: []APIMessage{{
+			ID:             42,
+			ConversationID: 7,
+			Subject:        "Quarterly Plan",
+			FromEmail:      "alice@example.com",
+			SentAt:         time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+		}},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 42, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=quarterly&mode=vector&explain=true", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+
+	var resp struct {
+		Results []map[string]any `json:"results"`
+	}
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	requirepkg.Len(t, resp.Results, 1, "results")
+	assertpkg.Contains(t, resp.Results[0], "score", "explain=true should include score breakdown")
 }
 
 // TestHandleSearch_HybridUsesBulkHydration regresses the N+1 bug
@@ -1886,6 +4130,67 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 		"GetMessagesSummariesByIDs call count, want 1 (single bulk lookup)")
 	wantIDs := []int64{1, 2, 3}
 	require.Equal(wantIDs, store.getSummariesByIDsLastIDs, "getSummariesByIDs last ids")
+}
+
+func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	store := &mockStore{
+		messages: []APIMessage{
+			{ID: 1, Subject: "seed", From: "seed@example.com", Snippet: "..."},
+			{ID: 2, Subject: "second", From: "a@example.com", Snippet: "..."},
+			{ID: 3, Subject: "third", From: "b@example.com", Snippet: "..."},
+		},
+	}
+	cfg := vector.Config{
+		Embeddings: vector.EmbeddingsConfig{Model: "fake", Dimension: 4},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 7, Model: "fake", Dimension: 4,
+			Fingerprint: cfg.GenerationFingerprint(), State: vector.GenerationActive,
+		},
+		loadVec: []float32{1, 0, 0, 0},
+		searchHits: []vector.Hit{
+			{MessageID: 1, Score: 1, Rank: 1},
+			{MessageID: 2, Score: 0.9, Rank: 2},
+			{MessageID: 3, Score: 0.8, Rank: 3},
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:     store,
+		VectorCfg: cfg,
+		Backend:   backend,
+		Logger:    testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1&limit=2&message_type=sms&has_attachment=true", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal([]string{"sms"}, backend.searchFilter.MessageTypes, "message types")
+	require.NotNil(backend.searchFilter.HasAttachment, "has attachment filter")
+	assert.True(*backend.searchFilter.HasAttachment, "has attachment filter")
+	assert.Equal(int32(1), store.getSummariesByIDsCalls.Load(), "bulk hydration calls")
+	assert.Equal([]int64{2, 3}, store.getSummariesByIDsLastIDs, "hydrated ids")
+
+	var resp struct {
+		SeedMessageID int64 `json:"seed_message_id"`
+		Returned      int   `json:"returned"`
+		Generation    struct {
+			ID int64 `json:"id"`
+		} `json:"generation"`
+		Messages []MessageSummary `json:"messages"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal(int64(1), resp.SeedMessageID, "seed_message_id")
+	assert.Equal(2, resp.Returned, "returned")
+	assert.Equal(int64(7), resp.Generation.ID, "generation id")
+	require.Len(resp.Messages, 2, "messages")
+	assert.Equal(int64(2), resp.Messages[0].ID, "first result")
+	assert.Equal(int64(3), resp.Messages[1].ID, "second result")
 }
 
 // TestHandleSearch_HybridPoolSaturatedAlwaysEmitted regression-guards
@@ -2002,6 +4307,8 @@ type fakeVectorBackend struct {
 	active       *vector.Generation
 	building     *vector.Generation
 	stats        vector.Stats
+	loadVec      []float32
+	loadErr      error
 	searchHits   []vector.Hit
 	searchErr    error
 	searchFilter vector.Filter
@@ -2041,7 +4348,7 @@ func (f *fakeVectorBackend) Stats(_ context.Context, _ vector.GenerationID) (vec
 	return f.stats, nil
 }
 func (f *fakeVectorBackend) LoadVector(_ context.Context, _ int64) ([]float32, error) {
-	return nil, errors.New("not implemented")
+	return f.loadVec, f.loadErr
 }
 func (f *fakeVectorBackend) ResetWatermarkBelow(_ context.Context, _ int64) error {
 	return nil
@@ -2322,7 +4629,7 @@ func TestHandleMessageInline_UnsupportedEngine(t *testing.T) {
 		err  error
 	}{
 		{"ErrNotImplemented", query.ErrNotImplemented},
-		{"ErrNotSupported", remote.ErrNotSupported},
+		{"ErrNotSupported", daemonclient.ErrNotSupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

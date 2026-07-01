@@ -131,6 +131,7 @@ Verify the service:
 
 ```bash
 curl http://remote-host:8080/health
+curl http://remote-host:8080/openapi.json
 ```
 
 See [Platform Notes](#platform-notes) for Synology, QNAP, and Raspberry Pi-specific paths.
@@ -172,7 +173,9 @@ msgvault export-token you@gmail.com --allow-insecure
 
 ## 4) Run Initial Full Sync
 
-The scheduler and sync API run **incremental** syncs only, which require a completed full sync to work. Run the initial full sync inside the container:
+Scheduled syncs are incremental, which require a completed full sync to work.
+Run the initial full sync through the daemon-backed CLI so the serving process
+continues to own and serialize archive writes:
 
 ```bash
 # Required — scheduled sync will not work without this
@@ -182,15 +185,26 @@ docker exec msgvault msgvault sync-full you@gmail.com
 docker exec msgvault msgvault sync-full you@gmail.com --limit 100
 ```
 
-After the full sync completes, scheduled syncs run automatically on the cron schedule registered during token export (`0 2 * * *` by default). You can also trigger a manual sync via the API:
+After the full sync completes, scheduled syncs run automatically on the cron schedule registered during token export (`0 2 * * *` by default). The daemon runs these itself, so there is no contention. You can also trigger manual syncs through the CLI or the incremental sync API:
 
 ```bash
+# Full or incremental sync through the daemon-backed CLI
+docker exec msgvault msgvault sync-full you@gmail.com
+docker exec msgvault msgvault sync you@gmail.com
+
 # Trigger incremental sync via API (only works after full sync)
 curl -X POST -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/sync/you@gmail.com
 
 # Check schedule status
 curl -H "X-API-Key: YOUR_API_KEY" http://remote-host:8080/api/v1/scheduler/status
 ```
+
+Maintenance commands that mutate the archive also go through the daemon-backed
+CLI. For example, `docker exec msgvault msgvault repair-encoding`,
+`docker exec msgvault msgvault build-cache`, and
+`docker exec msgvault msgvault rebuild-fts` send HTTP requests to the serving
+process and stream its output back to the terminal instead of opening SQLite in
+a second writer process.
 
 ## 5) Verify Setup
 
@@ -237,11 +251,12 @@ api_key = "YOUR_API_KEY"
 allow_insecure = true
 ```
 
-`search`, `stats`, `list-accounts`, `show-message`, and `tui` automatically query the remote API.
-Use `--local` if you explicitly want to query local SQLite instead.
+HTTP-backed CLI commands automatically use the remote API. This includes `sync`, `sync-full`, `verify`, `search` in FTS mode, `query`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `show-message`, `export-eml`, `export-attachment`, `export-attachments`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
+
+Use `--local` only when you explicitly want the command to talk to this machine's local background daemon instead of the configured remote.
 
 !!! tip "Remote TUI"
-    The interactive TUI (`msgvault tui`) connects to the remote server automatically when `[remote]` is configured. All views, drill-downs, search, and filtering work the same as local mode. Deletion staging and attachment export are not available in remote mode. Use `--local` to force a local database connection.
+    The interactive TUI (`msgvault tui`) connects to the remote server automatically when `[remote]` is configured. All views, drill-downs, search, filtering, deletion staging, and attachment export work through the selected daemon. Staged deletion manifests are saved on the daemon host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine. Use `--local` to force the local daemon instead of the configured remote server.
 
 ## Platform Notes
 
@@ -370,7 +385,7 @@ Check that `X-API-Key` matches the server's `[server] api_key` and that `/api/v1
 
 ### Sync fails with "no history ID" or "run full sync first"
 
-The scheduler and sync API only run incremental syncs. You must run a full sync first:
+Scheduled syncs and the public sync API run incremental syncs. You must run a full sync first through the daemon-backed CLI (see [Run Initial Full Sync](#4-run-initial-full-sync)):
 
 ```bash
 docker exec msgvault msgvault sync-full you@gmail.com

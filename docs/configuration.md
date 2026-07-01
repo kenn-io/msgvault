@@ -56,6 +56,15 @@ rate_limit_qps = 5
 api_port = 8080
 bind_addr = "127.0.0.1"
 api_key = "your-secret-key"
+daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
+daemon_auto_restart = "newer" # newer, never, or always
+
+[analytics]
+# Daemon-side analytics engine for TUI and aggregate HTTP views:
+# "auto" uses DuckDB/Parquet when usable, otherwise live SQL.
+# "sql" always uses live SQL. "duckdb" requires a usable Parquet cache.
+engine = "auto"
+auto_build_cache = true
 
 [remote]
 # Remote msgvault endpoint for CLI remote mode
@@ -171,7 +180,7 @@ Log files are named `msgvault-YYYY-MM-DD.log` (UTC date), written as newline-del
 
 When SQL logging is enabled, slow/error entries include query arguments and streaming query durations, which makes it easier to diagnose expensive reads without enabling full trace output.
 
-Use `msgvault logs` to view and tail log files. See [CLI Reference: logs](/cli-reference/#logs).
+Use `msgvault logs` to view and tail log files from the selected local or remote daemon. See [CLI Reference: logs](/cli-reference/#logs).
 
 ### `[sync]`
 
@@ -181,7 +190,7 @@ Use `msgvault logs` to view and tail log files. See [CLI Reference: logs](/cli-r
 
 ### `[server]`
 
-Settings for the web server started by `msgvault serve`. See [Web Server](/api-server/) for endpoint documentation.
+Settings for the web server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. See [Web Server](/api-server/) for endpoint documentation, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
@@ -192,10 +201,27 @@ Settings for the web server started by `msgvault serve`. See [Web Server](/api-s
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
+| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+
+`daemon_idle_timeout` applies only to background daemons started by `msgvault serve start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
+
+`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
+
+### `[analytics]`
+
+Settings for daemon-side aggregate query behavior. The TUI, MCP server, and aggregate list commands use these settings through the local daemon or a configured remote server.
+
+| Key | Default | Description |
+|---|---|---|
+| `engine` | `auto` | Aggregate engine: `auto` uses DuckDB over Parquet when the cache is usable and falls back to live SQL; `sql` always uses live SQL; `duckdb` requires a usable Parquet cache |
+| `auto_build_cache` | `true` | Build a stale or missing Parquet cache before the daemon opens DuckDB for aggregate views |
+
+Deprecated in 0.17.0: per-command analytics flags such as `msgvault tui --force-sql`, `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and `--no-sqlite-scanner` were replaced by this daemon-level section. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. If `engine = "duckdb"` and the cache cannot be built or opened, `msgvault serve` fails instead of silently falling back.
 
 ### `[remote]`
 
-When set, CLI commands read from the remote server by default for supported operations.
+When set, archive-access CLI commands use the remote server by default. Without `[remote].url`, they use the local background daemon instead. Pass `--local` to use the local daemon instead of the configured remote.
 
 | Key | Default | Description |
 |---|---|---|
@@ -203,7 +229,7 @@ When set, CLI commands read from the remote server by default for supported oper
 | `api_key` | — | API key used by remote commands |
 | `allow_insecure` | `false` | Allow HTTP remote connections |
 
-Affected CLI commands: `search`, `show-message`, `stats`, `list-accounts`, `tui`.
+Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`.
 
 ### `[[accounts]]`
 

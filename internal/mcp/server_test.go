@@ -16,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -32,6 +33,24 @@ type stubEmbedder struct{}
 
 func (stubEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, errors.New("stubEmbedder.Embed should not be called in this test")
+}
+
+type attachmentReaderFunc func(context.Context, string) ([]byte, error)
+
+func (f attachmentReaderFunc) ReadAttachment(ctx context.Context, contentHash string) ([]byte, error) {
+	return f(ctx, contentHash)
+}
+
+type hybridSearcherFunc func(context.Context, HybridSearchRequest) (*HybridSearchResult, error)
+
+func (f hybridSearcherFunc) SearchHybrid(ctx context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+	return f(ctx, req)
+}
+
+type similarSearcherFunc func(context.Context, SimilarSearchRequest) (*SimilarSearchResult, error)
+
+func (f similarSearcherFunc) FindSimilar(ctx context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
+	return f(ctx, req)
 }
 
 // toolHandler is the function signature for MCP tool handler methods.
@@ -221,6 +240,64 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+}
+
+func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	var gotReq HybridSearchRequest
+	rrf := 0.42
+	engine := &querytest.MockEngine{
+		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+			assert.Equal([]int64{102}, ids, "hydrated ids")
+			return []query.MessageSummary{
+				testutil.NewMessageSummary(102).WithSubject("Second").Build(),
+			}, nil
+		},
+	}
+	h := &handlers{
+		engine: engine,
+		hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+			gotReq = req
+			return &HybridSearchResult{
+				Hits: []HybridSearchHit{
+					{ID: 101},
+					{ID: 102, RRFScore: &rrf, SubjectBoosted: true},
+					{ID: 103},
+				},
+				PoolSaturated: true,
+				Generation: hybridGenerationSummary{
+					ID:          7,
+					Model:       "fake",
+					Dimension:   4,
+					Fingerprint: "fake:4",
+					State:       "active",
+				},
+			}, nil
+		}),
+	}
+
+	resp := runTool[searchMessagesHybridResponse](t, "search_messages", h.searchMessages, map[string]any{
+		"query":   "quarterly plan",
+		"mode":    searchModeHybrid,
+		"account": "alice@example.com",
+		"limit":   float64(1),
+		"offset":  float64(1),
+		"explain": true,
+	})
+
+	assert.Equal("quarterly plan", gotReq.Query, "query")
+	assert.Equal(searchModeHybrid, gotReq.Mode, "mode")
+	assert.Equal("alice@example.com", gotReq.Account, "account")
+	assert.Equal(3, gotReq.Limit, "fetch limit")
+	assert.Equal(searchModeHybrid, resp.Mode, "response mode")
+	assert.True(resp.HasMore, "has_more")
+	require.Len(resp.Data, 1, "data")
+	assert.Equal(int64(102), resp.Data[0].ID, "message id")
+	require.NotNil(resp.Data[0].Score, "score")
+	assert.Equal(&rrf, resp.Data[0].Score.RRF, "rrf")
+	assert.True(resp.Data[0].Score.SubjectBoosted, "subject boosted")
+	assert.Equal(int64(7), resp.Generation.ID, "generation")
 }
 
 // newHybridHandlersForErrorTest wires a real hybrid.Engine around the
@@ -1192,6 +1269,34 @@ func TestGetAttachment(t *testing.T) {
 		assert.Equal("application/octet-stream", blob.MIMEType, "default blob MIME type")
 	})
 
+	t.Run("attachment reader supplies bytes without local directory", func(t *testing.T) {
+		require := requirepkg.New(t)
+		assert := assertpkg.New(t)
+		var gotHash string
+		h2 := &handlers{
+			engine: &querytest.MockEngine{
+				Attachments: map[int64]*query.AttachmentInfo{
+					52: {ID: 52, Filename: "remote.pdf", MimeType: "application/pdf", Size: 12, ContentHash: hash},
+				},
+			},
+			attachmentReader: attachmentReaderFunc(func(_ context.Context, contentHash string) ([]byte, error) {
+				gotHash = contentHash
+				return []byte("remote bytes"), nil
+			}),
+		}
+		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(52)})
+		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+
+		assert.Equal(hash, gotHash, "content hash")
+		er, ok := r.Content[1].(mcp.EmbeddedResource)
+		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
+		blob, ok := er.Resource.(mcp.BlobResourceContents)
+		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
+		decoded, err := base64.StdEncoding.DecodeString(blob.Blob)
+		require.NoError(err, "base64 decode")
+		assert.Equal("remote bytes", string(decoded), "content")
+	})
+
 	t.Run("filename with spaces and unicode", func(t *testing.T) {
 		require := requirepkg.New(t)
 		assert := assertpkg.New(t)
@@ -1621,6 +1726,15 @@ type stageDeletionResponse struct {
 	NextStep     string `json:"next_step"`
 }
 
+type captureDeletionManifestSaver struct {
+	manifest *deletion.Manifest
+}
+
+func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest *deletion.Manifest) error {
+	s.manifest = manifest
+	return nil
+}
+
 func TestStageDeletion(t *testing.T) {
 	eng := &querytest.MockEngine{
 		Accounts: []query.AccountInfo{
@@ -1663,6 +1777,21 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"from": "news@example.com"},
 		)
 		assertpkg.Equal(t, 2, resp.MessageCount, "MessageCount")
+	})
+
+	t.Run("uses injected manifest saver", func(t *testing.T) {
+		dataDir := t.TempDir()
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: eng, dataDir: dataDir, manifestSaver: saver}
+
+		resp := runTool[stageDeletionResponse](
+			t, "stage_deletion", h.stageDeletion,
+			map[string]any{"query": "from:news"},
+		)
+		requirepkg.NotNil(t, saver.manifest, "manifest saver should receive manifest")
+		assertpkg.Equal(t, resp.BatchID, saver.manifest.ID, "manifest ID")
+		assertpkg.Equal(t, []string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
+		assertpkg.NoDirExists(t, filepath.Join(dataDir, "deletions"), "local fallback should not be used")
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {
@@ -1909,6 +2038,55 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 	})
 	txt := resultText(t, r)
 	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+}
+
+func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	var gotReq SimilarSearchRequest
+	hasAttachment := true
+	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	h := &handlers{
+		engine: &querytest.MockEngine{},
+		similarSearcher: similarSearcherFunc(func(_ context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
+			gotReq = req
+			return &SimilarSearchResult{
+				SeedMessageID: req.MessageID,
+				Generation: HybridGeneration{
+					ID:          7,
+					Model:       "fake",
+					Dimension:   4,
+					Fingerprint: "fake:4",
+					State:       "active",
+				},
+				Messages: []query.MessageSummary{
+					testutil.NewMessageSummary(102).WithSubject("Similar").Build(),
+				},
+			}, nil
+		}),
+	}
+
+	resp := runTool[similarResponse](t, "find_similar_messages", h.findSimilarMessages, map[string]any{
+		"message_id":     float64(101),
+		"limit":          float64(3),
+		"account":        "alice@example.com",
+		"message_type":   "sms",
+		"after":          "2024-01-01",
+		"has_attachment": true,
+	})
+
+	assert.Equal(int64(101), gotReq.MessageID, "message_id")
+	assert.Equal(3, gotReq.Limit, "limit")
+	assert.Equal("alice@example.com", gotReq.Account, "account")
+	assert.Equal("sms", gotReq.MessageType, "message_type")
+	require.NotNil(gotReq.After, "after")
+	assert.Equal(after, *gotReq.After, "after")
+	require.NotNil(gotReq.HasAttachment, "has_attachment")
+	assert.Equal(&hasAttachment, gotReq.HasAttachment, "has_attachment")
+	assert.Equal(int64(101), resp.SeedMessageID, "seed_message_id")
+	assert.Equal(int64(7), resp.Generation.ID, "generation")
+	require.Len(resp.Messages, 1, "messages")
+	assert.Equal(int64(102), resp.Messages[0].ID, "message id")
 }
 
 // TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable guards the

@@ -734,6 +734,11 @@ func isDevBuildVersion(v string) bool {
 	return gitDescribePattern.MatchString(v)
 }
 
+// IsDevBuildVersion reports whether v is not a released semantic version.
+func IsDevBuildVersion(v string) bool {
+	return isDevBuildVersion(v)
+}
+
 // isNewer returns true if v1 is newer than v2 (semver comparison).
 // Prerelease versions (e.g. -rc1) are considered older than the same base version.
 // Git-describe versions (e.g. 0.4.0-5-gabcdef) are treated as their base version.
@@ -750,6 +755,12 @@ func isNewer(v1, v2 string) bool {
 	sv2 := normalizeSemver(v2)
 
 	return semver.Compare(sv1, sv2) > 0
+}
+
+// IsNewer reports whether v1 is newer than v2 using msgvault's release
+// version comparison rules.
+func IsNewer(v1, v2 string) bool {
+	return isNewer(v1, v2)
 }
 
 // prereleaseNumericPattern matches prerelease identifiers consisting of letters followed

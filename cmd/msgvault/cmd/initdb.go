@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -19,37 +20,43 @@ created if they don't already exist.`,
 		dbPath := cfg.DatabaseDSN()
 		logger.Info("initializing database", "path", dbPath)
 
-		s, err := store.Open(dbPath)
+		s, info, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return fmt.Errorf("open store: %w", err)
 		}
 		defer func() { _ = s.Close() }()
 
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-
 		logger.Info("database initialized successfully")
 
-		// Print stats
-		stats, err := s.GetStats()
+		result, err := s.InitCLIArchive(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("get stats: %w", err)
+			return fmt.Errorf("init archive: %w", err)
+		}
+		if result.Notice != "" {
+			_, _ = fmt.Fprint(cmd.ErrOrStderr(), result.Notice)
 		}
 
-		fmt.Printf("Database: %s\n", dbPath)
-		fmt.Printf("  Messages:    %d\n", stats.MessageCount)
-		fmt.Printf("  Threads:     %d\n", stats.ThreadCount)
-		fmt.Printf("  Attachments: %d\n", stats.AttachmentCount)
-		fmt.Printf("  Labels:      %d\n", stats.LabelCount)
-		fmt.Printf("  Sources:     %d\n", stats.SourceCount)
-		fmt.Printf("  Size:        %.2f MB\n", float64(stats.DatabaseSize)/(1024*1024))
+		printInitDBStats(cmd.OutOrStdout(), info, dbPath, result.Stats)
 
 		return nil
 	},
+}
+
+func printInitDBStats(w io.Writer, info HTTPStoreInfo, dbPath string, stats *store.Stats) {
+	if info.Kind == HTTPStoreConfiguredRemote {
+		_, _ = fmt.Fprintf(w, "Remote: %s\n", info.URL)
+	} else {
+		_, _ = fmt.Fprintf(w, "Database: %s\n", dbPath)
+	}
+	if stats == nil {
+		stats = &store.Stats{}
+	}
+	_, _ = fmt.Fprintf(w, "  Messages:    %d\n", stats.MessageCount)
+	_, _ = fmt.Fprintf(w, "  Threads:     %d\n", stats.ThreadCount)
+	_, _ = fmt.Fprintf(w, "  Attachments: %d\n", stats.AttachmentCount)
+	_, _ = fmt.Fprintf(w, "  Labels:      %d\n", stats.LabelCount)
+	_, _ = fmt.Fprintf(w, "  Sources:     %d\n", stats.SourceCount)
+	_, _ = fmt.Fprintf(w, "  Size:        %.2f MB\n", float64(stats.DatabaseSize)/(1024*1024))
 }
 
 func init() {

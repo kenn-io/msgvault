@@ -10,21 +10,31 @@ description: Terminal interface for exploring, filtering, and managing your emai
 msgvault tui
 ```
 
-The TUI automatically builds or updates the Parquet analytics cache on launch when new messages are detected.
+The TUI always talks to a msgvault HTTP server. Without `[remote].url`, it starts or reuses the local background daemon. The daemon owns database access, analytics engine selection, and cache rebuilds.
 
-### Remote Mode
+By default, the daemon builds or updates the Parquet analytics cache when aggregate views need it. Configure this behavior in `config.toml`:
 
-When your `config.toml` has a `[remote]` section configured, the TUI connects to the remote server automatically. All views, drill-downs, search, and filtering work the same as in local mode. Use `--local` to force a local database connection when remote is configured.
+```toml
+[analytics]
+engine = "auto"          # auto, sql, or duckdb
+auto_build_cache = true  # set false to require explicit msgvault build-cache
+```
+
+Deprecated in 0.17.0: the old `msgvault tui --force-sql`, `--no-cache-build`, and `--no-sqlite-scanner` flags are hidden because these choices are now daemon configuration. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. See [Configuration: analytics](/configuration/#analytics).
+
+### Local And Remote
+
+When your `config.toml` has a `[remote]` section configured, the TUI connects to the remote server automatically. All views, drill-downs, search, and filtering work the same as local-daemon mode. Use `--local` only when you want to force this machine's local daemon instead of the configured remote server.
 
 ```bash
 # Connects to remote server if [remote] is configured
 msgvault tui
 
-# Force local database
+# Force this machine's local daemon
 msgvault tui --local
 ```
 
-Deletion staging and attachment export are not available in remote mode.
+Deletion staging and attachment export use the selected daemon. When connected to a configured remote server, staged deletion manifests are saved on that remote host; attachment export streams bytes from the daemon and writes the zip file on the CLI machine.
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view with message counts and sizes" loading="lazy">
 </figure>
@@ -114,7 +124,7 @@ From a drill-down view, press `g` to re-aggregate the filtered messages by a dif
 
 ## Searching
 
-Press `/` to open a search bar that filters the current view in real time. Matching text is highlighted in the results. At the aggregate level (Senders, Domains, etc.), search runs fast DuckDB queries over Parquet, so results appear instantly even on large archives.
+Press `/` to open a search bar that filters the current view in real time. Matching text is highlighted in the results. At the aggregate level (Senders, Domains, etc.), search uses the daemon's configured analytics engine, so the default local-daemon setup uses DuckDB over Parquet when the cache is usable.
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/tui-search-sender.svg" alt="msgvault TUI search filtering senders by name with highlighted matches" loading="lazy">
 </figure>
@@ -187,6 +197,6 @@ See [Deleting Email](/usage/deletion/) for the full deletion workflow.
 
 ## Performance
 
-The TUI is built on DuckDB querying Parquet metadata exports, not the raw SQLite database. This architecture delivers aggregate queries (top senders, domains, labels, time series) **hundreds of times faster** than equivalent SQLite JOINs. The Parquet analytics layer has a small footprint, so drill-down and re-aggregation feel instant even on very large archives.
+The default SQLite archive path uses DuckDB querying Parquet metadata exports for aggregate views. This architecture delivers aggregate queries (top senders, domains, labels, time series) **hundreds of times faster** than equivalent SQLite JOINs. The Parquet analytics layer has a small footprint, so drill-down and re-aggregation feel instant even on very large archives. Configure `[analytics].engine` if you need to force live SQL or require DuckDB.
 
 See [Data Storage](/architecture/storage/) for details on how this works.

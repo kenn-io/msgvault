@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/store"
 	"google.golang.org/api/drive/v3"
 )
 
@@ -30,6 +32,18 @@ const gmailOnlyTokenJSON = `{
     "https://www.googleapis.com/auth/gmail.modify"
   ],
   "client_id": "test.apps.googleusercontent.com"
+}`
+
+const gmailOnlyOtherClientTokenJSON = `{
+  "access_token": "fake-access-token",
+  "token_type": "Bearer",
+  "refresh_token": "fake-refresh-token",
+  "expiry": "2099-01-01T00:00:00Z",
+  "scopes": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify"
+  ],
+  "client_id": "other.apps.googleusercontent.com"
 }`
 
 const gmailDriveTokenJSON = `{
@@ -313,7 +327,7 @@ func TestAddCalendarHeadless_PrintsInstructionsAndPreservesToken(t *testing.T) {
 	before, err := os.ReadFile(tokenPath)
 	require.NoError(err, "read seeded token")
 
-	addCmd := newAddCalendarCmd()
+	addCmd := newAddCalendarLocalCmd()
 	addCmd.SetContext(context.Background())
 	addCmd.SetArgs([]string{"--headless", scopeEscalationAccount})
 	defer func() { calAddHeadless = false }()
@@ -331,4 +345,53 @@ func TestAddCalendarHeadless_PrintsInstructionsAndPreservesToken(t *testing.T) {
 	after, err := os.ReadFile(tokenPath)
 	require.NoError(err, "the existing Gmail token must survive")
 	assert.Equal(string(before), string(after), "token content must be unchanged")
+}
+
+func TestPlanCLIAddCalendarRequiresScopeEscalationForGmailOnlyToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "open store")
+	defer func() { _ = st.Close() }()
+	require.NoError(st.InitSchema(), "init schema")
+
+	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+		Email: scopeEscalationAccount,
+	})
+
+	require.NoError(err, "plan add-calendar")
+	assert.True(plan.NeedsScopeEscalation, "gmail-only token should require Calendar scope escalation")
+	assert.Equal("CALENDAR ACCESS REQUIRED", plan.Headline)
+	assert.Contains(plan.BodyLines, "Calendar sync needs read-only Calendar access.")
+	assert.Equal("Cancelled. Calendar was not added.", plan.CancelHint)
+}
+
+func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	_, restore := seedTokenEnv(t, gmailOnlyOtherClientTokenJSON)
+	defer restore()
+	cfg.OAuth.Apps = map[string]config.OAuthApp{
+		"acme": {ClientSecrets: cfg.OAuth.ClientSecrets},
+	}
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err, "open store")
+	defer func() { _ = st.Close() }()
+	require.NoError(st.InitSchema(), "init schema")
+
+	plan, err := planCLIAddCalendar(context.Background(), st, api.CLIAddCalendarPlanRequest{
+		Email:            scopeEscalationAccount,
+		OAuthApp:         "acme",
+		OAuthAppExplicit: true,
+	})
+
+	require.NoError(err, "plan add-calendar")
+	assert.True(plan.NeedsScopeEscalation, "non-reusable gmail-only token should still require foreground scope confirmation")
+	assert.Equal("CALENDAR ACCESS REQUIRED", plan.Headline)
 }

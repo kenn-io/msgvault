@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +16,31 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type captureManifestSaver struct {
+	manifest *deletion.Manifest
+	err      error
+}
+
+func (s *captureManifestSaver) SaveManifest(manifest *deletion.Manifest) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.manifest = manifest
+	return nil
+}
+
+type mapAttachmentReader struct {
+	data map[string][]byte
+}
+
+func (r mapAttachmentReader) OpenAttachment(_ context.Context, contentHash string) (io.ReadCloser, error) {
+	data, ok := r.data[contentHash]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
 
 // ControllerTestEnv encapsulates common setup for ActionController tests.
 type ControllerTestEnv struct {
@@ -234,6 +262,22 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 	assertpkg.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
 }
 
+func TestSaveManifest_UsesInjectedSaver(t *testing.T) {
+	dir := t.TempDir()
+	saver := &captureManifestSaver{}
+	ctrl := NewActionControllerWithOptions(&querytest.MockEngine{}, ActionControllerOptions{
+		DataDir:       dir,
+		ManifestSaver: saver,
+	})
+	manifest := deletion.NewManifest("daemon backed", []string{"gid1"})
+
+	err := ctrl.SaveManifest(manifest)
+	requirepkg.NoError(t, err, "SaveManifest")
+
+	assertpkg.Same(t, manifest, saver.manifest)
+	assertpkg.NoFileExists(t, filepath.Join(dir, "deletions", "pending", manifest.ID+".json"))
+}
+
 func TestExportAttachments_NilDetail(t *testing.T) {
 	env := newTestEnv(t)
 	cmd := env.Ctrl.ExportAttachments(nil, nil)
@@ -382,4 +426,45 @@ func TestExportAttachments_FullSuccess(t *testing.T) {
 
 	require.NoError(result.Err, "expected Err to be nil for full success")
 	assert.NotEmpty(result.Result)
+}
+
+func TestExportAttachments_UsesInjectedAttachmentReader(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	const contentHash = "abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
+	outputDir := t.TempDir()
+	t.Chdir(outputDir)
+
+	ctrl := NewActionControllerWithOptions(&querytest.MockEngine{}, ActionControllerOptions{
+		DataDir: t.TempDir(),
+		AttachmentReader: mapAttachmentReader{data: map[string][]byte{
+			contentHash: []byte("daemon bytes"),
+		}},
+	})
+	detail := &query.MessageDetail{
+		ID:      7,
+		Subject: "HTTP backed",
+		Attachments: []query.AttachmentInfo{
+			{ID: 1, Filename: "from-daemon.txt", ContentHash: contentHash},
+		},
+	}
+
+	cmd := ctrl.ExportAttachments(detail, map[int]bool{0: true})
+	require.NotNil(cmd)
+	msg := cmd()
+	result, ok := msg.(ExportResultMsg)
+	require.True(ok, "expected ExportResultMsg, got %T", msg)
+	require.NoError(result.Err, "ExportAttachments")
+
+	zr, err := zip.OpenReader(filepath.Join(outputDir, "HTTP backed_7.zip"))
+	require.NoError(err, "OpenReader")
+	defer func() { require.NoError(zr.Close(), "Close zip") }()
+	require.Len(zr.File, 1, "zip file count")
+	assert.Equal("from-daemon.txt", zr.File[0].Name)
+	file, err := zr.File[0].Open()
+	require.NoError(err, "open zip entry")
+	body, err := io.ReadAll(file)
+	require.NoError(err, "read zip entry")
+	require.NoError(file.Close(), "close zip entry")
+	assert.Equal("daemon bytes", string(body))
 }

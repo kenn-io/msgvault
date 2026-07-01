@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 var (
@@ -73,19 +72,37 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Construct storage path: attachmentsDir/hash[:2]/hash
-	attachmentsDir := cfg.AttachmentsDir()
-	storagePath := filepath.Join(attachmentsDir, contentHash[:2], contentHash)
+	return runExportAttachmentHTTP(cmd, contentHash)
+}
 
-	// JSON mode reads the full file into memory for base64 encoding.
-	// Base64 and binary modes stream directly to avoid loading large files.
+func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
+	if cmd == nil {
+		return errors.New("command context is required for HTTP attachment export")
+	}
+	s, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
 	if exportAttachmentJSON {
-		return exportAttachmentAsJSON(storagePath, contentHash)
+		data, err := s.GetCLIAttachment(cmd.Context(), contentHash)
+		if err != nil {
+			return err
+		}
+		return exportAttachmentDataAsJSON(data, contentHash)
 	}
+
+	body, err := s.OpenCLIAttachment(cmd.Context(), contentHash)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+
 	if exportAttachmentBase64 {
-		return exportAttachmentAsBase64(storagePath)
+		return exportAttachmentStreamAsBase64(body)
 	}
-	return exportAttachmentBinary(storagePath)
+	return exportAttachmentBinaryStream(body)
 }
 
 func exportAttachmentAsJSON(storagePath, contentHash string) error {
@@ -93,7 +110,10 @@ func exportAttachmentAsJSON(storagePath, contentHash string) error {
 	if err != nil {
 		return err
 	}
+	return exportAttachmentDataAsJSON(data, contentHash)
+}
 
+func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
 	output := map[string]any{
 		"content_hash": contentHash,
 		"size":         len(data),
@@ -122,6 +142,18 @@ func exportAttachmentAsBase64(storagePath string) error {
 	return nil
 }
 
+func exportAttachmentStreamAsBase64(r io.Reader) error {
+	encoder := base64.NewEncoder(base64.StdEncoding, os.Stdout)
+	if _, err := io.Copy(encoder, r); err != nil {
+		return fmt.Errorf("encode attachment: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("finalize base64: %w", err)
+	}
+	fmt.Println() // trailing newline
+	return nil
+}
+
 func exportAttachmentBinary(storagePath string) error {
 	f, err := openAttachmentFile(storagePath)
 	if err != nil {
@@ -135,23 +167,105 @@ func exportAttachmentBinary(storagePath string) error {
 		return err
 	}
 
-	dst, err := fileutil.SecureOpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	n, err := writeAttachmentStreamToFile(outputPath, f)
 	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
-	}
-
-	n, copyErr := io.Copy(dst, f)
-	closeErr := dst.Close()
-	if copyErr != nil {
-		_ = os.Remove(outputPath)
-		return fmt.Errorf("write file: %w", copyErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(outputPath)
-		return fmt.Errorf("close file: %w", closeErr)
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
+	return nil
+}
+
+func exportAttachmentBinaryStream(r io.Reader) error {
+	outputPath := exportAttachmentOutput
+	if outputPath == "" || outputPath == "-" {
+		_, err := io.Copy(os.Stdout, r)
+		return err
+	}
+
+	n, err := writeAttachmentStreamToFile(outputPath, r)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
+	return nil
+}
+
+func writeAttachmentStreamToFile(outputPath string, r io.Reader) (int64, error) {
+	dir := filepath.Dir(outputPath)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(outputPath)+".tmp-*")
+	if err != nil {
+		return 0, fmt.Errorf("create output file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return 0, fmt.Errorf("set output file permissions: %w", err)
+	}
+
+	n, copyErr := io.Copy(tmp, r)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return 0, fmt.Errorf("write file: %w", copyErr)
+	}
+	if closeErr != nil {
+		return 0, fmt.Errorf("close file: %w", closeErr)
+	}
+	if err := replaceOutputFile(tmpPath, outputPath); err != nil {
+		return 0, fmt.Errorf("replace output file: %w", err)
+	}
+	cleanup = false
+	return n, nil
+}
+
+func replaceOutputFile(tmpPath, outputPath string) error {
+	info, err := os.Lstat(outputPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.Rename(tmpPath, outputPath)
+		}
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("output path is a directory: %s", outputPath)
+	}
+
+	dir := filepath.Dir(outputPath)
+	backup, err := os.CreateTemp(dir, "."+filepath.Base(outputPath)+".old-*")
+	if err != nil {
+		return fmt.Errorf("create output backup: %w", err)
+	}
+	backupPath := backup.Name()
+	if err := backup.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return fmt.Errorf("close output backup: %w", err)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("prepare output backup: %w", err)
+	}
+
+	if err := os.Rename(outputPath, backupPath); err != nil {
+		return fmt.Errorf("backup existing output: %w", err)
+	}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		if restoreErr := os.Rename(backupPath, outputPath); restoreErr != nil {
+			return fmt.Errorf("%w; restore existing output: %w", err, restoreErr)
+		}
+		return err
+	}
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove output backup: %w", err)
+	}
 	return nil
 }
 

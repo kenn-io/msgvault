@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -14,13 +15,17 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+const calScopeEscalationConfirmedFlag = "scope-escalation-confirmed"
 
 var (
 	calAddOAuthApp   string
@@ -49,6 +54,18 @@ func interactiveStdin() bool {
 }
 
 func newAddCalendarCmd() *cobra.Command {
+	cmd := newAddCalendarLocalCmd()
+	runLocal := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runAddCalendarHTTP(cmd, args)
+		}
+		return runLocal(cmd, args)
+	}
+	return cmd
+}
+
+func newAddCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-calendar <email>",
 		Short: "Authorize Google Calendar access and register calendars for an account",
@@ -68,11 +85,11 @@ func newAddCalendarCmd() *cobra.Command {
 				return usageErr(cmd, err)
 			}
 
-			st, err := openCalendarStore()
+			st, cleanup, err := openWritableStoreAndInit()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = st.Close() }()
+			defer cleanup()
 
 			appDecision, err := calendarAddOAuthAppDecision(st, email, calAddOAuthApp, oauthAppExplicit)
 			if err != nil {
@@ -111,25 +128,26 @@ func newAddCalendarCmd() *cobra.Command {
 					return wrapOAuthError(err)
 				}
 			case !hasCalendarScope:
-				body := []string{
-					"Calendar sync needs read-only Calendar access.",
-					"",
-					"Re-authorizing REPLACES the granted scopes, so msgvault will",
-					"re-request Gmail, Calendar, and any already granted Google",
-					"scopes together. On the consent screen, keep every existing",
-					"permission checked or Google will remove that access for this",
-					"account.",
-				}
+				headline, body, cancelHint := calendarScopeEscalationPrompt()
 				existingScopes := mgr.GrantedScopes(email)
 				requiredScopes := calendarEscalationScopes(existingScopes,
 					calendarShouldPreserveGmail(hasToken, mgr.HasScopeMetadata(email), existingScopes))
-				if err := promptScopeEscalation(ctx, email, requiredScopes,
-					"CALENDAR ACCESS REQUIRED", body,
-					"Cancelled. Calendar was not added.", secretsPath); err != nil {
-					if errors.Is(err, errUserCanceled) {
-						return nil
+				confirmed, err := cmd.Flags().GetBool(calScopeEscalationConfirmedFlag)
+				if err != nil {
+					return fmt.Errorf("read --%s flag: %w", calScopeEscalationConfirmedFlag, err)
+				}
+				if confirmed {
+					if err := authorizeScopeEscalation(ctx, email, requiredScopes, secretsPath); err != nil {
+						return err
 					}
-					return err
+				} else {
+					if err := promptScopeEscalation(ctx, email, requiredScopes,
+						headline, body, cancelHint, secretsPath); err != nil {
+						if errors.Is(err, errUserCanceled) {
+							return nil
+						}
+						return err
+					}
 				}
 			case !tokenReusable:
 				fmt.Printf("OAuth app for %s requires reauthorization. Authorizing...\n", email)
@@ -180,10 +198,73 @@ func newAddCalendarCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&calAddAll, "all-calendars", false, "include reader/freeBusyReader calendars (default: owner+writer)")
 	cmd.Flags().StringVar(&calAddMinRole, "min-access-role", "", "minimum access role: owner|writer|reader")
 	cmd.Flags().StringSliceVar(&calAddCalendars, "calendars", nil, "comma-separated calendar IDs to register (default: by access role)")
+	cmd.Flags().Bool(calScopeEscalationConfirmedFlag, false, "Internal: Calendar scope escalation was already accepted by the frontend CLI")
+	if err := cmd.Flags().MarkHidden(calScopeEscalationConfirmedFlag); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 
+func runAddCalendarHTTP(cmd *cobra.Command, args []string) error {
+	email := normalizeCalendarAccountEmail(args[0])
+	if email == "" {
+		return usageErr(cmd, errors.New("account email is required"))
+	}
+	if err := calsync.ValidateMinAccessRole(calAddMinRole); err != nil {
+		return usageErr(cmd, err)
+	}
+
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	plan, err := st.PlanCLIAddCalendar(cmd.Context(), daemonclient.CLIAddCalendarPlanRequest{
+		Email:            email,
+		OAuthApp:         calAddOAuthApp,
+		OAuthAppExplicit: cmd.Flags().Changed("oauth-app"),
+		Headless:         calAddHeadless,
+	})
+	if err != nil {
+		return err
+	}
+	if plan != nil && plan.NeedsScopeEscalation {
+		ok, err := promptAddCalendarScopeEscalation(cmd.InOrStdin(), cmd.OutOrStdout(), *plan)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := cmd.Flags().Set(calScopeEscalationConfirmedFlag, "true"); err != nil {
+			return fmt.Errorf("set --%s after confirmation: %w", calScopeEscalationConfirmedFlag, err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+func promptAddCalendarScopeEscalation(
+	in io.Reader,
+	out io.Writer,
+	plan daemonclient.CLIAddCalendarPlan,
+) (bool, error) {
+	return promptScopeEscalationConfirmation(in, out, plan.Headline, plan.BodyLines, plan.CancelHint)
+}
+
 func newSyncCalendarCmd() *cobra.Command {
+	cmd := newSyncCalendarLocalCmd()
+	runLocal := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		return runLocal(cmd, args)
+	}
+	return cmd
+}
+
+func newSyncCalendarLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "sync-calendar <name|email>",
 		Aliases: []string{"sync-calendar-incremental"},
@@ -230,11 +311,11 @@ func newSyncCalendarCmd() *cobra.Command {
 				return usageErr(cmd, err)
 			}
 
-			st, err := openCalendarStore()
+			st, cleanup, err := openWritableStoreAndInit()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = st.Close() }()
+			defer cleanup()
 
 			existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
 			if err != nil {
@@ -366,6 +447,56 @@ func calendarEscalationScopes(existingScopes []string, preserveGmail bool) []str
 		scopes = appendScopeIfMissing(scopes, scope)
 	}
 	return scopes
+}
+
+func calendarScopeEscalationPrompt() (string, []string, string) {
+	return "CALENDAR ACCESS REQUIRED", []string{
+		"Calendar sync needs read-only Calendar access.",
+		"",
+		"Re-authorizing REPLACES the granted scopes, so msgvault will",
+		"re-request Gmail, Calendar, and any already granted Google",
+		"scopes together. On the consent screen, keep every existing",
+		"permission checked or Google will remove that access for this",
+		"account.",
+	}, "Cancelled. Calendar was not added."
+}
+
+func planCLIAddCalendar(
+	_ context.Context,
+	st *store.Store,
+	req api.CLIAddCalendarPlanRequest,
+) (api.CLIAddCalendarPlanResponse, error) {
+	email := normalizeCalendarAccountEmail(req.Email)
+	if email == "" {
+		return api.CLIAddCalendarPlanResponse{}, errors.New("account email is required")
+	}
+	appDecision, err := calendarAddOAuthAppDecision(st, email, req.OAuthApp, req.OAuthAppExplicit)
+	if err != nil {
+		return api.CLIAddCalendarPlanResponse{}, err
+	}
+	oauthApp := appDecision.OAuthApp
+
+	secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
+	if err != nil {
+		return api.CLIAddCalendarPlanResponse{}, err
+	}
+	mgr, err := newCalendarOAuthManager(secretsPath, email)
+	if err != nil {
+		return api.CLIAddCalendarPlanResponse{}, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
+	}
+	hasToken := mgr.HasToken(email)
+	hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
+	if req.Headless || !hasToken || hasCalendarScope {
+		return api.CLIAddCalendarPlanResponse{}, nil
+	}
+
+	headline, body, cancelHint := calendarScopeEscalationPrompt()
+	return api.CLIAddCalendarPlanResponse{
+		NeedsScopeEscalation: true,
+		Headline:             headline,
+		BodyLines:            body,
+		CancelHint:           cancelHint,
+	}, nil
 }
 
 func calendarOAuthScopesForAccount(hasToken bool, hasScopeMetadata bool, existingScopes []string) []string {
@@ -543,24 +674,6 @@ func calendarSyncNextCommand(email, oauthApp string, opts calendarSyncNextOption
 	}
 	parts = append(parts, email)
 	return strings.Join(parts, " ")
-}
-
-// openCalendarStore opens the main store and runs schema init + startup
-// migrations, matching the other ingest commands.
-func openCalendarStore() (*store.Store, error) {
-	st, err := store.Open(cfg.DatabaseDSN())
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := st.InitSchema(); err != nil {
-		_ = st.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(st); err != nil {
-		_ = st.Close()
-		return nil, fmt.Errorf("startup migrations: %w", err)
-	}
-	return st, nil
 }
 
 // buildCalendarClient constructs a gcal.API client. The OAuth token is keyed on

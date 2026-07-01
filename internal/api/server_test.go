@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -65,9 +68,22 @@ func (m *mockScheduler) IsRunning() bool {
 
 // mockStore implements MessageStore for tests.
 type mockStore struct {
-	stats    *StoreStats
-	messages []APIMessage
-	total    int64
+	stats            *StoreStats
+	messages         []APIMessage
+	total            int64
+	needsFTSBackfill bool
+	backfillFTSFunc  func(func(done, total int64)) (int64, error)
+	rebuildFTSFunc   func(func(done, total int64)) (int64, error)
+	buildCacheFunc   func(context.Context, bool, func(CLICacheBuildEvent) error) error
+	syncFunc         func(context.Context, CLISyncRequest, func(CLISyncEvent) error) error
+	verifyFunc       func(context.Context, CLIVerifyRequest, func(CLIVerifyEvent) error) error
+	repairFunc       func(context.Context, func(CLIRepairEncodingEvent) error) error
+	runFunc          func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error
+	planCalendarFunc func(context.Context, CLIAddCalendarPlanRequest) (CLIAddCalendarPlanResponse, error)
+	planEmbedsFunc   func(context.Context, CLIEmbeddingsPlanRequest) (CLIEmbeddingsPlanResponse, error)
+	planDeleteFunc   func(context.Context, CLIDeleteStagedPlanRequest) (CLIDeleteStagedPlanResponse, error)
+	planDedupFunc    func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error)
+	saveManifestFunc func(context.Context, *deletion.Manifest) error
 
 	// Call counts so tests can assert that bulk hydration paths use
 	// GetMessagesSummariesByIDs (one round-trip) instead of looping
@@ -75,6 +91,13 @@ type mockStore struct {
 	getMessageCalls          atomic.Int32
 	getSummariesByIDsCalls   atomic.Int32
 	getSummariesByIDsLastIDs []int64
+	searchMessagesCalls      atomic.Int32
+	searchMessagesQueryCalls atomic.Int32
+	searchMessagesQueryLast  *search.Query
+
+	sourcesByLookup    map[string][]*store.Source
+	sourcesByLookupErr error
+	collections        map[string]*store.CollectionWithSources
 }
 
 func (m *mockStore) GetStats() (*StoreStats, error) {
@@ -115,11 +138,222 @@ func (m *mockStore) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 }
 
 func (m *mockStore) SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error) {
+	m.searchMessagesCalls.Add(1)
 	return m.messages, m.total, nil
 }
 
 func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
+	m.searchMessagesQueryCalls.Add(1)
+	if q != nil {
+		cp := *q
+		cp.AccountIDs = append([]int64(nil), q.AccountIDs...)
+		cp.TextTerms = append([]string(nil), q.TextTerms...)
+		m.searchMessagesQueryLast = &cp
+	} else {
+		m.searchMessagesQueryLast = nil
+	}
 	return m.messages, m.total, nil
+}
+
+func (m *mockStore) GetStatsForScope([]int64) (*store.Stats, error) {
+	if m.stats == nil {
+		return &store.Stats{}, nil
+	}
+	return m.stats, nil
+}
+
+func (m *mockStore) GetSourcesByIdentifierOrDisplayName(input string) ([]*store.Source, error) {
+	if m.sourcesByLookupErr != nil {
+		return nil, m.sourcesByLookupErr
+	}
+	if m.sourcesByLookup != nil {
+		return m.sourcesByLookup[input], nil
+	}
+	return nil, nil
+}
+
+func (m *mockStore) GetSourcesByTypeAndAccount(string, string) ([]*store.Source, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
+	if m.collections != nil {
+		if coll, ok := m.collections[name]; ok {
+			return coll, nil
+		}
+	}
+	return nil, store.ErrCollectionNotFound
+}
+
+func (m *mockStore) ListCollections() ([]*store.CollectionWithSources, error) {
+	return nil, nil
+}
+
+func (m *mockStore) CreateCollection(
+	string,
+	string,
+	[]int64,
+) (*store.Collection, error) {
+	return &store.Collection{}, nil
+}
+
+func (m *mockStore) AddSourcesToCollection(string, []int64) error {
+	return nil
+}
+
+func (m *mockStore) RemoveSourcesFromCollection(string, []int64) error {
+	return nil
+}
+
+func (m *mockStore) DeleteCollection(string) error {
+	return nil
+}
+
+func (m *mockStore) UpdateSourceDisplayName(int64, string) error {
+	return nil
+}
+
+func (m *mockStore) ListSources(string) ([]*store.Source, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetSourceByID(int64) (*store.Source, error) {
+	return nil, store.ErrSourceNotFound
+}
+
+func (m *mockStore) ListAccountIdentities(int64) ([]store.AccountIdentity, error) {
+	return nil, nil
+}
+
+func (m *mockStore) AddAccountIdentity(int64, string, string) error {
+	return nil
+}
+
+func (m *mockStore) RemoveAccountIdentity(int64, string) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockStore) CountMessagesForSource(int64) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockStore) NeedsFTSBackfill() bool {
+	return m.needsFTSBackfill
+}
+
+func (m *mockStore) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	if m.backfillFTSFunc != nil {
+		return m.backfillFTSFunc(progress)
+	}
+	return 0, nil
+}
+
+func (m *mockStore) RebuildFTS(progress func(done, total int64)) (int64, error) {
+	if m.rebuildFTSFunc != nil {
+		return m.rebuildFTSFunc(progress)
+	}
+	return 0, nil
+}
+
+func (m *mockStore) BuildCLICache(
+	ctx context.Context,
+	fullRebuild bool,
+	emit func(CLICacheBuildEvent) error,
+) error {
+	if m.buildCacheFunc != nil {
+		return m.buildCacheFunc(ctx, fullRebuild, emit)
+	}
+	return nil
+}
+
+func (m *mockStore) RunCLISync(
+	ctx context.Context,
+	req CLISyncRequest,
+	emit func(CLISyncEvent) error,
+) error {
+	if m.syncFunc != nil {
+		return m.syncFunc(ctx, req, emit)
+	}
+	return nil
+}
+
+func (m *mockStore) RunCLIVerify(
+	ctx context.Context,
+	req CLIVerifyRequest,
+	emit func(CLIVerifyEvent) error,
+) error {
+	if m.verifyFunc != nil {
+		return m.verifyFunc(ctx, req, emit)
+	}
+	return nil
+}
+
+func (m *mockStore) RunCLIRepairEncoding(
+	ctx context.Context,
+	emit func(CLIRepairEncodingEvent) error,
+) error {
+	if m.repairFunc != nil {
+		return m.repairFunc(ctx, emit)
+	}
+	return nil
+}
+
+func (m *mockStore) RunCLICommand(
+	ctx context.Context,
+	req CLIRunRequest,
+	emit func(CLIRunEvent) error,
+) error {
+	if m.runFunc != nil {
+		return m.runFunc(ctx, req, emit)
+	}
+	return nil
+}
+
+func (m *mockStore) PlanCLIAddCalendar(
+	ctx context.Context,
+	req CLIAddCalendarPlanRequest,
+) (CLIAddCalendarPlanResponse, error) {
+	if m.planCalendarFunc != nil {
+		return m.planCalendarFunc(ctx, req)
+	}
+	return CLIAddCalendarPlanResponse{}, nil
+}
+
+func (m *mockStore) PlanCLIEmbeddings(
+	ctx context.Context,
+	req CLIEmbeddingsPlanRequest,
+) (CLIEmbeddingsPlanResponse, error) {
+	if m.planEmbedsFunc != nil {
+		return m.planEmbedsFunc(ctx, req)
+	}
+	return CLIEmbeddingsPlanResponse{}, nil
+}
+
+func (m *mockStore) PlanCLIDeleteStaged(
+	ctx context.Context,
+	req CLIDeleteStagedPlanRequest,
+) (CLIDeleteStagedPlanResponse, error) {
+	if m.planDeleteFunc != nil {
+		return m.planDeleteFunc(ctx, req)
+	}
+	return CLIDeleteStagedPlanResponse{}, nil
+}
+
+func (m *mockStore) PlanCLIDeduplicate(
+	ctx context.Context,
+	req CLIDeduplicatePlanRequest,
+) (CLIDeduplicatePlanResponse, error) {
+	if m.planDedupFunc != nil {
+		return m.planDedupFunc(ctx, req)
+	}
+	return CLIDeduplicatePlanResponse{}, nil
+}
+
+func (m *mockStore) SaveCLIDeletionManifest(ctx context.Context, manifest *deletion.Manifest) error {
+	if m.saveManifestFunc != nil {
+		return m.saveManifestFunc(ctx, manifest)
+	}
+	return nil
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -155,6 +389,67 @@ func TestHealthEndpoint_HEAD(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	assertpkg.Equal(t, http.StatusOK, w.Code, "HEAD /health status")
+}
+
+func TestDaemonPingEndpoint(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{APIPort: 8080},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        cfg,
+		Scheduler:     newMockScheduler(),
+		Logger:        testLogger(),
+		DaemonVersion: "v-test",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, daemon.DefaultPingPath, nil)
+	w := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(w, req)
+
+	assertpkg.Equal(t, http.StatusOK, w.Code, "daemon ping status")
+
+	var info daemon.PingInfo
+	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&info), "decode daemon ping")
+	assertpkg.True(t, info.OK, "ping ok")
+	assertpkg.Equal(t, "msgvault", info.Service, "service")
+	assertpkg.Equal(t, "v-test", info.Version, "version")
+	assertpkg.Equal(t, os.Getpid(), info.PID, "pid")
+}
+
+func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
+	called := make(chan struct{}, 1)
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Scheduler:     newMockScheduler(),
+		Logger:        testLogger(),
+		ShutdownToken: "runtime-token",
+		ShutdownFunc: func() {
+			called <- struct{}{}
+		},
+	})
+
+	missing := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
+	missingResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(missingResp, missing)
+
+	assertpkg.Equal(t, http.StatusUnauthorized, missingResp.Code, "missing token status")
+	assertpkg.Empty(t, called, "shutdown must not run without token")
+
+	req := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
+	req.Header.Set(DaemonShutdownTokenHeader, "runtime-token")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assertpkg.Equal(t, http.StatusAccepted, w.Code, "valid token status")
+	requirepkg.Eventually(t, func() bool {
+		select {
+		case <-called:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "shutdown callback")
 }
 
 func TestAuthMiddleware(t *testing.T) {
@@ -303,6 +598,7 @@ func TestNilStoreReturns503(t *testing.T) {
 
 	endpoints := []string{
 		"/api/v1/stats",
+		"/api/v1/cli/stats",
 		"/api/v1/messages",
 		"/api/v1/messages/1",
 		"/api/v1/search?q=test",
@@ -402,6 +698,16 @@ func TestCORSFromConfig(t *testing.T) {
 
 	assertpkg.Empty(t, w2.Header().Get("Access-Control-Allow-Origin"),
 		"expected no CORS header for disallowed origin")
+
+	// Preflight requests from allowed origins should advertise every API method.
+	req3 := httptest.NewRequest(http.MethodOptions, "/api/v1/cli/collections/Team/sources", nil)
+	req3.Header.Set("Origin", "http://localhost:3000")
+	w3 := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w3, req3)
+
+	assertpkg.Equal(t, http.StatusNoContent, w3.Code, "preflight status")
+	assertpkg.Contains(t, w3.Header().Get("Access-Control-Allow-Methods"), http.MethodPatch,
+		"expected PATCH in allowed methods")
 }
 
 func TestCORSDisabledByDefault(t *testing.T) {

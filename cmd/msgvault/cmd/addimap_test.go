@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"strings"
@@ -182,3 +183,54 @@ func TestReadPasswordFromPipeLargeInput(t *testing.T) {
 
 // Verify the function signature accepts io.Reader.
 var _ func(io.Reader) (string, error) = readPasswordFromPipe
+
+func TestAddIMAPUsesDaemonRunnerAndForwardsPasswordEnv(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	const host = "localhost"
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{
+			"add-imap",
+			"--host=" + host,
+			"--no-tls",
+			"--port=1",
+			"--username=alice@example.com",
+		}, req.Args, "args")
+		assert.Equal(map[string]string{"MSGVAULT_IMAP_PASSWORD": "secret"}, req.Env, "env")
+	}, `{"type":"stdout","data":"IMAP account added successfully!\n"}`, `{"type":"complete"}`)
+
+	savedHost := imapHost
+	savedPort := imapPort
+	savedUsername := imapUsername
+	savedNoTLS := imapNoTLS
+	savedStartTLS := imapSTARTTLS
+	savedNoDefaultIdentity := noDefaultIdentityAddImap
+	t.Cleanup(func() {
+		imapHost = savedHost
+		imapPort = savedPort
+		imapUsername = savedUsername
+		imapNoTLS = savedNoTLS
+		imapSTARTTLS = savedStartTLS
+		noDefaultIdentityAddImap = savedNoDefaultIdentity
+	})
+	configureRemoteDaemonForTest(t, server.URL)
+	t.Setenv("MSGVAULT_IMAP_PASSWORD", "secret")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newAddIMAPCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{
+		"--host", host,
+		"--port", "1",
+		"--username", "alice@example.com",
+		"--no-tls",
+	})
+
+	require.NoError(cmd.Execute(), "add-imap")
+
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("IMAP account added successfully!\n", stdout.String(), "stdout")
+	assert.Contains(stderr.String(), "Using password from MSGVAULT_IMAP_PASSWORD", "stderr")
+}

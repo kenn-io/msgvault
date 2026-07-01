@@ -1,17 +1,30 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func newRemoveAccountLocalTestCmd() *cobra.Command {
+	cmd := newRemoveAccountCmd()
+	cmd.RunE = runRemoveAccountLocal
+	return cmd
+}
 
 // seedAttachmentFile creates a file under attachmentsDir at relPath and returns
 // its absolute path. Intermediate directories are created as needed.
@@ -46,6 +59,127 @@ func seedMessageWithAttachment(
 		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
+func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	requests := &atomic.Int32{}
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		requests.Add(1)
+
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode request") {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal([]string{"remove-account", "--type=gmail", "--yes", "alice@example.com"}, req.Args, "args")
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"stdout","data":"Account removed\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"stderr","data":"remove warning\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		Remote: config.RemoteConfig{
+			URL:           server.URL,
+			AllowInsecure: true,
+		},
+	}
+	useLocal = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRemoveAccountCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com", "--yes", "--type", "gmail"})
+
+	require.NoError(cmd.Execute(), "remove-account")
+
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("Account removed\n", stdout.String(), "stdout")
+	assert.Equal("remove warning\n", stderr.String(), "stderr")
+}
+
+func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	requests := &atomic.Int32{}
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		requests.Add(1)
+
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode request") {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		assert.Equal([]string{"remove-account", "--confirmed", "alice@example.com"}, req.Args, "args")
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"type":"stdout","data":"Account removed\n"}` + "\n"))
+		_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+	cfg = &config.Config{
+		HomeDir: t.TempDir(),
+		Remote: config.RemoteConfig{
+			URL:           server.URL,
+			AllowInsecure: true,
+		},
+	}
+	useLocal = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newRemoveAccountCmd()
+	cmd.SetIn(bytes.NewBufferString("y\n"))
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com"})
+
+	require.NoError(cmd.Execute(), "remove-account")
+
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Contains(stdout.String(), "Remove this account and all its data?", "prompt")
+	assert.Contains(stdout.String(), "Account removed\n", "daemon stdout")
+	assert.Empty(stderr.String(), "stderr")
+}
+
 func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	require := requirepkg.New(t)
 	tmpDir := t.TempDir()
@@ -69,7 +203,7 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
@@ -104,7 +238,7 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
@@ -141,7 +275,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
@@ -194,7 +328,7 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	// --yes bypasses the initial GetActiveSync guard so we exercise the
 	// later file-deletion path.
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
@@ -202,6 +336,38 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 
 	_, err = os.Stat(filePath)
 	assertpkg.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
+}
+
+func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
+	require := requirepkg.New(t)
+	tmpDir := t.TempDir()
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err, "open store")
+	require.NoError(s.InitSchema(), "init schema")
+	seedMessageWithAttachment(t, s,
+		"alice@example.com", "thread-a", "msg-a",
+		"ee/hashA", "hashA")
+	aliceSrc, err := s.GetSourceByIdentifier("alice@example.com")
+	require.NoError(err, "GetSourceByIdentifier")
+	_, err = s.StartSync(aliceSrc.ID, "full")
+	require.NoError(err, "StartSync")
+	_ = s.Close()
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "alice@example.com", "--confirmed"})
+
+	err = root.Execute()
+	require.Error(err, "confirmed prompt must not force active-sync removal")
+	require.ErrorContains(err, "active sync in progress")
 }
 
 func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
@@ -231,7 +397,7 @@ func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
 	require.NoError(root.Execute(), "remove-account")
 
@@ -241,7 +407,7 @@ func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
 
 func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account"})
 
 	requirepkg.Error(t, root.Execute(), "expected error for missing email arg")
@@ -266,7 +432,7 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "nobody@example.com", "--yes",
 	})
@@ -298,7 +464,7 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "test@example.com", "--yes",
 	})
@@ -344,7 +510,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	// Without --type should fail
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "dup@example.com", "--yes",
 	})
@@ -355,7 +521,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 
 	// With --type should succeed
 	root2 := newTestRootCmd()
-	root2.AddCommand(newRemoveAccountCmd())
+	root2.AddCommand(newRemoveAccountLocalTestCmd())
 	root2.SetArgs([]string{
 		"remove-account", "dup@example.com",
 		"--yes", "--type", "mbox",
@@ -402,7 +568,7 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "tok@example.com", "--yes",
 	})
@@ -443,7 +609,7 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "tok@example.com", "--yes", "--type", "teams",
 	})
@@ -481,7 +647,7 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 	}
 
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{
 		"remove-account", "imp@example.com", "--yes",
 	})
@@ -551,7 +717,7 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 
 	// Run WITHOUT --yes so it tries to read confirmation
 	root := newTestRootCmd()
-	root.AddCommand(newRemoveAccountCmd())
+	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account", "eof@example.com"})
 
 	err = root.Execute()

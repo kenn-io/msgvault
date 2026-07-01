@@ -54,12 +54,16 @@ Examples:
 	RunE: runImportImessage,
 }
 
-func runImportImessage(cmd *cobra.Command, _ []string) error {
-	s, err := openStoreAndInitForIngest()
+func runImportImessage(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer cleanup()
 
 	chatDBPath, err := resolveChatDBPath()
 	if err != nil {
@@ -244,43 +248,6 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 		}
 	}
 	return phoneMatches > 0 || emailMatches > 0
-}
-
-func openStoreAndInit() (*store.Store, error) {
-	// Shared by 15 commands (deduplicate, identity, collection,
-	// import-imessage/gvoice, delete-deduped, …). store.Open + InitSchema
-	// create the database file on first use, which is the right behavior
-	// for a freshly-installed CLI: a missing file is not an error here.
-	// init-db remains the explicit setup command for users who want to
-	// pre-create the DB.
-	return openStoreAndInitWith(runStartupMigrations)
-}
-
-// openStoreAndInitForIngest is the ingest-command variant of
-// openStoreAndInit. It uses runStartupMigrationsForIngest so that, on a
-// fresh install with [identity] addresses configured but no source yet,
-// the misleading "migration will run on the next command" notice does
-// not fire. The post-source-create migration call run by ingest commands
-// after GetOrCreateSource emits the accurate "applied" notice once.
-func openStoreAndInitForIngest() (*store.Store, error) {
-	return openStoreAndInitWith(runStartupMigrationsForIngest)
-}
-
-func openStoreAndInitWith(migrate func(*store.Store) error) (*store.Store, error) {
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := s.InitSchema(); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-	if err := migrate(s); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("startup migrations: %w", err)
-	}
-	return s, nil
 }
 
 func resolveChatDBPath() (string, error) {

@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/spf13/cobra"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -17,14 +19,14 @@ import (
 func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require := requirepkg.New(t)
 
-	buildCmd, _, err := rootCmd.Find([]string{"embeddings", "build"})
+	buildCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "build"})
 	require.NoError(err)
 	require.Equal("build", buildCmd.Name())
 	require.NotNil(buildCmd.Flags().Lookup("full-rebuild"))
 	require.NotNil(buildCmd.Flags().Lookup("yes"))
 	require.NotNil(buildCmd.Flags().Lookup("backstop"))
 
-	resumeCmd, _, err := rootCmd.Find([]string{"embeddings", "resume"})
+	resumeCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "resume"})
 	require.NoError(err)
 	require.Equal("resume", resumeCmd.Name())
 	require.Nil(resumeCmd.Flags().Lookup("full-rebuild"))
@@ -32,17 +34,17 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	// can do a watermark-ignoring straggler sweep without --full-rebuild.
 	require.NotNil(resumeCmd.Flags().Lookup("backstop"))
 
-	listCmd, _, err := rootCmd.Find([]string{"embeddings", "list"})
+	listCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "list"})
 	require.NoError(err)
 	require.Equal("list", listCmd.Name())
 
-	retireCmd, _, err := rootCmd.Find([]string{"embeddings", "retire"})
+	retireCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "retire"})
 	require.NoError(err)
 	require.Equal("retire", retireCmd.Name())
 	require.NotNil(retireCmd.Flags().Lookup("yes"))
 	require.NotNil(retireCmd.Flags().Lookup("force-active"))
 
-	activateCmd, _, err := rootCmd.Find([]string{"embeddings", "activate"})
+	activateCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "activate"})
 	require.NoError(err)
 	require.Equal("activate", activateCmd.Name())
 	require.NotNil(activateCmd.Flags().Lookup("yes"))
@@ -54,6 +56,188 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 	require.NotEmpty(legacyCmd.Deprecated)
 	require.NotNil(legacyCmd.Flags().Lookup("full-rebuild"))
 	require.NotNil(legacyCmd.Flags().Lookup("yes"))
+}
+
+func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "list"}, req.Args, "args")
+	}, `{"type":"stdout","data":"ID\tSTATE\n1\tactive\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	list := &cobra.Command{
+		Use:  cmdUseList,
+		RunE: runEmbeddingsListCommand,
+	}
+	embeddings.AddCommand(list)
+	root.AddCommand(embeddings)
+
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetArgs([]string{embeddingsCommandName, "list"})
+
+	require.NoError(root.Execute(), "embeddings list")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("ID\tSTATE\n1\tactive\n", stdout.String(), "stdout")
+}
+
+func TestEmbeddingsBuildPromptsBeforeDaemonRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
+	t.Cleanup(func() { embedFullRebuild, embedYes, embedBackstop = oldFull, oldYes, oldBackstop })
+
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{
+			embeddingsCommandName,
+			"build",
+			"--backstop",
+			"--full-rebuild",
+			"--yes",
+		}, req.Args, "args")
+	}, `{"type":"stderr","data":"Building generation 2\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	build := newEmbeddingsBuildCmd("build")
+	embeddings.AddCommand(build)
+	root.AddCommand(embeddings)
+
+	var stderr bytes.Buffer
+	root.SetIn(bytes.NewBufferString("y\n"))
+	root.SetErr(&stderr)
+	root.SetArgs([]string{embeddingsCommandName, "build", "--full-rebuild", "--backstop"})
+
+	require.NoError(root.Execute(), "embeddings build")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Contains(stderr.String(), "Start a full rebuild?", "frontend prompt")
+	assert.Contains(stderr.String(), "Building generation 2", "daemon stderr")
+}
+
+func TestEmbeddingsResumeUsesDaemonRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
+	t.Cleanup(func() { embedFullRebuild, embedYes, embedBackstop = oldFull, oldYes, oldBackstop })
+
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "resume", "--backstop"}, req.Args, "args")
+	}, `{"type":"stdout","data":"Scanned: 1, succeeded: 1, failed: 0, truncated: 0\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	resume := &cobra.Command{
+		Use:  "resume",
+		RunE: runEmbeddingsResume,
+	}
+	resume.Flags().BoolVar(&embedBackstop, "backstop", false,
+		"Full-scan pass that ignores the per-generation watermark")
+	embeddings.AddCommand(resume)
+	root.AddCommand(embeddings)
+
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetArgs([]string{embeddingsCommandName, "resume", "--backstop"})
+
+	require.NoError(root.Execute(), "embeddings resume")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("Scanned: 1, succeeded: 1, failed: 0, truncated: 0\n", stdout.String(), "stdout")
+}
+
+func TestEmbeddingsRetirePromptsBeforeDaemonRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	oldYes, oldForce := embeddingsRetireYes, embeddingsRetireForceActive
+	t.Cleanup(func() {
+		embeddingsRetireYes, embeddingsRetireForceActive = oldYes, oldForce
+	})
+
+	server, runRequests, planRequests := newDaemonCLIEmbeddingsTestServer(t, func(req daemonCLIEmbeddingsPlanTestRequest) {
+		assert.Equal(cliEmbeddingsOperationRetire, req.Operation, "operation")
+		assert.Equal(int64(2), req.GenerationID, "generation id")
+		assert.True(req.Force, "force")
+	}, map[string]any{
+		"needs_confirmation": true,
+		"prompt":             "Retire generation 2 (fp)? ",
+	}, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "retire", "--force-active", "--yes", "2"}, req.Args, "args")
+	}, `{"type":"stdout","data":"Generation 2 retired.\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	retire := &cobra.Command{
+		Use:  "retire <generation-id>",
+		Args: cobra.ExactArgs(1),
+		RunE: runEmbeddingsRetireCommand,
+	}
+	retire.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
+	retire.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")
+	embeddings.AddCommand(retire)
+	root.AddCommand(embeddings)
+
+	var stdout, stderr bytes.Buffer
+	root.SetIn(bytes.NewBufferString("y\n"))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{embeddingsCommandName, "retire", "--force-active", "2"})
+
+	require.NoError(root.Execute(), "embeddings retire")
+	assert.Equal(1, int(planRequests.Load()), "plan endpoint calls")
+	assert.Equal(1, int(runRequests.Load()), "runner endpoint calls")
+	assert.Contains(stderr.String(), "Retire generation 2 (fp)? ", "frontend prompt")
+	assert.Equal("Generation 2 retired.\n", stdout.String(), "stdout")
+}
+
+func TestEmbeddingsActivatePromptsBeforeDaemonRunner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	oldYes, oldForce := embeddingsActivateYes, embeddingsActivateForce
+	t.Cleanup(func() {
+		embeddingsActivateYes, embeddingsActivateForce = oldYes, oldForce
+	})
+
+	server, runRequests, planRequests := newDaemonCLIEmbeddingsTestServer(t, func(req daemonCLIEmbeddingsPlanTestRequest) {
+		assert.Equal(cliEmbeddingsOperationActivate, req.Operation, "operation")
+		assert.Equal(int64(3), req.GenerationID, "generation id")
+		assert.True(req.Force, "force")
+	}, map[string]any{
+		"needs_confirmation": true,
+		"prompt":             "Activate generation 3 (fp) and retire active generation 2 (old)? ",
+	}, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "activate", "--force", "--yes", "3"}, req.Args, "args")
+	}, `{"type":"stdout","data":"Generation 3 activated.\n"}`, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	activate := &cobra.Command{
+		Use:  "activate <generation-id>",
+		Args: cobra.ExactArgs(1),
+		RunE: runEmbeddingsActivateCommand,
+	}
+	activate.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")
+	activate.Flags().BoolVar(&embeddingsActivateForce, "force", false, "Allow activation while messages still need embedding")
+	embeddings.AddCommand(activate)
+	root.AddCommand(embeddings)
+
+	var stdout, stderr bytes.Buffer
+	root.SetIn(bytes.NewBufferString("y\n"))
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{embeddingsCommandName, "activate", "--force", "3"})
+
+	require.NoError(root.Execute(), "embeddings activate")
+	assert.Equal(1, int(planRequests.Load()), "plan endpoint calls")
+	assert.Equal(1, int(runRequests.Load()), "runner endpoint calls")
+	assert.Contains(stderr.String(), "Activate generation 3 (fp)", "frontend prompt")
+	assert.Equal("Generation 3 activated.\n", stdout.String(), "stdout")
 }
 
 // TestRunEmbeddingsResume_PreservesBackstopFlag pins the resume behavior:
@@ -291,7 +475,9 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 func withEmbeddingCommandConfig(t *testing.T, vecPath string) {
 	t.Helper()
 	oldCfg := cfg
-	cfg = newTestConfigForFingerprint(vecPath)
+	c := newTestConfigForFingerprint(vecPath)
+	c.Data.DataDir = filepath.Dir(vecPath)
+	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
 }
 

@@ -85,7 +85,9 @@ func TestCORSPreflightHeaders(t *testing.T) {
 
 	// Check all preflight headers
 	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Origin"), "missing Access-Control-Allow-Origin")
-	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Methods"), "missing Access-Control-Allow-Methods")
+	methods := w.Header().Get("Access-Control-Allow-Methods")
+	assert.NotEmpty(methods, "missing Access-Control-Allow-Methods")
+	assert.Contains(methods, http.MethodPatch, "preflight methods should include PATCH")
 	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Headers"), "missing Access-Control-Allow-Headers")
 	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
 }

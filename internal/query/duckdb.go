@@ -2620,7 +2620,7 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 	conditions = append(conditions,
 		store.LiveMessagesWhere("msg", filter.HideDeletedFromSource),
 	)
-	messageTypes, noMessageTypeMatches := scopedMessageTypes(q.MessageTypes, filter.MessageType)
+	messageTypes, noMessageTypeMatches := ScopedMessageTypes(q.MessageTypes, filter.MessageType)
 	switch {
 	case noMessageTypeMatches:
 		conditions = append(conditions, "1=0")

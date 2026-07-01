@@ -115,6 +115,18 @@ func TestBuildFilter_MessageType(t *testing.T) {
 	assertpkg.Equal(t, []string{"sms", "mms"}, f.MessageTypes, "MessageTypes")
 }
 
+func TestBuildFilter_SourceIDs(t *testing.T) {
+	ctx := context.Background()
+	db := newFilterTestDB(t)
+	q := search.Parse(`lunch`)
+	q.AccountIDs = []int64{17, 23}
+
+	f, err := BuildFilter(ctx, db, nil, q)
+	requirepkg.NoError(t, err, "BuildFilter")
+
+	assertpkg.Equal(t, []int64{17, 23}, f.SourceIDs, "SourceIDs")
+}
+
 // TestBuildFilter_LabelsAndAttachments checks the label: and
 // has:attachment operators.
 func TestBuildFilter_LabelsAndAttachments(t *testing.T) {

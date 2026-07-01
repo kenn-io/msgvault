@@ -35,6 +35,10 @@ const DefaultCollectionName = "All"
 // ErrCollectionNotFound is returned when a collection lookup has no hits.
 var ErrCollectionNotFound = errors.New("collection not found")
 
+// ErrCollectionExists is returned when creating a collection with a name
+// that already exists.
+var ErrCollectionExists = errors.New("collection already exists")
+
 // ErrCollectionImmutable is returned when an explicit mutation is
 // attempted against the auto-managed default collection.
 var ErrCollectionImmutable = errors.New(
@@ -125,7 +129,9 @@ func (s *Store) CreateCollection(
 		if err != nil {
 			if s.dialect.IsConflictError(err) {
 				return fmt.Errorf(
-					"collection %q already exists", name,
+					"collection %q already exists: %w",
+					name,
+					ErrCollectionExists,
 				)
 			}
 			return fmt.Errorf("insert collection: %w", err)

@@ -280,6 +280,102 @@ func TestTriggerSync(t *testing.T) {
 	assert.Equal(int32(1), called.Load(), "syncFunc called times")
 }
 
+func TestScheduler_WorkTrackerWrapsTriggeredSync(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	tracker := &fakeWorkTracker{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	s := New(func(ctx context.Context, email string) error {
+		startedOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}).WithWorkTracker(tracker)
+
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	s.Start()
+	defer func() {
+		ctx := s.Stop()
+		<-ctx.Done()
+	}()
+
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("sync did not start")
+	}
+	assert.Equal(1, tracker.active(), "active work while sync runs")
+
+	close(release)
+	require.Eventually(func() bool {
+		return tracker.active() == 0
+	}, time.Second, time.Millisecond, "active work after sync exits")
+}
+
+type blockingContextWorkTracker struct {
+	begin   chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingContextWorkTracker() *blockingContextWorkTracker {
+	return &blockingContextWorkTracker{
+		begin:   make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (t *blockingContextWorkTracker) signalBegin() {
+	t.once.Do(func() { close(t.begin) })
+}
+
+func (t *blockingContextWorkTracker) BeginWork() (func(), bool) {
+	t.signalBegin()
+	<-t.release
+	return func() {}, false
+}
+
+func (t *blockingContextWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	t.signalBegin()
+	select {
+	case <-t.release:
+		return func() {}, false
+	case <-ctx.Done():
+		return func() {}, false
+	}
+}
+
+func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
+	tracker := newBlockingContextWorkTracker()
+	s := New(func(context.Context, string) error {
+		requirepkg.FailNow(t, "sync function must not run when gate wait is canceled")
+		return nil
+	}).WithWorkTracker(tracker)
+	requirepkg.NoError(t, s.AddAccount("test@example.com", "* * * * *"), "AddAccount")
+	requirepkg.NoError(t, s.TriggerSync("test@example.com"), "TriggerSync")
+
+	select {
+	case <-tracker.begin:
+	case <-time.After(500 * time.Millisecond):
+		requirepkg.FailNow(t, "sync did not start waiting on tracker")
+	}
+
+	stopCtx := s.Stop()
+	select {
+	case <-stopCtx.Done():
+	case <-time.After(500 * time.Millisecond):
+		close(tracker.release)
+		requirepkg.FailNow(t, "Stop did not cancel work tracker wait")
+	}
+}
+
 func TestSyncPreventsDoubleRun(t *testing.T) {
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
@@ -396,6 +492,40 @@ func TestTriggerSyncAfterStop(t *testing.T) {
 
 	err := s.TriggerSync("test@gmail.com")
 	assertpkg.Error(t, err, "TriggerSync() after Stop()")
+}
+
+type fakeWorkTracker struct {
+	mu         sync.Mutex
+	activeWork int
+}
+
+func (t *fakeWorkTracker) BeginWork() (func(), bool) {
+	return t.BeginWorkContext(context.Background())
+}
+
+func (t *fakeWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {
+	if ctx != nil && ctx.Err() != nil {
+		return func() {}, false
+	}
+	t.mu.Lock()
+	t.activeWork++
+	t.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mu.Lock()
+			if t.activeWork > 0 {
+				t.activeWork--
+			}
+			t.mu.Unlock()
+		})
+	}, true
+}
+
+func (t *fakeWorkTracker) active() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.activeWork
 }
 
 // ---------- fakes for EmbedJob tests ----------

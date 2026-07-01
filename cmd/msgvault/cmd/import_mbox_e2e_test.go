@@ -19,6 +19,8 @@ import (
 )
 
 func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	require := requirepkg.New(t)
 	tmp := t.TempDir()
 
@@ -124,6 +126,8 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 }
 
 func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -195,6 +199,8 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -274,6 +280,8 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 }
 
 func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	require := requirepkg.New(t)
 	tmp := t.TempDir()
 

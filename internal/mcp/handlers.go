@@ -95,9 +95,13 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	engine         query.Engine
-	attachmentsDir string
-	dataDir        string
+	engine           query.Engine
+	attachmentsDir   string
+	attachmentReader AttachmentReader
+	manifestSaver    DeletionManifestSaver
+	hybridSearcher   HybridSearcher
+	similarSearcher  SimilarSearcher
+	dataDir          string
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_messages handler rejects mode=vector and mode=hybrid with
@@ -107,6 +111,67 @@ type handlers struct {
 	hybridEngine *hybrid.Engine
 	vectorCfg    vector.Config
 	backend      vector.Backend
+}
+
+// AttachmentReader fetches content-addressed attachment bytes. It is optional:
+// local MCP servers can read from attachmentsDir, while daemon-routed MCP
+// servers can fetch the bytes over HTTP.
+type AttachmentReader interface {
+	ReadAttachment(ctx context.Context, contentHash string) ([]byte, error)
+}
+
+// DeletionManifestSaver persists staged deletion manifests. It is optional:
+// direct/local MCP servers can save under dataDir, while daemon-routed MCP
+// servers save through the selected daemon.
+type DeletionManifestSaver interface {
+	SaveManifest(ctx context.Context, manifest *deletion.Manifest) error
+}
+
+// HybridSearcher runs vector/hybrid searches outside the MCP process. The
+// daemon-backed CLI uses this so MCP does not open local vector stores.
+type HybridSearcher interface {
+	SearchHybrid(ctx context.Context, req HybridSearchRequest) (*HybridSearchResult, error)
+}
+
+type HybridSearchRequest struct {
+	Query   string
+	Mode    string
+	Account string
+	Limit   int
+}
+
+type HybridSearchHit struct {
+	ID             int64
+	RRFScore       *float64
+	BM25Score      *float64
+	VectorScore    *float64
+	SubjectBoosted bool
+}
+
+type HybridSearchResult struct {
+	Hits          []HybridSearchHit
+	PoolSaturated bool
+	Generation    HybridGeneration
+}
+
+type SimilarSearcher interface {
+	FindSimilar(ctx context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error)
+}
+
+type SimilarSearchRequest struct {
+	MessageID     int64
+	Limit         int
+	Account       string
+	MessageType   string
+	After         *time.Time
+	Before        *time.Time
+	HasAttachment *bool
+}
+
+type SimilarSearchResult struct {
+	SeedMessageID int64
+	Generation    HybridGeneration
+	Messages      []query.MessageSummary
 }
 
 // translateVectorErr maps well-known vector sentinel errors to MCP tool
@@ -187,6 +252,27 @@ func getDateArg(args map[string]any, key string) (*time.Time, error) {
 		return nil, fmt.Errorf("invalid %s date %q: expected YYYY-MM-DD", key, v)
 	}
 	return &t, nil
+}
+
+func (h *handlers) readAttachment(ctx context.Context, contentHash string) ([]byte, error) {
+	if h.attachmentReader != nil {
+		return h.readAttachmentFromReader(ctx, contentHash)
+	}
+	return h.readAttachmentFile(contentHash)
+}
+
+func (h *handlers) readAttachmentFromReader(ctx context.Context, contentHash string) ([]byte, error) {
+	if err := export.ValidateContentHash(contentHash); err != nil {
+		return nil, errors.New("attachment has invalid content hash")
+	}
+	data, err := h.attachmentReader.ReadAttachment(ctx, contentHash)
+	if err != nil {
+		return nil, fmt.Errorf("attachment file not available: %w", err)
+	}
+	if int64(len(data)) > maxAttachmentSize {
+		return nil, fmt.Errorf("attachment too large: %d bytes (max %d)", len(data), maxAttachmentSize)
+	}
+	return data, nil
 }
 
 // readAttachmentFile reads the content-addressed attachment file after
@@ -335,15 +421,17 @@ type hybridMessageItem struct {
 	Score *hybridScoreBreakdown `json:"score,omitempty"`
 }
 
-// hybridGenerationSummary describes the active vector-index generation
-// used to answer a hybrid/vector query.
-type hybridGenerationSummary struct {
+// HybridGeneration describes the active vector-index generation used to answer
+// a hybrid/vector query.
+type HybridGeneration struct {
 	ID          int64  `json:"id"`
 	Model       string `json:"model"`
 	Dimension   int    `json:"dimension"`
 	Fingerprint string `json:"fingerprint"`
 	State       string `json:"state"`
 }
+
+type hybridGenerationSummary = HybridGeneration
 
 // searchMessagesHybridResponse is the paginated body for mode=vector|hybrid.
 type searchMessagesHybridResponse struct {
@@ -363,6 +451,9 @@ func (h *handlers) searchMessagesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr, mode string, explain bool,
 ) (*mcp.CallToolResult, error) {
+	if h.hybridSearcher != nil {
+		return h.searchMessagesHybridViaSearcher(ctx, args, queryStr, mode, explain)
+	}
 	if h.hybridEngine == nil {
 		return mcp.NewToolResultError(
 			"vector_not_enabled: vector search is not configured on this server",
@@ -518,6 +609,87 @@ func (h *handlers) searchMessagesHybrid(
 	})
 }
 
+func (h *handlers) searchMessagesHybridViaSearcher(
+	ctx context.Context, args map[string]any,
+	queryStr, mode string, explain bool,
+) (*mcp.CallToolResult, error) {
+	limit := searchLimitArg(args)
+	offset := limitArg(args, "offset", 0)
+	requestedEnd := offset + limit
+
+	parsed := search.Parse(queryStr)
+	freeText := strings.Join(parsed.TextTerms, " ")
+	if freeText == "" {
+		return mcp.NewToolResultError(
+			"missing_free_text: mode=" + mode +
+				" requires at least one free-text term; use mode=fts for filter-only queries",
+		), nil
+	}
+
+	account, _ := args["account"].(string)
+	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
+		Query:   queryStr,
+		Mode:    mode,
+		Account: account,
+		Limit:   requestedEnd + 1,
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+	if result == nil {
+		result = &HybridSearchResult{}
+	}
+
+	hits := result.Hits
+	hasMore := len(hits) > requestedEnd
+	var pageHits []HybridSearchHit
+	if offset < len(hits) {
+		end := min(requestedEnd, len(hits))
+		pageHits = hits[offset:end]
+	}
+
+	hitIDs := make([]int64, len(pageHits))
+	for i, hit := range pageHits {
+		hitIDs[i] = hit.ID
+	}
+	summaries, err := h.engine.GetMessageSummariesByIDs(ctx, hitIDs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"mcp: hydrate daemon hybrid hits failed: ids=%d error=%v\n",
+			len(hitIDs), err)
+		summaries = nil
+	}
+	byID := make(map[int64]query.MessageSummary, len(summaries))
+	for _, s := range summaries {
+		byID[s.ID] = s
+	}
+
+	items := make([]hybridMessageItem, 0, len(pageHits))
+	for _, hit := range pageHits {
+		msg, ok := byID[hit.ID]
+		if !ok {
+			continue
+		}
+		item := hybridMessageItem{MessageSummary: msg}
+		if explain {
+			item.Score = &hybridScoreBreakdown{
+				RRF:            hit.RRFScore,
+				BM25:           hit.BM25Score,
+				Vector:         hit.VectorScore,
+				SubjectBoosted: hit.SubjectBoosted,
+			}
+		}
+		items = append(items, item)
+	}
+
+	return jsonResult(searchMessagesHybridResponse{
+		paginatedResponse: newPaginatedResponseNoTotal(items, offset, hasMore),
+		Mode:              mode,
+		PoolSaturated:     result.PoolSaturated,
+		Generation:        result.Generation,
+	})
+}
+
 // similarMessagesResponse is the full response body for
 // find_similar_messages.
 type similarMessagesResponse struct {
@@ -532,6 +704,9 @@ type similarMessagesResponse struct {
 // results. Structured filters (account, after, before, has_attachment)
 // are applied at the backend level.
 func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if h.similarSearcher != nil {
+		return h.findSimilarMessagesViaSearcher(ctx, req)
+	}
 	if h.backend == nil {
 		return mcp.NewToolResultError(
 			"vector_not_enabled: vector search is not configured on this server",
@@ -627,6 +802,60 @@ func (h *handlers) findSimilarMessages(ctx context.Context, req mcp.CallToolRequ
 			State:       string(active.State),
 		},
 		Messages: messages,
+	})
+}
+
+func (h *handlers) findSimilarMessagesViaSearcher(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+
+	seedID, err := getIDArg(args, "message_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	limit := limitArg(args, "limit", 20)
+	if limit < 1 {
+		limit = 20
+	}
+	account, _ := args["account"].(string)
+	messageType, _ := args["message_type"].(string)
+	after, err := getDateArg(args, "after")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	before, err := getDateArg(args, "before")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	var hasAttachment *bool
+	if v, ok := args["has_attachment"].(bool); ok {
+		hasAttachment = &v
+	}
+
+	result, err := h.similarSearcher.FindSimilar(ctx, SimilarSearchRequest{
+		MessageID:     seedID,
+		Limit:         limit,
+		Account:       account,
+		MessageType:   messageType,
+		After:         after,
+		Before:        before,
+		HasAttachment: hasAttachment,
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("find similar failed: %v", err)), nil
+	}
+	if result == nil {
+		result = &SimilarSearchResult{SeedMessageID: seedID}
+	}
+	if result.SeedMessageID == 0 {
+		result.SeedMessageID = seedID
+	}
+
+	return jsonResult(similarMessagesResponse{
+		SeedMessageID: result.SeedMessageID,
+		Returned:      len(result.Messages),
+		Generation:    result.Generation,
+		Messages:      result.Messages,
 	})
 }
 
@@ -888,7 +1117,7 @@ func (h *handlers) getAttachment(ctx context.Context, req mcp.CallToolRequest) (
 		return mcp.NewToolResultError("attachment not found"), nil
 	}
 
-	if h.attachmentsDir == "" {
+	if h.attachmentReader == nil && h.attachmentsDir == "" {
 		return mcp.NewToolResultError("attachments directory not configured"), nil
 	}
 
@@ -896,7 +1125,7 @@ func (h *handlers) getAttachment(ctx context.Context, req mcp.CallToolRequest) (
 		return mcp.NewToolResultError(fmt.Sprintf("attachment too large: %d bytes (max %d)", att.Size, maxAttachmentSize)), nil
 	}
 
-	data, err := h.readAttachmentFile(att.ContentHash)
+	data, err := h.readAttachment(ctx, att.ContentHash)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -954,7 +1183,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest
 		return mcp.NewToolResultError("attachment not found"), nil
 	}
 
-	if h.attachmentsDir == "" {
+	if h.attachmentReader == nil && h.attachmentsDir == "" {
 		return mcp.NewToolResultError("attachments directory not configured"), nil
 	}
 
@@ -962,7 +1191,7 @@ func (h *handlers) exportAttachment(ctx context.Context, req mcp.CallToolRequest
 		return mcp.NewToolResultError(fmt.Sprintf("attachment too large: %d bytes (max %d)", att.Size, maxAttachmentSize)), nil
 	}
 
-	data, err := h.readAttachmentFile(att.ContentHash)
+	data, err := h.readAttachment(ctx, att.ContentHash)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1319,13 +1548,6 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		return mcp.NewToolResultError("no messages match the specified criteria"), nil
 	}
 
-	// Create deletion manager and manifest
-	deletionsDir := filepath.Join(h.dataDir, "deletions")
-	manager, err := deletion.NewManager(deletionsDir)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("create deletion manager: %v", err)), nil
-	}
-
 	manifest := deletion.NewManifest(description, gmailIDs)
 	manifest.CreatedBy = "mcp"
 
@@ -1347,7 +1569,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 		manifest.Filters.Before = beforeDate.Format("2006-01-02")
 	}
 
-	if err := manager.SaveManifest(manifest); err != nil {
+	if err := h.saveDeletionManifest(ctx, manifest); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("save manifest: %v", err)), nil
 	}
 
@@ -1364,6 +1586,18 @@ func (h *handlers) stageDeletion(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	return jsonResult(resp)
+}
+
+func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.Manifest) error {
+	if h.manifestSaver != nil {
+		return h.manifestSaver.SaveManifest(ctx, manifest)
+	}
+	deletionsDir := filepath.Join(h.dataDir, "deletions")
+	manager, err := deletion.NewManager(deletionsDir)
+	if err != nil {
+		return fmt.Errorf("create deletion manager: %w", err)
+	}
+	return manager.SaveManifest(manifest)
 }
 
 func (h *handlers) searchByDomains(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

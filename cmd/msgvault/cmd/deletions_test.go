@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
@@ -51,4 +54,148 @@ func TestListDeletions_ShowsCancelled(t *testing.T) {
 		idPrefix = idPrefix[:20]
 	}
 	assert.Contains(buf.String(), idPrefix, "output missing manifest ID prefix %q", idPrefix)
+}
+
+func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+	t.Setenv(remoteDeleteEnvVar, "1")
+
+	savedPermanent := deletePermanent
+	savedYes := deleteYes
+	savedDryRun := deleteDryRun
+	savedList := deleteList
+	savedAccount := deleteAccount
+	deletePermanent = false
+	deleteYes = true
+	deleteDryRun = false
+	deleteList = false
+	deleteAccount = ""
+	t.Cleanup(func() {
+		deletePermanent = savedPermanent
+		deleteYes = savedYes
+		deleteDryRun = savedDryRun
+		deleteList = savedList
+		deleteAccount = savedAccount
+	})
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	requirepkg.NoError(t, err, "NewManager")
+	_, err = mgr.CreateManifest("owned archive", []string{"gmail-1"}, deletion.Filters{})
+	requirepkg.NoError(t, err, "CreateManifest")
+
+	owner, err := tryAcquireWriteOwnerLock(dataDir)
+	requirepkg.NoError(t, err, "acquire owner lock")
+	t.Cleanup(func() { requirepkg.NoError(t, owner.Close(), "close owner lock") })
+
+	cmd := &cobra.Command{Use: "delete-staged"}
+	cmd.SetContext(context.Background())
+	err = deleteStagedCmd.RunE(cmd, nil)
+	requirepkg.Error(t, err, "delete-staged should fail while the archive is owned")
+	assertpkg.Contains(t, err.Error(), "write operation is in progress")
+	assertpkg.Contains(t, err.Error(), "cannot start")
+}
+
+func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	dataDir := t.TempDir()
+	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
+
+	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+	require.NoError(err, "NewManager")
+	first, err := mgr.CreateManifest("first batch", []string{"gmail-1"}, deletion.Filters{Account: "alice@example.com"})
+	require.NoError(err, "CreateManifest first")
+	second, err := mgr.CreateManifest("second batch", []string{"gmail-2"}, deletion.Filters{Account: "alice@example.com"})
+	require.NoError(err, "CreateManifest second")
+
+	plan, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		RemoteDeleteEnabled: true,
+		Yes:                 true,
+	})
+	require.NoError(err, "build initial plan")
+	require.ElementsMatch([]string{first.ID, second.ID}, plan.PlannedBatchIDs, "planned ids")
+	require.NotEmpty(plan.PlanFingerprint, "fingerprint")
+
+	newBatch, err := mgr.CreateManifest("new batch", []string{"gmail-3"}, deletion.Filters{Account: "alice@example.com"})
+	require.NoError(err, "CreateManifest new")
+
+	pinned, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		PlannedBatchIDs:     plan.PlannedBatchIDs,
+		RemoteDeleteEnabled: true,
+		Yes:                 true,
+	})
+	require.NoError(err, "build pinned plan")
+	assert.Equal(plan.PlannedBatchIDs, pinned.PlannedBatchIDs, "pinned plan preserves confirmed batch order")
+	assert.NotContains(pinned.PlannedBatchIDs, newBatch.ID, "pinned plan must not include newly staged batches")
+
+	first.GmailIDs = append(first.GmailIDs, "gmail-4")
+	require.NoError(mgr.SaveManifest(first), "SaveManifest changed first")
+	changed, err := buildDeleteStagedPlan(deleteStagedPlanOptions{
+		PlannedBatchIDs:     plan.PlannedBatchIDs,
+		RemoteDeleteEnabled: true,
+		Yes:                 true,
+	})
+	require.NoError(err, "build changed plan")
+	assert.NotEqual(plan.PlanFingerprint, changed.PlanFingerprint, "fingerprint should change when confirmed manifest content changes")
+}
+
+func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
+	defer restore()
+
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(sourceTypeGmail, scopeEscalationAccount)
+	require.NoError(err, "GetOrCreateSource")
+
+	mgr, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	require.NoError(err, "NewManager")
+	manifest, err := mgr.CreateManifest("permanent batch", []string{"gmail-1"}, deletion.Filters{Account: scopeEscalationAccount})
+	require.NoError(err, "CreateManifest")
+
+	got, err := planCLIDeleteStaged(context.Background(), st, api.CLIDeleteStagedPlanRequest{
+		Permanent:           true,
+		Yes:                 true,
+		RemoteDeleteEnabled: true,
+	})
+
+	require.NoError(err, "planCLIDeleteStaged")
+	assert.True(got.NeedsExecution, "needs execution")
+	assert.True(got.NeedsConfirmation, "permanent deletion always needs destructive confirmation")
+	assert.Equal([]string{manifest.ID}, got.PlannedBatchIDs, "planned batch ids")
+	assert.NotEmpty(got.PlanFingerprint, "plan fingerprint")
+	assert.True(got.NeedsScopeEscalation, "gmail-only token should require deletion scope escalation")
+	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
+	assert.Contains(got.ScopeEscalationBodyLines, "Batch deletion requires elevated Gmail permissions.", "scope body")
+}
+
+func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	_, restore := seedTokenEnv(t, legacyTokenJSON)
+	defer restore()
+
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(sourceTypeGmail, scopeEscalationAccount)
+	require.NoError(err, "GetOrCreateSource")
+
+	mgr, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	require.NoError(err, "NewManager")
+	_, err = mgr.CreateManifest("legacy token batch", []string{"gmail-1"}, deletion.Filters{Account: scopeEscalationAccount})
+	require.NoError(err, "CreateManifest")
+
+	got, err := planCLIDeleteStaged(context.Background(), st, api.CLIDeleteStagedPlanRequest{
+		Permanent:           true,
+		Yes:                 true,
+		RemoteDeleteEnabled: true,
+	})
+
+	require.NoError(err, "planCLIDeleteStaged")
+	assert.True(got.NeedsScopeEscalation, "legacy token must require foreground deletion scope escalation")
+	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
 }

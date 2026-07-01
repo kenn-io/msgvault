@@ -65,6 +65,11 @@ type ContentHashCandidate struct {
 	FromEmail        string
 }
 
+type DedupedBatchCount struct {
+	ID    string
+	Count int64
+}
+
 func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
 	query := `
 		SELECT rfc822_message_id, COUNT(*) AS cnt
@@ -393,6 +398,38 @@ func (s *Store) DeleteDedupedBatch(batchID string) (int64, error) {
 		return err
 	})
 	return deleted, err
+}
+
+func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int64, error) {
+	stats := make([]DedupedBatchCount, 0, len(batchIDs))
+	var total int64
+	for _, id := range batchIDs {
+		var count int64
+		err := s.db.QueryRow(
+			s.Rebind("SELECT COUNT(*) FROM messages WHERE delete_batch_id = ? AND deleted_at IS NOT NULL"),
+			id,
+		).Scan(&count)
+		if err != nil {
+			return nil, 0, fmt.Errorf("count rows for batch %q: %w", id, err)
+		}
+		total += count
+		stats = append(stats, DedupedBatchCount{ID: id, Count: count})
+	}
+	return stats, total, nil
+}
+
+func (s *Store) CountAllDeduped() (total int64, distinctBatches int64, err error) {
+	if err := s.db.QueryRow(
+		s.Rebind("SELECT COUNT(*) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
+	).Scan(&total); err != nil {
+		return 0, 0, fmt.Errorf("count hidden messages: %w", err)
+	}
+	if err := s.db.QueryRow(
+		s.Rebind("SELECT COUNT(DISTINCT delete_batch_id) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
+	).Scan(&distinctBatches); err != nil {
+		return 0, 0, fmt.Errorf("count distinct batches: %w", err)
+	}
+	return total, distinctBatches, nil
 }
 
 // DeleteAllDeduped permanently deletes every dedup-hidden row regardless of

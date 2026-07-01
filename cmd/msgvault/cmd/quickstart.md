@@ -82,9 +82,9 @@ If Gmail's history has expired (~7 days), it will suggest running a full sync.
 
 ### Build the analytics cache
 
-The TUI and aggregate queries use Parquet files for fast analytics. The cache
-is built automatically when launching the TUI, but you can also build it
-manually:
+The TUI and aggregate queries use Parquet files for fast analytics. The daemon
+builds the cache automatically by default when aggregate views need it, but you
+can also build it manually:
 
 ```bash
 # Incremental update (only new messages)
@@ -266,18 +266,18 @@ msgvault version
 ## Interactive TUI
 
 ```bash
-# Launch the TUI (auto-builds analytics cache if needed)
+# Launch the TUI (uses local daemon unless [remote].url is configured)
 # Press 'a' inside the TUI to filter by account
 msgvault tui
 
-# Force local database (override remote config)
+# Force this machine's local daemon (override remote config)
 msgvault tui --local
 ```
 
 ### Remote mode
 
 When `[remote].url` is configured in `config.toml`, the TUI connects to a remote
-msgvault server instead of the local database. This is useful for accessing an
+msgvault server instead of this machine's local daemon. This is useful for accessing an
 archive on a NAS or server from another machine.
 
 ```toml
@@ -286,7 +286,10 @@ url = "http://nas.local:8080"
 api_key = "your-api-key"
 ```
 
-In remote mode, deletion staging and attachment export are disabled for safety.
+Deletion staging and attachment export use the selected daemon. When connected
+to a configured remote server, staged deletion manifests are saved on that
+remote host; attachment export streams bytes from the daemon and writes the zip
+file on the CLI machine.
 
 ### TUI keybindings
 

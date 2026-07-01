@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1813,7 +1812,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// type (e.g. Texts mode → sms/mms). Without this, SearchFast within a
 	// type-scoped view would silently widen back to all message types.
 	if filter.MessageType != "" {
-		messageTypes, noMatches := scopedMessageTypes(merged.MessageTypes, filter.MessageType)
+		messageTypes, noMatches := ScopedMessageTypes(merged.MessageTypes, filter.MessageType)
 		merged.MessageTypes = messageTypes
 		if noMatches {
 			merged.AccountIDs = []int64{}
@@ -1874,23 +1873,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// contexts will not be scoped to the current view.
 
 	return &merged
-}
-
-func containsMessageType(types []string, want string) bool {
-	return slices.Contains(types, want)
-}
-
-func scopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
-	if filterType == "" {
-		return append([]string(nil), queryTypes...), false
-	}
-	if len(queryTypes) == 0 {
-		return []string{filterType}, false
-	}
-	if containsMessageType(queryTypes, filterType) {
-		return []string{filterType}, false
-	}
-	return []string{filterType}, true
 }
 
 // timePeriodToBounds converts a time period string to half-open date

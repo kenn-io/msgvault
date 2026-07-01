@@ -374,6 +374,25 @@ func (s *Store) DB() *sql.DB {
 	return s.db.DB
 }
 
+// BackupDatabase writes a point-in-time consistent copy of the SQLite database
+// to dst using VACUUM INTO. PostgreSQL deployments should be backed up with
+// pg_dump, pg_basebackup, or replication tooling outside msgvault.
+func (s *Store) BackupDatabase(dst string) error {
+	if s.IsPostgreSQL() {
+		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
+			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
+			"then rerun with --no-backup",
+		)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("backup target already exists: %s", dst)
+	}
+	if _, err := s.DB().Exec("VACUUM INTO ?", dst); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dst, err)
+	}
+	return nil
+}
+
 // IsPostgreSQL reports whether this store is backed by PostgreSQL.
 // Engine factories use this to choose between the SQLite and PostgreSQL
 // query paths.

@@ -115,13 +115,9 @@ msgvault search from:alice@example.com --json
 
 ## Semantic / Hybrid Search
 
-The same `msgvault search` command supports semantic search in local
-mode when `[vector]` is configured with an embedding endpoint. Pass
+The same `msgvault search` command supports semantic search when the
+selected local daemon or remote server has `[vector]` configured with
+an embedding endpoint. Pass
 `--mode vector` for pure semantic search, or `--mode hybrid` to fuse
 BM25 and vector ranking. See [Vector Search](/usage/vector-search/)
 for setup, initial embedding, and incremental update workflows.
-
-When `[remote].url` is configured, CLI remote search currently uses
-the FTS API path only; `--mode vector` and `--mode hybrid` are local
-CLI modes. Use the remote server's HTTP `/api/v1/search?mode=...`
-endpoint directly for remote semantic search.

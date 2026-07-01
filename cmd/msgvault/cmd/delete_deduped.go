@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 var deleteDedupedCmd = &cobra.Command{
@@ -38,74 +38,28 @@ var (
 )
 
 func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
-	// delete-deduped mutates local SQLite directly, has no remote API
-	// equivalent, and the local DB is not reachable in remote mode.
-	// Reject upfront so the user gets a clear error rather than the
-	// generic "must specify --batch or --all-hidden" hint.
-	if IsRemoteMode() {
-		return errors.New("delete-deduped is local-only; not supported in remote mode")
-	}
-
 	if len(deleteDedupedBatchIDs) == 0 && !deleteDedupedAllHidden {
 		return usageErr(cmd, errors.New("must specify --batch or --all-hidden"))
 	}
 
-	st, err := openStoreAndInit()
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 
-	// compute pre-delete stats and totalN before prompting.
-	var totalN int64
-	if deleteDedupedAllHidden {
-		// Match DeleteAllDeduped's predicate exactly: only rows that
-		// the dedup pipeline soft-hid (deleted_at IS NOT NULL AND
-		// delete_batch_id IS NOT NULL) are eligible for purge, so the
-		// prompt counts must use the same gate. A bare deleted_at row
-		// would over-report compared to the actual delete.
-		var distinctBatches int64
-		err = st.DB().QueryRow(
-			st.Rebind("SELECT COUNT(*) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
-		).Scan(&totalN)
-		if err != nil {
-			return fmt.Errorf("count hidden messages: %w", err)
-		}
-		err = st.DB().QueryRow(
-			st.Rebind("SELECT COUNT(DISTINCT delete_batch_id) FROM messages WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL"),
-		).Scan(&distinctBatches)
-		if err != nil {
-			return fmt.Errorf("count distinct batches: %w", err)
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Will permanently delete %d hidden message(s) from %d distinct batch(es).\n",
-			totalN, distinctBatches)
-	} else {
-		type batchStat struct {
-			id  string
-			cnt int64
-		}
-		stats := make([]batchStat, 0, len(deleteDedupedBatchIDs))
-		for _, id := range deleteDedupedBatchIDs {
-			var cnt int64
-			err = st.DB().QueryRow(
-				st.Rebind("SELECT COUNT(*) FROM messages WHERE delete_batch_id = ? AND deleted_at IS NOT NULL"),
-				id,
-			).Scan(&cnt)
-			if err != nil {
-				return fmt.Errorf("count rows for batch %q: %w", id, err)
-			}
-			totalN += cnt
-			stats = append(stats, batchStat{id: id, cnt: cnt})
-		}
-		out := cmd.OutOrStdout()
-		_, _ = fmt.Fprintf(out, "Will permanently delete %d hidden message(s) from %d batch(es):\n",
-			totalN, len(deleteDedupedBatchIDs))
-		for _, s := range stats {
-			_, _ = fmt.Fprintf(out, "  %s: %d row(s)\n", s.id, s.cnt)
-		}
+	req := daemonclient.CLIDeleteDedupedRequest{
+		BatchIDs:  append([]string(nil), deleteDedupedBatchIDs...),
+		AllHidden: deleteDedupedAllHidden,
+		NoBackup:  deleteDedupedNoBackup,
+	}
+	plan, err := st.PlanCLIDeleteDeduped(cmd.Context(), req)
+	if err != nil {
+		return fmt.Errorf("plan delete-deduped: %w", err)
 	}
 
-	if totalN == 0 {
+	printDeleteDedupedPlan(cmd, plan)
+	if plan.Total == 0 {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Nothing to delete.")
 		return nil
 	}
@@ -128,57 +82,49 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if !deleteDedupedNoBackup {
-		// Resolve the DSN to a real filesystem path so backups work
-		// when [data].database_url is a "file:" URI; reject non-file
-		// DSNs (postgres://, etc.) which the VACUUM INTO backup path
-		// can't operate on.
-		dbFilePath, err := cfg.DatabasePath()
-		if err != nil {
-			return fmt.Errorf("resolve database path: %w", err)
-		}
-		backupPath := filepath.Join(
-			filepath.Dir(dbFilePath),
-			filepath.Base(dbFilePath)+".delete-deduped-backup-"+time.Now().Format("20060102-150405"),
-		)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backing up database to %s...\n", filepath.Base(backupPath))
-		if err := backupDatabase(st, backupPath); err != nil {
-			return fmt.Errorf("backup database: %w", err)
-		}
-	}
-
 	// Note: parquet analytics and the vector index may contain entries
 	// for deleted rows; the post-run summary recommends rebuilding each
 	// separately ('build-cache --full-rebuild' and
 	// 'embeddings build --full-rebuild').
 
-	var deletedTotal int64
-	var batchCount int64
-	if deleteDedupedAllHidden {
-		deleted, distinct, err := st.DeleteAllDeduped()
-		if err != nil {
-			return fmt.Errorf("delete all dedup-hidden: %w", err)
-		}
-		deletedTotal = deleted
-		batchCount = distinct
-	} else {
-		batchCount = int64(len(deleteDedupedBatchIDs))
-		for _, id := range deleteDedupedBatchIDs {
-			deleted, err := st.DeleteDedupedBatch(id)
-			if err != nil {
-				return fmt.Errorf("delete dedup batch %q: %w", id, err)
-			}
-			deletedTotal += deleted
-		}
+	expectedTotal := plan.Total
+	expectedBatchCount := plan.BatchCount
+	req.ExpectedTotal = &expectedTotal
+	req.ExpectedBatchCount = &expectedBatchCount
+	req.ExpectedBatches = append([]daemonclient.CLIDeleteDedupedBatch{}, plan.Batches...)
+	executed, err := st.ExecuteCLIDeleteDeduped(cmd.Context(), req)
+	if err != nil {
+		return fmt.Errorf("delete deduped: %w", err)
 	}
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "\nDeleted %d message(s) from %d batch(es).\n\n", deletedTotal, batchCount)
+	if !deleteDedupedNoBackup && executed.BackupPath != "" {
+		_, _ = fmt.Fprintf(out, "Backing up database to %s...\n", filepath.Base(executed.BackupPath))
+	}
+	_, _ = fmt.Fprintf(out, "\nDeleted %d message(s) from %d batch(es).\n\n", executed.Deleted, executed.BatchCount)
 	_, _ = fmt.Fprintln(out, "Caches may have stale entries; rebuild each separately:")
 	_, _ = fmt.Fprintln(out, "  'msgvault build-cache --full-rebuild'        (parquet analytics)")
 	_, _ = fmt.Fprintln(out, "  'msgvault embeddings build --full-rebuild'   (vector index, if enabled)")
 
 	return nil
+}
+
+func printDeleteDedupedPlan(cmd *cobra.Command, plan *daemonclient.CLIDeleteDedupedPlan) {
+	if plan == nil {
+		plan = &daemonclient.CLIDeleteDedupedPlan{}
+	}
+	out := cmd.OutOrStdout()
+	if deleteDedupedAllHidden {
+		_, _ = fmt.Fprintf(out, "Will permanently delete %d hidden message(s) from %d distinct batch(es).\n",
+			plan.Total, plan.BatchCount)
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Will permanently delete %d hidden message(s) from %d batch(es):\n",
+		plan.Total, len(deleteDedupedBatchIDs))
+	for _, batch := range plan.Batches {
+		_, _ = fmt.Fprintf(out, "  %s: %d row(s)\n", batch.ID, batch.Count)
+	}
 }
 
 func init() {

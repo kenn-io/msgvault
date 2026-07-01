@@ -39,4 +39,4 @@ msgvault list-labels
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/list-senders.svg" alt="msgvault list-senders command output" loading="lazy">
 </figure>
-These commands query the SQLite database directly. For interactive exploration with drill-down, use the [TUI](/usage/tui/).
+These commands query the configured daemon or remote server. For interactive exploration with drill-down, use the [TUI](/usage/tui/).

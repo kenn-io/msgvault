@@ -24,11 +24,26 @@ type CORSConfig struct {
 func DefaultCORSConfig() CORSConfig {
 	return CORSConfig{
 		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key"},
+		AllowedMethods:   defaultCORSAllowedMethods(),
+		AllowedHeaders:   defaultCORSAllowedHeaders(),
 		AllowCredentials: false,
 		MaxAge:           86400, // 24 hours
 	}
+}
+
+func defaultCORSAllowedMethods() []string {
+	return []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodOptions,
+	}
+}
+
+func defaultCORSAllowedHeaders() []string {
+	return []string{"Accept", "Authorization", "Content-Type", "X-API-Key"}
 }
 
 // CORSMiddleware returns a middleware that handles CORS headers.

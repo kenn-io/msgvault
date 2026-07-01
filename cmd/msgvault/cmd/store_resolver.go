@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"time"
 
-	"go.kenn.io/msgvault/internal/remote"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -76,27 +79,27 @@ func runPostSourceCreateMigrations(s *store.Store) error {
 	return runStartupMigrations(s)
 }
 
-// MessageStore is the interface for commands that need basic message operations.
-// Both store.Store and remote.Store implement this interface.
-type MessageStore interface {
-	GetStats() (*store.Stats, error)
-	ListMessages(offset, limit int) ([]store.APIMessage, int64, error)
-	GetMessage(id int64) (*store.APIMessage, error)
-	SearchMessages(query string, offset, limit int) ([]store.APIMessage, int64, error)
-	Close() error
+// HTTPStoreKind identifies which HTTP endpoint a CLI command is using.
+type HTTPStoreKind string
+
+const (
+	HTTPStoreConfiguredRemote HTTPStoreKind = "configured_remote"
+	HTTPStoreLocalDaemon      HTTPStoreKind = "local_daemon"
+)
+
+// HTTPStoreInfo carries the selected daemon endpoint alongside the client.
+// Commands use it for user-facing endpoint labels and local-daemon cwd policy.
+type HTTPStoreInfo struct {
+	Kind HTTPStoreKind
+	URL  string
 }
 
-// RemoteStore extends MessageStore with remote-specific operations.
-type RemoteStore interface {
-	MessageStore
-	ListAccounts() ([]remote.AccountInfo, error)
-}
-
-// IsRemoteMode returns true if commands should use remote server.
+// IsRemoteMode returns true when CLI requests should target the configured
+// remote daemon instead of this machine's local daemon.
 // Resolution order:
-//  1. --local flag → always local
-//  2. [remote].url set in config → use remote
-//  3. Default → use local DB
+//  1. --local flag → local daemon
+//  2. [remote].url set in config → configured remote daemon
+//  3. Default → local daemon
 func IsRemoteMode() bool {
 	if useLocal {
 		return false
@@ -104,72 +107,124 @@ func IsRemoteMode() bool {
 	return cfg != nil && cfg.Remote.URL != ""
 }
 
-// OpenStore returns either a local or remote store based on configuration.
-// If [remote].url is set in config and --local is not specified, uses remote.
-// Otherwise uses local SQLite database.
-func OpenStore() (MessageStore, error) {
+// OpenHTTPStore returns the HTTP store that ordinary CLI commands should use.
+// A configured [remote].url wins unless --local was passed. Otherwise the local
+// daemon is discovered or started so SQLite remains owned by one long-lived
+// process.
+func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, error) {
+	if cfg == nil {
+		return nil, HTTPStoreInfo{}, errors.New("nil config")
+	}
 	if IsRemoteMode() {
-		return openRemoteStore()
+		st, err := openRemoteStoreWithTimeout(api.DaemonLongRequestTimeout)
+		if err != nil {
+			return nil, HTTPStoreInfo{}, err
+		}
+		return st, HTTPStoreInfo{
+			Kind: HTTPStoreConfiguredRemote,
+			URL:  cfg.Remote.URL,
+		}, nil
 	}
-	return openLocalStore()
-}
 
-// OpenRemoteStore opens a remote store, returning error if not configured.
-// Unlike OpenStore, this always attempts remote connection.
-func OpenRemoteStore() (RemoteStore, error) {
-	if cfg.Remote.URL == "" {
-		return nil, errors.New("remote server not configured\n\n" +
-			"Configure in ~/.msgvault/config.toml:\n" +
-			"  [remote]\n" +
-			"  url = \"http://nas:8080\"\n" +
-			"  api_key = \"your-api-key\"\n" +
-			"  allow_insecure = true  # for trusted networks")
-	}
-	return openRemoteStore()
-}
-
-// openLocalStore opens the local SQLite database.
-func openLocalStore() (*store.Store, error) {
-	dbPath := cfg.DatabaseDSN()
-	return store.Open(dbPath)
-}
-
-// openLocalStoreAndInit opens the local SQLite database, initializes the
-// schema, and runs startup migrations. Callers that previously called
-// store.Open + s.InitSchema separately should migrate to this helper.
-func openLocalStoreAndInit() (*store.Store, error) {
-	s, err := openLocalStore()
+	rt, err := ensureLocalDaemonRuntime(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, HTTPStoreInfo{}, err
 	}
-	if err := s.InitSchema(); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
+	url := urlFromDaemonRuntime(rt)
+	st, err := daemonclient.New(daemonclient.Config{
+		URL:           url,
+		APIKey:        cfg.Server.APIKey,
+		AllowInsecure: true,
+		Timeout:       api.DaemonLongRequestTimeout,
+	})
+	if err != nil {
+		return nil, HTTPStoreInfo{}, err
 	}
-	if err := runStartupMigrations(s); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("startup migrations: %w", err)
-	}
-	return s, nil
+	return st, HTTPStoreInfo{
+		Kind: HTTPStoreLocalDaemon,
+		URL:  url,
+	}, nil
 }
 
-// openRemoteStore creates a remote store client.
-func openRemoteStore() (*remote.Store, error) {
-	return remote.New(remote.Config{
+func openRemoteStoreWithTimeout(timeout time.Duration) (*daemonclient.Client, error) {
+	return daemonclient.New(daemonclient.Config{
 		URL:           cfg.Remote.URL,
 		APIKey:        cfg.Remote.APIKey,
 		AllowInsecure: cfg.Remote.AllowInsecure,
-		Timeout:       30 * time.Second,
+		Timeout:       timeout,
 	})
 }
 
-// MustBeLocal returns an error if remote mode is active.
-// Use this for commands that only work with local database.
-func MustBeLocal(cmdName string) error {
-	if IsRemoteMode() && !useLocal {
-		return fmt.Errorf("%s requires local database, "+
-			"this command cannot run against a remote server, "+
-			"use --local flag to force local database", cmdName)
+func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRuntime, error) {
+	if c == nil {
+		return nil, errors.New("nil config")
 	}
-	return nil
+	if err := os.MkdirAll(c.Data.DataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create data directory: %w", err)
+	}
+	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil &&
+		!shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, c.Server.DaemonAutoRestart) {
+		return rt, nil
+	}
+
+	// No usable daemon was found. If a direct CLI writer owns the archive,
+	// fail fast with a clear message instead of spawning a daemon that cannot
+	// claim the held write-owner lock.
+	if err := daemonAutostartPreflight(c); err != nil {
+		return nil, err
+	}
+
+	launchLock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
+	if !ok {
+		if rt := waitForUsableBackgroundRuntime(ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, 30*time.Second); rt != nil {
+			return rt, nil
+		}
+		return nil, errors.New("msgvault daemon start is already in progress")
+	}
+	defer func() { _ = launchLock.Unlock() }()
+
+	prep, err := prepareBackgroundDaemonStart(c, "run `msgvault serve stop` or retry with --local")
+	if err != nil {
+		return nil, err
+	}
+	if rt := prep.Reusable; rt != nil {
+		return rt, nil
+	}
+
+	proc, err := startServeBackgroundProcessForRun(c)
+	if err != nil {
+		return nil, fmt.Errorf("start background daemon: %w", err)
+	}
+	rt, ready, err := waitForBackgroundServeReadyForRun(
+		ctx, c.Data.DataDir, proc.Wait, 30*time.Second,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"server exited before becoming ready: %w\nLogs: %s",
+			err, proc.LogPath,
+		)
+	}
+	if !ready {
+		return nil, fmt.Errorf(
+			"msgvault daemon did not become ready within 30s (pid %d)\nLogs: %s",
+			proc.PID, proc.LogPath,
+		)
+	}
+	return rt, nil
+}
+
+func waitForUsableBackgroundRuntime(ctx context.Context, dataDir string, policy string, timeout time.Duration) *DaemonRuntime {
+	rt, ready, _ := waitForDaemonRuntime(
+		ctx,
+		dataDir,
+		timeout,
+		func(rt *DaemonRuntime) bool {
+			return rt != nil && !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, policy)
+		},
+		nil,
+	)
+	if !ready {
+		return nil
+	}
+	return rt
 }

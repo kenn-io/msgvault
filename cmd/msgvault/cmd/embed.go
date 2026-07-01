@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -16,8 +17,10 @@ var (
 	embeddingsActivateYes       bool
 )
 
+const embeddingsCommandName = "embeddings"
+
 var embeddingsCmd = &cobra.Command{
-	Use:   "embeddings",
+	Use:   embeddingsCommandName,
 	Short: "Manage vector embeddings",
 }
 
@@ -36,19 +39,19 @@ watermark, catching any straggler messages the incremental scan skipped.`,
 var embeddingsListCmd = &cobra.Command{
 	Use:   cmdUseList,
 	Short: "List vector embedding generations",
-	RunE:  runEmbeddingsList,
+	RunE:  runEmbeddingsListCommand,
 }
 var embeddingsRetireCmd = &cobra.Command{
 	Use:   "retire <generation-id>",
 	Short: "Retire a vector embedding generation",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runEmbeddingsRetire,
+	RunE:  runEmbeddingsRetireCommand,
 }
 var embeddingsActivateCmd = &cobra.Command{
 	Use:   "activate <generation-id>",
 	Short: "Activate a completed vector embedding generation",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runEmbeddingsActivate,
+	RunE:  runEmbeddingsActivateCommand,
 }
 var embedCmd = newEmbeddingsBuildCmd("build-embeddings")
 
@@ -75,6 +78,13 @@ to point at a running OpenAI-compatible endpoint.`,
 }
 
 func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runEmbeddingsBuildHTTP(cmd, args)
+	}
+	return runEmbeddingsBuildLocal(cmd)
+}
+
+func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
 	if !cfg.Vector.Enabled {
 		return errors.New("vector search not enabled; add [vector] enabled=true to config.toml first")
 	}
@@ -82,6 +92,18 @@ func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
 		return errors.New("[vector.embeddings] endpoint and model are required")
 	}
 	return runEmbed(cmd)
+}
+
+func runEmbeddingsBuildHTTP(cmd *cobra.Command, args []string) error {
+	if embedFullRebuild && !embedYes {
+		if !confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ") {
+			return errors.New("aborted")
+		}
+		if err := cmd.Flags().Set("yes", "true"); err != nil {
+			return fmt.Errorf("set --yes after confirmation: %w", err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
 }
 
 func runEmbeddingsResume(cmd *cobra.Command, args []string) error {
@@ -94,6 +116,13 @@ func runEmbeddingsResume(cmd *cobra.Command, args []string) error {
 		embedYes = oldYes
 	}()
 	return runEmbeddingsBuild(cmd, args)
+}
+
+func runEmbeddingsListCommand(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+	return runEmbeddingsList(cmd, args)
 }
 
 func init() {

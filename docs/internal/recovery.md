@@ -23,9 +23,12 @@ This drops `messages_fts` and recreates it from the core tables
 extra disk usage is roughly the size of the FTS5 shadow tables — a few
 percent of the SQLite database.
 
-Stop `msgvault serve` and any MCP clients before running; `rebuild-fts`
-needs an exclusive write lock and will fail with a "database is busy"
-message otherwise.
+By default, `rebuild-fts` runs through a configured remote or the local
+background daemon over HTTP and streams progress back to the CLI. This keeps
+the SQLite archive owned by the daemon during the repair.
+
+Pass `--local` only when a remote is configured and you want the rebuild to run
+through this machine's local background daemon instead.
 
 ### Why SQLite's own rebuild pragma does not work
 

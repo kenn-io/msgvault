@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/pflag"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -47,6 +49,33 @@ func captureStdout(t *testing.T) func() string {
 		res := <-ch
 		_ = r.Close()
 		requirepkg.NoError(t, res.err, "read captured stdout")
+		return string(res.data)
+	}
+}
+
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	requirepkg.NoError(t, err, "create pipe")
+	os.Stderr = w
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		data, readErr := io.ReadAll(r)
+		ch <- result{data, readErr}
+	}()
+
+	return func() string {
+		_ = w.Close()
+		os.Stderr = origStderr
+		res := <-ch
+		_ = r.Close()
+		requirepkg.NoError(t, res.err, "read captured stderr")
 		return string(res.data)
 	}
 }
@@ -98,20 +127,40 @@ func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
 	}
 }
 
-func TestSearchCmd_AccountFlagRejectsRemoteMode(t *testing.T) {
+func TestSearchCmd_AccountFlagForwardsToRemoteHTTP(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	requests := &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal("/api/v1/cli/search", r.URL.Path, "path")
+		assert.Equal("alice@example.com", r.URL.Query().Get("account"), "account query")
+		assert.Equal("hello", r.URL.Query().Get("q"), "query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[],"scope_label":"alice@example.com","scope_source_count":1}`))
+	}))
+	defer srv.Close()
 
 	cfg = &config.Config{}
-	cfg.Remote.URL = "http://example.com"
+	cfg.Remote.URL = srv.URL
+	cfg.Remote.AllowInsecure = true
+	useLocal = false
 
 	root := newTestRootCmd()
 	root.AddCommand(searchCmd)
-	root.SetArgs([]string{"search", "--account", "a@b.com", "hello"})
+	root.SetArgs([]string{"search", "--account", "alice@example.com", "hello"})
 
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error when --account used in remote mode")
-	assertpkg.ErrorContains(t, err, "not supported in remote mode")
+	require.NoError(err, "search with account should work over HTTP")
+	assert.Equal(1, int(requests.Load()), "search endpoint calls")
 }
 
 func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
@@ -125,15 +174,12 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/search", r.URL.Path, "path")
+		assertpkg.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
 		gotQuery = r.URL.Query().Get("q")
+		assertpkg.Equal(t, "sms", r.URL.Query().Get("message_type"), "message_type query")
 		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(map[string]any{
-			"query":     gotQuery,
-			"total":     0,
-			"page":      1,
-			"page_size": 50,
-			"messages":  []map[string]any{},
+			"results": []map[string]any{},
 		})
 		assertpkg.NoError(t, err, "write response")
 	}))
@@ -150,8 +196,142 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 
 	err := root.Execute()
 	requirepkg.NoError(t, err, "message-type remote search should be forwarded")
-	assertpkg.Contains(t, gotQuery, "message_type:sms", "remote query should include flag scope")
-	assertpkg.Contains(t, gotQuery, "lunch", "remote query should keep search terms")
+	assertpkg.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
+}
+
+func TestSearchCmd_FTSUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, searchRequests := searchHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+
+	done := captureStdout(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--json", "lunch"})
+
+	err := root.Execute()
+	out := done()
+	require.NoError(err, "search command")
+
+	assert.Equal(1, int(searchRequests.Load()), "search endpoint calls")
+	assert.Contains(out, `"subject": "Lunch"`, "JSON output should preserve local result shape")
+	assert.NotContains(out, `"total"`, "local JSON search output is a bare result array")
+}
+
+func TestSearchCmd_FTSCollectionSearchUsesDaemonHTTPAndPreservesBanner(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, searchRequests := searchHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+
+	doneOut := captureStdout(t)
+	doneErr := captureStderr(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--collection", "Important", "--json"})
+
+	err := root.Execute()
+	out := doneOut()
+	errOut := doneErr()
+	require.NoError(err, "collection search command")
+
+	assert.Equal(1, int(searchRequests.Load()), "search endpoint calls")
+	assert.Contains(out, `"subject": "Lunch"`, "JSON output")
+	assert.Contains(errOut, `Searching collection "Important" (2 accounts)`, "collection banner")
+}
+
+func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	searchRequests := &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		searchRequests.Add(1)
+		if r.URL.Query().Get("collection") == "Important" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"results": [{
+					"id": 42,
+					"source_message_id": "remote-42",
+					"conversation_id": 7,
+					"subject": "Lunch",
+					"snippet": "see you there",
+					"from_email": "alice@example.com",
+					"sent_at": "2024-01-02T03:04:05Z",
+					"size_estimate": 123,
+					"has_attachments": true,
+					"attachment_count": 1,
+					"labels": ["INBOX"]
+				}],
+				"scope_label": "Important",
+				"scope_source_count": 2
+			}`))
+			return
+		}
+		if r.URL.Query().Get("q") != "lunch" {
+			http.Error(w, "missing query", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results": [{
+				"id": 42,
+				"source_message_id": "remote-42",
+				"conversation_id": 7,
+				"subject": "Lunch",
+				"snippet": "see you there",
+				"from_email": "alice@example.com",
+				"sent_at": "2024-01-02T03:04:05Z",
+				"size_estimate": 123,
+				"has_attachments": true,
+				"attachment_count": 1,
+				"labels": ["INBOX"]
+			}]
+		}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, searchRequests
 }
 
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
@@ -163,6 +343,7 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	s, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	require.NoError(s.InitSchema(), "init schema")
+	t.Cleanup(func() { _ = s.Close() })
 
 	// Seed two accounts with one message each.
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
@@ -187,15 +368,22 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 		SizeEstimate: 200,
 	})
 	require.NoError(err, "insert msg 2")
-	_ = s.Close()
+	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
 
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 
 	// Search with --account only (no query terms) — must succeed.
 	done := captureStdout(t)
@@ -223,6 +411,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	s, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	require.NoError(s.InitSchema(), "init schema")
+	t.Cleanup(func() { _ = s.Close() })
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
@@ -243,15 +432,22 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert calendar event")
-	require.NoError(s.Close(), "close store")
+	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
 
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
@@ -294,6 +490,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	s, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	require.NoError(s.InitSchema(), "init schema")
+	t.Cleanup(func() { _ = s.Close() })
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 	conv, err := s.EnsureConversation(src.ID, "c1", "")
@@ -305,15 +502,22 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 		SizeEstimate: 100,
 	})
 	require.NoError(err, "insert msg")
-	_ = s.Close()
+	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
 
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 
 	// First invocation: search with --account.
 	done := captureStdout(t)
@@ -369,6 +573,7 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	s, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	require.NoError(s.InitSchema(), "init schema")
+	t.Cleanup(func() { _ = s.Close() })
 	src1, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
@@ -393,15 +598,22 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	require.NoError(err, "insert msg 2")
 	_, err = s.CreateCollection("alice-only", "", []int64{src1.ID})
 	require.NoError(err, "create collection")
-	_ = s.Close()
+	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
 
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 
 	done := captureStdout(t)
 	root := newTestRootCmd()
@@ -425,14 +637,22 @@ func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
 	s, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	require.NoError(s.InitSchema(), "init schema")
-	_ = s.Close()
+	t.Cleanup(func() { _ = s.Close() })
+	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
-	defer func() { cfg = savedCfg; resetSearchFlags() }()
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 
 	root := newTestRootCmd()
 	root.AddCommand(searchCmd)

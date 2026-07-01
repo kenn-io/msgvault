@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -14,12 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/remote"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -119,22 +119,67 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+type HealthResponse struct {
+	Status string `json:"status"`
+}
+
+type MessageListResponse struct {
+	Total    int64            `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"page_size"`
+	Messages []MessageSummary `json:"messages"`
+}
+
+type AccountListResponse struct {
+	Accounts []AccountInfo `json:"accounts"`
+}
+
+type StatusMessageResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type FilteredMessagesResponse struct {
+	Count    int              `json:"count"`
+	HasMore  bool             `json:"has_more"`
+	Offset   int              `json:"offset"`
+	Limit    int              `json:"limit"`
+	Messages []MessageSummary `json:"messages"`
+}
+
+type GmailIDsResponse struct {
+	GmailIDs []string `json:"gmail_ids"`
+}
+
+type DeepSearchResponse struct {
+	Query    string           `json:"query"`
+	Messages []MessageSummary `json:"messages"`
+	Count    int              `json:"count"`
+	HasMore  bool             `json:"has_more"`
+	Offset   int              `json:"offset"`
+	Limit    int              `json:"limit"`
+}
+
 // MessageSummary represents a message in list responses.
 type MessageSummary struct {
-	ID             int64    `json:"id"`
-	ConversationID int64    `json:"conversation_id,omitempty"`
-	Subject        string   `json:"subject"`
-	MessageType    string   `json:"message_type,omitempty"`
-	From           string   `json:"from"`
-	To             []string `json:"to"`
-	Cc             []string `json:"cc,omitempty"`
-	Bcc            []string `json:"bcc,omitempty"`
-	SentAt         string   `json:"sent_at"`
-	DeletedAt      string   `json:"deleted_at,omitempty"`
-	Snippet        string   `json:"snippet"`
-	Labels         []string `json:"labels"`
-	HasAttach      bool     `json:"has_attachments"`
-	SizeBytes      int64    `json:"size_bytes"`
+	ID              int64    `json:"id"`
+	SourceMessageID string   `json:"source_message_id,omitempty"`
+	ConversationID  int64    `json:"conversation_id,omitempty"`
+	Subject         string   `json:"subject"`
+	MessageType     string   `json:"message_type,omitempty"`
+	From            string   `json:"from"`
+	FromEmail       string   `json:"from_email,omitempty"`
+	FromName        string   `json:"from_name,omitempty"`
+	FromPhone       string   `json:"from_phone,omitempty"`
+	To              []string `json:"to"`
+	Cc              []string `json:"cc,omitempty"`
+	Bcc             []string `json:"bcc,omitempty"`
+	SentAt          string   `json:"sent_at"`
+	DeletedAt       string   `json:"deleted_at,omitempty"`
+	Snippet         string   `json:"snippet"`
+	Labels          []string `json:"labels"`
+	HasAttach       bool     `json:"has_attachments"`
+	SizeBytes       int64    `json:"size_bytes"`
 }
 
 // MessageDetail represents a full message response.
@@ -148,10 +193,23 @@ type MessageDetail struct {
 
 // AttachmentInfo represents attachment metadata in API responses.
 type AttachmentInfo struct {
-	Filename string `json:"filename"`
-	MimeType string `json:"mime_type"`
-	Size     int64  `json:"size_bytes"`
-	URL      string `json:"url,omitempty"`
+	ID          int64  `json:"id"`
+	Filename    string `json:"filename"`
+	MimeType    string `json:"mime_type"`
+	Size        int64  `json:"size_bytes"`
+	ContentHash string `json:"content_hash,omitempty"`
+	URL         string `json:"url,omitempty"`
+}
+
+func attachmentInfoFromStore(att store.APIAttachment) AttachmentInfo {
+	return AttachmentInfo{
+		ID:          att.ID,
+		Filename:    att.Filename,
+		MimeType:    att.MimeType,
+		Size:        att.Size,
+		ContentHash: att.ContentHash,
+		URL:         att.URL,
+	}
 }
 
 // SearchResult represents search results.
@@ -167,18 +225,27 @@ type SearchResult struct {
 // PoolSaturated is always emitted so clients can read "pool not
 // saturated" as a positive signal rather than an absent field.
 type hybridSearchResponse struct {
-	Query         string             `json:"query"`
-	Mode          string             `json:"mode"`
-	Returned      int                `json:"returned"`
-	PoolSaturated bool               `json:"pool_saturated"`
-	Generation    generationSummary  `json:"generation"`
-	TookMS        int64              `json:"took_ms"`
-	Results       []hybridSearchItem `json:"results"`
+	Query            string                  `json:"query"`
+	Mode             string                  `json:"mode"`
+	Returned         int                     `json:"returned"`
+	PoolSaturated    bool                    `json:"pool_saturated"`
+	Generation       hybridGenerationSummary `json:"generation"`
+	TookMS           int64                   `json:"took_ms"`
+	ScopeLabel       string                  `json:"scope_label,omitempty"`
+	ScopeSourceCount int                     `json:"scope_source_count,omitempty"`
+	Results          []hybridSearchItem      `json:"results"`
+}
+
+type similarSearchResponse struct {
+	SeedMessageID int64                   `json:"seed_message_id"`
+	Returned      int                     `json:"returned"`
+	Generation    hybridGenerationSummary `json:"generation"`
+	Messages      []MessageSummary        `json:"messages"`
 }
 
 // generationSummary describes the active vector-index generation used to
 // answer a hybrid/vector query.
-type generationSummary struct {
+type hybridGenerationSummary struct {
 	ID          int64  `json:"id"`
 	Model       string `json:"model"`
 	Dimension   int    `json:"dimension"`
@@ -225,6 +292,11 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
 }
 
+func writeAPIHTTPError(w http.ResponseWriter, err *apiHTTPError) {
+	resp := err.ErrorResponse
+	writeError(w, err.GetStatus(), resp.Error, resp.Message)
+}
+
 func nullableTimePtr(value time.Time) *string {
 	formatted := value.UTC().Format(time.RFC3339)
 	return &formatted
@@ -235,8 +307,12 @@ func nullableTimePtr(value time.Time) *string {
 // emitting body_html alongside body when both are present.
 func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	from := ""
+	fromEmail := ""
+	fromName := ""
 	if len(qMsg.From) > 0 {
 		from = formatQueryAddress(qMsg.From[0])
+		fromEmail = qMsg.From[0].Email
+		fromName = qMsg.From[0].Name
 	}
 
 	toAddrs := make([]string, 0, len(qMsg.To))
@@ -265,29 +341,34 @@ func messageDetailFromQuery(qMsg *query.MessageDetail) MessageDetail {
 	attachments := make([]AttachmentInfo, 0, len(qMsg.Attachments))
 	for _, att := range qMsg.Attachments {
 		attachments = append(attachments, AttachmentInfo{
-			Filename: att.Filename,
-			MimeType: att.MimeType,
-			Size:     att.Size,
-			URL:      att.URL,
+			ID:          att.ID,
+			Filename:    att.Filename,
+			MimeType:    att.MimeType,
+			Size:        att.Size,
+			ContentHash: att.ContentHash,
+			URL:         att.URL,
 		})
 	}
 
 	return MessageDetail{
 		MessageSummary: MessageSummary{
-			ID:             qMsg.ID,
-			ConversationID: qMsg.ConversationID,
-			Subject:        qMsg.Subject,
-			MessageType:    qMsg.MessageType,
-			From:           from,
-			To:             toAddrs,
-			Cc:             ccAddrs,
-			Bcc:            bccAddrs,
-			SentAt:         qMsg.SentAt.UTC().Format(time.RFC3339),
-			DeletedAt:      formatDeletedAt(qMsg.DeletedAt),
-			Snippet:        qMsg.Snippet,
-			Labels:         labels,
-			HasAttach:      qMsg.HasAttachments,
-			SizeBytes:      qMsg.SizeEstimate,
+			ID:              qMsg.ID,
+			SourceMessageID: qMsg.SourceMessageID,
+			ConversationID:  qMsg.ConversationID,
+			Subject:         qMsg.Subject,
+			MessageType:     qMsg.MessageType,
+			From:            from,
+			FromEmail:       fromEmail,
+			FromName:        fromName,
+			To:              toAddrs,
+			Cc:              ccAddrs,
+			Bcc:             bccAddrs,
+			SentAt:          qMsg.SentAt.UTC().Format(time.RFC3339),
+			DeletedAt:       formatDeletedAt(qMsg.DeletedAt),
+			Snippet:         qMsg.Snippet,
+			Labels:          labels,
+			HasAttach:       qMsg.HasAttachments,
+			SizeBytes:       qMsg.SizeEstimate,
 		},
 		Body:        body,
 		BodyHTML:    qMsg.BodyHTML,
@@ -306,20 +387,24 @@ func toMessageSummary(m APIMessage) MessageSummary {
 		labels = []string{}
 	}
 	return MessageSummary{
-		ID:             m.ID,
-		ConversationID: m.ConversationID,
-		Subject:        m.Subject,
-		MessageType:    m.MessageType,
-		From:           m.From,
-		To:             to,
-		Cc:             m.Cc,
-		Bcc:            m.Bcc,
-		SentAt:         m.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:      formatDeletedAt(m.DeletedAt),
-		Snippet:        m.Snippet,
-		Labels:         labels,
-		HasAttach:      m.HasAttachments,
-		SizeBytes:      m.SizeEstimate,
+		ID:              m.ID,
+		SourceMessageID: m.SourceMessageID,
+		ConversationID:  m.ConversationID,
+		Subject:         m.Subject,
+		MessageType:     m.MessageType,
+		From:            m.From,
+		FromEmail:       m.FromEmail,
+		FromName:        m.FromName,
+		FromPhone:       m.FromPhone,
+		To:              to,
+		Cc:              m.Cc,
+		Bcc:             m.Bcc,
+		SentAt:          m.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:       formatDeletedAt(m.DeletedAt),
+		Snippet:         m.Snippet,
+		Labels:          labels,
+		HasAttach:       m.HasAttachments,
+		SizeBytes:       m.SizeEstimate,
 	}
 }
 
@@ -344,15 +429,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("vector stats", "error", vsErr)
 	}
 
-	resp := StatsResponse{
-		TotalMessages: stats.MessageCount,
-		TotalThreads:  stats.ThreadCount,
-		TotalAccounts: stats.SourceCount,
-		TotalLabels:   stats.LabelCount,
-		TotalAttach:   stats.AttachmentCount,
-		DatabaseSize:  stats.DatabaseSize,
-		VectorSearch:  vs,
-	}
+	resp := statsResponseFromStore(stats)
+	resp.VectorSearch = vs
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -387,11 +465,11 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"total":     total,
-		"page":      page,
-		"page_size": pageSize,
-		"messages":  summaries,
+	writeJSON(w, http.StatusOK, MessageListResponse{
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		Messages: summaries,
 	})
 }
 
@@ -399,7 +477,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 // When the query engine is available, it returns separate body_html for rich
 // rendering; otherwise it falls back to the store layer (plain Body only).
 func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
+	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_id", "Message ID must be a number")
@@ -448,7 +526,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 
 	attachments := make([]AttachmentInfo, 0, len(msg.Attachments))
 	for _, att := range msg.Attachments {
-		attachments = append(attachments, AttachmentInfo(att))
+		attachments = append(attachments, attachmentInfoFromStore(att))
 	}
 	detail.Attachments = attachments
 
@@ -472,9 +550,41 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "fts"
 	}
-	explain := r.URL.Query().Get("explain") == "1"
+	explain := false
+	if rawExplain := r.URL.Query().Get("explain"); rawExplain != "" {
+		var err error
+		explain, err = strconv.ParseBool(rawExplain)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_explain",
+				"Query parameter 'explain' must be a boolean")
+			return
+		}
+	}
 	parsedQuery := parseSearchQueryRequest(r, query)
 	parsedQuery.HideDeleted = true
+
+	account := r.URL.Query().Get("account")
+	collection := r.URL.Query().Get("collection")
+	scope := cliScope{}
+	if account != "" || collection != "" {
+		cliStore, apiErr := s.cliStore()
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+		var err error
+		scope, err = resolveCLIStatsScope(cliStore, account, collection)
+		if err != nil {
+			writeAPIHTTPError(w, s.cliScopeError(err))
+			return
+		}
+		sourceIDs := scope.sourceIDs()
+		if len(sourceIDs) == 0 {
+			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
+			return
+		}
+		parsedQuery.AccountIDs = append(parsedQuery.AccountIDs, sourceIDs...)
+	}
 
 	if mode == "vector" || mode == "hybrid" {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -490,7 +600,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if maxPage := s.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && pageSize > maxPage {
 			pageSize = maxPage
 		}
-		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, pageSize)
+		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, pageSize, scope)
 		return
 	}
 
@@ -516,7 +626,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		total    int64
 		err      error
 	)
-	if parsedQuery.HasOperators() {
+	if parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0 {
 		messages, total, err = s.store.SearchMessagesQuery(parsedQuery, offset, pageSize)
 	} else {
 		messages, total, err = s.store.SearchMessages(query, offset, pageSize)
@@ -561,6 +671,7 @@ func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
 func (s *Server) handleHybridSearch(
 	w http.ResponseWriter, r *http.Request,
 	q string, parsed *search.Query, mode string, explain bool, pageSize int,
+	scope cliScope,
 ) {
 	if s.hybridEngine == nil {
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
@@ -676,11 +787,13 @@ func (s *Server) handleHybridSearch(
 	}
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
-		Query:         q,
-		Mode:          mode,
-		Returned:      len(items),
-		PoolSaturated: meta.PoolSaturated,
-		Generation: generationSummary{
+		Query:            q,
+		Mode:             mode,
+		Returned:         len(items),
+		PoolSaturated:    meta.PoolSaturated,
+		ScopeLabel:       scope.displayName(),
+		ScopeSourceCount: len(scope.sourceIDs()),
+		Generation: hybridGenerationSummary{
 			ID:          int64(meta.Generation.ID),
 			Model:       meta.Generation.Model,
 			Dimension:   meta.Generation.Dimension,
@@ -690,6 +803,181 @@ func (s *Server) handleHybridSearch(
 		TookMS:  time.Since(start).Milliseconds(),
 		Results: items,
 	})
+}
+
+func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
+	if s.backend == nil {
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
+			"vector search is not configured on this server")
+		return
+	}
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Database not available")
+		return
+	}
+
+	seedID, err := parseRequiredInt64Query(r, "message_id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_message_id", err.Error())
+		return
+	}
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 {
+		limit = 20
+	}
+	if maxPage := s.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
+		limit = maxPage
+	}
+
+	filter, apiErr := s.similarSearchFilter(r)
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
+
+	ctx := r.Context()
+	active, err := vector.ResolveActiveForFingerprint(ctx, s.backend, s.vectorCfg.GenerationFingerprint())
+	if err != nil {
+		s.writeVectorSearchError(w, err, "active generation")
+		return
+	}
+	if err := hybrid.ValidateBuildScope(s.vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
+		s.writeVectorSearchError(w, err, "scope validation")
+		return
+	}
+
+	seed, err := s.backend.LoadVector(ctx, seedID)
+	if err != nil {
+		s.writeVectorSearchError(w, err, "load seed vector")
+		return
+	}
+
+	hits, err := s.backend.Search(ctx, active.ID, seed, limit+1, filter)
+	if err != nil {
+		s.writeVectorSearchError(w, err, "similar search")
+		return
+	}
+
+	wantIDs := make([]int64, 0, limit)
+	for _, hit := range hits {
+		if hit.MessageID == seedID {
+			continue
+		}
+		if len(wantIDs) >= limit {
+			break
+		}
+		wantIDs = append(wantIDs, hit.MessageID)
+	}
+
+	summaries, err := s.store.GetMessagesSummariesByIDs(wantIDs)
+	if err != nil {
+		s.logger.Warn("hydrate similar hits failed", "ids", len(wantIDs), "error", err)
+		summaries = nil
+	}
+	byID := make(map[int64]APIMessage, len(summaries))
+	for _, msg := range summaries {
+		byID[msg.ID] = msg
+	}
+	messages := make([]MessageSummary, 0, len(wantIDs))
+	for _, id := range wantIDs {
+		msg, ok := byID[id]
+		if !ok {
+			continue
+		}
+		messages = append(messages, toMessageSummary(msg))
+	}
+
+	writeJSON(w, http.StatusOK, similarSearchResponse{
+		SeedMessageID: seedID,
+		Returned:      len(messages),
+		Generation: hybridGenerationSummary{
+			ID:          int64(active.ID),
+			Model:       active.Model,
+			Dimension:   active.Dimension,
+			Fingerprint: active.Fingerprint,
+			State:       string(active.State),
+		},
+		Messages: messages,
+	})
+}
+
+func parseRequiredInt64Query(r *http.Request, name string) (int64, error) {
+	value := r.URL.Query().Get(name)
+	if value == "" {
+		return 0, fmt.Errorf("%s is required", name)
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return id, nil
+}
+
+func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPError) {
+	var filter vector.Filter
+	if account := r.URL.Query().Get("account"); account != "" {
+		cliStore, apiErr := s.cliStore()
+		if apiErr != nil {
+			return filter, apiErr
+		}
+		scope, err := resolveCLIStatsScope(cliStore, account, "")
+		if err != nil {
+			return filter, s.cliScopeError(err)
+		}
+		filter.SourceIDs = scope.sourceIDs()
+	}
+	if messageType := strings.TrimSpace(r.URL.Query().Get("message_type")); messageType != "" {
+		filter.MessageTypes = []string{strings.ToLower(messageType)}
+	}
+	if v := r.URL.Query().Get("after"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			filter.After = &t
+		}
+	}
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			filter.Before = &t
+		}
+	}
+	if v := r.URL.Query().Get("has_attachment"); v != "" {
+		hasAttachment := v == "true"
+		filter.HasAttachment = &hasAttachment
+	}
+	return filter, nil
+}
+
+func parseAPITime(value string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse API time %q: %w", value, err)
+	}
+	return t.UTC(), nil
+}
+
+func (s *Server) writeVectorSearchError(w http.ResponseWriter, err error, operation string) {
+	switch {
+	case errors.Is(err, vector.ErrNotEnabled):
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
+			"vector search is not configured")
+	case errors.Is(err, vector.ErrIndexStale):
+		writeError(w, http.StatusServiceUnavailable, "index_stale",
+			"the vector index does not match the configured model; run `msgvault embeddings build --full-rebuild`")
+	case errors.Is(err, vector.ErrIndexBuilding):
+		writeError(w, http.StatusServiceUnavailable, "index_building",
+			"the initial vector index is still being built")
+	case errors.Is(err, vector.ErrEmbeddingTimeout):
+		writeError(w, http.StatusServiceUnavailable, "embedding_timeout",
+			"the embedding endpoint did not respond in time; retry, or raise [vector.embeddings].timeout")
+	case errors.Is(err, vector.ErrIndexScopeMismatch):
+		writeError(w, http.StatusBadRequest, "index_scope_mismatch", err.Error())
+	default:
+		s.logger.Error("vector search failed", "operation", operation, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", operation+" failed")
+	}
 }
 
 // handleListAccounts returns all configured accounts.
@@ -745,9 +1033,7 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		accounts = []AccountInfo{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"accounts": accounts,
-	})
+	writeJSON(w, http.StatusOK, AccountListResponse{Accounts: accounts})
 }
 
 // handleSourceStatus returns read-only sync status for all matching sources.
@@ -905,7 +1191,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	account := chi.URLParam(r, "account")
+	account := r.PathValue("account")
 	if account == "" {
 		writeError(w, http.StatusBadRequest, "missing_account", "Account email is required")
 		return
@@ -924,9 +1210,9 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("sync triggered via API", "account", account)
-	writeJSON(w, http.StatusAccepted, map[string]string{
-		"status":  "accepted",
-		"message": "Sync started for " + account,
+	writeJSON(w, http.StatusAccepted, StatusMessageResponse{
+		Status:  "accepted",
+		Message: "Sync started for " + account,
 	})
 }
 
@@ -957,10 +1243,20 @@ type tokenFile struct {
 	ClientID string   `json:"client_id,omitempty"`
 }
 
+type TokenUploadRequest struct {
+	AccessToken  string    `json:"access_token,omitempty"`
+	TokenType    string    `json:"token_type,omitempty"`
+	RefreshToken string    `json:"refresh_token"`
+	Expiry       time.Time `json:"expiry,omitzero"`
+	Scopes       []string  `json:"scopes,omitempty"`
+	TenantID     string    `json:"tenant_id,omitempty"`
+	ClientID     string    `json:"client_id,omitempty"`
+}
+
 // handleUploadToken accepts a token from a remote client and saves it.
 // POST /api/v1/auth/token/{email}.
 func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
-	email := chi.URLParam(r, "email")
+	email := r.PathValue("email")
 	if email == "" {
 		writeError(w, http.StatusBadRequest, "missing_email", "Email address is required")
 		return
@@ -1044,9 +1340,9 @@ func (s *Server) handleUploadToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("token uploaded via API", "email", email)
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"status":  "created",
-		"message": "Token saved for " + email,
+	writeJSON(w, http.StatusCreated, StatusMessageResponse{
+		Status:  "created",
+		Message: "Token saved for " + email,
 	})
 }
 
@@ -1118,9 +1414,9 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	for _, acc := range s.cfg.Accounts {
 		if acc.Email == req.Email {
 			s.cfgMu.Unlock()
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status":  "exists",
-				"message": "Account already configured for " + req.Email,
+			writeJSON(w, http.StatusOK, StatusMessageResponse{
+				Status:  "exists",
+				Message: "Account already configured for " + req.Email,
 			})
 			return
 		}
@@ -1154,9 +1450,9 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("account added via API", "email", req.Email, "schedule", req.Schedule)
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"status":  "created",
-		"message": "Account added for " + req.Email,
+	writeJSON(w, http.StatusCreated, StatusMessageResponse{
+		Status:  "created",
+		Message: "Account added for " + req.Email,
 	})
 }
 
@@ -1164,22 +1460,16 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 // Raw SQL Query Endpoint
 // ============================================================================
 
-type queryRequest struct {
+type QueryRequest struct {
 	SQL string `json:"sql"`
 }
+
+var errSQLQueryEngineUnavailable = errors.New("SQL query requires DuckDB engine (analytics cache may not be built)")
 
 // handleQuery executes a raw SQL query against DuckDB views.
 // POST /api/v1/query.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	querier, ok := s.engine.(query.SQLQuerier)
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable,
-			"engine_unavailable",
-			"SQL query requires DuckDB engine (analytics cache may not be built)")
-		return
-	}
-
-	var req queryRequest
+	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Invalid request body")
 		return
@@ -1189,13 +1479,30 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := querier.QuerySQL(r.Context(), req.SQL)
+	result, err := s.runSQLQuery(r.Context(), req.SQL)
 	if err != nil {
+		if errors.Is(err, errSQLQueryEngineUnavailable) {
+			writeError(w, http.StatusServiceUnavailable,
+				"engine_unavailable",
+				errSQLQueryEngineUnavailable.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "query_error", err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) runSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
+	if s.sqlQueryRunner != nil {
+		return s.sqlQueryRunner(ctx, sql)
+	}
+	querier, ok := s.engine.(query.SQLQuerier)
+	if !ok {
+		return nil, errSQLQueryEngineUnavailable
+	}
+	return querier.QuerySQL(ctx, sql)
 }
 
 // ============================================================================
@@ -1512,20 +1819,24 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 		from = m.FromName
 	}
 	return MessageSummary{
-		ID:             m.ID,
-		ConversationID: m.ConversationID,
-		Subject:        m.Subject,
-		MessageType:    m.MessageType,
-		From:           from,
-		To:             formatQueryAddresses(m.To),
-		Cc:             formatQueryAddresses(m.Cc),
-		Bcc:            formatQueryAddresses(m.Bcc),
-		SentAt:         m.SentAt.UTC().Format(time.RFC3339),
-		DeletedAt:      formatDeletedAt(m.DeletedAt),
-		Snippet:        m.Snippet,
-		Labels:         labels,
-		HasAttach:      m.HasAttachments,
-		SizeBytes:      m.SizeEstimate,
+		ID:              m.ID,
+		SourceMessageID: m.SourceMessageID,
+		ConversationID:  m.ConversationID,
+		Subject:         m.Subject,
+		MessageType:     m.MessageType,
+		From:            from,
+		FromEmail:       m.FromEmail,
+		FromName:        m.FromName,
+		FromPhone:       m.FromPhone,
+		To:              formatQueryAddresses(m.To),
+		Cc:              formatQueryAddresses(m.Cc),
+		Bcc:             formatQueryAddresses(m.Bcc),
+		SentAt:          m.SentAt.UTC().Format(time.RFC3339),
+		DeletedAt:       formatDeletedAt(m.DeletedAt),
+		Snippet:         m.Snippet,
+		Labels:          labels,
+		HasAttach:       m.HasAttachments,
+		SizeBytes:       m.SizeEstimate,
 	}
 }
 
@@ -1678,13 +1989,127 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"count":    len(summaries),
-		"has_more": hasMore,
-		"offset":   filter.Pagination.Offset,
-		"limit":    requestLimit,
-		"messages": summaries,
+	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
+		Count:    len(summaries),
+		HasMore:  hasMore,
+		Offset:   filter.Pagination.Offset,
+		Limit:    requestLimit,
+		Messages: summaries,
 	})
+}
+
+func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
+		return
+	}
+
+	ids, err := s.engine.GetGmailIDsByFilter(r.Context(), parseMessageFilter(r))
+	if err != nil {
+		s.logger.Error("gmail id filter query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
+		return
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, GmailIDsResponse{GmailIDs: ids})
+}
+
+func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Attachment ID must be a number")
+		return
+	}
+
+	att, err := s.engine.GetAttachment(r.Context(), id)
+	if err != nil {
+		s.logger.Error("failed to get attachment", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve attachment")
+		return
+	}
+	if att == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AttachmentInfo(*att))
+}
+
+func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
+		return
+	}
+
+	domains := parseDomainValues(r.URL.Query()["domains"])
+	if len(domains) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_domains", "At least one domain is required")
+		return
+	}
+
+	filter := parseMessageFilter(r)
+	if filter.Pagination.Limit <= 0 {
+		filter.Pagination.Limit = maxPageSize
+	}
+	if filter.Pagination.Limit > maxPageSize {
+		filter.Pagination.Limit = maxPageSize
+	}
+
+	requestLimit := filter.Pagination.Limit
+	messages, err := s.engine.SearchByDomains(
+		r.Context(),
+		domains,
+		filter.After,
+		filter.Before,
+		requestLimit+1,
+		filter.Pagination.Offset,
+	)
+	if err != nil {
+		s.logger.Error("domain search failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Domain search failed")
+		return
+	}
+
+	hasMore := len(messages) > requestLimit
+	if hasMore {
+		messages = messages[:requestLimit]
+	}
+
+	summaries := make([]MessageSummary, len(messages))
+	for i, m := range messages {
+		summaries[i] = toMessageSummaryFromQuery(m)
+	}
+
+	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
+		Count:    len(summaries),
+		HasMore:  hasMore,
+		Offset:   filter.Pagination.Offset,
+		Limit:    requestLimit,
+		Messages: summaries,
+	})
+}
+
+func parseDomainValues(values []string) []string {
+	var domains []string
+	for _, value := range values {
+		for part := range strings.SplitSeq(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			domains = append(domains, part)
+		}
+	}
+	return domains
 }
 
 // handleTotalStats returns detailed stats with optional filters.
@@ -1862,13 +2287,13 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"query":    queryStr,
-		"messages": summaries,
-		"count":    len(summaries),
-		"has_more": hasMore,
-		"offset":   offset,
-		"limit":    limit,
+	writeJSON(w, http.StatusOK, DeepSearchResponse{
+		Query:    queryStr,
+		Messages: summaries,
+		Count:    len(summaries),
+		HasMore:  hasMore,
+		Offset:   offset,
+		Limit:    limit,
 	})
 }
 
@@ -1878,7 +2303,7 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 // those to a stable status code keeps the API honest about engine
 // capabilities rather than emitting 500 for predictable misses.
 func isEngineUnsupported(err error) bool {
-	return errors.Is(err, query.ErrNotImplemented) || errors.Is(err, remote.ErrNotSupported)
+	return errors.Is(err, query.ErrNotImplemented) || errors.Is(err, daemonclient.ErrNotSupported)
 }
 
 // handleMessageInline serves a CID-referenced inline MIME part (e.g. an
@@ -1891,7 +2316,7 @@ func (s *Server) handleMessageInline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idStr := chi.URLParam(r, "id")
+	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_id", "Message ID must be a number")

@@ -95,6 +95,9 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if len(q.MessageTypes) > 0 {
 		f.MessageTypes = append([]string(nil), q.MessageTypes...)
 	}
+	if len(q.AccountIDs) > 0 {
+		f.SourceIDs = append([]int64(nil), q.AccountIDs...)
+	}
 	return f, nil
 }
 

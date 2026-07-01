@@ -19,6 +19,8 @@ import (
 )
 
 func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
 	home := t.TempDir()

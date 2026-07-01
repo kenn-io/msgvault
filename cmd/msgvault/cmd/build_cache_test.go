@@ -1792,3 +1792,14 @@ func TestGlobalConfigFlagArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildCacheDaemonChildEnvMarksSubprocess(t *testing.T) {
+	got := buildCacheDaemonChildEnv([]string{
+		"OTHER=value",
+		buildCacheDaemonSubprocessEnv + "=0",
+	}, 4242)
+
+	assertpkg.Contains(t, got, "OTHER=value", "preserves existing environment")
+	assertpkg.Contains(t, got, buildCacheDaemonSubprocessEnv+"=4242", "marks daemon-owned subprocess")
+	assertpkg.NotContains(t, got, buildCacheDaemonSubprocessEnv+"=0", "replaces stale marker")
+}

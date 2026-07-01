@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
 	assertpkg "github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -34,6 +38,7 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	savedListJSON := identityListJSON
 	savedShowJSON := identityShowJSON
 	savedAddSignal := identityAddSignal
+	savedUseLocal := useLocal
 	t.Cleanup(func() {
 		cfg = savedCfg
 		logger = savedLogger
@@ -42,6 +47,7 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 		identityListJSON = savedListJSON
 		identityShowJSON = savedShowJSON
 		identityAddSignal = savedAddSignal
+		useLocal = savedUseLocal
 		// Reset cobra's "Changed" state so mutually-exclusive flag groups
 		// don't carry over between tests that share the package-level command.
 		for _, name := range []string{"account", "collection", "json"} {
@@ -60,8 +66,11 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	cfg = &config.Config{
 		HomeDir: tmpDir,
 		Data:    config.DataConfig{DataDir: tmpDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
+	useLocal = true
 	logger = slog.New(slog.DiscardHandler)
+	startStoreAPIDaemon(t, tmpDir, s, nil)
 
 	var stdout, stderr bytes.Buffer
 	root := newTestRootCmd()
@@ -70,6 +79,273 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	root.AddCommand(identityCmd)
 
 	return s, root, &stdout, &stderr
+}
+
+func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, requests := identityHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	savedListJSON := identityListJSON
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		identityListJSON = savedListJSON
+	})
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+	identityListJSON = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{Use: "list", RunE: runIdentityList}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	require.NoError(err, "identity list")
+
+	assert.Equal(1, int(requests.Load()), "identity endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Contains(stdout.String(), "ACCOUNT", "table header")
+	assert.Contains(stdout.String(), "alice@example.com", "identity row")
+	assert.Contains(stdout.String(), "manual", "signal")
+	assert.Contains(stdout.String(), "2024-01-02 03:04", "confirmed timestamp")
+	assert.Contains(stdout.String(), "(none)", "none row")
+}
+
+func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, requests := identityHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	savedShowJSON := identityShowJSON
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		identityShowJSON = savedShowJSON
+	})
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+	identityShowJSON = false
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{
+		Use:  "show <account>",
+		Args: identityShowCmd.Args,
+		RunE: runIdentityShow,
+	}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"empty@example.com"})
+
+	err := cmd.Execute()
+	require.NoError(err, "identity show")
+
+	assert.Equal(1, int(requests.Load()), "identity endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Contains(stdout.String(), "(none)", "none row")
+	assert.Contains(stdout.String(), "msgvault identity add empty@example.com <identifier>", "empty identity hint")
+}
+
+func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, requests := identityHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	savedSignal := identityAddSignal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		identityAddSignal = savedSignal
+	})
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+	identityAddSignal = "manual"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{
+		Use:  "add <account> <identifier>",
+		Args: identityAddCmd.Args,
+		RunE: runIdentityAdd,
+	}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com", "extra@example.com"})
+
+	err := cmd.Execute()
+	require.NoError(err, "identity add")
+
+	assert.Equal(1, int(requests.Load()), "identity endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Contains(stdout.String(),
+		"Added extra@example.com to alice@example.com (signal: manual).",
+		"add confirmation")
+}
+
+func TestIdentityRemoveUsesLocalDaemonHTTPAndPreservesWarning(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	dataDir := t.TempDir()
+	server, requests := identityHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
+	}
+	useLocal = true
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{
+		Use:  "remove <account> <identifier>",
+		Args: identityRemoveCmd.Args,
+		RunE: runIdentityRemove,
+	}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"alice@example.com", "alice@example.com"})
+
+	err := cmd.Execute()
+	require.NoError(err, "identity remove")
+
+	assert.Equal(1, int(requests.Load()), "identity endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Contains(stdout.String(),
+		"Removed alice@example.com from alice@example.com.",
+		"remove confirmation")
+	assert.Contains(stdout.String(), "Warning: alice@example.com now has no confirmed identity.",
+		"last-identity warning")
+}
+
+func identityHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	requests := &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/identities", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Query().Get("account") {
+			case "":
+				_, _ = w.Write([]byte(`{
+					"rows": [{
+						"account": "alice@example.com",
+						"source_id": 7,
+						"source_type": "gmail",
+						"identifier": "alice@example.com",
+						"signals": ["manual"],
+						"confirmed_at": "2024-01-02T03:04:05Z"
+					}, {
+						"account": "old-mbox",
+						"source_id": 8,
+						"source_type": "mbox",
+						"signals": [],
+						"none": true
+					}]
+				}`))
+			case "empty@example.com":
+				assertpkg.Equal(t, "true", r.URL.Query().Get("primary_only"), "identity show primary-only query")
+				_, _ = w.Write([]byte(`{
+					"rows": [{
+						"account": "empty@example.com",
+						"source_id": 9,
+						"source_type": "gmail",
+						"signals": [],
+						"none": true
+					}]
+				}`))
+			default:
+				http.Error(w, "unexpected account", http.StatusBadRequest)
+			}
+		case http.MethodPost:
+			var req struct {
+				Account    string `json:"account"`
+				Identifier string `json:"identifier"`
+				Signal     string `json:"signal"`
+			}
+			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode add request") {
+				http.Error(w, "bad add request", http.StatusBadRequest)
+				return
+			}
+			assertpkg.Equal(t, "alice@example.com", req.Account, "add account")
+			assertpkg.Equal(t, "extra@example.com", req.Identifier, "add identifier")
+			assertpkg.Equal(t, "manual", req.Signal, "add signal")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"account": "alice@example.com",
+				"identifier": "extra@example.com",
+				"signal": "manual",
+				"outcome": "added"
+			}`))
+		case http.MethodDelete:
+			var req struct {
+				Account    string `json:"account"`
+				Identifier string `json:"identifier"`
+			}
+			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode remove request") {
+				http.Error(w, "bad remove request", http.StatusBadRequest)
+				return
+			}
+			assertpkg.Equal(t, "alice@example.com", req.Account, "remove account")
+			assertpkg.Equal(t, "alice@example.com", req.Identifier, "remove identifier")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"account": "alice@example.com",
+				"identifier": "alice@example.com",
+				"removed": 1,
+				"no_identity": true
+			}`))
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, requests
 }
 
 func TestIdentityList_NoScope(t *testing.T) {

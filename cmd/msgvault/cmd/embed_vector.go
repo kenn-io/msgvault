@@ -23,6 +23,12 @@ func runEmbed(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	s, err := store.Open(cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)

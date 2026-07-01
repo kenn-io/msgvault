@@ -42,6 +42,9 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 			if opts.GoogleAccount == "" {
 				return errors.New("--google-account is required")
 			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			name := args[0]
 			if cfg.GetSynctechSMSSource(name) != nil {
 				return fmt.Errorf("synctech-sms source %q already exists", name)
@@ -94,6 +97,9 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 		Short: "Run one configured synctech-sms source now",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
 			src := cfg.GetSynctechSMSSource(args[0])
 			if src == nil {
 				return fmt.Errorf("synctech-sms source %q not found", args[0])
@@ -104,11 +110,11 @@ func newSyncSynctechSMSCmd() *cobra.Command {
 }
 
 func runConfiguredSynctechSMSSource(ctx context.Context, src config.SynctechSMSSource) error {
-	st, err := openStoreAndInitForIngest()
+	st, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = st.Close() }()
+	defer cleanup()
 
 	return runConfiguredSynctechSMSSourceWithStore(ctx, st, src)
 }

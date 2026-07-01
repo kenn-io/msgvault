@@ -24,7 +24,7 @@ var (
 	cfgFile    string
 	homeDir    string
 	verbose    bool
-	useLocal   bool // Force local database even when remote is configured
+	useLocal   bool // Use local daemon even when remote is configured
 	logFile    string
 	logLevel   string
 	noLogFile  bool
@@ -71,7 +71,8 @@ in a single binary.`,
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
 		if cmd.Name() == "version" || cmd.Name() == "update" ||
-			cmd.Name() == "quickstart" || cmd.Name() == "completion" ||
+			cmd.Name() == "quickstart" || cmd.Name() == "openapi" ||
+			cmd.Name() == "completion" ||
 			cmd.Name() == cobra.ShellCompRequestCmd ||
 			cmd.Name() == cobra.ShellCompNoDescRequestCmd {
 			cmd.SilenceUsage = false
@@ -266,7 +267,7 @@ func ExecuteContext(ctx context.Context) error {
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.
-	if logger != nil {
+	if logResult != nil && logger != nil {
 		if err != nil {
 			logger.Info("msgvault exit",
 				"outcome", "error", "error", err.Error(),
@@ -536,7 +537,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.msgvault/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&homeDir, "home", "", "home directory (overrides MSGVAULT_HOME)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output (implies --log-level=debug)")
-	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "force local database (override remote config)")
+	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "use local daemon instead of configured remote")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "",

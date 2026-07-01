@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -104,6 +105,43 @@ const (
 	hashUniqA  = "h2uniqueA00000000000000000000000000000000000000000000000000000de"
 	hashUniqB  = "h3uniqueB000000000000000000000000000000000000000000000000000ab12"
 )
+
+func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(src.ID, "thread-nullhash", "Thread Null Hash")
+	require.NoError(err, "EnsureConversation")
+	msgID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "nullhash-msg",
+		MessageType:     "email",
+		Subject:         sql.NullString{String: "Attachment", Valid: true},
+		SizeEstimate:    100,
+	})
+	require.NoError(err, "UpsertMessage")
+
+	inserted, err := st.DB().Exec(
+		st.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
+			VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)`),
+		msgID, nil, nil, "legacy/path.bin", nil,
+	)
+	require.NoError(err, "insert nullable attachment metadata")
+	attachmentID, err := inserted.LastInsertId()
+	require.NoError(err, "attachment id")
+
+	got, err := st.GetMessage(msgID)
+	require.NoError(err, "GetMessage")
+	require.Len(got.Attachments, 1, "attachments")
+	assert.Equal(attachmentID, got.Attachments[0].ID, "id")
+	assert.Empty(got.Attachments[0].Filename, "filename")
+	assert.Empty(got.Attachments[0].MimeType, "mime_type")
+	assert.Zero(got.Attachments[0].Size, "size")
+	assert.Empty(got.Attachments[0].ContentHash, "content_hash")
+}
 
 // TestAttachment_E2E_MultiMessageDedup verifies that multiple messages within
 // a single source can reference the same content_hash via UpsertAttachment
