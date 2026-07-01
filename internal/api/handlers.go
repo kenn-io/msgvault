@@ -42,6 +42,7 @@ type StatsResponse struct {
 	TotalAttach   int64             `json:"total_attachments"`
 	DatabaseSize  int64             `json:"database_size_bytes"`
 	VectorSearch  *vector.StatsView `json:"vector_search,omitempty"`
+	VectorStatus  string            `json:"vector_status,omitempty"`
 }
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
@@ -119,8 +120,16 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-type HealthResponse struct {
+// VectorHealth reports the vector subsystem state in health responses so
+// daemon status is visible while background init runs (or after it fails).
+type VectorHealth struct {
 	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+type HealthResponse struct {
+	Status string        `json:"status"`
+	Vector *VectorHealth `json:"vector,omitempty"`
 }
 
 type MessageListResponse struct {
@@ -432,6 +441,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	resp := statsResponseFromStore(stats)
 	resp.VectorSearch = vs
+	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
+		resp.VectorStatus = string(status)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }

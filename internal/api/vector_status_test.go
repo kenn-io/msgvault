@@ -159,3 +159,53 @@ func TestHybridSearchInitializing503(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "vector_initializing", body.Error)
 }
+
+func TestHealthReportsVectorStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     VectorStatus
+		initErr    error
+		wantVector *VectorHealth
+	}{
+		{"disabled omits vector", VectorStatusDisabled, nil, nil},
+		{"initializing", VectorStatusInitializing, nil, &VectorHealth{Status: "initializing"}},
+		{"error carries message", VectorStatusError, errors.New("migration exploded"),
+			&VectorHealth{Status: "error", Error: "migration exploded"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := testServerOptions(t, nil)
+			opts.VectorStatus = tt.status
+			srv := NewServerWithOptions(opts)
+			if tt.initErr != nil {
+				srv.SetVectorInitError(tt.initErr)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			rec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			var body HealthResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, "ok", body.Status)
+			assert.Equal(t, tt.wantVector, body.Vector)
+		})
+	}
+}
+
+func TestStatsReportsVectorStatus(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+	srv.vectorMu.Lock()
+	srv.vectorStatus = VectorStatusInitializing
+	srv.vectorMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body StatsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "initializing", body.VectorStatus)
+}

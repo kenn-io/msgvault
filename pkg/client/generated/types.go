@@ -1050,12 +1050,27 @@ func (g GmailIDsResponse) Validate() error {
 
 type HealthResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	Status string  `json:"status" validate:"required"`
+	Schema *string       `json:"$schema,omitempty"`
+	Status string        `json:"status" validate:"required"`
+	Vector *VectorHealth `json:"vector,omitempty"`
 }
 
 func (h HealthResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(h.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if h.Vector != nil {
+		if v, ok := any(h.Vector).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Vector", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type HybridGenerationSummary struct {
@@ -1627,6 +1642,7 @@ type StatsResponse struct {
 	TotalMessages     int64      `json:"total_messages"`
 	TotalThreads      int64      `json:"total_threads"`
 	VectorSearch      *StatsView `json:"vector_search,omitempty"`
+	VectorStatus      *string    `json:"vector_status,omitempty"`
 }
 
 func (s StatsResponse) Validate() error {
@@ -1892,4 +1908,13 @@ type UpdateResult struct {
 
 func (u UpdateResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type VectorHealth struct {
+	ErrorData *string `json:"error,omitempty"`
+	Status    string  `json:"status" validate:"required"`
+}
+
+func (v VectorHealth) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }

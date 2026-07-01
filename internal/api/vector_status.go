@@ -52,6 +52,16 @@ func (s *Server) VectorStatus() (VectorStatus, string) {
 	return s.vectorStatus, s.vectorErr
 }
 
+// vectorHealth returns the health-response view of the vector subsystem,
+// or nil when vector search is disabled.
+func (s *Server) vectorHealth() *VectorHealth {
+	status, errMsg := s.VectorStatus()
+	if status == VectorStatusDisabled {
+		return nil
+	}
+	return &VectorHealth{Status: string(status), Error: errMsg}
+}
+
 func (s *Server) vectorComponents() (*hybrid.Engine, vector.Backend, vector.Config) {
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()

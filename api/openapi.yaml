@@ -1517,6 +1517,8 @@ components:
           type: string
         status:
           type: string
+        vector:
+          $ref: "#/components/schemas/VectorHealth"
       required:
         - status
       type: object
@@ -2266,6 +2268,8 @@ components:
           type: integer
         vector_search:
           $ref: "#/components/schemas/StatsView"
+        vector_status:
+          type: string
       required:
         - total_messages
         - total_threads
@@ -2628,6 +2632,16 @@ components:
       required:
         - email
         - display_name
+      type: object
+    VectorHealth:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        status:
+          type: string
+      required:
+        - status
       type: object
   securitySchemes:
     apiKey:
