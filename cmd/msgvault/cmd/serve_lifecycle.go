@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -73,7 +74,10 @@ var serveRestartCmd = &cobra.Command{
 func runServeStatus(cmd *cobra.Command, dataDir string) error {
 	out := cmd.OutOrStdout()
 	if rt := findDaemonRuntime(dataDir); rt != nil {
-		for _, line := range serveStatusLines(rt) {
+		lines := serveStatusLines(rt)
+		lines = append(lines, vectorStatusLines(
+			fetchDaemonVectorHealth(cmd.Context(), urlFromDaemonRuntime(rt)))...)
+		for _, line := range lines {
 			_, _ = fmt.Fprintln(out, line)
 		}
 		return nil
@@ -109,6 +113,42 @@ func serveStatusLines(rt *DaemonRuntime) []string {
 			time.Since(rt.Record.StartedAt).Round(time.Second)))
 	}
 	return lines
+}
+
+// fetchDaemonVectorHealth fetches /health from a running daemon and returns
+// its vector block. Best-effort: any transport/decode failure returns nil
+// and the status output simply omits the vector line.
+func fetchDaemonVectorHealth(ctx context.Context, baseURL string) *api.VectorHealth {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var health api.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return nil
+	}
+	return health.Vector
+}
+
+func vectorStatusLines(vh *api.VectorHealth) []string {
+	if vh == nil {
+		return nil
+	}
+	line := "  vector:  " + vh.Status
+	if vh.Error != "" {
+		line += " (" + vh.Error + ")"
+	}
+	return []string{line}
 }
 
 func daemonRunningLine(state string, rt *DaemonRuntime, pid int) string {

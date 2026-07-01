@@ -58,6 +58,40 @@ func TestServeStatusLines(t *testing.T) {
 	assert.Contains(out, "uptime:")
 }
 
+func TestServeStatusPrintsVectorLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		health   string
+		wantLine string
+		wantNone bool
+	}{
+		{"initializing", `{"status":"ok","vector":{"status":"initializing"}}`,
+			"vector:  initializing", false},
+		{"error with detail", `{"status":"ok","vector":{"status":"error","error":"migration exploded"}}`,
+			"vector:  error (migration exploded)", false},
+		{"disabled omits line", `{"status":"ok"}`, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/health", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.health))
+			}))
+			defer srv.Close()
+
+			vh := fetchDaemonVectorHealth(context.Background(), srv.URL)
+			lines := vectorStatusLines(vh)
+			if tt.wantNone {
+				assert.Empty(t, lines)
+				return
+			}
+			require.Len(t, lines, 1)
+			assert.Contains(t, lines[0], tt.wantLine)
+		})
+	}
+}
+
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
 	cmd, stdout, stderr := lifecycleTestCommand()
 
