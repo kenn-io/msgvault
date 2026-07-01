@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -28,13 +28,13 @@ func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
 	cmd.SetErr(new(bytes.Buffer))
 	err := cmd.Execute()
 	requirepkg.Error(t, err, "want mutual-exclusion error")
-	assertpkg.Contains(t, err.Error(), "permanent")
-	assertpkg.Contains(t, err.Error(), "yes")
+	assert.Contains(t, err.Error(), "permanent")
+	assert.Contains(t, err.Error(), "yes")
 }
 
 func TestListDeletions_ShowsCancelled(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	mgr, err := deletion.NewManager(tmpDir)
 	require.NoError(err, "NewManager")
@@ -57,7 +57,7 @@ func TestListDeletions_ShowsCancelled(t *testing.T) {
 }
 
 func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
@@ -109,7 +109,7 @@ func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
 
 func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
@@ -154,7 +154,7 @@ func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 
 func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
 	defer restore()
@@ -186,7 +186,7 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 
 func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	_, restore := seedTokenEnv(t, legacyTokenJSON)
 	defer restore()

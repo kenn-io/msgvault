@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/deletion"
@@ -59,7 +59,7 @@ func TestNew_RejectsInvalidScheme(t *testing.T) {
 		APIKey: "key",
 	})
 	requirepkg.Error(t, err, "New() should reject ftp:// scheme")
-	assertpkg.ErrorContains(t, err, "http or https")
+	assert.ErrorContains(t, err, "http or https")
 }
 
 func TestNew_RejectsEmptyHost(t *testing.T) {
@@ -69,7 +69,7 @@ func TestNew_RejectsEmptyHost(t *testing.T) {
 		AllowInsecure: true,
 	})
 	requirepkg.Error(t, err, "New() should reject URL with empty host")
-	assertpkg.ErrorContains(t, err, "must include a host")
+	assert.ErrorContains(t, err, "must include a host")
 }
 
 func TestNew_TrimsTrailingSlash(t *testing.T) {
@@ -79,7 +79,7 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 		AllowInsecure: true,
 	})
 	requirepkg.NoError(t, err, "New()")
-	assertpkg.Equal(t, "http://nas:8080", s.BaseURL(), "baseURL should have trailing slash trimmed")
+	assert.Equal(t, "http://nas:8080", s.BaseURL(), "baseURL should have trailing slash trimmed")
 }
 
 func TestNew_DefaultTimeout(t *testing.T) {
@@ -88,11 +88,11 @@ func TestNew_DefaultTimeout(t *testing.T) {
 		APIKey: "key",
 	})
 	requirepkg.NoError(t, err, "New()")
-	assertpkg.NotZero(t, s.Timeout(), "httpClient.Timeout should have a default")
+	assert.NotZero(t, s.Timeout(), "httpClient.Timeout should have a default")
 }
 
 func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +128,7 @@ func TestRunCLISyncStreamsWithoutAbsoluteClientTimeout(t *testing.T) {
 }
 
 func TestRunCLICommandStreamsOutput(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +184,7 @@ func TestRunCLICommandStreamsOutput(t *testing.T) {
 }
 
 func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +234,7 @@ func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestPlanCLIEmbeddingsUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +279,7 @@ func TestPlanCLIEmbeddingsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +347,7 @@ func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	manifest := deletion.NewManifest("tui selection", []string{"gid1", "gid2"})
 	manifest.CreatedBy = "tui"
@@ -381,7 +381,7 @@ func TestCreateCLIDeletionManifestUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestPlanCLIDeduplicateUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -467,7 +467,7 @@ func newTestStore(srv *httptest.Server, apiKey string) *Client {
 func newCLINDJSONTestServer(t *testing.T, method, path string, events ...string) *httptest.Server {
 	t.Helper()
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(method, r.Method, "method")
 		assert.Equal(path, r.URL.Path, "path")
@@ -517,7 +517,7 @@ func newGeneratedClientAdapterStore(t *testing.T, handler http.HandlerFunc) *Cli
 	t.Helper()
 
 	generatedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "generated-key", r.Header.Get("X-Api-Key"), "api key")
+		assert.Equal(t, "generated-key", r.Header.Get("X-Api-Key"), "api key")
 		handler(w, r)
 	}))
 	t.Cleanup(generatedSrv.Close)
@@ -534,7 +534,7 @@ func writeJSONResponse(t *testing.T, w http.ResponseWriter, value any) {
 
 func TestGeneratedClientUsesStoreTransportAndAuth(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
 		assert.Equal("/api/v1/query", r.URL.Path, "path")
@@ -565,12 +565,12 @@ func TestGeneratedCLIResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 	}, nil)
 
 	requirepkg.Error(t, err, "missing CLI JSON200 payload must not be a successful zero-value mutation")
-	assertpkg.ErrorContains(t, err, "200 JSON response body")
+	assert.ErrorContains(t, err, "200 JSON response body")
 }
 
 func TestGetStatsRejectsEmptyGeneratedOKBody(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/cli/stats", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/cli/stats", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -580,13 +580,13 @@ func TestGetStatsRejectsEmptyGeneratedOKBody(t *testing.T) {
 	_, err := s.GetCLIStats(context.Background(), "", "")
 
 	requirepkg.Error(t, err, "empty 200 JSON body must fail")
-	assertpkg.NotContains(t, err.Error(), "API error (200)", "empty success decode failures are not API errors")
+	assert.NotContains(t, err.Error(), "API error (200)", "empty success decode failures are not API errors")
 }
 
 func TestCreateCLICollectionRejectsEmptyGeneratedOKBody(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "method")
-		assertpkg.Equal(t, "/api/v1/cli/collections", r.URL.Path, "path")
+		assert.Equal(t, http.MethodPost, r.Method, "method")
+		assert.Equal(t, "/api/v1/cli/collections", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -596,7 +596,7 @@ func TestCreateCLICollectionRejectsEmptyGeneratedOKBody(t *testing.T) {
 	_, err := s.CreateCLICollection(context.Background(), CLICollectionCreateRequest{Name: "archive"})
 
 	requirepkg.Error(t, err, "empty 200 mutation body must fail")
-	assertpkg.NotContains(t, err.Error(), "API error (200)", "empty success decode failures are not API errors")
+	assert.NotContains(t, err.Error(), "API error (200)", "empty success decode failures are not API errors")
 }
 
 func TestHandleErrorResponse_JSONBody(t *testing.T) {
@@ -611,7 +611,7 @@ func TestHandleErrorResponse_JSONBody(t *testing.T) {
 	err := HandleErrorResponse(resp)
 	requirepkg.Error(t, err, "HandleErrorResponse should return error")
 	requirepkg.ErrorContains(t, err, "404", "error should contain status code")
-	assertpkg.ErrorContains(t, err, "Message 42 not found", "error should contain API message")
+	assert.ErrorContains(t, err, "Message 42 not found", "error should contain API message")
 }
 
 func TestHandleErrorResponse_PlainTextBody(t *testing.T) {
@@ -623,7 +623,7 @@ func TestHandleErrorResponse_PlainTextBody(t *testing.T) {
 	err := HandleErrorResponse(resp)
 	requirepkg.Error(t, err, "HandleErrorResponse should return error")
 	requirepkg.ErrorContains(t, err, "500", "error should contain status code")
-	assertpkg.ErrorContains(t, err, "internal server error", "error should contain body text")
+	assert.ErrorContains(t, err, "internal server error", "error should contain body text")
 }
 
 func TestGeneratedAPIResponseErrorDecodesGeneratedErrorResponse(t *testing.T) {
@@ -635,7 +635,7 @@ func TestGeneratedAPIResponseErrorDecodesGeneratedErrorResponse(t *testing.T) {
 	err := APIResponseError(resp, nil)
 
 	requirepkg.Error(t, err, "generated API response error")
-	assertpkg.ErrorContains(t, err, "API error (500): database locked")
+	assert.ErrorContains(t, err, "API error (500): database locked")
 }
 
 func TestGeneratedAPIResponseErrorUsesResponseWhenGeneratedClientReturnsError(t *testing.T) {
@@ -647,7 +647,7 @@ func TestGeneratedAPIResponseErrorUsesResponseWhenGeneratedClientReturnsError(t 
 	err := APIResponseError(resp, errors.New("API error (status 503)"))
 
 	requirepkg.Error(t, err, "generated API response error")
-	assertpkg.ErrorContains(t, err, "API error (503): daemon unavailable")
+	assert.ErrorContains(t, err, "API error (503): daemon unavailable")
 }
 
 func TestGeneratedAPIResponseErrorReturnsTransportErrorWithoutResponse(t *testing.T) {
@@ -690,7 +690,7 @@ func TestGeneratedResponseWrappersApplyStoreErrorMapping(t *testing.T) {
 	require.NoError(
 		err, "API wrapper")
 
-	assertpkg.Same(t, want, got, "API wrapper response")
+	assert.Same(t, want, got, "API wrapper response")
 
 	_, err = CLIResponse(s, func(*apiclient.Client) (*generated.CreateCLICollectionResp, error) {
 		return &generated.CreateCLICollectionResp{
@@ -711,7 +711,7 @@ func TestDecodeGeneratedSearchBodyReportsOperation(t *testing.T) {
 	_, err := DecodeGeneratedSearchBody[generated.SearchResult]("CLI hybrid search", []byte("{"))
 
 	requirepkg.Error(t, err, "DecodeGeneratedSearchBody should reject malformed JSON")
-	assertpkg.ErrorContains(t, err, "decode CLI hybrid search response")
+	assert.ErrorContains(t, err, "decode CLI hybrid search response")
 }
 
 func TestGetStats_ErrorResponse(t *testing.T) {
@@ -725,11 +725,11 @@ func TestGetStats_ErrorResponse(t *testing.T) {
 	s := newTestStore(srv, "key")
 	_, err := s.GetStats()
 	requirepkg.Error(t, err, "GetStats should return error on 500")
-	assertpkg.ErrorContains(t, err, "database locked")
+	assert.ErrorContains(t, err, "database locked")
 }
 
 func TestGetStats_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(generated.StatsResponse{
@@ -752,7 +752,7 @@ func TestGetStats_Success(t *testing.T) {
 }
 
 func TestGetStatsUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/stats", r.URL.Path, "path")
@@ -777,7 +777,7 @@ func TestGetStatsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestGetCLIStats_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/stats", r.URL.Path, "path")
 		assert.Equal("Important", r.URL.Query().Get("collection"), "collection query")
@@ -810,7 +810,7 @@ func TestGetCLIStats_Success(t *testing.T) {
 }
 
 func TestGetCLISearch_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/search", r.URL.Path, "path")
 		assert.Equal("lunch", r.URL.Query().Get("q"), "query")
@@ -860,7 +860,7 @@ func TestGetCLISearch_Success(t *testing.T) {
 }
 
 func TestGetCLIHybridSearch_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search", r.URL.Path, "path")
 		assert.Equal("lunch", r.URL.Query().Get("q"), "query")
@@ -941,7 +941,7 @@ func TestGetCLIHybridSearch_Success(t *testing.T) {
 }
 
 func TestGetCLIHybridSearchUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1005,7 +1005,7 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 		requirepkg.
 			New(t)
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
@@ -1042,14 +1042,14 @@ func TestCLICollectionMutations(t *testing.T) {
 		requirepkg.
 			New(t)
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	collectionName := "Team/One"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/cli/collections":
 			var req CLICollectionCreateRequest
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode create request") {
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode create request") {
 				http.Error(w, "bad create request", http.StatusBadRequest)
 				return
 			}
@@ -1058,7 +1058,7 @@ func TestCLICollectionMutations(t *testing.T) {
 			_, _ = w.Write([]byte(`{"name":"Team/One","source_count":2}`))
 		case r.Method == http.MethodPatch && r.RequestURI == "/api/v1/cli/collections/Team%2FOne/sources":
 			var req CLICollectionSourcesRequest
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode add request") {
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode add request") {
 				http.Error(w, "bad add request", http.StatusBadRequest)
 				return
 			}
@@ -1066,7 +1066,7 @@ func TestCLICollectionMutations(t *testing.T) {
 			_, _ = w.Write([]byte(`{"name":"Team/One","source_count":1}`))
 		case r.Method == http.MethodDelete && r.RequestURI == "/api/v1/cli/collections/Team%2FOne/sources":
 			var req CLICollectionSourcesRequest
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode remove request") {
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode remove request") {
 				http.Error(w, "bad remove request", http.StatusBadRequest)
 				return
 			}
@@ -1118,8 +1118,8 @@ func TestCLICollectionMutations(t *testing.T) {
 
 func TestGetCLICollection_NotFound(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/cli/collection", r.URL.Path, "path")
-		assertpkg.Equal(t, "missing", r.URL.Query().Get("name"), "name query")
+		assert.Equal(t, "/api/v1/cli/collection", r.URL.Path, "path")
+		assert.Equal(t, "missing", r.URL.Query().Get("name"), "name query")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"not_found","message":"Collection not found"}`))
@@ -1130,11 +1130,11 @@ func TestGetCLICollection_NotFound(t *testing.T) {
 	collection, err := s.GetCLICollection(context.Background(), "missing")
 
 	requirepkg.ErrorIs(t, err, store.ErrCollectionNotFound, "GetCLICollection(missing)")
-	assertpkg.Nil(t, collection, "collection")
+	assert.Nil(t, collection, "collection")
 }
 
 func TestRebuildCLIFTSStreamsProgress(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	srv := newCLINDJSONTestServer(t, http.MethodPost, "/api/v1/cli/rebuild-fts",
 		`{"type":"progress","done":2,"total":4}`,
@@ -1155,7 +1155,7 @@ func TestRebuildCLIFTSStreamsProgress(t *testing.T) {
 }
 
 func TestRebuildCLIFTSIgnoresUnknownStreamEvents(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	srv := newCLINDJSONTestServer(t, http.MethodPost, "/api/v1/cli/rebuild-fts",
 		`{"type":"notice","message":"future daemon detail"}`,
@@ -1176,7 +1176,7 @@ func TestRebuildCLIFTSIgnoresUnknownStreamEvents(t *testing.T) {
 }
 
 func TestRunCLIRepairEncodingStreamsOutput(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	srv := newCLINDJSONTestServer(t, http.MethodPost, "/api/v1/cli/repair-encoding",
 		`{"type":"stdout","data":"Scanning messages\n"}`,
@@ -1197,7 +1197,7 @@ func TestRunCLIRepairEncodingStreamsOutput(t *testing.T) {
 }
 
 func TestRebuildCLIFTSUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1218,7 +1218,7 @@ func TestGetCLIIdentities_Success(t *testing.T) {
 		requirepkg.
 			New(t)
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/identities", r.URL.Path, "path")
 		assert.Equal("alice@example.com", r.URL.Query().Get("account"), "account query")
@@ -1271,7 +1271,7 @@ func TestGetCLIIdentities_Success(t *testing.T) {
 }
 
 func TestGetCLIMessage_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/message", r.URL.Path, "path")
 		assert.Equal("remote-42", r.URL.Query().Get("id"), "id query")
@@ -1319,7 +1319,7 @@ func TestGetCLIMessage_NotFound(t *testing.T) {
 }
 
 func TestGetCLIMessageRaw_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/message/raw", r.URL.Path, "path")
@@ -1339,7 +1339,7 @@ func TestGetCLIMessageRaw_Success(t *testing.T) {
 }
 
 func TestGetCLIMessageRawUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
 
@@ -1394,11 +1394,11 @@ func TestGetCLIMessageRaw_NotFoundPreservesGeneratedDecodeError(t *testing.T) {
 
 	var decodeErr *runtime.ResponseDecodeError
 	requirepkg.ErrorAs(t, err, &decodeErr, "GetCLIMessageRaw malformed 404 should preserve generated decode error")
-	assertpkg.NotContains(t, err.Error(), "API error (404)", "decode failures are contract errors, not daemon API messages")
+	assert.NotContains(t, err.Error(), "API error (404)", "decode failures are contract errors, not daemon API messages")
 }
 
 func TestGetCLIAttachment_Success(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1417,7 +1417,7 @@ func TestGetCLIAttachment_Success(t *testing.T) {
 }
 
 func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	require := requirepkg.New(t)
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
@@ -1436,7 +1436,7 @@ func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 
 func TestOpenCLIAttachment_Success(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1459,7 +1459,7 @@ func TestOpenCLIAttachment_Success(t *testing.T) {
 
 func TestOpenCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
 
@@ -1488,12 +1488,12 @@ func TestGetMessage_NotFound(t *testing.T) {
 	s := newTestStore(srv, "key")
 	msg, err := s.GetMessage(999)
 	requirepkg.ErrorIs(t, err, store.ErrMessageNotFound, "GetMessage(999) should report not found")
-	assertpkg.Nil(t, msg, "GetMessage(999) should return nil for not found")
+	assert.Nil(t, msg, "GetMessage(999) should return nil for not found")
 }
 
 func TestGetMessage_Success(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
@@ -1524,14 +1524,14 @@ func TestGetMessage_Success(t *testing.T) {
 }
 
 func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
 			New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/messages/42", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.MessageDetail{
 			ID:             42,
 			ConversationID: int64Ptr(7),
@@ -1580,7 +1580,7 @@ func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
 func TestListMessages_ZeroLimit(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ps := r.URL.Query().Get("page_size")
-		assertpkg.NotEqual(t, "0", ps, "page_size should not be 0")
+		assert.NotEqual(t, "0", ps, "page_size should not be 0")
 		resp := generated.MessageListResponse{
 			Total:    0,
 			Page:     1,
@@ -1596,14 +1596,14 @@ func TestListMessages_ZeroLimit(t *testing.T) {
 	// This previously panicked with divide-by-zero
 	msgs, total, err := s.ListMessages(0, 0)
 	requirepkg.NoError(t, err, "ListMessages(0, 0) error")
-	assertpkg.Equal(t, int64(0), total, "total")
-	assertpkg.Empty(t, msgs, "len(msgs)")
+	assert.Equal(t, int64(0), total, "total")
+	assert.Empty(t, msgs, "len(msgs)")
 }
 
 func TestListMessages_NegativeLimit(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ps := r.URL.Query().Get("page_size")
-		assertpkg.Equal(t, "20", ps, "page_size should default to 20")
+		assert.Equal(t, "20", ps, "page_size should default to 20")
 		resp := generated.MessageListResponse{Total: 0, Page: 1, PageSize: 20}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -1617,16 +1617,16 @@ func TestListMessages_NegativeLimit(t *testing.T) {
 }
 
 func TestListMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
 			New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/messages", r.URL.Path, "path")
-		assertpkg.Equal(t, "3", r.URL.Query().Get("page"), "page")
-		assertpkg.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
+		assert.Equal(t, "/api/v1/messages", r.URL.Path, "path")
+		assert.Equal(t, "3", r.URL.Query().Get("page"), "page")
+		assert.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
 		writeJSONResponse(t, w, generated.MessageListResponse{
 			Total:    55,
 			Page:     3,
@@ -1663,7 +1663,7 @@ func TestListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 func TestSearchMessages_ZeroLimit(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ps := r.URL.Query().Get("page_size")
-		assertpkg.NotEqual(t, "0", ps, "page_size should not be 0")
+		assert.NotEqual(t, "0", ps, "page_size should not be 0")
 		resp := generated.SearchResult{
 			Query:    "test",
 			Total:    0,
@@ -1680,14 +1680,14 @@ func TestSearchMessages_ZeroLimit(t *testing.T) {
 	// This previously panicked with divide-by-zero
 	msgs, total, err := s.SearchMessages("test", 0, 0)
 	requirepkg.NoError(t, err, "SearchMessages(test, 0, 0) error")
-	assertpkg.Equal(t, int64(0), total, "total")
-	assertpkg.Empty(t, msgs, "len(msgs)")
+	assert.Equal(t, int64(0), total, "total")
+	assert.Empty(t, msgs, "len(msgs)")
 }
 
 func TestSearchMessages_QueryEncoding(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		assertpkg.Equal(t, "hello world", q, "q")
+		assert.Equal(t, "hello world", q, "q")
 		resp := generated.SearchResult{Query: "hello world", Total: 0, Page: 1, PageSize: 20}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -1700,17 +1700,17 @@ func TestSearchMessages_QueryEncoding(t *testing.T) {
 }
 
 func TestSearchMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
 			New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/search", r.URL.Path, "path")
-		assertpkg.Equal(t, "hello world", r.URL.Query().Get("q"), "q")
-		assertpkg.Equal(t, "3", r.URL.Query().Get("page"), "page")
-		assertpkg.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
+		assert.Equal(t, "/api/v1/search", r.URL.Path, "path")
+		assert.Equal(t, "hello world", r.URL.Query().Get("q"), "q")
+		assert.Equal(t, "3", r.URL.Query().Get("page"), "page")
+		assert.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
 		writeJSONResponse(t, w, generated.SearchResult{
 			Query:    "hello world",
 			Total:    55,
@@ -1764,8 +1764,8 @@ func TestListMessages_PageCalculation(t *testing.T) {
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				page := r.URL.Query().Get("page")
 				ps := r.URL.Query().Get("page_size")
-				assertpkg.Equal(t, tt.wantPage, page, "page")
-				assertpkg.Equal(t, tt.wantSize, ps, "page_size")
+				assert.Equal(t, tt.wantPage, page, "page")
+				assert.Equal(t, tt.wantSize, ps, "page_size")
 				resp := generated.MessageListResponse{Total: 0, Page: 1, PageSize: 20}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(resp)
@@ -1782,7 +1782,7 @@ func TestListMessages_PageCalculation(t *testing.T) {
 
 func TestListAccounts_Success(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(generated.AccountListResponse{
 			Accounts: []generated.AccountInfo{
@@ -1796,18 +1796,18 @@ func TestListAccounts_Success(t *testing.T) {
 	accounts, err := s.ListAccounts()
 	requirepkg.NoError(t, err, "ListAccounts error")
 	requirepkg.Len(t, accounts, 1, "len(accounts)")
-	assertpkg.Equal(t, "user@gmail.com", accounts[0].Email, "Email")
+	assert.Equal(t, "user@gmail.com", accounts[0].Email, "Email")
 }
 
 func TestListAccountsUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
 			New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.AccountListResponse{
 			Accounts: []generated.AccountInfo{
 				{

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 )
 
@@ -21,15 +21,15 @@ func TestServerConfigDefaults(t *testing.T) {
 	requirepkg.NoError(t, err, "Load()")
 
 	// Check server defaults
-	assertpkg.Equal(t, 8080, cfg.Server.APIPort)
-	assertpkg.Empty(t, cfg.Server.APIKey)
+	assert.Equal(t, 8080, cfg.Server.APIPort)
+	assert.Empty(t, cfg.Server.APIKey)
 }
 
 func TestAnalyticsConfigDefaults(t *testing.T) {
 	cfg := NewDefaultConfig()
 
-	assertpkg.Equal(t, AnalyticsEngineAuto, cfg.Analytics.Engine)
-	assertpkg.True(t, cfg.Analytics.AutoBuildCache)
+	assert.Equal(t, AnalyticsEngineAuto, cfg.Analytics.Engine)
+	assert.True(t, cfg.Analytics.AutoBuildCache)
 }
 
 func TestAccountScheduleEmpty(t *testing.T) {
@@ -39,15 +39,15 @@ func TestAccountScheduleEmpty(t *testing.T) {
 	cfg, err := Load("", "")
 	requirepkg.NoError(t, err, "Load()")
 
-	assertpkg.Empty(t, cfg.Accounts)
+	assert.Empty(t, cfg.Accounts)
 
 	scheduled := cfg.ScheduledAccounts()
-	assertpkg.Empty(t, scheduled)
+	assert.Empty(t, scheduled)
 }
 
 func TestLoadWithServerConfig(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
@@ -86,7 +86,7 @@ enabled = false
 
 func TestLoadWithServerDaemonIdleTimeout(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	configContent := `
@@ -105,7 +105,7 @@ daemon_idle_timeout = "6h"
 func TestServerDaemonAutoRestartDefault(t *testing.T) {
 	cfg := NewDefaultConfig()
 
-	assertpkg.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
+	assert.Equal(t, DaemonAutoRestartNewer, cfg.Server.DaemonAutoRestart)
 }
 
 func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
@@ -121,7 +121,7 @@ daemon_auto_restart = "always"
 	cfg, err := Load(configPath, "")
 	requirepkg.NoError(t, err, "Load()")
 
-	assertpkg.Equal(t, DaemonAutoRestartAlways, cfg.Server.DaemonAutoRestart)
+	assert.Equal(t, DaemonAutoRestartAlways, cfg.Server.DaemonAutoRestart)
 }
 
 func TestLoadWithInvalidServerDaemonAutoRestart(t *testing.T) {
@@ -137,11 +137,11 @@ daemon_auto_restart = "sometimes"
 	_, err := Load(configPath, "")
 
 	requirepkg.Error(t, err, "Load()")
-	assertpkg.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
+	assert.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
 }
 
 func TestLoadWithAnalyticsConfig(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.New(t)
@@ -177,11 +177,11 @@ engine = "sqlite"
 
 	_, err := Load(configPath, "")
 	requirepkg.Error(t, err, "Load()")
-	assertpkg.Contains(t, err.Error(), "invalid [analytics] engine")
+	assert.Contains(t, err.Error(), "invalid [analytics] engine")
 }
 
 func TestServerDaemonIdleTimeoutDefaultAndZero(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cfg := NewDefaultConfig()
 	assert.Equal(20*time.Minute, cfg.Server.DaemonIdleTimeout)
 
@@ -199,7 +199,7 @@ daemon_idle_timeout = "0s"
 }
 
 func TestScheduledAccounts(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cfg := &Config{
 		Accounts: []AccountSchedule{
 			{Email: "enabled@gmail.com", Schedule: "0 2 * * *", Enabled: true},
@@ -247,17 +247,17 @@ func TestGetAccountSchedule(t *testing.T) {
 		t.Run(tt.email, func(t *testing.T) {
 			acc := cfg.GetAccountSchedule(tt.email)
 			if tt.wantNil {
-				assertpkg.Nil(t, acc, "GetAccountSchedule(%q)", tt.email)
+				assert.Nil(t, acc, "GetAccountSchedule(%q)", tt.email)
 				return
 			}
 			requirepkg.NotNil(t, acc, "GetAccountSchedule(%q)", tt.email)
-			assertpkg.Equal(t, tt.wantSched, acc.Schedule, "GetAccountSchedule(%q).Schedule", tt.email)
+			assert.Equal(t, tt.wantSched, acc.Schedule, "GetAccountSchedule(%q).Schedule", tt.email)
 		})
 	}
 }
 
 func TestGetAccountScheduleReturnsCopy(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cfg := &Config{
 		Accounts: []AccountSchedule{
 			{Email: "test@gmail.com", Schedule: "0 2 * * *", Enabled: true},
@@ -418,13 +418,13 @@ func TestExpandPath(t *testing.T) {
 			if tt.windowsOnly && runtime.GOOS != "windows" {
 				t.Skip("skipping Windows-specific path test on non-Windows")
 			}
-			assertpkg.Equal(t, tt.expected, expandPath(tt.input), "expandPath(%q)", tt.input)
+			assert.Equal(t, tt.expected, expandPath(tt.input), "expandPath(%q)", tt.input)
 		})
 	}
 }
 
 func TestLoadEmptyPath(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Use a temp directory as MSGVAULT_HOME
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -445,7 +445,7 @@ func TestLoadEmptyPath(t *testing.T) {
 
 func TestLoadWithConfigFile(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Use a temp directory as MSGVAULT_HOME
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -484,12 +484,12 @@ func TestLoadExplicitPathNotFound(t *testing.T) {
 	// When --config explicitly specifies a file that doesn't exist, Load should error
 	_, err := Load("/nonexistent/path/config.toml", "")
 	requirepkg.Error(t, err, "Load with explicit nonexistent path should return error")
-	assertpkg.Contains(t, err.Error(), "config file not found")
+	assert.Contains(t, err.Error(), "config file not found")
 }
 
 func TestLoadExplicitPathDerivedHomeDir(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// When --config points to a custom location, HomeDir and DataDir
 	// should derive from the config file's parent directory
 	tmpDir := t.TempDir()
@@ -521,7 +521,7 @@ rate_limit_qps = 3
 
 func TestLoadExplicitPathWithDataDirOverride(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// When config file explicitly sets data_dir, that should take precedence
 	tmpDir := t.TempDir()
 	customDataDir := t.TempDir()
@@ -546,7 +546,7 @@ data_dir = "` + filepath.ToSlash(customDataDir) + `"
 
 func TestLoadExplicitPathRelativePaths(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// When --config is used, relative data_dir and client_secrets should
 	// resolve against the config file's directory, not the working directory.
 	tmpDir := t.TempDir()
@@ -591,7 +591,7 @@ func TestLoadExplicitPathWithTilde(t *testing.T) {
 	cfg, err := Load(tildePath, "")
 	require.NoError(err, "Load(%q)", tildePath)
 
-	assertpkg.Equal(t, 7, cfg.Sync.RateLimitQPS)
+	assert.Equal(t, 7, cfg.Sync.RateLimitQPS)
 }
 
 func TestLoadConfigFilePath(t *testing.T) {
@@ -603,7 +603,7 @@ func TestLoadConfigFilePath(t *testing.T) {
 	cfg, err := Load(configPath, "")
 	requirepkg.NoError(t, err, "Load(%q)", configPath)
 
-	assertpkg.Equal(t, configPath, cfg.ConfigFilePath())
+	assert.Equal(t, configPath, cfg.ConfigFilePath())
 }
 
 func TestDefaultHomeExpandsTilde(t *testing.T) {
@@ -612,7 +612,7 @@ func TestDefaultHomeExpandsTilde(t *testing.T) {
 
 	t.Setenv("MSGVAULT_HOME", "~/.msgvault")
 	expected := filepath.Join(home, ".msgvault")
-	assertpkg.Equal(t, expected, DefaultHome())
+	assert.Equal(t, expected, DefaultHome())
 }
 
 // assertTempDirSecured checks that a temp dir has permissions no more
@@ -625,7 +625,7 @@ func assertTempDirSecured(t *testing.T, dir string) {
 	info, err := os.Stat(dir)
 	requirepkg.NoError(t, err, "Stat temp dir")
 	got := info.Mode().Perm()
-	assertpkg.Zero(t, got&^os.FileMode(0700), "temp dir perm = %04o, has bits beyond 0700 (extra: %04o)", got, got&^0700)
+	assert.Zero(t, got&^os.FileMode(0700), "temp dir perm = %04o, has bits beyond 0700 (extra: %04o)", got, got&^0700)
 }
 
 func TestMkTempDir(t *testing.T) {
@@ -645,7 +645,7 @@ func TestMkTempDir(t *testing.T) {
 		requirepkg.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
-		assertpkg.True(t, strings.HasPrefix(dir, preferred), "temp dir %q not under preferred %q", dir, preferred)
+		assert.True(t, strings.HasPrefix(dir, preferred), "temp dir %q not under preferred %q", dir, preferred)
 		assertTempDirSecured(t, dir)
 	})
 
@@ -665,7 +665,7 @@ func TestMkTempDir(t *testing.T) {
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		// Should have fallen back to system temp
-		assertpkg.NotContains(t, dir, "nonexistent", "should not have used nonexistent dir")
+		assert.NotContains(t, dir, "nonexistent", "should not have used nonexistent dir")
 	})
 
 	t.Run("falls back to msgvault home when system temp is unavailable", func(t *testing.T) {
@@ -698,7 +698,7 @@ func TestMkTempDir(t *testing.T) {
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		expectedBase := filepath.Join(msgvaultHome, "tmp")
-		assertpkg.True(t, strings.HasPrefix(dir, expectedBase), "temp dir %q not under fallback %q", dir, expectedBase)
+		assert.True(t, strings.HasPrefix(dir, expectedBase), "temp dir %q not under fallback %q", dir, expectedBase)
 
 		// Verify the tmp dir was created with restrictive permissions
 		assertTempDirSecured(t, expectedBase)
@@ -726,7 +726,7 @@ func TestLoadBackslashErrorHint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			tmpDir := t.TempDir()
 			t.Setenv("MSGVAULT_HOME", tmpDir)
 
@@ -745,7 +745,7 @@ func TestLoadBackslashErrorHint(t *testing.T) {
 }
 
 func TestLoadWithHomeDir(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	homeDir := t.TempDir()
 
 	cfg, err := Load("", homeDir)
@@ -763,7 +763,7 @@ func TestLoadWithHomeDir(t *testing.T) {
 
 func TestLoadWithHomeDirReadsConfig(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// --home should load config.toml from that directory
 	homeDir := t.TempDir()
 	configPath := filepath.Join(homeDir, "config.toml")
@@ -781,7 +781,7 @@ rate_limit_qps = 42
 
 func TestLoadWithHomeDirExpandsTilde(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	home, err := os.UserHomeDir()
 	require.NoError(err, "failed to get user home dir")
 
@@ -812,7 +812,7 @@ mcp_enabled = true
 	cfg, err := Load("", "")
 	requirepkg.NoError(t, err, "Load() should succeed with deprecated mcp_enabled")
 
-	assertpkg.Equal(t, 9090, cfg.Server.APIPort)
+	assert.Equal(t, 9090, cfg.Server.APIPort)
 }
 
 func TestNewDefaultConfig(t *testing.T) {
@@ -822,14 +822,14 @@ func TestNewDefaultConfig(t *testing.T) {
 
 	cfg := NewDefaultConfig()
 
-	assertpkg.Equal(t, tmpDir, cfg.HomeDir)
-	assertpkg.Equal(t, tmpDir, cfg.Data.DataDir)
-	assertpkg.Equal(t, 5, cfg.Sync.RateLimitQPS)
+	assert.Equal(t, tmpDir, cfg.HomeDir)
+	assert.Equal(t, tmpDir, cfg.Data.DataDir)
+	assert.Equal(t, 5, cfg.Sync.RateLimitQPS)
 }
 
 func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	cfg := NewDefaultConfig()
@@ -877,7 +877,7 @@ func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
 	// Should have no group/other permissions (0600 or stricter)
 	// Windows doesn't support Unix file permissions.
 	if runtime.GOOS != "windows" {
-		assertpkg.Zero(t, info.Mode().Perm()&0077, "config perm = %04o, want no group/other access", info.Mode().Perm())
+		assert.Zero(t, info.Mode().Perm()&0077, "config perm = %04o, want no group/other access", info.Mode().Perm())
 	}
 }
 
@@ -899,7 +899,7 @@ func TestSave_TightensWeakPermissions(t *testing.T) {
 
 	info, err := os.Stat(path)
 	require.NoError(err, "Stat")
-	assertpkg.Zero(t, info.Mode().Perm()&0077, "Save should tighten perms: got %04o, want 0600", info.Mode().Perm())
+	assert.Zero(t, info.Mode().Perm()&0077, "Save should tighten perms: got %04o, want 0600", info.Mode().Perm())
 }
 
 func TestSave_FollowsSymlink(t *testing.T) {
@@ -909,7 +909,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 
 	t.Run("absolute target", func(t *testing.T) {
 		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		tmpDir := t.TempDir()
 		targetDir := t.TempDir()
 		targetPath := filepath.Join(targetDir, "actual-config.toml")
@@ -934,7 +934,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 
 	t.Run("relative target", func(t *testing.T) {
 		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		tmpDir := t.TempDir()
 		// Create subdir for the actual file
 		subDir := filepath.Join(tmpDir, "real")
@@ -965,7 +965,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 
 func TestSave_FailurePreservesExisting(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("cannot make directory unwritable on Windows")
 	}
@@ -1031,7 +1031,7 @@ func TestSave_OverwritesExisting(t *testing.T) {
 	// Load and verify the update took effect
 	loaded, err := Load(cfg.ConfigFilePath(), "")
 	require.NoError(err, "Load()")
-	assertpkg.Equal(t, 42, loaded.Sync.RateLimitQPS)
+	assert.Equal(t, 42, loaded.Sync.RateLimitQPS)
 }
 
 func TestOAuthConfig_ClientSecretsFor(t *testing.T) {
@@ -1092,11 +1092,11 @@ func TestOAuthConfig_ClientSecretsFor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.config.ClientSecretsFor(tt.appName)
 			if tt.wantErr {
-				assertpkg.Error(t, err, "ClientSecretsFor(%q)", tt.appName)
+				assert.Error(t, err, "ClientSecretsFor(%q)", tt.appName)
 				return
 			}
 			requirepkg.NoError(t, err, "ClientSecretsFor(%q)", tt.appName)
-			assertpkg.Equal(t, tt.want, got, "ClientSecretsFor(%q)", tt.appName)
+			assert.Equal(t, tt.want, got, "ClientSecretsFor(%q)", tt.appName)
 		})
 	}
 }
@@ -1123,7 +1123,7 @@ func TestOAuthConfig_ServiceAccountKeyFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, cfg.ServiceAccountKeyFor(tt.appName), "ServiceAccountKeyFor(%q)", tt.appName)
+			assert.Equal(t, tt.want, cfg.ServiceAccountKeyFor(tt.appName), "ServiceAccountKeyFor(%q)", tt.appName)
 		})
 	}
 }
@@ -1190,14 +1190,14 @@ func TestOAuthConfig_HasAnyConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, tt.config.HasAnyConfig())
+			assert.Equal(t, tt.want, tt.config.HasAnyConfig())
 		})
 	}
 }
 
 func TestLoadWithNamedOAuthApps(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
@@ -1264,7 +1264,7 @@ dimension = 768
 	require.NoError(err, "Load")
 
 	expected := filepath.Join(home, "custom/vectors.db")
-	assertpkg.Equal(t, expected, cfg.Vector.DBPath)
+	assert.Equal(t, expected, cfg.Vector.DBPath)
 }
 
 func TestLoadResolvesRelativeVectorDBPath(t *testing.T) {
@@ -1287,7 +1287,7 @@ dimension = 768
 	requirepkg.NoError(t, err, "Load")
 
 	expected := filepath.Join(tmpDir, "sub/vectors.db")
-	assertpkg.Equal(t, expected, cfg.Vector.DBPath)
+	assert.Equal(t, expected, cfg.Vector.DBPath)
 }
 
 // TestLoadReappliesVectorDefaults verifies that a zero-valued numeric
@@ -1297,7 +1297,7 @@ dimension = 768
 // from this re-defaulting.
 func TestLoadReappliesVectorDefaults(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
 
@@ -1348,12 +1348,12 @@ client_secrets = "secrets/acme.json"
 	expectedAcme := filepath.Join(tmpDir, "secrets/acme.json")
 	acme, ok := cfg.OAuth.Apps["acme"]
 	require.True(ok, "Apps[acme] not found")
-	assertpkg.Equal(t, expectedAcme, acme.ClientSecrets)
+	assert.Equal(t, expectedAcme, acme.ClientSecrets)
 }
 
 func TestLoadWithServiceAccountKeysExpandsPaths(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	home, err := os.UserHomeDir()
 	require.NoError(err, "UserHomeDir")
 
@@ -1383,7 +1383,7 @@ service_account_key = "~/keys/workspace-service-account.json"
 
 func TestLoadWithServiceAccountKeysResolvesRelativePaths(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	configContent := `
@@ -1409,7 +1409,7 @@ service_account_key = "keys/workspace-service-account.json"
 
 func TestLoadNamedAppsOnly_NoDefault(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
@@ -1441,7 +1441,7 @@ client_secrets = "/path/to/acme.json"
 
 func TestSave_AllowInsecureRoundTrip(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	// Save with AllowInsecure = false (default)
@@ -1466,7 +1466,7 @@ func TestSave_AllowInsecureRoundTrip(t *testing.T) {
 
 func TestMicrosoftConfig(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	configContent := `
 [microsoft]
@@ -1484,7 +1484,7 @@ tenant_id = "my-tenant"
 
 func TestMicrosoftConfig_DefaultTenant(t *testing.T) {
 	cfg := NewDefaultConfig()
-	assertpkg.Equal(t, "common", cfg.Microsoft.EffectiveTenantID())
+	assert.Equal(t, "common", cfg.Microsoft.EffectiveTenantID())
 }
 
 func TestDatabasePath(t *testing.T) {
@@ -1494,7 +1494,7 @@ func TestDatabasePath(t *testing.T) {
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
 		want := filepath.Join("/tmp/data", "msgvault.db")
-		assertpkg.Equal(t, want, got)
+		assert.Equal(t, want, got)
 	})
 
 	t.Run("file: URI is stripped", func(t *testing.T) {
@@ -1502,7 +1502,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db"
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
-		assertpkg.Equal(t, "/var/lib/msgvault.db", got)
+		assert.Equal(t, "/var/lib/msgvault.db", got)
 	})
 
 	t.Run("file: URI with query string drops query", func(t *testing.T) {
@@ -1510,7 +1510,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db?_journal_mode=WAL&_busy_timeout=5000"
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
-		assertpkg.Equal(t, "/var/lib/msgvault.db", got)
+		assert.Equal(t, "/var/lib/msgvault.db", got)
 	})
 
 	t.Run("file: URI decodes percent-encoded path", func(t *testing.T) {
@@ -1518,7 +1518,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:/var/lib/my%20vault.db"
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
-		assertpkg.Equal(t, "/var/lib/my vault.db", got)
+		assert.Equal(t, "/var/lib/my vault.db", got)
 	})
 
 	t.Run("file: URI relative path (Opaque)", func(t *testing.T) {
@@ -1527,7 +1527,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:msgvault.db"
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
-		assertpkg.Equal(t, "msgvault.db", got)
+		assert.Equal(t, "msgvault.db", got)
 	})
 
 	t.Run("file: URI relative path with percent-encoding (Opaque)", func(t *testing.T) {
@@ -1539,7 +1539,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg.Data.DatabaseURL = "file:my%20vault.db"
 		got, err := cfg.DatabasePath()
 		requirepkg.NoError(t, err, "DatabasePath")
-		assertpkg.Equal(t, "my vault.db", got)
+		assert.Equal(t, "my vault.db", got)
 	})
 
 	t.Run("postgres:// is rejected", func(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	requirepkg "github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -41,30 +41,30 @@ func TestNewRejectsEmptyURL(t *testing.T) {
 func TestNewRejectsInvalidScheme(t *testing.T) {
 	_, err := New(Config{URL: "ftp://nas:8080", APIKey: "key"})
 	requirepkg.Error(t, err, "New should reject ftp")
-	assertpkg.ErrorContains(t, err, "http or https")
+	assert.ErrorContains(t, err, "http or https")
 }
 
 func TestNewRejectsEmptyHost(t *testing.T) {
 	_, err := New(Config{URL: "http://", APIKey: "key", AllowInsecure: true})
 	requirepkg.Error(t, err, "New should reject empty host")
-	assertpkg.ErrorContains(t, err, "must include a host")
+	assert.ErrorContains(t, err, "must include a host")
 }
 
 func TestNewTrimsTrailingSlash(t *testing.T) {
 	c, err := New(Config{URL: "http://nas:8080/", APIKey: "key", AllowInsecure: true})
 	requirepkg.NoError(t, err, "New")
-	assertpkg.Equal(t, "http://nas:8080", c.BaseURL(), "base URL")
+	assert.Equal(t, "http://nas:8080", c.BaseURL(), "base URL")
 }
 
 func TestNewDefaultTimeout(t *testing.T) {
 	c, err := New(Config{URL: "https://nas:8080", APIKey: "key"})
 	requirepkg.NoError(t, err, "New")
-	assertpkg.Equal(t, 30*time.Second, c.Timeout(), "timeout")
+	assert.Equal(t, 30*time.Second, c.Timeout(), "timeout")
 }
 
 func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
 	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
 		assert.Equal("/api/v1/query", r.URL.Path, "path")
@@ -95,9 +95,9 @@ func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
 
 func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/query", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/query", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
-		assertpkg.NoError(t, json.NewEncoder(w).Encode(generated.QueryResult{
+		assert.NoError(t, json.NewEncoder(w).Encode(generated.QueryResult{
 			Columns: []string{"n"},
 			Rows:    [][]any{{float64(1)}},
 		}), "encode response")
@@ -124,11 +124,11 @@ func TestGeneratedResponseErrorReturnsDecodeErrorForOKDecodeFailure(t *testing.T
 	}, decodeErr)
 
 	requirepkg.ErrorIs(t, err, decodeErr, "decode error")
-	assertpkg.NotContains(t, err.Error(), "API error (200)", "decode failures are not API error bodies")
+	assert.NotContains(t, err.Error(), "API error (200)", "decode failures are not API error bodies")
 }
 
 func TestGeneratedResponseMetadataExtractsStatusBodyAndJSON200State(t *testing.T) {
-	assert := assertpkg.
+	assert := assert.
 		New(t)
 	require :=
 		requirepkg.
@@ -159,7 +159,7 @@ func TestGeneratedResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 	err := APIResponseError(&generated.GetCLIStatsResp{StatusCode: http.StatusOK}, nil)
 
 	requirepkg.Error(t, err, "missing JSON body must fail")
-	assertpkg.ErrorContains(t, err, "200 JSON response body")
+	assert.ErrorContains(t, err, "200 JSON response body")
 }
 
 func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
@@ -173,6 +173,6 @@ func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
 
 func TestGeneratedResponseDecodeErrorDetection(t *testing.T) {
 	err := &runtime.ResponseDecodeError{Err: errors.New("malformed")}
-	assertpkg.True(t, responseDecodeError(err), "decode error")
-	assertpkg.False(t, responseDecodeError(errors.New("other")), "other error")
+	assert.True(t, responseDecodeError(err), "decode error")
+	assert.False(t, responseDecodeError(errors.New("other")), "other error")
 }
