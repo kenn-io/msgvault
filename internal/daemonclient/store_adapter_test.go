@@ -1524,14 +1524,11 @@ func TestGetMessage_Success(t *testing.T) {
 }
 
 func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assert.
-		New(t)
-	require :=
-		requirepkg.
-			New(t)
+	assert := assert.New(t)
+	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/messages/42", r.URL.Path, "path")
+		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.MessageDetail{
 			ID:             42,
 			ConversationID: int64Ptr(7),
@@ -1617,16 +1614,13 @@ func TestListMessages_NegativeLimit(t *testing.T) {
 }
 
 func TestListMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assert.
-		New(t)
-	require :=
-		requirepkg.
-			New(t)
+	assert := assert.New(t)
+	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/messages", r.URL.Path, "path")
-		assert.Equal(t, "3", r.URL.Query().Get("page"), "page")
-		assert.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
+		assert.Equal("/api/v1/messages", r.URL.Path, "path")
+		assert.Equal("3", r.URL.Query().Get("page"), "page")
+		assert.Equal("20", r.URL.Query().Get("page_size"), "page_size")
 		writeJSONResponse(t, w, generated.MessageListResponse{
 			Total:    55,
 			Page:     3,
@@ -1700,17 +1694,14 @@ func TestSearchMessages_QueryEncoding(t *testing.T) {
 }
 
 func TestSearchMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assert.
-		New(t)
-	require :=
-		requirepkg.
-			New(t)
+	assert := assert.New(t)
+	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/search", r.URL.Path, "path")
-		assert.Equal(t, "hello world", r.URL.Query().Get("q"), "q")
-		assert.Equal(t, "3", r.URL.Query().Get("page"), "page")
-		assert.Equal(t, "20", r.URL.Query().Get("page_size"), "page_size")
+		assert.Equal("/api/v1/search", r.URL.Path, "path")
+		assert.Equal("hello world", r.URL.Query().Get("q"), "q")
+		assert.Equal("3", r.URL.Query().Get("page"), "page")
+		assert.Equal("20", r.URL.Query().Get("page_size"), "page_size")
 		writeJSONResponse(t, w, generated.SearchResult{
 			Query:    "hello world",
 			Total:    55,
@@ -1800,14 +1791,11 @@ func TestListAccounts_Success(t *testing.T) {
 }
 
 func TestListAccountsUsesGeneratedClientAdapter(t *testing.T) {
-	assert := assert.
-		New(t)
-	require :=
-		requirepkg.
-			New(t)
+	assert := assert.New(t)
+	require := requirepkg.New(t)
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
+		assert.Equal("/api/v1/accounts", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.AccountListResponse{
 			Accounts: []generated.AccountInfo{
 				{
