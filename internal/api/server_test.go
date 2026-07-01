@@ -392,6 +392,9 @@ func TestHealthEndpoint_HEAD(t *testing.T) {
 }
 
 func TestDaemonPingEndpoint(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080},
 	}
@@ -406,18 +409,20 @@ func TestDaemonPingEndpoint(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(w, req)
-
-	assertpkg.Equal(t, http.StatusOK, w.Code, "daemon ping status")
+	assert.Equal(http.StatusOK, w.Code, "daemon ping status")
 
 	var info daemon.PingInfo
 	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&info), "decode daemon ping")
-	assertpkg.True(t, info.OK, "ping ok")
-	assertpkg.Equal(t, "msgvault", info.Service, "service")
-	assertpkg.Equal(t, "v-test", info.Version, "version")
-	assertpkg.Equal(t, os.Getpid(), info.PID, "pid")
+	assert.True(info.OK, "ping ok")
+	assert.Equal("msgvault", info.Service, "service")
+	assert.Equal("v-test", info.Version, "version")
+	assert.Equal(os.Getpid(), info.PID, "pid")
 }
 
 func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+
 	called := make(chan struct{}, 1)
 	srv := NewServerWithOptions(ServerOptions{
 		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
@@ -432,16 +437,14 @@ func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
 	missing := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
 	missingResp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(missingResp, missing)
-
-	assertpkg.Equal(t, http.StatusUnauthorized, missingResp.Code, "missing token status")
-	assertpkg.Empty(t, called, "shutdown must not run without token")
+	assert.Equal(http.StatusUnauthorized, missingResp.Code, "missing token status")
+	assert.Empty(called, "shutdown must not run without token")
 
 	req := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
 	req.Header.Set(DaemonShutdownTokenHeader, "runtime-token")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
-
-	assertpkg.Equal(t, http.StatusAccepted, w.Code, "valid token status")
+	assert.Equal(http.StatusAccepted, w.Code, "valid token status")
 	requirepkg.Eventually(t, func() bool {
 		select {
 		case <-called:
@@ -672,6 +675,9 @@ func TestSecurityValidation(t *testing.T) {
 }
 
 func TestCORSFromConfig(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			APIPort:     8080,
@@ -686,8 +692,7 @@ func TestCORSFromConfig(t *testing.T) {
 	req.Header.Set("Origin", "http://localhost:3000")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
-
-	assertpkg.Equal(t, "http://localhost:3000", w.Header().Get("Access-Control-Allow-Origin"),
+	assert.Equal("http://localhost:3000", w.Header().Get("Access-Control-Allow-Origin"),
 		"expected CORS header for allowed origin")
 
 	// Request from disallowed origin
@@ -695,8 +700,7 @@ func TestCORSFromConfig(t *testing.T) {
 	req2.Header.Set("Origin", "http://evil.com")
 	w2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w2, req2)
-
-	assertpkg.Empty(t, w2.Header().Get("Access-Control-Allow-Origin"),
+	assert.Empty(w2.Header().Get("Access-Control-Allow-Origin"),
 		"expected no CORS header for disallowed origin")
 
 	// Preflight requests from allowed origins should advertise every API method.
@@ -704,9 +708,8 @@ func TestCORSFromConfig(t *testing.T) {
 	req3.Header.Set("Origin", "http://localhost:3000")
 	w3 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w3, req3)
-
-	assertpkg.Equal(t, http.StatusNoContent, w3.Code, "preflight status")
-	assertpkg.Contains(t, w3.Header().Get("Access-Control-Allow-Methods"), http.MethodPatch,
+	assert.Equal(http.StatusNoContent, w3.Code, "preflight status")
+	assert.Contains(w3.Header().Get("Access-Control-Allow-Methods"), http.MethodPatch,
 		"expected PATCH in allowed methods")
 }
 

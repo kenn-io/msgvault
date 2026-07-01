@@ -375,6 +375,26 @@ type TriggerSyncResponse = StatusMessageResponse
 
 type TriggerSyncErrorResponse = ErrorResponse
 
+type GetTextAggregatesResponse = AggregateResponse
+
+type GetTextAggregatesErrorResponse = ErrorResponse
+
+type ListTextConversationsResponse = TextConversationsResponse
+
+type ListTextConversationsErrorResponse = ErrorResponse
+
+type ListTextConversationMessagesResponse = TextMessagesResponse
+
+type ListTextConversationMessagesErrorResponse = ErrorResponse
+
+type SearchTextMessagesResponse = TextMessagesResponse
+
+type SearchTextMessagesErrorResponse = ErrorResponse
+
+type GetTextStatsResponse = TotalStatsResponse
+
+type GetTextStatsErrorResponse = ErrorResponse
+
 type HealthResponseJSON = HealthResponse
 
 type HealthErrorResponse = ErrorResponse
@@ -820,6 +840,41 @@ type TriggerSyncResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON202      *TriggerSyncResponse
+}
+
+type GetTextAggregatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetTextAggregatesResponse
+}
+
+type ListTextConversationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListTextConversationsResponse
+}
+
+type ListTextConversationMessagesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListTextConversationMessagesResponse
+}
+
+type SearchTextMessagesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchTextMessagesResponse
+}
+
+type GetTextStatsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetTextStatsResponse
 }
 
 type HealthResp struct {

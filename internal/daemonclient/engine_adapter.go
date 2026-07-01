@@ -31,6 +31,7 @@ type Engine struct {
 
 // Compile-time check that Engine implements query.Engine.
 var _ query.Engine = (*Engine)(nil)
+var _ query.TextEngine = (*Engine)(nil)
 
 // NewEngine creates a new daemon-backed query engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -121,6 +122,36 @@ func timeGranularityToString(g query.TimeGranularity) string {
 		return "day"
 	default:
 		return "month"
+	}
+}
+
+func textViewTypeToString(v query.TextViewType) string {
+	switch v {
+	case query.TextViewConversations:
+		return "conversations"
+	case query.TextViewContacts:
+		return "contacts"
+	case query.TextViewContactNames:
+		return "contact_names"
+	case query.TextViewSources:
+		return "sources"
+	case query.TextViewLabels:
+		return apiValueLabels
+	case query.TextViewTime:
+		return "time"
+	default:
+		return "contacts"
+	}
+}
+
+func textSortFieldToString(f query.TextSortField) string {
+	switch f {
+	case query.TextSortByCount:
+		return apiValueCount
+	case query.TextSortByName:
+		return "name"
+	default:
+		return "last_message"
 	}
 }
 
@@ -226,6 +257,57 @@ func gmailIDsFilterQuery(filter query.MessageFilter) *generated.GetGmailIDsByFil
 func filterMessagesQuery(filter query.MessageFilter) *generated.FilterMessagesQuery {
 	out := generatedFilterMessagesQuery(filter, true)
 	return &out
+}
+
+func textConversationsQuery(filter query.TextFilter) *generated.ListTextConversationsQuery {
+	return &generated.ListTextConversationsQuery{
+		SourceID:        copyInt64(filter.SourceID),
+		ContactPhone:    optionalString(filter.ContactPhone),
+		ContactName:     optionalString(filter.ContactName),
+		SourceType:      optionalString(filter.SourceType),
+		Label:           optionalString(filter.Label),
+		TimePeriod:      optionalString(filter.TimeRange.Period),
+		TimeGranularity: optionalString(timeGranularityToString(filter.TimeRange.Granularity)),
+		After:           optionalTimeRFC3339(filter.After),
+		Before:          optionalTimeRFC3339(filter.Before),
+		Offset:          optionalPositiveInt64(filter.Pagination.Offset),
+		Limit:           optionalPositiveInt64(filter.Pagination.Limit),
+		Sort:            optionalString(textSortFieldToString(filter.SortField)),
+		Direction:       optionalString(sortDirectionToString(filter.SortDirection)),
+	}
+}
+
+func textConversationMessagesQuery(filter query.TextFilter) *generated.ListTextConversationMessagesQuery {
+	base := textConversationsQuery(filter)
+	return &generated.ListTextConversationMessagesQuery{
+		SourceID:        base.SourceID,
+		ContactPhone:    base.ContactPhone,
+		ContactName:     base.ContactName,
+		SourceType:      base.SourceType,
+		Label:           base.Label,
+		TimePeriod:      base.TimePeriod,
+		TimeGranularity: base.TimeGranularity,
+		After:           base.After,
+		Before:          base.Before,
+		Offset:          base.Offset,
+		Limit:           base.Limit,
+		Sort:            base.Sort,
+		Direction:       base.Direction,
+	}
+}
+
+func textAggregateQuery(viewType query.TextViewType, opts query.TextAggregateOptions) *generated.GetTextAggregatesQuery {
+	return &generated.GetTextAggregatesQuery{
+		ViewType:        optionalString(textViewTypeToString(viewType)),
+		Sort:            optionalString(textSortFieldToString(opts.SortField)),
+		Direction:       optionalString(sortDirectionToString(opts.SortDirection)),
+		Limit:           optionalPositiveInt64(opts.Limit),
+		TimeGranularity: optionalString(timeGranularityToString(opts.TimeGranularity)),
+		SourceID:        copyInt64(opts.SourceID),
+		SearchQuery:     optionalString(opts.SearchQuery),
+		After:           optionalTimeRFC3339(opts.After),
+		Before:          optionalTimeRFC3339(opts.Before),
+	}
 }
 
 func fastSearchQuery(queryStr string, filter query.MessageFilter, statsGroupBy query.ViewType, limit, offset int) *generated.FastSearchQuery {
@@ -374,6 +456,40 @@ func totalStatsFromGenerated(resp *generated.TotalStatsResponse) *query.TotalSta
 		LabelCount:      resp.LabelCount,
 		AccountCount:    resp.AccountCount,
 	}
+}
+
+func textConversationRowsFromGenerated(rows []generated.TextConversationRow) []query.ConversationRow {
+	if rows == nil {
+		return nil
+	}
+	out := make([]query.ConversationRow, len(rows))
+	for i, row := range rows {
+		var lastMessageAt time.Time
+		if row.LastMessageAt != nil {
+			lastMessageAt = parseTime(*row.LastMessageAt)
+		}
+		out[i] = query.ConversationRow{
+			ConversationID:   row.ConversationID,
+			Title:            row.Title,
+			SourceType:       row.SourceType,
+			MessageCount:     row.MessageCount,
+			ParticipantCount: row.ParticipantCount,
+			LastMessageAt:    lastMessageAt,
+			LastPreview:      row.LastPreview,
+		}
+	}
+	return out
+}
+
+func queryMessageSummariesFromCLIGenerated(msgs []generated.CLIQueryMessageSummary) []query.MessageSummary {
+	if msgs == nil {
+		return nil
+	}
+	out := make([]query.MessageSummary, len(msgs))
+	for i, msg := range msgs {
+		out[i] = queryMessageSummaryFromGenerated(msg)
+	}
+	return out
 }
 
 // ============================================================================
@@ -720,9 +836,9 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
 }
 
-// ListAccounts returns all configured accounts.
+// ListAccounts returns all archive source accounts.
 func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) {
-	accounts, err := e.store.ListAccounts()
+	accounts, err := e.store.GetCLIAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -731,11 +847,80 @@ func (e *Engine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) 
 	for i, acc := range accounts {
 		result[i] = query.AccountInfo{
 			ID:          acc.ID,
+			SourceType:  acc.Type,
 			Identifier:  acc.Email,
 			DisplayName: acc.DisplayName,
 		}
 	}
 	return result, nil
+}
+
+func (e *Engine) ListConversations(ctx context.Context, filter query.TextFilter) ([]query.ConversationRow, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.ListTextConversationsResp, error) {
+		return client.ListTextConversationsWithResponse(ctx, &generated.ListTextConversationsRequestOptions{
+			Query: textConversationsQuery(filter),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return textConversationRowsFromGenerated(resp.JSON200.Conversations), nil
+}
+
+func (e *Engine) TextAggregate(ctx context.Context, viewType query.TextViewType, opts query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetTextAggregatesResp, error) {
+		return client.GetTextAggregatesWithResponse(ctx, &generated.GetTextAggregatesRequestOptions{
+			Query: textAggregateQuery(viewType, opts),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return aggregateRowsFromGenerated(resp.JSON200), nil
+}
+
+func (e *Engine) ListConversationMessages(ctx context.Context, convID int64, filter query.TextFilter) ([]query.MessageSummary, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.ListTextConversationMessagesResp, error) {
+		return client.ListTextConversationMessagesWithResponse(ctx, &generated.ListTextConversationMessagesRequestOptions{
+			PathParams: &generated.ListTextConversationMessagesPath{ID: convID},
+			Query:      textConversationMessagesQuery(filter),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
+}
+
+func (e *Engine) TextSearch(ctx context.Context, queryStr string, limit, offset int) ([]query.MessageSummary, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.SearchTextMessagesResp, error) {
+		return client.SearchTextMessagesWithResponse(ctx, &generated.SearchTextMessagesRequestOptions{
+			Query: &generated.SearchTextMessagesQuery{
+				Q:      queryStr,
+				Limit:  optionalPositiveInt64(limit),
+				Offset: optionalPositiveInt64(offset),
+			},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return queryMessageSummariesFromCLIGenerated(resp.JSON200.Messages), nil
+}
+
+func (e *Engine) GetTextStats(ctx context.Context, opts query.TextStatsOptions) (*query.TotalStats, error) {
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetTextStatsResp, error) {
+		return client.GetTextStatsWithResponse(ctx, &generated.GetTextStatsRequestOptions{
+			Query: &generated.GetTextStatsQuery{
+				SourceID:    copyInt64(opts.SourceID),
+				SearchQuery: optionalString(opts.SearchQuery),
+			},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return totalStatsFromGenerated(resp.JSON200), nil
 }
 
 // GetTotalStats returns overall database statistics.

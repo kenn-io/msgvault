@@ -342,10 +342,15 @@ func TestDuckDBEngine_SQLiteEngineFTSCacheReuse(t *testing.T) {
 
 // TestDuckDBEngine_NoSQLiteDB verifies behavior when sqliteDB is nil.
 func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	assert := assertpkg.New(t)
 	// Create engine without sqliteDB
 	engine, err := NewDuckDBEngine("", "", nil)
-	requirepkg.NoError(t, err, "NewDuckDBEngine")
+	require.NoError(
+		err, "NewDuckDBEngine")
+
 	defer func() { _ = engine.Close() }()
 
 	// sqliteEngine should be nil
@@ -355,11 +360,11 @@ func TestDuckDBEngine_NoSQLiteDB(t *testing.T) {
 
 	// GetMessage should return error (no SQLite path configured)
 	_, err = engine.GetMessage(ctx, 1)
-	requirepkg.Error(t, err, "expected error from GetMessage without SQLite")
+	require.Error(err, "expected error from GetMessage without SQLite")
 
 	// GetMessageBySourceID should return error
 	_, err = engine.GetMessageBySourceID(ctx, "msg1")
-	requirepkg.Error(t, err, "expected error from GetMessageBySourceID without SQLite")
+	require.Error(err, "expected error from GetMessageBySourceID without SQLite")
 
 	// Search should return error
 	q := &search.Query{TextTerms: []string{"test"}}

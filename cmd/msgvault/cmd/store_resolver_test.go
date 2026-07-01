@@ -55,13 +55,15 @@ func TestOpenHTTPStoreUsesLongTimeoutForConfiguredRemote(t *testing.T) {
 }
 
 func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	waitCh := make(chan error)
 	var started bool
 	stubStartServeBackgroundProcess(t, func(c *config.Config) (*backgroundServeProcess, error) {
 		started = true
-		assert.Equal(t, dataDir, c.Data.DataDir)
+		assert.Equal(dataDir, c.Data.DataDir)
 		return &backgroundServeProcess{
 			PID:     4242,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -74,8 +76,8 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 		_ <-chan error,
 		timeout time.Duration,
 	) (*DaemonRuntime, bool, error) {
-		assert.Equal(t, dataDir, gotDataDir)
-		assert.Equal(t, 30*time.Second, timeout)
+		assert.Equal(dataDir, gotDataDir)
+		assert.Equal(30*time.Second, timeout)
 		require.NoError(t, ctx.Err())
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 4242},
@@ -88,13 +90,16 @@ func TestOpenHTTPStoreStartsLocalDaemonWhenNoRemoteConfigured(t *testing.T) {
 	st, info, err := OpenHTTPStore(context.Background())
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
-
-	assert.True(t, started, "local daemon should be started")
-	assert.Equal(t, HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal(t, "http://127.0.0.1:9911", info.URL)
+	assert.True(started, "local daemon should be started")
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	assert.Equal("http://127.0.0.1:9911", info.URL)
 }
 
 func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
 	localCfg.Server.APIKey = "local-daemon-secret"
@@ -118,9 +123,12 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(t, err, "split listener address")
+	require.NoError(
+		err, "split listener address")
+
 	port, err := strconv.Atoi(portText)
-	require.NoError(t, err, "parse listener port")
+	require.NoError(
+		err, "parse listener port")
 
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
@@ -134,20 +142,29 @@ func TestOpenHTTPStoreUsesServerAPIKeyForLocalDaemon(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
 
 	st, info, err := OpenHTTPStore(context.Background())
-	require.NoError(t, err, "OpenHTTPStore")
+	require.NoError(
+		err, "OpenHTTPStore")
+
 	t.Cleanup(func() { _ = st.Close() })
 
 	stats, err := st.GetStats()
-	require.NoError(t, err, "GetStats")
-	assert.Equal(t, HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal(t, int64(7), stats.MessageCount)
-	assert.Equal(t, localCfg.Server.APIKey, gotAPIKey)
+	require.NoError(
+		err, "GetStats")
+
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	assert.Equal(int64(7), stats.MessageCount)
+	assert.Equal(localCfg.Server.APIKey, gotAPIKey)
 }
 
 func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	withTestVersion(t, "v1.1.0")
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
@@ -166,9 +183,12 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(t, err, "split listener address")
+	require.NoError(
+		err, "split listener address")
+
 	port, err := strconv.Atoi(portText)
-	require.NoError(t, err, "parse listener port")
+	require.NoError(
+		err, "parse listener port")
 
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
@@ -182,23 +202,31 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
+
 	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
-		require.FailNow(t, "never policy must not start over a compatible daemon")
+		require.FailNow("never policy must not start over a compatible daemon")
 		return nil, errors.New("unreachable")
 	})
 
 	st, info, err := OpenHTTPStore(context.Background())
-	require.NoError(t, err, "OpenHTTPStore")
+	require.NoError(
+		err, "OpenHTTPStore")
+
 	t.Cleanup(func() { _ = st.Close() })
 
 	stats, err := st.GetStats()
-	require.NoError(t, err, "GetStats")
-	assert.Equal(t, HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal(t, int64(9), stats.MessageCount)
+	require.NoError(
+		err, "GetStats")
+
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	assert.Equal(int64(9), stats.MessageCount)
 }
 
 func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
 	c.Remote.URL = "http://daemonclient.example:8080"
@@ -210,7 +238,7 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 	var started bool
 	stubStartServeBackgroundProcess(t, func(got *config.Config) (*backgroundServeProcess, error) {
 		started = true
-		assert.Equal(t, dataDir, got.Data.DataDir)
+		assert.Equal(dataDir, got.Data.DataDir)
 		return &backgroundServeProcess{
 			PID:     4242,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -223,8 +251,8 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 		_ <-chan error,
 		timeout time.Duration,
 	) (*DaemonRuntime, bool, error) {
-		assert.Equal(t, dataDir, gotDataDir)
-		assert.Equal(t, 30*time.Second, timeout)
+		assert.Equal(dataDir, gotDataDir)
+		assert.Equal(30*time.Second, timeout)
 		require.NoError(t, ctx.Err())
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 4242},
@@ -237,10 +265,9 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 	st, info, err := OpenHTTPStore(context.Background())
 	require.NoError(t, err, "OpenHTTPStore")
 	t.Cleanup(func() { _ = st.Close() })
-
-	assert.True(t, started, "--local should start/use the local daemon")
-	assert.Equal(t, HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal(t, "http://127.0.0.1:9911", info.URL)
+	assert.True(started, "--local should start/use the local daemon")
+	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+	assert.Equal("http://127.0.0.1:9911", info.URL)
 }
 
 func withStoreResolverConfig(t *testing.T, c *config.Config) {

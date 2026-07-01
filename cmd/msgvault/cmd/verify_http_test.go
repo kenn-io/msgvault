@@ -13,14 +13,16 @@ import (
 )
 
 func TestVerifyUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/verify", r.URL.Path, "path")
-		assert.Equal(t, "alice@example.com", r.URL.Query().Get("email"), "email query")
-		assert.Equal(t, "25", r.URL.Query().Get("sample"), "sample query")
-		assert.Equal(t, "true", r.URL.Query().Get("skip_db_check"), "skip_db_check query")
-		assert.Equal(t, "true", r.URL.Query().Get("json"), "json query")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/verify", r.URL.Path, "path")
+		assert.Equal("alice@example.com", r.URL.Query().Get("email"), "email query")
+		assert.Equal("25", r.URL.Query().Get("sample"), "sample query")
+		assert.Equal("true", r.URL.Query().Get("skip_db_check"), "skip_db_check query")
+		assert.Equal("true", r.URL.Query().Get("json"), "json query")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -45,10 +47,9 @@ func TestVerifyUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "verify command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.JSONEq(t, "{\"email\":\"alice@example.com\"}\n", stdout.String())
-	assert.Equal(t, "verify warning\n", stderr.String())
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.JSONEq("{\"email\":\"alice@example.com\"}\n", stdout.String())
+	assert.Equal("verify warning\n", stderr.String())
 }
 
 func resetVerifyFlagsForTest(t *testing.T) {

@@ -124,14 +124,14 @@ func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
 	})
 	require.NoError(err, "UpsertMessage")
 
-	inserted, err := st.DB().Exec(
+	var attachmentID int64
+	err = st.DB().QueryRow(
 		st.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
-			VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)`),
+			VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
+			RETURNING id`),
 		msgID, nil, nil, "legacy/path.bin", nil,
-	)
+	).Scan(&attachmentID)
 	require.NoError(err, "insert nullable attachment metadata")
-	attachmentID, err := inserted.LastInsertId()
-	require.NoError(err, "attachment id")
 
 	got, err := st.GetMessage(msgID)
 	require.NoError(err, "GetMessage")

@@ -128,27 +128,31 @@ func TestGeneratedResponseErrorReturnsDecodeErrorForOKDecodeFailure(t *testing.T
 }
 
 func TestGeneratedResponseMetadataExtractsStatusBodyAndJSON200State(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	body := []byte(`{"total_messages": 7}`)
 	meta, ok := responseMetadata(&generated.GetStatsResp{
 		StatusCode: http.StatusOK,
 		Body:       body,
 		JSON200:    &generated.StatsResponse{TotalMessages: 7},
 	})
-
-	requirepkg.True(t, ok, "metadata")
-	assertpkg.Equal(t, http.StatusOK, meta.Status, "status")
-	assertpkg.Equal(t, body, meta.Body, "body")
-	assertpkg.True(t, meta.HasJSON200, "has JSON200")
-	assertpkg.False(t, meta.MissingJSON200, "missing JSON200")
+	require.True(ok, "metadata")
+	assert.Equal(http.StatusOK, meta.Status, "status")
+	assert.Equal(body, meta.Body, "body")
+	assert.True(meta.HasJSON200, "has JSON200")
+	assert.False(meta.MissingJSON200, "missing JSON200")
 
 	meta, ok = responseMetadata(&generated.GetCLIStatsResp{
 		StatusCode: http.StatusOK,
 		Body:       []byte(`{}`),
 	})
-
-	requirepkg.True(t, ok, "CLI metadata")
-	assertpkg.True(t, meta.HasJSON200, "nil JSON200 field is still present")
-	assertpkg.True(t, meta.MissingJSON200, "nil JSON200 pointer is missing payload")
+	require.True(ok, "CLI metadata")
+	assert.True(meta.HasJSON200, "nil JSON200 field is still present")
+	assert.True(meta.MissingJSON200, "nil JSON200 pointer is missing payload")
 }
 
 func TestGeneratedResponseErrorRejectsMissingJSON200Payload(t *testing.T) {

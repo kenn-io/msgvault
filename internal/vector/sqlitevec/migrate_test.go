@@ -296,6 +296,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 	assert.Equal(2, n, "embeddings rows")
 	require.NoError(db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT embedding_id) FROM embeddings`).Scan(&n), "count distinct eid")
+
 	assert.Equal(2, n, "distinct embedding_ids (one per (gen, msg))")
 
 	// vec0 join still resolves cleanly for the row that was actually
@@ -306,6 +307,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 		SELECT COUNT(*) FROM vectors_vec_d768 v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = 1 AND e.message_id = 10`).Scan(&n), "join")
+
 	assert.Equal(1, n, "join rows")
 }
 
@@ -331,6 +333,10 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 // read-only opens too, where dropping (before the signal is honored on a later
 // writable open) would be wrong.
 func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db := openTestDB(t, path)
@@ -341,19 +347,26 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 		generation_id INTEGER NOT NULL,
 		message_id    INTEGER NOT NULL
 	)`)
-	requirepkg.NoError(t, err, "create legacy pending_embeddings")
+	require.NoError(
+		err, "create legacy pending_embeddings")
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate")
+	require.NoError(
+		Migrate(ctx, db, 768), "migrate")
 
 	exists, err := tableExists(ctx, db, "pending_embeddings")
-	requirepkg.NoError(t, err, "probe pending_embeddings")
-	assertpkg.True(t, exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+	require.NoError(
+		err, "probe pending_embeddings")
 
-	// Idempotent: a second Migrate still leaves it (the drop is Open's job).
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate (idempotent)")
+	assert.True(exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+	require.NoError(
+
+		Migrate(ctx, db, 768), "second migrate (idempotent)")
+
 	exists, err = tableExists(ctx, db, "pending_embeddings")
-	requirepkg.NoError(t, err, "probe pending_embeddings after second migrate")
-	assertpkg.True(t, exists, "second Migrate still must not drop pending_embeddings")
+	require.NoError(
+		err, "probe pending_embeddings after second migrate")
+
+	assert.True(exists, "second Migrate still must not drop pending_embeddings")
 }
 
 func openTestDB(t *testing.T, path string) *sql.DB {

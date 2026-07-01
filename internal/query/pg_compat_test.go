@@ -65,8 +65,10 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		require.NoError(err, "UpsertMessage")
 		require.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
 			"ReplaceMessageRecipients from")
+
 		require.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
 			"ReplaceMessageRecipients to")
+
 		require.NoError(st.ReplaceMessageLabels(mid, []int64{labelID}),
 			"ReplaceMessageLabels")
 	}
@@ -307,6 +309,10 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 // testutil.NewTestStore selects, so it doubles as a SQLite<->PG parity test:
 // both backends must return the body-only hit.
 func TestQueryEngine_FTSBodySearch(t *testing.T) {
+	assert :=
+		assertpkg.
+			New(t)
+
 	require := requirepkg.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.FTS5Available() {
@@ -336,6 +342,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 	require.NoError(st.UpsertMessageBody(mid,
 		sql.NullString{String: body, Valid: true},
 		sql.NullString{}), "UpsertMessageBody")
+
 	// Index the message for full-text search (search_fts on PG, messages_fts on SQLite).
 	require.NoError(st.UpsertFTS(mid, "Quarterly report", body, "", "", ""), "UpsertFTS")
 
@@ -346,16 +353,16 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 	// can, since the term is absent from subject/snippet.
 	got, err := eng.Search(ctx, &search.Query{TextTerms: []string{bodyOnlyTerm}}, 50, 0)
 	require.NoError(err, "Search TextTerms=%q", bodyOnlyTerm)
-	assertpkg.Len(t, got, 1,
+	assert.Len(got, 1,
 		"body-only term %q must be found via FTS (subject/snippet LIKE fallback would return 0)", bodyOnlyTerm)
 	if len(got) == 1 {
-		assertpkg.Equal(t, mid, got[0].ID, "the indexed message")
+		assert.Equal(mid, got[0].ID, "the indexed message")
 	}
 
 	// (2) Control: a subject term is found on both the FTS and LIKE paths.
 	gotSubj, err := eng.Search(ctx, &search.Query{TextTerms: []string{"Quarterly"}}, 50, 0)
 	require.NoError(err, "Search TextTerms=Quarterly")
-	assertpkg.Len(t, gotSubj, 1, "subject term must match")
+	assert.Len(gotSubj, 1, "subject term must match")
 }
 
 // TestQueryDialect_HasFTSTableSQL_SchemaScoped pins cr2-8: the PG query
@@ -417,6 +424,7 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 	require.NoError(
 		scopedDB.QueryRow(query.PostgreSQLQueryDialect{}.HasFTSTableSQL()).Scan(&count),
 		"run HasFTSTableSQL probe")
+
 	assertpkg.Equal(t, 0, count,
 		"schema-scoped FTS probe must not count a sibling schema's messages.search_fts")
 }

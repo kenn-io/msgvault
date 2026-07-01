@@ -253,6 +253,9 @@ func TestStopCancelsRunningSync(t *testing.T) {
 }
 
 func TestTriggerSync(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	assert := assertpkg.New(t)
 	var called atomic.Int32
 	s := New(func(ctx context.Context, email string) error {
@@ -260,19 +263,20 @@ func TestTriggerSync(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		return nil
 	})
-
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	require.NoError(
+		s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Trigger manually
 	err := s.TriggerSync("test@gmail.com")
-	requirepkg.NoError(t, err, "TriggerSync()")
+	require.NoError(
+		err, "TriggerSync()")
 
 	// Wait for sync to start
 	time.Sleep(10 * time.Millisecond)
 
 	// Second trigger should fail (already running)
 	err = s.TriggerSync("test@gmail.com")
-	requirepkg.Error(t, err, "TriggerSync() while running")
+	require.Error(err, "TriggerSync() while running")
 
 	// Wait for completion
 	time.Sleep(100 * time.Millisecond)
@@ -353,18 +357,24 @@ func (t *blockingContextWorkTracker) BeginWorkContext(ctx context.Context) (func
 }
 
 func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	tracker := newBlockingContextWorkTracker()
 	s := New(func(context.Context, string) error {
 		requirepkg.FailNow(t, "sync function must not run when gate wait is canceled")
 		return nil
 	}).WithWorkTracker(tracker)
-	requirepkg.NoError(t, s.AddAccount("test@example.com", "* * * * *"), "AddAccount")
-	requirepkg.NoError(t, s.TriggerSync("test@example.com"), "TriggerSync")
+	require.NoError(
+		s.AddAccount("test@example.com", "* * * * *"), "AddAccount")
+
+	require.NoError(
+		s.TriggerSync("test@example.com"), "TriggerSync")
 
 	select {
 	case <-tracker.begin:
 	case <-time.After(500 * time.Millisecond):
-		requirepkg.FailNow(t, "sync did not start waiting on tracker")
+		require.FailNow("sync did not start waiting on tracker")
 	}
 
 	stopCtx := s.Stop()
@@ -372,7 +382,7 @@ func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
 	case <-stopCtx.Done():
 	case <-time.After(500 * time.Millisecond):
 		close(tracker.release)
-		requirepkg.FailNow(t, "Stop did not cancel work tracker wait")
+		require.FailNow("Stop did not cancel work tracker wait")
 	}
 }
 

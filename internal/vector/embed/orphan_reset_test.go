@@ -88,17 +88,21 @@ func (f *orphanFixture) openBackend(ctx context.Context, t *testing.T) *sqliteve
 // reuse id 1, so coverage reports them missing and a subsequent build re-embeds
 // them — no false "done"/empty-index activation.
 func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	f := newOrphanFixture(t, 2)
 
 	// Simulate a recreated vectors.db: empty index_generations, but main.db
 	// already stamps both messages embed_gen=1 (the old, now-gone gen id).
 	_, err := f.MainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = 1`)
-	require.NoError(t, err, "stamp orphaned embed_gen=1")
+	require.NoError(
+		err, "stamp orphaned embed_gen=1")
 
-	// Sanity: WITHOUT the reset, coverage for a freshly-created gen id 1 would
-	// (wrongly) read these as covered. Confirm both are currently stamped.
-	require.Equal(t, 0, countMissing(t, f.MainDB, 1), "pre-open: stamps mask coverage")
+	require. // Sanity: WITHOUT the reset, coverage for a freshly-created gen id 1 would
+		// (wrongly) read these as covered. Confirm both are currently stamped.
+		Equal(0, countMissing(t, f.MainDB, 1), "pre-open: stamps mask coverage")
 
 	// Open writable: index_generations is empty, so the valid-id set is empty
 	// and ALL non-NULL stamps are orphaned -> cleared.
@@ -106,15 +110,17 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 
 	for _, id := range []int64{1, 2} {
 		_, isNull := embedGenOf(t, f.MainDB, id)
-		assert.Truef(t, isNull, "msg %d embed_gen reset to NULL after recreate open", id)
+		assert.Truef(isNull, "msg %d embed_gen reset to NULL after recreate open", id)
 	}
 
 	// Now a rebuild creates a fresh gen (id 1, reusing the AUTOINCREMENT seed)
 	// and coverage correctly reports both messages missing.
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.Equal(t, int64(1), int64(gen), "fresh vectors.db restarts gen ids at 1")
-	assert.Equal(t, 2, countMissing(t, f.MainDB, int64(gen)),
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.Equal(int64(1), int64(gen), "fresh vectors.db restarts gen ids at 1")
+	assert.Equal(2, countMissing(t, f.MainDB, int64(gen)),
 		"both messages missing for the reused gen id (no false coverage)")
 
 	// A worker RunOnce re-embeds both, so the index is NOT empty.
@@ -127,9 +133,11 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 		BatchSize: 8,
 	})
 	res, err := w.RunOnce(ctx, gen)
-	require.NoError(t, err, "RunOnce")
-	assert.Equal(t, 2, res.Succeeded, "both messages re-embedded after reset")
-	assert.Equal(t, 0, countMissing(t, f.MainDB, int64(gen)), "coverage complete after re-embed")
+	require.NoError(
+		err, "RunOnce")
+
+	assert.Equal(2, res.Succeeded, "both messages re-embedded after reset")
+	assert.Equal(0, countMissing(t, f.MainDB, int64(gen)), "coverage complete after re-embed")
 }
 
 // TestResetOrphanedEmbedGen_NoFalsePositive verifies the reset PRESERVES
@@ -137,6 +145,9 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 // a real, retained gen (active or retired — retire only flips state) must NOT
 // be reset, so the normal activate/retire flow never re-embeds good data.
 func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	f := newOrphanFixture(t, 2)
 
@@ -144,14 +155,23 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 	// both messages embedded and stamped — the normal "fully covered" state.
 	b := f.openBackend(ctx, t)
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
-	}), "Upsert")
-	require.NoError(t, f.Store.SetEmbedGen(ctx, []int64{1, 2}, int64(gen)), "stamp")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
-	require.NoError(t, b.Close(), "close first backend")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+		}), "Upsert")
+
+	require.NoError(
+		f.Store.SetEmbedGen(ctx, []int64{1, 2}, int64(gen)), "stamp")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate")
+
+	require.NoError(
+		b.Close(), "close first backend")
 
 	// Re-open writable: gen still exists in index_generations, so its stamps
 	// must be PRESERVED (not reset).
@@ -159,10 +179,10 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 
 	for _, id := range []int64{1, 2} {
 		v, isNull := embedGenOf(t, f.MainDB, id)
-		assert.Falsef(t, isNull, "msg %d stamp preserved (gen still exists)", id)
-		assert.Equalf(t, int64(gen), v, "msg %d embed_gen preserved", id)
+		assert.Falsef(isNull, "msg %d stamp preserved (gen still exists)", id)
+		assert.Equalf(int64(gen), v, "msg %d embed_gen preserved", id)
 	}
-	assert.Equal(t, 0, countMissing(t, f.MainDB, int64(gen)),
+	assert.Equal(0, countMissing(t, f.MainDB, int64(gen)),
 		"coverage stays complete; no spurious re-embed")
 }
 

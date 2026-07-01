@@ -30,9 +30,15 @@ func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 }
 
 func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	doc, err := OpenAPIJSONVersion("3.1")
-	require.NoError(t, err, "render OpenAPI JSON")
-	assert.True(t, bytes.HasSuffix(doc, []byte("\n")), "json output should end with newline")
+	require.NoError(
+		err, "render OpenAPI JSON")
+
+	assert.True(bytes.HasSuffix(doc, []byte("\n")), "json output should end with newline")
 
 	var decoded struct {
 		OpenAPI string `json:"openapi"`
@@ -40,9 +46,11 @@ func TestOpenAPIJSONVersionPrettyPrintsSchema(t *testing.T) {
 			Version string `json:"version"`
 		} `json:"info"`
 	}
-	require.NoError(t, json.Unmarshal(doc, &decoded), "decode OpenAPI JSON")
-	assert.Equal(t, "3.1.0", decoded.OpenAPI)
-	assert.Equal(t, APISchemaVersion, decoded.Info.Version)
+	require.NoError(
+		json.Unmarshal(doc, &decoded), "decode OpenAPI JSON")
+
+	assert.Equal("3.1.0", decoded.OpenAPI)
+	assert.Equal(APISchemaVersion, decoded.Info.Version)
 }
 
 func TestOpenAPIYAMLDeterministic(t *testing.T) {
@@ -84,21 +92,25 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 
 	for path, route := range routes {
 		t.Run(route.operationID, func(t *testing.T) {
+			assert := assert.New(t)
+			require :=
+				require.New(t)
+
 			op := doc.Paths[path].Get
-			require.NotNil(t, op, "operation")
+			require.NotNil(op, "operation")
 			defaultResp := op.Responses["default"]
-			require.NotNil(t, defaultResp, "default response")
+			require.NotNil(defaultResp, "default response")
 			jsonError := defaultResp.Content["application/json"]
-			require.NotNil(t, jsonError, "json error media type")
-			require.NotNil(t, jsonError.Schema, "json error schema")
-			assert.Equal(t, "#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "json error schema ref")
+			require.NotNil(jsonError, "json error media type")
+			require.NotNil(jsonError.Schema, "json error schema")
+			assert.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "json error schema ref")
 			for _, status := range route.statuses {
 				resp := op.Responses[strconv.Itoa(status)]
-				require.NotNil(t, resp, "response %d", status)
+				require.NotNil(resp, "response %d", status)
 				jsonError := resp.Content["application/json"]
-				require.NotNil(t, jsonError, "response %d json error media type", status)
-				require.NotNil(t, jsonError.Schema, "response %d json error schema", status)
-				assert.Equal(t, "#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "response %d json error schema ref", status)
+				require.NotNil(jsonError, "response %d json error media type", status)
+				require.NotNil(jsonError.Schema, "response %d json error schema", status)
+				assert.Equal("#/components/schemas/ErrorResponse", jsonError.Schema.Ref, "response %d json error schema ref", status)
 			}
 		})
 	}
@@ -123,17 +135,27 @@ func TestOpenAPIClientSpecArtifactUpToDate(t *testing.T) {
 }
 
 func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
+	require :=
+		require.New(t)
+
 	tmpRoot := t.TempDir()
 	tmpGenerated := filepath.Join(tmpRoot, "generated")
-	require.NoError(t, os.Mkdir(tmpGenerated, 0o700), "mkdir generated temp dir")
+	require.NoError(
+		os.Mkdir(tmpGenerated, 0o700), "mkdir generated temp dir")
 
 	config, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, "config.yaml"))
-	require.NoError(t, err, "read generated config")
-	require.NoError(t, os.WriteFile(filepath.Join(tmpGenerated, "config.yaml"), config, 0o600), "write generated config")
+	require.NoError(
+		err, "read generated config")
+
+	require.NoError(
+		os.WriteFile(filepath.Join(tmpGenerated, "config.yaml"), config, 0o600), "write generated config")
 
 	spec, err := os.ReadFile(openAPIClientArtifactPath)
-	require.NoError(t, err, "read pkg/client/openapi.yaml; run `make api-generate` to regenerate")
-	require.NoError(t, os.WriteFile(filepath.Join(tmpRoot, "openapi.yaml"), spec, 0o600), "write generated spec")
+	require.NoError(
+		err, "read pkg/client/openapi.yaml; run `make api-generate` to regenerate")
+
+	require.NoError(
+		os.WriteFile(filepath.Join(tmpRoot, "openapi.yaml"), spec, 0o600), "write generated spec")
 
 	cmd := exec.Command(
 		"go",
@@ -146,19 +168,23 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 	cmd.Dir = tmpGenerated
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "generate client:\n%s", out)
+	require.NoError(err, "generate client:\n%s", out)
 
 	gotFiles, err := generatedGoFiles(tmpGenerated)
-	require.NoError(t, err, "list generated temp files")
+	require.NoError(
+		err, "list generated temp files")
+
 	wantFiles, err := generatedGoFiles(openAPIClientGeneratedDir)
-	require.NoError(t, err, "list checked-in generated files")
-	require.Equal(t, wantFiles, gotFiles, "generated file list is stale; run `make api-generate`")
+	require.NoError(
+		err, "list checked-in generated files")
+
+	require.Equal(wantFiles, gotFiles, "generated file list is stale; run `make api-generate`")
 
 	for _, name := range wantFiles {
 		got, err := os.ReadFile(filepath.Join(tmpGenerated, name))
-		require.NoError(t, err, "read generated temp file %s", name)
+		require.NoError(err, "read generated temp file %s", name)
 		want, err := os.ReadFile(filepath.Join(openAPIClientGeneratedDir, name))
-		require.NoError(t, err, "read checked-in generated file %s", name)
+		require.NoError(err, "read checked-in generated file %s", name)
 		assert.Equal(t, string(want), string(got), "%s is stale; run `make api-generate`", filepath.Join(openAPIClientGeneratedDir, name))
 	}
 }

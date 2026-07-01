@@ -16,10 +16,12 @@ import (
 )
 
 func TestCacheStatsUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/cache-stats", r.URL.Path, "path")
+		assert.Equal(http.MethodGet, r.Method, "method")
+		assert.Equal("/api/v1/cli/cache-stats", r.URL.Path, "path")
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -59,10 +61,9 @@ func TestCacheStatsUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "cache-stats command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.Empty(t, stderr.String(), "stderr")
-	assert.Equal(t, `Cache Statistics:
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Equal(`Cache Statistics:
   Total messages:    42
   Accounts:          3
   Unique senders:    9

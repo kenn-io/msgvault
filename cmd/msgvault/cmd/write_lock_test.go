@@ -19,21 +19,29 @@ func TestWriteOwnerLockPath(t *testing.T) {
 }
 
 func TestTryAcquireWriteOwnerLockExcludesSecondOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	dataDir := t.TempDir()
 
 	first, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "first lock")
-	t.Cleanup(func() { require.NoError(t, first.Close(), "close first lock") })
+	require.NoError(
+		err, "first lock")
+
+	t.Cleanup(func() { require.NoError(first.Close(), "close first lock") })
 
 	second, err := tryAcquireWriteOwnerLock(dataDir)
-	assert.Nil(t, second, "second lock")
-	require.Error(t, err, "second acquisition should fail")
-	require.ErrorAs(t, err, &writeOwnerLockHeldError{}, "error type")
-	assert.Contains(t, err.Error(), "msgvault process", "error text")
-
-	require.NoError(t, first.Close(), "release first lock")
+	assert.Nil(second, "second lock")
+	require.Error(err, "second acquisition should fail")
+	require.ErrorAs(err, &writeOwnerLockHeldError{}, "error type")
+	assert.Contains(err.Error(), "msgvault process", "error text")
+	require.NoError(
+		first.Close(), "release first lock")
 
 	third, err := acquireWriteOwnerLock(context.Background(), dataDir)
-	require.NoError(t, err, "third lock after release")
-	require.NoError(t, third.Close(), "close third lock")
+	require.NoError(
+		err, "third lock after release")
+
+	require.NoError(
+		third.Close(), "close third lock")
 }

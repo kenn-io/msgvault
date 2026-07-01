@@ -16,11 +16,13 @@ import (
 )
 
 func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/sync", r.URL.Path, "path")
-		assert.Equal(t, "alice@example.com", r.URL.Query().Get("email"), "email query")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/sync", r.URL.Path, "path")
+		assert.Equal("alice@example.com", r.URL.Query().Get("email"), "email query")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -41,23 +43,24 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "sync command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.Equal(t, "Starting incremental sync for alice@example.com\n", stdout.String())
-	assert.Equal(t, "sync warning\n", stderr.String())
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.Equal("Starting incremental sync for alice@example.com\n", stdout.String())
+	assert.Equal("sync warning\n", stderr.String())
 }
 
 func TestSyncFullUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/sync-full", r.URL.Path, "path")
-		assert.Equal(t, "alice@example.com", r.URL.Query().Get("email"), "email query")
-		assert.Equal(t, "from:bob@example.com", r.URL.Query().Get("query"), "query flag")
-		assert.Equal(t, "2024-01-01", r.URL.Query().Get("after"), "after flag")
-		assert.Equal(t, "2024-12-31", r.URL.Query().Get("before"), "before flag")
-		assert.Equal(t, "25", r.URL.Query().Get("limit"), "limit flag")
-		assert.Equal(t, "true", r.URL.Query().Get("noresume"), "noresume flag")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/sync-full", r.URL.Path, "path")
+		assert.Equal("alice@example.com", r.URL.Query().Get("email"), "email query")
+		assert.Equal("from:bob@example.com", r.URL.Query().Get("query"), "query flag")
+		assert.Equal("2024-01-01", r.URL.Query().Get("after"), "after flag")
+		assert.Equal("2024-12-31", r.URL.Query().Get("before"), "before flag")
+		assert.Equal("25", r.URL.Query().Get("limit"), "limit flag")
+		assert.Equal("true", r.URL.Query().Get("noresume"), "noresume flag")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -91,10 +94,9 @@ func TestSyncFullUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "sync-full command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.Equal(t, "Starting full sync for alice@example.com\n", stdout.String())
-	assert.Equal(t, "sync-full warning\n", stderr.String())
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.Equal("Starting full sync for alice@example.com\n", stdout.String())
+	assert.Equal("sync-full warning\n", stderr.String())
 }
 
 func configureRemoteSyncTest(t *testing.T, remoteURL string) {

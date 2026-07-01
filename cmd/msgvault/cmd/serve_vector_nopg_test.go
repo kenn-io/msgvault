@@ -20,6 +20,9 @@ import (
 // gained real PG vector support; this pins that no remaining code path
 // emits it under this tag combo.
 func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 
@@ -35,14 +38,16 @@ func TestSetupVectorFeatures_PostgresWithoutPgvectorTag(t *testing.T) {
 	// store.DB()); an in-memory SQLite store suffices — the PG branch is
 	// selected from the DSN and fails at the pgvector stub.
 	st, err := store.Open(":memory:")
-	require.NoError(t, err, "store.Open")
+	require.NoError(
+		err, "store.Open")
+
 	t.Cleanup(func() { _ = st.Close() })
 
 	_, err = setupVectorFeatures(context.Background(), st, "postgres://user@host/db", false)
-	require.Error(t, err, "setupVectorFeatures with postgres DSN and no pgvector tag")
-	// Must come from the stub, not the removed up-front refusal.
-	assert.Contains(t, err.Error(), "pgvector support not compiled in",
-		"error should be the pgvector stub's not-built message")
-	assert.NotContains(t, err.Error(), "SQLite-only",
+	require.Error(err, "setupVectorFeatures with postgres DSN and no pgvector tag")
+	assert. // Must come from the stub, not the removed up-front refusal.
+		Contains(err.Error(), "pgvector support not compiled in",
+			"error should be the pgvector stub's not-built message")
+	assert.NotContains(err.Error(), "SQLite-only",
 		"the old up-front SQLite-only refusal must be gone")
 }

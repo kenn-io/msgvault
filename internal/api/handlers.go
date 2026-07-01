@@ -1543,6 +1543,32 @@ type SearchFastResponse struct {
 	Stats      *TotalStatsResponse `json:"stats,omitempty"`
 }
 
+type TextConversationRow struct {
+	ConversationID   int64  `json:"conversation_id"`
+	Title            string `json:"title"`
+	SourceType       string `json:"source_type"`
+	MessageCount     int64  `json:"message_count"`
+	ParticipantCount int64  `json:"participant_count"`
+	LastMessageAt    string `json:"last_message_at,omitempty"`
+	LastPreview      string `json:"last_preview"`
+}
+
+type TextConversationsResponse struct {
+	Count         int                   `json:"count"`
+	HasMore       bool                  `json:"has_more"`
+	Offset        int                   `json:"offset"`
+	Limit         int                   `json:"limit"`
+	Conversations []TextConversationRow `json:"conversations"`
+}
+
+type TextMessagesResponse struct {
+	Count    int                    `json:"count"`
+	HasMore  bool                   `json:"has_more"`
+	Offset   int                    `json:"offset"`
+	Limit    int                    `json:"limit"`
+	Messages []query.MessageSummary `json:"messages"`
+}
+
 // parseViewType parses a view type string into query.ViewType.
 func parseViewType(s string) (query.ViewType, bool) {
 	switch strings.ToLower(s) {
@@ -1620,6 +1646,55 @@ func parseTimeGranularity(s string) query.TimeGranularity {
 		return query.TimeDay
 	default:
 		return query.TimeMonth
+	}
+}
+
+func parseTextViewType(s string) (query.TextViewType, bool) {
+	switch strings.ToLower(s) {
+	case "conversations":
+		return query.TextViewConversations, true
+	case "contacts":
+		return query.TextViewContacts, true
+	case "contact_names":
+		return query.TextViewContactNames, true
+	case "sources":
+		return query.TextViewSources, true
+	case "labels":
+		return query.TextViewLabels, true
+	case "time":
+		return query.TextViewTime, true
+	default:
+		return query.TextViewContacts, false
+	}
+}
+
+func textViewTypeString(v query.TextViewType) string {
+	switch v {
+	case query.TextViewConversations:
+		return "conversations"
+	case query.TextViewContacts:
+		return "contacts"
+	case query.TextViewContactNames:
+		return "contact_names"
+	case query.TextViewSources:
+		return "sources"
+	case query.TextViewLabels:
+		return "labels"
+	case query.TextViewTime:
+		return "time"
+	default:
+		return "unknown"
+	}
+}
+
+func parseTextSortField(s string) query.TextSortField {
+	switch strings.ToLower(s) {
+	case "count":
+		return query.TextSortByCount
+	case "name":
+		return query.TextSortByName
+	default:
+		return query.TextSortByLastMessage
 	}
 }
 
@@ -1775,6 +1850,98 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 	return filter
 }
 
+func parseTextFilter(r *http.Request) query.TextFilter {
+	var filter query.TextFilter
+	filter.ContactPhone = r.URL.Query().Get("contact_phone")
+	filter.ContactName = r.URL.Query().Get("contact_name")
+	filter.SourceType = r.URL.Query().Get("source_type")
+	filter.Label = r.URL.Query().Get("label")
+
+	if v := r.URL.Query().Get("source_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			filter.SourceID = &id
+		}
+	}
+	if v := r.URL.Query().Get("time_period"); v != "" {
+		filter.TimeRange.Period = v
+	}
+	if v := r.URL.Query().Get("time_granularity"); v != "" {
+		filter.TimeRange.Granularity = parseTimeGranularity(v)
+	}
+	if v := r.URL.Query().Get("after"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			filter.After = &t
+		}
+	}
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			filter.Before = &t
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if offset, err := strconv.Atoi(v); err == nil && offset >= 0 {
+			filter.Pagination.Offset = offset
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if limit, err := strconv.Atoi(v); err == nil && limit >= 0 {
+			filter.Pagination.Limit = limit
+		}
+	}
+	if v := r.URL.Query().Get("sort"); v != "" {
+		filter.SortField = parseTextSortField(v)
+	}
+	if v := r.URL.Query().Get("direction"); v != "" {
+		filter.SortDirection = parseSortDirection(v)
+	}
+
+	return filter
+}
+
+func parseTextAggregateOptions(r *http.Request) query.TextAggregateOptions {
+	opts := query.TextAggregateOptions{
+		SortField:       query.TextSortByCount,
+		SortDirection:   query.SortDesc,
+		Limit:           100,
+		TimeGranularity: query.TimeMonth,
+	}
+
+	if v := r.URL.Query().Get("source_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			opts.SourceID = &id
+		}
+	}
+	if v := r.URL.Query().Get("sort"); v != "" {
+		opts.SortField = parseTextSortField(v)
+	}
+	if v := r.URL.Query().Get("direction"); v != "" {
+		opts.SortDirection = parseSortDirection(v)
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if limit, err := strconv.Atoi(v); err == nil && limit > 0 {
+			opts.Limit = limit
+		}
+	}
+	if v := r.URL.Query().Get("time_granularity"); v != "" {
+		opts.TimeGranularity = parseTimeGranularity(v)
+	}
+	if v := r.URL.Query().Get("search_query"); v != "" {
+		opts.SearchQuery = v
+	}
+	if v := r.URL.Query().Get("after"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			opts.After = &t
+		}
+	}
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, err := parseAPITime(v); err == nil {
+			opts.Before = &t
+		}
+	}
+
+	return opts
+}
+
 // toAggregateRowJSON converts query.AggregateRow to JSON format.
 func toAggregateRowJSON(row query.AggregateRow) AggregateRowJSON {
 	return AggregateRowJSON{
@@ -1785,6 +1952,35 @@ func toAggregateRowJSON(row query.AggregateRow) AggregateRowJSON {
 		AttachmentCount: row.AttachmentCount,
 		TotalUnique:     row.TotalUnique,
 	}
+}
+
+func toTextConversationRow(row query.ConversationRow) TextConversationRow {
+	var lastMessageAt string
+	if !row.LastMessageAt.IsZero() {
+		lastMessageAt = row.LastMessageAt.UTC().Format(time.RFC3339)
+	}
+	return TextConversationRow{
+		ConversationID:   row.ConversationID,
+		Title:            row.Title,
+		SourceType:       row.SourceType,
+		MessageCount:     row.MessageCount,
+		ParticipantCount: row.ParticipantCount,
+		LastMessageAt:    lastMessageAt,
+		LastPreview:      row.LastPreview,
+	}
+}
+
+func (s *Server) textEngine(w http.ResponseWriter) (query.TextEngine, bool) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
+		return nil, false
+	}
+	textEngine, ok := s.engine.(query.TextEngine)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "text_engine_unavailable", "Text query engine not available")
+		return nil, false
+	}
+	return textEngine, true
 }
 
 // toTotalStatsResponse converts query.TotalStats to JSON format.
@@ -2295,6 +2491,203 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		Offset:   offset,
 		Limit:    limit,
 	})
+}
+
+func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request) {
+	textEngine, ok := s.textEngine(w)
+	if !ok {
+		return
+	}
+
+	filter := parseTextFilter(r)
+	if filter.Pagination.Limit <= 0 {
+		filter.Pagination.Limit = 100
+	}
+	if filter.Pagination.Limit > maxPageSize {
+		filter.Pagination.Limit = maxPageSize
+	}
+
+	requestLimit := filter.Pagination.Limit
+	filter.Pagination.Limit = requestLimit + 1
+	rows, err := textEngine.ListConversations(r.Context(), filter)
+	if err != nil {
+		s.logger.Error("text conversations query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Text conversations query failed")
+		return
+	}
+
+	hasMore := len(rows) > requestLimit
+	if hasMore {
+		rows = rows[:requestLimit]
+	}
+
+	conversations := make([]TextConversationRow, len(rows))
+	for i, row := range rows {
+		conversations[i] = toTextConversationRow(row)
+	}
+
+	writeJSON(w, http.StatusOK, TextConversationsResponse{
+		Count:         len(conversations),
+		HasMore:       hasMore,
+		Offset:        filter.Pagination.Offset,
+		Limit:         requestLimit,
+		Conversations: conversations,
+	})
+}
+
+func (s *Server) handleTextAggregates(w http.ResponseWriter, r *http.Request) {
+	textEngine, ok := s.textEngine(w)
+	if !ok {
+		return
+	}
+
+	viewTypeStr := r.URL.Query().Get("view_type")
+	if viewTypeStr == "" {
+		viewTypeStr = "contacts"
+	}
+	viewType, ok := parseTextViewType(viewTypeStr)
+	if !ok || viewType == query.TextViewConversations {
+		writeError(w, http.StatusBadRequest, "invalid_view_type",
+			"Invalid view_type. Must be one of: contacts, contact_names, sources, labels, time")
+		return
+	}
+
+	opts := parseTextAggregateOptions(r)
+	rows, err := textEngine.TextAggregate(r.Context(), viewType, opts)
+	if err != nil {
+		s.logger.Error("text aggregate query failed", "view_type", viewTypeStr, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Text aggregate query failed")
+		return
+	}
+
+	jsonRows := make([]AggregateRowJSON, len(rows))
+	for i, row := range rows {
+		jsonRows[i] = toAggregateRowJSON(row)
+	}
+
+	writeJSON(w, http.StatusOK, AggregateResponse{
+		ViewType: textViewTypeString(viewType),
+		Rows:     jsonRows,
+	})
+}
+
+func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.Request) {
+	textEngine, ok := s.textEngine(w)
+	if !ok {
+		return
+	}
+
+	idStr := r.PathValue("id")
+	conversationID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || conversationID < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Conversation ID must be a positive integer")
+		return
+	}
+
+	filter := parseTextFilter(r)
+	if filter.Pagination.Limit <= 0 {
+		filter.Pagination.Limit = maxPageSize
+	}
+	if filter.Pagination.Limit > maxPageSize {
+		filter.Pagination.Limit = maxPageSize
+	}
+
+	requestLimit := filter.Pagination.Limit
+	filter.Pagination.Limit = requestLimit + 1
+	messages, err := textEngine.ListConversationMessages(r.Context(), conversationID, filter)
+	if err != nil {
+		s.logger.Error("text conversation messages query failed", "conversation_id", conversationID, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Text conversation messages query failed")
+		return
+	}
+
+	hasMore := len(messages) > requestLimit
+	if hasMore {
+		messages = messages[:requestLimit]
+	}
+	if messages == nil {
+		messages = []query.MessageSummary{}
+	}
+
+	writeJSON(w, http.StatusOK, TextMessagesResponse{
+		Count:    len(messages),
+		HasMore:  hasMore,
+		Offset:   filter.Pagination.Offset,
+		Limit:    requestLimit,
+		Messages: messages,
+	})
+}
+
+func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
+	textEngine, ok := s.textEngine(w)
+	if !ok {
+		return
+	}
+
+	queryStr := r.URL.Query().Get("q")
+	if queryStr == "" {
+		writeError(w, http.StatusBadRequest, "missing_query", "Query parameter 'q' is required")
+		return
+	}
+
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+
+	messages, err := textEngine.TextSearch(r.Context(), queryStr, limit+1, offset)
+	if err != nil {
+		s.logger.Error("text search failed", "query", queryStr, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Text search failed")
+		return
+	}
+
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	if messages == nil {
+		messages = []query.MessageSummary{}
+	}
+
+	writeJSON(w, http.StatusOK, TextMessagesResponse{
+		Count:    len(messages),
+		HasMore:  hasMore,
+		Offset:   offset,
+		Limit:    limit,
+		Messages: messages,
+	})
+}
+
+func (s *Server) handleTextStats(w http.ResponseWriter, r *http.Request) {
+	textEngine, ok := s.textEngine(w)
+	if !ok {
+		return
+	}
+
+	var opts query.TextStatsOptions
+	if v := r.URL.Query().Get("source_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			opts.SourceID = &id
+		}
+	}
+	opts.SearchQuery = r.URL.Query().Get("search_query")
+
+	stats, err := textEngine.GetTextStats(r.Context(), opts)
+	if err != nil {
+		s.logger.Error("text stats query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Text stats query failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toTotalStatsResponse(stats))
 }
 
 // isEngineUnsupported reports whether err indicates the configured query

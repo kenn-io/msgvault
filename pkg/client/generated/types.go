@@ -1781,6 +1781,70 @@ func (s SyncRunStatus) Validate() error {
 	return errors
 }
 
+type TextConversationRow struct {
+	ConversationID   int64   `json:"conversation_id"`
+	LastMessageAt    *string `json:"last_message_at,omitempty"`
+	LastPreview      string  `json:"last_preview" validate:"required"`
+	MessageCount     int64   `json:"message_count"`
+	ParticipantCount int64   `json:"participant_count"`
+	SourceType       string  `json:"source_type" validate:"required"`
+	Title            string  `json:"title" validate:"required"`
+}
+
+func (t TextConversationRow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type TextConversationsResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string               `json:"$schema,omitempty"`
+	Conversations []TextConversationRow `json:"conversations,omitempty" validate:"required"`
+	Count         int64                 `json:"count"`
+	HasMore       bool                  `json:"has_more"`
+	Limit         int64                 `json:"limit"`
+	Offset        int64                 `json:"offset"`
+}
+
+func (t TextConversationsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Conversations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Conversations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type TextMessagesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string                  `json:"$schema,omitempty"`
+	Count    int64                    `json:"count"`
+	HasMore  bool                     `json:"has_more"`
+	Limit    int64                    `json:"limit"`
+	Messages []CLIQueryMessageSummary `json:"messages,omitempty" validate:"required"`
+	Offset   int64                    `json:"offset"`
+}
+
+func (t TextMessagesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range t.Messages {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Messages[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type TokenUploadRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema       *string    `json:"$schema,omitempty"`

@@ -57,6 +57,12 @@ func TestListDeletions_ShowsCancelled(t *testing.T) {
 }
 
 func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 	t.Setenv(remoteDeleteEnvVar, "1")
@@ -80,20 +86,25 @@ func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
 	})
 
 	mgr, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
-	requirepkg.NoError(t, err, "NewManager")
+	require.NoError(
+		err, "NewManager")
+
 	_, err = mgr.CreateManifest("owned archive", []string{"gmail-1"}, deletion.Filters{})
-	requirepkg.NoError(t, err, "CreateManifest")
+	require.NoError(
+		err, "CreateManifest")
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	requirepkg.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { requirepkg.NoError(t, owner.Close(), "close owner lock") })
 
 	cmd := &cobra.Command{Use: "delete-staged"}
 	cmd.SetContext(context.Background())
 	err = deleteStagedCmd.RunE(cmd, nil)
-	requirepkg.Error(t, err, "delete-staged should fail while the archive is owned")
-	assertpkg.Contains(t, err.Error(), "write operation is in progress")
-	assertpkg.Contains(t, err.Error(), "cannot start")
+	require.Error(err, "delete-staged should fail while the archive is owned")
+	assert.Contains(err.Error(), "write operation is in progress")
+	assert.Contains(err.Error(), "cannot start")
 }
 
 func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {

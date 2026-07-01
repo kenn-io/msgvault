@@ -13,10 +13,12 @@ import (
 )
 
 func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/repair-encoding", r.URL.Path, "path")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/repair-encoding", r.URL.Path, "path")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -36,8 +38,7 @@ func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) 
 
 	err := cmd.Execute()
 	require.NoError(t, err, "repair-encoding command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.Equal(t, "Scanning messages for invalid UTF-8...\n", stdout.String())
-	assert.Equal(t, "repair warning\n", stderr.String())
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.Equal("Scanning messages for invalid UTF-8...\n", stdout.String())
+	assert.Equal("repair warning\n", stderr.String())
 }

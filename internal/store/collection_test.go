@@ -143,15 +143,19 @@ func TestCollection_Idempotent(t *testing.T) {
 // with ErrCollectionImmutable. Otherwise the next EnsureDefaultCollection
 // call would silently revert the change, surprising the user.
 func TestCollection_DefaultAllIsImmutable(t *testing.T) {
+	require :=
+		requirepkg.
+			New(t)
+
 	assert := assertpkg.New(t)
 	f := storetest.New(t)
 	st := f.Store
+	require.NoError(
+		st.EnsureDefaultCollection(), "EnsureDefaultCollection")
 
-	requirepkg.NoError(t, st.EnsureDefaultCollection(), "EnsureDefaultCollection")
-
-	requirepkg.ErrorIs(t, st.AddSourcesToCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
+	require.ErrorIs(st.AddSourcesToCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
 		"AddSourcesToCollection(All)")
-	requirepkg.ErrorIs(t, st.RemoveSourcesFromCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
+	require.ErrorIs(st.RemoveSourcesFromCollection("All", []int64{f.Source.ID}), store.ErrCollectionImmutable,
 		"RemoveSourcesFromCollection(All)")
 	assert.ErrorIs(st.DeleteCollection("All"), store.ErrCollectionImmutable,
 		"DeleteCollection(All)")

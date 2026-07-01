@@ -86,35 +86,48 @@ func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.Genera
 //   - force=true retires the active generation.
 //   - force=false against a NON-active (building) generation retires fine.
 func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	// Build + force-activate genA (force bypasses the coverage gate so the
 	// one unembedded test message does not block activation).
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
+	require.Equal(vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
 
 	// (1) Non-forced retire of the ACTIVE gen is refused atomically.
 	err = b.RetireGeneration(ctx, genA, false)
-	requirepkg.ErrorIs(t, err, vector.ErrRefuseRetireActive,
+	require.ErrorIs(err, vector.ErrRefuseRetireActive,
 		"non-forced retire of active gen must return ErrRefuseRetireActive")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA),
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, genA),
 		"refused retire must leave the active gen's state unchanged")
+	require.NoError(
 
-	// (2) Forced retire succeeds.
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genA, true),
+		b.RetireGeneration(ctx, genA, true),
 		"forced retire of active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA),
 		"forced retire flips state to retired")
 
 	// (3) A NON-active (building) generation retires fine without force.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.Equal(t, vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genB, false),
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.Equal(vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
+	require.NoError(
+		b.RetireGeneration(ctx, genB, false),
 		"non-forced retire of a non-active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genB),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genB),
 		"non-active gen retires to retired without force")
 }
 
@@ -122,19 +135,29 @@ func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 // activating a new generation demotes the previously-active one to
 // retired in the same tx as the state flip (RETURNING-id provable).
 func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
 
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
 
 	retired := singleRetiredGenSV(t, b)
-	assertpkg.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
-	assertpkg.NotEqual(t, genB, retired, "the newly-activated gen must not be retired")
+	assert.Equal(genA, retired, "the previously-active gen must be the sole retired row")
+	assert.NotEqual(genB, retired, "the newly-activated gen must not be retired")
 }
 
 // TestBackend_ActivateGeneration_CoverageGate pins the scan-and-fill
@@ -142,22 +165,32 @@ func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
 // embedding (embed_gen <> gen) is refused without force, and succeeds once
 // coverage is complete (or with force).
 func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.Equal(t, 1, missingCountSV(t, b, gen), "precondition: one missing message")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.Equal(1, missingCountSV(t, b, gen), "precondition: one missing message")
 
 	// Non-forced activate is refused while the message is unembedded.
 	err = b.ActivateGeneration(ctx, gen, false)
-	requirepkg.Error(t, err, "activate must be refused with missing coverage")
-	assertpkg.Contains(t, err.Error(), "needing embedding")
+	require.Error(err, "activate must be refused with missing coverage")
+	assert.Contains(err.Error(), "needing embedding")
 
 	// Stamp the message as covered, then activation succeeds.
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
-	requirepkg.NoError(t, err, "stamp embed_gen")
-	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "covered now")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
+	require.NoError(
+		err, "stamp embed_gen")
+
+	require.Equal(0, missingCountSV(t, b, gen), "covered now")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
+
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
 // TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage pins that
@@ -168,30 +201,40 @@ func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
 // gen id, so the lifecycle check must run first. The seeded test message
 // (id=1) stays unembedded so the coverage gate WOULD trip if checked first.
 func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
-	requirepkg.Equal(t, 1, missingCountSV(t, b, vector.GenerationID(999)),
+	require.Equal(1, missingCountSV(t, b, vector.GenerationID(999)),
 		"precondition: coverage gate would trip for any gen (message unembedded)")
 
 	// (a) Unknown gen id: lifecycle error (ErrUnknownGeneration), not coverage.
 	err := b.ActivateGeneration(ctx, vector.GenerationID(999), false)
-	requirepkg.Error(t, err, "activating unknown gen must fail")
-	requirepkg.ErrorIs(t, err, vector.ErrUnknownGeneration,
+	require.Error(err, "activating unknown gen must fail")
+	require.ErrorIs(err, vector.ErrUnknownGeneration,
 		"unknown gen must return ErrUnknownGeneration, not coverage error")
-	assertpkg.NotContains(t, err.Error(), "needing embedding",
+	assert.NotContains(err.Error(), "needing embedding",
 		"unknown gen must NOT surface the coverage error")
 
 	// (b) Non-building (retired) gen id: lifecycle error, not coverage.
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
-	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
-	requirepkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
+
+	require.NoError(
+		b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
+
+	require.Equal(vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
 
 	err = b.ActivateGeneration(ctx, gen, false)
-	requirepkg.Error(t, err, "activating retired gen must fail")
-	assertpkg.Contains(t, err.Error(), "not in 'building' state",
+	require.Error(err, "activating retired gen must fail")
+	assert.Contains(err.Error(), "not in 'building' state",
 		"retired gen must return the not-building lifecycle error")
-	assertpkg.NotContains(t, err.Error(), "needing embedding",
+	assert.NotContains(err.Error(), "needing embedding",
 		"retired gen must NOT surface the coverage error")
 }
 
@@ -201,40 +244,58 @@ func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
 // complete — at which point A is retired in the same swap. There is no
 // dual-write fan-out; the per-message embed_gen names exactly one target.
 func TestBackend_SingleTargetRebuild(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	// A: build, cover (force-activate to skip the gate for the one test
 	// message), and start serving.
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
 	active, err := b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration")
-	requirepkg.Equal(t, genA, active.ID, "A is serving")
+	require.NoError(
+		err, "ActiveGeneration")
+
+	require.Equal(genA, active.ID, "A is serving")
 
 	// B: a new building generation for the same corpus. The message reads
 	// as missing for B (embed_gen still names A), but A keeps serving
 	// unchanged — stale-but-correct mid-rebuild.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.Equal(t, 1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
-	active, err = b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration mid-rebuild")
-	assertpkg.Equal(t, genA, active.ID, "A still serving while B builds")
+	require.NoError(
+		err, "CreateGeneration B")
 
-	// B's activation is refused until its coverage is complete.
-	requirepkg.Error(t, b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
+	require.Equal(1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
+	active, err = b.ActiveGeneration(ctx)
+	require.NoError(
+		err, "ActiveGeneration mid-rebuild")
+
+	assert.Equal(genA, active.ID, "A still serving while B builds")
+	require. // B's activation is refused until its coverage is complete.
+			Error(b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
 
 	// Cover the message for B (worker would do this after upsert), then
 	// activate B — the swap retires A and makes B the single serving gen.
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(genB))
-	requirepkg.NoError(t, err, "stamp embed_gen for B")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
+	require.NoError(
+		err, "stamp embed_gen for B")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
 
 	active, err = b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration after swap")
-	assertpkg.Equal(t, genB, active.ID, "B is the single serving gen after swap")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
+	require.NoError(
+		err, "ActiveGeneration after swap")
+
+	assert.Equal(genB, active.ID, "B is the single serving gen after swap")
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
 }
 
 // singleRetiredGenSV returns the id of the one generation in state='retired',
@@ -268,34 +329,49 @@ func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 // users at `embeddings resume`, which cannot stamp seeded_at — making the
 // row unactivatable except via --force. Coverage is the real gate now.
 func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
 	// Simulate a legacy/crashed generation: clear seeded_at.
 	_, err = b.db.ExecContext(ctx,
 		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	requirepkg.NoError(t, err, "clear seeded_at")
+	require.NoError(
+		err, "clear seeded_at")
+
 	var seededAt sql.NullInt64
-	requirepkg.NoError(t, b.db.QueryRowContext(ctx,
+	require.NoError(b.db.QueryRowContext(ctx,
 		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt))
-	requirepkg.False(t, seededAt.Valid, "precondition: seeded_at is NULL")
+	require.False(seededAt.Valid, "precondition: seeded_at is NULL")
 
 	// Make coverage complete (worker would stamp this after upsert).
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
-	requirepkg.NoError(t, err, "stamp embed_gen")
-	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "precondition: coverage complete")
+	require.NoError(
+		err, "stamp embed_gen")
 
-	// Activation succeeds WITHOUT force despite seeded_at=NULL.
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false),
+	require.Equal(0, missingCountSV(t, b, gen), "precondition: coverage complete")
+	require.NoError(
+
+		b.ActivateGeneration(ctx, gen, false),
 		"NULL seeded_at + full coverage must activate without --force")
+
 	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
 func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.
+		New(t)
+
 	ctx := context.Background()
 	main, err := sql.Open("sqlite3", ":memory:")
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(
+		err, "open main")
+
 	t.Cleanup(func() { _ = main.Close() })
 	_, err = main.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
@@ -304,14 +380,17 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`)
-	requirepkg.NoError(t, err, "create messages")
+	require.NoError(
+		err, "create messages")
+
 	_, err = main.Exec(`
 		INSERT INTO messages (id, message_type, deleted_from_source_at) VALUES
 		(1, 'email', NULL),
 		(2, 'sms', NULL),
 		(3, 'mms', NULL),
 		(4, 'sms', CURRENT_TIMESTAMP)`)
-	requirepkg.NoError(t, err, "insert messages")
+	require.NoError(
+		err, "insert messages")
 
 	b, err := Open(ctx, Options{
 		Path:       filepath.Join(t.TempDir(), "vectors.db"),
@@ -319,28 +398,41 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		MainDB:     main,
 		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
+	require.NoError(
+		err, "Create")
+
 	stats, err := b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats")
-	assertpkg.Equal(t, int64(2), stats.PendingCount, "only scoped live messages should count as missing")
+	require.NoError(
+		err, "Stats")
+
+	assert.Equal(int64(2), stats.PendingCount, "only scoped live messages should count as missing")
 
 	missing, err := b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen")
-	assertpkg.True(t, missing, "scoped messages still need embeddings")
+	require.NoError(
+		err, "hasMissingForGen")
+
+	assert.True(missing, "scoped messages still need embeddings")
 
 	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
-	requirepkg.NoError(t, err, "stamp scoped messages")
+	require.NoError(
+		err, "stamp scoped messages")
 
 	stats, err = b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats after stamp")
-	assertpkg.Equal(t, int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
+	require.NoError(
+		err, "Stats after stamp")
+
+	assert.Equal(int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
 	missing, err = b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen after stamp")
-	assertpkg.False(t, missing, "unscoped email must not block scoped activation")
+	require.NoError(
+		err, "hasMissingForGen after stamp")
+
+	assert.False(missing, "unscoped email must not block scoped activation")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling
@@ -414,16 +506,23 @@ func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
 // whose only message is deleted-from-source reports zero missing, so a
 // building generation can activate without force.
 func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := context.Background()
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
+	require.NoError(
+		err, "Create")
+
 	missing, err := b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen")
+	require.NoError(
+		err, "hasMissingForGen")
+
 	assertpkg.False(t, missing, "deleted-from-source message must not count as missing")
-	// With no live missing message, activation passes the coverage gate.
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
+	require.NoError(
+		b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
 }
 
 // TestBackend_CoverageGate_SkipsDedupHidden verifies the coverage gate
@@ -601,6 +700,7 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 		{MessageID: 7, ChunkIndex: 1, Vector: v1, SourceCharLen: 90,
 			ChunkCharStart: 80, ChunkCharEnd: 170},
 	}), "Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 7`, gid).Scan(&n)
@@ -647,11 +747,13 @@ func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 100},
 		{MessageID: 5, ChunkIndex: 1, Vector: v1, SourceCharLen: 90},
 	}), "first Upsert")
+
 	// Second upsert: only chunk 0. Idempotent replace should also
 	// vacate the stale chunk 1 row.
 	require.NoError(b.Upsert(ctx, gid, []vector.Chunk{
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 999},
 	}), "second Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 5`, gid).Scan(&n)

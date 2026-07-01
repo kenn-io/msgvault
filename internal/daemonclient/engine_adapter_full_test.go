@@ -119,6 +119,173 @@ func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	assert.True(msgs[0].HasAttachments)
 }
 
+func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
+		writeJSONResponse(t, w, map[string]any{
+			"accounts": []map[string]any{
+				{
+					"id":            42,
+					"email":         "imported@example.com",
+					"type":          "imessage",
+					"display_name":  "Imported",
+					"message_count": 12,
+				},
+			},
+		})
+	})
+
+	engine := NewEngineAdapter(store)
+	accounts, err := engine.ListAccounts(context.Background())
+	require.NoError(err, "ListAccounts")
+	require.Len(accounts, 1, "accounts")
+	assert.Equal(int64(42), accounts[0].ID)
+	assert.Equal("imessage", accounts[0].SourceType)
+	assert.Equal("imported@example.com", accounts[0].Identifier)
+	assert.Equal("Imported", accounts[0].DisplayName)
+}
+
+func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/text/conversations":
+			assert.Equal("sms", r.URL.Query().Get("source_type"), "source_type")
+			assert.Equal("+15555550123", r.URL.Query().Get("contact_phone"), "contact_phone")
+			assert.Equal("25", r.URL.Query().Get("limit"), "limit")
+			assert.Equal("count", r.URL.Query().Get("sort"), "sort")
+			writeJSONResponse(t, w, map[string]any{
+				"count":    1,
+				"has_more": false,
+				"offset":   0,
+				"limit":    25,
+				"conversations": []map[string]any{
+					{
+						"conversation_id":   77,
+						"title":             "Family",
+						"source_type":       "sms",
+						"message_count":     3,
+						"participant_count": 2,
+						"last_message_at":   "2024-01-15T10:30:00Z",
+						"last_preview":      "see you soon",
+					},
+				},
+			})
+		case "/api/v1/text/aggregates":
+			assert.Equal("labels", r.URL.Query().Get("view_type"), "view_type")
+			assert.Equal("family", r.URL.Query().Get("search_query"), "search_query")
+			writeJSONResponse(t, w, map[string]any{
+				"view_type": "labels",
+				"rows": []map[string]any{
+					{"key": "Friends", "count": 3, "total_size": 123},
+				},
+			})
+		case "/api/v1/text/conversations/77/messages":
+			assert.Equal("10", r.URL.Query().Get("limit"), "limit")
+			writeJSONResponse(t, w, textMessagesResponseJSON("timeline body"))
+		case "/api/v1/text/search":
+			assert.Equal("dinner", r.URL.Query().Get("q"), "q")
+			assert.Equal("5", r.URL.Query().Get("offset"), "offset")
+			writeJSONResponse(t, w, textMessagesResponseJSON("search body"))
+		case "/api/v1/text/stats":
+			assert.Equal("family", r.URL.Query().Get("search_query"), "search_query")
+			writeJSONResponse(t, w, map[string]any{
+				"message_count":    3,
+				"total_size":       123,
+				"attachment_count": 1,
+				"attachment_size":  45,
+				"label_count":      2,
+				"account_count":    1,
+			})
+		default:
+			assert.Fail("unexpected path", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusInternalServerError)
+		}
+	})
+
+	engine := NewEngineAdapter(store)
+	textEngine, ok := any(engine).(query.TextEngine)
+	require.True(ok, "daemon engine must satisfy TextEngine")
+
+	conversations, err := textEngine.ListConversations(context.Background(), query.TextFilter{
+		ContactPhone: "+15555550123",
+		SourceType:   "sms",
+		Pagination:   query.Pagination{Limit: 25},
+		SortField:    query.TextSortByCount,
+	})
+	require.NoError(err, "ListConversations")
+	require.Len(conversations, 1, "conversations")
+	assert.Equal(int64(77), conversations[0].ConversationID)
+	assert.Equal("Family", conversations[0].Title)
+	assert.Equal("2024-01-15T10:30:00Z", conversations[0].LastMessageAt.UTC().Format(time.RFC3339))
+
+	aggregates, err := textEngine.TextAggregate(context.Background(), query.TextViewLabels, query.TextAggregateOptions{
+		SearchQuery: "family",
+	})
+	require.NoError(err, "TextAggregate")
+	require.Len(aggregates, 1, "aggregates")
+	assert.Equal("Friends", aggregates[0].Key)
+	assert.Equal(int64(3), aggregates[0].Count)
+
+	timeline, err := textEngine.ListConversationMessages(context.Background(), 77, query.TextFilter{
+		Pagination: query.Pagination{Limit: 10},
+	})
+	require.NoError(err, "ListConversationMessages")
+	require.Len(timeline, 1, "timeline")
+	assert.Equal("timeline body", timeline[0].BodyText)
+	assert.Equal("Family", timeline[0].ConversationTitle)
+	assert.Equal("+15555550123", timeline[0].FromPhone)
+
+	searchResults, err := textEngine.TextSearch(context.Background(), "dinner", 10, 5)
+	require.NoError(err, "TextSearch")
+	require.Len(searchResults, 1, "searchResults")
+	assert.Equal("search body", searchResults[0].BodyText)
+
+	stats, err := textEngine.GetTextStats(context.Background(), query.TextStatsOptions{SearchQuery: "family"})
+	require.NoError(err, "GetTextStats")
+	require.NotNil(stats, "stats")
+	assert.Equal(int64(3), stats.MessageCount)
+	assert.Equal(int64(45), stats.AttachmentSize)
+}
+
+func textMessagesResponseJSON(body string) map[string]any {
+	return map[string]any{
+		"count":    1,
+		"has_more": false,
+		"offset":   0,
+		"limit":    10,
+		"messages": []map[string]any{
+			{
+				"id":                     99,
+				"source_message_id":      "sms-99",
+				"conversation_id":        77,
+				"source_conversation_id": "thread-77",
+				"subject":                "",
+				"snippet":                "preview",
+				"from_email":             "",
+				"from_name":              "Alice",
+				"from_phone":             "+15555550123",
+				"to": []map[string]any{
+					{"Email": "+15555550999", "Name": "Bob"},
+				},
+				"sent_at":            "2024-01-15T10:30:00Z",
+				"size_estimate":      123,
+				"has_attachments":    true,
+				"attachment_count":   1,
+				"labels":             []string{"Friends"},
+				"message_type":       "sms",
+				"conversation_title": "Family",
+				"body_text":          body,
+			},
+		},
+	}
+}
+
 func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)

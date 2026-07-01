@@ -1548,6 +1548,62 @@ func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
 	assert.Equal("match", resp.Results[0].Subject, "subject")
 }
 
+func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
+	require := requirepkg.New(t)
+	assert := assertpkg.New(t)
+	gate := NewSerialOperationGate()
+	releaseGate, ok := gate.BeginWork()
+	require.True(ok, "occupy operation gate")
+
+	backfillStarted := make(chan struct{}, 1)
+	st := &mockStore{
+		needsFTSBackfill: true,
+		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
+			backfillStarted <- struct{}{}
+			return 1, nil
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         st,
+		Engine:        engine,
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+	resp := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(resp, req)
+		close(done)
+	}()
+
+	select {
+	case <-backfillStarted:
+		assert.Fail("backfill started while operation gate was occupied")
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	releaseGate()
+	select {
+	case <-backfillStarted:
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow("backfill did not start after gate release")
+	}
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		require.FailNow("search did not finish after gate release")
+	}
+	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+}
+
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
 	require := requirepkg.New(t)
 	assert := assertpkg.New(t)
@@ -2082,6 +2138,7 @@ func TestHandleSourceStatus(t *testing.T) {
 		MessagesAdded:     8,
 		MessagesUpdated:   2,
 	}), "UpdateSyncCheckpoint")
+
 	require.NoError(st.RecordSyncRunItem(store.SyncRunItem{
 		SyncRunID:       completedID,
 		SourceMessageID: "gmail-missing",
@@ -2090,6 +2147,7 @@ func TestHandleSourceStatus(t *testing.T) {
 		ErrorKind:       "gmail_not_found",
 		ErrorMessage:    "not found: /messages/gmail-missing",
 	}), "RecordSyncRunItem skipped")
+
 	require.NoError(st.RecordSyncRunItem(store.SyncRunItem{
 		SyncRunID:       completedID,
 		SourceMessageID: "gmail-error",
@@ -2098,6 +2156,7 @@ func TestHandleSourceStatus(t *testing.T) {
 		ErrorKind:       "ingest_error",
 		ErrorMessage:    "parse MIME: malformed header",
 	}), "RecordSyncRunItem error")
+
 	require.NoError(st.CompleteSync(completedID, "history-2"), "CompleteSync")
 
 	runningID, err := st.StartSync(gmail.ID, "incremental")
@@ -4041,6 +4100,9 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 }
 
 func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	store := &mockStore{
 		messages: []APIMessage{{
 			ID:             42,
@@ -4071,14 +4133,15 @@ func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=quarterly&mode=vector&explain=true", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
-
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp struct {
 		Results []map[string]any `json:"results"`
 	}
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-	requirepkg.Len(t, resp.Results, 1, "results")
+	require.NoError(
+		json.NewDecoder(w.Body).Decode(&resp), "decode")
+
+	require.Len(resp.Results, 1, "results")
 	assertpkg.Contains(t, resp.Results[0], "score", "explain=true should include score breakdown")
 }
 

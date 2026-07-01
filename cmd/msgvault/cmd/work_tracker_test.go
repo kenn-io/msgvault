@@ -56,6 +56,9 @@ func (t *fakeDaemonWorkTracker) counts() (int, int) {
 }
 
 func TestCombineWorkTrackersBeginsAndReleasesAll(t *testing.T) {
+	assert := assert.New(
+		t)
+
 	var events []string
 	first := &fakeDaemonWorkTracker{allow: true, name: "first", events: &events}
 	second := &fakeDaemonWorkTracker{allow: true, name: "second", events: &events}
@@ -65,8 +68,7 @@ func TestCombineWorkTrackersBeginsAndReleasesAll(t *testing.T) {
 	require.True(t, ok, "BeginWork")
 	done()
 	done()
-
-	assert.Equal(t, []string{
+	assert.Equal([]string{
 		"begin:first",
 		"begin:second",
 		"done:second",
@@ -74,31 +76,33 @@ func TestCombineWorkTrackersBeginsAndReleasesAll(t *testing.T) {
 	}, events, "tracker order")
 	firstBegin, firstDone := first.counts()
 	secondBegin, secondDone := second.counts()
-	assert.Equal(t, 1, firstBegin, "first begin")
-	assert.Equal(t, 1, firstDone, "first done")
-	assert.Equal(t, 1, secondBegin, "second begin")
-	assert.Equal(t, 1, secondDone, "second done")
+	assert.Equal(1, firstBegin, "first begin")
+	assert.Equal(1, firstDone, "first done")
+	assert.Equal(1, secondBegin, "second begin")
+	assert.Equal(1, secondDone, "second done")
 }
 
 func TestCombineWorkTrackersUnwindsWhenLaterTrackerRejects(t *testing.T) {
+	assert := assert.New(
+		t)
+
 	var events []string
 	first := &fakeDaemonWorkTracker{allow: true, name: "first", events: &events}
 	second := &fakeDaemonWorkTracker{allow: false, name: "second", events: &events}
 
 	tracker := combineWorkTrackers(first, second)
 	done, ok := tracker.BeginWork()
-
-	assert.False(t, ok, "BeginWork")
+	assert.False(ok, "BeginWork")
 	done()
-	assert.Equal(t, []string{
+	assert.Equal([]string{
 		"begin:first",
 		"begin:second",
 		"done:first",
 	}, events, "tracker order")
 	firstBegin, firstDone := first.counts()
 	secondBegin, secondDone := second.counts()
-	assert.Equal(t, 1, firstBegin, "first begin")
-	assert.Equal(t, 1, firstDone, "first done")
-	assert.Equal(t, 1, secondBegin, "second begin")
-	assert.Equal(t, 0, secondDone, "second done")
+	assert.Equal(1, firstBegin, "first begin")
+	assert.Equal(1, firstDone, "first done")
+	assert.Equal(1, secondBegin, "second begin")
+	assert.Equal(0, secondDone, "second done")
 }

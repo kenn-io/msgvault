@@ -2429,6 +2429,102 @@ components:
         - cursor_before
         - cursor_after
       type: object
+    TextConversationRow:
+      additionalProperties: true
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        last_message_at:
+          type: string
+        last_preview:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        participant_count:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+        title:
+          type: string
+      required:
+        - conversation_id
+        - title
+        - source_type
+        - message_count
+        - participant_count
+        - last_preview
+      type: object
+    TextConversationsResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextConversationsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        conversations:
+          items:
+            $ref: "#/components/schemas/TextConversationRow"
+          type:
+            - array
+            - "null"
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - conversations
+      type: object
+    TextMessagesResponse:
+      additionalProperties: true
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextMessagesResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          type:
+            - array
+            - "null"
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
     TokenUploadRequest:
       additionalProperties: false
       properties:
@@ -5140,6 +5236,335 @@ paths:
       security:
         - apiKey: []
       summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/text/aggregates:
+    get:
+      operationId: getTextAggregates
+      parameters:
+        - description: Text aggregate view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: "Sort field: count or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get text aggregate rows
+      tags:
+        - API
+  /api/v1/text/conversations:
+    get:
+      operationId: listTextConversations
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Sender phone/address filter
+          in: query
+          name: contact_phone
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: contact_name
+          schema:
+            type: string
+        - description: Source type filter
+          in: query
+          name: source_type
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: last_message, count, or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextConversationsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List text conversations
+      tags:
+        - API
+  /api/v1/text/conversations/{id}/messages:
+    get:
+      operationId: listTextConversationMessages
+      parameters:
+        - description: Conversation ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Sender phone/address filter
+          in: query
+          name: contact_phone
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: contact_name
+          schema:
+            type: string
+        - description: Source type filter
+          in: query
+          name: source_type
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: last_message, count, or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List messages in a text conversation
+      tags:
+        - API
+  /api/v1/text/search:
+    get:
+      operationId: searchTextMessages
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search text messages
+      tags:
+        - API
+  /api/v1/text/stats:
+    get:
+      operationId: getTextStats
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotalStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get text message totals
       tags:
         - API
   /health:

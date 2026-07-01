@@ -16,11 +16,13 @@ import (
 )
 
 func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/build-cache", r.URL.Path, "path")
-		assert.Equal(t, "true", r.URL.Query().Get("full_rebuild"), "full_rebuild query")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/build-cache", r.URL.Path, "path")
+		assert.Equal("true", r.URL.Query().Get("full_rebuild"), "full_rebuild query")
 		requests.Add(1)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -58,8 +60,7 @@ func TestBuildCacheUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "build-cache command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP requests")
-	assert.Equal(t, "Building cache...\nExported 42 messages to /tmp/msgvault-analytics\n", stdout.String())
-	assert.Equal(t, "Warning: using CSV fallback\n", stderr.String())
+	assert.Equal(int32(1), requests.Load(), "HTTP requests")
+	assert.Equal("Building cache...\nExported 42 messages to /tmp/msgvault-analytics\n", stdout.String())
+	assert.Equal("Warning: using CSV fallback\n", stderr.String())
 }

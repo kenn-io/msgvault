@@ -10,30 +10,41 @@ import (
 )
 
 func TestClaimServeOwnershipLocksAndPublishesRuntime(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
 
 	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
-	require.NoError(t, err, "claimServeOwnership")
+	require.NoError(
+		err, "claimServeOwnership")
 
 	second, err := tryAcquireWriteOwnerLock(dataDir)
-	assert.Nil(t, second, "second write lock")
-	require.ErrorAs(t, err, &writeOwnerLockHeldError{}, "second owner error")
+	assert.Nil(second, "second write lock")
+	require.ErrorAs(err, &writeOwnerLockHeldError{}, "second owner error")
 
 	records, err := daemonRuntimeStore(dataDir).List()
-	require.NoError(t, err, "list runtime records")
-	require.Len(t, records, 1, "runtime records while serve owns archive")
-	assert.Equal(t, daemonService, records[0].Service, "service")
+	require.NoError(
+		err, "list runtime records")
 
-	require.NoError(t, owner.Close(), "close ownership")
+	require.Len(records, 1, "runtime records while serve owns archive")
+	assert.Equal(daemonService, records[0].Service, "service")
+	require.NoError(
+		owner.Close(), "close ownership")
 
 	records, err = daemonRuntimeStore(dataDir).List()
-	require.NoError(t, err, "list runtime records after close")
-	assert.Empty(t, records, "runtime records after close")
+	require.NoError(
+		err, "list runtime records after close")
+
+	assert.Empty(records, "runtime records after close")
 
 	reacquired, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "lock after ownership close")
-	require.NoError(t, reacquired.Close(), "close reacquired lock")
+	require.NoError(
+		err, "lock after ownership close")
+
+	require.NoError(
+		reacquired.Close(), "close reacquired lock")
 }
 
 func TestClaimServeOwnershipRejectsSecondOwner(t *testing.T) {
@@ -50,6 +61,8 @@ func TestClaimServeOwnershipRejectsSecondOwner(t *testing.T) {
 }
 
 func TestClaimServeOwnershipSkipsSQLiteLockForPostgreSQL(t *testing.T) {
+	require := require.New(t)
+
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{
 		DataDir:     dataDir,
@@ -57,19 +70,29 @@ func TestClaimServeOwnershipSkipsSQLiteLockForPostgreSQL(t *testing.T) {
 	}}
 
 	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
-	require.NoError(t, err, "claimServeOwnership")
-	t.Cleanup(func() { require.NoError(t, owner.Close(), "close ownership") })
+	require.NoError(
+		err, "claimServeOwnership")
+
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
 	sqliteLock, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "postgres daemon should not hold sqlite write lock")
-	require.NoError(t, sqliteLock.Close(), "close sqlite lock")
+	require.NoError(
+		err, "postgres daemon should not hold sqlite write lock")
+
+	require.NoError(
+		sqliteLock.Close(), "close sqlite lock")
 
 	records, err := daemonRuntimeStore(dataDir).List()
-	require.NoError(t, err, "list runtime records")
-	require.Len(t, records, 1, "runtime record still published")
+	require.NoError(
+		err, "list runtime records")
+
+	require.Len(records, 1, "runtime record still published")
 }
 
 func TestClaimServeOwnershipRejectsSecondPostgreSQLDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	dataDir := t.TempDir()
 	cfg := &config.Config{Data: config.DataConfig{
 		DataDir:     dataDir,
@@ -77,11 +100,13 @@ func TestClaimServeOwnershipRejectsSecondPostgreSQLDaemon(t *testing.T) {
 	}}
 
 	owner, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8123, "v-test")
-	require.NoError(t, err, "claimServeOwnership")
-	t.Cleanup(func() { require.NoError(t, owner.Close(), "close ownership") })
+	require.NoError(
+		err, "claimServeOwnership")
+
+	t.Cleanup(func() { require.NoError(owner.Close(), "close ownership") })
 
 	second, err := claimServeOwnership(context.Background(), cfg, "127.0.0.1", 8124, "v-test")
-	assert.Nil(t, second, "second owner")
-	require.Error(t, err, "second PostgreSQL daemon should be rejected")
-	assert.Contains(t, err.Error(), "daemon", "error names daemon ownership")
+	assert.Nil(second, "second owner")
+	require.Error(err, "second PostgreSQL daemon should be rejected")
+	assert.Contains(err.Error(), "daemon", "error names daemon ownership")
 }

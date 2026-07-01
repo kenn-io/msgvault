@@ -53,7 +53,8 @@ jobs:
           docker run --rm msgvault:test version
           docker run --rm msgvault:test --help
 
-          mkdir -p /tmp/msgvault-test && chmod 777 /tmp/msgvault-test
+          mkdir -p /tmp/msgvault-test
+          sudo chown 1000:1000 /tmp/msgvault-test
           docker run --rm -v /tmp/msgvault-test:/data msgvault:test init-db
           test -f /tmp/msgvault-test/msgvault.db || { echo "FATAL: database not created"; exit 1; }
           rm -rf /tmp/msgvault-test

@@ -1314,15 +1314,32 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		ScopeSourceCount: len(scope.sourceIDs()),
 	}
 	if cliStore.NeedsFTSBackfill() {
-		n, err := cliStore.BackfillFTS(nil)
+		n, err := func() (int64, error) {
+			done, ok := s.beginOperationGateWork(r.Context())
+			if !ok {
+				return 0, newAPIHTTPError(http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
+			}
+			defer done()
+			if !cliStore.NeedsFTSBackfill() {
+				return 0, nil
+			}
+			return cliStore.BackfillFTS(nil)
+		}()
 		if err != nil {
+			var apiErr *apiHTTPError
+			if errors.As(err, &apiErr) {
+				writeAPIHTTPError(w, apiErr)
+				return
+			}
 			s.logger.Error("failed to build CLI search index", "error", err)
 			writeError(w, http.StatusInternalServerError, "build_search_index_failed",
 				fmt.Sprintf("build search index: %v", err))
 			return
 		}
-		resp.IndexBuilt = true
-		resp.IndexedMessages = n
+		if n > 0 || !cliStore.NeedsFTSBackfill() {
+			resp.IndexBuilt = true
+			resp.IndexedMessages = n
+		}
 	}
 
 	results, err := s.engine.Search(r.Context(), parsed, limit, offset)

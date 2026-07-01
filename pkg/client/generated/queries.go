@@ -617,3 +617,137 @@ type GetTotalStatsQuery struct {
 	// GroupBy Aggregate view type for grouping
 	GroupBy *string `json:"group_by,omitempty"`
 }
+
+type GetTextAggregatesQuery struct {
+	// ViewType Text aggregate view type
+	ViewType *string `json:"view_type,omitempty"`
+
+	// Sort Sort field: count or name
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc
+	Direction *string `json:"direction,omitempty"`
+
+	// Limit Maximum number of rows to return
+	Limit *int64 `json:"limit,omitempty"`
+
+	// TimeGranularity Time bucket granularity
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SearchQuery Search query
+	SearchQuery *string `json:"search_query,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+}
+
+type ListTextConversationsQuery struct {
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// ContactPhone Sender phone/address filter
+	ContactPhone *string `json:"contact_phone,omitempty"`
+
+	// ContactName Sender display-name filter
+	ContactName *string `json:"contact_name,omitempty"`
+
+	// SourceType Source type filter
+	SourceType *string `json:"source_type,omitempty"`
+
+	// Label Label filter
+	Label *string `json:"label,omitempty"`
+
+	// TimePeriod Named time period
+	TimePeriod *string `json:"time_period,omitempty"`
+
+	// TimeGranularity Time bucket granularity
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+
+	// Limit Maximum number of rows to return
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Sort Sort field: last_message, count, or name
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc
+	Direction *string `json:"direction,omitempty"`
+}
+
+type ListTextConversationMessagesQuery struct {
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// ContactPhone Sender phone/address filter
+	ContactPhone *string `json:"contact_phone,omitempty"`
+
+	// ContactName Sender display-name filter
+	ContactName *string `json:"contact_name,omitempty"`
+
+	// SourceType Source type filter
+	SourceType *string `json:"source_type,omitempty"`
+
+	// Label Label filter
+	Label *string `json:"label,omitempty"`
+
+	// TimePeriod Named time period
+	TimePeriod *string `json:"time_period,omitempty"`
+
+	// TimeGranularity Time bucket granularity
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+
+	// Limit Maximum number of rows to return
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Sort Sort field: last_message, count, or name
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc
+	Direction *string `json:"direction,omitempty"`
+}
+
+type SearchTextMessagesQuery struct {
+	// Q Search query
+	Q string `json:"q" validate:"required"`
+
+	// Offset Zero-based row offset
+	Offset *int64 `json:"offset,omitempty"`
+
+	// Limit Maximum number of rows to return
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+func (s SearchTextMessagesQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetTextStatsQuery struct {
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// SearchQuery Search query
+	SearchQuery *string `json:"search_query,omitempty"`
+}

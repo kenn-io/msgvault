@@ -30,35 +30,48 @@ func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
 }
 
 func TestAcquireDirectSQLiteWriteLock_HoldsThenReleases(t *testing.T) {
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
 	release, err := acquireDirectSQLiteWriteLock(cfg)
-	require.NoError(t, err, "acquire on a free archive")
-	require.NotNil(t, release, "release func")
+	require.NoError(
+		err, "acquire on a free archive")
+
+	require.NotNil(release, "release func")
 
 	// While a direct writer owns the archive, no second writer can claim it.
 	blocked, err := tryAcquireWriteOwnerLock(dataDir)
 	assert.Nil(t, blocked, "second owner")
-	require.ErrorAs(t, err, &writeOwnerLockHeldError{}, "second acquisition blocked")
+	require.ErrorAs(err, &writeOwnerLockHeldError{}, "second acquisition blocked")
 
 	release()
 
 	// After release the archive is free again.
 	reacquired, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "reacquire after release")
-	require.NoError(t, reacquired.Close(), "close reacquired lock")
+	require.NoError(
+		err, "reacquire after release")
+
+	require.NoError(
+		reacquired.Close(), "close reacquired lock")
 }
 
 func TestOpenWritableStoreAndInitOwnsArchiveUntilCleanup(t *testing.T) {
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
 	withStoreResolverConfig(t, testCfg)
 
 	st, cleanup, err := openWritableStoreAndInit()
-	require.NoError(t, err, "open writable store")
-	require.NotNil(t, st, "store")
-	require.NotNil(t, cleanup, "cleanup")
+	require.NoError(
+		err, "open writable store")
+
+	require.NotNil(st, "store")
+	require.NotNil(cleanup, "cleanup")
 	defer func() {
 		if cleanup != nil {
 			cleanup()
@@ -67,29 +80,38 @@ func TestOpenWritableStoreAndInitOwnsArchiveUntilCleanup(t *testing.T) {
 
 	blocked, err := tryAcquireWriteOwnerLock(dataDir)
 	assert.Nil(t, blocked, "second owner while store is open")
-	require.ErrorAs(t, err, &writeOwnerLockHeldError{}, "store helper holds write-owner lock")
+	require.ErrorAs(err, &writeOwnerLockHeldError{}, "store helper holds write-owner lock")
 
 	cleanup()
 	cleanup = nil
 
 	reacquired, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "cleanup releases write-owner lock")
-	require.NoError(t, reacquired.Close(), "close reacquired lock")
+	require.NoError(
+		err, "cleanup releases write-owner lock")
+
+	require.NoError(
+		reacquired.Close(), "close reacquired lock")
 }
 
 func TestAcquireDirectSQLiteWriteLock_ActionableErrorWhenOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "pre-acquire owner")
+	require.NoError(
+		err, "pre-acquire owner")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	release, err := acquireDirectSQLiteWriteLock(cfg)
-	assert.Nil(t, release, "no release when blocked")
-	require.Error(t, err, "acquire on an owned archive")
-	assert.Contains(t, err.Error(), "owned", "names the ownership condition")
-	assert.Contains(t, err.Error(), "serve stop", "points at the remedy")
+	assert.Nil(release, "no release when blocked")
+	require.Error(err, "acquire on an owned archive")
+	assert.Contains(err.Error(), "owned", "names the ownership condition")
+	assert.Contains(err.Error(), "serve stop", "points at the remedy")
 }
 
 func TestDirectWriterOwnsArchive_TrueWhenHeldWithoutDaemon(t *testing.T) {
@@ -107,34 +129,50 @@ func TestDirectWriterOwnsArchive_TrueWhenHeldWithoutDaemon(t *testing.T) {
 }
 
 func TestDirectWriterOwnsArchive_FalseWhenArchiveFree(t *testing.T) {
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
 	owned, err := directSQLiteWriterOwnsArchive(cfg)
-	require.NoError(t, err, "inspect direct writer ownership")
+	require.NoError(
+		err, "inspect direct writer ownership")
+
 	assert.False(t, owned, "free archive")
 
 	// And the archive is still claimable afterwards (the probe released it).
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "probe did not leak the lock")
-	require.NoError(t, owner.Close(), "close")
+	require.NoError(
+		err, "probe did not leak the lock")
+
+	require.NoError(
+		owner.Close(), "close")
 }
 
 func TestDirectWriterOwnsArchive_FalseWhenDaemonRecordPresent(t *testing.T) {
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
 	// A live daemon advertises a runtime record; simulate one for this
 	// (alive) test process so liveDaemonRecords observes it.
 	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test")
-	require.NoError(t, err, "write daemon runtime record")
+	require.NoError(
+		err, "write daemon runtime record")
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	owned, err := directSQLiteWriterOwnsArchive(cfg)
-	require.NoError(t, err, "inspect direct writer ownership")
+	require.NoError(
+		err, "inspect direct writer ownership")
+
 	assert.False(t, owned,
 		"lock held by a live daemon is not a direct writer")
 }
@@ -165,103 +203,149 @@ func TestDaemonAutostartPreflight_AllowsWhenArchiveFree(t *testing.T) {
 // writer, the foreground command must refuse rather than start a daemon that
 // cannot claim archive ownership.
 func TestDeduplicateFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	err = runDeduplicate(&cobra.Command{}, nil)
-	require.Error(t, err, "deduplicate must fail while the archive is owned")
-	assert.Contains(t, err.Error(), "write operation", "actionable ownership error")
-	assert.Contains(t, err.Error(), "cannot start", "explains daemon autostart is blocked")
+	require.Error(err, "deduplicate must fail while the archive is owned")
+	assert.Contains(err.Error(), "write operation", "actionable ownership error")
+	assert.Contains(err.Error(), "cannot start", "explains daemon autostart is blocked")
 }
 
 func TestEmbeddingsRetireFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	cmd := &cobra.Command{Use: "retire"}
 	cmd.SetContext(context.Background())
 	err = runEmbeddingsRetire(cmd, []string{"1"})
-	require.Error(t, err, "embeddings retire must fail while the archive is owned")
-	assert.Contains(t, err.Error(), "owned", "actionable ownership error")
-	assert.Contains(t, err.Error(), "serve stop", "points at the remedy")
+	require.Error(err, "embeddings retire must fail while the archive is owned")
+	assert.Contains(err.Error(), "owned", "actionable ownership error")
+	assert.Contains(err.Error(), "serve stop", "points at the remedy")
 }
 
 func TestEmbeddingsListFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
 	withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(t, err, "open test archive")
-	require.NoError(t, st.InitSchema(), "init test archive")
-	require.NoError(t, st.Close(), "close test archive")
+	require.NoError(
+		err, "open test archive")
+
+	require.NoError(
+		st.InitSchema(), "init test archive")
+
+	require.NoError(
+		st.Close(), "close test archive")
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	cmd := &cobra.Command{Use: "list"}
 	cmd.SetContext(context.Background())
 	err = runEmbeddingsList(cmd, nil)
-	require.Error(t, err, "embeddings list must fail while the archive is owned")
-	assert.Contains(t, err.Error(), "owned", "actionable ownership error")
-	assert.Contains(t, err.Error(), "serve stop", "points at the remedy")
+	require.Error(err, "embeddings list must fail while the archive is owned")
+	assert.Contains(err.Error(), "owned", "actionable ownership error")
+	assert.Contains(err.Error(), "serve stop", "points at the remedy")
 }
 
 func TestInitDBFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	err = initDBCmd.RunE(&cobra.Command{Use: "init-db"}, nil)
-	require.Error(t, err, "init-db must fail while the archive is owned")
-	assert.Contains(t, err.Error(), "write operation", "explains the active writer")
-	assert.Contains(t, err.Error(), "wait", "points at the remedy")
+	require.Error(err, "init-db must fail while the archive is owned")
+	assert.Contains(err.Error(), "write operation", "explains the active writer")
+	assert.Contains(err.Error(), "wait", "points at the remedy")
 }
 
 func TestVerifyDaemonAutostartFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	withStoreResolverConfig(t, lifecycleTestConfig(dataDir))
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	err = verifyCmd.RunE(&cobra.Command{Use: "verify"}, []string{"alice@example.com"})
-	require.Error(t, err, "verify must not autostart a daemon while the archive is owned")
-	assert.Contains(t, err.Error(), "write operation is in progress", "actionable ownership error")
-	assert.Contains(t, err.Error(), "cannot start", "daemon start is refused")
+	require.Error(err, "verify must not autostart a daemon while the archive is owned")
+	assert.Contains(err.Error(), "write operation is in progress", "actionable ownership error")
+	assert.Contains(err.Error(), "cannot start", "daemon start is refused")
 }
 
 func TestBuildCacheFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
 	withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(t, err, "open test archive")
-	require.NoError(t, st.InitSchema(), "init test archive")
-	require.NoError(t, st.Close(), "close test archive")
+	require.NoError(
+		err, "open test archive")
+
+	require.NoError(
+		st.InitSchema(), "init test archive")
+
+	require.NoError(
+		st.Close(), "close test archive")
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	err = buildCacheCmd.RunE(&cobra.Command{Use: "build-cache"}, nil)
-	require.Error(t, err, "build-cache must fail while a local writer owns the archive")
-	assert.Contains(t, err.Error(), "write operation is in progress", "actionable ownership error")
-	assert.Contains(t, err.Error(), "cannot start", "daemon start is refused")
+	require.Error(err, "build-cache must fail while a local writer owns the archive")
+	assert.Contains(err.Error(), "write operation is in progress", "actionable ownership error")
+	assert.Contains(err.Error(), "cannot start", "daemon start is refused")
 }
 
 func TestBuildCacheDaemonChildBypassesArchiveOwnershipLock(t *testing.T) {
@@ -293,14 +377,23 @@ func TestDaemonCLIChildBypassesArchiveOwnershipLock(t *testing.T) {
 }
 
 func TestCreateSubsetFailsFastWhenArchiveOwned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(
+		t)
+
 	dataDir := t.TempDir()
 	testCfg := lifecycleTestConfig(dataDir)
 	withStoreResolverConfig(t, testCfg)
 
 	st, err := store.Open(testCfg.DatabaseDSN())
-	require.NoError(t, err, "open test archive")
-	require.NoError(t, st.InitSchema(), "init test archive")
-	require.NoError(t, st.Close(), "close test archive")
+	require.NoError(
+		err, "open test archive")
+
+	require.NoError(
+		st.InitSchema(), "init test archive")
+
+	require.NoError(
+		st.Close(), "close test archive")
 
 	oldRows := subsetRows
 	oldOutput := subsetOutput
@@ -312,13 +405,15 @@ func TestCreateSubsetFailsFastWhenArchiveOwned(t *testing.T) {
 	subsetOutput = t.TempDir()
 
 	owner, err := tryAcquireWriteOwnerLock(dataDir)
-	require.NoError(t, err, "acquire owner lock")
+	require.NoError(
+		err, "acquire owner lock")
+
 	t.Cleanup(func() { _ = owner.Close() })
 
 	err = runCreateSubset(&cobra.Command{Use: "create-subset"}, nil)
-	require.Error(t, err, "create-subset must not autostart a daemon while the archive is owned")
-	assert.Contains(t, err.Error(), "write operation", "actionable ownership error")
-	assert.Contains(t, err.Error(), "cannot start", "daemon start is refused")
+	require.Error(err, "create-subset must not autostart a daemon while the archive is owned")
+	assert.Contains(err.Error(), "write operation", "actionable ownership error")
+	assert.Contains(err.Error(), "cannot start", "daemon start is refused")
 }
 
 // TestOpenHTTPStoreFailsWhenDirectWriterOwnsArchive exercises the

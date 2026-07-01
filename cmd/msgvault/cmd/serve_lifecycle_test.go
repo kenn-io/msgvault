@@ -24,18 +24,21 @@ import (
 )
 
 func TestServeCommandHasLifecycleSubcommands(t *testing.T) {
+	assert := assert.New(t)
+
 	names := map[string]bool{}
 	for _, sub := range serveCmd.Commands() {
 		names[sub.Name()] = true
 	}
-
-	assert.True(t, names["status"], "serve must expose status")
-	assert.True(t, names["start"], "serve must expose start")
-	assert.True(t, names["stop"], "serve must expose stop")
-	assert.True(t, names["restart"], "serve must expose restart")
+	assert.True(names["status"], "serve must expose status")
+	assert.True(names["start"], "serve must expose start")
+	assert.True(names["stop"], "serve must expose stop")
+	assert.True(names["restart"], "serve must expose restart")
 }
 
 func TestServeStatusLines(t *testing.T) {
+	assert := assert.New(t)
+
 	rt := &DaemonRuntime{
 		Record: daemon.RuntimeRecord{
 			PID:       4242,
@@ -48,12 +51,11 @@ func TestServeStatusLines(t *testing.T) {
 	}
 
 	out := strings.Join(serveStatusLines(rt), "\n")
-
-	assert.Contains(t, out, "msgvault running at http://127.0.0.1:8080")
-	assert.Contains(t, out, "pid:     4242")
-	assert.Contains(t, out, "version: v9.9.9")
-	assert.Contains(t, out, "api:     "+api.APISchemaVersion)
-	assert.Contains(t, out, "uptime:")
+	assert.Contains(out, "msgvault running at http://127.0.0.1:8080")
+	assert.Contains(out, "pid:     4242")
+	assert.Contains(out, "version: v9.9.9")
+	assert.Contains(out, "api:     "+api.APISchemaVersion)
+	assert.Contains(out, "uptime:")
 }
 
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
@@ -66,30 +68,36 @@ func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
 }
 
 func TestRunServeStatusReturnsRuntimeListError(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := runtimeDataDirFile(t)
 	cmd, stdout, stderr := lifecycleTestCommand()
 
 	err := runServeStatus(cmd, dataDir)
 
 	require.Error(t, err, "status should surface runtime-store failures")
-	assert.Contains(t, err.Error(), "list daemon runtimes", "runtime list error")
-	assert.Empty(t, stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
+	assert.Empty(stdout.String())
+	assert.Empty(stderr.String())
 }
 
 func TestStopLiveDaemonsReturnsRuntimeListError(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := runtimeDataDirFile(t)
 	cmd, stdout, stderr := lifecycleTestCommand()
 
 	err := stopLiveDaemons(cmd, dataDir, false)
 
 	require.Error(t, err, "stop should surface runtime-store failures")
-	assert.Contains(t, err.Error(), "list daemon runtimes", "runtime list error")
-	assert.Empty(t, stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
+	assert.Empty(stdout.String())
+	assert.Empty(stderr.String())
 }
 
 func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
+	assert := assert.New(t)
+
 	dataDir := runtimeDataDirFile(t)
 
 	rt, ready, err := waitForBackgroundServeReady(
@@ -100,12 +108,16 @@ func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
 	)
 
 	require.Error(t, err, "wait should surface runtime-store failures")
-	assert.Contains(t, err.Error(), "list daemon runtimes", "runtime list error")
-	assert.False(t, ready, "ready")
-	assert.Nil(t, rt, "runtime")
+	assert.Contains(err.Error(), "list daemon runtimes", "runtime list error")
+	assert.False(ready, "ready")
+	assert.Nil(rt, "runtime")
 }
 
 func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	dataDir := t.TempDir()
 	block := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -122,9 +134,13 @@ func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
 		server.Close()
 	})
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(t, err, "split server address")
+	require.NoError(
+		err, "split server address")
+
 	port, err := strconv.Atoi(portText)
-	require.NoError(t, err, "parse server port")
+	require.NoError(
+		err, "parse server port")
+
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
@@ -137,21 +153,27 @@ func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
 			runtimeAPISchemaVersion: api.APISchemaVersion,
 		},
 	})
-	require.NoError(t, err, "write runtime record")
+	require.NoError(
+		err, "write runtime record")
 
 	start := time.Now()
 	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, time.Second, daemonRuntimeReady, nil)
 	elapsed := time.Since(start)
-
-	require.ErrorIs(t, err, context.Canceled, "wait error")
-	assert.False(t, ready, "ready")
-	assert.Nil(t, rt, "runtime")
-	assert.Less(t, elapsed, 250*time.Millisecond, "wait should not sit through daemon probe timeout")
+	require.ErrorIs(err, context.Canceled, "wait error")
+	assert.False(ready, "ready")
+	assert.Nil(rt, "runtime")
+	assert.Less(elapsed, 250*time.Millisecond, "wait should not sit through daemon probe timeout")
 }
 
 func TestWaitForRecordedDaemonExitRemovesRecordWhenGone(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	recordPath := filepath.Join(t.TempDir(), "runtime.json")
-	require.NoError(t, os.WriteFile(recordPath, []byte("runtime"), 0o600), "write runtime record")
+	require.NoError(
+		os.WriteFile(recordPath, []byte("runtime"), 0o600), "write runtime record")
+
 	rec := daemon.RuntimeRecord{SourcePath: recordPath}
 	calls := 0
 
@@ -164,13 +186,16 @@ func TestWaitForRecordedDaemonExitRemovesRecordWhenGone(t *testing.T) {
 			return calls < 3
 		},
 	)
-
-	require.True(t, exited, "wait should observe daemon exit")
-	assert.Equal(t, 3, calls, "poll count")
-	assert.NoFileExists(t, recordPath, "runtime record")
+	require.True(exited, "wait should observe daemon exit")
+	assert.Equal(3, calls, "poll count")
+	assert.NoFileExists(recordPath, "runtime record")
 }
 
 func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
 	portText := strconv.Itoa(server.Port)
@@ -186,19 +211,23 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
+
 	cmd, stdout, stderr := lifecycleTestCommand()
-
-	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
-
-	assert.Equal(t,
+	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	withTestVersion(t, "v1.0.0")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
@@ -215,27 +244,31 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
+
 	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
-		require.Fail(t, "older CLI must not stop a newer daemon")
+		require.Fail("older CLI must not stop a newer daemon")
 		return nil
 	})
 	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
-		require.FailNow(t, "older CLI must not start over a newer daemon")
+		require.FailNow("older CLI must not start over a newer daemon")
 		return nil, errors.New("unreachable")
 	})
 	cmd, stdout, stderr := lifecycleTestCommand()
-
-	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
-
-	assert.Equal(t,
+	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	withTestVersion(t, "v1.1.0")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
@@ -252,7 +285,8 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
 
 	var stoppedPID int
 	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
@@ -280,18 +314,20 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 		}, true, nil
 	})
 	cmd, stdout, stderr := lifecycleTestCommand()
-
-	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
-
-	assert.Equal(t, os.Getpid(), stoppedPID, "stopped older daemon")
-	assert.Equal(t,
+	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+	assert.Equal(os.Getpid(), stoppedPID, "stopped older daemon")
+	assert.Equal(
 		"msgvault running at http://127.0.0.1:9090 (pid 777)\n"+
 			"Logs: /tmp/msgvault-serve.log\n",
 		stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	withTestVersion(t, "v1.1.0")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
@@ -308,29 +344,33 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
+
 	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
-		require.FailNow(t, "never policy must not stop a compatible daemon")
+		require.FailNow("never policy must not stop a compatible daemon")
 		return errors.New("unreachable")
 	})
 	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
-		require.FailNow(t, "never policy must not start over a compatible daemon")
+		require.FailNow("never policy must not start over a compatible daemon")
 		return nil, errors.New("unreachable")
 	})
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
 	cmd, stdout, stderr := lifecycleTestCommand()
-
-	require.NoError(t, runServeStart(cmd, cfg))
-
-	assert.Equal(t,
+	require.NoError(runServeStart(cmd, cfg))
+	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	withTestVersion(t, "v1.1.0")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
@@ -347,7 +387,8 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion - 1),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
 
 	var stoppedPID int
 	stubStopDaemonRuntimeForUpgrade(t, func(_ config.Config, rt *DaemonRuntime) error {
@@ -375,18 +416,20 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 		}, true, nil
 	})
 	cmd, stdout, stderr := lifecycleTestCommand()
-
-	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
-
-	assert.Equal(t, os.Getpid(), stoppedPID, "stopped older incompatible daemon")
-	assert.Equal(t,
+	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
+	assert.Equal(os.Getpid(), stoppedPID, "stopped older incompatible daemon")
+	assert.Equal(
 		"msgvault running at http://127.0.0.1:9092 (pid 779)\n"+
 			"Logs: /tmp/msgvault-serve.log\n",
 		stdout.String())
-	assert.Empty(t, stderr.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	withTestVersion(t, "v1.0.0")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
@@ -403,24 +446,25 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion + 1),
 		},
 	})
-	require.NoError(t, err, "write runtime")
+	require.NoError(
+		err, "write runtime")
+
 	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime) error {
-		require.FailNow(t, "older CLI must not stop a newer incompatible daemon")
+		require.FailNow("older CLI must not stop a newer incompatible daemon")
 		return errors.New("unreachable")
 	})
 	stubStartServeBackgroundProcess(t, func(*config.Config) (*backgroundServeProcess, error) {
-		require.FailNow(t, "older CLI must not start over a newer incompatible daemon")
+		require.FailNow("older CLI must not start over a newer incompatible daemon")
 		return nil, errors.New("unreachable")
 	})
 	cmd, stdout, stderr := lifecycleTestCommand()
 
 	err = runServeStart(cmd, lifecycleTestConfig(dataDir))
-
-	require.Error(t, err, "newer incompatible daemon must be refused")
-	assert.Contains(t, err.Error(), "incompatible daemon is already running")
-	assert.Contains(t, err.Error(), "msgvault serve stop")
-	assert.Empty(t, stdout.String())
-	assert.Empty(t, stderr.String())
+	require.Error(err, "newer incompatible daemon must be refused")
+	assert.Contains(err.Error(), "incompatible daemon is already running")
+	assert.Contains(err.Error(), "msgvault serve stop")
+	assert.Empty(stdout.String())
+	assert.Empty(stderr.String())
 }
 
 func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
@@ -464,16 +508,21 @@ func TestServeStopGraceTimeoutCoversDaemonShutdownBudget(t *testing.T) {
 }
 
 func TestRequestDaemonShutdownUsesRuntimeToken(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	var gotToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, api.DaemonShutdownPath, r.URL.Path, "path")
-		assert.Equal(t, http.MethodPost, r.Method, "method")
+		assert.Equal(api.DaemonShutdownPath, r.URL.Path, "path")
+		assert.Equal(http.MethodPost, r.Method, "method")
 		gotToken = r.Header.Get(api.DaemonShutdownTokenHeader)
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(server.Close)
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(t, err, "split listener address")
+	require.NoError(
+		err, "split listener address")
 
 	requested, err := requestDaemonShutdown(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
@@ -487,10 +536,11 @@ func TestRequestDaemonShutdownUsesRuntimeToken(t *testing.T) {
 			runtimeShutdownToken: "test-runtime-token",
 		},
 	})
+	require.NoError(
+		err, "request shutdown")
 
-	require.NoError(t, err, "request shutdown")
-	assert.True(t, requested, "shutdown requested")
-	assert.Equal(t, "test-runtime-token", gotToken, "shutdown token")
+	assert.True(requested, "shutdown requested")
+	assert.Equal("test-runtime-token", gotToken, "shutdown token")
 }
 
 func TestNewDaemonIdleTrackerOnlyRunsForBackgroundServeChild(t *testing.T) {

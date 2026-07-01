@@ -65,3 +65,8 @@ type TriggerSyncPath struct {
 func (t TriggerSyncPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
+
+type ListTextConversationMessagesPath struct {
+	// ID Conversation ID
+	ID int64 `json:"id"`
+}

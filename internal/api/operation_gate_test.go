@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,6 +56,8 @@ func (g *recordingOperationGate) counts() (int, int) {
 func TestOperationGateMiddlewareSkipsReadMethods(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
 		t.Run(method, func(t *testing.T) {
+			assert := assert.New(t)
+
 			gate := &recordingOperationGate{allow: true}
 			called := false
 			handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -64,12 +68,11 @@ func TestOperationGateMiddlewareSkipsReadMethods(t *testing.T) {
 			req := httptest.NewRequest(method, "/api/v1/messages", nil)
 			resp := httptest.NewRecorder()
 			handler.ServeHTTP(resp, req)
-
-			assert.True(t, called, "handler called")
-			assert.Equal(t, http.StatusNoContent, resp.Code, "status")
+			assert.True(called, "handler called")
+			assert.Equal(http.StatusNoContent, resp.Code, "status")
 			begin, done := gate.counts()
-			assert.Equal(t, 0, begin, "begin calls")
-			assert.Equal(t, 0, done, "done calls")
+			assert.Equal(0, begin, "begin calls")
+			assert.Equal(0, done, "done calls")
 		})
 	}
 }
@@ -95,6 +98,8 @@ func TestOperationGateMiddlewareGatesMutatingMethods(t *testing.T) {
 }
 
 func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
+	assert := assert.New(t)
+
 	gate := &recordingOperationGate{allow: true}
 	called := false
 	handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -105,15 +110,56 @@ func TestOperationGateMiddlewareSkipsDaemonShutdown(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
-
-	assert.True(t, called, "handler called")
-	assert.Equal(t, http.StatusAccepted, resp.Code, "status")
+	assert.True(called, "handler called")
+	assert.Equal(http.StatusAccepted, resp.Code, "status")
 	begin, done := gate.counts()
-	assert.Equal(t, 0, begin, "begin calls")
-	assert.Equal(t, 0, done, "done calls")
+	assert.Equal(0, begin, "begin calls")
+	assert.Equal(0, done, "done calls")
+}
+
+func TestOperationGateMiddlewareSkipsLogCLIRunAndRestoresBody(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: false}
+	handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Args []string `json:"args"`
+		}
+		if assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode body") {
+			assert.Equal([]string{"logs", "--follow"}, req.Args, "args")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["logs","--follow"]}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusNoContent, resp.Code, "status")
+	begin, done := gate.counts()
+	assert.Equal(0, begin, "begin calls")
+	assert.Equal(0, done, "done calls")
+}
+
+func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: true}
+	handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["import-mbox","archive.mbox"]}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Equal(http.StatusNoContent, resp.Code, "status")
+	begin, done := gate.counts()
+	assert.Equal(1, begin, "begin calls")
+	assert.Equal(1, done, "done calls")
 }
 
 func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
+	assert := assert.New(t)
+
 	gate := &recordingOperationGate{allow: false}
 	called := false
 	handler := operationGateMiddleware(gate)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -124,13 +170,12 @@ func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
-
-	assert.False(t, called, "handler should not run")
-	assert.Equal(t, http.StatusServiceUnavailable, resp.Code, "status")
-	assert.Contains(t, resp.Body.String(), "server is busy or shutting down")
+	assert.False(called, "handler should not run")
+	assert.Equal(http.StatusServiceUnavailable, resp.Code, "status")
+	assert.Contains(resp.Body.String(), "server is busy or shutting down")
 	begin, done := gate.counts()
-	assert.Equal(t, 1, begin, "begin calls")
-	assert.Equal(t, 0, done, "done calls")
+	assert.Equal(1, begin, "begin calls")
+	assert.Equal(0, done, "done calls")
 }
 
 func TestOperationGateMiddlewareStopsWaitingWhenRequestContextCancels(t *testing.T) {

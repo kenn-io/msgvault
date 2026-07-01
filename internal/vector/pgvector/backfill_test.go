@@ -30,6 +30,9 @@ func embedGenOf(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 // messages and leaves the un-embedded one NULL; coverage becomes honest;
 // re-running is a ledger-guarded no-op.
 func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	// The minimal PG test schema omits applied_migrations; create it so the
@@ -38,60 +41,76 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	// 3 messages: 1 and 2 embedded under the active gen, 3 not.
 	for _, id := range []int64{1, 2, 3} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
 	chunks := []vector.Chunk{
 		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
 		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
 	}
-	require.NoError(t, b.Upsert(ctx, gen, chunks), "Upsert")
+	require.NoError(
+		b.Upsert(ctx, gen, chunks), "Upsert")
 
 	// Stamp + activate, then simulate the upgrade by resetting embed_gen.
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1`, int64(gen))
-	require.NoError(t, err, "stamp")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "activate (force)")
+	require.NoError(
+		err, "stamp")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "activate (force)")
+
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen to NULL (simulate upgrade)")
+	require.NoError(
+		err, "reset embed_gen to NULL (simulate upgrade)")
 
 	// Open already ran (and marked) the backfill at open time when no gen
 	// existed; clear the ledger so this call reproduces the real upgrade
 	// timing (first Open where an active gen + embeddings are present).
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "reset ledger")
+	require.NoError(
+		err, "reset ledger")
 
-	require.NoError(t, b.BackfillEmbedGenForUpgrade(ctx), "backfill")
+	require.NoError(
+		b.BackfillEmbedGenForUpgrade(ctx), "backfill")
 
 	for _, id := range []int64{1, 2} {
 		v, isNull := embedGenOf(t, db, id)
-		assert.Falsef(t, isNull, "msg %d should be stamped", id)
-		assert.Equalf(t, int64(gen), v, "msg %d embed_gen", id)
+		assert.Falsef(isNull, "msg %d should be stamped", id)
+		assert.Equalf(int64(gen), v, "msg %d embed_gen", id)
 	}
 	_, isNull3 := embedGenOf(t, db, 3)
-	assert.True(t, isNull3, "msg 3 (un-embedded) stays NULL")
+	assert.True(isNull3, "msg 3 (un-embedded) stays NULL")
 
 	// Coverage is honest: only message 3 missing.
 	s, err := b.Stats(ctx, gen)
-	require.NoError(t, err, "Stats")
-	assert.Equal(t, int64(1), s.PendingCount, "post-backfill: only msg 3 missing")
+	require.NoError(
+		err, "Stats")
 
-	// Re-running is a ledger-guarded no-op: msg 3 stays NULL.
-	require.NoError(t, b.BackfillEmbedGenForUpgrade(ctx), "backfill again (no-op)")
+	assert.Equal(int64(1), s.PendingCount, "post-backfill: only msg 3 missing")
+	require.NoError(
+
+		b.BackfillEmbedGenForUpgrade(ctx), "backfill again (no-op)")
+
 	_, isNull3Again := embedGenOf(t, db, 3)
-	assert.True(t, isNull3Again, "msg 3 still NULL after second backfill (ledger no-op)")
+	assert.True(isNull3Again, "msg 3 still NULL after second backfill (ledger no-op)")
 }
 
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the PG
@@ -105,32 +124,44 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 // message with no pending row must end embed_gen=active. pending_embeddings is
 // dropped after.
 func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	// msg 1: embedded AND pending-for-re-embed (stale) -> must stay NULL.
 	// msg 2: embedded, NO pending row (normal)         -> must be stamped.
 	for _, id := range []int64{1, 2} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
-	}), "Upsert")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+		}), "Upsert")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate")
 
 	// Reconstruct the OLD-state precondition: pending_embeddings exists and
 	// carries an active-gen row for msg 1 only (msg 1 was re-enqueued for
@@ -139,29 +170,36 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 		generation_id BIGINT NOT NULL,
 		message_id    BIGINT NOT NULL
 	)`)
-	require.NoError(t, err, "create legacy pending_embeddings")
+	require.NoError(
+		err, "create legacy pending_embeddings")
+
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO pending_embeddings (generation_id, message_id) VALUES ($1, 1)`, int64(gen))
-	require.NoError(t, err, "seed active-gen pending row for msg 1")
+	require.NoError(
+		err, "seed active-gen pending row for msg 1")
 
 	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared so the
 	// next backfill runs (Open marked it at open time when no gen existed).
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen")
+	require.NoError(
+		err, "reset embed_gen")
+
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear ledger")
+	require.NoError(
+		err, "clear ledger")
 
-	require.NoError(t, b.BackfillEmbedGenForUpgrade(ctx), "backfill")
+	require.NoError(
+		b.BackfillEmbedGenForUpgrade(ctx), "backfill")
 
 	// msg 1 (had an active-gen pending re-embed row) must stay NULL → re-embed.
 	_, isNull1 := embedGenOf(t, db, 1)
-	assert.True(t, isNull1,
+	assert.True(isNull1,
 		"msg 1 (active-gen pending re-embed) must stay embed_gen=NULL so it re-embeds")
 	// msg 2 (normal embedded, no pending) must be stamped → not re-embedded.
 	v2, isNull2 := embedGenOf(t, db, 2)
-	assert.False(t, isNull2, "msg 2 (no pending row) must be stamped")
-	assert.Equal(t, int64(gen), v2, "msg 2 embed_gen = active")
+	assert.False(isNull2, "msg 2 (no pending row) must be stamped")
+	assert.Equal(int64(gen), v2, "msg 2 embed_gen = active")
 }
 
 // TestOpen_DropsDeadPendingEmbeddings pins that a normal writable Open drops
@@ -169,27 +207,33 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 // consult it. The drop moved out of Migrate into the Open
 // writable path.
 func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	// Stand up a legacy pending_embeddings table, then open writably.
 	_, err = db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
 		generation_id BIGINT NOT NULL,
 		message_id    BIGINT NOT NULL
 	)`)
-	require.NoError(t, err, "create legacy pending_embeddings")
+	require.NoError(
+		err, "create legacy pending_embeddings")
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "writable Open")
+	require.NoError(
+		err, "writable Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	var reg *string
-	require.NoError(t, db.QueryRowContext(ctx,
+	require.NoError(db.QueryRowContext(ctx,
 		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
 	assert.Nil(t, reg, "writable Open must drop pending_embeddings after the backfill consults it")
 }
@@ -206,35 +250,50 @@ func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
 // must be ROLLED BACK (embed_gen stays NULL) and the ledger must stay UNMARKED,
 // so a later clean backfill re-runs and completes.
 func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
-	require.NoError(t, err, "insert message")
+	require.NoError(
+		err, "insert message")
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-	}), "Upsert")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+		}), "Upsert")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate")
 
 	// Pre-upgrade state: embed_gen NULL, ledger cleared (Open already marked
 	// it when no gen existed).
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen")
+	require.NoError(
+		err, "reset embed_gen")
+
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear ledger")
+	require.NoError(
+		err, "clear ledger")
 
 	// Install a fault that makes ONLY the ledger mark fail. The embed_gen
 	// UPDATE on messages still succeeds, so a non-atomic implementation would
@@ -247,39 +306,45 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 			RETURN NEW;
 		END;
 		$fn$ LANGUAGE plpgsql`)
-	require.NoError(t, err, "create fault function")
+	require.NoError(
+		err, "create fault function")
+
 	_, err = db.Exec(`CREATE TRIGGER zz_fail_backfill_mark
 		BEFORE INSERT ON applied_migrations
 		FOR EACH ROW EXECUTE FUNCTION zz_fail_backfill_mark()`)
-	require.NoError(t, err, "install fault trigger")
+	require.NoError(
+		err, "install fault trigger")
 
 	err = b.BackfillEmbedGenForUpgrade(ctx)
-	require.Error(t, err, "backfill must surface the injected ledger-mark failure")
-	assert.Contains(t, err.Error(), "injected backfill mark failure")
+	require.Error(err, "backfill must surface the injected ledger-mark failure")
+	assert.Contains(err.Error(), "injected backfill mark failure")
 
 	// Atomicity: the stamp must have been ROLLED BACK with the failed mark.
 	_, isNull := embedGenOf(t, db, 1)
-	assert.True(t, isNull,
+	assert.True(isNull,
 		"embed_gen must be rolled back to NULL when the ledger mark fails (atomic)")
 	var marked int
-	require.NoError(t, db.QueryRow(
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
-	assert.Equal(t, 0, marked, "ledger must stay unmarked when the backfill tx rolls back")
+	assert.Equal(0, marked, "ledger must stay unmarked when the backfill tx rolls back")
 
 	// Recovery: remove the fault and re-run. The migration was never marked,
 	// so the one-time backfill re-runs cleanly and now completes.
 	_, err = db.Exec(`DROP TRIGGER zz_fail_backfill_mark ON applied_migrations`)
-	require.NoError(t, err, "drop fault trigger")
-	require.NoError(t, b.BackfillEmbedGenForUpgrade(ctx), "clean re-run must succeed")
+	require.NoError(
+		err, "drop fault trigger")
+
+	require.NoError(
+		b.BackfillEmbedGenForUpgrade(ctx), "clean re-run must succeed")
 
 	v, isNull := embedGenOf(t, db, 1)
-	assert.False(t, isNull, "embed_gen stamped after clean re-run")
-	assert.Equal(t, int64(gen), v, "embed_gen references the active generation")
-	require.NoError(t, db.QueryRow(
+	assert.False(isNull, "embed_gen stamped after clean re-run")
+	assert.Equal(int64(gen), v, "embed_gen references the active generation")
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
-	assert.Equal(t, 1, marked, "ledger marked after clean re-run")
+	assert.Equal(1, marked, "ledger marked after clean re-run")
 }
 
 // TestResetOrphanedEmbedGen_RecreateScenario mirrors the sqlitevec recreate
@@ -288,25 +353,33 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 // generation row not). A writable Open must reset those orphaned stamps to NULL
 // so coverage reports them missing rather than masking an empty index.
 func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 
 	for _, id := range []int64{1, 2} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	// Open (creates the empty index_generations), then stamp both messages
 	// for a generation id (99) that does not exist — the orphan condition.
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = 99`)
-	require.NoError(t, err, "stamp orphaned embed_gen=99")
+	require.NoError(
+		err, "stamp orphaned embed_gen=99")
 
 	// Re-open writable: the reset runs and clears the orphaned stamps.
 	b2, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "re-Open (writable)")
+	require.NoError(
+		err, "re-Open (writable)")
+
 	t.Cleanup(func() { _ = b2.Close() })
 
 	for _, id := range []int64{1, 2} {
@@ -319,37 +392,52 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 // stamps that reference a still-existing generation row (active or retired —
 // retire only flips state on PG, it does not delete the index_generations row).
 func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 
 	for _, id := range []int64{1, 2} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
-	}), "Upsert")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+		}), "Upsert")
+
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1`, int64(gen))
-	require.NoError(t, err, "stamp")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
+	require.NoError(
+		err, "stamp")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate")
 
 	// Re-open writable: gen still exists, so its stamps must be preserved.
 	b2, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "re-Open (writable)")
+	require.NoError(
+		err, "re-Open (writable)")
+
 	t.Cleanup(func() { _ = b2.Close() })
 
 	for _, id := range []int64{1, 2} {
 		v, isNull := embedGenOf(t, db, id)
-		assert.Falsef(t, isNull, "msg %d stamp preserved (gen still exists)", id)
-		assert.Equalf(t, int64(gen), v, "msg %d embed_gen preserved", id)
+		assert.Falsef(isNull, "msg %d stamp preserved (gen still exists)", id)
+		assert.Equalf(int64(gen), v, "msg %d embed_gen preserved", id)
 	}
 }
 
@@ -360,29 +448,38 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 // writable management open (SkipMigrate=true, ReadOnly=false) must still run
 // the reset — see TestResetOrphanedEmbedGen_SkipMigrate_Management_Resets.
 func TestResetOrphanedEmbedGen_ReadOnly_Skipped(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 
 	_, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`)
-	require.NoError(t, err, "insert message")
+	require.NoError(
+		err, "insert message")
 
 	// Bring up the schema (index_generations etc.) via a writable Open, then
 	// stamp an orphaned embed_gen.
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open (writable, migrate)")
+	require.NoError(
+		err, "Open (writable, migrate)")
+
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = 99`)
-	require.NoError(t, err, "stamp orphaned embed_gen=99")
+	require.NoError(
+		err, "stamp orphaned embed_gen=99")
 
 	// Read-only Open (MCP path sets SkipMigrate + ReadOnly): the reset must be
 	// skipped because no writes are permitted.
 	b2, err := Open(ctx, Options{DB: db, Dimension: 4, SkipMigrate: true, ReadOnly: true})
-	require.NoError(t, err, "Open (ReadOnly) must not error")
+	require.NoError(
+		err, "Open (ReadOnly) must not error")
+
 	t.Cleanup(func() { _ = b2.Close() })
 
 	v, isNull := embedGenOf(t, db, 1)
-	assert.False(t, isNull, "ReadOnly Open must NOT reset the orphaned embed_gen")
-	assert.Equal(t, int64(99), v, "orphaned stamp unchanged under ReadOnly Open")
+	assert.False(isNull, "ReadOnly Open must NOT reset the orphaned embed_gen")
+	assert.Equal(int64(99), v, "orphaned stamp unchanged under ReadOnly Open")
 }
 
 // TestResetOrphanedEmbedGen_SkipMigrate_Management_Resets is the inverse of
@@ -392,23 +489,31 @@ func TestResetOrphanedEmbedGen_ReadOnly_Skipped(t *testing.T) {
 // open performed NO writes (reset was gated on !SkipMigrate), leaving the
 // orphaned stamp in place.
 func TestResetOrphanedEmbedGen_SkipMigrate_Management_Resets(t *testing.T) {
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 
 	_, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`)
-	require.NoError(t, err, "insert message")
+	require.NoError(
+		err, "insert message")
 
 	// Bring up the schema via a writable full Open, then stamp an orphan.
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open (writable, migrate)")
+	require.NoError(
+		err, "Open (writable, migrate)")
+
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = 99`)
-	require.NoError(t, err, "stamp orphaned embed_gen=99")
+	require.NoError(
+		err, "stamp orphaned embed_gen=99")
 
 	// Management open: SkipMigrate (no CREATE EXTENSION) but writable. The
 	// reset must run and clear the orphaned stamp.
 	b2, err := Open(ctx, Options{DB: db, Dimension: 4, SkipMigrate: true})
-	require.NoError(t, err, "Open (SkipMigrate, writable) must not error")
+	require.NoError(
+		err, "Open (SkipMigrate, writable) must not error")
+
 	t.Cleanup(func() { _ = b2.Close() })
 
 	_, isNull := embedGenOf(t, db, 1)
@@ -450,82 +555,106 @@ func pgRegclassExists(t *testing.T, db *sql.DB, rel string) bool {
 // body (a single `if !opts.SkipMigrate { ... }` guarding migrate+reset+
 // backfill); reverting Open to that shape makes this test red.
 func TestManagementOpen_FiresUpgradeBackfill(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	// 3 messages: 1 and 2 embedded under the active gen, 3 not.
 	for _, id := range []int64{1, 2, 3} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	// Stand up a serve/build-style archive: full Open migrates the schema and
 	// builds + activates a generation with embeddings for messages 1 and 2.
 	setup, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "setup Open (full migrate)")
+	require.NoError(
+		err, "setup Open (full migrate)")
+
 	gen, err := setup.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, setup.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
-	}), "Upsert")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		setup.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+		}), "Upsert")
+
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1 WHERE id IN (1,2)`, int64(gen))
-	require.NoError(t, err, "stamp")
-	require.NoError(t, setup.ActivateGeneration(ctx, gen, true), "Activate (force)")
-	require.NoError(t, setup.Close(), "close setup backend")
+	require.NoError(
+		err, "stamp")
+
+	require.NoError(
+		setup.ActivateGeneration(ctx, gen, true), "Activate (force)")
+
+	require.NoError(
+		setup.Close(), "close setup backend")
 
 	// Simulate the upgrade: embeddings + active gen present, but embed_gen
 	// reset to NULL on the embedded rows, and the backfill ledger cleared (the
 	// full Open above already marked it when no gen existed — clear it so this
 	// reproduces the real first-post-upgrade timing).
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen to NULL (simulate upgrade)")
+	require.NoError(
+		err, "reset embed_gen to NULL (simulate upgrade)")
+
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear backfill ledger")
+	require.NoError(
+		err, "clear backfill ledger")
+
 	// Also drop embed_watermark to prove the management open's schema-only
 	// migrate re-creates it (a pre-upgrade archive predates the table).
 	_, err = db.ExecContext(ctx, `DROP TABLE IF EXISTS embed_watermark`)
-	require.NoError(t, err, "drop embed_watermark to prove schema-only re-apply")
+	require.NoError(
+		err, "drop embed_watermark to prove schema-only re-apply")
 
 	// THE FIX: a writable management-style Open (SkipMigrate=true to skip the
 	// privileged CREATE EXTENSION, ReadOnly=false). It must apply the
 	// extension-less schema (re-creating embed_watermark) and run the one-time
 	// backfill (stamping embed_gen for the embedded rows).
 	mgmt, err := Open(ctx, Options{DB: db, Dimension: 4, SkipMigrate: true})
-	require.NoError(t, err, "management Open (SkipMigrate, writable)")
+	require.NoError(
+		err, "management Open (SkipMigrate, writable)")
+
 	t.Cleanup(func() { _ = mgmt.Close() })
 
 	// Backfill ran: messages 1 and 2 are stamped for the active gen.
 	for _, id := range []int64{1, 2} {
 		v, isNull := embedGenOf(t, db, id)
-		assert.Falsef(t, isNull, "msg %d should be stamped by the management-open backfill", id)
-		assert.Equalf(t, int64(gen), v, "msg %d embed_gen", id)
+		assert.Falsef(isNull, "msg %d should be stamped by the management-open backfill", id)
+		assert.Equalf(int64(gen), v, "msg %d embed_gen", id)
 	}
 	// Message 3 (never embedded) stays NULL.
 	_, isNull3 := embedGenOf(t, db, 3)
-	assert.True(t, isNull3, "msg 3 (un-embedded) stays NULL")
-
-	// embed_watermark exists again (schema-only migrate re-applied it).
-	assert.True(t, pgRegclassExists(t, db, "embed_watermark"),
-		"embed_watermark must exist after the management open's schema-only migrate")
+	assert.True(isNull3, "msg 3 (un-embedded) stays NULL")
+	assert. // embed_watermark exists again (schema-only migrate re-applied it).
+		True(pgRegclassExists(t, db, "embed_watermark"),
+			"embed_watermark must exist after the management open's schema-only migrate")
 
 	// The ledger key is set so the one-time backfill never re-runs.
 	var marked int
-	require.NoError(t, db.QueryRow(
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
-	assert.Equal(t, 1, marked, "backfill ledger key must be set after management open")
+	assert.Equal(1, marked, "backfill ledger key must be set after management open")
 
 	// Coverage is honest: only message 3 is now missing.
 	s, err := mgmt.Stats(ctx, gen)
-	require.NoError(t, err, "Stats")
-	assert.Equal(t, int64(1), s.PendingCount, "post-backfill: only msg 3 missing")
+	require.NoError(
+		err, "Stats")
+
+	assert.Equal(int64(1), s.PendingCount, "post-backfill: only msg 3 missing")
 }
 
 // TestReadOnlyOpen_PerformsNoWrites asserts the read-only safety guarantee
@@ -539,63 +668,86 @@ func TestManagementOpen_FiresUpgradeBackfill(t *testing.T) {
 // CODE PATH instead: ReadOnly=true ⇒ neither Migrate nor the backfill is
 // attempted, observable as "no side effects on the DB".
 func TestReadOnlyOpen_PerformsNoWrites(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	for _, id := range []int64{1, 2} {
 		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
 	}
 
 	// Build + activate a generation with embeddings, then simulate the
 	// upgrade (embed_gen NULL, ledger cleared, embed_watermark dropped).
 	setup, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "setup Open")
+	require.NoError(
+		err, "setup Open")
+
 	gen, err := setup.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, setup.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
-	}), "Upsert")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		setup.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, Vector: []float32{1, 0, 0, 0}},
+			{MessageID: 2, Vector: []float32{0, 1, 0, 0}},
+		}), "Upsert")
+
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = $1`, int64(gen))
-	require.NoError(t, err, "stamp")
-	require.NoError(t, setup.ActivateGeneration(ctx, gen, true), "Activate (force)")
-	require.NoError(t, setup.Close(), "close setup")
+	require.NoError(
+		err, "stamp")
+
+	require.NoError(
+		setup.ActivateGeneration(ctx, gen, true), "Activate (force)")
+
+	require.NoError(
+		setup.Close(), "close setup")
 
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen (simulate upgrade)")
+	require.NoError(
+		err, "reset embed_gen (simulate upgrade)")
+
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear ledger")
+	require.NoError(
+		err, "clear ledger")
+
 	_, err = db.ExecContext(ctx, `DROP TABLE IF EXISTS embed_watermark`)
-	require.NoError(t, err, "drop embed_watermark")
+	require.NoError(
+		err, "drop embed_watermark")
 
 	// Read-only Open: MUST NOT write. SkipMigrate suppresses CREATE EXTENSION +
 	// full migrate; ReadOnly suppresses the schema-only migrate + reset +
 	// backfill.
 	ro, err := Open(ctx, Options{DB: db, Dimension: 4, SkipMigrate: true, ReadOnly: true})
-	require.NoError(t, err, "read-only Open must not error")
+	require.NoError(
+		err, "read-only Open must not error")
+
 	t.Cleanup(func() { _ = ro.Close() })
 
 	// No backfill: both embedded rows stay NULL.
 	for _, id := range []int64{1, 2} {
 		_, isNull := embedGenOf(t, db, id)
-		assert.Truef(t, isNull, "ReadOnly Open must NOT stamp msg %d", id)
+		assert.Truef(isNull, "ReadOnly Open must NOT stamp msg %d", id)
 	}
-	// No schema apply: embed_watermark must NOT have been re-created.
-	assert.False(t, pgRegclassExists(t, db, "embed_watermark"),
-		"ReadOnly Open must NOT re-create embed_watermark (no schema apply)")
+	assert. // No schema apply: embed_watermark must NOT have been re-created.
+		False(pgRegclassExists(t, db, "embed_watermark"),
+			"ReadOnly Open must NOT re-create embed_watermark (no schema apply)")
 	// No ledger mark.
 	var marked int
-	require.NoError(t, db.QueryRow(
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
-	assert.Equal(t, 0, marked, "ReadOnly Open must NOT mark the backfill ledger")
+	assert.Equal(0, marked, "ReadOnly Open must NOT mark the backfill ledger")
 }
 
 // lowTimeoutMS is the SESSION statement_timeout the low-timeout backfill handle
@@ -696,27 +848,36 @@ func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 // "canceling statement due to statement timeout (SQLSTATE 57014)" error and
 // embed_gen stays NULL.
 func TestBackfillEmbedGen_CompletesUnderLowStatementTimeout(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ctx := context.Background()
 	db := openPGTestDB(t)
 	_, err := db.Exec(`CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
-	require.NoError(t, err, "create applied_migrations")
+	require.NoError(
+		err, "create applied_migrations")
 
 	// Bring up the embeddings schema (index_generations, embeddings, …) via a
 	// full Open on the NORMAL handle, then bulk-seed lowTimeoutSeedRows messages
 	// + one embedding each so the stamp UPDATE has real work to do.
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
-	require.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gen, err := b.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO messages (id) SELECT generate_series(1, $1)`, lowTimeoutSeedRows)
-	require.NoError(t, err, "bulk insert messages")
+	require.NoError(
+		err, "bulk insert messages")
+
 	// One embedding per message under the generation. Columns mirror schema.sql's
 	// NOT NULL set; the vector value is irrelevant (the backfill only checks
 	// existence via EXISTS).
@@ -725,45 +886,50 @@ func TestBackfillEmbedGen_CompletesUnderLowStatementTimeout(t *testing.T) {
 		    (generation_id, message_id, chunk_index, embedded_at, source_char_len, dimension, embedding)
 		 SELECT $1, g, 0, 0, 1, 4, ('[' || (g % 4) || ',0,0,0]')::vector
 		   FROM generate_series(1, $2) g`, int64(gen), lowTimeoutSeedRows)
-	require.NoError(t, err, "bulk insert embeddings")
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate (force)")
+	require.NoError(
+		err, "bulk insert embeddings")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate (force)")
 
 	// Simulate the upgrade: embeddings + active gen present, embed_gen NULL, the
 	// backfill ledger cleared so the next backfill call reproduces the real
 	// first-post-upgrade timing. All on the NORMAL handle, before lowering the
 	// timeout.
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen to NULL (simulate upgrade)")
+	require.NoError(
+		err, "reset embed_gen to NULL (simulate upgrade)")
+
 	_, err = db.ExecContext(ctx,
 		`DELETE FROM applied_migrations WHERE name = $1`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear backfill ledger")
+	require.NoError(
+		err, "clear backfill ledger")
 
 	// NOW switch to the low-timeout single-connection handle and run the backfill
 	// on it. Pre-fix the stamp UPDATE is cancelled (57014); post-fix the tx's
 	// SET LOCAL statement_timeout = 0 lets it complete.
 	low := openLowTimeoutHandle(t, db)
 	lowBackend := &Backend{db: low}
-
-	require.NoErrorf(t, lowBackend.BackfillEmbedGenForUpgrade(ctx),
+	require.NoErrorf(lowBackend.BackfillEmbedGenForUpgrade(ctx),
 		"backfill must COMPLETE under a %dms statement_timeout (SET LOCAL lifts it)", lowTimeoutMS)
 
 	// The stamp landed despite the low session timeout: a sample of embedded rows
 	// is now stamped for the active generation, and the full count matches.
 	for _, id := range []int64{1, lowTimeoutSeedRows / 2, lowTimeoutSeedRows} {
 		v, isNull := embedGenOf(t, db, id)
-		assert.Falsef(t, isNull, "msg %d should be stamped by the low-timeout backfill", id)
-		assert.Equalf(t, int64(gen), v, "msg %d embed_gen", id)
+		assert.Falsef(isNull, "msg %d should be stamped by the low-timeout backfill", id)
+		assert.Equalf(int64(gen), v, "msg %d embed_gen", id)
 	}
 	var stamped int64
-	require.NoError(t, db.QueryRow(
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE embed_gen = $1`, int64(gen)).Scan(&stamped))
-	assert.Equal(t, int64(lowTimeoutSeedRows), stamped,
+	assert.Equal(int64(lowTimeoutSeedRows), stamped,
 		"every embedded row stamped after the low-timeout backfill")
 
 	// And the ledger is marked so the one-time backfill never re-runs.
 	var marked int
-	require.NoError(t, db.QueryRow(
+	require.NoError(db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
-	assert.Equal(t, 1, marked, "backfill ledger marked after completing under low timeout")
+	assert.Equal(1, marked, "backfill ledger marked after completing under low timeout")
 }

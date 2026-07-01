@@ -10,10 +10,12 @@ import (
 )
 
 func TestLogsCommandUsesDaemonRunner(t *testing.T) {
+	assert := assert.New(t)
+
 	resetLogsRoutingGlobals(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-		assert.Equal(t, []string{
+		assert.Equal([]string{
 			"logs",
 			"--all",
 			"--grep=sync",
@@ -38,9 +40,9 @@ func TestLogsCommandUsesDaemonRunner(t *testing.T) {
 	})
 
 	require.NoError(t, cmd.Execute(), "logs")
-	assert.Equal(t, 1, int(requests.Load()), "runner endpoint calls")
-	assert.Equal(t, "12:00:00 WARN abc123 sync failed\n", stdout.String(), "stdout")
-	assert.Equal(t, "tail warning\n", stderr.String(), "stderr")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+	assert.Equal("12:00:00 WARN abc123 sync failed\n", stdout.String(), "stdout")
+	assert.Equal("tail warning\n", stderr.String(), "stderr")
 }
 
 func resetLogsRoutingGlobals(t *testing.T) {

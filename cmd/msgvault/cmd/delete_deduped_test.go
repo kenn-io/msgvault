@@ -68,22 +68,24 @@ func TestDeleteDeduped_MutualExclusion(t *testing.T) {
 }
 
 func TestDeleteDedupedUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var planRequests atomic.Int32
 	var executeRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/cli/delete-deduped/plan":
-			assert.Equal(t, http.MethodPost, r.Method, "plan method")
+			assert.Equal(http.MethodPost, r.Method, "plan method")
 			var req struct {
 				BatchIDs  []string `json:"batch_ids"`
 				AllHidden bool     `json:"all_hidden"`
 			}
-			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			assert.Equal(t, []string{"batch-a", "batch-b"}, req.BatchIDs, "plan batch ids")
-			assert.False(t, req.AllHidden, "plan all_hidden")
+			assert.Equal([]string{"batch-a", "batch-b"}, req.BatchIDs, "plan batch ids")
+			assert.False(req.AllHidden, "plan all_hidden")
 			planRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -95,7 +97,7 @@ func TestDeleteDedupedUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 				]
 			}`))
 		case "/api/v1/cli/delete-deduped":
-			assert.Equal(t, http.MethodPost, r.Method, "execute method")
+			assert.Equal(http.MethodPost, r.Method, "execute method")
 			var req struct {
 				BatchIDs           []string `json:"batch_ids"`
 				AllHidden          bool     `json:"all_hidden"`
@@ -107,20 +109,20 @@ func TestDeleteDedupedUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 					Count int64  `json:"count"`
 				} `json:"expected_batches"`
 			}
-			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode execute request") {
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&req), "decode execute request") {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			assert.Equal(t, []string{"batch-a", "batch-b"}, req.BatchIDs, "execute batch ids")
-			assert.False(t, req.AllHidden, "execute all_hidden")
-			assert.True(t, req.NoBackup, "execute no_backup")
-			assert.Equal(t, int64(3), req.ExpectedTotal, "execute expected_total")
-			assert.Equal(t, int64(2), req.ExpectedBatchCount, "execute expected_batch_count")
-			if assert.Len(t, req.ExpectedBatches, 2, "execute expected_batches") {
-				assert.Equal(t, "batch-a", req.ExpectedBatches[0].ID, "expected batch-a id")
-				assert.Equal(t, int64(2), req.ExpectedBatches[0].Count, "expected batch-a count")
-				assert.Equal(t, "batch-b", req.ExpectedBatches[1].ID, "expected batch-b id")
-				assert.Equal(t, int64(1), req.ExpectedBatches[1].Count, "expected batch-b count")
+			assert.Equal([]string{"batch-a", "batch-b"}, req.BatchIDs, "execute batch ids")
+			assert.False(req.AllHidden, "execute all_hidden")
+			assert.True(req.NoBackup, "execute no_backup")
+			assert.Equal(int64(3), req.ExpectedTotal, "execute expected_total")
+			assert.Equal(int64(2), req.ExpectedBatchCount, "execute expected_batch_count")
+			if assert.Len(req.ExpectedBatches, 2, "execute expected_batches") {
+				assert.Equal("batch-a", req.ExpectedBatches[0].ID, "expected batch-a id")
+				assert.Equal(int64(2), req.ExpectedBatches[0].Count, "expected batch-a count")
+				assert.Equal("batch-b", req.ExpectedBatches[1].ID, "expected batch-b id")
+				assert.Equal(int64(1), req.ExpectedBatches[1].Count, "expected batch-b count")
 			}
 			executeRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
@@ -167,11 +169,10 @@ func TestDeleteDedupedUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "delete-deduped command")
-
-	assert.Equal(t, int32(1), planRequests.Load(), "plan request count")
-	assert.Equal(t, int32(1), executeRequests.Load(), "execute request count")
-	assert.Empty(t, stderr.String(), "stderr")
-	assert.Equal(t, `Will permanently delete 3 hidden message(s) from 2 batch(es):
+	assert.Equal(int32(1), planRequests.Load(), "plan request count")
+	assert.Equal(int32(1), executeRequests.Load(), "execute request count")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Equal(`Will permanently delete 3 hidden message(s) from 2 batch(es):
   batch-a: 2 row(s)
   batch-b: 1 row(s)
 

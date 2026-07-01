@@ -273,6 +273,11 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[similarSearchResponse](apiV1, "findSimilarMessages", http.MethodGet, "/search/similar", "Find messages similar to a seed message", s.handleSimilarSearch)
 	registerAPIV1RawHumaJSONRoute[SearchFastResponse](apiV1, "fastSearch", http.MethodGet, "/search/fast", "Run fast aggregate search", s.handleFastSearch)
 	registerAPIV1RawHumaJSONRoute[DeepSearchResponse](apiV1, "deepSearch", http.MethodGet, "/search/deep", "Run deep aggregate search", s.handleDeepSearch)
+	registerAPIV1RawHumaJSONRoute[TextConversationsResponse](apiV1, "listTextConversations", http.MethodGet, "/text/conversations", "List text conversations", s.handleTextConversations)
+	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getTextAggregates", http.MethodGet, "/text/aggregates", "Get text aggregate rows", s.handleTextAggregates)
+	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "listTextConversationMessages", http.MethodGet, "/text/conversations/{id}/messages", "List messages in a text conversation", s.handleTextConversationMessages)
+	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "searchTextMessages", http.MethodGet, "/text/search", "Search text messages", s.handleTextSearch)
+	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTextStats", http.MethodGet, "/text/stats", "Get text message totals", s.handleTextStats)
 
 	registerAPIV1RawHumaJSONRoute[AccountListResponse](apiV1, "listAccounts", http.MethodGet, "/accounts", "List configured accounts", s.handleListAccounts)
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
@@ -424,12 +429,12 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "listMessages":
 		return paginationParams("page", "page_size")
 	case "getMessage":
-		return []*huma.Param{pathIntegerParam("id", "Message ID")}
+		return []*huma.Param{pathIntegerParam("Message ID")}
 	case "getAttachment":
-		return []*huma.Param{pathIntegerParam("id", "Attachment ID")}
+		return []*huma.Param{pathIntegerParam("Attachment ID")}
 	case "getMessageInlinePart":
 		return []*huma.Param{
-			pathIntegerParam("id", "Message ID"),
+			pathIntegerParam("Message ID"),
 			queryStringParam("cid", "Inline MIME Content-ID", true),
 		}
 	case "searchMessages":
@@ -488,6 +493,33 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
 		}, messageFilterParams()...)
+	case "listTextConversations":
+		return textFilterParams()
+	case "getTextAggregates":
+		return []*huma.Param{
+			queryStringParam("view_type", "Text aggregate view type", false),
+			queryStringParam("sort", "Sort field: count or name", false),
+			queryStringParam("direction", "Sort direction: asc or desc", false),
+			queryIntegerParam("limit", "Maximum number of rows to return"),
+			queryStringParam("time_granularity", "Time bucket granularity", false),
+			queryIntegerParam("source_id", "Source ID"),
+			queryStringParam("search_query", "Search query", false),
+			queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
+			queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
+		}
+	case "listTextConversationMessages":
+		return append([]*huma.Param{pathIntegerParam("Conversation ID")}, textFilterParams()...)
+	case "searchTextMessages":
+		return []*huma.Param{
+			queryStringParam("q", "Search query", true),
+			queryIntegerParam("offset", "Zero-based row offset"),
+			queryIntegerParam("limit", "Maximum number of rows to return"),
+		}
+	case "getTextStats":
+		return []*huma.Param{
+			queryIntegerParam("source_id", "Source ID"),
+			queryStringParam("search_query", "Search query", false),
+		}
 	case "listSourceStatus":
 		return []*huma.Param{queryStringParam("source_type", "Restrict to one source type", false)}
 	case "triggerSync":
@@ -553,6 +585,24 @@ func messageFilterParams() []*huma.Param {
 	}
 }
 
+func textFilterParams() []*huma.Param {
+	return []*huma.Param{
+		queryIntegerParam("source_id", "Source ID"),
+		queryStringParam("contact_phone", "Sender phone/address filter", false),
+		queryStringParam("contact_name", "Sender display-name filter", false),
+		queryStringParam("source_type", "Source type filter", false),
+		queryStringParam("label", "Label filter", false),
+		queryStringParam("time_period", "Named time period", false),
+		queryStringParam("time_granularity", "Time bucket granularity", false),
+		queryStringParam("after", "Lower date/time bound (RFC3339 or YYYY-MM-DD)", false),
+		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
+		queryIntegerParam("offset", "Zero-based row offset"),
+		queryIntegerParam("limit", "Maximum number of rows to return"),
+		queryStringParam("sort", "Sort field: last_message, count, or name", false),
+		queryStringParam("direction", "Sort direction: asc or desc", false),
+	}
+}
+
 func mergeParams(groups ...[]*huma.Param) []*huma.Param {
 	seen := map[string]struct{}{}
 	merged := []*huma.Param{}
@@ -573,8 +623,8 @@ func pathStringParam(name, doc string) *huma.Param {
 	return param(name, "path", huma.TypeString, doc, true)
 }
 
-func pathIntegerParam(name, doc string) *huma.Param {
-	p := param(name, "path", huma.TypeInteger, doc, true)
+func pathIntegerParam(doc string) *huma.Param {
+	p := param("id", "path", huma.TypeInteger, doc, true)
 	p.Schema.Format = "int64"
 	return p
 }

@@ -16,10 +16,12 @@ import (
 )
 
 func TestInitDBUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		assert.Equal(t, "/api/v1/cli/init-db", r.URL.Path, "path")
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/cli/init-db", r.URL.Path, "path")
 
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
@@ -58,10 +60,9 @@ func TestInitDBUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err, "init-db command")
-
-	assert.Equal(t, int32(1), requests.Load(), "HTTP stats requests")
-	assert.Equal(t, "legacy notice\n", stderr.String(), "stderr")
-	assert.Equal(t, "Remote: "+server.URL+`
+	assert.Equal(int32(1), requests.Load(), "HTTP stats requests")
+	assert.Equal("legacy notice\n", stderr.String(), "stderr")
+	assert.Equal("Remote: "+server.URL+`
   Messages:    3
   Threads:     2
   Attachments: 5

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -159,7 +162,40 @@ func operationGateRequest(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false
-	default:
-		return true
 	}
+	if r.URL.Path == "/api/v1/cli/run" && cliRunRequestSkipsOperationGate(r) {
+		return false
+	}
+	return true
+}
+
+func cliRunRequestSkipsOperationGate(r *http.Request) bool {
+	if r == nil || r.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	var req struct {
+		Args []string `json:"args"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || len(req.Args) == 0 {
+		return false
+	}
+	switch req.Args[0] {
+	case "logs":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) beginOperationGateWork(ctx context.Context) (func(), bool) {
+	if s.operationGate == nil {
+		return func() {}, true
+	}
+	return s.operationGate.BeginWorkContext(ctx)
 }

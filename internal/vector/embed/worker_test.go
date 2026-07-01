@@ -77,6 +77,11 @@ func TestWorker_EmptyCorpusReturnsZero(t *testing.T) {
 // embedder trips MaxConsecutiveFailures and RunOnce returns an error,
 // leaving the messages unstamped (so the next run re-finds them).
 func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require := requirepkg.
+		New(t)
+
 	f := newWorkerFixture(t, 10)
 	f.FakeClient.FailNext(1000)
 	w := NewWorker(WorkerDeps{
@@ -89,11 +94,11 @@ func TestWorker_AbortsAfterConsecutiveFailures(t *testing.T) {
 		MaxConsecutiveFailures: 3,
 	})
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
-	requirepkg.Error(t, err, "expected abort")
-	requirepkg.ErrorContains(t, err, "consecutive failures")
-	assertpkg.Equal(t, 0, res.Succeeded, "nothing should succeed")
-	// All messages left unstamped (next scan re-finds them).
-	assertpkg.Equal(t, 10, countMissing(t, f.MainDB, int64(f.BuildingGen)), "still missing")
+	require.Error(err, "expected abort")
+	require.ErrorContains(err, "consecutive failures")
+	assert.Equal(0, res.Succeeded, "nothing should succeed")
+	assert. // All messages left unstamped (next scan re-finds them).
+		Equal(10, countMissing(t, f.MainDB, int64(f.BuildingGen)), "still missing")
 }
 
 // TestWorker_FailureLeavesUnstampedThenRecovers: a transient failure on
@@ -134,11 +139,16 @@ func TestWorker_RespectsContextCancel(t *testing.T) {
 // DB between scan and fetch are skip-marked (stamped) so they drop out of
 // the next scan rather than spinning forever.
 func TestWorker_MissingMessagesSkipMarked(t *testing.T) {
+	require := requirepkg.
+		New(t)
+
 	f := newWorkerFixture(t, 3)
 	// Delete message 2's row entirely (gone from main DB) but leave its
 	// embed_gen NULL so the scan still finds it.
 	_, err := f.MainDB.Exec(`DELETE FROM messages WHERE id = 2`)
-	requirepkg.NoError(t, err, "delete msg 2")
+	require.NoError(
+		err, "delete msg 2")
+
 	// Re-insert a placeholder id 2 with NULL embed_gen but no body so the
 	// scan finds it; then drop its body row to make embedBatch see it as
 	// present-but-empty. Instead, simulate "missing" by inserting an id
@@ -146,13 +156,18 @@ func TestWorker_MissingMessagesSkipMarked(t *testing.T) {
 	// So this test covers the empty case via a blank body.
 	_, err = f.MainDB.Exec(
 		`INSERT INTO messages (id, subject, embed_gen) VALUES (2, '', NULL)`)
-	requirepkg.NoError(t, err, "reinsert msg 2 empty")
+	require.NoError(
+		err, "reinsert msg 2 empty")
+
 	_, err = f.MainDB.Exec(`DELETE FROM message_bodies WHERE message_id = 2`)
-	requirepkg.NoError(t, err, "delete body 2")
+	require.NoError(
+		err, "delete body 2")
 
 	w := newTestWorker(f, 8)
 	_, err = w.RunOnce(context.Background(), f.BuildingGen)
-	requirepkg.NoError(t, err, "RunOnce")
+	require.NoError(
+		err, "RunOnce")
+
 	// Empty message 2 must be skip-marked, not re-found.
 	assertpkg.Equal(t, 0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "all stamped")
 }
@@ -343,6 +358,11 @@ func TestWorker_SplitsChunkInputsAcrossSubBatches(t *testing.T) {
 // TestWorker_Progress fires the progress callback per handled batch with
 // the configured TotalPending denominator.
 func TestWorker_Progress(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require := requirepkg.
+		New(t)
+
 	f := newWorkerFixture(t, 5)
 	var reports []ProgressReport
 	w := NewWorker(WorkerDeps{
@@ -356,12 +376,14 @@ func TestWorker_Progress(t *testing.T) {
 		Progress:     func(p ProgressReport) { reports = append(reports, p) },
 	})
 	_, err := w.RunOnce(context.Background(), f.BuildingGen)
-	requirepkg.NoError(t, err, "RunOnce")
-	requirepkg.NotEmpty(t, reports, "progress reports")
+	require.NoError(
+		err, "RunOnce")
+
+	require.NotEmpty(reports, "progress reports")
 	for i, p := range reports {
-		assertpkg.Equalf(t, 5, p.TotalPending, "report[%d].TotalPending", i)
+		assert.Equalf(5, p.TotalPending, "report[%d].TotalPending", i)
 	}
-	assertpkg.Equal(t, 5, reports[len(reports)-1].Done, "final Done")
+	assert.Equal(5, reports[len(reports)-1].Done, "final Done")
 }
 
 // --- Watermark behavior ---
@@ -401,6 +423,9 @@ func TestWorker_WatermarkLossHarmless(t *testing.T) {
 // unstamped BELOW the persisted watermark is invisible to RunOnce
 // (watermark-bounded) but caught by RunBackstop (full scan from 0).
 func TestWorker_BackstopCatchesSubWatermarkStraggler(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+
 	require := requirepkg.New(t)
 	f := newWorkerFixture(t, 5)
 	w := newTestWorker(f, 5)
@@ -418,14 +443,14 @@ func TestWorker_BackstopCatchesSubWatermarkStraggler(t *testing.T) {
 	// RunOnce resumes from the watermark (id > 5) and does NOT see id 2.
 	res, err := w.RunOnce(context.Background(), f.BuildingGen)
 	require.NoError(err, "RunOnce 2")
-	assertpkg.Equal(t, 0, res.Succeeded, "RunOnce misses sub-watermark straggler")
-	assertpkg.Equal(t, 1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler still missing")
+	assert.Equal(0, res.Succeeded, "RunOnce misses sub-watermark straggler")
+	assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler still missing")
 
 	// Backstop scans from 0 and catches it.
 	res, err = w.RunBackstop(context.Background(), f.BuildingGen)
 	require.NoError(err, "RunBackstop")
-	assertpkg.Equal(t, 1, res.Succeeded, "backstop embeds the straggler")
-	assertpkg.Equal(t, 0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler covered")
+	assert.Equal(1, res.Succeeded, "backstop embeds the straggler")
+	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "straggler covered")
 }
 
 // TestWorker_BackstopDoesNotPersistWatermark: the backstop must not

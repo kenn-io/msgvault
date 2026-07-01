@@ -51,6 +51,8 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 }
 
 func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *testing.T) {
+	assert := assert.New(t)
+
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -65,15 +67,16 @@ func TestDaemonMCPServeOptionsDisablesVectorToolsWhenDaemonVectorUnavailable(t *
 
 	opts, err := daemonMCPServeOptions(context.Background(), client)
 	require.NoError(t, err)
-
-	assert.NotNil(t, opts.Engine, "engine")
-	assert.NotNil(t, opts.AttachmentReader, "attachment reader")
-	assert.NotNil(t, opts.ManifestSaver, "manifest saver")
-	assert.Nil(t, opts.HybridSearcher, "hybrid searcher")
-	assert.Nil(t, opts.SimilarSearcher, "similar searcher")
+	assert.NotNil(opts.Engine, "engine")
+	assert.NotNil(opts.AttachmentReader, "attachment reader")
+	assert.NotNil(opts.ManifestSaver, "manifest saver")
+	assert.Nil(opts.HybridSearcher, "hybrid searcher")
+	assert.Nil(opts.SimilarSearcher, "similar searcher")
 }
 
 func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) {
+	require := require.New(t)
+
 	withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -102,12 +105,12 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 	})
 
 	opts, err := daemonMCPServeOptions(context.Background(), client)
-	require.NoError(t, err)
-	require.NotNil(t, opts.ManifestSaver, "manifest saver")
+	require.NoError(err)
+	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
 	err = opts.ManifestSaver.SaveManifest(context.Background(), manifest)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, int32(1), manifestRequests.Load(), "manifest requests")
 }
 

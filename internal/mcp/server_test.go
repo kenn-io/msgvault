@@ -1780,6 +1780,9 @@ func TestStageDeletion(t *testing.T) {
 	})
 
 	t.Run("uses injected manifest saver", func(t *testing.T) {
+		assert := assertpkg.
+			New(t)
+
 		dataDir := t.TempDir()
 		saver := &captureDeletionManifestSaver{}
 		h := &handlers{engine: eng, dataDir: dataDir, manifestSaver: saver}
@@ -1789,9 +1792,9 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"query": "from:news"},
 		)
 		requirepkg.NotNil(t, saver.manifest, "manifest saver should receive manifest")
-		assertpkg.Equal(t, resp.BatchID, saver.manifest.ID, "manifest ID")
-		assertpkg.Equal(t, []string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
-		assertpkg.NoDirExists(t, filepath.Join(dataDir, "deletions"), "local fallback should not be used")
+		assert.Equal(resp.BatchID, saver.manifest.ID, "manifest ID")
+		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
+		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {

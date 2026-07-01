@@ -11,8 +11,13 @@ import (
 )
 
 func TestRenderOpenAPIJSONUsesAPISchemaVersion(t *testing.T) {
+	assert := assert.New(t)
+	require :=
+		require.New(t)
+
 	out, err := renderOpenAPI("3.1", "json")
-	require.NoError(t, err, "render openapi")
+	require.NoError(
+		err, "render openapi")
 
 	var doc struct {
 		OpenAPI string `json:"openapi"`
@@ -20,12 +25,16 @@ func TestRenderOpenAPIJSONUsesAPISchemaVersion(t *testing.T) {
 			Version string `json:"version"`
 		} `json:"info"`
 	}
-	require.NoError(t, json.Unmarshal(out, &doc), "decode openapi")
-	assert.Equal(t, "3.1.0", doc.OpenAPI)
-	assert.Equal(t, api.APISchemaVersion, doc.Info.Version)
+	require.NoError(
+		json.Unmarshal(out, &doc), "decode openapi")
+
+	assert.Equal("3.1.0", doc.OpenAPI)
+	assert.Equal(api.APISchemaVersion, doc.Info.Version)
 }
 
 func TestOpenAPICommandWritesOnlyStdout(t *testing.T) {
+	assert := assert.New(t)
+
 	cmd := newOpenAPICmd()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -34,26 +43,31 @@ func TestOpenAPICommandWritesOnlyStdout(t *testing.T) {
 	cmd.SetArgs([]string{"--format", "json"})
 
 	require.NoError(t, cmd.Execute(), "execute openapi command")
-	assert.Contains(t, stdout.String(), `"openapi": "3.1.0"`)
-	assert.Contains(t, stdout.String(), `"version": "`+api.APISchemaVersion+`"`)
-	assert.Empty(t, stderr.String())
+	assert.Contains(stdout.String(), `"openapi": "3.1.0"`)
+	assert.Contains(stdout.String(), `"version": "`+api.APISchemaVersion+`"`)
+	assert.Empty(stderr.String())
 }
 
 func TestOpenAPIDeleteDedupedExecuteCountsAreNotNullable(t *testing.T) {
+	require :=
+		require.New(t)
+
 	out, err := renderOpenAPI("3.1", "json")
-	require.NoError(t, err, "render openapi")
+	require.NoError(
+		err, "render openapi")
 
 	var doc map[string]any
-	require.NoError(t, json.Unmarshal(out, &doc), "decode openapi")
+	require.NoError(
+		json.Unmarshal(out, &doc), "decode openapi")
 
 	components, ok := doc["components"].(map[string]any)
-	require.True(t, ok, "components object")
+	require.True(ok, "components object")
 	schemas, ok := components["schemas"].(map[string]any)
-	require.True(t, ok, "schemas object")
+	require.True(ok, "schemas object")
 	schema, ok := schemas["CliDeleteDedupedExecuteRequest"].(map[string]any)
-	require.True(t, ok, "execute request schema")
+	require.True(ok, "execute request schema")
 	properties, ok := schema["properties"].(map[string]any)
-	require.True(t, ok, "execute request properties")
+	require.True(ok, "execute request properties")
 
 	assertOpenAPIPropertyRejectsNull(t, properties, "expected_total")
 	assertOpenAPIPropertyRejectsNull(t, properties, "expected_batch_count")

@@ -671,6 +671,10 @@ func TestGeneratedAPIResponseErrorAcceptsOK(t *testing.T) {
 }
 
 func TestGeneratedResponseWrappersApplyStoreErrorMapping(t *testing.T) {
+	require :=
+		requirepkg.
+			New(t)
+
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
 
@@ -683,7 +687,9 @@ func TestGeneratedResponseWrappersApplyStoreErrorMapping(t *testing.T) {
 	got, err := APIResponse(s, func(*apiclient.Client) (*generated.GetStatsResp, error) {
 		return want, nil
 	})
-	requirepkg.NoError(t, err, "API wrapper")
+	require.NoError(
+		err, "API wrapper")
+
 	assertpkg.Same(t, want, got, "API wrapper response")
 
 	_, err = CLIResponse(s, func(*apiclient.Client) (*generated.CreateCLICollectionResp, error) {
@@ -692,13 +698,13 @@ func TestGeneratedResponseWrappersApplyStoreErrorMapping(t *testing.T) {
 			Body:       []byte(`{"error":"invalid_collection","message":"bad account"}`),
 		}, nil
 	})
-	requirepkg.EqualError(t, err, "bad account", "CLI wrapper should keep bare message")
+	require.EqualError(err, "bad account", "CLI wrapper should keep bare message")
 
 	transportErr := errors.New("connection refused")
 	_, err = APIResponse(s, func(*apiclient.Client) (*generated.GetStatsResp, error) {
 		return nil, transportErr
 	})
-	requirepkg.ErrorIs(t, err, transportErr, "transport error")
+	require.ErrorIs(err, transportErr, "transport error")
 }
 
 func TestDecodeGeneratedSearchBodyReportsOperation(t *testing.T) {
@@ -995,6 +1001,10 @@ func TestGetCLIHybridSearchUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestGetCLIAccounts_Success(t *testing.T) {
+	require :=
+		requirepkg.
+			New(t)
+
 	assert := assertpkg.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
@@ -1014,19 +1024,24 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 
 	s := newTestStore(srv, "key")
 	accounts, err := s.GetCLIAccounts(context.Background())
-	requirepkg.NoError(t, err, "GetCLIAccounts")
+	require.NoError(
+		err, "GetCLIAccounts")
 
-	requirepkg.Len(t, accounts, 1, "accounts")
+	require.Len(accounts, 1, "accounts")
 	assert.Equal(int64(7), accounts[0].ID, "ID")
 	assert.Equal("alice@example.com", accounts[0].Email, "Email")
 	assert.Equal("gmail", accounts[0].Type, "Type")
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")
-	requirepkg.NotNil(t, accounts[0].LastSync, "LastSync")
+	require.NotNil(accounts[0].LastSync, "LastSync")
 	assert.Equal("2024-01-02T03:04:05Z", accounts[0].LastSync.UTC().Format(time.RFC3339), "LastSync")
 }
 
 func TestCLICollectionMutations(t *testing.T) {
+	require :=
+		requirepkg.
+			New(t)
+
 	assert := assertpkg.New(t)
 	collectionName := "Team/One"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1070,26 +1085,34 @@ func TestCLICollectionMutations(t *testing.T) {
 		Name:     collectionName,
 		Accounts: []string{"alice@example.com", "bob@example.com"},
 	})
-	requirepkg.NoError(t, err, "CreateCLICollection")
+	require.NoError(
+		err, "CreateCLICollection")
+
 	assert.Equal(collectionName, createResult.Name, "create result name")
 	assert.Equal(2, createResult.SourceCount, "create source count")
 
 	addResult, err := s.AddCLICollectionSources(context.Background(), collectionName, CLICollectionSourcesRequest{
 		Accounts: []string{"alice@example.com"},
 	})
-	requirepkg.NoError(t, err, "AddCLICollectionSources")
+	require.NoError(
+		err, "AddCLICollectionSources")
+
 	assert.Equal(collectionName, addResult.Name, "add result name")
 	assert.Equal(1, addResult.SourceCount, "add source count")
 
 	removeResult, err := s.RemoveCLICollectionSources(context.Background(), collectionName, CLICollectionSourcesRequest{
 		Accounts: []string{"bob@example.com"},
 	})
-	requirepkg.NoError(t, err, "RemoveCLICollectionSources")
+	require.NoError(
+		err, "RemoveCLICollectionSources")
+
 	assert.Equal(collectionName, removeResult.Name, "remove result name")
 	assert.Equal(1, removeResult.SourceCount, "remove source count")
 
 	deleteResult, err := s.DeleteCLICollection(context.Background(), collectionName)
-	requirepkg.NoError(t, err, "DeleteCLICollection")
+	require.NoError(
+		err, "DeleteCLICollection")
+
 	assert.Equal(collectionName, deleteResult.Name, "delete result name")
 }
 
@@ -1191,6 +1214,10 @@ func TestRebuildCLIFTSUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestGetCLIIdentities_Success(t *testing.T) {
+	require :=
+		requirepkg.
+			New(t)
+
 	assert := assertpkg.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/identities", r.URL.Path, "path")
@@ -1221,15 +1248,16 @@ func TestGetCLIIdentities_Success(t *testing.T) {
 		Account:     "alice@example.com",
 		PrimaryOnly: true,
 	})
-	requirepkg.NoError(t, err, "GetCLIIdentities")
+	require.NoError(
+		err, "GetCLIIdentities")
 
-	requirepkg.Len(t, rows, 2, "rows")
+	require.Len(rows, 2, "rows")
 	assert.Equal("alice@example.com", rows[0].Account, "identity account")
 	assert.Equal(int64(7), rows[0].SourceID, "identity source ID")
 	assert.Equal("gmail", rows[0].SourceType, "identity source type")
 	assert.Equal("alice@example.com", rows[0].Identifier, "identity identifier")
 	assert.Equal([]string{"manual"}, rows[0].Signals, "identity signals")
-	requirepkg.NotNil(t, rows[0].ConfirmedAt, "identity confirmed_at")
+	require.NotNil(rows[0].ConfirmedAt, "identity confirmed_at")
 	assert.Equal("2024-01-02T03:04:05Z", rows[0].ConfirmedAt.UTC().Format(time.RFC3339), "identity confirmed_at")
 	assert.False(rows[0].None, "identity none")
 
@@ -1496,6 +1524,12 @@ func TestGetMessage_Success(t *testing.T) {
 }
 
 func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assertpkg.Equal(t, "/api/v1/messages/42", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.MessageDetail{
@@ -1526,19 +1560,21 @@ func TestGetMessageUsesGeneratedClientAdapter(t *testing.T) {
 	})
 
 	msg, err := s.GetMessage(42)
-	requirepkg.NoError(t, err, "GetMessage")
-	requirepkg.NotNil(t, msg, "GetMessage returned nil")
-	assertpkg.Equal(t, int64(42), msg.ID, "ID")
-	assertpkg.Equal(t, int64(7), msg.ConversationID, "ConversationID")
-	assertpkg.Equal(t, "Generated detail", msg.Subject, "Subject")
-	assertpkg.Equal(t, "email", msg.MessageType, "MessageType")
-	assertpkg.Equal(t, "Hello, generated world!", msg.Body, "Body")
-	requirepkg.Len(t, msg.Attachments, 1, "len(Attachments)")
-	assertpkg.Equal(t, int64(52), msg.Attachments[0].ID, "Attachments[0].ID")
-	assertpkg.Equal(t, "doc.pdf", msg.Attachments[0].Filename, "Attachments[0].Filename")
-	assertpkg.Equal(t, "hash-123", msg.Attachments[0].ContentHash, "Attachments[0].ContentHash")
-	requirepkg.NotNil(t, msg.DeletedAt, "DeletedAt")
-	assertpkg.Equal(t, "2026-03-18T15:00:00Z", msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
+	require.NoError(
+		err, "GetMessage")
+
+	require.NotNil(msg, "GetMessage returned nil")
+	assert.Equal(int64(42), msg.ID, "ID")
+	assert.Equal(int64(7), msg.ConversationID, "ConversationID")
+	assert.Equal("Generated detail", msg.Subject, "Subject")
+	assert.Equal("email", msg.MessageType, "MessageType")
+	assert.Equal("Hello, generated world!", msg.Body, "Body")
+	require.Len(msg.Attachments, 1, "len(Attachments)")
+	assert.Equal(int64(52), msg.Attachments[0].ID, "Attachments[0].ID")
+	assert.Equal("doc.pdf", msg.Attachments[0].Filename, "Attachments[0].Filename")
+	assert.Equal("hash-123", msg.Attachments[0].ContentHash, "Attachments[0].ContentHash")
+	require.NotNil(msg.DeletedAt, "DeletedAt")
+	assert.Equal("2026-03-18T15:00:00Z", msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
 func TestListMessages_ZeroLimit(t *testing.T) {
@@ -1581,6 +1617,12 @@ func TestListMessages_NegativeLimit(t *testing.T) {
 }
 
 func TestListMessagesUsesGeneratedClientAdapter(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assertpkg.Equal(t, "/api/v1/messages", r.URL.Path, "path")
 		assertpkg.Equal(t, "3", r.URL.Query().Get("page"), "page")
@@ -1596,24 +1638,26 @@ func TestListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	})
 
 	msgs, total, err := s.ListMessages(40, 20)
-	requirepkg.NoError(t, err, "ListMessages")
-	assertpkg.Equal(t, int64(55), total, "total")
-	requirepkg.Len(t, msgs, 1, "len(msgs)")
-	assertpkg.Equal(t, int64(42), msgs[0].ID, "ID")
-	assertpkg.Equal(t, int64(7), msgs[0].ConversationID, "ConversationID")
-	assertpkg.Equal(t, "Generated message", msgs[0].Subject, "Subject")
-	assertpkg.Equal(t, "sms", msgs[0].MessageType, "MessageType")
-	assertpkg.Equal(t, "Alice <alice@example.com>", msgs[0].From, "From")
-	assertpkg.Equal(t, "msg-42", msgs[0].SourceMessageID, "SourceMessageID")
-	assertpkg.Equal(t, "alice@example.com", msgs[0].FromEmail, "FromEmail")
-	assertpkg.Equal(t, "Alice", msgs[0].FromName, "FromName")
-	assertpkg.Equal(t, "+15555550123", msgs[0].FromPhone, "FromPhone")
-	assertpkg.Equal(t, []string{"carol@example.com"}, msgs[0].Cc, "Cc")
-	assertpkg.Equal(t, []string{"dave@example.com"}, msgs[0].Bcc, "Bcc")
-	assertpkg.True(t, msgs[0].HasAttachments, "HasAttachments")
-	assertpkg.Equal(t, int64(1234), msgs[0].SizeEstimate, "SizeEstimate")
-	requirepkg.NotNil(t, msgs[0].DeletedAt, "DeletedAt")
-	assertpkg.Equal(t, "2026-03-18T15:00:00Z", msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
+	require.NoError(
+		err, "ListMessages")
+
+	assert.Equal(int64(55), total, "total")
+	require.Len(msgs, 1, "len(msgs)")
+	assert.Equal(int64(42), msgs[0].ID, "ID")
+	assert.Equal(int64(7), msgs[0].ConversationID, "ConversationID")
+	assert.Equal("Generated message", msgs[0].Subject, "Subject")
+	assert.Equal("sms", msgs[0].MessageType, "MessageType")
+	assert.Equal("Alice <alice@example.com>", msgs[0].From, "From")
+	assert.Equal("msg-42", msgs[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("alice@example.com", msgs[0].FromEmail, "FromEmail")
+	assert.Equal("Alice", msgs[0].FromName, "FromName")
+	assert.Equal("+15555550123", msgs[0].FromPhone, "FromPhone")
+	assert.Equal([]string{"carol@example.com"}, msgs[0].Cc, "Cc")
+	assert.Equal([]string{"dave@example.com"}, msgs[0].Bcc, "Bcc")
+	assert.True(msgs[0].HasAttachments, "HasAttachments")
+	assert.Equal(int64(1234), msgs[0].SizeEstimate, "SizeEstimate")
+	require.NotNil(msgs[0].DeletedAt, "DeletedAt")
+	assert.Equal("2026-03-18T15:00:00Z", msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
 func TestSearchMessages_ZeroLimit(t *testing.T) {
@@ -1656,6 +1700,12 @@ func TestSearchMessages_QueryEncoding(t *testing.T) {
 }
 
 func TestSearchMessagesUsesGeneratedClientAdapter(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assertpkg.Equal(t, "/api/v1/search", r.URL.Path, "path")
 		assertpkg.Equal(t, "hello world", r.URL.Query().Get("q"), "q")
@@ -1673,23 +1723,25 @@ func TestSearchMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	})
 
 	msgs, total, err := s.SearchMessages("hello world", 40, 20)
-	requirepkg.NoError(t, err, "SearchMessages")
-	assertpkg.Equal(t, int64(55), total, "total")
-	requirepkg.Len(t, msgs, 1, "len(msgs)")
-	assertpkg.Equal(t, int64(42), msgs[0].ID, "ID")
-	assertpkg.Equal(t, int64(7), msgs[0].ConversationID, "ConversationID")
-	assertpkg.Equal(t, "Generated search hit", msgs[0].Subject, "Subject")
-	assertpkg.Equal(t, "sms", msgs[0].MessageType, "MessageType")
-	assertpkg.Equal(t, "msg-42", msgs[0].SourceMessageID, "SourceMessageID")
-	assertpkg.Equal(t, "alice@example.com", msgs[0].FromEmail, "FromEmail")
-	assertpkg.Equal(t, "Alice", msgs[0].FromName, "FromName")
-	assertpkg.Equal(t, "+15555550123", msgs[0].FromPhone, "FromPhone")
-	assertpkg.Equal(t, []string{"carol@example.com"}, msgs[0].Cc, "Cc")
-	assertpkg.Equal(t, []string{"dave@example.com"}, msgs[0].Bcc, "Bcc")
-	assertpkg.True(t, msgs[0].HasAttachments, "HasAttachments")
-	assertpkg.Equal(t, int64(1234), msgs[0].SizeEstimate, "SizeEstimate")
-	requirepkg.NotNil(t, msgs[0].DeletedAt, "DeletedAt")
-	assertpkg.Equal(t, "2026-03-18T15:00:00Z", msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
+	require.NoError(
+		err, "SearchMessages")
+
+	assert.Equal(int64(55), total, "total")
+	require.Len(msgs, 1, "len(msgs)")
+	assert.Equal(int64(42), msgs[0].ID, "ID")
+	assert.Equal(int64(7), msgs[0].ConversationID, "ConversationID")
+	assert.Equal("Generated search hit", msgs[0].Subject, "Subject")
+	assert.Equal("sms", msgs[0].MessageType, "MessageType")
+	assert.Equal("msg-42", msgs[0].SourceMessageID, "SourceMessageID")
+	assert.Equal("alice@example.com", msgs[0].FromEmail, "FromEmail")
+	assert.Equal("Alice", msgs[0].FromName, "FromName")
+	assert.Equal("+15555550123", msgs[0].FromPhone, "FromPhone")
+	assert.Equal([]string{"carol@example.com"}, msgs[0].Cc, "Cc")
+	assert.Equal([]string{"dave@example.com"}, msgs[0].Bcc, "Bcc")
+	assert.True(msgs[0].HasAttachments, "HasAttachments")
+	assert.Equal(int64(1234), msgs[0].SizeEstimate, "SizeEstimate")
+	require.NotNil(msgs[0].DeletedAt, "DeletedAt")
+	assert.Equal("2026-03-18T15:00:00Z", msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
 func TestListMessages_PageCalculation(t *testing.T) {
@@ -1748,6 +1800,12 @@ func TestListAccounts_Success(t *testing.T) {
 }
 
 func TestListAccountsUsesGeneratedClientAdapter(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.
+			New(t)
+
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assertpkg.Equal(t, "/api/v1/accounts", r.URL.Path, "path")
 		writeJSONResponse(t, w, generated.AccountListResponse{
@@ -1766,15 +1824,17 @@ func TestListAccountsUsesGeneratedClientAdapter(t *testing.T) {
 	})
 
 	accounts, err := s.ListAccounts()
-	requirepkg.NoError(t, err, "ListAccounts")
-	requirepkg.Len(t, accounts, 1, "len(accounts)")
-	assertpkg.Equal(t, int64(42), accounts[0].ID, "ID")
-	assertpkg.Equal(t, "user@gmail.com", accounts[0].Email, "Email")
-	assertpkg.Equal(t, "User", accounts[0].DisplayName, "DisplayName")
-	assertpkg.Equal(t, "2026-06-29T15:30:00Z", accounts[0].LastSyncAt, "LastSyncAt")
-	assertpkg.Equal(t, "2026-06-30T15:30:00Z", accounts[0].NextSyncAt, "NextSyncAt")
-	assertpkg.Equal(t, "0 2 * * *", accounts[0].Schedule, "Schedule")
-	assertpkg.True(t, accounts[0].Enabled, "Enabled")
+	require.NoError(
+		err, "ListAccounts")
+
+	require.Len(accounts, 1, "len(accounts)")
+	assert.Equal(int64(42), accounts[0].ID, "ID")
+	assert.Equal("user@gmail.com", accounts[0].Email, "Email")
+	assert.Equal("User", accounts[0].DisplayName, "DisplayName")
+	assert.Equal("2026-06-29T15:30:00Z", accounts[0].LastSyncAt, "LastSyncAt")
+	assert.Equal("2026-06-30T15:30:00Z", accounts[0].NextSyncAt, "NextSyncAt")
+	assert.Equal("0 2 * * *", accounts[0].Schedule, "Schedule")
+	assert.True(accounts[0].Enabled, "Enabled")
 }
 
 // readCloser wraps a string in an io.ReadCloser. The embedded *strings.Reader

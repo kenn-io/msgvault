@@ -141,6 +141,11 @@ daemon_auto_restart = "sometimes"
 }
 
 func TestLoadWithAnalyticsConfig(t *testing.T) {
+	assert := assertpkg.
+		New(t)
+	require :=
+		requirepkg.New(t)
+
 	tmpDir := t.TempDir()
 
 	configContent := `
@@ -149,13 +154,15 @@ engine = "SQL"
 auto_build_cache = false
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+	require.NoError(
+		os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
 
 	cfg, err := Load(configPath, "")
-	requirepkg.NoError(t, err, "Load()")
+	require.NoError(
+		err, "Load()")
 
-	assertpkg.Equal(t, AnalyticsEngineSQL, cfg.Analytics.Engine)
-	assertpkg.False(t, cfg.Analytics.AutoBuildCache)
+	assert.Equal(AnalyticsEngineSQL, cfg.Analytics.Engine)
+	assert.False(cfg.Analytics.AutoBuildCache)
 }
 
 func TestLoadWithInvalidAnalyticsEngine(t *testing.T) {
