@@ -334,14 +334,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	if err := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate); err != nil {
-		logger.Error("daemon shutdown error", "error", err)
-		return err
-	}
+	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate)
+	// Wait for the background vector init regardless of the shutdown
+	// outcome: the deferred s.Close() must not run under a still-running
+	// init goroutine, and vectors.db needs closing whenever init finished.
 	if vectorInit.WaitTimeout(serveOperationDrainTimeout) {
 		vectorInit.CloseFeatures()
 	} else {
 		logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
+	}
+	if shutdownErr != nil {
+		logger.Error("daemon shutdown error", "error", shutdownErr)
+		return shutdownErr
 	}
 	if serverStartupErr != nil {
 		return fmt.Errorf("API server: %w", serverStartupErr)

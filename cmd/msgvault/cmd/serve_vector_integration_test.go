@@ -19,8 +19,8 @@ import (
 // TestRunServeServesHealthWhileVectorInitBlocked verifies the daemon starts
 // serving the HTTP API — with /health reporting vector status "initializing"
 // — before the expensive vector backend setup completes. The vector init
-// seam is overridden to block until released, so a passing test proves the
-// API listener comes up independently of vector maintenance.
+// seam is overridden to block until daemon shutdown, so a passing test
+// proves the API listener comes up independently of vector maintenance.
 func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	oldCfg := cfg
 	dataDir := t.TempDir()
@@ -34,12 +34,12 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	cfg = c
 	t.Cleanup(func() { cfg = oldCfg })
 
-	release := make(chan struct{})
+	// The seam blocks until the daemon shuts down (ctx cancelled), so
+	// health is polled while vector init is guaranteed still pending. It
+	// only returns once ctx is done, so ctx.Err() is always non-nil and
+	// the seam never yields (nil, nil).
 	overrideSetupVectorFeatures(t, func(ctx context.Context, _ *store.Store, _ string, _ bool) (*vectorFeatures, error) {
-		select {
-		case <-release:
-		case <-ctx.Done():
-		}
+		<-ctx.Done()
 		return nil, ctx.Err()
 	})
 
@@ -76,9 +76,8 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	require.NotNil(t, health.Vector)
 	assert.Equal(t, "initializing", health.Vector.Status)
 
-	// Release the blocked init, then shut down via context cancellation and
-	// confirm a clean exit.
-	close(release)
+	// Shut down via context cancellation (which also unblocks the seam)
+	// and confirm a clean exit.
 	cancel()
 
 	select {
