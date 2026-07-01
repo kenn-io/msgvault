@@ -138,7 +138,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	// First request should succeed
 	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req1.RemoteAddr = "127.0.0.1:1234"
+	req1.RemoteAddr = "203.0.113.7:1234"
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, req1)
 
@@ -146,7 +146,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	// Second immediate request should be rate limited
 	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req2.RemoteAddr = "127.0.0.1:1234"
+	req2.RemoteAddr = "203.0.113.7:1234"
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 
@@ -154,4 +154,26 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	// Check Retry-After header
 	assert.NotEmpty(t, w2.Header().Get("Retry-After"), "missing Retry-After header on rate limited response")
+}
+
+func TestRateLimitMiddlewareExemptsLoopback(t *testing.T) {
+	rl := NewRateLimiter(1, 1) // would reject the second request if applied
+	middleware := RateLimitMiddleware(rl)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// The local TUI/CLI bursts far past the remote budget (daemon discovery
+	// alone fires a dozen parallel pings), so loopback clients must never
+	// see 429 regardless of request rate.
+	for _, remoteAddr := range []string{"127.0.0.1:1234", "[::1]:1234"} {
+		for range 30 {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.RemoteAddr = remoteAddr
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "loopback request from %s must not be rate limited", remoteAddr)
+		}
+	}
 }
