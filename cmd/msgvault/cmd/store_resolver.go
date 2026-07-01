@@ -467,7 +467,24 @@ func waitForUsableBackgroundRuntimeOrLaunchLock(
 			return rt, nil, nil
 		}
 		if lock, ok := acquireBackgroundLaunchLock(dataDir); ok {
-			return nil, lock, nil
+			inProgress, err := daemonStartInProgress(ctx, dataDir)
+			if err != nil {
+				_ = lock.Unlock()
+				return nil, nil, err
+			}
+			if !inProgress {
+				return nil, lock, nil
+			}
+			// A previous `serve start` released the launch lock after its
+			// short readiness wait, but its background child is still
+			// initializing (a live runtime record not yet answering the
+			// daemon ping). Taking over now would spawn a duplicate daemon
+			// that fails on the port/ownership lock and surfaces an opaque
+			// error. Release and keep polling: the child's record becomes
+			// ping-responsive when ready (the loop-top probe returns it),
+			// and if the child dies its record stops being live so takeover
+			// proceeds on a later iteration.
+			_ = lock.Unlock()
 		}
 		select {
 		case <-ctx.Done():
@@ -477,4 +494,28 @@ func waitForUsableBackgroundRuntimeOrLaunchLock(
 			return nil, nil, nil
 		}
 	}
+}
+
+// daemonStartInProgress reports whether a live msgvault process holds a
+// runtime record that is not yet answering the daemon ping — i.e. a daemon
+// child that is still initializing. A released launch lock is not proof the
+// previous starter's child died: `serve start` releases the lock after a
+// short readiness wait while its child may still be starting up. A record
+// that IS answering the ping does not block takeover here (a compatible one
+// is already returned by the loop-top probe; an incompatible or
+// upgrade-eligible one is stopped by prepareBackgroundDaemonStart).
+func daemonStartInProgress(ctx context.Context, dataDir string) (bool, error) {
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	if err != nil {
+		return false, err
+	}
+	for _, rec := range records {
+		if _, probeErr := probeDaemonRuntimeRecord(ctx, rec); probeErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -563,6 +563,83 @@ func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testi
 	assert.Equal("http://127.0.0.1:9911", info.URL)
 }
 
+func TestWaitForUsableBackgroundRuntimeReturnsLockWhenNoDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+
+	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
+		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+	)
+	require.NoError(err, "wait should not error when no daemon is running")
+	assert.Nil(rt, "no runtime")
+	require.NotNil(lock, "should acquire launch lock when no daemon is starting")
+	_ = lock.Unlock()
+}
+
+func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	dataDir := t.TempDir()
+
+	// A live process (this test) owns a runtime record whose recorded
+	// endpoint is not answering the daemon ping — i.e. a `serve start`
+	// child that is still initializing after its parent released the lock.
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:       "127.0.0.1",
+			runtimePort:       "1",
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
+		context.Background(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond,
+	)
+	require.NoError(err, "wait should reach the timeout path without error")
+	assert.Nil(rt, "initializing child is not yet usable")
+	assert.Nil(lock, "must not hand out the launch lock while a child is starting")
+}
+
+func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	withTestVersion(t, "v1.1.0")
+	dataDir := t.TempDir()
+	ping := httptestPingDaemon(t)
+
+	// An older, ping-responding daemon is eligible for upgrade under the
+	// "newer" policy, so takeover is allowed and a lock is returned.
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(ping.Host, strconv.Itoa(ping.Port)),
+		Service: daemonService,
+		Version: "v1.0.0",
+		Metadata: map[string]string{
+			runtimeHost:       ping.Host,
+			runtimePort:       strconv.Itoa(ping.Port),
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
+		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+	)
+	require.NoError(err, "wait should not error")
+	assert.Nil(rt, "upgrade-eligible daemon must not be returned as usable")
+	require.NotNil(lock, "ping-responding upgrade-eligible daemon should allow takeover")
+	_ = lock.Unlock()
+}
+
 func withStoreResolverConfig(t *testing.T, c *config.Config) {
 	t.Helper()
 	oldCfg := cfg
