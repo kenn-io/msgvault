@@ -368,6 +368,28 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	assert.Equal(int64(52), msg.Attachments[0].ID, "Attachments[0].ID")
 }
 
+func TestEngineGetMessageRendersLargeIDInPath(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/messages/24489626", r.URL.Path, "path")
+		writeJSONResponse(t, w, map[string]any{
+			"id":      24489626,
+			"subject": "Large ID detail",
+			"from":    "alice@example.com",
+			"sent_at": "2024-01-15T10:30:00Z",
+		})
+	})
+
+	engine := NewEngineAdapter(store)
+
+	msg, err := engine.GetMessage(context.Background(), 24489626)
+	require.NoError(err, "GetMessage")
+	require.NotNil(msg, "GetMessage returned nil")
+	assert.Equal("Large ID detail", msg.Subject, "Subject")
+}
+
 func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

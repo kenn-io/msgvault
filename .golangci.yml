@@ -170,8 +170,13 @@ linters:
       # Internal-to-internal calls preserve full type info; stdlib SQL/HTTP
       # errors are routinely returned verbatim from helpers, and `os`/
       # `encoding/json` errors already include the operation in their message.
+      # The generated API client runtime returns typed errors (ClientAPIError,
+      # ResponseDecodeError) that callers detect with errors.Is/As; transparent
+      # decorators over its interfaces return those verbatim, and wrapping would
+      # break that detection.
       ignore-package-globs:
         - go.kenn.io/msgvault/*
+        - github.com/doordash-oss/oapi-codegen-dd/*
         - database/sql
         - database/sql/*
         - io

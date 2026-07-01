@@ -64,6 +64,52 @@ func TestRunQueryDecodesScalarCells(t *testing.T) {
 	assert.Equal(true, got.Rows[0][2], "bool cell")
 }
 
+func TestGetMessageRendersLargeIDInPath(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/messages/24489626", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":24489626,"subject":"Large ID"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+
+	resp, err := c.GetMessageWithResponse(context.Background(), &generated.GetMessageRequestOptions{
+		PathParams: &generated.GetMessagePath{ID: 24489626},
+	})
+	require.NoError(err, "GetMessageWithResponse")
+	require.NotNil(resp.JSON200, "JSON200")
+	assert.Equal(int64(24489626), resp.JSON200.ID, "id")
+}
+
+func TestListMessagesRendersLargeQueryValue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/messages", r.URL.Path, "path")
+		assert.Equal("12345678", r.URL.Query().Get("page"), "page query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"page":12345678,"page_size":20,"total":0}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+
+	page := int64(12345678)
+	resp, err := c.ListMessagesWithResponse(context.Background(), &generated.ListMessagesRequestOptions{
+		Query: &generated.ListMessagesQuery{Page: &page},
+	})
+	require.NoError(err, "ListMessagesWithResponse")
+	require.NotNil(resp.JSON200, "JSON200")
+	assert.Equal(int64(12345678), resp.JSON200.Page, "page")
+}
+
 func TestAddAccountAcceptsIdempotentOK(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
