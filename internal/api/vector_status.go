@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -50,9 +52,26 @@ func (s *Server) VectorStatus() (VectorStatus, string) {
 	return s.vectorStatus, s.vectorErr
 }
 
-//nolint:unparam // hybridEngine is used by vector handlers in later tasks
 func (s *Server) vectorComponents() (*hybrid.Engine, vector.Backend, vector.Config) {
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()
 	return s.hybridEngine, s.backend, s.vectorCfg
+}
+
+// writeVectorUnavailable reports why vector search cannot serve a request
+// right now: still initializing (daemon background migration), failed to
+// initialize, or simply not enabled.
+func (s *Server) writeVectorUnavailable(w http.ResponseWriter) {
+	status, errMsg := s.VectorStatus()
+	switch status {
+	case VectorStatusInitializing:
+		writeError(w, http.StatusServiceUnavailable, "vector_initializing",
+			"vector search is initializing (schema migration or backfill in progress); retry shortly")
+	case VectorStatusError:
+		writeError(w, http.StatusServiceUnavailable, "vector_init_failed",
+			"vector search failed to initialize: "+errMsg)
+	default:
+		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
+			"vector search is not configured on this server")
+	}
 }

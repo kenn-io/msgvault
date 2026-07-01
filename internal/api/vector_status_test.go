@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +103,59 @@ func TestSetVectorFeaturesConcurrentReads(t *testing.T) {
 
 	status, _ := srv.VectorStatus()
 	assert.Equal(t, VectorStatusReady, status)
+}
+
+func TestSimilarSearchStatusAware503(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      VectorStatus
+		initErr     error
+		wantCode    string
+		wantMessage string
+	}{
+		{"initializing", VectorStatusInitializing, nil, "vector_initializing", "initializing"},
+		{"error", VectorStatusError, errors.New("migration exploded"), "vector_init_failed", "migration exploded"},
+		{"disabled", VectorStatusDisabled, nil, "vector_not_enabled", "not configured"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := testServerOptions(t, nil)
+			opts.VectorStatus = tt.status
+			srv := NewServerWithOptions(opts)
+			if tt.initErr != nil {
+				srv.SetVectorInitError(tt.initErr)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
+			rec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+			var body struct {
+				Error   string `json:"error"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, tt.wantCode, body.Error)
+			assert.Contains(t, body.Message, tt.wantMessage)
+		})
+	}
+}
+
+func TestHybridSearchInitializing503(t *testing.T) {
+	opts := testServerOptions(t, nil)
+	opts.VectorStatus = VectorStatusInitializing
+	opts.Store = &mockStore{}
+	srv := NewServerWithOptions(opts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=hybrid", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	var body struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "vector_initializing", body.Error)
 }

@@ -424,7 +424,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	// Vector stats are best-effort: log errors but still include
 	// whatever partial stats came back.
-	vs, vsErr := vector.CollectStats(r.Context(), s.backend)
+	_, backend, _ := s.vectorComponents()
+	vs, vsErr := vector.CollectStats(r.Context(), backend)
 	if vsErr != nil {
 		s.logger.Warn("vector stats", "error", vsErr)
 	}
@@ -597,7 +598,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if pageSize < 1 {
 			pageSize = 20
 		}
-		if maxPage := s.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && pageSize > maxPage {
+		_, _, vectorCfg := s.vectorComponents()
+		if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && pageSize > maxPage {
 			pageSize = maxPage
 		}
 		s.handleHybridSearch(w, r, query, parsedQuery, mode, explain, pageSize, scope)
@@ -673,9 +675,9 @@ func (s *Server) handleHybridSearch(
 	q string, parsed *search.Query, mode string, explain bool, pageSize int,
 	scope cliScope,
 ) {
-	if s.hybridEngine == nil {
-		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
-			"vector search is not configured on this server")
+	hybridEngine, _, _ := s.vectorComponents()
+	if hybridEngine == nil {
+		s.writeVectorUnavailable(w)
 		return
 	}
 	ctx := r.Context()
@@ -698,7 +700,7 @@ func (s *Server) handleHybridSearch(
 		subjectTerms = append(subjectTerms, strings.ToLower(t))
 	}
 
-	filter, err := s.hybridEngine.BuildFilter(ctx, parsed)
+	filter, err := hybridEngine.BuildFilter(ctx, parsed)
 	if err != nil {
 		s.logger.Error("build hybrid filter failed", "query", q, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "filter resolution failed")
@@ -714,7 +716,7 @@ func (s *Server) handleHybridSearch(
 		Explain:      explain,
 	}
 
-	hits, meta, err := s.hybridEngine.Search(ctx, req)
+	hits, meta, err := hybridEngine.Search(ctx, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, vector.ErrNotEnabled):
@@ -806,9 +808,9 @@ func (s *Server) handleHybridSearch(
 }
 
 func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
-	if s.backend == nil {
-		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
-			"vector search is not configured on this server")
+	_, backend, vectorCfg := s.vectorComponents()
+	if backend == nil {
+		s.writeVectorUnavailable(w)
 		return
 	}
 	if s.store == nil {
@@ -826,7 +828,7 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 	if limit < 1 {
 		limit = 20
 	}
-	if maxPage := s.vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
+	if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && limit > maxPage {
 		limit = maxPage
 	}
 
@@ -837,23 +839,23 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	active, err := vector.ResolveActiveForFingerprint(ctx, s.backend, s.vectorCfg.GenerationFingerprint())
+	active, err := vector.ResolveActiveForFingerprint(ctx, backend, vectorCfg.GenerationFingerprint())
 	if err != nil {
 		s.writeVectorSearchError(w, err, "active generation")
 		return
 	}
-	if err := hybrid.ValidateBuildScope(s.vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
+	if err := hybrid.ValidateBuildScope(vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
 		s.writeVectorSearchError(w, err, "scope validation")
 		return
 	}
 
-	seed, err := s.backend.LoadVector(ctx, seedID)
+	seed, err := backend.LoadVector(ctx, seedID)
 	if err != nil {
 		s.writeVectorSearchError(w, err, "load seed vector")
 		return
 	}
 
-	hits, err := s.backend.Search(ctx, active.ID, seed, limit+1, filter)
+	hits, err := backend.Search(ctx, active.ID, seed, limit+1, filter)
 	if err != nil {
 		s.writeVectorSearchError(w, err, "similar search")
 		return
