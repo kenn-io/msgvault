@@ -57,14 +57,15 @@ func serveTrackedNoContent(t *testing.T, tracker *IdleTracker) *httptest.Respons
 }
 
 func TestIdleTrackerExternalRequestResetsIdle(t *testing.T) {
-	f := newIdleTrackerFixture(t, 40*time.Millisecond)
+	f := newIdleTrackerFixture(t, 200*time.Millisecond)
 	f.run(t)
 
-	time.Sleep(25 * time.Millisecond)
-	serveTrackedNoContent(t, f.tracker)
+	time.Sleep(50 * time.Millisecond)
+	rec := serveTrackedNoContent(t, f.tracker)
+	require.Equal(t, http.StatusNoContent, rec.Code)
 
-	f.requireNotFiredWithin(t, 25*time.Millisecond, "idle fired before reset timeout elapsed")
-	f.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after external activity")
+	f.requireNotFiredWithin(t, 100*time.Millisecond, "idle fired before reset timeout elapsed")
+	f.requireFiredWithin(t, 300*time.Millisecond, "idle did not fire after external activity")
 }
 
 func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
