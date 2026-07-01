@@ -1823,6 +1823,9 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	// #nosec G304,G703 -- contentHash is validated as a SHA-256 hex digest and
 	// StoragePath anchors it under the configured attachments directory.
+	//
+	// codeql[go/path-injection] -- StoragePath validates the hash and anchors
+	// the resulting path under AttachmentsDir.
 	f, err := os.Open(storagePath)
 	if err != nil {
 		if os.IsNotExist(err) {

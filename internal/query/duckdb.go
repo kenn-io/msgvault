@@ -197,6 +197,8 @@ func (e *DuckDBEngine) QuerySQL(
 	// views match the current Parquet schema.
 	e.ensureFreshOptionalCols()
 
+	// codeql[go/sql-injection] -- QuerySQL is an explicit trusted-user SQL
+	// interface over the user's local archive, not an injection boundary.
 	rows, err := e.db.QueryContext(ctx, sqlStr)
 	if err != nil {
 		return nil, fmt.Errorf("execute query: %w", err)

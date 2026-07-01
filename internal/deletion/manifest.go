@@ -129,6 +129,8 @@ func sanitizeForFilename(s string) string {
 
 // LoadManifest reads a manifest from a JSON file.
 func LoadManifest(path string) (*Manifest, error) {
+	// codeql[go/path-injection] -- manifest paths are explicit local CLI
+	// inputs from the privileged user, not a security boundary.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -145,6 +147,9 @@ func LoadManifest(path string) (*Manifest, error) {
 // Save writes the manifest to a JSON file.
 func (m *Manifest) Save(path string) error {
 	// Ensure parent directory exists
+	//
+	// codeql[go/path-injection] -- manifest paths are explicit local CLI
+	// inputs from the privileged user, not a security boundary.
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}

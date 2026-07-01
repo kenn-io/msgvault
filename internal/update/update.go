@@ -417,6 +417,8 @@ func extractTarGz(archivePath, destDir string) error {
 
 	tr := tar.NewReader(gzr)
 	for {
+		// codeql[go/zipslip] -- every tar entry name is passed through
+		// sanitizeTarPath before any filesystem operation.
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -511,6 +513,8 @@ func extractZip(archivePath, destDir string) error {
 	}
 	defer func() { _ = r.Close() }()
 
+	// codeql[go/zipslip] -- every zip entry name is passed through
+	// sanitizeTarPath before any filesystem operation.
 	for _, f := range r.File {
 		target, err := sanitizeTarPath(absDestDir, f.Name)
 		if err != nil {
