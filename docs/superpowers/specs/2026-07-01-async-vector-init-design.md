@@ -61,6 +61,20 @@ does not need it.
   - `disabled`: current behavior (vector search not enabled).
 - `/api/v1/stats` includes the vector status alongside the existing
   `vector_search` stats block (which is only populated once ready).
+- `/health` (`HealthResponse`) gains an optional `vector` object with
+  `status` and `error` fields so the daemon status is never blind to an
+  in-progress or failed vector init. Omitted when vector is disabled.
+- OpenAPI artifacts (`api/openapi.yaml`, `pkg/client/*`) are regenerated
+  (`make openapi`) since `HealthResponse` and `StatsResponse` change.
+
+### Daemon status CLI
+
+`msgvault serve status` currently prints from the kit ping probe
+(`daemon.PingInfo`), which is an external kit type we cannot extend. After
+printing the runtime lines, it additionally fetches `GET /health` from the
+running daemon's URL (short timeout, best-effort) and prints a
+`vector:  <status>` line, including the error detail when status is `error`.
+No line is printed when vector is disabled or `/health` is unreachable.
 
 ### Shutdown
 
@@ -98,6 +112,7 @@ late engine swap) is a follow-up.
   with error detail, status `error`.
 - `api.Server` unit tests: `SetVectorFeatures` visible to concurrent handler
   reads (race detector); status transitions disabled/initializing/ready/error
-  reflected in handler responses and stats.
+  reflected in handler responses, `/health`, and stats.
+- `serve status` test: prints the vector line from a live `/health` response.
 - Existing `TestSetupVectorFeatures_Disabled` and port-reservation tests stay
   green.
