@@ -15,7 +15,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
@@ -110,15 +110,15 @@ func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]a
 	req.Params.Name = name
 	req.Params.Arguments = args
 	result, err := fn(context.Background(), req)
-	requirepkg.NoError(t, err, "handler returned error")
+	require.NoError(t, err, "handler returned error")
 	return result
 }
 
 func resultText(t *testing.T, r *mcp.CallToolResult) string {
 	t.Helper()
-	requirepkg.NotEmpty(t, r.Content, "empty content")
+	require.NotEmpty(t, r.Content, "empty content")
 	tc, ok := r.Content[0].(mcp.TextContent)
-	requirepkg.True(t, ok, "expected TextContent, got %T", r.Content[0])
+	require.True(t, ok, "expected TextContent, got %T", r.Content[0])
 	return tc.Text
 }
 
@@ -126,9 +126,9 @@ func resultText(t *testing.T, r *mcp.CallToolResult) string {
 func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]any) T {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	requirepkg.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
+	require.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
 	var out T
-	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
+	require.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
 	return out
 }
 
@@ -136,7 +136,7 @@ func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]a
 func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	requirepkg.True(t, r.IsError, "expected error result")
+	require.True(t, r.IsError, "expected error result")
 	return r
 }
 
@@ -150,7 +150,7 @@ func TestSearchMessages(t *testing.T) {
 
 	t.Run("valid query", func(t *testing.T) {
 		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
-		requirepkg.Len(t, resp.Data, 1, "data")
+		require.Len(t, resp.Data, 1, "data")
 		assert.Equal(t, "Hello", resp.Data[0].Subject, "subject")
 		assert.Equal(t, "thread-abc", resp.Data[0].SourceConversationID, "SourceConversationID")
 	})
@@ -168,7 +168,7 @@ func TestSearchMessages(t *testing.T) {
 }
 
 func TestSearchFallbackToFTS(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	eng := &querytest.MockEngine{
@@ -243,7 +243,7 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 }
 
 func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var gotReq HybridSearchRequest
 	rrf := 0.42
@@ -443,7 +443,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 // would silently drop the field when false; clients that key off
 // "saturated vs not" would break.
 func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	backend := &fakeBackend{
 		active: vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -518,7 +518,7 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 		"offset": float64(1),
 		"limit":  float64(1),
 	})
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	require.Len(resp.Data, 1, "data")
 	assert.Equal(int64(20), resp.Data[0].ID, "second ranked hit")
@@ -570,7 +570,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 		"offset": float64(40),
 		"limit":  float64(20),
 	})
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	require.Len(resp.Data, 10, "data")
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
@@ -628,7 +628,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 		"offset": float64(30),
 		"limit":  float64(20),
 	})
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	require.Len(resp.Data, 20, "data")
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
@@ -683,7 +683,7 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 		"mode":  searchModeVector,
 		"limit": float64(20),
 	})
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	require.Len(resp.Data, 20, "data")
 	assert.True(resp.HasMore, "has_more")
@@ -1009,7 +1009,7 @@ func TestGetMessageToolDescriptionDoesNotReferenceFutureTools(t *testing.T) {
 	assert.NotContains(t, tool.Description, "search_in_message")
 	centerAt := tool.InputSchema.Properties["center_at"]
 	raw, err := json.Marshal(centerAt)
-	requirepkg.NoError(t, err, "marshal center_at schema")
+	require.NoError(t, err, "marshal center_at schema")
 	assert.NotContains(t, string(raw), "search_in_message")
 }
 
@@ -1040,12 +1040,12 @@ func TestGetStats_VectorDisabled(t *testing.T) {
 	// a null value.
 	r := callToolDirect(t, "get_stats", h.getStats, map[string]any{})
 	var raw map[string]json.RawMessage
-	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal raw")
+	require.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal raw")
 	assert.NotContains(raw, "vector_search", "expected 'vector_search' to be absent from JSON when backend is nil")
 }
 
 func TestGetStats_VectorEnabled(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	eng := &querytest.MockEngine{
 		Stats: &query.TotalStats{
@@ -1130,7 +1130,7 @@ func TestListMessages(t *testing.T) {
 			"after": "2024-01-01",
 			"limit": float64(10),
 		})
-		requirepkg.Len(t, resp.Data, 1, "data")
+		require.Len(t, resp.Data, 1, "data")
 		assert.Equal(t, "thread-list", resp.Data[0].SourceConversationID, "SourceConversationID")
 		assert.False(t, resp.HasMore, "has_more")
 	})
@@ -1191,8 +1191,8 @@ func TestAggregateInvalidDates(t *testing.T) {
 func createAttachmentFixture(t *testing.T, dir string, hash string, content []byte) {
 	t.Helper()
 	hashDir := filepath.Join(dir, hash[:2])
-	requirepkg.NoError(t, os.MkdirAll(hashDir, 0o755), "MkdirAll")
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(hashDir, hash), content, 0o644), "WriteFile")
+	require.NoError(t, os.MkdirAll(hashDir, 0o755), "MkdirAll")
+	require.NoError(t, os.WriteFile(filepath.Join(hashDir, hash), content, 0o644), "WriteFile")
 }
 
 func TestGetAttachment(t *testing.T) {
@@ -1210,7 +1210,7 @@ func TestGetAttachment(t *testing.T) {
 	h := &handlers{engine: eng, attachmentsDir: tmpDir}
 
 	t.Run("valid", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		r := callToolDirect(t, "get_attachment", h.getAttachment, map[string]any{"attachment_id": float64(10)})
 		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
@@ -1239,7 +1239,7 @@ func TestGetAttachment(t *testing.T) {
 	})
 
 	t.Run("empty mime type defaults to octet-stream", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		noMimeHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		noMimeContent := []byte("binary data")
@@ -1270,7 +1270,7 @@ func TestGetAttachment(t *testing.T) {
 	})
 
 	t.Run("attachment reader supplies bytes without local directory", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		var gotHash string
 		h2 := &handlers{
@@ -1298,7 +1298,7 @@ func TestGetAttachment(t *testing.T) {
 	})
 
 	t.Run("filename with spaces and unicode", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		unicodeHash := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 		unicodeContent := []byte("unicode file")
@@ -1398,7 +1398,7 @@ func TestGetAttachment(t *testing.T) {
 		bigHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		createAttachmentFixture(t, tmpDir, bigHash, nil)
 		bigPath := filepath.Join(tmpDir, bigHash[:2], bigHash)
-		requirepkg.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
+		require.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
 
 		h2 := &handlers{
 			engine: &querytest.MockEngine{
@@ -1444,14 +1444,14 @@ func TestExportAttachment(t *testing.T) {
 		wantPath := filepath.Join(destDir, "report.pdf")
 		assert.Equal(wantPath, resp.Path, "path")
 		got, err := os.ReadFile(wantPath)
-		requirepkg.NoError(t, err, "ReadFile")
+		require.NoError(t, err, "ReadFile")
 		assert.Equal(string(content), string(got), "content")
 	})
 
 	t.Run("filename collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create existing file to force collision.
-		requirepkg.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
+		require.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
@@ -1465,7 +1465,7 @@ func TestExportAttachment(t *testing.T) {
 	t.Run("directory collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create a directory with the same name as the attachment.
-		requirepkg.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
+		require.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
@@ -1478,7 +1478,7 @@ func TestExportAttachment(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
 		downloads := filepath.Join(home, "Downloads")
-		requirepkg.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
+		require.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
 
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
@@ -1791,7 +1791,7 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"query": "from:news"},
 		)
-		requirepkg.NotNil(t, saver.manifest, "manifest saver should receive manifest")
+		require.NotNil(t, saver.manifest, "manifest saver should receive manifest")
 		assert.Equal(resp.BatchID, saver.manifest.ID, "manifest ID")
 		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
 		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
@@ -1886,7 +1886,7 @@ func TestStageDeletion(t *testing.T) {
 				"from":    "news@example.com",
 			},
 		)
-		requirepkg.NotNil(t, capturedFilter.SourceID, "expected SourceID to be set")
+		require.NotNil(t, capturedFilter.SourceID, "expected SourceID to be set")
 		assert.Equal(t, int64(1), *capturedFilter.SourceID, "SourceID")
 	})
 
@@ -2044,7 +2044,7 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 }
 
 func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var gotReq SimilarSearchRequest
 	hasAttachment := true
@@ -2161,7 +2161,7 @@ func TestFindSimilarMessages_HappyPath(t *testing.T) {
 	assert.Equal(2, resp.Returned, "returned")
 	assert.Equal(int64(7), resp.Generation.ID, "generation.id")
 	assert.Equal(cfg.GenerationFingerprint(), resp.Generation.Fingerprint, "generation.fingerprint")
-	requirepkg.Len(t, resp.Messages, 2, "messages")
+	require.Len(t, resp.Messages, 2, "messages")
 	for _, m := range resp.Messages {
 		assert.NotEqual(int64(100), m.ID, "seed message 100 must not appear in results")
 	}
@@ -2405,8 +2405,8 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 
 	select {
 	case err := <-done:
-		requirepkg.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
+		require.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
 	case <-time.After(15 * time.Second):
-		requirepkg.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
+		require.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
 	}
 }

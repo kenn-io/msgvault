@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/config"
@@ -21,8 +21,8 @@ import (
 )
 
 func TestCollectionListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -59,8 +59,8 @@ func TestCollectionListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestCollectionShowUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -105,8 +105,8 @@ func TestCollectionShowUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestCollectionCreateUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -148,8 +148,8 @@ func TestCollectionCreateUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestCollectionAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -191,8 +191,8 @@ func TestCollectionAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestCollectionRemoveUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -234,8 +234,8 @@ func TestCollectionRemoveUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestCollectionDeleteUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := collectionHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -309,12 +309,12 @@ func collectionHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 				Name     string   `json:"name"`
 				Accounts []string `json:"accounts"`
 			}
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode collection create") {
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode collection create") {
 				http.Error(w, "bad create request", http.StatusBadRequest)
 				return
 			}
-			assertpkg.Equal(t, "Team", req.Name, "create name")
-			assertpkg.Equal(t, []string{"alice@example.com", "bob@example.com"}, req.Accounts, "create accounts")
+			assert.Equal(t, "Team", req.Name, "create name")
+			assert.Equal(t, []string{"alice@example.com", "bob@example.com"}, req.Accounts, "create accounts")
 			requests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"name":"Team","source_count":2}`))
@@ -342,11 +342,11 @@ func collectionHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		var req struct {
 			Accounts []string `json:"accounts"`
 		}
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode collection accounts") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode collection accounts") {
 			http.Error(w, "bad accounts request", http.StatusBadRequest)
 			return
 		}
-		assertpkg.Equal(t, []string{"alice@example.com", "bob@example.com"}, req.Accounts, "accounts")
+		assert.Equal(t, []string{"alice@example.com", "bob@example.com"}, req.Accounts, "accounts")
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"name":"Team","source_count":2}`))
@@ -387,8 +387,8 @@ func collectionHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 }
 
 func TestCollectionShowPrintsReadableSourceNames(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCfg := cfg
 	savedUseLocal := useLocal
 	defer func() {
@@ -430,7 +430,7 @@ func TestCollectionShowPrintsReadableSourceNames(t *testing.T) {
 }
 
 func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -462,7 +462,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 // number) that happened to not match a source ID would error
 // immediately instead of being looked up by identifier.
 func TestResolveAccountListNumericFallthroughResolvesIdentifier(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	st, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err, "open store")

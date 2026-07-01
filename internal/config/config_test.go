@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServerConfigDefaults(t *testing.T) {
@@ -18,7 +18,7 @@ func TestServerConfigDefaults(t *testing.T) {
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
 	cfg, err := Load("", "")
-	requirepkg.NoError(t, err, "Load()")
+	require.NoError(t, err, "Load()")
 
 	// Check server defaults
 	assert.Equal(t, 8080, cfg.Server.APIPort)
@@ -37,7 +37,7 @@ func TestAccountScheduleEmpty(t *testing.T) {
 	t.Setenv("MSGVAULT_HOME", tmpDir)
 
 	cfg, err := Load("", "")
-	requirepkg.NoError(t, err, "Load()")
+	require.NoError(t, err, "Load()")
 
 	assert.Empty(t, cfg.Accounts)
 
@@ -46,7 +46,7 @@ func TestAccountScheduleEmpty(t *testing.T) {
 }
 
 func TestLoadWithServerConfig(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -85,7 +85,7 @@ enabled = false
 }
 
 func TestLoadWithServerDaemonIdleTimeout(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -116,10 +116,10 @@ func TestLoadWithServerDaemonAutoRestart(t *testing.T) {
 daemon_auto_restart = "always"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
 
 	cfg, err := Load(configPath, "")
-	requirepkg.NoError(t, err, "Load()")
+	require.NoError(t, err, "Load()")
 
 	assert.Equal(t, DaemonAutoRestartAlways, cfg.Server.DaemonAutoRestart)
 }
@@ -132,11 +132,11 @@ func TestLoadWithInvalidServerDaemonAutoRestart(t *testing.T) {
 daemon_auto_restart = "sometimes"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
 
 	_, err := Load(configPath, "")
 
-	requirepkg.Error(t, err, "Load()")
+	require.Error(t, err, "Load()")
 	assert.Contains(t, err.Error(), "invalid [server] daemon_auto_restart")
 }
 
@@ -144,7 +144,7 @@ func TestLoadWithAnalyticsConfig(t *testing.T) {
 	assert := assert.
 		New(t)
 	require :=
-		requirepkg.New(t)
+		require.New(t)
 
 	tmpDir := t.TempDir()
 
@@ -173,10 +173,10 @@ func TestLoadWithInvalidAnalyticsEngine(t *testing.T) {
 engine = "sqlite"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
 
 	_, err := Load(configPath, "")
-	requirepkg.Error(t, err, "Load()")
+	require.Error(t, err, "Load()")
 	assert.Contains(t, err.Error(), "invalid [analytics] engine")
 }
 
@@ -191,10 +191,10 @@ func TestServerDaemonIdleTimeoutDefaultAndZero(t *testing.T) {
 daemon_idle_timeout = "0s"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile()")
 
 	loaded, err := Load(configPath, "")
-	requirepkg.NoError(t, err, "Load()")
+	require.NoError(t, err, "Load()")
 	assert.Equal(time.Duration(0), loaded.Server.DaemonIdleTimeout)
 }
 
@@ -211,7 +211,7 @@ func TestScheduledAccounts(t *testing.T) {
 
 	scheduled := cfg.ScheduledAccounts()
 
-	requirepkg.Len(t, scheduled, 2)
+	require.Len(t, scheduled, 2)
 
 	// Should contain only enabled accounts with schedules
 	emails := make(map[string]bool)
@@ -250,7 +250,7 @@ func TestGetAccountSchedule(t *testing.T) {
 				assert.Nil(t, acc, "GetAccountSchedule(%q)", tt.email)
 				return
 			}
-			requirepkg.NotNil(t, acc, "GetAccountSchedule(%q)", tt.email)
+			require.NotNil(t, acc, "GetAccountSchedule(%q)", tt.email)
 			assert.Equal(t, tt.wantSched, acc.Schedule, "GetAccountSchedule(%q).Schedule", tt.email)
 		})
 	}
@@ -266,7 +266,7 @@ func TestGetAccountScheduleReturnsCopy(t *testing.T) {
 
 	// Get a reference and mutate it
 	acc := cfg.GetAccountSchedule("test@gmail.com")
-	requirepkg.NotNil(t, acc, "GetAccountSchedule returned nil")
+	require.NotNil(t, acc, "GetAccountSchedule returned nil")
 
 	// Mutate the returned copy
 	acc.Schedule = "modified"
@@ -280,7 +280,7 @@ func TestGetAccountScheduleReturnsCopy(t *testing.T) {
 }
 
 func TestSynctechSMSSourcesConfig(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 	data := []byte(`
@@ -314,12 +314,12 @@ func TestSynctechSMSScheduledSources(t *testing.T) {
 		{Name: "unscheduled", Enabled: true, OwnerPhone: "+15550000003", Backend: "local", Path: "/tmp/inbox"},
 	}
 	got := cfg.ScheduledSynctechSMSSources()
-	requirepkg.Truef(t, len(got) == 1 && got[0].Name == "enabled", "ScheduledSynctechSMSSources = %#v", got)
+	require.Truef(t, len(got) == 1 && got[0].Name == "enabled", "ScheduledSynctechSMSSources = %#v", got)
 }
 
 func TestExpandPath(t *testing.T) {
 	home, err := os.UserHomeDir()
-	requirepkg.NoError(t, err, "failed to get user home dir")
+	require.NoError(t, err, "failed to get user home dir")
 
 	tests := []struct {
 		name        string
@@ -431,7 +431,7 @@ func TestLoadEmptyPath(t *testing.T) {
 
 	// Load with empty path should use defaults
 	cfg, err := Load("", "")
-	requirepkg.NoError(t, err, "Load(\"\")")
+	require.NoError(t, err, "Load(\"\")")
 
 	// Verify default values
 	assert.Equal(tmpDir, cfg.HomeDir)
@@ -444,7 +444,7 @@ func TestLoadEmptyPath(t *testing.T) {
 }
 
 func TestLoadWithConfigFile(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// Use a temp directory as MSGVAULT_HOME
 	tmpDir := t.TempDir()
@@ -483,12 +483,12 @@ rate_limit_qps = 10
 func TestLoadExplicitPathNotFound(t *testing.T) {
 	// When --config explicitly specifies a file that doesn't exist, Load should error
 	_, err := Load("/nonexistent/path/config.toml", "")
-	requirepkg.Error(t, err, "Load with explicit nonexistent path should return error")
+	require.Error(t, err, "Load with explicit nonexistent path should return error")
 	assert.Contains(t, err.Error(), "config file not found")
 }
 
 func TestLoadExplicitPathDerivedHomeDir(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// When --config points to a custom location, HomeDir and DataDir
 	// should derive from the config file's parent directory
@@ -520,7 +520,7 @@ rate_limit_qps = 3
 }
 
 func TestLoadExplicitPathWithDataDirOverride(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// When config file explicitly sets data_dir, that should take precedence
 	tmpDir := t.TempDir()
@@ -545,7 +545,7 @@ data_dir = "` + filepath.ToSlash(customDataDir) + `"
 }
 
 func TestLoadExplicitPathRelativePaths(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// When --config is used, relative data_dir and client_secrets should
 	// resolve against the config file's directory, not the working directory.
@@ -572,7 +572,7 @@ client_secrets = "secrets/client.json"
 }
 
 func TestLoadExplicitPathWithTilde(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// Explicit --config with ~ should be expanded before stat
 	home, err := os.UserHomeDir()
 	require.NoError(err, "failed to get user home dir")
@@ -598,17 +598,17 @@ func TestLoadConfigFilePath(t *testing.T) {
 	// ConfigFilePath should return the actual loaded path, not the default
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(""), 0o644), "failed to write config file")
+	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o644), "failed to write config file")
 
 	cfg, err := Load(configPath, "")
-	requirepkg.NoError(t, err, "Load(%q)", configPath)
+	require.NoError(t, err, "Load(%q)", configPath)
 
 	assert.Equal(t, configPath, cfg.ConfigFilePath())
 }
 
 func TestDefaultHomeExpandsTilde(t *testing.T) {
 	home, err := os.UserHomeDir()
-	requirepkg.NoError(t, err, "failed to get user home dir")
+	require.NoError(t, err, "failed to get user home dir")
 
 	t.Setenv("MSGVAULT_HOME", "~/.msgvault")
 	expected := filepath.Join(home, ".msgvault")
@@ -623,7 +623,7 @@ func assertTempDirSecured(t *testing.T, dir string) {
 		return // Windows uses DACLs, not Unix permission bits
 	}
 	info, err := os.Stat(dir)
-	requirepkg.NoError(t, err, "Stat temp dir")
+	require.NoError(t, err, "Stat temp dir")
 	got := info.Mode().Perm()
 	assert.Zero(t, got&^os.FileMode(0700), "temp dir perm = %04o, has bits beyond 0700 (extra: %04o)", got, got&^0700)
 }
@@ -631,18 +631,18 @@ func assertTempDirSecured(t *testing.T, dir string) {
 func TestMkTempDir(t *testing.T) {
 	t.Run("uses system temp when no preferred dirs", func(t *testing.T) {
 		dir, err := MkTempDir("test-*")
-		requirepkg.NoError(t, err, "MkTempDir failed")
+		require.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		_, err = os.Stat(dir)
-		requirepkg.NoError(t, err, "temp dir does not exist")
+		require.NoError(t, err, "temp dir does not exist")
 		assertTempDirSecured(t, dir)
 	})
 
 	t.Run("uses preferred dir when available", func(t *testing.T) {
 		preferred := t.TempDir()
 		dir, err := MkTempDir("test-*", preferred)
-		requirepkg.NoError(t, err, "MkTempDir failed")
+		require.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		assert.True(t, strings.HasPrefix(dir, preferred), "temp dir %q not under preferred %q", dir, preferred)
@@ -651,17 +651,17 @@ func TestMkTempDir(t *testing.T) {
 
 	t.Run("skips empty preferred dir strings", func(t *testing.T) {
 		dir, err := MkTempDir("test-*", "")
-		requirepkg.NoError(t, err, "MkTempDir failed")
+		require.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		// Should have used system temp, not errored
 		_, err = os.Stat(dir)
-		requirepkg.NoError(t, err, "temp dir does not exist")
+		require.NoError(t, err, "temp dir does not exist")
 	})
 
 	t.Run("falls back to system temp when preferred dir is inaccessible", func(t *testing.T) {
 		dir, err := MkTempDir("test-*", "/nonexistent-dir-that-does-not-exist")
-		requirepkg.NoError(t, err, "MkTempDir failed")
+		require.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		// Should have fallen back to system temp
@@ -675,7 +675,7 @@ func TestMkTempDir(t *testing.T) {
 
 		// Create a restricted temp dir so os.MkdirTemp("", ...) fails
 		restrictedTmp := t.TempDir()
-		requirepkg.NoError(t, os.Chmod(restrictedTmp, 0o500), "chmod failed")
+		require.NoError(t, os.Chmod(restrictedTmp, 0o500), "chmod failed")
 		t.Cleanup(func() { _ = os.Chmod(restrictedTmp, 0o700) })
 
 		// Probe whether the restriction actually works (root and some ACL
@@ -694,7 +694,7 @@ func TestMkTempDir(t *testing.T) {
 		t.Setenv("MSGVAULT_HOME", msgvaultHome)
 
 		dir, err := MkTempDir("test-*")
-		requirepkg.NoError(t, err, "MkTempDir failed")
+		require.NoError(t, err, "MkTempDir failed")
 		defer func() { _ = os.RemoveAll(dir) }()
 
 		expectedBase := filepath.Join(msgvaultHome, "tmp")
@@ -725,7 +725,7 @@ func TestLoadBackslashErrorHint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			assert := assert.New(t)
 			tmpDir := t.TempDir()
 			t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -749,7 +749,7 @@ func TestLoadWithHomeDir(t *testing.T) {
 	homeDir := t.TempDir()
 
 	cfg, err := Load("", homeDir)
-	requirepkg.NoError(t, err, "Load failed")
+	require.NoError(t, err, "Load failed")
 
 	assert.Equal(homeDir, cfg.HomeDir)
 	assert.Equal(homeDir, cfg.Data.DataDir)
@@ -762,7 +762,7 @@ func TestLoadWithHomeDir(t *testing.T) {
 }
 
 func TestLoadWithHomeDirReadsConfig(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// --home should load config.toml from that directory
 	homeDir := t.TempDir()
@@ -780,7 +780,7 @@ rate_limit_qps = 42
 }
 
 func TestLoadWithHomeDirExpandsTilde(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	home, err := os.UserHomeDir()
 	require.NoError(err, "failed to get user home dir")
@@ -807,10 +807,10 @@ api_port = 9090
 mcp_enabled = true
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "WriteFile()")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "WriteFile()")
 
 	cfg, err := Load("", "")
-	requirepkg.NoError(t, err, "Load() should succeed with deprecated mcp_enabled")
+	require.NoError(t, err, "Load() should succeed with deprecated mcp_enabled")
 
 	assert.Equal(t, 9090, cfg.Server.APIPort)
 }
@@ -828,7 +828,7 @@ func TestNewDefaultConfig(t *testing.T) {
 }
 
 func TestSaveAndLoad_RoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -869,10 +869,10 @@ func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
 	cfg := NewDefaultConfig()
 	cfg.HomeDir = tmpDir
 
-	requirepkg.NoError(t, cfg.Save(), "Save()")
+	require.NoError(t, cfg.Save(), "Save()")
 
 	info, err := os.Stat(cfg.ConfigFilePath())
-	requirepkg.NoError(t, err, "Stat config")
+	require.NoError(t, err, "Stat config")
 
 	// Should have no group/other permissions (0600 or stricter)
 	// Windows doesn't support Unix file permissions.
@@ -882,7 +882,7 @@ func TestSave_CreatesFileWithSecurePermissions(t *testing.T) {
 }
 
 func TestSave_TightensWeakPermissions(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix file permissions not supported on Windows")
 	}
@@ -908,7 +908,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 	}
 
 	t.Run("absolute target", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		tmpDir := t.TempDir()
 		targetDir := t.TempDir()
@@ -933,7 +933,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 	})
 
 	t.Run("relative target", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		assert := assert.New(t)
 		tmpDir := t.TempDir()
 		// Create subdir for the actual file
@@ -964,7 +964,7 @@ func TestSave_FollowsSymlink(t *testing.T) {
 }
 
 func TestSave_FailurePreservesExisting(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("cannot make directory unwritable on Windows")
@@ -1015,7 +1015,7 @@ func TestSave_FailurePreservesExisting(t *testing.T) {
 }
 
 func TestSave_OverwritesExisting(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	// Save initial config
@@ -1095,7 +1095,7 @@ func TestOAuthConfig_ClientSecretsFor(t *testing.T) {
 				assert.Error(t, err, "ClientSecretsFor(%q)", tt.appName)
 				return
 			}
-			requirepkg.NoError(t, err, "ClientSecretsFor(%q)", tt.appName)
+			require.NoError(t, err, "ClientSecretsFor(%q)", tt.appName)
 			assert.Equal(t, tt.want, got, "ClientSecretsFor(%q)", tt.appName)
 		})
 	}
@@ -1196,7 +1196,7 @@ func TestOAuthConfig_HasAnyConfig(t *testing.T) {
 }
 
 func TestLoadWithNamedOAuthApps(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -1240,7 +1240,7 @@ client_secrets = "/absolute/personal.json"
 }
 
 func TestLoadExpandsVectorDBPath(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	home, err := os.UserHomeDir()
 	require.NoError(err, "UserHomeDir")
 
@@ -1281,10 +1281,10 @@ endpoint = "http://localhost:8080/v1"
 model = "nomic-embed-text-v1.5"
 dimension = 768
 `
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile")
 
 	cfg, err := Load(configPath, "")
-	requirepkg.NoError(t, err, "Load")
+	require.NoError(t, err, "Load")
 
 	expected := filepath.Join(tmpDir, "sub/vectors.db")
 	assert.Equal(t, expected, cfg.Vector.DBPath)
@@ -1296,7 +1296,7 @@ dimension = 768
 // timeouts. Preprocess booleans use pointer semantics and are exempt
 // from this re-defaulting.
 func TestLoadReappliesVectorDefaults(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
@@ -1331,7 +1331,7 @@ strip_signatures = false
 }
 
 func TestLoadWithNamedOAuthApps_RelativePaths(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	configContent := `
@@ -1352,7 +1352,7 @@ client_secrets = "secrets/acme.json"
 }
 
 func TestLoadWithServiceAccountKeysExpandsPaths(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	home, err := os.UserHomeDir()
 	require.NoError(err, "UserHomeDir")
@@ -1382,7 +1382,7 @@ service_account_key = "~/keys/workspace-service-account.json"
 }
 
 func TestLoadWithServiceAccountKeysResolvesRelativePaths(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -1408,7 +1408,7 @@ service_account_key = "keys/workspace-service-account.json"
 }
 
 func TestLoadNamedAppsOnly_NoDefault(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	t.Setenv("MSGVAULT_HOME", tmpDir)
@@ -1440,7 +1440,7 @@ client_secrets = "/path/to/acme.json"
 }
 
 func TestSave_AllowInsecureRoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -1465,7 +1465,7 @@ func TestSave_AllowInsecureRoundTrip(t *testing.T) {
 }
 
 func TestMicrosoftConfig(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	configContent := `
@@ -1492,7 +1492,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DataDir = "/tmp/data"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		want := filepath.Join("/tmp/data", "msgvault.db")
 		assert.Equal(t, want, got)
 	})
@@ -1501,7 +1501,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "/var/lib/msgvault.db", got)
 	})
 
@@ -1509,7 +1509,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:/var/lib/msgvault.db?_journal_mode=WAL&_busy_timeout=5000"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "/var/lib/msgvault.db", got)
 	})
 
@@ -1517,7 +1517,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:/var/lib/my%20vault.db"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "/var/lib/my vault.db", got)
 	})
 
@@ -1526,7 +1526,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:msgvault.db"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "msgvault.db", got)
 	})
 
@@ -1538,7 +1538,7 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:my%20vault.db"
 		got, err := cfg.DatabasePath()
-		requirepkg.NoError(t, err, "DatabasePath")
+		require.NoError(t, err, "DatabasePath")
 		assert.Equal(t, "my vault.db", got)
 	})
 
@@ -1546,13 +1546,13 @@ func TestDatabasePath(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "postgres://user@host:5432/db"
 		_, err := cfg.DatabasePath()
-		requirepkg.Error(t, err, "DatabasePath: expected error for non-file DSN")
+		require.Error(t, err, "DatabasePath: expected error for non-file DSN")
 	})
 
 	t.Run("empty file: URI is rejected", func(t *testing.T) {
 		cfg := &Config{}
 		cfg.Data.DatabaseURL = "file:"
 		_, err := cfg.DatabasePath()
-		requirepkg.Error(t, err, "DatabasePath: expected error for empty file: URI")
+		require.Error(t, err, "DatabasePath: expected error for empty file: URI")
 	})
 }

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -30,8 +30,8 @@ import (
 )
 
 func TestServeConfigParsing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Create temp config with scheduled accounts
 	tmpDir := t.TempDir()
 	configContent := `
@@ -99,14 +99,14 @@ func TestSchedulerWithConfig(t *testing.T) {
 	count, errs := sched.AddAccountsFromConfig(cfg)
 
 	// Should schedule 2 valid accounts
-	assertpkg.Equal(t, 2, count, "scheduled count")
+	assert.Equal(t, 2, count, "scheduled count")
 
 	// Should have 1 error for invalid cron
-	assertpkg.Len(t, errs, 1, "len(errs)")
+	assert.Len(t, errs, 1, "len(errs)")
 
 	// Verify status
 	statuses := sched.Status()
-	assertpkg.Len(t, statuses, 2, "len(Status())")
+	assert.Len(t, statuses, 2, "len(Status())")
 }
 
 func TestServeCmdNoAccounts(t *testing.T) {
@@ -117,23 +117,23 @@ func TestServeCmdNoAccounts(t *testing.T) {
 client_secrets = "/path/to/secrets.json"
 `
 	configPath := filepath.Join(tmpDir, "config.toml")
-	requirepkg.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "write config")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "write config")
 
 	cfg, err := config.Load(configPath, "")
-	requirepkg.NoError(t, err, "Load")
+	require.NoError(t, err, "Load")
 
 	scheduled := cfg.ScheduledAccounts()
-	assertpkg.Empty(t, scheduled, "expected no scheduled accounts")
+	assert.Empty(t, scheduled, "expected no scheduled accounts")
 }
 
 func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
-	assertpkg.True(t, hasServeOAuthConfig(&config.Config{
+	assert.True(t, hasServeOAuthConfig(&config.Config{
 		Microsoft: config.MicrosoftConfig{ClientID: "azure-client-id"},
 	}))
 }
 
 func TestServeOAuthValidationReportsNoProviders(t *testing.T) {
-	assertpkg.False(t, hasServeOAuthConfig(&config.Config{}))
+	assert.False(t, hasServeOAuthConfig(&config.Config{}))
 }
 
 func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
@@ -157,9 +157,9 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		requirepkg.NoError(t, err, "runServe")
+		require.NoError(t, err, "runServe")
 	case <-time.After(5 * time.Second):
-		requirepkg.FailNow(t, "runServe did not stop after context cancellation")
+		require.FailNow(t, "runServe did not stop after context cancellation")
 	}
 }
 
@@ -208,8 +208,8 @@ func TestShutdownServeRuntimeDrainsGateAroundHTTPAndScheduler(t *testing.T) {
 		recordingServeGate{events: &events},
 	)
 
-	requirepkg.NoError(t, err, "shutdownServeRuntime")
-	assertpkg.Equal(t, []string{
+	require.NoError(t, err, "shutdownServeRuntime")
+	assert.Equal(t, []string{
 		"gate-start-drain",
 		"api-shutdown",
 		"scheduler-stop",
@@ -220,10 +220,10 @@ func TestShutdownServeRuntimeDrainsGateAroundHTTPAndScheduler(t *testing.T) {
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	requirepkg.NoError(t, err, "listen on free port")
-	defer func() { requirepkg.NoError(t, ln.Close(), "close listener") }()
+	require.NoError(t, err, "listen on free port")
+	defer func() { require.NoError(t, ln.Close(), "close listener") }()
 	addr, ok := ln.Addr().(*net.TCPAddr)
-	requirepkg.True(t, ok, "listener address must be TCP")
+	require.True(t, ok, "listener address must be TCP")
 	return addr.Port
 }
 
@@ -234,8 +234,8 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
-			requirepkg.NoError(t, err, "runServe exited before health was ready")
-			requirepkg.FailNow(t, "runServe exited before health was ready")
+			require.NoError(t, err, "runServe exited before health was ready")
+			require.FailNow(t, "runServe exited before health was ready")
 		default:
 		}
 		resp, err := http.Get(url) //nolint:gosec // local test server
@@ -247,12 +247,12 @@ func waitForServeHealth(t *testing.T, port int, errCh <-chan error) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	requirepkg.FailNow(t, "serve health endpoint did not become ready")
+	require.FailNow(t, "serve health endpoint did not become ready")
 }
 
 func TestRunDaemonSQLQueryRebuildsStaleCacheOutOfProcess(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
 	s, err := store.Open(c.DatabaseDSN())
@@ -282,8 +282,8 @@ func TestRunDaemonSQLQueryRebuildsStaleCacheOutOfProcess(t *testing.T) {
 }
 
 func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineSQL
 	c.Analytics.AutoBuildCache = true
@@ -300,8 +300,8 @@ func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 }
 
 func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = false
@@ -318,8 +318,8 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 }
 
 func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
@@ -339,7 +339,7 @@ func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testi
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineDuckDB
 	c.Analytics.AutoBuildCache = true
@@ -361,9 +361,9 @@ func openTestDaemonAnalyticsStore(t *testing.T) (*config.Config, *store.Store) {
 	t.Helper()
 	c := lifecycleTestConfig(t.TempDir())
 	s, err := store.Open(c.DatabaseDSN())
-	requirepkg.NoError(t, err, "open store")
+	require.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = s.Close() })
-	requirepkg.NoError(t, s.InitSchema(), "init schema")
+	require.NoError(t, s.InitSchema(), "init schema")
 	return c, s
 }
 
@@ -378,8 +378,8 @@ func stubBuildCacheSubprocess(
 }
 
 func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
@@ -436,8 +436,8 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 }
 
 func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
@@ -476,8 +476,8 @@ func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
 }
 
 func TestStoreAPIAdapterServesCLIDeleteDeduped(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	f := storetest.New(t)
 	keepID := f.CreateMessage("keep")
@@ -551,8 +551,8 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 	cfg.Vector.Enabled = false
 
 	vf, err := setupVectorFeatures(context.Background(), nil, "", false)
-	requirepkg.NoError(t, err, "setupVectorFeatures")
-	assertpkg.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
+	require.NoError(t, err, "setupVectorFeatures")
+	assert.Nil(t, vf, "setupVectorFeatures should be nil when disabled")
 }
 
 // TestRunScheduledIMAPSync_NoCredentials verifies that the IMAP path
@@ -561,8 +561,8 @@ func TestSetupVectorFeatures_Disabled(t *testing.T) {
 // rather than the misleading "oauth2: token expired and refresh token
 // is not set" message reported in #329.
 func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
@@ -602,8 +602,8 @@ func TestRunScheduledIMAPSync_NoCredentials(t *testing.T) {
 // matched against identifier, so config-driven scheduled syncs fell
 // through to the Gmail OAuth path (#329).
 func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
@@ -647,8 +647,8 @@ func TestRunScheduledIMAPSync_DispatchByDisplayName(t *testing.T) {
 // would inject e.g. "imaps://user@host:993" into account_identities
 // when the user had cleared their identities.
 func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCfg := cfg
 	defer func() { cfg = savedCfg }()
 	cfg = &config.Config{}
@@ -711,8 +711,8 @@ func TestRunScheduledIMAPSync_DefaultIdentityIsDisplayName(t *testing.T) {
 // only the matching type for single-type identifiers, and an empty slice
 // for unknown identifiers.
 func TestFindScheduledSyncSources(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -787,9 +787,9 @@ func TestCronExpressionValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := scheduler.ValidateCronExpr(tt.expr)
 			if tt.wantErr {
-				assertpkg.Error(t, err, "ValidateCronExpr(%q)", tt.expr)
+				assert.Error(t, err, "ValidateCronExpr(%q)", tt.expr)
 			} else {
-				assertpkg.NoError(t, err, "ValidateCronExpr(%q)", tt.expr)
+				assert.NoError(t, err, "ValidateCronExpr(%q)", tt.expr)
 			}
 		})
 	}

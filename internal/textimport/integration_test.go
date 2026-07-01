@@ -8,15 +8,15 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
 func TestNormalizeAddressClassifiesPhoneAndRaw(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	phone := textimport.NormalizeAddress("+1 (555) 123-4567")
 	require.Equal(textimport.AddressPhone, phone.Kind, "phone normalization = %#v", phone)
 	require.Equal("+15551234567", phone.Value, "phone normalization = %#v", phone)
@@ -29,8 +29,8 @@ func TestNormalizeAddressClassifiesPhoneAndRaw(t *testing.T) {
 // store methods, participant deduplication across sources,
 // conversation stats recomputation, and TextEngine queries.
 func TestIntegration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Create a temporary on-disk DB (store.Open does MkdirAll, WAL, etc.)

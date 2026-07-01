@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNormalizePhone(t *testing.T) {
@@ -44,13 +44,13 @@ func TestNormalizePhone(t *testing.T) {
 
 	for _, tt := range tests {
 		got := normalizePhone(tt.raw)
-		assertpkg.Equal(t, tt.want, got, "normalizePhone(%q)", tt.raw)
+		assert.Equal(t, tt.want, got, "normalizePhone(%q)", tt.raw)
 	}
 }
 
 func TestParseFile(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	vcf := `BEGIN:VCARD
 VERSION:2.1
 N:McGregor;Alastair;;;
@@ -99,8 +99,8 @@ END:VCARD
 }
 
 func TestParseFile_FoldedAndEncoded(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN:José\r\n" +
@@ -129,7 +129,7 @@ func TestParseFile_FoldedAndEncoded(t *testing.T) {
 }
 
 func TestParseFile_QPSoftBreaks(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN;ENCODING=QUOTED-PRINTABLE:Jo=C3=A3o da =\r\n" +
@@ -144,11 +144,11 @@ func TestParseFile_QPSoftBreaks(t *testing.T) {
 	contacts, err := ParseFile(path)
 	require.NoError(err, "ParseFile")
 	require.Len(contacts, 1)
-	assertpkg.Equal(t, "João da Silva", contacts[0].FullName, "QP soft break name")
+	assert.Equal(t, "João da Silva", contacts[0].FullName, "QP soft break name")
 }
 
 func TestParseFile_QPSoftBreakWithFoldedContinuation(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:2.1\r\n" +
 		"FN;ENCODING=QUOTED-PRINTABLE:Jo=C3=A3o da =\r\n" +
@@ -163,12 +163,12 @@ func TestParseFile_QPSoftBreakWithFoldedContinuation(t *testing.T) {
 	contacts, err := ParseFile(path)
 	require.NoError(err, "ParseFile")
 	require.Len(contacts, 1)
-	assertpkg.Equal(t, "João da Silva", contacts[0].FullName, "QP folded soft break name")
+	assert.Equal(t, "João da Silva", contacts[0].FullName, "QP folded soft break name")
 }
 
 func TestParseFile_Base64PhotoEqualsPaddingDoesNotEatNextLine(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Apple's modern vCard PHOTO blobs are base64 with '=' padding. The QP
 	// soft-break logic must NOT splice such lines into the following
 	// END:VCARD, or the contact gets silently dropped.
@@ -198,8 +198,8 @@ func TestParseFile_Base64PhotoEqualsPaddingDoesNotEatNextLine(t *testing.T) {
 }
 
 func TestParseFile_Emails(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:3.0\r\n" +
 		"FN:Alice Example\r\n" +
@@ -228,8 +228,8 @@ func TestParseFile_Emails(t *testing.T) {
 }
 
 func TestParseFile_GroupedProperties(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	vcf := "BEGIN:VCARD\r\n" +
 		"VERSION:3.0\r\n" +
 		"item1.FN:Grouped Person\r\n" +
@@ -262,7 +262,7 @@ func TestDecodeQuotedPrintable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := decodeQuotedPrintable(tt.input)
-		assertpkg.Equal(t, tt.want, got, "decodeQuotedPrintable(%q)", tt.input)
+		assert.Equal(t, tt.want, got, "decodeQuotedPrintable(%q)", tt.input)
 	}
 }
 
@@ -280,7 +280,7 @@ func TestExtractValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractValue(tt.line)
-		assertpkg.Equal(t, tt.want, got, "extractValue(%q)", tt.line)
+		assert.Equal(t, tt.want, got, "extractValue(%q)", tt.line)
 	}
 }
 
@@ -298,6 +298,6 @@ func TestNormalizedPropertyKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := normalizedPropertyKey(tt.line)
-		assertpkg.Equal(t, tt.want, got, "normalizedPropertyKey(%q)", tt.line)
+		assert.Equal(t, tt.want, got, "normalizedPropertyKey(%q)", tt.line)
 	}
 }

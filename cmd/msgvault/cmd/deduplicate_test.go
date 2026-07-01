@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -42,8 +42,8 @@ func TestDeduplicateNonInteractiveFormsUseDaemonRunner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			resetDeduplicateRoutingGlobals(t)
 
 			stdoutJSON, err := json.Marshal(tt.stdout)
@@ -66,8 +66,8 @@ func TestDeduplicateNonInteractiveFormsUseDaemonRunner(t *testing.T) {
 }
 
 func TestDeduplicateInteractiveAccountPlansPromptsAndExecutesThroughDaemon(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeduplicateRoutingGlobals(t)
 
 	server, runRequests, planRequests := newDaemonCLIDeduplicateTestServer(t, func(req daemonCLIDeduplicatePlanTestRequest) {
@@ -111,8 +111,8 @@ func TestDeduplicateInteractiveAccountPlansPromptsAndExecutesThroughDaemon(t *te
 }
 
 func TestDeduplicateInteractiveAccountCancelDoesNotExecute(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeduplicateRoutingGlobals(t)
 
 	server, runRequests, planRequests := newDaemonCLIDeduplicateTestServer(t, nil, map[string]any{
@@ -140,8 +140,8 @@ func TestDeduplicateInteractiveAccountCancelDoesNotExecute(t *testing.T) {
 }
 
 func TestDeduplicateInteractivePerSourcePromptsShareInput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeduplicateRoutingGlobals(t)
 
 	server, runRequests, planRequests := newDaemonCLIDeduplicateTestServer(t, nil, map[string]any{
@@ -263,17 +263,17 @@ func TestDeduplicateMutualExclusion(t *testing.T) {
 	cmd.SetArgs([]string{"deduplicate", "--account", "alpha@example.com", "--collection", "work"})
 
 	err := cmd.Execute()
-	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
+	require.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
-	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
+	assert.Contains(t, msg, "account", "error should mention account flag name")
+	assert.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }
 
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, accountID, _ := setupScopeFixture(t)
 
 	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
@@ -295,8 +295,8 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 // TestDeduplicateCollectionResolution confirms that --collection resolves
 // successfully when the name matches a real collection in the store.
 func TestDeduplicateCollectionResolution(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f, _, collectionName := setupScopeFixture(t)
 
 	scope, err := ResolveCollectionFlag(f.Store, collectionName)
@@ -310,8 +310,8 @@ func TestDeduplicateCollectionResolution(t *testing.T) {
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands
 // to all members when a collection has more than one source.
 func TestDeduplicateCollectionResolution_MultiSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	src2, err := f.Store.GetOrCreateSource("mbox", "backup@example.com")
@@ -329,8 +329,8 @@ func TestDeduplicateCollectionResolution_MultiSource(t *testing.T) {
 }
 
 func TestResolveDeduplicateScopeNonEmailCollectionReturnsInvalidError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	calendarSource, err := f.Store.GetOrCreateSource("gcal", "calendar@example.com")
@@ -384,11 +384,11 @@ func TestPrintAccumulatedUndoHint(t *testing.T) {
 			printAccumulatedUndoHint(tc.batches)
 			out := done()
 			if tc.wantNoOutput {
-				assertpkg.Empty(t, out, "expected no output")
+				assert.Empty(t, out, "expected no output")
 				return
 			}
 			for _, want := range tc.wantContains {
-				assertpkg.Contains(t, out, want, "output missing %q", want)
+				assert.Contains(t, out, want, "output missing %q", want)
 			}
 		})
 	}

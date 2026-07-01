@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/importer/mboxzip"
 	"go.kenn.io/msgvault/internal/mbox"
@@ -21,7 +21,7 @@ import (
 func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -160,7 +160,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	})
 
 	// Force attachment storage errors by making the attachments path a file.
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(tmp, "attachments"), []byte("not a dir"), 0600), "write attachments sentinel")
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "attachments"), []byte("not a dir"), 0600), "write attachments sentinel")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -180,7 +180,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	requirepkg.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
+	require.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -195,7 +195,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 
 	// Attachment storage failures are best-effort: the import
 	// succeeds even though the attachment file can't be written.
-	requirepkg.NoError(t, rootCmd.ExecuteContext(context.Background()), "expected success")
+	require.NoError(t, rootCmd.ExecuteContext(context.Background()), "expected success")
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
@@ -253,7 +253,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	}
 
 	mboxPath := filepath.Join(tmp, "export.mbox")
-	requirepkg.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
+	require.NoError(t, os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -275,14 +275,14 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	importMboxCmd.SetContext(ctx)
 
 	err := rootCmd.ExecuteContext(ctx)
-	requirepkg.Error(t, err, "expected error")
-	requirepkg.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
+	require.Error(t, err, "expected error")
+	require.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
 }
 
 func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	// Save/restore global state for cmd package.
@@ -445,6 +445,6 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 		var c int
 		err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
 		require.NoError(err, "count subject %q", subj)
-		assertpkg.Equal(t, 1, c, "subject %q count", subj)
+		assert.Equal(t, 1, c, "subject %q count", subj)
 	}
 }

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -27,13 +27,13 @@ func TestDeleteStaged_PermanentAndYesMutuallyExclusive(t *testing.T) {
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	err := cmd.Execute()
-	requirepkg.Error(t, err, "want mutual-exclusion error")
+	require.Error(t, err, "want mutual-exclusion error")
 	assert.Contains(t, err.Error(), "permanent")
 	assert.Contains(t, err.Error(), "yes")
 }
 
 func TestListDeletions_ShowsCancelled(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	mgr, err := deletion.NewManager(tmpDir)
@@ -60,7 +60,7 @@ func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
 	assert := assert.
 		New(t)
 	require :=
-		requirepkg.
+		require.
 			New(t)
 
 	dataDir := t.TempDir()
@@ -97,7 +97,7 @@ func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
 	require.NoError(
 		err, "acquire owner lock")
 
-	t.Cleanup(func() { requirepkg.NoError(t, owner.Close(), "close owner lock") })
+	t.Cleanup(func() { require.NoError(owner.Close(), "close owner lock") })
 
 	cmd := &cobra.Command{Use: "delete-staged"}
 	cmd.SetContext(context.Background())
@@ -108,7 +108,7 @@ func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {
 }
 
 func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	dataDir := t.TempDir()
@@ -153,7 +153,7 @@ func TestBuildDeleteStagedPlanPinsPlannedBatches(t *testing.T) {
 }
 
 func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	_, restore := seedTokenEnv(t, gmailOnlyTokenJSON)
@@ -185,7 +185,7 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 }
 
 func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	_, restore := seedTokenEnv(t, legacyTokenJSON)

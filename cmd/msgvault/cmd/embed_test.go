@@ -9,15 +9,15 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestEmbeddingsCommandRegistration(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 
 	buildCmd, _, err := rootCmd.Find([]string{embeddingsCommandName, "build"})
 	require.NoError(err)
@@ -59,8 +59,8 @@ func TestEmbeddingsCommandRegistration(t *testing.T) {
 }
 
 func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{embeddingsCommandName, "list"}, req.Args, "args")
@@ -86,8 +86,8 @@ func TestEmbeddingsListUsesDaemonRunner(t *testing.T) {
 }
 
 func TestEmbeddingsBuildPromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
 	t.Cleanup(func() { embedFullRebuild, embedYes, embedBackstop = oldFull, oldYes, oldBackstop })
 
@@ -120,8 +120,8 @@ func TestEmbeddingsBuildPromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestEmbeddingsResumeUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
 	t.Cleanup(func() { embedFullRebuild, embedYes, embedBackstop = oldFull, oldYes, oldBackstop })
 
@@ -151,8 +151,8 @@ func TestEmbeddingsResumeUsesDaemonRunner(t *testing.T) {
 }
 
 func TestEmbeddingsRetirePromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	oldYes, oldForce := embeddingsRetireYes, embeddingsRetireForceActive
 	t.Cleanup(func() {
 		embeddingsRetireYes, embeddingsRetireForceActive = oldYes, oldForce
@@ -196,8 +196,8 @@ func TestEmbeddingsRetirePromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestEmbeddingsActivatePromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	oldYes, oldForce := embeddingsActivateYes, embeddingsActivateForce
 	t.Cleanup(func() {
 		embeddingsActivateYes, embeddingsActivateForce = oldYes, oldForce
@@ -245,7 +245,7 @@ func TestEmbeddingsActivatePromptsBeforeDaemonRunner(t *testing.T) {
 // must leave embedBackstop exactly as the operator set it, so
 // `embeddings resume --backstop` actually runs a backstop pass.
 func TestRunEmbeddingsResume_PreservesBackstopFlag(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	// Save and restore all three globals so the test is hermetic.
 	oldFull, oldYes, oldBackstop := embedFullRebuild, embedYes, embedBackstop
@@ -276,8 +276,8 @@ func TestRunEmbeddingsResume_PreservesBackstopFlag(t *testing.T) {
 }
 
 func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	db := newEmbeddingMetadataTestDB(t)
 
 	// listEmbeddingGenerations reads only the generation metadata now;
@@ -300,8 +300,8 @@ func TestListEmbeddingGenerationsIncludesActiveAndBuilding(t *testing.T) {
 // has live messages needing embedding (embed_gen <> gen in the main DB)
 // must fail without --force.
 func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
 	// Main DB with one live, unembedded message -> coverage reports
@@ -324,8 +324,8 @@ func TestRunEmbeddingsActivateRefusesMissingWithoutForce(t *testing.T) {
 }
 
 func TestFillCoverageUsesEmbeddingScope(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))
 	seedMainDBWithScopedCoverageMessages(t, dataDir)
@@ -347,8 +347,8 @@ func TestFillCoverageUsesEmbeddingScope(t *testing.T) {
 // TestRunEmbeddingsRetire_ForceActive so this untagged test stays buildable
 // without a vector backend tag.
 func TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
 	withEmbeddingCommandConfig(t, dbPath)
 
@@ -376,8 +376,8 @@ func newEmbeddingMetadataTestDB(t *testing.T) *sql.DB {
 	path := newEmbeddingMetadataTestDBFile(t)
 
 	db, err := sql.Open("sqlite3", path)
-	requirepkg.NoError(t, err)
-	t.Cleanup(func() { requirepkg.NoError(t, db.Close()) })
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db
 }
 
@@ -392,8 +392,8 @@ func newEmbeddingMetadataTestDBFile(t *testing.T) string {
 func newEmbeddingMetadataTestDBFileAt(t *testing.T, path string) string {
 	t.Helper()
 	db, err := sql.Open("sqlite3", path)
-	requirepkg.NoError(t, err)
-	defer func() { requirepkg.NoError(t, db.Close()) }()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
 
 	_, err = db.Exec(`
 CREATE TABLE index_generations (
@@ -409,7 +409,7 @@ CREATE TABLE index_generations (
 	message_count INTEGER NOT NULL DEFAULT 0
 );
 `)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 
 	fp := newTestConfigForFingerprint("").Vector.GenerationFingerprint()
 	_, err = db.Exec(`
@@ -419,7 +419,7 @@ VALUES
 	(1, 'model', 4, ?, 100, 101, 110, 111, 'active', 2),
 	(2, 'model', 4, ?, 120, 121, NULL, NULL, 'building', 1);
 `, fp, fp)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	return path
 }
 
@@ -429,23 +429,23 @@ VALUES
 func seedMainDBWithLiveMessage(t *testing.T, dataDir string) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	requirepkg.NoError(t, err)
-	defer func() { requirepkg.NoError(t, s.Close()) }()
-	requirepkg.NoError(t, s.InitSchema())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+	require.NoError(t, s.InitSchema())
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen) VALUES (1, 1, 1, 'm1', 'email', NULL);
 `)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func seedMainDBWithScopedCoverageMessages(t *testing.T, dataDir string) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	requirepkg.NoError(t, err)
-	defer func() { requirepkg.NoError(t, s.Close()) }()
-	requirepkg.NoError(t, s.InitSchema())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+	require.NoError(t, s.InitSchema())
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
@@ -453,15 +453,15 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 	(1, 1, 1, 'email-missing', 'email', NULL),
 	(2, 2, 1, 'sms-stamped', 'sms', 2);
 `)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func seedMainDBWithScopedFullCoverageMessages(t *testing.T, dataDir string) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
-	requirepkg.NoError(t, err)
-	defer func() { requirepkg.NoError(t, s.Close()) }()
-	requirepkg.NoError(t, s.InitSchema())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+	require.NoError(t, s.InitSchema())
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread'), (2, 1, 'sms_thread');
@@ -469,7 +469,7 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 	(1, 1, 1, 'email-stamped', 'email', 2),
 	(2, 2, 1, 'sms-stamped', 'sms', 2);
 `)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func withEmbeddingCommandConfig(t *testing.T, vecPath string) {
@@ -514,6 +514,6 @@ var sqliteRebind = (&store.SQLiteDialect{}).Rebind
 func mustGetEmbeddingGeneration(ctx context.Context, t *testing.T, db *sql.DB, gen vector.GenerationID) embeddingGenerationRow {
 	t.Helper()
 	row, err := getEmbeddingGeneration(ctx, db, sqliteRebind, gen)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	return row
 }

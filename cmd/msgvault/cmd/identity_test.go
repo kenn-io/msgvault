@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -26,8 +26,8 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
 	s, err := store.Open(dbPath)
-	requirepkg.NoError(t, err)
-	requirepkg.NoError(t, s.InitSchema())
+	require.NoError(t, err)
+	require.NoError(t, s.InitSchema())
 	t.Cleanup(func() { _ = s.Close() })
 
 	// Save and restore package-level globals.
@@ -82,8 +82,8 @@ func newIdentityCLITest(t *testing.T) (*store.Store, *cobra.Command, *bytes.Buff
 }
 
 func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := identityHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -124,8 +124,8 @@ func TestIdentityListUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := identityHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -168,8 +168,8 @@ func TestIdentityShowUsesLocalDaemonHTTPAndPreservesHint(t *testing.T) {
 }
 
 func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := identityHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -213,8 +213,8 @@ func TestIdentityAddUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestIdentityRemoveUsesLocalDaemonHTTPAndPreservesWarning(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, requests := identityHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -288,7 +288,7 @@ func identityHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 					}]
 				}`))
 			case "empty@example.com":
-				assertpkg.Equal(t, "true", r.URL.Query().Get("primary_only"), "identity show primary-only query")
+				assert.Equal(t, "true", r.URL.Query().Get("primary_only"), "identity show primary-only query")
 				_, _ = w.Write([]byte(`{
 					"rows": [{
 						"account": "empty@example.com",
@@ -307,13 +307,13 @@ func identityHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 				Identifier string `json:"identifier"`
 				Signal     string `json:"signal"`
 			}
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode add request") {
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode add request") {
 				http.Error(w, "bad add request", http.StatusBadRequest)
 				return
 			}
-			assertpkg.Equal(t, "alice@example.com", req.Account, "add account")
-			assertpkg.Equal(t, "extra@example.com", req.Identifier, "add identifier")
-			assertpkg.Equal(t, "manual", req.Signal, "add signal")
+			assert.Equal(t, "alice@example.com", req.Account, "add account")
+			assert.Equal(t, "extra@example.com", req.Identifier, "add identifier")
+			assert.Equal(t, "manual", req.Signal, "add signal")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"account": "alice@example.com",
@@ -326,12 +326,12 @@ func identityHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 				Account    string `json:"account"`
 				Identifier string `json:"identifier"`
 			}
-			if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode remove request") {
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode remove request") {
 				http.Error(w, "bad remove request", http.StatusBadRequest)
 				return
 			}
-			assertpkg.Equal(t, "alice@example.com", req.Account, "remove account")
-			assertpkg.Equal(t, "alice@example.com", req.Identifier, "remove identifier")
+			assert.Equal(t, "alice@example.com", req.Account, "remove account")
+			assert.Equal(t, "alice@example.com", req.Identifier, "remove identifier")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"account": "alice@example.com",
@@ -349,7 +349,7 @@ func identityHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 }
 
 func TestIdentityList_NoScope(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	s, root, out, _ := newIdentityCLITest(t)
 	a, _ := s.GetOrCreateSource("gmail", "alice@example.com")
 	b, _ := s.GetOrCreateSource("imap", "bob@example.com")
@@ -357,7 +357,7 @@ func TestIdentityList_NoScope(t *testing.T) {
 	_ = s.AddAccountIdentity(b.ID, "bob@example.com", "account-identifier")
 
 	root.SetArgs([]string{"identity", "list"})
-	requirepkg.NoError(t, root.Execute())
+	require.NoError(t, root.Execute())
 	text := out.String()
 	assert.Contains(text, "alice@example.com", "missing alice")
 	assert.Contains(text, "bob@example.com", "missing bob")
@@ -371,10 +371,10 @@ func TestIdentityList_AccountFilter(t *testing.T) {
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "manual")
 
 	root.SetArgs([]string{"identity", "list", "--account", "alice@example.com"})
-	requirepkg.NoError(t, root.Execute())
+	require.NoError(t, root.Execute())
 	text := out.String()
-	assertpkg.Contains(t, text, "alice@example.com", "missing alice")
-	assertpkg.NotContains(t, text, "bob@example.com", "bob leaked into account-filtered output")
+	assert.Contains(t, text, "alice@example.com", "missing alice")
+	assert.NotContains(t, text, "bob@example.com", "bob leaked into account-filtered output")
 }
 
 func TestIdentityList_AccountWithNoneRow(t *testing.T) {
@@ -382,13 +382,13 @@ func TestIdentityList_AccountWithNoneRow(t *testing.T) {
 	_, _ = s.GetOrCreateSource("mbox", "old-mbox-2018")
 
 	root.SetArgs([]string{"identity", "list"})
-	requirepkg.NoError(t, root.Execute())
+	require.NoError(t, root.Execute())
 	text := out.String()
-	assertpkg.Contains(t, text, "(none)", "expected (none) row for account with no identifiers")
+	assert.Contains(t, text, "(none)", "expected (none) row for account with no identifiers")
 }
 
 func TestIdentityList_JSONShape(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	s, root, out, _ := newIdentityCLITest(t)
 	a, _ := s.GetOrCreateSource("gmail", "alice@example.com")
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "manual")
@@ -403,8 +403,8 @@ func TestIdentityList_JSONShape(t *testing.T) {
 }
 
 func TestIdentityList_JSONEmptySignals(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	s, root, out, _ := newIdentityCLITest(t)
 	a, _ := s.GetOrCreateSource("gmail", "alice@example.com")
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "") // empty signal
@@ -428,8 +428,8 @@ func TestIdentityShow_Populated(t *testing.T) {
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "account-identifier")
 
 	root.SetArgs([]string{"identity", "show", "alice@example.com"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "alice@example.com", "missing alice")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "alice@example.com", "missing alice")
 }
 
 func TestIdentityShow_Empty(t *testing.T) {
@@ -437,22 +437,22 @@ func TestIdentityShow_Empty(t *testing.T) {
 	_, _ = s.GetOrCreateSource("gmail", "alice@example.com")
 
 	root.SetArgs([]string{"identity", "show", "alice@example.com"})
-	requirepkg.NoError(t, root.Execute())
+	require.NoError(t, root.Execute())
 	text := out.String()
-	assertpkg.Contains(t, text, "(none)", "missing (none) row")
-	assertpkg.Contains(t, text, "identity add", "missing hint")
+	assert.Contains(t, text, "(none)", "missing (none) row")
+	assert.Contains(t, text, "identity add", "missing hint")
 }
 
 func TestIdentityShow_UnknownAccount(t *testing.T) {
 	_, root, _, _ := newIdentityCLITest(t) //nolint:dogsled // helper returns 4 values; test needs only root
 	root.SetArgs([]string{"identity", "show", "ghost@example.com"})
 	err := root.Execute()
-	requirepkg.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestIdentityShow_JSONShape(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	s, root, out, _ := newIdentityCLITest(t)
 	a, _ := s.GetOrCreateSource("gmail", "alice@example.com")
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "manual")
@@ -475,10 +475,10 @@ func TestIdentityShow_JSONEmpty(t *testing.T) {
 	_, _ = s.GetOrCreateSource("gmail", "alice@example.com")
 
 	root.SetArgs([]string{"identity", "show", "alice@example.com", "--json"})
-	requirepkg.NoError(t, root.Execute())
+	require.NoError(t, root.Execute())
 	var rows []map[string]any
-	requirepkg.NoError(t, json.Unmarshal(out.Bytes(), &rows), "json decode (out=%s)", out.String())
-	requirepkg.Empty(t, rows, "got rows %+v", rows)
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rows), "json decode (out=%s)", out.String())
+	require.Empty(t, rows, "got rows %+v", rows)
 }
 
 func TestIdentityAdd_FirstTime(t *testing.T) {
@@ -486,8 +486,8 @@ func TestIdentityAdd_FirstTime(t *testing.T) {
 	_, _ = s.GetOrCreateSource("gmail", "alice@example.com")
 
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "extra@example.com"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "Added extra@example.com", "missing add confirmation")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "Added extra@example.com", "missing add confirmation")
 }
 
 func TestIdentityAdd_IdempotentSameSignal(t *testing.T) {
@@ -496,8 +496,8 @@ func TestIdentityAdd_IdempotentSameSignal(t *testing.T) {
 	_ = s.AddAccountIdentity(a.ID, "extra@example.com", "manual")
 
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "extra@example.com"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "already confirmed", "missing idempotent confirmation")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "already confirmed", "missing idempotent confirmation")
 }
 
 func TestIdentityAdd_AdditionalSignal(t *testing.T) {
@@ -507,8 +507,8 @@ func TestIdentityAdd_AdditionalSignal(t *testing.T) {
 
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "extra@example.com",
 		"--signal", "account-identifier"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "additional signal", "missing additional-signal confirmation")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "additional signal", "missing additional-signal confirmation")
 }
 
 func TestIdentityAdd_RejectsCommaInSignal(t *testing.T) {
@@ -517,8 +517,8 @@ func TestIdentityAdd_RejectsCommaInSignal(t *testing.T) {
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "foo@example.com",
 		"--signal", "a,b"})
 	err := root.Execute()
-	requirepkg.Error(t, err, "want comma error")
-	requirepkg.ErrorContains(t, err, "comma")
+	require.Error(t, err, "want comma error")
+	require.ErrorContains(t, err, "comma")
 }
 
 func TestIdentityAdd_RejectsEmptyIdentifier(t *testing.T) {
@@ -526,8 +526,8 @@ func TestIdentityAdd_RejectsEmptyIdentifier(t *testing.T) {
 	_, _ = s.GetOrCreateSource("gmail", "alice@example.com")
 	root.SetArgs([]string{"identity", "add", "alice@example.com", "   "})
 	err := root.Execute()
-	requirepkg.Error(t, err, "want empty-identifier error")
-	requirepkg.ErrorContains(t, err, "empty")
+	require.Error(t, err, "want empty-identifier error")
+	require.ErrorContains(t, err, "empty")
 }
 
 func TestIdentityAdd_RejectsCollectionAsAccount(t *testing.T) {
@@ -537,8 +537,8 @@ func TestIdentityAdd_RejectsCollectionAsAccount(t *testing.T) {
 
 	root.SetArgs([]string{"identity", "add", "team", "extra@example.com"})
 	err := root.Execute()
-	requirepkg.Error(t, err, "want collection-rejection error")
-	requirepkg.ErrorContains(t, err, "collection")
+	require.Error(t, err, "want collection-rejection error")
+	require.ErrorContains(t, err, "collection")
 }
 
 func TestIdentityRemove_Hit(t *testing.T) {
@@ -548,8 +548,8 @@ func TestIdentityRemove_Hit(t *testing.T) {
 	_ = s.AddAccountIdentity(a.ID, "extra@example.com", "manual")
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "extra@example.com"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "Removed extra@example.com", "missing remove confirmation")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "Removed extra@example.com", "missing remove confirmation")
 }
 
 func TestIdentityRemove_Miss(t *testing.T) {
@@ -559,9 +559,9 @@ func TestIdentityRemove_Miss(t *testing.T) {
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "ghost@example.com"})
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error on miss")
+	require.Error(t, err, "expected error on miss")
 	combined := out.String() + errOut.String() + err.Error()
-	assertpkg.Contains(t, combined, "Currently confirmed:", "error should hint at present identifiers")
+	assert.Contains(t, combined, "Currently confirmed:", "error should hint at present identifiers")
 }
 
 func TestIdentityRemove_MissOnEmptyAccount(t *testing.T) {
@@ -570,8 +570,8 @@ func TestIdentityRemove_MissOnEmptyAccount(t *testing.T) {
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "ghost@example.com"})
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error on miss")
-	assertpkg.ErrorContains(t, err, "no confirmed identifiers")
+	require.Error(t, err, "expected error on miss")
+	assert.ErrorContains(t, err, "no confirmed identifiers")
 }
 
 func TestIdentityRemove_WhitespaceIdentifier(t *testing.T) {
@@ -579,8 +579,8 @@ func TestIdentityRemove_WhitespaceIdentifier(t *testing.T) {
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "   "})
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error for whitespace identifier")
-	assertpkg.ErrorContains(t, err, "identifier must not be empty")
+	require.Error(t, err, "expected error for whitespace identifier")
+	assert.ErrorContains(t, err, "identifier must not be empty")
 }
 
 func TestIdentityRemove_LastIdentifierWarns(t *testing.T) {
@@ -589,13 +589,13 @@ func TestIdentityRemove_LastIdentifierWarns(t *testing.T) {
 	_ = s.AddAccountIdentity(a.ID, "alice@example.com", "manual")
 
 	root.SetArgs([]string{"identity", "remove", "alice@example.com", "alice@example.com"})
-	requirepkg.NoError(t, root.Execute())
-	assertpkg.Contains(t, out.String(), "no confirmed identity", "missing degraded-dedup warning")
+	require.NoError(t, root.Execute())
+	assert.Contains(t, out.String(), "no confirmed identity", "missing degraded-dedup warning")
 }
 
 func TestIdentityList_CollectionFilter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	s, root, out, _ := newIdentityCLITest(t)
 	a, _ := s.GetOrCreateSource("gmail", "alice@example.com")
 	b, _ := s.GetOrCreateSource("gmail", "bob@example.com")

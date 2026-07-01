@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -55,9 +55,9 @@ func TestSanitizeTarPath(t *testing.T) {
 			}
 			_, err := sanitizeTarPath(destDir, tt.path)
 			if tt.wantErr {
-				assertpkg.Errorf(t, err, "sanitizeTarPath(%q)", tt.path)
+				assert.Errorf(t, err, "sanitizeTarPath(%q)", tt.path)
 			} else {
-				assertpkg.NoErrorf(t, err, "sanitizeTarPath(%q)", tt.path)
+				assert.NoErrorf(t, err, "sanitizeTarPath(%q)", tt.path)
 			}
 		})
 	}
@@ -75,7 +75,7 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 	})
 
 	err := extractTarGz(archivePath, extractDir)
-	requirepkg.Error(t, err, "extractTarGz should fail with path traversal attempt")
+	require.Error(t, err, "extractTarGz should fail with path traversal attempt")
 
 	testutil.MustNotExist(t, outsideFile)
 }
@@ -91,7 +91,7 @@ func TestExtractTarGzSymlinkSkipped(t *testing.T) {
 		{Name: "normal.txt", Content: "test"},
 	})
 
-	requirepkg.NoError(t, extractTarGz(archivePath, extractDir), "extractTarGz failed")
+	require.NoError(t, extractTarGz(archivePath, extractDir), "extractTarGz failed")
 
 	testutil.MustExist(t, filepath.Join(extractDir, "normal.txt"))
 	testutil.MustNotExist(t, filepath.Join(extractDir, "evil-link"))
@@ -108,14 +108,14 @@ func TestExtractZip(t *testing.T) {
 		{Name: "README.md", Content: "readme"},
 	})
 
-	requirepkg.NoError(t, extractZip(archivePath, extractDir), "extractZip failed")
+	require.NoError(t, extractZip(archivePath, extractDir), "extractZip failed")
 
 	testutil.MustExist(t, filepath.Join(extractDir, "msgvault.exe"))
 	testutil.MustExist(t, filepath.Join(extractDir, "README.md"))
 
 	content, err := os.ReadFile(filepath.Join(extractDir, "msgvault.exe"))
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, "binary content", string(content))
+	require.NoError(t, err)
+	assert.Equal(t, "binary content", string(content))
 }
 
 func TestExtractZipPathTraversal(t *testing.T) {
@@ -130,7 +130,7 @@ func TestExtractZipPathTraversal(t *testing.T) {
 	})
 
 	err := extractZip(archivePath, extractDir)
-	requirepkg.Error(t, err, "extractZip should fail with path traversal attempt")
+	require.Error(t, err, "extractZip should fail with path traversal attempt")
 
 	testutil.MustNotExist(t, outsideFile)
 }
@@ -204,7 +204,7 @@ func TestExtractChecksum(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := extractChecksum(tt.body, tt.assetName)
-			assertpkg.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -234,7 +234,7 @@ func TestExtractBaseSemver(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
 			t.Parallel()
-			assertpkg.Equal(t, tt.want, extractBaseSemver(tt.version))
+			assert.Equal(t, tt.want, extractBaseSemver(tt.version))
 		})
 	}
 }
@@ -260,7 +260,7 @@ func TestIsDevBuildVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
 			t.Parallel()
-			assertpkg.Equal(t, tt.want, isDevBuildVersion(tt.version))
+			assert.Equal(t, tt.want, isDevBuildVersion(tt.version))
 		})
 	}
 }
@@ -292,7 +292,7 @@ func TestNormalizePrereleaseIdentifiers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := normalizePrereleaseIdentifiers(tt.prerelease)
-			assertpkg.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -339,7 +339,7 @@ func TestIsNewer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assertpkg.Equal(t, tt.want, isNewer(tt.v1, tt.v2))
+			assert.Equal(t, tt.want, isNewer(tt.v1, tt.v2))
 		})
 	}
 }
@@ -352,7 +352,7 @@ func TestIsNewer(t *testing.T) {
 func TestUpdateURLsTargetCanonicalRepo(t *testing.T) {
 	t.Parallel()
 	const wantPrefix = "https://github.com/kenn-io/msgvault/"
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	assert.Truef(strings.HasPrefix(githubLatestReleaseURL, wantPrefix),
 		"githubLatestReleaseURL must target the canonical repo, got %q", githubLatestReleaseURL)
 	assert.Truef(strings.HasPrefix(githubReleaseDownloadBase, wantPrefix),
@@ -366,8 +366,8 @@ func (poisonDefaultTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestHTTPHelpersDoNotUseDefaultTransport(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	oldDefaultTransport := http.DefaultTransport
 	http.DefaultTransport = poisonDefaultTransport{}
 	t.Cleanup(func() {
@@ -415,9 +415,9 @@ func TestDownloadHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
 	client := newUpdateDownloadHTTPClient()
 	defer client.CloseIdleConnections()
 
-	assertpkg.Zero(t, client.Timeout)
-	assertpkg.NotNil(t, client.Transport)
-	assertpkg.NotSame(t, http.DefaultTransport, client.Transport)
+	assert.Zero(t, client.Timeout)
+	assert.NotNil(t, client.Transport)
+	assert.NotSame(t, http.DefaultTransport, client.Transport)
 }
 
 func TestResolveLatestTag(t *testing.T) {
@@ -461,8 +461,8 @@ func TestResolveLatestTag(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(
 				func(w http.ResponseWriter, _ *http.Request) {
@@ -508,8 +508,8 @@ func TestFetchContentLength(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(
 				func(w http.ResponseWriter, _ *http.Request) {
@@ -548,7 +548,7 @@ func TestFormatSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			t.Parallel()
-			assertpkg.Equal(t, tt.want, FormatSize(tt.bytes))
+			assert.Equal(t, tt.want, FormatSize(tt.bytes))
 		})
 	}
 }
@@ -620,8 +620,8 @@ func TestCheckCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			tmpDir := t.TempDir()
 			t.Setenv("MSGVAULT_HOME", tmpDir)
 
@@ -657,8 +657,8 @@ func TestCheckCacheNoFile(t *testing.T) {
 	// No cache file exists
 	info, done := checkCache("v1.0.0", "1.0.0", false)
 
-	assertpkg.False(t, done)
-	assertpkg.Nilf(t, info, "expected UpdateInfo to be nil, got %+v", info)
+	assert.False(t, done)
+	assert.Nilf(t, info, "expected UpdateInfo to be nil, got %+v", info)
 }
 
 // TestSaveCacheFilePermissions verifies that the update check cache file is
@@ -677,18 +677,18 @@ func TestSaveCacheFilePermissions(t *testing.T) {
 
 	cachePath := filepath.Join(tmpDir, cacheFileName)
 	info, err := os.Stat(cachePath)
-	requirepkg.NoErrorf(t, err, "Stat(%s)", cachePath)
+	require.NoErrorf(t, err, "Stat(%s)", cachePath)
 
 	// File should have 0600 permissions (owner read/write only)
-	assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "cache file permissions")
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "cache file permissions")
 }
 
 func TestInstallBinaryTo(t *testing.T) {
 	t.Parallel()
 
 	t.Run("successful installation", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 
@@ -721,7 +721,7 @@ func TestInstallBinaryTo(t *testing.T) {
 	})
 
 	t.Run("installation to new location without existing binary", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 
@@ -738,11 +738,11 @@ func TestInstallBinaryTo(t *testing.T) {
 		// Verify new content
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "failed to read installed binary")
-		assertpkg.Equal(t, "new content", string(content))
+		assert.Equal(t, "new content", string(content))
 	})
 
 	t.Run("backup restored on copy failure", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		if runtime.GOOS == "windows" {
 			t.Skip("POSIX file permissions not enforced on Windows")
 		}
@@ -768,11 +768,11 @@ func TestInstallBinaryTo(t *testing.T) {
 		// Verify original was restored from backup
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "failed to read restored binary")
-		assertpkg.Equal(t, "old content", string(content))
+		assert.Equal(t, "old content", string(content))
 	})
 
 	t.Run("stale backup removed before install", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 
@@ -797,7 +797,7 @@ func TestInstallBinaryTo(t *testing.T) {
 		// Verify new content installed
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "failed to read installed binary")
-		assertpkg.Equal(t, "new content", string(content))
+		assert.Equal(t, "new content", string(content))
 	})
 }
 
@@ -810,7 +810,7 @@ func TestInstallFromArchiveTo(t *testing.T) {
 	}
 
 	t.Run("zip happy path", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 		archivePath := filepath.Join(tmpDir, "test.zip")
@@ -832,11 +832,11 @@ func TestInstallFromArchiveTo(t *testing.T) {
 
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "read installed binary")
-		assertpkg.Equal(t, binaryContent, string(content))
+		assert.Equal(t, binaryContent, string(content))
 	})
 
 	t.Run("tar.gz happy path", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 		archivePath := filepath.Join(tmpDir, "test.tar.gz")
@@ -857,7 +857,7 @@ func TestInstallFromArchiveTo(t *testing.T) {
 
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "read installed binary")
-		assertpkg.Equal(t, binaryContent, string(content))
+		assert.Equal(t, binaryContent, string(content))
 	})
 
 	t.Run("checksum mismatch", func(t *testing.T) {
@@ -873,8 +873,8 @@ func TestInstallFromArchiveTo(t *testing.T) {
 		dstPath := filepath.Join(tmpDir, "dest", binaryName)
 
 		err := installFromArchiveTo(archivePath, wrongChecksum, dstPath)
-		requirepkg.Error(t, err, "expected error for checksum mismatch")
-		assertpkg.Containsf(t, err.Error(), "checksum mismatch", "error should contain 'checksum mismatch'")
+		require.Error(t, err, "expected error for checksum mismatch")
+		assert.Containsf(t, err.Error(), "checksum mismatch", "error should contain 'checksum mismatch'")
 	})
 
 	t.Run("empty checksum", func(t *testing.T) {
@@ -889,11 +889,11 @@ func TestInstallFromArchiveTo(t *testing.T) {
 		dstPath := filepath.Join(tmpDir, "dest", binaryName)
 
 		err := installFromArchiveTo(archivePath, "", dstPath)
-		requirepkg.Error(t, err, "expected error for empty checksum")
+		require.Error(t, err, "expected error for empty checksum")
 	})
 
 	t.Run("missing binary in archive", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 		archivePath := filepath.Join(tmpDir, "test.zip")
@@ -911,11 +911,11 @@ func TestInstallFromArchiveTo(t *testing.T) {
 
 		err = installFromArchiveTo(archivePath, checksum, dstPath)
 		require.Error(err, "expected error for missing binary")
-		assertpkg.Containsf(t, err.Error(), "not found", "error should contain 'not found'")
+		assert.Containsf(t, err.Error(), "not found", "error should contain 'not found'")
 	})
 
 	t.Run("overwrites existing binary", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		t.Parallel()
 		tmpDir := t.TempDir()
 		archivePath := filepath.Join(tmpDir, "test.zip")
@@ -939,7 +939,7 @@ func TestInstallFromArchiveTo(t *testing.T) {
 
 		content, err := os.ReadFile(dstPath)
 		require.NoError(err, "read installed binary")
-		assertpkg.Equal(t, newContent, string(content))
+		assert.Equal(t, newContent, string(content))
 
 		// Verify backup was cleaned up
 		testutil.MustNotExist(t, dstPath+".old")

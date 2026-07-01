@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReader_Next_SplitsAndUnescapes(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00:00 2024",
 		"Subject: One",
@@ -60,15 +60,15 @@ func TestReader_Next_CanDisableUnescape(t *testing.T) {
 	r.SetUnescapeFrom(false)
 
 	msg, err := r.Next()
-	requirepkg.NoError(t, err, "Next()")
+	require.NoError(t, err, "Next()")
 	raw := string(msg.Raw)
-	assertpkg.Contains(t, raw, ">From should-stay-escaped\n", "expected no unescaping")
-	assertpkg.NotContains(t, raw, "\n\nFrom should-stay-escaped\n", "expected >From line to remain escaped")
+	assert.Contains(t, raw, ">From should-stay-escaped\n", "expected no unescaping")
+	assert.NotContains(t, raw, "\n\nFrom should-stay-escaped\n", "expected >From line to remain escaped")
 }
 
 func TestReader_Next_AllowsLongLines(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	longValue := strings.Repeat("a", 10_000)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00:00 2024",
@@ -115,16 +115,16 @@ func TestReader_Next_EnforcesMaxMessageBytesAndContinues(t *testing.T) {
 	r := NewReaderWithMaxMessageBytes(strings.NewReader(mboxData), 64)
 
 	_, err := r.Next()
-	requirepkg.ErrorIs(t, err, ErrMessageTooLarge, "expected ErrMessageTooLarge")
+	require.ErrorIs(t, err, ErrMessageTooLarge, "expected ErrMessageTooLarge")
 
 	msg2, err := r.Next()
-	requirepkg.NoError(t, err, "Next() (msg2)")
-	assertpkg.Contains(t, string(msg2.Raw), "Subject: Two\n", "msg2 raw")
+	require.NoError(t, err, "Next() (msg2)")
+	assert.Contains(t, string(msg2.Raw), "Subject: Two\n", "msg2 raw")
 }
 
 func TestReader_Next_DoesNotSplitOnUnescapedFromInBody(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00:00 2024",
 		"Subject: One",
@@ -155,8 +155,8 @@ func TestReader_Next_DoesNotSplitOnUnescapedFromInBody(t *testing.T) {
 }
 
 func TestReader_Next_AcceptsNamedTimezoneSeparators(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00:00 MST 2024",
 		"Subject: One",
@@ -185,8 +185,8 @@ func TestReader_Next_AcceptsNamedTimezoneSeparators(t *testing.T) {
 }
 
 func TestReader_Next_AcceptsRemoteFromSuffixSeparators(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00:00 2024 remote from mail.example.com",
 		"Subject: One",
@@ -215,8 +215,8 @@ func TestReader_Next_AcceptsRemoteFromSuffixSeparators(t *testing.T) {
 }
 
 func TestReader_Next_AcceptsNoSecondsSeparators(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mboxData := strings.Join([]string{
 		"From sender@example.com Mon Jan 1 00:00 2024",
 		"Subject: One",
@@ -245,7 +245,7 @@ func TestReader_Next_AcceptsNoSecondsSeparators(t *testing.T) {
 }
 
 func TestReader_Offset_RespectsSeekPosition(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	mboxData := strings.Join([]string{
 		"From a@example.com Mon Jan 1 00:00:00 2024",
 		"Subject: One",
@@ -276,10 +276,10 @@ func TestReader_Offset_RespectsSeekPosition(t *testing.T) {
 
 func TestValidate_FindsSeparator(t *testing.T) {
 	data := "not mbox\nFrom a@b Sat Jan 1 00:00:00 2024\nSubject: x\n\nBody\n"
-	requirepkg.NoError(t, Validate(strings.NewReader(data), 1024), "Validate()")
+	require.NoError(t, Validate(strings.NewReader(data), 1024), "Validate()")
 }
 
 func TestValidate_FindsSeparator_WithRemoteFromSuffix(t *testing.T) {
 	data := "not mbox\nFrom a@b Sat Jan 1 00:00:00 2024 remote from mail.example.com\nSubject: x\n\nBody\n"
-	requirepkg.NoError(t, Validate(strings.NewReader(data), 1024), "Validate()")
+	require.NoError(t, Validate(strings.NewReader(data), 1024), "Validate()")
 }

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -21,7 +21,7 @@ import (
 // drive the unexported fallback directly; the join fix is dialect-agnostic and
 // the cross-backend coverage lives in TestStoreAPI_MultipleFromRows_NoDuplication.
 func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromduplike@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -78,28 +78,28 @@ func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
 		seen := make(map[int64]struct{}, len(msgs))
 		for _, m := range msgs {
 			_, dup := seen[m.ID]
-			assertpkg.Falsef(t, dup, "%s: id %d duplicated", label, m.ID)
+			assert.Falsef(t, dup, "%s: id %d duplicated", label, m.ID)
 			seen[m.ID] = struct{}{}
 		}
-		assertpkg.Equalf(t, 1, occ(msgs, dupID), "%s: multi-from id %d must appear once", label, dupID)
-		assertpkg.Lenf(t, msgs, n, "%s: page must hold every distinct id once", label)
+		assert.Equalf(t, 1, occ(msgs, dupID), "%s: multi-from id %d must appear once", label, dupID)
+		assert.Lenf(t, msgs, n, "%s: page must hold every distinct id once", label)
 		for id := range wantIDs {
 			_, ok := seen[id]
-			assertpkg.Truef(t, ok, "%s: distinct id %d missing", label, id)
+			assert.Truef(t, ok, "%s: distinct id %d missing", label, id)
 		}
-		assertpkg.Equalf(t, int64(n), total, "%s: total must equal distinct count", label)
+		assert.Equalf(t, int64(n), total, "%s: total must equal distinct count", label)
 	}
 
 	t.Run("searchMessagesLike", func(t *testing.T) {
 		msgs, total, err := st.searchMessagesLike(tag, 0, n)
-		requirepkg.NoError(t, err, "searchMessagesLike")
+		require.NoError(err, "searchMessagesLike")
 		assertDistinct(t, msgs, total, "searchMessagesLike")
 	})
 
 	t.Run("searchMessagesQueryImpl no-FTS branch", func(t *testing.T) {
 		msgs, total, err := st.searchMessagesQueryImpl(
 			&search.Query{TextTerms: []string{tag}}, 0, n, false)
-		requirepkg.NoError(t, err, "searchMessagesQueryImpl ftsAvailable=false")
+		require.NoError(err, "searchMessagesQueryImpl ftsAvailable=false")
 		assertDistinct(t, msgs, total, "searchMessagesQueryImpl no-FTS")
 	})
 }

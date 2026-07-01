@@ -8,16 +8,16 @@ import (
 	"strconv"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 
 	path, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test")
@@ -40,8 +40,8 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 }
 
 func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
 		Service: daemonService,
@@ -75,8 +75,8 @@ func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {
 }
 
 func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
 		Service: "other",
@@ -104,12 +104,9 @@ func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
 }
 
 func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-
 	t.Run("wrong service", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		dataDir := t.TempDir()
 		_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 			PID:     os.Getpid(),
@@ -126,8 +123,8 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 	})
 
 	t.Run("dead process", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		dataDir := t.TempDir()
 		_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 			PID:     2147483647,
@@ -142,6 +139,9 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 		require.NoError(err, "list live records")
 		assert.Empty(records, "dead-process record")
 	})
+
+	require := require.New(t)
+	assert := assert.New(t)
 
 	dataDir := t.TempDir()
 	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
@@ -201,7 +201,7 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			rt := &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemonVersion}}
 			assert.Equal(tt.want, shouldUpgradeDaemonRuntimeWithPolicy(rt, tt.currentVersion, config.DaemonAutoRestartNewer), "upgrade decision")
 		})
@@ -255,7 +255,7 @@ func TestShouldUpgradeDaemonRuntimeWithConfiguredPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			rt := &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemonVersion}}
 			assert.Equal(tt.want,
 				shouldUpgradeDaemonRuntimeWithPolicy(rt, tt.currentVersion, tt.policy),
@@ -270,7 +270,7 @@ func TestIncompatibleDaemonMessageUsesCallerGuidance(t *testing.T) {
 		"run `msgvault serve stop` or retry with --local",
 	)
 
-	requirepkg.Error(t, err, "incompatible daemon error")
-	assertpkg.Contains(t, err.Error(), "incompatible daemon is already running")
-	assertpkg.Contains(t, err.Error(), "run `msgvault serve stop` or retry with --local")
+	require.Error(t, err, "incompatible daemon error")
+	assert.Contains(t, err.Error(), "incompatible daemon is already running")
+	assert.Contains(t, err.Error(), "run `msgvault serve stop` or retry with --local")
 }

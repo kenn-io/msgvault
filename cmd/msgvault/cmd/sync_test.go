@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -42,8 +42,8 @@ func runSyncFullLocalForTest(cmd *cobra.Command, args []string) error {
 // scaffolding so the test exercises runIncrementalSync, not just
 // the OAuth manager setup.
 func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -127,8 +127,8 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 // TestSyncCmd_SingleSourceNoAmbiguity verifies that a single
 // source for an identifier works without the legacy fallback.
 func TestSyncCmd_SingleSourceNoAmbiguity(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -184,11 +184,11 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 	dbPath := tmpDir + "/msgvault.db"
 
 	s, err := store.Open(dbPath)
-	requirepkg.NoError(t, err, "open store")
-	requirepkg.NoError(t, s.InitSchema(), "init schema")
+	require.NoError(t, err, "open store")
+	require.NoError(t, s.InitSchema(), "init schema")
 
 	_, err = s.GetOrCreateSource("mbox", "imported@example.com")
-	requirepkg.NoError(t, err, "create mbox source")
+	require.NoError(t, err, "create mbox source")
 	_ = s.Close()
 
 	savedCfg := cfg
@@ -226,8 +226,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 			})
 
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for non-syncable source")
-			assertpkg.ErrorContains(t, err, "cannot be synced", "expected unsupported-source error")
+			require.Error(t, err, "expected error for non-syncable source")
+			assert.ErrorContains(t, err, "cannot be synced", "expected unsupported-source error")
 		})
 	}
 }
@@ -236,8 +236,8 @@ func TestSyncCmd_MboxIdentifierDoesNotFallback(t *testing.T) {
 // mixed Gmail+IMAP setup without OAuth configured, sync-full skips
 // the Gmail source and still syncs the IMAP source.
 func TestSyncFullCmd_OAuthSkipDoesNotBlockIMAP(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -307,8 +307,8 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
@@ -397,8 +397,8 @@ func TestSyncCmd_BrokenOAuthDoesNotBlockIMAP(t *testing.T) {
 // even in a mixed Gmail+IMAP setup where Gmail would otherwise
 // succeed first.
 func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -468,7 +468,7 @@ func TestSyncFullCmd_MalformedDateRejectsBeforeSync(t *testing.T) {
 // --after/--before flags produce a clear error for IMAP sources
 // instead of silently syncing the entire mailbox.
 func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -527,9 +527,9 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 			})
 
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for malformed date")
-			requirepkg.ErrorContains(t, err, tc.errStr, "error should mention %q", tc.errStr)
-			assertpkg.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
+			require.Error(err, "expected error for malformed date")
+			require.ErrorContains(err, tc.errStr, "error should mention %q", tc.errStr)
+			assert.ErrorContains(t, err, "YYYY-MM-DD", "error should mention expected format")
 		})
 	}
 }
@@ -546,7 +546,7 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 		{"sync-full", runSyncFullLocalForTest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			tmpDir := t.TempDir()
 			dbPath := tmpDir + "/msgvault.db"
 
@@ -602,7 +602,7 @@ func TestSyncCmd_GmailOnlyBrokenOAuthSurfacesError(t *testing.T) {
 			errMsg := err.Error()
 
 			// Should surface the real OAuth parse error.
-			assertpkg.Contains(t, errMsg, "client secrets", "expected OAuth parse error")
+			assert.Contains(t, errMsg, "client secrets", "expected OAuth parse error")
 		})
 	}
 }

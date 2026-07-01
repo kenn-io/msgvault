@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 )
@@ -16,7 +16,7 @@ import (
 // =============================================================================
 
 func TestSubGroupingNavigation(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rows := []query.AggregateRow{
 		{Key: "alice@example.com", Count: 10},
 		{Key: "bob@example.com", Count: 5},
@@ -96,9 +96,9 @@ func TestSubAggregateDrillDown(t *testing.T) {
 
 	assertLevel(t, m, levelMessageList)
 	// Drill filter should now include both sender and recipient
-	assertpkg.Equal(t, "alice@example.com", m.drillFilter.Sender)
-	assertpkg.Equal(t, "bob@example.com", m.drillFilter.Recipient)
-	assertpkg.NotNil(t, cmd, "expected command to load messages")
+	assert.Equal(t, "alice@example.com", m.drillFilter.Sender)
+	assert.Equal(t, "bob@example.com", m.drillFilter.Recipient)
+	assert.NotNil(t, cmd, "expected command to load messages")
 }
 
 // =============================================================================
@@ -126,7 +126,7 @@ func (st *statsTracker) install(eng *querytest.MockEngine) {
 
 // TestStatsUpdateOnDrillDown verifies stats are reloaded when drilling into a subgroup.
 func TestStatsUpdateOnDrillDown(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	engine := newMockEngine(MockConfig{
 		Rows: []query.AggregateRow{
 			{Key: "alice@example.com", Count: 100, TotalSize: 500000},
@@ -167,7 +167,7 @@ func TestStatsUpdateOnDrillDown(t *testing.T) {
 
 // TestContextStatsSetOnDrillDown verifies contextStats is set from selected row.
 func TestContextStatsSetOnDrillDown(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rows := []query.AggregateRow{
 		{Key: "alice@example.com", Count: 100, TotalSize: 500000, AttachmentSize: 100000},
 		{Key: "bob@example.com", Count: 50, TotalSize: 250000, AttachmentSize: 50000},
@@ -191,7 +191,7 @@ func TestContextStatsSetOnDrillDown(t *testing.T) {
 	m := asModel(t, newModel)
 
 	// Verify contextStats is set from selected row
-	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
 	assert.Equal(int64(100), m.contextStats.MessageCount)
 	assert.Equal(int64(500000), m.contextStats.TotalSize)
 }
@@ -207,20 +207,20 @@ func TestContextStatsClearedOnGoBack(t *testing.T) {
 	// Drill down
 	m := drillDown(t, model)
 
-	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set after drill-down")
 
 	// Go back
 	newModel2, _ := m.goBack()
 	m2 := asModel(t, newModel2)
 
 	// contextStats should be cleared
-	assertpkg.Nil(t, m2.contextStats, "expected contextStats=nil after going back to aggregates")
+	assert.Nil(t, m2.contextStats, "expected contextStats=nil after going back to aggregates")
 }
 
 // TestContextStatsRestoredOnGoBackToSubAggregate verifies contextStats is restored when going back.
 func TestContextStatsRestoredOnGoBackToSubAggregate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	msgs := []query.MessageSummary{{ID: 1, Subject: "Test"}}
 	model := NewBuilder().
 		WithRows(
@@ -291,7 +291,7 @@ func TestViewTypeRestoredAfterEscFromSubAggregate(t *testing.T) {
 
 	assertLevel(t, m, levelDrillDown)
 	// viewType should have changed to next sub-group view (Recipients, skipping redundant SenderNames)
-	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "in sub-aggregate")
+	assert.Equal(t, query.ViewRecipients, m.viewType, "in sub-aggregate")
 
 	// Press Esc to go back to message list
 	newModel2, _ := m.goBack()
@@ -299,14 +299,14 @@ func TestViewTypeRestoredAfterEscFromSubAggregate(t *testing.T) {
 
 	assertLevel(t, m2, levelMessageList)
 	// viewType should be restored to ViewSenders
-	assertpkg.Equal(t, query.ViewSenders, m2.viewType, "after going back")
+	assert.Equal(t, query.ViewSenders, m2.viewType, "after going back")
 }
 
 // TestCursorScrollPreservedAfterGoBack verifies cursor and scroll are preserved
 // when navigating back. With view caching, data is restored from cache instantly
 // without requiring a reload.
 func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rows := makeRows()
 	model := NewBuilder().WithRows(rows...).WithViewType(query.ViewSenders).Build()
 	model.cursor = 5
@@ -318,7 +318,7 @@ func TestCursorScrollPreservedAfterGoBack(t *testing.T) {
 	assertLevel(t, m, levelMessageList)
 
 	// Verify breadcrumb was saved with cached rows
-	requirepkg.Len(t, m.breadcrumbs, 1)
+	require.Len(t, m.breadcrumbs, 1)
 	assert.NotNil(m.breadcrumbs[0].state.rows, "expected CachedRows to be set in breadcrumb")
 
 	// Go back to aggregates - with caching, this restores instantly without reload
@@ -353,13 +353,13 @@ func TestGoBackClearsError(t *testing.T) {
 	m := asModel(t, newModel)
 
 	// Error should be cleared
-	assertpkg.NoError(t, m.err, "expected err=nil after goBack")
+	assert.NoError(t, m.err, "expected err=nil after goBack")
 }
 
 // TestDrillFilterPreservedAfterMessageDetail verifies drillFilter is preserved
 // when navigating back from message detail to message list.
 func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "Test message"},
@@ -379,7 +379,7 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 	assertLevel(t, m, levelMessageDetail)
 
 	// Verify breadcrumb saved drillFilter
-	requirepkg.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
+	require.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
 	bc := m.breadcrumbs[len(m.breadcrumbs)-1]
 	assert.Equal("alice@example.com", bc.state.drillFilter.Sender)
 	assert.Equal("bob@example.com", bc.state.drillFilter.Recipient)
@@ -405,13 +405,13 @@ func TestDrillFilterPreservedAfterMessageDetail(t *testing.T) {
 func TestPushBreadcrumb(t *testing.T) {
 	m := NewBuilder().Build()
 
-	requirepkg.Empty(t, m.breadcrumbs, "expected no breadcrumbs initially")
+	require.Empty(t, m.breadcrumbs, "expected no breadcrumbs initially")
 
 	m.pushBreadcrumb()
-	assertpkg.Len(t, m.breadcrumbs, 1)
+	assert.Len(t, m.breadcrumbs, 1)
 
 	m.pushBreadcrumb()
-	assertpkg.Len(t, m.breadcrumbs, 2)
+	assert.Len(t, m.breadcrumbs, 2)
 }
 
 // =============================================================================
@@ -455,7 +455,7 @@ func TestSubAggregateDrillDownPreservesSelection(t *testing.T) {
 	assertLevel(t, m3, levelMessageList)
 
 	// The selection should NOT have been cleared by the sub-aggregate Enter
-	assertpkg.NotEmpty(t, m3.selection.aggregateKeys, "sub-aggregate Enter should not clear aggregate selection")
+	assert.NotEmpty(t, m3.selection.aggregateKeys, "sub-aggregate Enter should not clear aggregate selection")
 }
 
 func TestTopLevelDrillDownClearsSelection(t *testing.T) {
@@ -475,8 +475,8 @@ func TestTopLevelDrillDownClearsSelection(t *testing.T) {
 	assertLevel(t, m, levelMessageList)
 
 	// Selection should be cleared
-	assertpkg.Empty(t, m.selection.aggregateKeys, "top-level Enter should clear aggregate selection")
-	assertpkg.Empty(t, m.selection.messageIDs, "top-level Enter should clear message selection")
+	assert.Empty(t, m.selection.aggregateKeys, "top-level Enter should clear aggregate selection")
+	assert.Empty(t, m.selection.messageIDs, "top-level Enter should clear message selection")
 }
 
 // =============================================================================
@@ -486,7 +486,7 @@ func TestTopLevelDrillDownClearsSelection(t *testing.T) {
 // TestSubAggregateAKeyJumpsToMessages verifies 'a' key in sub-aggregate view
 // jumps to message list with the drill filter applied.
 func TestSubAggregateAKeyJumpsToMessages(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithRows(
 			query.AggregateRow{Key: "work", Count: 5},
@@ -511,7 +511,7 @@ func TestSubAggregateAKeyJumpsToMessages(t *testing.T) {
 	assert.Equal("alice@example.com", m.drillFilter.Sender)
 
 	// Should have saved breadcrumb
-	requirepkg.Len(t, m.breadcrumbs, 1)
+	require.Len(t, m.breadcrumbs, 1)
 
 	// Breadcrumb should be for sub-aggregate level
 	assert.Equal(levelDrillDown, m.breadcrumbs[0].state.level)

@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -105,7 +105,7 @@ func servePOSTTestRequest(srv *Server, target string) *httptest.ResponseRecorder
 func requireNDJSONResponse(t *testing.T, resp *httptest.ResponseRecorder) {
 	t.Helper()
 
-	requirepkg.Equal(t, http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	require.Equal(t, http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 	assert.Contains(t, resp.Header().Get("Content-Type"), "application/x-ndjson", "content type")
 }
 
@@ -120,14 +120,14 @@ func decodeNDJSONEvents[T any](t *testing.T, body io.Reader) []T {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		requirepkg.NoError(t, err, "decode event")
+		require.NoError(t, err, "decode event")
 		events = append(events, event)
 	}
 	return events
 }
 
 func TestHandleStats(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
@@ -158,7 +158,7 @@ func TestHandleStats(t *testing.T) {
 }
 
 func TestHandleCLIStatsCollectionScope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -184,7 +184,7 @@ func TestHandleCLIStatsCollectionScope(t *testing.T) {
 }
 
 func TestHandleCLIStatsAccountScopeIncludesAssociatedCalendarSources(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -216,7 +216,7 @@ func TestHandleCLIStatsAccountScopeIncludesAssociatedCalendarSources(t *testing.
 }
 
 func TestHandleCLIStatsAccountLookupErrorReturnsInternal(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newTestServerWithMockStore(t)
 	st.sourcesByLookupErr = errors.New("source index unavailable")
@@ -235,7 +235,7 @@ func TestHandleCLIStatsAccountLookupErrorReturnsInternal(t *testing.T) {
 }
 
 func TestHandleCLICreateDeletionManifest(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	manifest := deletion.NewManifest("tui selection", []string{"gid1", "gid2"})
 	manifest.CreatedBy = "tui"
@@ -269,7 +269,7 @@ func TestHandleCLICreateDeletionManifest(t *testing.T) {
 }
 
 func TestHandleCLIIdentities(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -311,7 +311,7 @@ func TestHandleCLIIdentities(t *testing.T) {
 }
 
 func TestHandleCLIIdentitiesPrimaryOnlyAccount(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -348,7 +348,7 @@ func TestHandleCLIIdentitiesPrimaryOnlyAccount(t *testing.T) {
 }
 
 func TestHandleCLIIdentityAddAndRemove(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -402,7 +402,7 @@ func TestHandleCLIIdentityAddAndRemove(t *testing.T) {
 }
 
 func TestHandleCLICollectionMutations(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -489,7 +489,7 @@ func TestHandleCLICollectionMutations(t *testing.T) {
 }
 
 func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -518,7 +518,7 @@ func TestOpenAPIExportsCLIIdentityContracts(t *testing.T) {
 }
 
 func TestOpenAPIExportsServerRouteTable(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
 
@@ -618,7 +618,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 }
 
 func TestCLIInitDBRunsStartupMigrationsAndReturnsStats(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -643,7 +643,7 @@ func TestCLIInitDBRunsStartupMigrationsAndReturnsStats(t *testing.T) {
 }
 
 func TestCLICacheStatsReportsMissingCacheThroughDaemon(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
@@ -664,7 +664,7 @@ func TestCLICacheStatsReportsMissingCacheThroughDaemon(t *testing.T) {
 }
 
 func TestHandleCLIBuildCacheStreamsOutput(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotFullRebuild bool
@@ -691,7 +691,7 @@ func TestHandleCLIBuildCacheStreamsOutput(t *testing.T) {
 }
 
 func TestHandleCLISyncFullStreamsOutput(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLISyncRequest
@@ -729,7 +729,7 @@ func TestHandleCLISyncFullStreamsOutput(t *testing.T) {
 }
 
 func TestHandleCLIVerifyStreamsOutput(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIVerifyRequest
@@ -764,7 +764,7 @@ func TestHandleCLIVerifyStreamsOutput(t *testing.T) {
 }
 
 func TestHandleCLIRepairEncodingStreamsOutput(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	st := &mockStore{
@@ -787,7 +787,7 @@ func TestHandleCLIRepairEncodingStreamsOutput(t *testing.T) {
 }
 
 func TestHandleCLIRunStreamsGenericCommandOutput(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIRunRequest
@@ -822,7 +822,7 @@ func TestHandleCLIRunStreamsGenericCommandOutput(t *testing.T) {
 }
 
 func TestHandleCLIRunAllowsLegacyBuildEmbeddingsCommand(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIRunRequest
@@ -853,7 +853,7 @@ func TestHandleCLIRunAllowsLegacyBuildEmbeddingsCommand(t *testing.T) {
 }
 
 func TestHandleCLIRunAllowsLogsCommand(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIRunRequest
@@ -884,7 +884,7 @@ func TestHandleCLIRunAllowsLogsCommand(t *testing.T) {
 }
 
 func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	canceled := false
 	st := &mockStore{
@@ -921,7 +921,7 @@ func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
 
 	st := &mockStore{
 		runFunc: func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
-			requirepkg.FailNow(t, "disallowed env should not reach runner")
+			require.FailNow(t, "disallowed env should not reach runner")
 			return nil
 		},
 	}
@@ -938,7 +938,7 @@ func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
 }
 
 func TestHandleCLIAddCalendarPlanReturnsPrompt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIAddCalendarPlanRequest
@@ -978,7 +978,7 @@ func TestHandleCLIAddCalendarPlanReturnsPrompt(t *testing.T) {
 }
 
 func TestHandleCLIEmbeddingsPlanReturnsPrompt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIEmbeddingsPlanRequest
@@ -1013,7 +1013,7 @@ func TestHandleCLIEmbeddingsPlanReturnsPrompt(t *testing.T) {
 }
 
 func TestHandleCLIDeleteStagedPlanReturnsPrompt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIDeleteStagedPlanRequest
@@ -1066,7 +1066,7 @@ func TestHandleCLIDeleteStagedPlanReturnsPrompt(t *testing.T) {
 }
 
 func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	var gotReq CLIDeduplicatePlanRequest
@@ -1115,7 +1115,7 @@ func TestHandleCLIDeduplicatePlanReturnsItems(t *testing.T) {
 }
 
 func TestHandleCLIDeduplicatePlanRequestErrorUsesAPIEnvelope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	st := &mockStore{
@@ -1146,7 +1146,7 @@ func TestHandleCLIDeduplicatePlanRequestErrorUsesAPIEnvelope(t *testing.T) {
 }
 
 func TestHandleCLIDeduplicatePlanInvalidCollectionUsesAPIEnvelope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	st := &mockStore{
@@ -1180,7 +1180,7 @@ func TestHandleCLIRunRejectsDisallowedCommand(t *testing.T) {
 
 	st := &mockStore{
 		runFunc: func(context.Context, CLIRunRequest, func(CLIRunEvent) error) error {
-			requirepkg.FailNow(t, "disallowed command should not reach runner")
+			require.FailNow(t, "disallowed command should not reach runner")
 			return nil
 		},
 	}
@@ -1197,7 +1197,7 @@ func TestHandleCLIRunRejectsDisallowedCommand(t *testing.T) {
 }
 
 func TestCLIDeleteDedupedPlansAndExecutesThroughDaemon(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	f := storetest.New(t)
@@ -1267,7 +1267,7 @@ func TestCLIDeleteDedupedPlansAndExecutesThroughDaemon(t *testing.T) {
 }
 
 func TestCLIDeleteDedupedRejectsChangedBatchPlan(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	f := storetest.New(t)
@@ -1313,7 +1313,7 @@ func TestCLIDeleteDedupedRejectsChangedBatchPlan(t *testing.T) {
 }
 
 func TestCLIDeleteDedupedRequiresExpectedBatchesForBatchExecute(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	f := storetest.New(t)
@@ -1364,12 +1364,12 @@ func createAPIDedupMessage(t *testing.T, f *storetest.Fixture, sourceMessageID, 
 		MessageType:     "email",
 		SizeEstimate:    1000,
 	})
-	requirepkg.NoError(t, err, "upsert dedup test message")
+	require.NoError(t, err, "upsert dedup test message")
 	return id
 }
 
 func TestHandleCLIIdentityAddPreservesErrorEnvelope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -1395,7 +1395,7 @@ func TestHandleCLIIdentityAddPreservesErrorEnvelope(t *testing.T) {
 }
 
 func TestHandleCLIIdentityAddMissingAccountUsesNotFoundCode(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -1454,7 +1454,7 @@ func TestOperationErrorPoliciesDocumentNotFoundStatus(t *testing.T) {
 }
 
 func TestResolveCLIStatsScopeRejectsMutuallyExclusiveScope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -1466,7 +1466,7 @@ func TestResolveCLIStatsScopeRejectsMutuallyExclusiveScope(t *testing.T) {
 }
 
 func TestHandleCLISearchCollectionScope(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -1502,7 +1502,7 @@ func TestHandleCLISearchCollectionScope(t *testing.T) {
 }
 
 func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := &mockStore{
 		needsFTSBackfill: true,
@@ -1549,7 +1549,7 @@ func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
 }
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
 	releaseGate, ok := gate.BeginWork()
@@ -1605,7 +1605,7 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 }
 
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := &mockStore{
 		rebuildFTSFunc: func(progress func(done, total int64)) (int64, error) {
@@ -1632,7 +1632,7 @@ func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
 }
 
 func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	releaseComplete := make(chan struct{})
 	var releaseOnce sync.Once
@@ -1719,7 +1719,7 @@ func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 }
 
 func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	gate := NewSerialOperationGate()
 	releaseGate, ok := gate.BeginWork()
@@ -1759,7 +1759,7 @@ func TestHandleCLIRebuildFTSBypassesStandardRequestTimeoutWhileQueued(t *testing
 }
 
 func TestHandleCLIAccountsReturnsSourceCounts(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1808,7 +1808,7 @@ func TestHandleCLIAccountsReturnsSourceCounts(t *testing.T) {
 }
 
 func TestHandleCLIUpdateAccountDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1847,7 +1847,7 @@ func TestHandleCLIUpdateAccountDisplayName(t *testing.T) {
 }
 
 func TestHandleCLIUpdateAccountResolvesCurrentDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServerWithOptions(ServerOptions{
@@ -1886,7 +1886,7 @@ func TestHandleCLIUpdateAccountResolvesCurrentDisplayName(t *testing.T) {
 }
 
 func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -1936,7 +1936,7 @@ func TestHandleCLIMessageResolvesSourceMessageID(t *testing.T) {
 }
 
 func TestHandleCLIMessageRawResolvesSourceMessageID(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -1978,7 +1978,7 @@ func TestHandleCLIMessageRawResolvesSourceMessageID(t *testing.T) {
 }
 
 func TestHandleCLIMessageRawMissingMessageUsesStableErrorCode(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -2002,7 +2002,7 @@ func TestHandleCLIMessageRawMissingMessageUsesStableErrorCode(t *testing.T) {
 }
 
 func TestHandleCLIMessageRawMissingRawUsesStableErrorCode(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -2042,7 +2042,7 @@ func TestHandleCLIMessageRawMissingRawUsesStableErrorCode(t *testing.T) {
 }
 
 func TestHandleCLIAttachmentReturnsContentAddressedBytes(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
@@ -2070,7 +2070,7 @@ func TestHandleCLIAttachmentReturnsContentAddressedBytes(t *testing.T) {
 }
 
 func TestHandleListMessages(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
@@ -2112,14 +2112,14 @@ func TestHandleListMessagesPagination(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status")
 
 	var resp map[string]any
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.InDelta(float64(1), resp["page"], 1e-9, "page")
 	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
 }
 
 func TestHandleSourceStatus(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	sched := newMockScheduler()
@@ -2208,7 +2208,7 @@ func TestHandleSourceStatus(t *testing.T) {
 }
 
 func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
@@ -2243,7 +2243,7 @@ func TestHandleGetMessage(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status")
 
 	var resp MessageDetail
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(int64(1), resp.ID, "id")
 	assert.Equal("Test Subject", resp.Subject, "subject")
@@ -2273,7 +2273,7 @@ func TestHandleGetMessageInvalidID(t *testing.T) {
 }
 
 func TestHandleGetMessage_EngineBodyHTML(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
@@ -2331,10 +2331,10 @@ func TestHandleGetMessage_EngineDeletedAt(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp map[string]any
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode")
 	want := deletedAt.Format(time.RFC3339)
 	assert.Equal(t, want, resp["deleted_at"], "deleted_at")
 }
@@ -2361,13 +2361,13 @@ func TestHandleSearch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp SearchResult
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(t, "Test", resp.Query, "query")
 }
 
 func TestHandleSearchPlainTextAccountScopeUsesStructuredSearch(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newTestServerWithMockStore(t)
 	st.sourcesByLookup = map[string][]*store.Source{
@@ -2389,7 +2389,7 @@ func TestHandleSearchPlainTextAccountScopeUsesStructuredSearch(t *testing.T) {
 }
 
 func TestHandleSearchAccountLookupErrorReturnsInternal(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, st := newTestServerWithMockStore(t)
 	st.sourcesByLookupErr = errors.New("source index unavailable")
@@ -2475,14 +2475,14 @@ func TestErrorResponseShape(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	var resp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode error response")
 
 	assert.NotEmpty(t, resp.Error, "expected error code in response")
 	assert.NotEmpty(t, resp.Message, "expected error message in response")
 }
 
 func TestMessageSummaryNilSlices(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	store := &mockStore{
 		messages: []APIMessage{
@@ -2527,7 +2527,7 @@ func TestMessageSummaryNilSlices(t *testing.T) {
 }
 
 func TestMessageSummaryCcBccInResponse(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, ms := newTestServerWithMockStore(t)
 	ms.messages[0].Cc = []string{"cc1@example.com", "cc2@example.com"}
@@ -2566,7 +2566,7 @@ func TestMessageSummaryCcBccInResponse(t *testing.T) {
 }
 
 func TestMessageSummaryCcBccOmittedWhenEmpty(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
@@ -2589,7 +2589,7 @@ func TestMessageSummaryCcBccOmittedWhenEmpty(t *testing.T) {
 }
 
 func TestGetMessageCcBccInResponse(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, ms := newTestServerWithMockStore(t)
 	ms.messages[0].Cc = []string{"cc@example.com"}
@@ -2611,7 +2611,7 @@ func TestGetMessageCcBccInResponse(t *testing.T) {
 }
 
 func TestGetMessageIncludesAttachmentID(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, ms := newTestServerWithMockStore(t)
 	ms.messages[0].HasAttachments = true
@@ -2670,7 +2670,7 @@ func TestHandleUploadToken(t *testing.T) {
 }
 
 func TestHandleUploadToken_PreservesClientID(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
@@ -2708,7 +2708,7 @@ func TestHandleUploadToken_PreservesClientID(t *testing.T) {
 }
 
 func TestHandleUploadTokenInvalidJSON(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -2733,7 +2733,7 @@ func TestHandleUploadTokenInvalidJSON(t *testing.T) {
 }
 
 func TestHandleUploadTokenMissingRefreshToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -2812,7 +2812,7 @@ func TestHandleUploadTokenMissingEmail(t *testing.T) {
 }
 
 func TestHandleAddAccount(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 
@@ -2861,7 +2861,7 @@ func TestHandleAddAccountDuplicate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp map[string]string
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal(t, "exists", resp["status"], "status")
 }
 
@@ -2882,7 +2882,7 @@ func TestHandleAddAccountInvalidCron(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal(t, "invalid_schedule", resp.Error, "error")
 }
 
@@ -2918,7 +2918,7 @@ func TestHandleAddAccountInvalidEmail(t *testing.T) {
 func TestHandleAddAccountSaveFailure(t *testing.T) {
 	// Point HomeDir to a file (not a directory) so Save() fails
 	tmpFile := filepath.Join(t.TempDir(), "not-a-dir")
-	requirepkg.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0600), "create blocker file")
+	require.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0600), "create blocker file")
 
 	cfg := &config.Config{
 		Server:  config.ServerConfig{APIPort: 8080},
@@ -3022,7 +3022,7 @@ func newTestServerWithEngine(t *testing.T, engine *querytest.MockEngine) *Server
 }
 
 func TestHandleAggregates(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
 		AggregateRows: []query.AggregateRow{
@@ -3099,14 +3099,14 @@ func TestHandleSubAggregates(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp AggregateResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal("labels", resp.ViewType, "view_type")
 	assert.Len(resp.Rows, 2, "rows count")
 }
 
 func TestHandleFilteredMessages(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
@@ -3146,7 +3146,7 @@ func TestHandleFilteredMessages(t *testing.T) {
 }
 
 func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
@@ -3174,7 +3174,7 @@ func TestHandleGmailIDsByFilterUsesQueryEngine(t *testing.T) {
 }
 
 func TestHandleGetAttachmentUsesQueryEngine(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
 		Attachments: map[int64]*query.AttachmentInfo{
@@ -3206,7 +3206,7 @@ func TestHandleGetAttachmentUsesQueryEngine(t *testing.T) {
 }
 
 func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var gotDomains []string
 	var gotAfter, gotBefore *time.Time
@@ -3265,7 +3265,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 }
 
 func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	deletedAt := time.Date(2026, 3, 18, 15, 0, 0, 0, time.UTC)
 	engine := &querytest.MockEngine{
 		ListResults: []query.MessageSummary{
@@ -3301,7 +3301,7 @@ func TestHandleFilteredMessagesIncludesDeletedAt(t *testing.T) {
 }
 
 func TestHandleFilteredMessagesFormatsPhoneBackedSMSParticipants(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	engine := &querytest.MockEngine{
 		ListResults: []query.MessageSummary{
 			{
@@ -3336,7 +3336,7 @@ func TestHandleFilteredMessagesFormatsPhoneBackedSMSParticipants(t *testing.T) {
 }
 
 func TestHandleFilteredMessagesFallsBackToContactNameWhenAddressMissing(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	engine := &querytest.MockEngine{
 		ListResults: []query.MessageSummary{
 			{
@@ -3394,7 +3394,7 @@ func TestHandleTotalStats(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp TotalStatsResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(int64(1000), resp.MessageCount, "message_count")
 	assert.Equal(int64(5000000), resp.TotalSize, "total_size")
@@ -3426,7 +3426,7 @@ func TestHandleFastSearch(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp SearchFastResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal("invoice", resp.Query, "query")
 	assert.Len(resp.Messages, 1, "messages count")
@@ -3456,7 +3456,7 @@ func TestHandleFastSearchInvalidViewType(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "status")
 
 	var errResp map[string]string
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 
 	assert.Equal(t, "invalid_view_type", errResp["error"], "error")
 }
@@ -3479,10 +3479,10 @@ func TestSearchRejectsMessageTypeFilterParam(t *testing.T) {
 
 			srv.Router().ServeHTTP(w, req)
 
-			requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+			require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 			var errResp map[string]string
-			requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode error")
-			requirepkg.Equal(t, "unsupported_filter", errResp["error"], "error")
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode error")
+			require.Equal(t, "unsupported_filter", errResp["error"], "error")
 		})
 	}
 }
@@ -3514,13 +3514,13 @@ func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
 
 			srv.Router().ServeHTTP(w, req)
 
-			requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+			require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 		})
 	}
 }
 
 func TestRemoteSearchParsedMessageTypeThroughAPI(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
 		SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
@@ -3596,7 +3596,7 @@ func TestHandleDeepSearch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	var resp map[string]any
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(t, "agenda", resp["query"], "query")
 }
@@ -3626,7 +3626,7 @@ func (m *mockSQLQueryEngine) QuerySQL(_ context.Context, _ string) (*query.Query
 }
 
 func TestHandleQuery(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	engine := &mockSQLQueryEngine{
 		queryResult: &query.QueryResult{
@@ -3663,7 +3663,7 @@ func TestHandleQuery(t *testing.T) {
 }
 
 func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 
 	cfg := &config.Config{
@@ -3701,7 +3701,7 @@ func TestHandleQueryUsesConfiguredRunnerWhenEngineDoesNotSupportSQL(t *testing.T
 }
 
 func TestHandleSearch_FTSModeUnchanged(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv, _ := newTestServerWithMockStore(t)
 
@@ -3730,10 +3730,10 @@ func TestHandleSearch_HybridModeNotConfigured(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 	assert.Equal(t, "vector_not_enabled", errResp.Error, "error")
 }
 
@@ -3774,9 +3774,9 @@ func TestHandleSearch_HybridErrIndexBuilding(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assert.Equal(t, "index_building", errResp.Error, "error")
 }
 
@@ -3792,9 +3792,9 @@ func TestHandleSearch_HybridErrNotEnabled(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assert.Equal(t, "vector_not_enabled", errResp.Error, "error")
 }
 
@@ -3858,9 +3858,9 @@ func TestHandleSearch_HybridEmbeddingTimeoutReturnsStructuredError(t *testing.T)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assert.Equal(t, "embedding_timeout", errResp.Error,
 		"error (timeout handling may have preempted with a bare 504)")
 }
@@ -3896,9 +3896,9 @@ func TestHandleSearch_HybridFilterOnlyReturnsBadRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "decode")
 	assert.Equal(t, "missing_free_text", errResp.Error, "error")
 }
 
@@ -3934,7 +3934,7 @@ func TestHandleSearch_VectorMessageTypeParamReachesFilter(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []string{"sms"}, backend.searchFilter.MessageTypes, "MessageTypes")
 }
 
@@ -3970,7 +3970,7 @@ func TestHandleSearch_VectorAccountParamReachesFilter(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []int64{77}, backend.searchFilter.SourceIDs, "SourceIDs")
 }
 
@@ -4010,7 +4010,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []int64{77, 88}, backend.searchFilter.SourceIDs, "SourceIDs")
 }
 
@@ -4021,7 +4021,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 // Catches regressions where the embedded type or omitempty rules
 // drift away from MessageSummary.
 func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	deletedAt := time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
 	store := &mockStore{
@@ -4100,7 +4100,7 @@ func TestHandleSearch_HybridResponseItemShape(t *testing.T) {
 }
 
 func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
-	require := requirepkg.
+	require := require.
 		New(t)
 
 	store := &mockStore{
@@ -4151,7 +4151,7 @@ func TestHandleSearch_VectorExplainAcceptsBooleanQueryValue(t *testing.T) {
 // roughly 7 queries per hit). Hybrid search must instead make a
 // single GetMessagesSummariesByIDs call carrying every hit's id.
 func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	store := &mockStore{
 		messages: []APIMessage{
@@ -4196,7 +4196,7 @@ func TestHandleSearch_HybridUsesBulkHydration(t *testing.T) {
 }
 
 func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	store := &mockStore{
 		messages: []APIMessage{
@@ -4263,7 +4263,7 @@ func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
 // silently drop the field for false values — clients that read
 // "pool not saturated" as a positive signal would break.
 func TestHandleSearch_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	store := &mockStore{}
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
@@ -4315,10 +4315,10 @@ func TestHandleSearch_HybridModePaginationUnsupported(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 	assert.Equal(t, "pagination_unsupported", errResp.Error, "error")
 }
 
@@ -4330,10 +4330,10 @@ func TestHandleSearch_UnknownMode(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 	assert.Equal(t, "invalid_mode", errResp.Error, "error")
 }
 
@@ -4359,7 +4359,7 @@ func TestHandleQuery_SQLiteEngine503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
 
 	var errResp ErrorResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&errResp), "failed to decode error response")
 	assert.Equal(t, "engine_unavailable", errResp.Error, "error")
 }
 
@@ -4430,17 +4430,17 @@ func TestHandleStats_VectorDisabled(t *testing.T) {
 
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 
 	// Parse raw JSON to verify "vector_search" is absent entirely.
 	var raw map[string]json.RawMessage
-	requirepkg.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode")
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw), "decode")
 	assert.NotContains(t, raw, "vector_search",
 		"expected 'vector_search' to be absent from JSON when backend is nil")
 }
 
 func TestHandleStats_VectorEnabledWithActive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
@@ -4552,7 +4552,7 @@ func TestHandleMessageInline_ImagePNG(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal("image/png", w.Header().Get("Content-Type"), "Content-Type")
 	cc := w.Header().Get("Cache-Control")
 	assert.Contains(cc, "private", "Cache-Control should contain 'private'")
@@ -4664,7 +4664,7 @@ func TestHandleMessageInline_CIDWithSlash(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, imgData, w.Body.Bytes(), "response body")
 }
 
@@ -4728,8 +4728,8 @@ func TestHandleGetMessage_EngineUnsupportedFallsBackToStore(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
-	requirepkg.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var resp map[string]any
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal(t, "Test Subject", resp["subject"], "subject (store path response)")
 }

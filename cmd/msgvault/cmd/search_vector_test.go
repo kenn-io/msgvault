@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	requests := &atomic.Int32{}
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
@@ -60,8 +60,8 @@ func TestSearchCmd_VectorModeUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testin
 }
 
 func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	requests := &atomic.Int32{}
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
@@ -119,13 +119,13 @@ func TestSearchCmd_VectorModeUnknownAccountUsesDaemonError(t *testing.T) {
 	})
 
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected daemon scope error")
-	assertpkg.ErrorContains(t, err, "no account found")
+	require.Error(t, err, "expected daemon scope error")
+	assert.ErrorContains(t, err, "no account found")
 }
 
 func TestSearchCmd_HybridModeUsesConfiguredRemoteHTTP(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	requests := &atomic.Int32{}
 	srv := vectorSearchHTTPDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -224,5 +224,5 @@ func writeVectorSearchResponse(
 			},
 		}},
 	})
-	requirepkg.NoError(t, err, "write vector search response")
+	require.NoError(t, err, "write vector search response")
 }

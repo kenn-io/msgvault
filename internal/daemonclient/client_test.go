@@ -11,59 +11,59 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestNewRejectsHTTPWithoutAllowInsecure(t *testing.T) {
 	_, err := New(Config{URL: "http://nas:8080", APIKey: "key"})
-	requirepkg.Error(t, err, "New should reject http without AllowInsecure")
+	require.Error(t, err, "New should reject http without AllowInsecure")
 }
 
 func TestNewAllowsHTTPWithAllowInsecure(t *testing.T) {
 	c, err := New(Config{URL: "http://nas:8080", APIKey: "key", AllowInsecure: true})
-	requirepkg.NoError(t, err, "New")
-	requirepkg.NotNil(t, c, "client")
+	require.NoError(t, err, "New")
+	require.NotNil(t, c, "client")
 }
 
 func TestNewAllowsHTTPS(t *testing.T) {
 	c, err := New(Config{URL: "https://nas:8080", APIKey: "key"})
-	requirepkg.NoError(t, err, "New")
-	requirepkg.NotNil(t, c, "client")
+	require.NoError(t, err, "New")
+	require.NotNil(t, c, "client")
 }
 
 func TestNewRejectsEmptyURL(t *testing.T) {
 	_, err := New(Config{APIKey: "key"})
-	requirepkg.Error(t, err, "New should reject empty URL")
+	require.Error(t, err, "New should reject empty URL")
 }
 
 func TestNewRejectsInvalidScheme(t *testing.T) {
 	_, err := New(Config{URL: "ftp://nas:8080", APIKey: "key"})
-	requirepkg.Error(t, err, "New should reject ftp")
+	require.Error(t, err, "New should reject ftp")
 	assert.ErrorContains(t, err, "http or https")
 }
 
 func TestNewRejectsEmptyHost(t *testing.T) {
 	_, err := New(Config{URL: "http://", APIKey: "key", AllowInsecure: true})
-	requirepkg.Error(t, err, "New should reject empty host")
+	require.Error(t, err, "New should reject empty host")
 	assert.ErrorContains(t, err, "must include a host")
 }
 
 func TestNewTrimsTrailingSlash(t *testing.T) {
 	c, err := New(Config{URL: "http://nas:8080/", APIKey: "key", AllowInsecure: true})
-	requirepkg.NoError(t, err, "New")
+	require.NoError(t, err, "New")
 	assert.Equal(t, "http://nas:8080", c.BaseURL(), "base URL")
 }
 
 func TestNewDefaultTimeout(t *testing.T) {
 	c, err := New(Config{URL: "https://nas:8080", APIKey: "key"})
-	requirepkg.NoError(t, err, "New")
+	require.NoError(t, err, "New")
 	assert.Equal(t, 30*time.Second, c.Timeout(), "timeout")
 }
 
 func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(http.MethodPost, r.Method, "method")
@@ -105,15 +105,15 @@ func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c, err := New(Config{URL: srv.URL, APIKey: "secret-key", HTTPClient: srv.Client()})
-	requirepkg.NoError(t, err, "New")
+	require.NoError(t, err, "New")
 	apiClient, err := c.GeneratedClient()
-	requirepkg.NoError(t, err, "generated client")
+	require.NoError(t, err, "generated client")
 
 	_, err = apiClient.RunQuery(context.Background(), &generated.RunQueryRequestOptions{
 		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
 	})
 
-	requirepkg.NoError(t, err, "RunQuery")
+	require.NoError(t, err, "RunQuery")
 }
 
 func TestGeneratedResponseErrorReturnsDecodeErrorForOKDecodeFailure(t *testing.T) {
@@ -123,7 +123,7 @@ func TestGeneratedResponseErrorReturnsDecodeErrorForOKDecodeFailure(t *testing.T
 		Body:       []byte("{"),
 	}, decodeErr)
 
-	requirepkg.ErrorIs(t, err, decodeErr, "decode error")
+	require.ErrorIs(t, err, decodeErr, "decode error")
 	assert.NotContains(t, err.Error(), "API error (200)", "decode failures are not API error bodies")
 }
 
@@ -131,7 +131,7 @@ func TestGeneratedResponseMetadataExtractsStatusBodyAndJSON200State(t *testing.T
 	assert := assert.
 		New(t)
 	require :=
-		requirepkg.
+		require.
 			New(t)
 
 	body := []byte(`{"total_messages": 7}`)
@@ -158,7 +158,7 @@ func TestGeneratedResponseMetadataExtractsStatusBodyAndJSON200State(t *testing.T
 func TestGeneratedResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 	err := APIResponseError(&generated.GetCLIStatsResp{StatusCode: http.StatusOK}, nil)
 
-	requirepkg.Error(t, err, "missing JSON body must fail")
+	require.Error(t, err, "missing JSON body must fail")
 	assert.ErrorContains(t, err, "200 JSON response body")
 }
 
@@ -168,7 +168,7 @@ func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
 		Body:       []byte(`{"error":"invalid_collection","message":"bad account"}`),
 	}, nil)
 
-	requirepkg.EqualError(t, err, "bad account", "CLI error")
+	require.EqualError(t, err, "bad account", "CLI error")
 }
 
 func TestGeneratedResponseDecodeErrorDetection(t *testing.T) {

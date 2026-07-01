@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechsms"
@@ -21,8 +21,8 @@ import (
 func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -53,8 +53,8 @@ func TestAddSynctechSMSDriveWritesConfigWithoutSecrets(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -98,8 +98,8 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() {
@@ -138,8 +138,8 @@ func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -171,8 +171,8 @@ func TestSynctechSMSDriveRunRecordsZeroSelectedPoll(t *testing.T) {
 }
 
 func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -208,8 +208,8 @@ func TestSynctechSMSDriveRunMarksOuterSyncFailedOnDownloadError(t *testing.T) {
 }
 
 func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	cfg = config.NewDefaultConfig()
 	cfg.HomeDir = home
@@ -267,8 +267,8 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 }
 
 func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	home := t.TempDir()
 	savedCfg := cfg
@@ -316,8 +316,8 @@ func TestRunConfiguredSynctechSMSSourceLeavesManualSyncMessagesUnstamped(t *test
 }
 
 func TestConfiguredSynctechSMSCompletesAfterImport(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	home := t.TempDir()
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
@@ -387,13 +387,13 @@ func synctechDriveTestSource() config.SynctechSMSSource {
 func getSynctechSource(t *testing.T, st *store.Store, ownerPhone string) *store.Source {
 	t.Helper()
 	sources, err := st.ListSources(synctechsms.SourceType)
-	requirepkg.NoError(t, err, "ListSources")
+	require.NoError(t, err, "ListSources")
 	for _, source := range sources {
 		if source.Identifier == ownerPhone {
 			return source
 		}
 	}
-	requirepkg.Failf(t, "synctech source not found", "owner_phone=%s sources=%#v", ownerPhone, sources)
+	require.Failf(t, "synctech source not found", "owner_phone=%s sources=%#v", ownerPhone, sources)
 	return nil
 }
 
@@ -401,7 +401,7 @@ func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "count sync runs")
+	require.NoError(t, err, "count sync runs")
 	return got
 }
 
@@ -419,14 +419,14 @@ func getOnlySyncRun(t *testing.T, st *store.Store, sourceID int64) store.SyncRun
 		&run.MessagesProcessed, &run.MessagesAdded, &run.MessagesUpdated, &run.ErrorsCount,
 		&run.ErrorMessage, &run.CursorBefore, &run.CursorAfter,
 	)
-	requirepkg.NoError(t, err, "get sync run")
+	require.NoError(t, err, "get sync run")
 	return run
 }
 
 func getDriveSourceImportItem(t *testing.T, st *store.Store, sourceID int64, providerID string) *store.SourceImportItem {
 	t.Helper()
 	item, err := st.GetSourceImportItem(sourceID, "drive", providerID)
-	requirepkg.NoError(t, err, "GetSourceImportItem")
+	require.NoError(t, err, "GetSourceImportItem")
 	return item
 }
 
@@ -434,14 +434,14 @@ func assertSourceMessageCount(t *testing.T, st *store.Store, sourceID int64, wan
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "count source messages")
-	assertpkg.Equal(t, want, got, "source message count")
+	require.NoError(t, err, "count source messages")
+	assert.Equal(t, want, got, "source message count")
 }
 
 func assertSourceConversationMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
 	t.Helper()
 	var got int
 	err := st.DB().QueryRow(st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
-	requirepkg.NoError(t, err, "read conversation message_count")
-	assertpkg.Equal(t, want, got, "conversation message_count")
+	require.NoError(t, err, "read conversation message_count")
+	assert.Equal(t, want, got, "conversation message_count")
 }

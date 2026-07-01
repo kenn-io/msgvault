@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -19,7 +19,7 @@ import (
 // This mirrors the FTS path's tokenless handling. It forces the no-FTS branch
 // directly, so it runs regardless of the fts5 build tag.
 func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "noftstokenless@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -58,9 +58,9 @@ func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			msgs, total, err := st.searchMessagesQueryImpl(
 				&search.Query{TextTerms: tc.terms}, 0, 50, false)
-			requirepkg.NoError(t, err, "searchMessagesQueryImpl(%v)", tc.terms)
-			assertpkg.Equal(t, int64(0), total, "tokenless terms must match nothing on the LIKE path")
-			assertpkg.Empty(t, msgs)
+			require.NoError(err, "searchMessagesQueryImpl(%v)", tc.terms)
+			assert.Equal(t, int64(0), total, "tokenless terms must match nothing on the LIKE path")
+			assert.Empty(t, msgs)
 		})
 	}
 }

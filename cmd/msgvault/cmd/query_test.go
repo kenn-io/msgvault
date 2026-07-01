@@ -11,15 +11,15 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, queryRequests := queryHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -68,7 +68,7 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 
 func queryHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	queryRequests := &atomic.Int32{}
 	mux := http.NewServeMux()

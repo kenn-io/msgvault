@@ -4,12 +4,12 @@ import (
 	"errors"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKindOf(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	err := Wrap(KindNotFound, errors.New("missing"))
 
 	assert.Equal(KindNotFound, KindOf(err), "wrapped kind")
@@ -17,8 +17,8 @@ func TestKindOf(t *testing.T) {
 }
 
 func TestWrapPreservesCause(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	cause := errors.New("database unavailable")
 	err := Wrap(KindInternal, cause)
 
@@ -42,7 +42,7 @@ func TestConstructorsClassifyErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, KindOf(tt.err), "kind")
+			assert.Equal(t, tt.want, KindOf(tt.err), "kind")
 		})
 	}
 }

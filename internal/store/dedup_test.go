@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -26,13 +26,13 @@ func newRFC822Message(
 		MessageType:  "email",
 		SizeEstimate: 1000,
 	})
-	requirepkg.NoError(t, err, "UpsertMessage")
+	require.NoError(t, err, "UpsertMessage")
 	return id
 }
 
 func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	idA := newRFC822Message(t, f, "src-a", "rfc822-shared")
 	idB := newRFC822Message(t, f, "src-b", "rfc822-shared")
@@ -53,8 +53,8 @@ func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
 }
 
 func TestStore_GetDuplicateGroupMessages_SentLabel(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	idInbox := newRFC822Message(t, f, "inbox-copy", "rfc822-sent")
 	idSent := newRFC822Message(t, f, "sent-copy", "rfc822-sent")
@@ -85,8 +85,8 @@ func TestStore_GetDuplicateGroupMessages_SentLabel(t *testing.T) {
 }
 
 func TestStore_MergeDuplicates_UnionsLabels(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-merge")
 	idDrop := newRFC822Message(t, f, "drop", "rfc822-merge")
@@ -119,17 +119,17 @@ func assertDedupDeleted(
 	err := st.DB().QueryRow(
 		st.Rebind("SELECT deleted_at FROM messages WHERE id = ?"), msgID,
 	).Scan(&deletedAt)
-	requirepkg.NoError(t, err, "query deleted_at")
+	require.NoError(t, err, "query deleted_at")
 	if wantDeleted {
-		assertpkg.True(t, deletedAt.Valid, "message %d: deleted_at should be set", msgID)
+		assert.True(t, deletedAt.Valid, "message %d: deleted_at should be set", msgID)
 	} else {
-		assertpkg.False(t, deletedAt.Valid, "message %d: deleted_at should be NULL", msgID)
+		assert.False(t, deletedAt.Valid, "message %d: deleted_at should be NULL", msgID)
 	}
 }
 
 func TestStore_BackfillRFC822IDs_EmptyTable(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	count, err := f.Store.CountMessagesWithoutRFC822ID()
 	require.NoError(err, "CountMessagesWithoutRFC822ID")
@@ -141,8 +141,8 @@ func TestStore_BackfillRFC822IDs_EmptyTable(t *testing.T) {
 }
 
 func TestStore_CountActiveMessages(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	_ = newRFC822Message(t, f, "a", "id-a")
 	idB := newRFC822Message(t, f, "b", "id-b")
@@ -164,8 +164,8 @@ func TestStore_CountActiveMessages(t *testing.T) {
 }
 
 func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	id := newRFC822Message(t, f, "needs-backfill", "")
@@ -196,7 +196,7 @@ func TestStore_BackfillRFC822IDs_ParsesFromRawMIME(t *testing.T) {
 }
 
 func TestStore_BackfillRFC822IDs_DoesNotOvercountRolledBackBatch(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses SQLite-specific CREATE TRIGGER ... NEW.* / RAISE(FAIL,...) syntax to force a mid-batch rollback")
 	f := storetest.New(t)
 
@@ -233,8 +233,8 @@ func TestStore_BackfillRFC822IDs_DoesNotOvercountRolledBackBatch(t *testing.T) {
 }
 
 func TestStore_MergeDuplicates_BackfillsRawMIME(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	idSurvivor := newRFC822Message(t, f, "survivor", "rfc822-mime-backfill")
@@ -269,7 +269,7 @@ func TestStore_MergeDuplicates_BackfillsRawMIME(t *testing.T) {
 // would prevent dedup's per-source identity match from finding a
 // stored case-mixed identity. Regression test for iter12 codex Medium.
 func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	mxid := "@Alice:matrix.org"
@@ -288,7 +288,7 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 	rows, err := f.Store.GetDuplicateGroupMessages("rfc822-mxid")
 	require.NoError(err, "GetDuplicateGroupMessages")
 	require.Len(rows, 1)
-	assertpkg.Equal(t, mxid, rows[0].FromEmail, "FromEmail (case must be preserved)")
+	assert.Equal(t, mxid, rows[0].FromEmail, "FromEmail (case must be preserved)")
 }
 
 // TestStore_GetAllRawMIMECandidates_PreservesFromCase mirrors
@@ -298,7 +298,7 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 // future refactor that reintroduces lowercasing in either query is
 // caught. Iter13 claude follow-up.
 func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	mxid := "@Bob:matrix.org"
@@ -330,5 +330,5 @@ func TestStore_GetAllRawMIMECandidates_PreservesFromCase(t *testing.T) {
 		}
 	}
 	require.NotNil(got, "test message %d not in candidates: %+v", id, cands)
-	assertpkg.Equal(t, mxid, got.FromEmail, "FromEmail (case must be preserved)")
+	assert.Equal(t, mxid, got.FromEmail, "FromEmail (case must be preserved)")
 }

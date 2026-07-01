@@ -6,13 +6,13 @@ import (
 	"runtime"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateNASBundle(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 	apiKey := "test-api-key-1234"
 	port := 9090
@@ -58,9 +58,9 @@ func TestCreateNASBundle(t *testing.T) {
 }
 
 func TestCreateNASBundle_NoSecrets(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
 	err := createNASBundle(bundleDir, "key", "", 8080)
@@ -82,8 +82,8 @@ func TestCreateNASBundle_NoSecrets(t *testing.T) {
 }
 
 func TestCreateNASBundle_CopiesSecrets(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	secretsPath := filepath.Join(tmpDir, "client_secret.json")
 	require.NoError(os.WriteFile(secretsPath, []byte(`{"installed":{}}`), 0600), "write secrets")
@@ -108,12 +108,12 @@ func TestCreateNASBundle_InvalidSecretPath(t *testing.T) {
 	bundleDir := filepath.Join(t.TempDir(), "nas-bundle")
 
 	err := createNASBundle(bundleDir, "key", "/nonexistent/secret.json", 8080)
-	requirepkg.Error(t, err, "createNASBundle should fail with nonexistent secrets path")
+	require.Error(t, err, "createNASBundle should fail with nonexistent secrets path")
 }
 
 func TestGenerateAPIKey(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	key1, err := generateAPIKey()
 	require.NoError(err, "generateAPIKey")
 

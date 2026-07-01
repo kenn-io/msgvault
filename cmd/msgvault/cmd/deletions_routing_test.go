@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeletionManifestCommandsUseDaemonRunner(t *testing.T) {
@@ -58,8 +58,8 @@ func TestDeletionManifestCommandsUseDaemonRunner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			requestAssert := assertpkg.New(t)
-			requestRequire := requirepkg.New(t)
+			requestAssert := assert.New(t)
+			requestRequire := require.New(t)
 			stdoutJSON, err := json.Marshal(tt.stdout)
 			requestRequire.NoError(err, "marshal stdout event")
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
@@ -80,8 +80,8 @@ func TestDeletionManifestCommandsUseDaemonRunner(t *testing.T) {
 }
 
 func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
 	t.Setenv(remoteDeleteEnvVar, "1")
 
@@ -129,8 +129,8 @@ func TestDeleteStagedTrashPromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestDeleteStagedPermanentPromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
 	t.Setenv(remoteDeleteEnvVar, "1")
 
@@ -175,8 +175,8 @@ func TestDeleteStagedPermanentPromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestDeleteStagedWithoutBatchPinsPlannedBatchesForDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
 	t.Setenv(remoteDeleteEnvVar, "1")
 
@@ -218,8 +218,8 @@ func TestDeleteStagedWithoutBatchPinsPlannedBatchesForDaemonRunner(t *testing.T)
 }
 
 func TestDeleteStagedScopeEscalationPromptsBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
 	t.Setenv(remoteDeleteEnvVar, "1")
 
@@ -266,8 +266,8 @@ func TestDeleteStagedScopeEscalationPromptsBeforeDaemonRunner(t *testing.T) {
 }
 
 func TestDeleteStagedConfirmationAndScopePromptsShareInput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	resetDeleteStagedRoutingGlobals(t)
 	t.Setenv(remoteDeleteEnvVar, "1")
 
@@ -311,8 +311,8 @@ func TestDeleteStagedConfirmationAndScopePromptsShareInput(t *testing.T) {
 }
 
 func TestCancelDeletionUsageErrorBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCancelAll := cancelAll
 	t.Cleanup(func() {
 		cancelAll = savedCancelAll

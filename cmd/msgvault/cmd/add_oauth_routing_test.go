@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAddAccountUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{
@@ -41,8 +41,8 @@ func TestAddAccountUsesDaemonRunner(t *testing.T) {
 }
 
 func TestAddO365UsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{
@@ -65,8 +65,8 @@ func TestAddO365UsesDaemonRunner(t *testing.T) {
 }
 
 func TestAddTeamsUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{
@@ -89,8 +89,8 @@ func TestAddTeamsUsesDaemonRunner(t *testing.T) {
 }
 
 func TestAddCalendarUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	saveCalendarGlobals := saveCalendarCommandGlobals()
 	t.Cleanup(saveCalendarGlobals)
 
@@ -132,8 +132,8 @@ func TestAddCalendarUsesDaemonRunner(t *testing.T) {
 }
 
 func TestSyncCalendarUsesDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	saveCalendarGlobals := saveCalendarCommandGlobals()
 	t.Cleanup(saveCalendarGlobals)
 
@@ -178,8 +178,8 @@ func TestSyncCalendarUsesDaemonRunner(t *testing.T) {
 }
 
 func TestAddCalendarPromptsScopeEscalationBeforeDaemonRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	saveCalendarGlobals := saveCalendarCommandGlobals()
 	t.Cleanup(saveCalendarGlobals)
 

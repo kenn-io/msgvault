@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,7 +33,7 @@ import (
 // Runs on whichever backend testutil.NewTestStore selects; a postgres:// DSN in
 // MSGVAULT_TEST_DB exercises the PG path as well as SQLite.
 func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromdup@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -107,46 +107,46 @@ func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
 		seen := make(map[int64]struct{}, len(msgs))
 		for _, m := range msgs {
 			_, dup := seen[m.ID]
-			assertpkg.Falsef(t, dup, "%s: id %d appeared more than once (row multiplication)", label, m.ID)
+			assert.Falsef(t, dup, "%s: id %d appeared more than once (row multiplication)", label, m.ID)
 			seen[m.ID] = struct{}{}
 		}
-		assertpkg.Equalf(t, 1, countOccurrences(msgs, dupID),
+		assert.Equalf(t, 1, countOccurrences(msgs, dupID),
 			"%s: multi-from message %d must appear exactly once", label, dupID)
 		// A full page (limit >= n) must contain every distinct id exactly once;
 		// on the old join the duplicate displaced a sibling so one id went missing.
-		assertpkg.Lenf(t, msgs, n, "%s: full page must hold every distinct message once", label)
+		assert.Lenf(t, msgs, n, "%s: full page must hold every distinct message once", label)
 		for id := range wantIDs {
 			_, ok := seen[id]
-			assertpkg.Truef(t, ok, "%s: distinct id %d missing (displaced by a duplicate)", label, id)
+			assert.Truef(t, ok, "%s: distinct id %d missing (displaced by a duplicate)", label, id)
 		}
-		assertpkg.Equalf(t, int64(n), total, "%s: total must equal distinct message count", label)
+		assert.Equalf(t, int64(n), total, "%s: total must equal distinct message count", label)
 	}
 
 	t.Run("ListMessages", func(t *testing.T) {
 		msgs, total, err := st.ListMessages(0, n)
-		requirepkg.NoError(t, err, "ListMessages")
+		require.NoError(err, "ListMessages")
 		assertDistinctPage(t, msgs, total, "ListMessages")
 	})
 
 	t.Run("SearchMessagesQuery", func(t *testing.T) {
 		msgs, total, err := st.SearchMessagesQuery(
 			&search.Query{SubjectTerms: []string{subjectTag}}, 0, n)
-		requirepkg.NoError(t, err, "SearchMessagesQuery")
+		require.NoError(err, "SearchMessagesQuery")
 		assertDistinctPage(t, msgs, total, "SearchMessagesQuery")
 	})
 
 	t.Run("GetMessage returns the multi-from message once with a sender", func(t *testing.T) {
 		m, err := st.GetMessage(dupID)
-		requirepkg.NoError(t, err, "GetMessage")
-		assertpkg.Equal(t, dupID, m.ID, "GetMessage id")
-		assertpkg.NotEmpty(t, m.From, "GetMessage must resolve a sender from the single joined from-row")
+		require.NoError(err, "GetMessage")
+		assert.Equal(t, dupID, m.ID, "GetMessage id")
+		assert.NotEmpty(t, m.From, "GetMessage must resolve a sender from the single joined from-row")
 	})
 
 	t.Run("GetMessagesSummariesByIDs returns each id exactly once", func(t *testing.T) {
 		msgs, err := st.GetMessagesSummariesByIDs(ids)
-		requirepkg.NoError(t, err, "GetMessagesSummariesByIDs")
-		assertpkg.Len(t, msgs, n, "summaries must hold every distinct id once")
-		assertpkg.Equal(t, 1, countOccurrences(msgs, dupID),
+		require.NoError(err, "GetMessagesSummariesByIDs")
+		assert.Len(t, msgs, n, "summaries must hold every distinct id once")
+		assert.Equal(t, 1, countOccurrences(msgs, dupID),
 			"multi-from message must appear exactly once in summaries")
 	})
 }

@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildHandler_WritesToFileAndStderr(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	var stderr bytes.Buffer
 	fixed := time.Date(2026, 4, 11, 12, 0, 0, 0, time.UTC)
@@ -58,12 +58,12 @@ func TestBuildHandler_FileDisabledKeepsStderr(t *testing.T) {
 		LevelString:  "info",
 		Stderr:       &stderr,
 	})
-	requirepkg.NoError(t, err, "BuildHandler")
+	require.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	assertpkg.Empty(t, res.FilePath)
+	assert.Empty(t, res.FilePath)
 	slog.New(res.Handler).Info("no-file")
-	assertpkg.Contains(t, stderr.String(), "no-file", "stderr missing msg")
+	assert.Contains(t, stderr.String(), "no-file", "stderr missing msg")
 }
 
 func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
@@ -75,18 +75,18 @@ func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
 		LevelOverride: &debug,
 		Stderr:        &stderr,
 	})
-	requirepkg.NoError(t, err, "BuildHandler")
+	require.NoError(t, err, "BuildHandler")
 	defer res.Close()
 
-	assertpkg.Equal(t, slog.LevelDebug, res.Level)
+	assert.Equal(t, slog.LevelDebug, res.Level)
 	logger := slog.New(res.Handler)
 	logger.Debug("dbg-line")
-	assertpkg.Contains(t, stderr.String(), "dbg-line", "debug line missing")
+	assert.Contains(t, stderr.String(), "dbg-line", "debug line missing")
 }
 
 func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "msgvault-2026-04-11.log")
 	// Seed a "big" file so BuildHandler will rotate it.
@@ -127,12 +127,12 @@ func TestParseLevel(t *testing.T) {
 		"garbage": slog.LevelInfo,
 	}
 	for in, want := range cases {
-		assertpkg.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
+		assert.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
 	}
 }
 
 func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	var textBuf, jsonBuf bytes.Buffer
 	textH := slog.NewTextHandler(&textBuf, &slog.HandlerOptions{
 		Level: slog.LevelWarn,

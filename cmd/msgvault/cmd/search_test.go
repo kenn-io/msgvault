@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
@@ -29,7 +29,7 @@ func captureStdout(t *testing.T) func() string {
 	t.Helper()
 	origStdout := os.Stdout
 	r, w, err := os.Pipe()
-	requirepkg.NoError(t, err, "create pipe")
+	require.NoError(t, err, "create pipe")
 	os.Stdout = w
 
 	// Drain the read side concurrently so writers never block.
@@ -48,7 +48,7 @@ func captureStdout(t *testing.T) func() string {
 		os.Stdout = origStdout
 		res := <-ch
 		_ = r.Close()
-		requirepkg.NoError(t, res.err, "read captured stdout")
+		require.NoError(t, res.err, "read captured stdout")
 		return string(res.data)
 	}
 }
@@ -57,7 +57,7 @@ func captureStderr(t *testing.T) func() string {
 	t.Helper()
 	origStderr := os.Stderr
 	r, w, err := os.Pipe()
-	requirepkg.NoError(t, err, "create pipe")
+	require.NoError(t, err, "create pipe")
 	os.Stderr = w
 
 	type result struct {
@@ -75,7 +75,7 @@ func captureStderr(t *testing.T) func() string {
 		os.Stderr = origStderr
 		res := <-ch
 		_ = r.Close()
-		requirepkg.NoError(t, res.err, "read captured stderr")
+		require.NoError(t, res.err, "read captured stderr")
 		return string(res.data)
 	}
 }
@@ -122,14 +122,14 @@ func TestSummaryFromDisplayFallsBackForPhoneMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := summaryFromDisplay(tt.msg)
-			requirepkg.Equal(t, tt.want, got, "summaryFromDisplay()")
+			require.Equal(t, tt.want, got, "summaryFromDisplay()")
 		})
 	}
 }
 
 func TestSearchCmd_AccountFlagForwardsToRemoteHTTP(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	savedCfg := cfg
 	savedUseLocal := useLocal
 	defer func() {
@@ -174,14 +174,14 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
 		gotQuery = r.URL.Query().Get("q")
-		assertpkg.Equal(t, "sms", r.URL.Query().Get("message_type"), "message_type query")
+		assert.Equal(t, "sms", r.URL.Query().Get("message_type"), "message_type query")
 		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(map[string]any{
 			"results": []map[string]any{},
 		})
-		assertpkg.NoError(t, err, "write response")
+		assert.NoError(t, err, "write response")
 	}))
 	defer srv.Close()
 
@@ -195,13 +195,13 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 	root.SetArgs([]string{"search", "--message-type", "sms", "lunch"})
 
 	err := root.Execute()
-	requirepkg.NoError(t, err, "message-type remote search should be forwarded")
-	assertpkg.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
+	require.NoError(t, err, "message-type remote search should be forwarded")
+	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
 }
 
 func TestSearchCmd_FTSUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, searchRequests := searchHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -236,8 +236,8 @@ func TestSearchCmd_FTSUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 }
 
 func TestSearchCmd_FTSCollectionSearchUsesDaemonHTTPAndPreservesBanner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	server, searchRequests := searchHTTPDaemon(t)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
@@ -335,8 +335,8 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 }
 
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -403,8 +403,8 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 }
 
 func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -478,12 +478,12 @@ func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
 	root.SetArgs([]string{"search", "before:not-a-date"})
 
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error for invalid query")
-	assertpkg.ErrorContains(t, err, "empty search query", "want 'empty search query' (not a DB error)")
+	require.Error(t, err, "expected error for invalid query")
+	assert.ErrorContains(t, err, "empty search query", "want 'empty search query' (not a DB error)")
 }
 
 func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -542,7 +542,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	err = root2.Execute()
 	out := done()
 	require.NoError(err, "second search failed")
-	assertpkg.Contains(t, out, "test msg",
+	assert.Contains(t, out, "test msg",
 		"second search should find msg without account filter")
 }
 
@@ -557,16 +557,16 @@ func TestSearchCmd_NoQueryNoAccount(t *testing.T) {
 	root.SetArgs([]string{"search"})
 
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected error for search with no query and no --account")
-	assertpkg.ErrorContains(t, err, "provide a search query")
+	require.Error(t, err, "expected error for search with no query and no --account")
+	assert.ErrorContains(t, err, "provide a search query")
 }
 
 // TestSearchCmd_CollectionFlagScopesResults seeds two accounts and one
 // collection containing only the first, then runs FTS search with
 // --collection. Only the first account's message must come back.
 func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -631,7 +631,7 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 // TestSearchCmd_CollectionFlagUnknown returns a clear error when the
 // named collection does not exist.
 func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	s, err := store.Open(dbPath)
@@ -661,7 +661,7 @@ func TestSearchCmd_CollectionFlagUnknown(t *testing.T) {
 	})
 	err = root.Execute()
 	require.Error(err, "expected error for unknown collection")
-	assertpkg.ErrorContains(t, err, "no collection")
+	assert.ErrorContains(t, err, "no collection")
 }
 
 // TestSearchCmd_VectorOrHybridRequireQueryText rejects empty-query
@@ -683,8 +683,8 @@ func TestSearchCmd_VectorOrHybridRequireQueryText(t *testing.T) {
 				"--account", "alice@example.com",
 			})
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for queryless --mode=%s", mode)
-			assertpkg.ErrorContains(t, err, "requires query text")
+			require.Error(t, err, "expected error for queryless --mode=%s", mode)
+			assert.ErrorContains(t, err, "requires query text")
 		})
 	}
 }
@@ -708,8 +708,8 @@ func TestSearchCmd_VectorOrHybridRejectFilterOnlyQuery(t *testing.T) {
 				"search", "--mode", mode, "from:alice",
 			})
 			err := root.Execute()
-			requirepkg.Error(t, err, "expected error for filter-only --mode=%s query", mode)
-			assertpkg.ErrorContains(t, err, "free-text terms")
+			require.Error(t, err, "expected error for filter-only --mode=%s query", mode)
+			assert.ErrorContains(t, err, "free-text terms")
 		})
 	}
 }
@@ -726,10 +726,10 @@ func TestSearchCmd_MutualExclusion(t *testing.T) {
 	cmd.SetArgs([]string{"search", "--account", "alpha@example.com", "--collection", "work"})
 
 	err := cmd.Execute()
-	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
+	require.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
-	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
+	assert.Contains(t, msg, "account", "error should mention account flag name")
+	assert.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }

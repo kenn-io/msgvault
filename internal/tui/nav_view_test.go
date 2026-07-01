@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -14,7 +14,7 @@ import (
 
 // TestGKeyCyclesViewType verifies that 'g' cycles through view types at aggregate level.
 func TestGKeyCyclesViewType(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithRows(query.AggregateRow{Key: "alice@example.com", Count: 10}).
 		WithPageSize(10).WithSize(100, 20).
@@ -58,7 +58,7 @@ func TestGKeyCyclesViewTypeFullCycle(t *testing.T) {
 		model = applyAggregateKey(t, model, key('g'))
 		model.loading = false // Reset for next iteration
 
-		assertpkg.Equal(t, expected, model.viewType, "cycle %d", i+1)
+		assert.Equal(t, expected, model.viewType, "cycle %d", i+1)
 	}
 }
 
@@ -76,7 +76,7 @@ func TestGKeyInSubAggregate(t *testing.T) {
 	m := applyAggregateKey(t, model, key('g'))
 
 	// Should skip ViewSenders (the drillViewType) and go to RecipientNames
-	assertpkg.Equal(t, query.ViewRecipientNames, m.viewType, "skipping drillViewType")
+	assert.Equal(t, query.ViewRecipientNames, m.viewType, "skipping drillViewType")
 }
 
 // TestGKeyInMessageListWithDrillFilter verifies 'g' switches to sub-aggregate view
@@ -102,7 +102,7 @@ func TestGKeyInMessageListWithDrillFilter(t *testing.T) {
 
 	assertLevel(t, m, levelDrillDown)
 	// ViewType should be next logical view (Recipients after Senders, skipping SenderNames)
-	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "after 'g'")
+	assert.Equal(t, query.ViewRecipients, m.viewType, "after 'g'")
 }
 
 // TestGKeyInMessageListNoDrillFilter verifies 'g' goes back to aggregates when no drill filter.
@@ -125,13 +125,13 @@ func TestGKeyInMessageListNoDrillFilter(t *testing.T) {
 	// Should transition to aggregate level
 	assertLevel(t, m, levelAggregates)
 	// Cursor and scroll should reset
-	assertpkg.Equal(t, 0, m.cursor, "after 'g' with no drill filter")
-	assertpkg.Equal(t, 0, m.scrollOffset, "after 'g' with no drill filter")
+	assert.Equal(t, 0, m.cursor, "after 'g' with no drill filter")
+	assert.Equal(t, 0, m.scrollOffset, "after 'g' with no drill filter")
 }
 
 // TestTabCyclesViewTypeAtAggregates verifies Tab still cycles view types.
 func TestTabCyclesViewTypeAtAggregates(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithRows(query.AggregateRow{Key: "test", Count: 10}).
 		WithPageSize(10).WithSize(100, 20).
@@ -166,8 +166,8 @@ func TestHomeKeyGoesToTop(t *testing.T) {
 	// Press 'home' - should go to top
 	m := applyAggregateKey(t, model, keyHome())
 
-	assertpkg.Equal(t, 0, m.cursor, "after 'home'")
-	assertpkg.Equal(t, 0, m.scrollOffset, "after 'home'")
+	assert.Equal(t, 0, m.cursor, "after 'home'")
+	assert.Equal(t, 0, m.scrollOffset, "after 'home'")
 }
 
 // =============================================================================
@@ -182,8 +182,8 @@ func TestTKeyJumpsToTimeView(t *testing.T) {
 
 	// Press 't' from Senders view - should jump to Time
 	m := applyAggregateKey(t, model, key('t'))
-	assertpkg.Equal(t, query.ViewTime, m.viewType, "after 't' from Senders")
-	assertpkg.True(t, m.loading, "expected loading=true after 't' key")
+	assert.Equal(t, query.ViewTime, m.viewType, "after 't' from Senders")
+	assert.True(t, m.loading, "expected loading=true after 't' key")
 }
 
 func TestTKeyJumpsToTimeFromAnyView(t *testing.T) {
@@ -203,7 +203,7 @@ func TestTKeyJumpsToTimeFromAnyView(t *testing.T) {
 			WithViewType(vt).Build()
 
 		m := applyAggregateKey(t, model, key('t'))
-		assertpkg.Equal(t, query.ViewTime, m.viewType, "from %v after 't'", vt)
+		assert.Equal(t, query.ViewTime, m.viewType, "from %v after 't'", vt)
 	}
 }
 
@@ -216,8 +216,8 @@ func TestTKeyCyclesGranularityInTimeView(t *testing.T) {
 
 	// Press 't' in Time view - should cycle granularity
 	m := applyAggregateKey(t, model, key('t'))
-	assertpkg.Equal(t, query.ViewTime, m.viewType, "expected to stay in ViewTime")
-	assertpkg.Equal(t, query.TimeMonth, m.timeGranularity, "after cycling from TimeYear")
+	assert.Equal(t, query.ViewTime, m.viewType, "expected to stay in ViewTime")
+	assert.Equal(t, query.TimeMonth, m.timeGranularity, "after cycling from TimeYear")
 }
 
 func TestTKeyResetsSelectionOnJump(t *testing.T) {
@@ -230,13 +230,13 @@ func TestTKeyResetsSelectionOnJump(t *testing.T) {
 	model.scrollOffset = 3
 
 	m := applyAggregateKey(t, model, key('t'))
-	assertpkg.Empty(t, m.selection.aggregateKeys, "expected selection cleared after 't' jump")
-	assertpkg.Equal(t, 0, m.cursor, "after 't' jump")
-	assertpkg.Equal(t, 0, m.scrollOffset, "after 't' jump")
+	assert.Empty(t, m.selection.aggregateKeys, "expected selection cleared after 't' jump")
+	assert.Equal(t, 0, m.cursor, "after 't' jump")
+	assert.Equal(t, 0, m.scrollOffset, "after 't' jump")
 }
 
 func TestTKeyDoesNotResetSelectionOnCycle(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithRows(query.AggregateRow{Key: "2024", Count: 10}, query.AggregateRow{Key: "2023", Count: 5}).
 		WithPageSize(10).WithSize(100, 20).
@@ -264,8 +264,8 @@ func TestTKeyNoOpInSubAggregateWhenDrillIsTime(t *testing.T) {
 
 	// Press 't' in sub-aggregate where drill was from Time — should be a no-op
 	m := applyAggregateKey(t, model, key('t'))
-	assertpkg.Equal(t, query.ViewSenders, m.viewType, "expected viewType unchanged")
-	assertpkg.False(t, m.loading, "expected no-op")
+	assert.Equal(t, query.ViewSenders, m.viewType, "expected viewType unchanged")
+	assert.False(t, m.loading, "expected no-op")
 }
 
 // TestTKeyInMessageListJumpsToTimeSubGroup verifies that pressing 't' in a
@@ -285,7 +285,7 @@ func TestTKeyInMessageListJumpsToTimeSubGroup(t *testing.T) {
 	m := applyMessageListKey(t, model, key('t'))
 
 	assertLevel(t, m, levelDrillDown)
-	assertpkg.Equal(t, query.ViewTime, m.viewType, "after 't'")
+	assert.Equal(t, query.ViewTime, m.viewType, "after 't'")
 }
 
 // TestTKeyInMessageListFromTimeDrillIsNoop verifies that pressing 't' when
@@ -304,7 +304,7 @@ func TestTKeyInMessageListFromTimeDrillIsNoop(t *testing.T) {
 	m := applyMessageListKey(t, model, key('t'))
 
 	assertLevel(t, m, levelMessageList)
-	assertpkg.False(t, m.loading, "expected no-op")
+	assert.False(t, m.loading, "expected no-op")
 }
 
 // TestTKeyInMessageListNoDrillFilterIsNoop verifies that 't' does nothing
@@ -341,7 +341,7 @@ func TestNextSubGroupViewSkipsSenderNames(t *testing.T) {
 
 	m := applyMessageListKey(t, model, key('g'))
 
-	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "sub-group from Senders should skip SenderNames")
+	assert.Equal(t, query.ViewRecipients, m.viewType, "sub-group from Senders should skip SenderNames")
 }
 
 // TestNextSubGroupViewSkipsRecipientNames verifies that drilling from Recipients
@@ -359,7 +359,7 @@ func TestNextSubGroupViewSkipsRecipientNames(t *testing.T) {
 
 	m := applyMessageListKey(t, model, key('g'))
 
-	assertpkg.Equal(t, query.ViewDomains, m.viewType, "sub-group from Recipients should skip RecipientNames")
+	assert.Equal(t, query.ViewDomains, m.viewType, "sub-group from Recipients should skip RecipientNames")
 }
 
 // TestNextSubGroupViewFromSenderNamesKeepsRecipients verifies that drilling from
@@ -377,7 +377,7 @@ func TestNextSubGroupViewFromSenderNamesKeepsRecipients(t *testing.T) {
 
 	m := applyMessageListKey(t, model, key('g'))
 
-	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "sub-group from SenderNames")
+	assert.Equal(t, query.ViewRecipients, m.viewType, "sub-group from SenderNames")
 }
 
 // TestNextSubGroupViewFromRecipientNamesKeepsDomains verifies that drilling from
@@ -395,7 +395,7 @@ func TestNextSubGroupViewFromRecipientNamesKeepsDomains(t *testing.T) {
 
 	m := applyMessageListKey(t, model, key('g'))
 
-	assertpkg.Equal(t, query.ViewDomains, m.viewType, "sub-group from RecipientNames")
+	assert.Equal(t, query.ViewDomains, m.viewType, "sub-group from RecipientNames")
 }
 
 // TestNextSubGroupViewFromDomainsGoesToLabels verifies the standard chain continues.
@@ -412,7 +412,7 @@ func TestNextSubGroupViewFromDomainsGoesToLabels(t *testing.T) {
 
 	m := applyMessageListKey(t, model, key('g'))
 
-	assertpkg.Equal(t, query.ViewLabels, m.viewType, "sub-group from Domains")
+	assert.Equal(t, query.ViewLabels, m.viewType, "sub-group from Domains")
 }
 
 // =============================================================================
@@ -446,8 +446,8 @@ func TestTopLevelTimeDrillDown_AllGranularities(t *testing.T) {
 
 			assertState(t, m, levelMessageList, query.ViewTime, 0)
 
-			assertpkg.Equal(t, tt.key, m.drillFilter.TimeRange.Period)
-			assertpkg.Equal(t, tt.granularity, m.drillFilter.TimeRange.Granularity)
+			assert.Equal(t, tt.key, m.drillFilter.TimeRange.Period)
+			assert.Equal(t, tt.granularity, m.drillFilter.TimeRange.Granularity)
 		})
 	}
 }
@@ -494,11 +494,11 @@ func TestSubAggregateTimeDrillDown_AllGranularities(t *testing.T) {
 
 			assertLevel(t, m, levelMessageList)
 
-			assertpkg.Equal(t, tt.key, m.drillFilter.TimeRange.Period)
-			assertpkg.Equal(t, tt.subGranularity, m.drillFilter.TimeRange.Granularity,
+			assert.Equal(t, tt.key, m.drillFilter.TimeRange.Period)
+			assert.Equal(t, tt.subGranularity, m.drillFilter.TimeRange.Granularity,
 				"should match sub-agg granularity, not initial %v", tt.initialGranularity)
 			// Sender filter from original drill should be preserved
-			assertpkg.Equal(t, "alice@example.com", m.drillFilter.Sender,
+			assert.Equal(t, "alice@example.com", m.drillFilter.Sender,
 				"should preserve parent drill filter")
 		})
 	}
@@ -527,9 +527,9 @@ func TestSubAggregateTimeDrillDown_NonTimeViewPreservesGranularity(t *testing.T)
 	assertLevel(t, m, levelMessageList)
 
 	// TimeGranularity should be unchanged (we drilled by Label, not Time)
-	assertpkg.Equal(t, query.TimeYear, m.drillFilter.TimeRange.Granularity,
+	assert.Equal(t, query.TimeYear, m.drillFilter.TimeRange.Granularity,
 		"non-time drill should not change it")
-	assertpkg.Equal(t, "INBOX", m.drillFilter.Label)
+	assert.Equal(t, "INBOX", m.drillFilter.Label)
 }
 
 func TestTopLevelTimeDrillDown_GranularityChangedBeforeEnter(t *testing.T) {
@@ -547,12 +547,12 @@ func TestTopLevelTimeDrillDown_GranularityChangedBeforeEnter(t *testing.T) {
 	m := applyAggregateKey(t, model, keyEnter())
 
 	assertLevel(t, m, levelMessageList)
-	assertpkg.Equal(t, query.TimeYear, m.drillFilter.TimeRange.Granularity)
-	assertpkg.Equal(t, "2024", m.drillFilter.TimeRange.Period)
+	assert.Equal(t, query.TimeYear, m.drillFilter.TimeRange.Granularity)
+	assert.Equal(t, "2024", m.drillFilter.TimeRange.Period)
 }
 
 func TestSubAggregateTimeDrillDown_FullScenario(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Full user scenario: search sender → drill → sub-group by time → toggle Year → Enter
 	// This is the exact bug report scenario.
 	model := NewBuilder().
@@ -568,7 +568,7 @@ func TestSubAggregateTimeDrillDown_FullScenario(t *testing.T) {
 	step1 := applyAggregateKey(t, model, keyEnter())
 	assertLevel(t, step1, levelMessageList)
 
-	requirepkg.Equal(t, query.TimeMonth, step1.drillFilter.TimeRange.Granularity,
+	require.Equal(t, query.TimeMonth, step1.drillFilter.TimeRange.Granularity,
 		"after top-level drill")
 
 	// Step 2: Tab to sub-aggregate view
@@ -609,7 +609,7 @@ func TestSubAggregateTimeDrillDown_FullScenario(t *testing.T) {
 // TestSenderNamesDrillDown verifies that pressing Enter on a SenderNames row
 // sets drillFilter.SenderName and transitions to message list.
 func TestSenderNamesDrillDown(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rows := []query.AggregateRow{
 		{Key: "Alice Smith", Count: 10},
 		{Key: "Bob Jones", Count: 5},
@@ -642,8 +642,8 @@ func TestSenderNamesDrillDownEmptyKey(t *testing.T) {
 	newModel, _ := model.handleAggregateKeys(keyEnter())
 	m := asModel(t, newModel)
 
-	assertpkg.True(t, m.drillFilter.MatchesEmpty(query.ViewSenderNames), "expected MatchEmptySenderName=true for empty key")
-	assertpkg.Empty(t, m.drillFilter.SenderName)
+	assert.True(t, m.drillFilter.MatchesEmpty(query.ViewSenderNames), "expected MatchEmptySenderName=true for empty key")
+	assert.Empty(t, m.drillFilter.SenderName)
 }
 
 // TestSenderNamesDrillFilterKey verifies drillFilterKey returns the SenderName.
@@ -655,21 +655,21 @@ func TestSenderNamesDrillFilterKey(t *testing.T) {
 	model.drillFilter = query.MessageFilter{SenderName: "John Doe"}
 
 	key := model.drillFilterKey()
-	assertpkg.Equal(t, "John Doe", key)
+	assert.Equal(t, "John Doe", key)
 
 	// Test empty case
 	model.drillFilter = query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewSenderNames: true}}
 	key = model.drillFilterKey()
-	assertpkg.Equal(t, "(empty)", key, "for MatchEmptySenderName")
+	assert.Equal(t, "(empty)", key, "for MatchEmptySenderName")
 }
 
 // TestSenderNamesBreadcrumbPrefix verifies the "N:" prefix in breadcrumbs.
 func TestSenderNamesBreadcrumbPrefix(t *testing.T) {
 	prefix := viewTypePrefix(query.ViewSenderNames)
-	assertpkg.Equal(t, "N", prefix)
+	assert.Equal(t, "N", prefix)
 
 	abbrev := viewTypeAbbrev(query.ViewSenderNames)
-	assertpkg.Equal(t, "Sender Name", abbrev)
+	assert.Equal(t, "Sender Name", abbrev)
 }
 
 // TestShiftTabCyclesSenderNames verifies shift+tab cycles backward through
@@ -682,7 +682,7 @@ func TestShiftTabCyclesSenderNames(t *testing.T) {
 
 	// Shift+tab from SenderNames should go back to Senders
 	m := applyAggregateKey(t, model, keyShiftTab())
-	assertpkg.Equal(t, query.ViewSenders, m.viewType, "after shift+tab from SenderNames")
+	assert.Equal(t, query.ViewSenders, m.viewType, "after shift+tab from SenderNames")
 }
 
 // TestSubAggregateFromSenderNames verifies that drilling from SenderNames
@@ -709,7 +709,7 @@ func TestSubAggregateFromSenderNames(t *testing.T) {
 
 	assertLevel(t, m2, levelDrillDown)
 	// Should skip SenderNames (the drill view type) and go to Recipients
-	assertpkg.Equal(t, query.ViewRecipients, m2.viewType, "skipping SenderNames")
+	assert.Equal(t, query.ViewRecipients, m2.viewType, "skipping SenderNames")
 }
 
 // TestHasDrillFilterWithSenderName verifies hasDrillFilter returns true
@@ -720,16 +720,16 @@ func TestHasDrillFilterWithSenderName(t *testing.T) {
 		WithPageSize(10).WithSize(100, 20).Build()
 
 	model.drillFilter = query.MessageFilter{SenderName: "John"}
-	assertpkg.True(t, model.hasDrillFilter(), "for SenderName")
+	assert.True(t, model.hasDrillFilter(), "for SenderName")
 
 	model.drillFilter = query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewSenderNames: true}}
-	assertpkg.True(t, model.hasDrillFilter(), "for MatchEmptySenderName")
+	assert.True(t, model.hasDrillFilter(), "for MatchEmptySenderName")
 }
 
 // TestSenderNamesBreadcrumbRoundTrip verifies that drilling into a sender name,
 // navigating to message detail, and going back preserves the SenderName filter.
 func TestSenderNamesBreadcrumbRoundTrip(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "Test message"},
@@ -744,7 +744,7 @@ func TestSenderNamesBreadcrumbRoundTrip(t *testing.T) {
 	assertLevel(t, m, levelMessageDetail)
 
 	// Verify breadcrumb saved SenderName
-	requirepkg.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
+	require.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
 	bc := m.breadcrumbs[len(m.breadcrumbs)-1]
 	assert.Equal("Alice Smith", bc.state.drillFilter.SenderName)
 
@@ -761,7 +761,7 @@ func TestSenderNamesBreadcrumbRoundTrip(t *testing.T) {
 // =============================================================================
 
 func TestRecipientNamesDrillDown(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rows := []query.AggregateRow{
 		{Key: "Bob Jones", Count: 10},
 		{Key: "Carol White", Count: 5},
@@ -792,8 +792,8 @@ func TestRecipientNamesDrillDownEmptyKey(t *testing.T) {
 	newModel, _ := model.handleAggregateKeys(keyEnter())
 	m := asModel(t, newModel)
 
-	assertpkg.True(t, m.drillFilter.MatchesEmpty(query.ViewRecipientNames), "expected MatchEmptyRecipientName=true for empty key")
-	assertpkg.Empty(t, m.drillFilter.RecipientName)
+	assert.True(t, m.drillFilter.MatchesEmpty(query.ViewRecipientNames), "expected MatchEmptyRecipientName=true for empty key")
+	assert.Empty(t, m.drillFilter.RecipientName)
 }
 
 func TestRecipientNamesDrillFilterKey(t *testing.T) {
@@ -804,20 +804,20 @@ func TestRecipientNamesDrillFilterKey(t *testing.T) {
 	model.drillFilter = query.MessageFilter{RecipientName: "Jane Doe"}
 
 	key := model.drillFilterKey()
-	assertpkg.Equal(t, "Jane Doe", key)
+	assert.Equal(t, "Jane Doe", key)
 
 	// Test empty case
 	model.drillFilter = query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewRecipientNames: true}}
 	key = model.drillFilterKey()
-	assertpkg.Equal(t, "(empty)", key, "for MatchEmptyRecipientName")
+	assert.Equal(t, "(empty)", key, "for MatchEmptyRecipientName")
 }
 
 func TestRecipientNamesBreadcrumbPrefix(t *testing.T) {
 	prefix := viewTypePrefix(query.ViewRecipientNames)
-	assertpkg.Equal(t, "RN", prefix)
+	assert.Equal(t, "RN", prefix)
 
 	abbrev := viewTypeAbbrev(query.ViewRecipientNames)
-	assertpkg.Equal(t, "Recipient Name", abbrev)
+	assert.Equal(t, "Recipient Name", abbrev)
 }
 
 func TestShiftTabCyclesRecipientNames(t *testing.T) {
@@ -828,7 +828,7 @@ func TestShiftTabCyclesRecipientNames(t *testing.T) {
 
 	// Shift+tab from RecipientNames should go back to Recipients
 	m := applyAggregateKey(t, model, keyShiftTab())
-	assertpkg.Equal(t, query.ViewRecipients, m.viewType, "after shift+tab from RecipientNames")
+	assert.Equal(t, query.ViewRecipients, m.viewType, "after shift+tab from RecipientNames")
 }
 
 func TestTabFromRecipientsThenRecipientNames(t *testing.T) {
@@ -839,12 +839,12 @@ func TestTabFromRecipientsThenRecipientNames(t *testing.T) {
 
 	// Tab from Recipients should go to RecipientNames
 	m := applyAggregateKey(t, model, keyTab())
-	assertpkg.Equal(t, query.ViewRecipientNames, m.viewType, "after tab from Recipients")
+	assert.Equal(t, query.ViewRecipientNames, m.viewType, "after tab from Recipients")
 
 	// Tab from RecipientNames should go to Domains
 	m.loading = false
 	m = applyAggregateKey(t, m, keyTab())
-	assertpkg.Equal(t, query.ViewDomains, m.viewType, "after tab from RecipientNames")
+	assert.Equal(t, query.ViewDomains, m.viewType, "after tab from RecipientNames")
 }
 
 func TestSubAggregateFromRecipientNames(t *testing.T) {
@@ -869,7 +869,7 @@ func TestSubAggregateFromRecipientNames(t *testing.T) {
 
 	assertLevel(t, m2, levelDrillDown)
 	// nextSubGroupView(RecipientNames) = Domains
-	assertpkg.Equal(t, query.ViewDomains, m2.viewType, "nextSubGroupView from RecipientNames")
+	assert.Equal(t, query.ViewDomains, m2.viewType, "nextSubGroupView from RecipientNames")
 }
 
 func TestHasDrillFilterWithRecipientName(t *testing.T) {
@@ -878,14 +878,14 @@ func TestHasDrillFilterWithRecipientName(t *testing.T) {
 		WithPageSize(10).WithSize(100, 20).Build()
 
 	model.drillFilter = query.MessageFilter{RecipientName: "John"}
-	assertpkg.True(t, model.hasDrillFilter(), "for RecipientName")
+	assert.True(t, model.hasDrillFilter(), "for RecipientName")
 
 	model.drillFilter = query.MessageFilter{EmptyValueTargets: map[query.ViewType]bool{query.ViewRecipientNames: true}}
-	assertpkg.True(t, model.hasDrillFilter(), "for MatchEmptyRecipientName")
+	assert.True(t, model.hasDrillFilter(), "for MatchEmptyRecipientName")
 }
 
 func TestRecipientNamesBreadcrumbRoundTrip(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "Test message"},
@@ -900,7 +900,7 @@ func TestRecipientNamesBreadcrumbRoundTrip(t *testing.T) {
 	assertLevel(t, m, levelMessageDetail)
 
 	// Verify breadcrumb saved RecipientName
-	requirepkg.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
+	require.NotEmpty(t, m.breadcrumbs, "expected breadcrumb to be saved")
 	bc := m.breadcrumbs[len(m.breadcrumbs)-1]
 	assert.Equal("Bob Jones", bc.state.drillFilter.RecipientName)
 
@@ -921,8 +921,8 @@ func TestRecipientNamesBreadcrumbRoundTrip(t *testing.T) {
 // viewType as GroupBy in StatsOptions when search is active. This ensures the
 // DuckDB engine searches the correct key columns for 1:N views.
 func TestLoadDataSetsGroupByInStatsOpts(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	engine := newMockEngine(MockConfig{
 		Rows: []query.AggregateRow{
 			{Key: "bob@example.com", Count: 10, TotalSize: 5000},

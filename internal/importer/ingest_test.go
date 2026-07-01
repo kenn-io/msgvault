@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -36,7 +36,7 @@ func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := normalizeMessageID(tt.input)
-			assertpkg.True(t, utf8.ValidString(result),
+			assert.True(t, utf8.ValidString(result),
 				"normalizeMessageID(%q) produced invalid UTF-8: %q",
 				tt.input, result)
 		})
@@ -44,12 +44,12 @@ func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
 }
 
 func TestNormalizeMessageID_PreservesValidContent(t *testing.T) {
-	assertpkg.Equal(t, "valid@example.com", normalizeMessageID("<valid@example.com>"))
+	assert.Equal(t, "valid@example.com", normalizeMessageID("<valid@example.com>"))
 }
 
 func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	st, err := store.Open(dbPath)
@@ -125,8 +125,8 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 }
 
 func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	st, err := store.Open(dbPath)

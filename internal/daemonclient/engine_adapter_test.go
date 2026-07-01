@@ -3,12 +3,12 @@ package daemonclient
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestBuildSearchQueryStringIncludesMessageTypes(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	assert.Equal(
 		"message_type:sms",

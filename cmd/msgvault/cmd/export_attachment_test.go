@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
@@ -35,8 +35,8 @@ func setupTestAttachment(t *testing.T) (string, string, []byte) {
 	data := []byte("test attachment content")
 
 	subDir := filepath.Join(tmpDir, contentHash[:2])
-	requirepkg.NoError(t, os.MkdirAll(subDir, 0755), "create subdir")
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(subDir, contentHash), data, 0600), "write test file")
+	require.NoError(t, os.MkdirAll(subDir, 0755), "create subdir")
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, contentHash), data, 0600), "write test file")
 
 	return tmpDir, contentHash, data
 }
@@ -54,8 +54,8 @@ func (r *failingAttachmentStream) Read(p []byte) (int, error) {
 }
 
 func TestExportAttachment_BinaryToFile(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	attDir, contentHash, wantData := setupTestAttachment(t)
 
 	outFile := filepath.Join(attDir, "output.bin")
@@ -81,8 +81,8 @@ func TestExportAttachment_BinaryToFile(t *testing.T) {
 }
 
 func TestExportAttachmentBinaryStreamPreservesExistingFileOnError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	outFile := filepath.Join(tmpDir, "attachment.bin")
 	original := []byte("existing data")
@@ -101,8 +101,8 @@ func TestExportAttachmentBinaryStreamPreservesExistingFileOnError(t *testing.T) 
 }
 
 func TestExportAttachmentBinaryStreamReplacesExistingFile(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	outFile := filepath.Join(tmpDir, "attachment.bin")
 	require.NoError(os.WriteFile(outFile, []byte("old data"), 0o600), "seed output file")
@@ -120,8 +120,8 @@ func TestExportAttachmentBinaryStreamReplacesExistingFile(t *testing.T) {
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
@@ -170,8 +170,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T)
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
@@ -222,8 +222,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T)
 }
 
 func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
@@ -266,8 +266,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.
 }
 
 func TestExportAttachment_JSONOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	attDir, contentHash, wantData := setupTestAttachment(t)
 
 	storagePath := filepath.Join(attDir, contentHash[:2], contentHash)
@@ -312,14 +312,14 @@ func TestExportAttachment_Base64Output(t *testing.T) {
 	_ = w.Close()
 	os.Stdout = oldStdout
 
-	requirepkg.NoError(t, err, "exportAttachmentAsBase64")
+	require.NoError(t, err, "exportAttachmentAsBase64")
 
 	outputBytes, _ := io.ReadAll(r)
 	output := string(outputBytes)
 
 	// Strip trailing newline
 	expected := base64.StdEncoding.EncodeToString(wantData) + "\n"
-	assertpkg.Equal(t, expected, output, "base64 output")
+	assert.Equal(t, expected, output, "base64 output")
 }
 
 func TestExportAttachment_MissingFile(t *testing.T) {
@@ -329,8 +329,8 @@ func TestExportAttachment_MissingFile(t *testing.T) {
 	storagePath := filepath.Join(tmpDir, hash[:2], hash)
 
 	_, err := openAttachmentFile(storagePath)
-	requirepkg.Error(t, err, "expected error for missing file")
-	assertpkg.ErrorContains(t, err, "attachment not found")
+	require.Error(t, err, "expected error for missing file")
+	assert.ErrorContains(t, err, "attachment not found")
 }
 
 func TestExportAttachment_FlagMutualExclusivity(t *testing.T) {
@@ -362,8 +362,8 @@ func TestExportAttachment_FlagMutualExclusivity(t *testing.T) {
 				"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			})
 
-			requirepkg.Error(t, err, "expected error containing %q", tc.errMsg)
-			assertpkg.ErrorContains(t, err, tc.errMsg)
+			require.Error(t, err, "expected error containing %q", tc.errMsg)
+			assert.ErrorContains(t, err, tc.errMsg)
 		})
 	}
 }
@@ -412,8 +412,8 @@ func TestExportAttachment_HashValidation(t *testing.T) {
 			exportAttachmentBase64 = false
 
 			err := runExportAttachment(nil, []string{tc.hash})
-			requirepkg.Error(t, err, "expected error for invalid hash")
-			assertpkg.ErrorContains(t, err, "invalid content hash")
+			require.Error(t, err, "expected error for invalid hash")
+			assert.ErrorContains(t, err, "invalid content hash")
 		})
 	}
 }

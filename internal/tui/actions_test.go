@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -56,7 +56,7 @@ func NewControllerTestEnv(t *testing.T, engine *querytest.MockEngine) *Controlle
 	t.Helper()
 	dir := t.TempDir()
 	mgr, err := deletion.NewManager(filepath.Join(dir, "deletions"))
-	requirepkg.NoError(t, err, "NewManager")
+	require.NoError(t, err, "NewManager")
 	return &ControllerTestEnv{
 		t:    t,
 		Ctrl: NewActionController(engine, dir, mgr),
@@ -99,7 +99,7 @@ func (e *ControllerTestEnv) StageForDeletion(args stageArgs) *deletion.Manifest 
 		Messages:           args.messages,
 		DrillFilter:        args.drillFilter,
 	})
-	requirepkg.NoError(e.t, err)
+	require.NoError(e.t, err)
 	return manifest
 }
 
@@ -115,9 +115,9 @@ func TestStageForDeletion_FromAggregateSelection(t *testing.T) {
 		view:       query.ViewSenders,
 	})
 
-	assertpkg.Len(t, manifest.GmailIDs, 3)
-	assertpkg.Equal(t, []string{"alice@example.com"}, manifest.Filters.Senders)
-	assertpkg.Equal(t, "tui", manifest.CreatedBy)
+	assert.Len(t, manifest.GmailIDs, 3)
+	assert.Equal(t, []string{"alice@example.com"}, manifest.Filters.Senders)
+	assert.Equal(t, "tui", manifest.CreatedBy)
 }
 
 func TestStageForDeletion_FromMessageSelection(t *testing.T) {
@@ -135,7 +135,7 @@ func TestStageForDeletion_FromMessageSelection(t *testing.T) {
 		messages:  messages,
 	})
 
-	assertpkg.ElementsMatch(t, []string{"gid_a", "gid_c"}, manifest.GmailIDs)
+	assert.ElementsMatch(t, []string{"gid_a", "gid_c"}, manifest.GmailIDs)
 }
 
 func TestStageForDeletion_NoSelection(t *testing.T) {
@@ -145,7 +145,7 @@ func TestStageForDeletion_NoSelection(t *testing.T) {
 		AggregateViewType: query.ViewSenders,
 		TimeGranularity:   query.TimeYear,
 	})
-	requirepkg.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestStageForDeletion_MultipleAggregates_DeterministicFilter(t *testing.T) {
@@ -155,7 +155,7 @@ func TestStageForDeletion_MultipleAggregates_DeterministicFilter(t *testing.T) {
 
 	for range 10 {
 		manifest := env.StageForDeletion(stageArgs{aggregates: agg, view: query.ViewSenders})
-		assertpkg.Equal(t, []string{"alice@example.com", "bob@example.com", "charlie@example.com"}, manifest.Filters.Senders)
+		assert.Equal(t, []string{"alice@example.com", "bob@example.com", "charlie@example.com"}, manifest.Filters.Senders)
 	}
 }
 
@@ -168,19 +168,19 @@ func TestStageForDeletion_ViewTypes(t *testing.T) {
 	}{
 		{"senders", query.ViewSenders, "a@b.com", func(t *testing.T, f deletion.Filters) {
 			t.Helper()
-			assertpkg.Equal(t, []string{"a@b.com"}, f.Senders)
+			assert.Equal(t, []string{"a@b.com"}, f.Senders)
 		}},
 		{"recipients", query.ViewRecipients, "c@d.com", func(t *testing.T, f deletion.Filters) {
 			t.Helper()
-			assertpkg.Equal(t, []string{"c@d.com"}, f.Recipients)
+			assert.Equal(t, []string{"c@d.com"}, f.Recipients)
 		}},
 		{"domains", query.ViewDomains, "example.com", func(t *testing.T, f deletion.Filters) {
 			t.Helper()
-			assertpkg.Equal(t, []string{"example.com"}, f.SenderDomains)
+			assert.Equal(t, []string{"example.com"}, f.SenderDomains)
 		}},
 		{"labels", query.ViewLabels, "INBOX", func(t *testing.T, f deletion.Filters) {
 			t.Helper()
-			assertpkg.Equal(t, []string{"INBOX"}, f.Labels)
+			assert.Equal(t, []string{"INBOX"}, f.Labels)
 		}},
 	}
 
@@ -211,7 +211,7 @@ func TestStageForDeletion_AccountFilter(t *testing.T) {
 		accountID:  &accountID,
 		accounts:   accounts,
 	})
-	assertpkg.Equal(t, "test@gmail.com", manifest.Filters.Account)
+	assert.Equal(t, "test@gmail.com", manifest.Filters.Account)
 }
 
 func TestStageForDeletion_DrillFilterApplied(t *testing.T) {
@@ -237,9 +237,9 @@ func TestStageForDeletion_DrillFilterApplied(t *testing.T) {
 	})
 
 	// Verify the filter passed to the engine includes both drill context and selection
-	assertpkg.Equal(t, "alice@example.com", capturedFilter.Sender)
-	assertpkg.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
-	assertpkg.Len(t, manifest.GmailIDs, 2)
+	assert.Equal(t, "alice@example.com", capturedFilter.Sender)
+	assert.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
+	assert.Len(t, manifest.GmailIDs, 2)
 }
 
 func TestStageForDeletion_NoDrillFilter(t *testing.T) {
@@ -258,8 +258,8 @@ func TestStageForDeletion_NoDrillFilter(t *testing.T) {
 		view:       query.ViewTime,
 	})
 
-	assertpkg.Empty(t, capturedFilter.Sender)
-	assertpkg.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
+	assert.Empty(t, capturedFilter.Sender)
+	assert.Equal(t, "2024-01", capturedFilter.TimeRange.Period)
 }
 
 func TestSaveManifest_UsesInjectedSaver(t *testing.T) {
@@ -272,16 +272,16 @@ func TestSaveManifest_UsesInjectedSaver(t *testing.T) {
 	manifest := deletion.NewManifest("daemon backed", []string{"gid1"})
 
 	err := ctrl.SaveManifest(manifest)
-	requirepkg.NoError(t, err, "SaveManifest")
+	require.NoError(t, err, "SaveManifest")
 
-	assertpkg.Same(t, manifest, saver.manifest)
-	assertpkg.NoFileExists(t, filepath.Join(dir, "deletions", "pending", manifest.ID+".json"))
+	assert.Same(t, manifest, saver.manifest)
+	assert.NoFileExists(t, filepath.Join(dir, "deletions", "pending", manifest.ID+".json"))
 }
 
 func TestExportAttachments_NilDetail(t *testing.T) {
 	env := newTestEnv(t)
 	cmd := env.Ctrl.ExportAttachments(nil, nil)
-	assertpkg.Nil(t, cmd, "expected nil cmd for nil detail")
+	assert.Nil(t, cmd, "expected nil cmd for nil detail")
 }
 
 func TestExportAttachments_NoSelection(t *testing.T) {
@@ -292,7 +292,7 @@ func TestExportAttachments_NoSelection(t *testing.T) {
 		},
 	}
 	cmd := env.Ctrl.ExportAttachments(detail, map[int]bool{})
-	assertpkg.Nil(t, cmd, "expected nil cmd for empty selection")
+	assert.Nil(t, cmd, "expected nil cmd for empty selection")
 }
 
 func TestExportAttachments_ErrBehavior(t *testing.T) {
@@ -319,8 +319,8 @@ func TestExportAttachments_ErrBehavior(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			env := newTestEnv(t)
 			detail := &query.MessageDetail{
 				ID:          1,
@@ -349,8 +349,8 @@ func TestExportAttachments_ErrBehavior(t *testing.T) {
 }
 
 func TestExportAttachments_PartialSuccess(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Partial success: one valid file exports, one missing file fails.
 	// Err should be nil because stats.Count > 0 (some files succeeded).
 	env := newTestEnv(t)
@@ -392,8 +392,8 @@ func TestExportAttachments_PartialSuccess(t *testing.T) {
 }
 
 func TestExportAttachments_FullSuccess(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Full success: all attachments export without errors.
 	env := newTestEnv(t)
 
@@ -429,8 +429,8 @@ func TestExportAttachments_FullSuccess(t *testing.T) {
 }
 
 func TestExportAttachments_UsesInjectedAttachmentReader(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	const contentHash = "abc123def456abc123def456abc123def456abc123def456abc123def456abc1"
 	outputDir := t.TempDir()
 	t.Chdir(outputDir)

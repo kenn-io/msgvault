@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCORSMiddleware(t *testing.T) {
@@ -56,20 +56,20 @@ func TestCORSMiddleware(t *testing.T) {
 
 			handler.ServeHTTP(w, req)
 
-			assertpkg.Equal(t, tt.wantStatus, w.Code, "status")
+			assert.Equal(t, tt.wantStatus, w.Code, "status")
 
 			corsHeader := w.Header().Get("Access-Control-Allow-Origin")
 			if tt.wantCORSHeader {
-				assertpkg.NotEmpty(t, corsHeader, "expected CORS header to be set")
+				assert.NotEmpty(t, corsHeader, "expected CORS header to be set")
 			} else {
-				assertpkg.Empty(t, corsHeader, "unexpected CORS header")
+				assert.Empty(t, corsHeader, "unexpected CORS header")
 			}
 		})
 	}
 }
 
 func TestCORSPreflightHeaders(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cfg := DefaultCORSConfig()
 	middleware := CORSMiddleware(cfg)
 
@@ -93,7 +93,7 @@ func TestCORSPreflightHeaders(t *testing.T) {
 }
 
 func TestRateLimiter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	rl := NewRateLimiter(2, 2) // 2 req/sec with burst of 2
 
 	// First two requests should succeed (burst)
@@ -142,7 +142,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, req1)
 
-	assertpkg.Equal(t, http.StatusOK, w1.Code, "first request status")
+	assert.Equal(t, http.StatusOK, w1.Code, "first request status")
 
 	// Second immediate request should be rate limited
 	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -150,8 +150,8 @@ func TestRateLimitMiddleware(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 
-	assertpkg.Equal(t, http.StatusTooManyRequests, w2.Code, "second request status")
+	assert.Equal(t, http.StatusTooManyRequests, w2.Code, "second request status")
 
 	// Check Retry-After header
-	assertpkg.NotEmpty(t, w2.Header().Get("Retry-After"), "missing Retry-After header on rate limited response")
+	assert.NotEmpty(t, w2.Header().Get("Retry-After"), "missing Retry-After header on rate limited response")
 }

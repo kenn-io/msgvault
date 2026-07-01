@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseE2EEJSONFile_Simple(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/e2ee_simple"
 	absRoot, err := filepath.Abs(root)
 	require.NoError(err)
@@ -42,8 +42,8 @@ func TestParseE2EEJSONFile_Simple(t *testing.T) {
 }
 
 func TestParseE2EEJSONFile_Group(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/e2ee_simple"
 	absRoot, err := filepath.Abs(root)
 	require.NoError(err)
@@ -56,8 +56,8 @@ func TestParseE2EEJSONFile_Group(t *testing.T) {
 }
 
 func TestParseE2EEJSONFile_MediaResolution(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/e2ee_simple"
 	absRoot, err := filepath.Abs(root)
 	require.NoError(err)
@@ -86,9 +86,9 @@ func TestParseE2EEJSONFile_NotAThread(t *testing.T) {
 	}
 	for name, body := range cases {
 		p := filepath.Join(tmp, name)
-		requirepkg.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 		_, err := ParseE2EEJSONFile(tmp, p)
-		assertpkg.ErrorIs(t, err, ErrNotE2EEThread, "%s", name)
+		assert.ErrorIs(t, err, ErrNotE2EEThread, "%s", name)
 	}
 }
 
@@ -104,23 +104,23 @@ func TestParseE2EEJSONFile_PartialObjectCorrupt(t *testing.T) {
 	}
 	for name, body := range cases {
 		p := filepath.Join(tmp, name)
-		requirepkg.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 		_, err := ParseE2EEJSONFile(tmp, p)
-		assertpkg.ErrorIs(t, err, ErrCorruptJSON, "%s", name)
+		assert.ErrorIs(t, err, ErrCorruptJSON, "%s", name)
 	}
 }
 
 func TestParseE2EEJSONFile_CorruptJSON(t *testing.T) {
 	tmp := t.TempDir()
 	badFile := filepath.Join(tmp, "bad.json")
-	requirepkg.NoError(t, os.WriteFile(badFile, []byte(`{not valid json`), 0644))
+	require.NoError(t, os.WriteFile(badFile, []byte(`{not valid json`), 0644))
 	_, err := ParseE2EEJSONFile(tmp, badFile)
-	requirepkg.Error(t, err)
-	assertpkg.ErrorIs(t, err, ErrCorruptJSON)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCorruptJSON)
 }
 
 func TestParseE2EEJSONFile_PathEscapeRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 	body := `{
 		"participants": ["A", "B"],
@@ -139,12 +139,12 @@ func TestParseE2EEJSONFile_PathEscapeRejected(t *testing.T) {
 	require.NoError(err, "parse")
 	require.Len(th.Messages, 1)
 	// Path escape should be rejected — no attachments resolved.
-	assertpkg.Empty(t, th.Messages[0].Attachments, "path escape not rejected")
+	assert.Empty(t, th.Messages[0].Attachments, "path escape not rejected")
 }
 
 func TestDiscover_E2EEFlat(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dirs, err := Discover("testdata/e2ee_simple")
 	require.NoError(err, "Discover")
 	// e2ee_simple has two JSON files at the messages root: alice_1.json
@@ -167,7 +167,7 @@ func TestDiscover_E2EEFlat(t *testing.T) {
 // thread files. Keeping the indexed list stable across runs is required
 // for checkpoint-by-thread-index resume.
 func TestDiscover_E2EEFlatRejectsNonThreadJSON(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 	thread := `{"participants":["A","B"],"threadName":"t","messages":[]}`
 	require.NoError(os.WriteFile(filepath.Join(tmp, "real_1.json"), []byte(thread), 0o644))
@@ -177,5 +177,5 @@ func TestDiscover_E2EEFlatRejectsNonThreadJSON(t *testing.T) {
 	dirs, err := Discover(tmp)
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
-	assertpkg.Equal(t, "real_1", dirs[0].Name)
+	assert.Equal(t, "real_1", dirs[0].Name)
 }

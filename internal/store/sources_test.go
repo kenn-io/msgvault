@@ -6,16 +6,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestStore_GetSourcesByIdentifier(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create two sources with same identifier, different types
@@ -37,13 +37,13 @@ func TestStore_GetSourcesByIdentifier_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	sources, err := st.GetSourcesByIdentifier("nobody@example.com")
-	requirepkg.NoError(t, err, "GetSourcesByIdentifier")
-	assertpkg.Empty(t, sources)
+	require.NoError(t, err, "GetSourcesByIdentifier")
+	assert.Empty(t, sources)
 }
 
 func TestStore_RemoveSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create messages, labels, and FTS data
@@ -100,12 +100,12 @@ func TestStore_RemoveSource_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	err := st.RemoveSource(99999)
-	requirepkg.Error(t, err, "RemoveSource should error for nonexistent ID")
+	require.Error(t, err, "RemoveSource should error for nonexistent ID")
 }
 
 func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create message with body, raw, and recipients
@@ -165,8 +165,8 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 
@@ -180,8 +180,8 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 	// Active sync on the source being removed — this row would be cascaded
@@ -198,8 +198,8 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Create a second source with its own running sync.
@@ -227,11 +227,11 @@ func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	_, err := st.RemoveSourceSerialized(context.Background(), 99999)
-	requirepkg.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
+	require.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
 }
 
 func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// Create a second source with its own conversation.
@@ -297,12 +297,12 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	require.NoError(err, "AttachmentPathsUniqueToSource")
 
 	require.Len(paths, 1, "paths: %v", paths)
-	assertpkg.Equal(t, "aa/uniquehash", paths[0], "path[0]")
+	assert.Equal(t, "aa/uniquehash", paths[0], "path[0]")
 }
 
 func TestStore_GetSourceByID(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	got, err := f.Store.GetSourceByID(f.Source.ID)
@@ -316,12 +316,12 @@ func TestStore_GetSourceByID_NotFound(t *testing.T) {
 	f := storetest.New(t)
 
 	_, err := f.Store.GetSourceByID(99999)
-	requirepkg.Error(t, err, "expected error for non-existent ID")
+	require.Error(t, err, "expected error for non-existent ID")
 }
 
 func TestStore_IsAttachmentPathReferenced(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-ref-1")
@@ -339,8 +339,8 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 }
 
 func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Simulate a pre-migration database that lacks the oauth_app column.
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)
@@ -409,7 +409,7 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 // `deleted_at` (LiveMessagesWhere, the dedup engine, the cache
 // staleness check) fails on upgraded databases with "no such column".
 func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)
 	require.NoError(err, "open store")
@@ -462,7 +462,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	require.NoError(st.DB().QueryRow(
 		"SELECT COUNT(*) FROM messages WHERE "+store.LiveMessagesWhere("", true),
 	).Scan(&n), "post-migration live count")
-	assertpkg.Equal(t, 1, n, "post-migration live count")
+	assert.Equal(t, 1, n, "post-migration live count")
 
 	// Confirm delete_batch_id is also queryable post-migration so
 	// DeleteAllDeduped's distinct-batch count works on upgraded DBs.

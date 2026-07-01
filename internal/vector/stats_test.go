@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // statsFakeBackend implements Backend for CollectStats tests. It is
@@ -89,13 +89,13 @@ var _ Backend = (*statsFakeBackend)(nil)
 
 func TestCollectStats_NilBackend(t *testing.T) {
 	sv, err := CollectStats(context.Background(), nil)
-	requirepkg.NoError(t, err, "CollectStats(nil)")
-	assertpkg.Nil(t, sv, "CollectStats(nil) should return nil")
+	require.NoError(t, err, "CollectStats(nil)")
+	assert.Nil(t, sv, "CollectStats(nil) should return nil")
 }
 
 func TestCollectStats_ActiveOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	activatedAt := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		active: &Generation{
@@ -129,8 +129,8 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 }
 
 func TestCollectStats_BuildingOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	startedAt := time.Date(2025, 4, 15, 9, 30, 0, 0, time.UTC)
 	b := &statsFakeBackend{
 		// No active generation — first build scenario.
@@ -162,8 +162,8 @@ func TestCollectStats_BuildingOnly(t *testing.T) {
 }
 
 func TestCollectStats_BothGenerations(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	activatedAt := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	startedAt := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
 	b := &statsFakeBackend{
@@ -203,8 +203,8 @@ func TestCollectStats_BothGenerations(t *testing.T) {
 }
 
 func TestCollectStats_ActiveError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// A non-sentinel error from ActiveGeneration is joined into the
 	// returned error, but the envelope (Enabled=true) is still returned
 	// so callers can log the failure and still render whatever partial
@@ -221,8 +221,8 @@ func TestCollectStats_ActiveError(t *testing.T) {
 }
 
 func TestCollectStats_BuildingError(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// A non-sentinel error from BuildingGeneration is joined into the
 	// returned error, symmetric with the ActiveGeneration error path.
 	wantErr := errors.New("db connection refused")
@@ -237,8 +237,8 @@ func TestCollectStats_BuildingError(t *testing.T) {
 }
 
 func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// BuildingGeneration loads fine, but its Stats call fails. The
 	// envelope is still returned with BuildingGeneration=nil, and the
 	// stats failure is joined into the returned error so callers can log
@@ -262,8 +262,8 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 }
 
 func TestCollectStats_BuildingStatsErrorDoesNotReportFrozenActiveDrift(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	wantErr := errors.New("stats table locked")
 	b := &statsFakeBackend{
 		active: &Generation{
@@ -293,8 +293,8 @@ func TestCollectStats_BuildingStatsErrorDoesNotReportFrozenActiveDrift(t *testin
 }
 
 func TestCollectStats_StatsError_Tolerated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Active generation loads fine, but Stats(active.ID) fails. The
 	// helper returns a StatsView with ActiveGeneration=nil and a joined
 	// error so callers can log the failure without losing the envelope.

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -25,12 +25,12 @@ import (
 func openTestBackend(t *testing.T) *sqlitevec.Backend {
 	t.Helper()
 	ctx := context.Background()
-	requirepkg.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
+	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	main, err := sql.Open("sqlite3", mainPath)
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = main.Close() })
 	schema := `
 CREATE TABLE messages (
@@ -39,16 +39,16 @@ CREATE TABLE messages (
     deleted_from_source_at DATETIME
 );`
 	_, err = main.Exec(schema)
-	requirepkg.NoError(t, err, "schema")
+	require.NoError(t, err, "schema")
 	_, err = main.Exec(`INSERT INTO messages (id) VALUES (1)`)
-	requirepkg.NoError(t, err, "seed")
+	require.NoError(t, err, "seed")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      filepath.Join(dir, "vectors.db"),
 		MainPath:  mainPath,
 		Dimension: 4,
 		MainDB:    main,
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
 	return b
 }
@@ -58,7 +58,7 @@ CREATE TABLE messages (
 func openStderrSink(t *testing.T) *os.File {
 	t.Helper()
 	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	requirepkg.NoError(t, err, "open /dev/null")
+	require.NoError(t, err, "open /dev/null")
 	t.Cleanup(func() { _ = f.Close() })
 	return f
 }
@@ -70,8 +70,8 @@ func openStderrSink(t *testing.T) *os.File {
 // still runs when pending drains to zero. Previously this path
 // errored out with ErrIndexBuilding.
 func TestPickEmbedGeneration_ResumesBuildingGeneration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -106,11 +106,11 @@ func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
 		Fingerprint: "fake:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected error when no generations exist")
+	require.Error(t, err, "expected error when no generations exist")
 	// Intentional: we wrap the underlying error with a hint, but the
 	// underlying sentinel should still be errors.Is-reachable so
 	// upstream callers can branch on it.
-	assertpkg.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
+	assert.ErrorIs(t, err, vector.ErrNotEnabled, "err should wrap ErrNotEnabled")
 }
 
 // TestPickEmbedGeneration_ResumeFingerprintMismatch rejects a resume
@@ -121,7 +121,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 	ctx := context.Background()
 	b := openTestBackend(t)
 	_, err := b.CreateGeneration(ctx, "old-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 
 	_, _, err = pickEmbedGeneration(ctx, b, embedGenerationOpts{
 		FullRebuild: false,
@@ -130,8 +130,8 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 		Fingerprint: "new-model:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected fingerprint mismatch error")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.Error(t, err, "expected fingerprint mismatch error")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint
@@ -142,8 +142,8 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 // (so it can be activated) rather than continuing to top up the old
 // active generation.
 func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -182,7 +182,7 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 	// State: building generation exists for an old model. No active
 	// generation, and config now points at a different model.
 	_, err := b.CreateGeneration(ctx, "old-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration (building)")
+	require.NoError(t, err, "CreateGeneration (building)")
 
 	_, _, err = pickEmbedGeneration(ctx, b, embedGenerationOpts{
 		FullRebuild: false,
@@ -191,8 +191,8 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 		Fingerprint: "new-model:4",
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected error for mismatched-fingerprint building generation")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	require.Error(t, err, "expected error for mismatched-fingerprint building generation")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_StaleActivePlusMatchingBuilding covers the
@@ -203,8 +203,8 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 // stale active one being topped up — otherwise the new build stays
 // stuck in `building` indefinitely.
 func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -235,7 +235,7 @@ func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
 // only rejected mismatched builds via the ErrIndexBuilding branch and
 // missed this active-also-matches case.
 func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	b := openTestBackend(t)
 
@@ -253,7 +253,7 @@ func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) 
 		Stderr:      openStderrSink(t),
 	})
 	require.Error(err, "expected error when a mismatched building exists alongside matching active")
-	assertpkg.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
+	assert.ErrorContains(t, err, "fingerprint", "error should mention fingerprint")
 }
 
 // TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined verifies the
@@ -270,19 +270,19 @@ func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
 		Confirm:     func() bool { return false },
 		Stderr:      openStderrSink(t),
 	})
-	requirepkg.Error(t, err, "expected abort error")
+	require.Error(t, err, "expected abort error")
 }
 
 func TestRemainingCoverageHintMentionsBackstop(t *testing.T) {
 	got := remainingCoverageHint(7, 3)
 
-	assertpkg.Contains(t, got, "Generation 7 still has 3 message(s) needing embedding")
-	assertpkg.Contains(t, got, "msgvault embeddings resume --backstop")
-	assertpkg.NotContains(t, got, "resume` again")
+	assert.Contains(t, got, "Generation 7 still has 3 message(s) needing embedding")
+	assert.Contains(t, got, "msgvault embeddings resume --backstop")
+	assert.NotContains(t, got, "resume` again")
 }
 
 func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	var buf bytes.Buffer
 	// window=2, total=210 so the percent path runs. The zero
 	// interval keeps the test deterministic without sleeping.
@@ -324,7 +324,7 @@ func TestNewProgressPrinter_UsesWindowedRate(t *testing.T) {
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	requirepkg.GreaterOrEqual(t, len(lines), 2, "expected at least 2 emitted lines, got:\n%s", out)
+	require.GreaterOrEqual(t, len(lines), 2, "expected at least 2 emitted lines, got:\n%s", out)
 	finalLine := lines[len(lines)-1]
 
 	assert.Contains(finalLine, "(last 2)", "expected `(last 2)` annotation on final line")
@@ -350,5 +350,5 @@ func TestNewProgressPrinter_DoesNotBypassThrottleAfterInitialTotal(t *testing.T)
 	})
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	requirepkg.Len(t, lines, 1, "progress emitted %d lines, want 1 throttled line after initial total:\n%s", len(lines), buf.String())
+	require.Len(t, lines, 1, "progress emitted %d lines, want 1 throttled line after initial total:\n%s", len(lines), buf.String())
 }

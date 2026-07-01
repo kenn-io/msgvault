@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
@@ -31,8 +31,8 @@ func newRemoveAccountLocalTestCmd() *cobra.Command {
 func seedAttachmentFile(t *testing.T, attachmentsDir, relPath, content string) string {
 	t.Helper()
 	absPath := filepath.Join(attachmentsDir, relPath)
-	requirepkg.NoError(t, os.MkdirAll(filepath.Dir(absPath), 0o755), "mkdir %s", filepath.Dir(absPath))
-	requirepkg.NoError(t, os.WriteFile(absPath, []byte(content), 0o600), "write %s", absPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(absPath), 0o755), "mkdir %s", filepath.Dir(absPath))
+	require.NoError(t, os.WriteFile(absPath, []byte(content), 0o600), "write %s", absPath)
 	return absPath
 }
 
@@ -45,23 +45,23 @@ func seedMessageWithAttachment(
 ) {
 	t.Helper()
 	src, err := s.GetOrCreateSource("gmail", email)
-	requirepkg.NoError(t, err, "GetOrCreateSource(%s)", email)
+	require.NoError(t, err, "GetOrCreateSource(%s)", email)
 	convID, err := s.EnsureConversation(src.ID, threadKey, "Thread")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(t, err, "EnsureConversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        src.ID,
 		SourceMessageID: msgKey,
 		MessageType:     "email",
 	})
-	requirepkg.NoError(t, err, "UpsertMessage")
-	requirepkg.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	require.NoError(t, err, "UpsertMessage")
+	require.NoError(t, s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
 func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	requests := &atomic.Int32{}
 
 	mux := http.NewServeMux()
@@ -120,8 +120,8 @@ func TestRemoveAccountUsesDaemonCLIRunnerAndPreservesStreams(t *testing.T) {
 }
 
 func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	requests := &atomic.Int32{}
 
 	mux := http.NewServeMux()
@@ -181,7 +181,7 @@ func TestRemoveAccountPromptsBeforeDaemonCLIRunner(t *testing.T) {
 }
 
 func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -208,11 +208,11 @@ func TestRemoveAccountCmd_DeletesUniqueAttachmentFiles(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
+	assert.True(t, os.IsNotExist(err), "expected attachment file deleted, err = %v", err)
 }
 
 func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -243,12 +243,12 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.NoError(t, err, "shared attachment file should be preserved")
+	assert.NoError(t, err, "shared attachment file should be preserved")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -299,7 +299,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 // though the sync worker may still be writing attachment files. The
 // pre-RemoveSource check must catch this and skip file deletion.
 func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 
@@ -335,11 +335,11 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(filePath)
-	assertpkg.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
+	assert.NoError(t, err, "attachment file should be preserved when the removed account has an active sync")
 }
 
 func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
@@ -371,7 +371,7 @@ func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
 }
 
 func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o755), "mkdir attachments")
@@ -402,7 +402,7 @@ func TestRemoveAccountCmd_RejectsPathTraversal(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(outsidePath)
-	assertpkg.NoError(t, err, "file outside attachments dir must not be deleted")
+	assert.NoError(t, err, "file outside attachments dir must not be deleted")
 }
 
 func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
@@ -410,11 +410,11 @@ func TestRemoveAccountCmd_RequiresEmail(t *testing.T) {
 	root.AddCommand(newRemoveAccountLocalTestCmd())
 	root.SetArgs([]string{"remove-account"})
 
-	requirepkg.Error(t, root.Execute(), "expected error for missing email arg")
+	require.Error(t, root.Execute(), "expected error for missing email arg")
 }
 
 func TestRemoveAccountCmd_NotFound(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -439,11 +439,11 @@ func TestRemoveAccountCmd_NotFound(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error for unknown email")
-	assertpkg.ErrorContains(t, err, "not found")
+	assert.ErrorContains(t, err, "not found")
 }
 
 func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -479,14 +479,14 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 
 	src, err := s.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
-	assertpkg.Nil(t, src, "account should be removed after --yes")
+	assert.Nil(t, src, "account should be removed after --yes")
 }
 
 func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 	t *testing.T,
 ) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -542,7 +542,7 @@ func TestRemoveAccountCmd_DuplicateIdentifierRequiresType(
 }
 
 func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -576,11 +576,11 @@ func TestRemoveAccountCmd_GmailRemovesToken(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(tokenPath)
-	assertpkg.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
+	assert.True(t, os.IsNotExist(err), "token file should be removed for gmail source")
 }
 
 func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -617,11 +617,11 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(tokenPath)
-	assertpkg.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
 }
 
 func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -655,11 +655,11 @@ func TestRemoveAccountCmd_NonGmailSkipsToken(t *testing.T) {
 	require.NoError(root.Execute(), "remove-account")
 
 	_, err = os.Stat(tokenPath)
-	assertpkg.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
+	assert.False(t, os.IsNotExist(err), "token file should NOT be removed for non-gmail source")
 }
 
 func TestResolveSource_IMAPDisplayName(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -680,11 +680,11 @@ func TestResolveSource_IMAPDisplayName(t *testing.T) {
 
 	found, err := resolveSource(s2, "user@outlook.com", "")
 	require.NoError(err, "resolveSource by display name")
-	assertpkg.Equal(t, "imaps://user%40outlook.com@outlook.office365.com:993", found.Identifier, "identifier should be IMAP URL")
+	assert.Equal(t, "imaps://user%40outlook.com@outlook.office365.com:993", found.Identifier, "identifier should be IMAP URL")
 }
 
 func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -722,5 +722,5 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error when stdin is closed")
-	assertpkg.ErrorContains(t, err, "use --yes")
+	assert.ErrorContains(t, err, "use --yes")
 }

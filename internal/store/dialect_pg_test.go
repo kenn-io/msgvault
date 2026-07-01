@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPostgreSQLDialect_Rebind(t *testing.T) {
@@ -46,14 +46,14 @@ func TestPostgreSQLDialect_Rebind(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assertpkg.Equal(t, tc.want, d.Rebind(tc.in), "Rebind(%q)", tc.in)
+			assert.Equal(t, tc.want, d.Rebind(tc.in), "Rebind(%q)", tc.in)
 		})
 	}
 }
 
 func TestPostgreSQLDialect_Now(t *testing.T) {
 	d := &PostgreSQLDialect{}
-	assertpkg.Equal(t, "NOW()", d.Now())
+	assert.Equal(t, "NOW()", d.Now())
 }
 
 func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
@@ -86,18 +86,18 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assertpkg.Equal(t, tc.want, d.InsertOrIgnore(tc.in), "InsertOrIgnore(%q)", tc.in)
+			assert.Equal(t, tc.want, d.InsertOrIgnore(tc.in), "InsertOrIgnore(%q)", tc.in)
 		})
 	}
 }
 
 func TestPostgreSQLDialect_InsertOrIgnoreSuffix(t *testing.T) {
 	d := &PostgreSQLDialect{}
-	assertpkg.Equal(t, " ON CONFLICT DO NOTHING", d.InsertOrIgnoreSuffix())
+	assert.Equal(t, " ON CONFLICT DO NOTHING", d.InsertOrIgnoreSuffix())
 }
 
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 	join, where, orderBy, orderArgCount := d.FTSSearchClause()
 	assert.Empty(join, "join (PostgreSQL needs no JOIN)")
@@ -137,7 +137,7 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assertpkg.Equal(t, tc.want, d.BuildFTSArg(tc.in), "BuildFTSArg(%q)", tc.in)
+			assert.Equal(t, tc.want, d.BuildFTSArg(tc.in), "BuildFTSArg(%q)", tc.in)
 		})
 	}
 }
@@ -146,5 +146,5 @@ func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {
 	d := &PostgreSQLDialect{}
 	in := "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "
 	want := "INSERT INTO message_labels (message_id, label_id) VALUES "
-	assertpkg.Equal(t, want, d.InsertOrIgnorePrefix(in), "InsertOrIgnorePrefix(%q)", in)
+	assert.Equal(t, want, d.InsertOrIgnorePrefix(in), "InsertOrIgnorePrefix(%q)", in)
 }

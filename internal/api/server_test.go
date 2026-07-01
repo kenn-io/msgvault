@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -371,7 +371,7 @@ func TestHealthEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "GET /health status")
 
 	var resp map[string]string
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(t, "ok", resp["status"], "health status")
 }
@@ -412,7 +412,7 @@ func TestDaemonPingEndpoint(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "daemon ping status")
 
 	var info daemon.PingInfo
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&info), "decode daemon ping")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&info), "decode daemon ping")
 	assert.True(info.OK, "ping ok")
 	assert.Equal("msgvault", info.Service, "service")
 	assert.Equal("v-test", info.Version, "version")
@@ -445,7 +445,7 @@ func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	assert.Equal(http.StatusAccepted, w.Code, "valid token status")
-	requirepkg.Eventually(t, func() bool {
+	require.Eventually(t, func() bool {
 		select {
 		case <-called:
 			return true
@@ -541,7 +541,7 @@ func TestSchedulerStatusEndpoint(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code, "status")
 
 	var resp SchedulerStatusResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.True(resp.Running, "expected scheduler to be running")
 	assert.Len(resp.Accounts, 1, "expected 1 account")
@@ -562,7 +562,7 @@ func TestSchedulerStatusNotRunning(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	var resp SchedulerStatusResponse
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.False(t, resp.Running, "expected scheduler to NOT be running")
 }
@@ -586,7 +586,7 @@ func TestListAccountsEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "status")
 
 	var resp map[string][]AccountInfo
-	requirepkg.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	accounts := resp["accounts"]
 	assert.Len(t, accounts, 2, "expected 2 accounts")

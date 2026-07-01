@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDaemonCLIChildEnvAppliesAllowlistedEnvOverrides(t *testing.T) {
@@ -20,7 +20,7 @@ func TestDaemonCLIChildEnvAppliesAllowlistedEnvOverrides(t *testing.T) {
 		map[string]string{"MSGVAULT_IMAP_PASSWORD": "new-secret"},
 	)
 
-	assertpkg.Equal(t, []string{
+	assert.Equal(t, []string{
 		"PATH=/usr/bin",
 		daemonCLISubprocessEnv + "=" + strconv.Itoa(123),
 		"MSGVAULT_IMAP_PASSWORD=new-secret",
@@ -32,6 +32,6 @@ func TestNewDaemonCLISubprocessCommandAppliesWorkingDirectory(t *testing.T) {
 
 	cmd, err := newDaemonCLISubprocessCommand(context.Background(), []string{"version"}, nil, cwd)
 
-	requirepkg.NoError(t, err, "newDaemonCLISubprocessCommand")
-	assertpkg.Equal(t, cwd, cmd.Dir, "working directory")
+	require.NoError(t, err, "newDaemonCLISubprocessCommand")
+	assert.Equal(t, cwd, cmd.Dir, "working directory")
 }

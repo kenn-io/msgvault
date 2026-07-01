@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCLIDeleteDedupedExecuteBodyKeepsEmptyExpectedBatches(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	expectedTotal := int64(0)
 	expectedBatchCount := int64(0)

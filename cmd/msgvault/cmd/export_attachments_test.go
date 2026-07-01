@@ -11,15 +11,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestExportAttachmentsCmd_Registration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Verify the command is registered and has expected configuration
 	cmd, _, err := rootCmd.Find([]string{"export-attachments"})
 	require.NoError(err, "export-attachments command not found")
@@ -67,8 +67,8 @@ func configureExportAttachmentsDaemonTest(t *testing.T, dataDir string) {
 }
 
 func TestExportAttachments_FullFlow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	setupExportAttachmentsHTTPTest(t)
 
 	outputDir := t.TempDir()
@@ -92,8 +92,8 @@ func TestExportAttachments_FullFlow(t *testing.T) {
 }
 
 func TestExportAttachmentsUsesLocalDaemonHTTPAndPreservesDirectoryOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	outputDir := t.TempDir()
 	reportData, photoData, messageRequests, attachmentRequests := setupExportAttachmentsHTTPTest(t)
 
@@ -135,10 +135,10 @@ func TestExportAttachments_GmailIDFallback(t *testing.T) {
 	// Use Gmail source ID instead of numeric ID
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
-	requirepkg.NoError(t, runExportAttachments(cmd, []string{"gmail_abc123"}), "runExportAttachments with Gmail ID")
+	require.NoError(t, runExportAttachments(cmd, []string{"gmail_abc123"}), "runExportAttachments with Gmail ID")
 
 	entries, _ := os.ReadDir(outputDir)
-	requirepkg.Len(t, entries, 2, "expected 2 files from Gmail ID lookup")
+	require.Len(t, entries, 2, "expected 2 files from Gmail ID lookup")
 }
 
 func TestExportAttachments_MessageNotFound(t *testing.T) {
@@ -147,8 +147,8 @@ func TestExportAttachments_MessageNotFound(t *testing.T) {
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"99999"})
-	requirepkg.Error(t, err, "expected error for nonexistent message")
-	assertpkg.ErrorContains(t, err, "message not found")
+	require.Error(t, err, "expected error for nonexistent message")
+	assert.ErrorContains(t, err, "message not found")
 }
 
 func TestExportAttachments_OutputDirValidation(t *testing.T) {
@@ -161,8 +161,8 @@ func TestExportAttachments_OutputDirValidation(t *testing.T) {
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"1"})
-	requirepkg.Error(t, err, "expected error for non-existent output directory")
-	assertpkg.ErrorContains(t, err, "output directory")
+	require.Error(t, err, "expected error for non-existent output directory")
+	assert.ErrorContains(t, err, "output directory")
 }
 
 func TestExportAttachments_NotADirectory(t *testing.T) {
@@ -170,15 +170,15 @@ func TestExportAttachments_NotADirectory(t *testing.T) {
 
 	// Point to a file, not a directory
 	tmpFile := filepath.Join(t.TempDir(), "afile.txt")
-	requirepkg.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0644))
+	require.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0644))
 	exportAttachmentsOutput = tmpFile
 	defer func() { exportAttachmentsOutput = "" }()
 
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"1"})
-	requirepkg.Error(t, err, "expected error for file as output dir")
-	assertpkg.ErrorContains(t, err, "not a directory")
+	require.Error(t, err, "expected error for file as output dir")
+	assert.ErrorContains(t, err, "not a directory")
 }
 
 func exportAttachmentsHTTPDaemon(

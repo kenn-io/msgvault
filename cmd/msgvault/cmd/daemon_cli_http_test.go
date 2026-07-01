@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
@@ -99,11 +99,11 @@ func newDaemonCLIAddCalendarTestServer(
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/cli/add-calendar/plan", func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "plan method")
+		assert.Equal(t, http.MethodPost, r.Method, "plan method")
 		planRequests.Add(1)
 
 		var req daemonCLIAddCalendarPlanTestRequest
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -112,7 +112,7 @@ func newDaemonCLIAddCalendarTestServer(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if !assertpkg.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
+		if !assert.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
 			return
 		}
 	})
@@ -144,11 +144,11 @@ func newDaemonCLIEmbeddingsTestServer(
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/cli/embeddings/plan", func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "plan method")
+		assert.Equal(t, http.MethodPost, r.Method, "plan method")
 		planRequests.Add(1)
 
 		var req daemonCLIEmbeddingsPlanTestRequest
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -157,7 +157,7 @@ func newDaemonCLIEmbeddingsTestServer(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if !assertpkg.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
+		if !assert.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
 			return
 		}
 	})
@@ -189,11 +189,11 @@ func newDaemonCLIDeleteStagedTestServer(
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/cli/delete-staged/plan", func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "plan method")
+		assert.Equal(t, http.MethodPost, r.Method, "plan method")
 		planRequests.Add(1)
 
 		var req daemonCLIDeleteStagedPlanTestRequest
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -202,7 +202,7 @@ func newDaemonCLIDeleteStagedTestServer(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if !assertpkg.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
+		if !assert.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
 			return
 		}
 	})
@@ -234,11 +234,11 @@ func newDaemonCLIDeduplicateTestServer(
 		Version: Version,
 	}))
 	mux.HandleFunc("/api/v1/cli/deduplicate/plan", func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "plan method")
+		assert.Equal(t, http.MethodPost, r.Method, "plan method")
 		planRequests.Add(1)
 
 		var req daemonCLIDeduplicatePlanTestRequest
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode plan request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -247,7 +247,7 @@ func newDaemonCLIDeduplicateTestServer(
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if !assertpkg.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
+		if !assert.NoError(t, json.NewEncoder(w).Encode(planResponse), "write plan response") {
 			return
 		}
 	})
@@ -267,11 +267,11 @@ func daemonCLIRunTestHandler(
 	t.Helper()
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, http.MethodPost, r.Method, "method")
+		assert.Equal(t, http.MethodPost, r.Method, "method")
 		requests.Add(1)
 
 		var req daemonCLIRunTestRequest
-		if !assertpkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request") {
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -310,8 +310,8 @@ func configureRemoteDaemonForTest(t *testing.T, url string) {
 }
 
 func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	var (
 		yes    bool
@@ -350,8 +350,8 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 }
 
 func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{"import-mbox", "alice@example.com", "export.mbox"}, req.Args, "args")
@@ -366,8 +366,8 @@ func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) 
 }
 
 func TestDaemonCLIRunCwdUsesCallerCwdForLocalDaemon(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	cwd, err := os.Getwd()
 	require.NoError(err, "get cwd")
@@ -379,8 +379,8 @@ func TestDaemonCLIRunCwdUsesCallerCwdForLocalDaemon(t *testing.T) {
 }
 
 func TestDaemonCLIArgsFromCobraHandlesNestedCommandsAndFalseBool(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	root := &cobra.Command{Use: "msgvault"}
 	parent := &cobra.Command{Use: "import"}
@@ -408,8 +408,8 @@ func TestDaemonCLIArgsFromCobraHandlesNestedCommandsAndFalseBool(t *testing.T) {
 }
 
 func TestDaemonCLIArgsFromCobraSkipsRootPersistentFlags(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	var cfgFile string
 	var verbose bool

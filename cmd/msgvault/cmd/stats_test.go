@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -32,10 +32,10 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 	cmd.SetArgs([]string{"stats", "--account", "foo@example.com", "--collection", "bar"})
 
 	err := cmd.Execute()
-	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
+	require.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
-	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
+	assert.Contains(t, msg, "account", "error should mention account flag name")
+	assert.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }
@@ -48,7 +48,7 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 // SourceIDs() returned an empty slice, and GetStatsForScope treats
 // an empty slice as unscoped/global.
 func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dataDir := t.TempDir()
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -90,12 +90,12 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error for empty collection")
-	assertpkg.Contains(t, err.Error(), "no member accounts")
+	assert.Contains(t, err.Error(), "no member accounts")
 }
 
 func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	testCfg := &config.Config{
 		HomeDir: dataDir,
@@ -147,8 +147,8 @@ Note: Size is global (not scoped).
 }
 
 func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dataDir := t.TempDir()
 	testCfg := &config.Config{
 		HomeDir: dataDir,
@@ -253,9 +253,9 @@ func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.Server) {
 	t.Helper()
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	requirepkg.NoError(t, err, "split listener address")
+	require.NoError(t, err, "split listener address")
 	_, err = strconv.Atoi(portText)
-	requirepkg.NoError(t, err, "parse listener port")
+	require.NoError(t, err, "parse listener port")
 
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
@@ -269,5 +269,5 @@ func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.
 			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
 		},
 	})
-	requirepkg.NoError(t, err, "write daemon runtime")
+	require.NoError(t, err, "write daemon runtime")
 }

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -48,8 +48,8 @@ func saveMessengerState(t *testing.T) func() {
 func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
@@ -82,8 +82,8 @@ func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
 	markDaemonCLISubprocessForTest(t)
 
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
@@ -114,8 +114,8 @@ func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
 }
 
 func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 	testCfg := lifecycleTestConfig(tmp)
@@ -177,8 +177,8 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 		filepath.Join(tmp, "does", "not", "exist"),
 	})
 	err := rootCmd.ExecuteContext(context.Background())
-	requirepkg.Error(t, err, "expected error for missing dir")
+	require.Error(t, err, "expected error for missing dir")
 	msg := err.Error()
-	assertpkg.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
+	assert.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
 		"error should describe missing path, got %v", err)
 }

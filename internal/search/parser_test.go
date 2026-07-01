@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/ptr"
 )
 
@@ -387,22 +387,22 @@ func TestParse_TopLevelWrapper(t *testing.T) {
 	// Test that Parse() handles relative dates without panicking
 	// and returns a non-nil AfterDate (the exact value depends on current time)
 	q := Parse("newer_than:1d")
-	assertpkg.NotNil(t, q.AfterDate, "Parse(\"newer_than:1d\") should set AfterDate")
+	assert.NotNil(t, q.AfterDate, "Parse(\"newer_than:1d\") should set AfterDate")
 
 	// Also verify older_than sets BeforeDate
 	q = Parse("older_than:1w")
-	assertpkg.NotNil(t, q.BeforeDate, "Parse(\"older_than:1w\") should set BeforeDate")
+	assert.NotNil(t, q.BeforeDate, "Parse(\"older_than:1w\") should set BeforeDate")
 }
 
 // TestParser_NilNow verifies that a Parser with nil Now function doesn't panic
 // and correctly handles relative date operators by falling back to time.Now().
 func TestParser_NilNow(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	p := &Parser{Now: nil}
 
 	// Should not panic and should return a valid result
 	q := p.Parse("newer_than:1d")
-	requirepkg.NotNil(t, q.AfterDate, "Parser{Now: nil}.Parse(\"newer_than:1d\") should set AfterDate")
+	require.NotNil(t, q.AfterDate, "Parser{Now: nil}.Parse(\"newer_than:1d\") should set AfterDate")
 
 	now := time.Now().UTC()
 	// AfterDate should be within a tight window around now-24h
@@ -429,7 +429,7 @@ func TestQuery_IsEmpty(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
 			q := Parse(tt.query)
-			assertpkg.Equal(t, tt.isEmpty, q.IsEmpty(), "IsEmpty(%q)", tt.query)
+			assert.Equal(t, tt.isEmpty, q.IsEmpty(), "IsEmpty(%q)", tt.query)
 		})
 	}
 
@@ -437,6 +437,6 @@ func TestQuery_IsEmpty(t *testing.T) {
 		q := &Query{}
 		id := int64(42)
 		q.AccountIDs = []int64{id}
-		assertpkg.False(t, q.IsEmpty(), "IsEmpty() = true for query with AccountIDs set")
+		assert.False(t, q.IsEmpty(), "IsEmpty() = true for query with AccountIDs set")
 	})
 }

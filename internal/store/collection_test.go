@@ -3,14 +3,14 @@ package store_test
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestCollection_CRUD(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -72,7 +72,7 @@ func TestCollection_CRUD(t *testing.T) {
 }
 
 func TestCollection_DefaultAll(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -96,22 +96,22 @@ func TestCollection_Validation(t *testing.T) {
 
 	t.Run("empty name rejected", func(t *testing.T) {
 		_, err := st.CreateCollection("", "", []int64{f.Source.ID})
-		requirepkg.Error(t, err, "expected error for empty name")
+		require.Error(t, err, "expected error for empty name")
 	})
 
 	t.Run("zero sources rejected", func(t *testing.T) {
 		_, err := st.CreateCollection("empty", "", nil)
-		requirepkg.Error(t, err, "expected error for zero sources")
+		require.Error(t, err, "expected error for zero sources")
 	})
 
 	t.Run("nonexistent source rejected", func(t *testing.T) {
 		_, err := st.CreateCollection("bad", "", []int64{99999})
-		requirepkg.Error(t, err, "expected error for nonexistent source")
+		require.Error(t, err, "expected error for nonexistent source")
 	})
 
 	t.Run("delete nonexistent returns error", func(t *testing.T) {
 		err := st.DeleteCollection("nonexistent")
-		requirepkg.ErrorIs(t, err, store.ErrCollectionNotFound)
+		require.ErrorIs(t, err, store.ErrCollectionNotFound)
 	})
 }
 
@@ -120,21 +120,21 @@ func TestCollection_Idempotent(t *testing.T) {
 	st := f.Store
 
 	_, err := st.CreateCollection("idem", "", []int64{f.Source.ID})
-	requirepkg.NoError(t, err, "CreateCollection")
+	require.NoError(t, err, "CreateCollection")
 
 	t.Run("add same source twice is no-op", func(t *testing.T) {
 		err := st.AddSourcesToCollection("idem", []int64{f.Source.ID})
-		requirepkg.NoError(t, err, "AddSourcesToCollection (dupe)")
+		require.NoError(t, err, "AddSourcesToCollection (dupe)")
 		coll, err := st.GetCollectionByName("idem")
-		requirepkg.NoError(t, err, "GetCollectionByName")
-		requirepkg.Len(t, coll.SourceIDs, 1)
+		require.NoError(t, err, "GetCollectionByName")
+		require.Len(t, coll.SourceIDs, 1)
 	})
 
 	t.Run("remove absent source is no-op", func(t *testing.T) {
 		src2, err := st.GetOrCreateSource("mbox", "other@example.com")
-		requirepkg.NoError(t, err, "GetOrCreateSource")
+		require.NoError(t, err, "GetOrCreateSource")
 		err = st.RemoveSourcesFromCollection("idem", []int64{src2.ID})
-		requirepkg.NoError(t, err, "RemoveSourcesFromCollection (absent)")
+		require.NoError(t, err, "RemoveSourcesFromCollection (absent)")
 	})
 }
 
@@ -144,10 +144,10 @@ func TestCollection_Idempotent(t *testing.T) {
 // call would silently revert the change, surprising the user.
 func TestCollection_DefaultAllIsImmutable(t *testing.T) {
 	require :=
-		requirepkg.
+		require.
 			New(t)
 
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	require.NoError(
@@ -162,7 +162,7 @@ func TestCollection_DefaultAllIsImmutable(t *testing.T) {
 }
 
 func TestCollection_DefaultAllIncremental(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -177,5 +177,5 @@ func TestCollection_DefaultAllIncremental(t *testing.T) {
 	require.NoError(st.EnsureDefaultCollection(), "EnsureDefaultCollection 2")
 	coll, err = st.GetCollectionByName("All")
 	require.NoError(err, "GetCollectionByName after add")
-	assertpkg.Len(t, coll.SourceIDs, initialCount+1)
+	assert.Len(t, coll.SourceIDs, initialCount+1)
 }

@@ -135,6 +135,13 @@ linters:
       # SQL table names) recur many more times than the threshold.
       min-occurrences: 10
 
+    importas:
+      alias:
+        - pkg: github.com/stretchr/testify/assert
+          alias: ""
+        - pkg: github.com/stretchr/testify/require
+          alias: ""
+
     revive:
       enable-default-rules: true
       rules:

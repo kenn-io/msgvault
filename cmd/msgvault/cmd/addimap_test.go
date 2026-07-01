@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPasswordPromptStrategy(t *testing.T) {
@@ -106,8 +106,8 @@ func TestPasswordPromptStrategy(t *testing.T) {
 			method, output := choosePasswordStrategy(
 				tt.stdinNat, tt.stdinCyg, tt.stderrTTY, tt.stdoutTTY,
 			)
-			assertpkg.Equal(t, tt.wantMethod, method, "method")
-			assertpkg.Equal(t, tt.wantOutput, output, "output")
+			assert.Equal(t, tt.wantMethod, method, "method")
+			assert.Equal(t, tt.wantOutput, output, "output")
 		})
 	}
 }
@@ -158,7 +158,7 @@ func TestReadPasswordFromPipe(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			r := strings.NewReader(tt.input)
 			got, err := readPasswordFromPipe(r)
 			if tt.wantErr != "" {
@@ -167,7 +167,7 @@ func TestReadPasswordFromPipe(t *testing.T) {
 				return
 			}
 			require.NoError(err)
-			assertpkg.Equal(t, tt.want, got)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -177,16 +177,16 @@ func TestReadPasswordFromPipeLargeInput(t *testing.T) {
 	input := "firstline\nsecondline\n"
 	r := strings.NewReader(input)
 	got, err := readPasswordFromPipe(r)
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, "firstline", got)
+	require.NoError(t, err)
+	assert.Equal(t, "firstline", got)
 }
 
 // Verify the function signature accepts io.Reader.
 var _ func(io.Reader) (string, error) = readPasswordFromPipe
 
 func TestAddIMAPUsesDaemonRunnerAndForwardsPasswordEnv(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	const host = "localhost"
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
 		assert.Equal([]string{

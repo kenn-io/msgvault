@@ -5,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/tbmock"
 )
 
 func TestAddLabel_ValidName(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	id := b.AddLabel("INBOX")
-	assertpkg.Equal(t, int64(1), id)
+	assert.Equal(t, int64(1), id)
 	id2 := b.AddLabel("SENT")
-	assertpkg.Equal(t, int64(2), id2)
+	assert.Equal(t, int64(2), id2)
 }
 
 func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
@@ -25,7 +25,7 @@ func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
 		Subject:  "test",
 		SourceID: 99, // explicit, so no sources needed
 	})
-	assertpkg.Equal(t, int64(1), id)
+	assert.Equal(t, int64(1), id)
 }
 
 func TestTestDataBuilder_ValidationFailures(t *testing.T) {
@@ -54,14 +54,14 @@ func TestTestDataBuilder_ValidationFailures(t *testing.T) {
 				b := NewTestDataBuilder(mtb)
 				tc.fn(b)
 			})
-			assertpkg.True(t, mtb.Failed(), "expected builder to fail")
+			assert.True(t, mtb.Failed(), "expected builder to fail")
 		})
 	}
 }
 
 func TestAddMessage_UsesFirstSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("a@test.com")
 	b.AddSource("b@test.com") // Add a second source to ensure first is selected
@@ -86,11 +86,11 @@ func TestAddAttachment_SetsHasAttachments(t *testing.T) {
 	b.AddSource("a@test.com")
 	msgID := b.AddMessage(MessageOpt{Subject: "with attachment"})
 
-	assertpkg.False(t, b.messages[0].HasAttachments, "HasAttachments should be false before AddAttachment")
+	assert.False(t, b.messages[0].HasAttachments, "HasAttachments should be false before AddAttachment")
 
 	b.AddAttachment(msgID, 1024, "file.txt")
 
-	assertpkg.True(t, b.messages[0].HasAttachments, "HasAttachments should be true after AddAttachment")
+	assert.True(t, b.messages[0].HasAttachments, "HasAttachments should be true after AddAttachment")
 }
 
 func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
@@ -107,6 +107,6 @@ func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
 
 	// Should be able to query without errors.
 	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
-	requirepkg.NoError(t, err, "GetTotalStats")
-	assertpkg.Equal(t, int64(1), stats.MessageCount)
+	require.NoError(t, err, "GetTotalStats")
+	assert.Equal(t, int64(1), stats.MessageCount)
 }

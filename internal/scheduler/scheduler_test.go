@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/vector"
@@ -21,7 +21,7 @@ func TestNew(t *testing.T) {
 		return nil
 	})
 
-	requirepkg.NotNil(t, s, "New()")
+	require.NotNil(t, s, "New()")
 	assert.NotNil(t, s.cron, "cron")
 	assert.NotNil(t, s.jobs, "jobs map")
 }
@@ -32,7 +32,7 @@ func TestAddAccount(t *testing.T) {
 	})
 
 	// Valid cron expression
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount() with valid cron")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount() with valid cron")
 
 	// Check job was added
 	s.mu.RLock()
@@ -57,14 +57,14 @@ func TestAddAccountReplacesExisting(t *testing.T) {
 	})
 
 	// Add initial schedule
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount()")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount()")
 
 	s.mu.RLock()
 	firstID := s.jobs["test@gmail.com"]
 	s.mu.RUnlock()
 
 	// Replace with new schedule
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 3 * * *"), "AddAccount() replacement")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 3 * * *"), "AddAccount() replacement")
 
 	s.mu.RLock()
 	secondID := s.jobs["test@gmail.com"]
@@ -78,7 +78,7 @@ func TestRemoveAccount(t *testing.T) {
 		return nil
 	})
 
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 2 * * *"), "AddAccount")
 	s.RemoveAccount("test@gmail.com")
 
 	s.mu.RLock()
@@ -146,7 +146,7 @@ func TestAddAccountsFromConfigWithErrors(t *testing.T) {
 }
 
 func TestSchedulerGenericJobStatus(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	var ran int
 	s := New(func(context.Context, string) error { return nil })
@@ -212,7 +212,7 @@ func TestIsRunning(t *testing.T) {
 }
 
 func TestStopCancelsRunningSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	syncStarted := make(chan struct{})
 	s := New(func(ctx context.Context, email string) error {
@@ -253,7 +253,7 @@ func TestStopCancelsRunningSync(t *testing.T) {
 }
 
 func TestTriggerSync(t *testing.T) {
-	require := requirepkg.
+	require := require.
 		New(t)
 
 	assert := assert.New(t)
@@ -285,7 +285,7 @@ func TestTriggerSync(t *testing.T) {
 }
 
 func TestScheduler_WorkTrackerWrapsTriggeredSync(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	tracker := &fakeWorkTracker{}
 	started := make(chan struct{})
@@ -357,12 +357,12 @@ func (t *blockingContextWorkTracker) BeginWorkContext(ctx context.Context) (func
 }
 
 func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
-	require := requirepkg.
+	require := require.
 		New(t)
 
 	tracker := newBlockingContextWorkTracker()
 	s := New(func(context.Context, string) error {
-		requirepkg.FailNow(t, "sync function must not run when gate wait is canceled")
+		require.FailNow("sync function must not run when gate wait is canceled")
 		return nil
 	}).WithWorkTracker(tracker)
 	require.NoError(
@@ -400,7 +400,7 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 		return nil
 	})
 
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Try to trigger multiple times concurrently
 	for range 5 {
@@ -413,7 +413,7 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
@@ -442,7 +442,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusAfterSyncSuccess(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
@@ -465,7 +465,7 @@ func TestStatusAfterSyncSuccess(t *testing.T) {
 }
 
 func TestStatusAfterSyncError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return errors.New("sync failed")
@@ -491,13 +491,13 @@ func TestTriggerSyncAfterStop(t *testing.T) {
 		return nil
 	})
 
-	requirepkg.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	require.NoError(t, s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	ctx := s.Stop()
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		requirepkg.Fail(t, "Stop() did not complete in time")
+		require.Fail(t, "Stop() did not complete in time")
 	}
 
 	err := s.TriggerSync("test@gmail.com")
@@ -886,7 +886,7 @@ func TestEmbedJob_Run_LeavesMismatchedBuildingForCLI(t *testing.T) {
 // now-active generation as its target — proving the post-activation
 // top-up path runs and the system converges.
 func TestEmbedJob_Run_PostActivationEnqueueDrainsOnNextRun(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	gen := vector.Generation{ID: 88, State: vector.GenerationBuilding, Fingerprint: "m:768"}
 	backend := &fakeBackend{
@@ -1152,7 +1152,7 @@ func TestEmbedJob_Run_SkipsWhenAlreadyRunning(t *testing.T) {
 	select {
 	case <-gate:
 	case <-time.After(time.Second):
-		requirepkg.Fail(t, "first RunOnce did not start")
+		require.Fail(t, "first RunOnce did not start")
 	}
 
 	// Second call must return immediately (no waiters queued).
@@ -1164,7 +1164,7 @@ func TestEmbedJob_Run_SkipsWhenAlreadyRunning(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		requirepkg.Fail(t, "second Run blocked; TryLock guard did not short-circuit")
+		require.Fail(t, "second Run blocked; TryLock guard did not short-circuit")
 	}
 
 	assert.Equal(t, 1, runner.calls(), "RunOnce calls during overlap")
@@ -1197,7 +1197,7 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 // ---------- SetEmbedJob tests ----------
 
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	s := New(func(ctx context.Context, email string) error { return nil })
 	backend := &fakeBackend{active: vector.Generation{ID: 1}}
@@ -1226,12 +1226,12 @@ func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	err := s.SetEmbedJob(job, "not a cron", false)
-	requirepkg.Error(t, err, "SetEmbedJob with invalid cron")
+	require.Error(t, err, "SetEmbedJob with invalid cron")
 	assert.False(t, s.embedEntrySet, "embedEntrySet should remain false after invalid cron")
 }
 
 func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	// After a successful SetEmbedJob, a later call with an invalid cron
 	// must leave the previous job, schedule, and post-sync flag intact.
@@ -1258,14 +1258,14 @@ func TestScheduler_SetEmbedJob_EmptyScheduleNoCronEntry(t *testing.T) {
 	runner := &fakeRunner{}
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
-	requirepkg.NoError(t, s.SetEmbedJob(job, "", true), "SetEmbedJob")
+	require.NoError(t, s.SetEmbedJob(job, "", true), "SetEmbedJob")
 	assert.False(s.embedEntrySet, "empty schedule should not create a cron entry")
 	assert.NotNil(s.embedJob, "embedJob should be set even with empty schedule")
 	assert.True(s.runEmbedAfterSync, "runEmbedAfterSync should be true")
 }
 
 func TestScheduler_RunAfterSync_Fires(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	assert := assert.New(t)
 	syncDone := make(chan struct{})
 	s := New(func(ctx context.Context, email string) error {
@@ -1305,7 +1305,7 @@ func TestScheduler_RunAfterSync_Fires(t *testing.T) {
 }
 
 func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	s := New(func(ctx context.Context, email string) error { return nil })
 	backend := &fakeBackend{active: vector.Generation{ID: 1}}
 	runner := &fakeRunner{}
@@ -1331,7 +1331,7 @@ func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
 }
 
 func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// When a sync's post-sync window coincides with Stop(), the embed
 	// hook must skip. We gate the syncFunc on a release channel so the
 	// test can Stop the scheduler before the sync completes.
@@ -1360,7 +1360,7 @@ func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
 }
 
 func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return errors.New("sync failed")
 	})

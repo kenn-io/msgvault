@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,7 +33,7 @@ import (
 // Runs against whichever backend testutil.NewTestStore selects; setting
 // MSGVAULT_TEST_DB to a postgres:// DSN exercises the PG path too.
 func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := context.Background()
 
@@ -68,8 +68,8 @@ func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
 		msgs, total, err := st.SearchMessagesQuery(
 			&search.Query{AfterDate: after, BeforeDate: before}, 0, 50,
 		)
-		requirepkg.NoError(t, err, "store SearchMessagesQuery")
-		requirepkg.Equal(t, int64(len(msgs)), total, "store total vs page mismatch")
+		require.NoError(err, "store SearchMessagesQuery")
+		require.Equal(int64(len(msgs)), total, "store total vs page mismatch")
 		return total == 1
 	}
 
@@ -86,7 +86,7 @@ func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
 			After:    after,
 			Before:   before,
 		}, 50, 0)
-		requirepkg.NoError(t, err, "engine SearchFast")
+		require.NoError(err, "engine SearchFast")
 		for _, m := range msgs {
 			if m.SourceMessageID == gmailID {
 				return true
@@ -123,12 +123,12 @@ func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
 
 			// Cross-path agreement is the core regression guard: the store
 			// API and the engine must never disagree at the boundary.
-			assertpkg.Equal(t, gotEngine, gotStore,
+			assert.Equal(t, gotEngine, gotStore,
 				"store-API and query-engine boundary divergence for %s", tc.name)
 			// And both must match the timezone-stable expectation.
-			assertpkg.Equal(t, tc.wantInclude, gotStore,
+			assert.Equal(t, tc.wantInclude, gotStore,
 				"store-API inclusion wrong for %s", tc.name)
-			assertpkg.Equal(t, tc.wantInclude, gotEngine,
+			assert.Equal(t, tc.wantInclude, gotEngine,
 				"query-engine inclusion wrong for %s", tc.name)
 		})
 	}

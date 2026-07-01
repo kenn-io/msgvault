@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	deletedAt := "2026-03-18T15:00:00Z"
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertpkg.Equal(t, "/api/v1/messages/filter", r.URL.Path, "path")
+		assert.Equal(t, "/api/v1/messages/filter", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"count":    1,
@@ -49,12 +49,12 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	require.NoError(err, "ListMessages()")
 	require.Len(msgs, 1)
 	require.NotNil(msgs[0].DeletedAt, "DeletedAt should be parsed")
-	assertpkg.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
+	assert.Equal(t, deletedAt, msgs[0].DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 }
 
 func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/filter", r.URL.Path, "path")
@@ -120,8 +120,8 @@ func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/accounts", r.URL.Path, "path")
@@ -149,8 +149,8 @@ func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
 }
 
 func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -255,8 +255,8 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineTextAggregatePreservesExplicitYearGranularity(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/text/aggregates", r.URL.Path, "path")
@@ -317,8 +317,8 @@ func textMessagesResponseJSON(body string) map[string]any {
 }
 
 func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	deletedAt := "2026-03-18T15:00:00Z"
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -369,8 +369,8 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 }
 
 func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
@@ -402,8 +402,8 @@ func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
 }
 
 func TestEngineGetMessageRawUsesGeneratedCLIEndpoint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	raw := []byte("From: alice@example.com\r\nSubject: Raw\r\n\r\nBody")
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -421,8 +421,8 @@ func TestEngineGetMessageRawUsesGeneratedCLIEndpoint(t *testing.T) {
 }
 
 func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/attachments/42", r.URL.Path, "path")
@@ -448,8 +448,8 @@ func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineGetGmailIDsByFilterUsesAuthoritativeEndpoint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/gmail-ids", r.URL.Path, "path")
 		assert.Equal("alice@example.com", r.URL.Query().Get("sender"), "sender")
@@ -481,8 +481,8 @@ func TestEngineGetGmailIDsByFilterUsesAuthoritativeEndpoint(t *testing.T) {
 }
 
 func TestEngineGetGmailIDsByFilterUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/gmail-ids", r.URL.Path, "path")
@@ -509,8 +509,8 @@ func TestEngineGetGmailIDsByFilterUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 
@@ -559,8 +559,8 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestFindSimilarMessagesUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 	hasAttachment := true
@@ -619,8 +619,8 @@ func TestFindSimilarMessagesUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineAggregateUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	sourceID := int64(7)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -659,8 +659,8 @@ func TestEngineAggregateUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineSubAggregateUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/aggregates/sub", r.URL.Path, "path")
@@ -704,8 +704,8 @@ func TestEngineSubAggregateUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	sourceID := int64(7)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
@@ -742,8 +742,8 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineGetMessageCarriesAttachmentContentHash(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/messages/42", r.URL.Path, "path")
 		w.Header().Set("Content-Type", "application/json")
@@ -782,8 +782,8 @@ func TestEngineGetMessageCarriesAttachmentContentHash(t *testing.T) {
 // MessageSummary it returns, matching the shape callers would have
 // seen from the older per-hit GetMessage-to-summary projection.
 func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -816,8 +816,8 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.True(s.HasAttachments, "HasAttachments")
 }
 func TestEngineSearchSerializesMessageTypes(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
 		gotQuery := r.URL.Query().Get("q")
@@ -845,8 +845,8 @@ func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	require.NoError(err, "Search")
 }
 func TestEngineSearchForwardsMessageTypeOnlyTerms(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	called := false
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -877,8 +877,8 @@ func TestEngineSearchForwardsMessageTypeOnlyTerms(t *testing.T) {
 }
 
 func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
@@ -935,8 +935,8 @@ func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search/fast", r.URL.Path, "path")
@@ -1004,8 +1004,8 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 }
 
 func TestEngineSearchFastWithStatsMergesFilterMessageTypeIntoQuery(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search/fast", r.URL.Path, "path")
@@ -1053,8 +1053,8 @@ func TestEngineSearchFastWithStatsMergesFilterMessageTypeIntoQuery(t *testing.T)
 }
 
 func TestEngineSearchFastWithStatsMessageTypeConflictReturnsNoMatches(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, _ *http.Request) {
 		assert.Fail("conflicting message-type scope should not issue a remote request")
