@@ -164,6 +164,47 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeAutoSelectsAPIPortWhenUnconfigured(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	oldCfg := cfg
+	dataDir := t.TempDir()
+	cfg = lifecycleTestConfig(dataDir)
+	cfg.Server.APIPort = 0 // auto-select an open port
+	t.Cleanup(func() { cfg = oldCfg })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := &cobra.Command{Use: "serve"}
+	cmd.SetContext(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServe(cmd, nil)
+	}()
+
+	// Discover the auto-selected port the same way clients do: through the
+	// daemon runtime record, not the configured port (which is 0).
+	rt, ready, err := waitForDaemonRuntime(ctx, dataDir, 5*time.Second, daemonRuntimeReady, errCh)
+	require.NoError(err, "wait for daemon runtime record")
+	require.True(ready, "daemon runtime record did not become ready")
+	assert.NotZero(rt.Port, "runtime record must record the bound ephemeral port")
+
+	url := fmt.Sprintf("http://%s/health", net.JoinHostPort(rt.Host, strconv.Itoa(rt.Port)))
+	resp, err := http.Get(url) //nolint:gosec // local test server
+	require.NoError(err, "GET /health on discovered address")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(http.StatusOK, resp.StatusCode, "/health status")
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(err, "runServe")
+	case <-time.After(5 * time.Second):
+		require.FailNow("runServe did not stop after context cancellation")
+	}
+}
+
 func TestRunServeFailsBeforeArchiveWorkWhenAPIPortInUse(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

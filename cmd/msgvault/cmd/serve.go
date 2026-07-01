@@ -37,7 +37,7 @@ var serveCmd = &cobra.Command{
 	Long: `Run msgvault as a long-running daemon that syncs email accounts on schedule.
 
 The daemon runs in the foreground and performs:
-  - HTTP API server on configured port (default: 8080)
+  - HTTP API server (auto-selects an open port unless [server] api_port is set)
   - Scheduled incremental syncs based on account config
   - Automatic cache rebuilds after each sync
 
@@ -120,7 +120,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, cfg.Server.APIPort, Version)
+	// Record the ACTUAL bound port, not cfg.Server.APIPort: when api_port is
+	// unset (0) the listener binds an ephemeral port, and this is the port
+	// clients discover through the daemon runtime record.
+	boundPort, err := listenerPort(apiListener)
+	if err != nil {
+		return err
+	}
+
+	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, boundPort, Version)
 	if err != nil {
 		return fmt.Errorf("claim daemon ownership: %w", err)
 	}
@@ -365,9 +373,33 @@ func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		if port != 0 {
+			return nil, fmt.Errorf(
+				"API server address unavailable at %s: %w "+
+					"(set a different [server] api_port, or unset it to auto-select an open port)",
+				addr, err)
+		}
 		return nil, fmt.Errorf("API server address unavailable at %s: %w", addr, err)
 	}
 	return ln, nil
+}
+
+// listenerPort extracts the TCP port a listener bound to. With an ephemeral
+// (api_port = 0) bind this is the OS-assigned port that clients discover
+// through the daemon runtime record.
+func listenerPort(ln net.Listener) (int, error) {
+	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
+		return tcpAddr.Port, nil
+	}
+	_, portText, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		return 0, fmt.Errorf("parse API listener address %q: %w", ln.Addr().String(), err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0, fmt.Errorf("parse API listener port %q: %w", portText, err)
+	}
+	return port, nil
 }
 
 func daemonStartupDatabaseLabel(dsn string) string {

@@ -63,7 +63,7 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort           int           `toml:"api_port"`            // HTTP server port (default: 8080)
+	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
 	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
 	APIKey            string        `toml:"api_key"`             // API authentication key
 	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
@@ -329,7 +329,7 @@ func NewDefaultConfig() *Config {
 			MaxResults: 20,
 		},
 		Server: ServerConfig{
-			APIPort:           8080,
+			APIPort:           0,
 			BindAddr:          "127.0.0.1",
 			DaemonIdleTimeout: 20 * time.Minute,
 			DaemonAutoRestart: DaemonAutoRestartNewer,

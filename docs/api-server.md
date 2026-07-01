@@ -620,7 +620,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 | Key | Default | Description |
 |---|---|---|
-| `api_port` | `8080` | Port the server listens on |
+| `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address |
 | `api_key` | — | API key for authentication |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |

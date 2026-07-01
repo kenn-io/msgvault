@@ -20,8 +20,9 @@ func TestServerConfigDefaults(t *testing.T) {
 	cfg, err := Load("", "")
 	require.NoError(t, err, "Load()")
 
-	// Check server defaults
-	assert.Equal(t, 8080, cfg.Server.APIPort)
+	// Check server defaults: api_port defaults to 0, which auto-selects an
+	// open port at daemon startup (clients discover it via the runtime record).
+	assert.Equal(t, 0, cfg.Server.APIPort)
 	assert.Empty(t, cfg.Server.APIKey)
 }
 
