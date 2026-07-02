@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestCORSMiddleware(t *testing.T) {
@@ -128,9 +130,17 @@ func TestRateLimiterCloseConcurrent(t *testing.T) {
 	// If we get here without a panic, the test passes.
 }
 
+// exemptNever is a rate-limit exempt predicate that trusts no request, so
+// every request runs through the limiter regardless of origin.
+func exemptNever(*http.Request) bool { return false }
+
+// exemptLoopback mirrors the keyless-mode exemption: any loopback request is
+// trusted (no API key configured means apiRequestAuthorized always passes).
+func exemptLoopback(r *http.Request) bool { return isLoopbackRequest(r) }
+
 func TestRateLimitMiddleware(t *testing.T) {
 	rl := NewRateLimiter(1, 1) // Very restrictive for testing
-	middleware := RateLimitMiddleware(rl)
+	middleware := RateLimitMiddleware(rl, exemptNever)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -158,15 +168,15 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 func TestRateLimitMiddlewareExemptsLoopback(t *testing.T) {
 	rl := NewRateLimiter(1, 1) // would reject the second request if applied
-	middleware := RateLimitMiddleware(rl)
+	middleware := RateLimitMiddleware(rl, exemptLoopback)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// The local TUI/CLI bursts far past the remote budget (daemon discovery
-	// alone fires a dozen parallel pings), so loopback clients must never
-	// see 429 regardless of request rate.
+	// Keyless local mode: the TUI/CLI bursts far past the remote budget (daemon
+	// discovery alone fires a dozen parallel pings), so trusted loopback clients
+	// must never see 429 regardless of request rate.
 	for _, remoteAddr := range []string{"127.0.0.1:1234", "[::1]:1234"} {
 		for range 30 {
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -176,4 +186,68 @@ func TestRateLimitMiddlewareExemptsLoopback(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code, "loopback request from %s must not be rate limited", remoteAddr)
 		}
 	}
+}
+
+func TestLoopbackRateLimitExempt(t *testing.T) {
+	const key = "secret-key"
+
+	newReq := func(remoteAddr, apiKey string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+		req.RemoteAddr = remoteAddr
+		if apiKey != "" {
+			req.Header.Set("X-Api-Key", apiKey)
+		}
+		return req
+	}
+
+	tests := []struct {
+		name       string
+		apiKey     string
+		remoteAddr string
+		reqKey     string
+		want       bool
+	}{
+		{"keyless loopback exempt", "", "127.0.0.1:1234", "", true},
+		{"key configured valid key loopback exempt", key, "127.0.0.1:1234", key, true},
+		{"key configured missing key loopback limited", key, "127.0.0.1:1234", "", false},
+		{"key configured bad key loopback limited", key, "127.0.0.1:1234", "wrong", false},
+		{"key configured valid key non-loopback limited", key, "203.0.113.7:1234", key, false},
+		{"keyless non-loopback limited", "", "203.0.113.7:1234", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewServer(
+				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey}},
+				nil, nil, testLogger(),
+			)
+			got := srv.loopbackRateLimitExempt(newReq(tt.remoteAddr, tt.reqKey))
+			require.Equal(t, tt.want, got, "loopbackRateLimitExempt")
+		})
+	}
+}
+
+func TestRateLimitMiddlewareLimitsUntrustedLoopback(t *testing.T) {
+	rl := NewRateLimiter(1, 1) // rejects the second request within a second
+	// Untrusted loopback: an API key is configured but the request has none, so
+	// the predicate refuses the exemption (models brute-force through a local
+	// proxy that forwards to 127.0.0.1).
+	middleware := RateLimitMiddleware(rl, exemptNever)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req1.RemoteAddr = "127.0.0.1:1234"
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusOK, w1.Code, "first loopback request status")
+
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req2.RemoteAddr = "127.0.0.1:1234"
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, w2.Code,
+		"untrusted loopback request must be rate limited")
 }

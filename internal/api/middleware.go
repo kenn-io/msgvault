@@ -175,15 +175,25 @@ func isLoopbackRequest(r *http.Request) bool {
 }
 
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.
-// Loopback clients are exempt: the local TUI/CLI legitimately bursts far past
-// the remote budget (daemon discovery alone fires a dozen parallel pings, and
-// TUI drill-downs issue many aggregate queries at once), and the limiter
-// exists to protect non-local exposure. The check uses r.RemoteAddr (via
-// clientIP), never forwarded-for headers, so it cannot be spoofed remotely.
-func RateLimitMiddleware(limiter *RateLimiter) func(http.Handler) http.Handler {
+// The exempt predicate lets trusted requests bypass the limiter: the local
+// TUI/CLI legitimately bursts far past the remote budget (daemon discovery
+// alone fires a dozen parallel pings, and TUI drill-downs issue many aggregate
+// queries at once), and the limiter exists to protect non-local exposure.
+//
+// A bare loopback address is NOT trusted on its own: behind a same-host
+// reverse proxy, SSH tunnel, or TLS terminator forwarding to loopback, remote
+// traffic arrives as 127.0.0.1 and could brute-force the API key unthrottled.
+// The predicate (see Server.loopbackRateLimitExempt) therefore also requires
+// that the request be authenticated or that no API key be configured. The
+// loopback check inside it uses r.RemoteAddr, never forwarded-for headers, so
+// it cannot be spoofed remotely.
+func RateLimitMiddleware(
+	limiter *RateLimiter,
+	exempt func(*http.Request) bool,
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isLoopbackRequest(r) {
+			if exempt != nil && exempt(r) {
 				next.ServeHTTP(w, r)
 				return
 			}

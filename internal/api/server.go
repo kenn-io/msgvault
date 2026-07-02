@@ -247,7 +247,7 @@ func (s *Server) setupRouter() http.Handler {
 	s.rateLimiter = NewRateLimiter(10, 20)
 
 	var h http.Handler = mux
-	h = RateLimitMiddleware(s.rateLimiter)(h)
+	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
 	h = CORSMiddleware(corsConfig)(h)
 	h = operationGateMiddleware(s.operationGate)(h)
 	h = s.timeoutMiddleware(h)
@@ -556,6 +556,19 @@ func (w *trackingResponseWriter) BytesWritten() int {
 
 func (w *trackingResponseWriter) WroteHeader() bool {
 	return w.status != 0
+}
+
+// loopbackRateLimitExempt reports whether a request should bypass the rate
+// limiter. Loopback origin alone is not sufficient: a same-host reverse proxy,
+// SSH tunnel, or TLS terminator forwarding to loopback makes remote traffic
+// arrive as 127.0.0.1, which would otherwise brute-force the API key
+// unthrottled. A loopback request is exempt only when it is trusted — either
+// no API key is configured (pure local mode, the TUI/CLI autostart case) or it
+// carries a valid API key (an authenticated local client). apiRequestAuthorized
+// returns true in exactly those two cases, so it is reused here to avoid the
+// auth logic drifting.
+func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
+	return isLoopbackRequest(r) && s.apiRequestAuthorized(r)
 }
 
 func (s *Server) apiRequestAuthorized(r *http.Request) bool {
