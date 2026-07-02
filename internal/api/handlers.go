@@ -310,6 +310,26 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
 }
 
+// writeIfContextError converts a context deadline/cancellation into a
+// structured 503 response and returns true. A request that overran its
+// server-side query budget (see requestTimeoutForPath) or was abandoned by
+// the client surfaces here as context.DeadlineExceeded/Canceled; without this
+// mapping those bubble up as a misleading 400/500 with a raw driver message.
+func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusServiceUnavailable, "query_timeout",
+			"the query exceeded the server time limit; narrow the query and retry")
+		return true
+	case errors.Is(err, context.Canceled):
+		writeError(w, http.StatusServiceUnavailable, "query_canceled",
+			"the query was canceled before it completed")
+		return true
+	default:
+		return false
+	}
+}
+
 func writeAPIHTTPError(w http.ResponseWriter, err *apiHTTPError) {
 	resp := err.ErrorResponse
 	writeError(w, err.GetStatus(), resp.Error, resp.Message)
@@ -653,12 +673,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		total    int64
 		err      error
 	)
-	if parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0 {
+	useQuery := parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0
+	if searcher, ok := s.store.(ctxMessageSearcher); ok {
+		if useQuery {
+			messages, total, err = searcher.SearchMessagesQueryContext(r.Context(), parsedQuery, offset, pageSize)
+		} else {
+			messages, total, err = searcher.SearchMessagesContext(r.Context(), query, offset, pageSize)
+		}
+	} else if useQuery {
 		messages, total, err = s.store.SearchMessagesQuery(parsedQuery, offset, pageSize)
 	} else {
 		messages, total, err = s.store.SearchMessages(query, offset, pageSize)
 	}
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("search failed", "query", query, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return

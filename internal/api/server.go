@@ -33,6 +33,16 @@ type MessageStore interface {
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
 }
 
+// ctxMessageSearcher is an optional extension of MessageStore for stores that
+// accept a context on the search path. handleSearch prefers it so an
+// abandoned or timed-out request cancels the underlying query instead of
+// running it to completion. Stores that predate it still satisfy MessageStore
+// and fall back to the non-context methods.
+type ctxMessageSearcher interface {
+	SearchMessagesContext(ctx context.Context, query string, offset, limit int) ([]APIMessage, int64, error)
+	SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]APIMessage, int64, error)
+}
+
 // SourceStatusStore defines the source/sync read operations used by the
 // source status endpoint.
 type SourceStatusStore interface {

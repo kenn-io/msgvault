@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -51,14 +52,15 @@ func TestSearchMessagesQueryImpl_NoFTS_AccountScoping(t *testing.T) {
 
 	// Baseline: unscoped LIKE search sees both.
 	_, total, err := st.searchMessagesQueryImpl(
-		&search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
+		context.Background(), &search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
 	require.NoError(err, "baseline no-FTS search")
 	require.Equal(int64(2), total, "unscoped no-FTS total")
 
-	msgs, total, err := st.searchMessagesQueryImpl(&search.Query{
-		TextTerms:  []string{"invoice"},
-		AccountIDs: []int64{src1.ID},
-	}, 0, 50, false)
+	msgs, total, err := st.searchMessagesQueryImpl(
+		context.Background(), &search.Query{
+			TextTerms:  []string{"invoice"},
+			AccountIDs: []int64{src1.ID},
+		}, 0, 50, false)
 	require.NoError(err, "scoped no-FTS search")
 	assert.Equal(int64(1), total, "scoped no-FTS total")
 	require.Len(msgs, 1)

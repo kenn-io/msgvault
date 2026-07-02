@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -361,6 +362,15 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 // reach the MATCH parser. Routing through BuildFTSArg sanitizes per
 // dialect and reuses the FALSE fallback for tokenless inputs.
 func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error) {
+	return s.SearchMessagesContext(context.Background(), query, offset, limit)
+}
+
+// SearchMessagesContext is the context-aware form of SearchMessages. The
+// context is threaded to the underlying SQLite driver so an abandoned or
+// timed-out request aborts the query instead of running to completion.
+func (s *Store) SearchMessagesContext(
+	ctx context.Context, query string, offset, limit int,
+) ([]APIMessage, int64, error) {
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
 		// Whitespace-only / empty input: no search performed. Returning
@@ -369,8 +379,8 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 		// queries errored at the FTS parser. Treat as "no matches".
 		return []APIMessage{}, 0, nil
 	}
-	return s.SearchMessagesQuery(
-		&search.Query{TextTerms: terms}, offset, limit,
+	return s.SearchMessagesQueryContext(
+		ctx, &search.Query{TextTerms: terms}, offset, limit,
 	)
 }
 
@@ -379,7 +389,16 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 func (s *Store) SearchMessagesQuery(
 	q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	return s.searchMessagesQueryImpl(q, offset, limit, s.fts5Available)
+	return s.SearchMessagesQueryContext(context.Background(), q, offset, limit)
+}
+
+// SearchMessagesQueryContext is the context-aware form of
+// SearchMessagesQuery. Request paths pass the request context so query
+// cancellation (client disconnect or server-side timeout) stops the scan.
+func (s *Store) SearchMessagesQueryContext(
+	ctx context.Context, q *search.Query, offset, limit int,
+) ([]APIMessage, int64, error) {
+	return s.searchMessagesQueryImpl(ctx, q, offset, limit, s.fts5Available)
 }
 
 // searchMessagesQueryImpl runs the actual query. The ftsAvailable flag is
@@ -387,7 +406,7 @@ func (s *Store) SearchMessagesQuery(
 // (searchMessagesQueryNoFTS) can force the LIKE path even when
 // s.fts5Available was true at startup.
 func (s *Store) searchMessagesQueryImpl(
-	q *search.Query, offset, limit int, ftsAvailable bool,
+	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
 ) ([]APIMessage, int64, error) {
 	var conditions []string
 	var args []any
@@ -606,9 +625,9 @@ func (s *Store) searchMessagesQueryImpl(
 	`, ftsJoin, whereClause)
 
 	var total int64
-	if err := s.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
-		if ftsEnabled {
-			return s.searchMessagesQueryNoFTS(q, offset, limit)
+	if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+		if ftsEnabled && ctx.Err() == nil {
+			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, fmt.Errorf("count search results: %w", err)
 	}
@@ -654,11 +673,13 @@ func (s *Store) searchMessagesQueryImpl(
 		resultArgs = append(resultArgs, ftsExpr)
 	}
 	resultArgs = append(resultArgs, limit, offset)
-	rows, err := s.db.Query(searchSQL, resultArgs...)
+	rows, err := s.db.QueryContext(ctx, searchSQL, resultArgs...)
 	if err != nil {
-		// FTS5 not available -- fall back if we used it.
-		if ftsEnabled {
-			return s.searchMessagesQueryNoFTS(q, offset, limit)
+		// FTS5 not available -- fall back if we used it. Skip the fallback
+		// when the context was cancelled: the error is the abort we asked
+		// for, not an FTS capability problem, and re-running would ignore it.
+		if ftsEnabled && ctx.Err() == nil {
+			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, err
 	}
@@ -683,9 +704,9 @@ func (s *Store) searchMessagesQueryImpl(
 // startup probe said FTS5 was available; passing ftsAvailable=false
 // forces the subject+snippet LIKE branch in searchMessagesQueryImpl.
 func (s *Store) searchMessagesQueryNoFTS(
-	q *search.Query, offset, limit int,
+	ctx context.Context, q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	return s.searchMessagesQueryImpl(q, offset, limit, false)
+	return s.searchMessagesQueryImpl(ctx, q, offset, limit, false)
 }
 
 // escapeLike escapes SQL LIKE special characters (%, _) so they are

@@ -669,6 +669,14 @@ func (a *storeAPIAdapter) SearchMessagesQuery(q *search.Query, offset, limit int
 	return a.store.SearchMessagesQuery(q, offset, limit)
 }
 
+func (a *storeAPIAdapter) SearchMessagesContext(ctx context.Context, query string, offset, limit int) ([]api.APIMessage, int64, error) {
+	return a.store.SearchMessagesContext(ctx, query, offset, limit)
+}
+
+func (a *storeAPIAdapter) SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]api.APIMessage, int64, error) {
+	return a.store.SearchMessagesQueryContext(ctx, q, offset, limit)
+}
+
 func (a *storeAPIAdapter) NeedsFTSBackfill() bool {
 	return a.store.NeedsFTSBackfill()
 }

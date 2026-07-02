@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -98,7 +99,7 @@ func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
 
 	t.Run("searchMessagesQueryImpl no-FTS branch", func(t *testing.T) {
 		msgs, total, err := st.searchMessagesQueryImpl(
-			&search.Query{TextTerms: []string{tag}}, 0, n, false)
+			context.Background(), &search.Query{TextTerms: []string{tag}}, 0, n, false)
 		require.NoError(err, "searchMessagesQueryImpl ftsAvailable=false")
 		assertDistinct(t, msgs, total, "searchMessagesQueryImpl no-FTS")
 	})

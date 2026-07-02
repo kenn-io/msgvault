@@ -142,6 +142,14 @@ func (m *mockStore) SearchMessages(query string, offset, limit int) ([]APIMessag
 	return m.messages, m.total, nil
 }
 
+func (m *mockStore) SearchMessagesContext(_ context.Context, query string, offset, limit int) ([]APIMessage, int64, error) {
+	return m.SearchMessages(query, offset, limit)
+}
+
+func (m *mockStore) SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
+	return m.SearchMessagesQuery(q, offset, limit)
+}
+
 func (m *mockStore) SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error) {
 	m.searchMessagesQueryCalls.Add(1)
 	if q != nil {
