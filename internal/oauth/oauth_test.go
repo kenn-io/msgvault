@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -24,7 +24,7 @@ func setupTestManager(t *testing.T, scopes []string) *Manager {
 	t.Helper()
 	dir := t.TempDir()
 	tokensDir := filepath.Join(dir, "tokens")
-	requirepkg.NoError(t, os.MkdirAll(tokensDir, 0700))
+	require.NoError(t, os.MkdirAll(tokensDir, 0700))
 	return &Manager{
 		config:    &oauth2.Config{Scopes: scopes},
 		tokensDir: tokensDir,
@@ -39,15 +39,15 @@ func writeTokenFile(t *testing.T, mgr *Manager, email string, token oauth2.Token
 		Scopes: scopes,
 	}
 	data, err := json.Marshal(tf)
-	requirepkg.NoError(t, err)
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
 }
 
 func writeLegacyTokenFile(t *testing.T, mgr *Manager, email string, token oauth2.Token) {
 	t.Helper()
 	data, err := json.Marshal(token)
-	requirepkg.NoError(t, err)
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, email+".json"), data, 0600))
 }
 
 var testToken = oauth2.Token{AccessToken: "test", TokenType: "Bearer"}
@@ -60,7 +60,7 @@ func assertNoSend[T any](t *testing.T, ch <-chan T, chanName string) {
 	const noSendTimeout = 100 * time.Millisecond
 	select {
 	case v := <-ch:
-		assertpkg.Failf(t, "unexpected value", "unexpected value on %s: %v", chanName, v)
+		assert.Failf(t, "unexpected value", "unexpected value on %s: %v", chanName, v)
 	case <-time.After(noSendTimeout):
 		// expected: no value arrived
 	}
@@ -97,7 +97,7 @@ func TestScopesToString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := scopesToString(tt.scopes)
-			assertpkg.Equal(t, tt.want, got, "scopesToString()")
+			assert.Equal(t, tt.want, got, "scopesToString()")
 		})
 	}
 }
@@ -111,21 +111,21 @@ func TestHasScope(t *testing.T) {
 	})
 
 	// Has a scope that was saved
-	assertpkg.True(t, mgr.HasScope("test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.True(t, mgr.HasScope("test@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return true for gmail.readonly")
 
 	// Does not have deletion scope
-	assertpkg.False(t, mgr.HasScope("test@gmail.com", "https://mail.google.com/"),
+	assert.False(t, mgr.HasScope("test@gmail.com", "https://mail.google.com/"),
 		"expected HasScope to return false for mail.google.com")
 
 	// Non-existent account
-	assertpkg.False(t, mgr.HasScope("missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.False(t, mgr.HasScope("missing@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return false for missing account")
 }
 
 func TestTokenFileScopesRoundTrip(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mgr := setupTestManager(t, ScopesDeletion)
 
 	token := &oauth2.Token{
@@ -150,7 +150,7 @@ func TestTokenFileScopesRoundTrip(t *testing.T) {
 }
 
 func TestSaveToken_OverwriteExisting(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	mgr := setupTestManager(t, Scopes)
 
 	token1 := &oauth2.Token{
@@ -171,7 +171,7 @@ func TestSaveToken_OverwriteExisting(t *testing.T) {
 
 	loaded, err := mgr.loadToken("test@gmail.com")
 	require.NoError(err)
-	assertpkg.Equal(t, "second", loaded.AccessToken, "access token after overwrite")
+	assert.Equal(t, "second", loaded.AccessToken, "access token after overwrite")
 }
 
 func TestHasScope_LegacyToken(t *testing.T) {
@@ -179,7 +179,7 @@ func TestHasScope_LegacyToken(t *testing.T) {
 
 	writeLegacyTokenFile(t, mgr, "legacy@gmail.com", testToken)
 
-	assertpkg.False(t, mgr.HasScope("legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
+	assert.False(t, mgr.HasScope("legacy@gmail.com", "https://www.googleapis.com/auth/gmail.readonly"),
 		"expected HasScope to return false for legacy token")
 }
 
@@ -190,7 +190,7 @@ func TestHasScopeMetadata(t *testing.T) {
 		"https://www.googleapis.com/auth/gmail.readonly",
 	})
 	writeLegacyTokenFile(t, mgr, "legacy@gmail.com", testToken)
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, "corrupt@gmail.com.json"), []byte("not json"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(mgr.tokensDir, "corrupt@gmail.com.json"), []byte("not json"), 0600))
 
 	tests := []struct {
 		name  string
@@ -206,7 +206,7 @@ func TestHasScopeMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mgr.HasScopeMetadata(tt.email)
-			assertpkg.Equal(t, tt.want, got, "HasScopeMetadata(%q)", tt.email)
+			assert.Equal(t, tt.want, got, "HasScopeMetadata(%q)", tt.email)
 		})
 	}
 }
@@ -226,7 +226,7 @@ func TestShellQuote(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := shellQuote(tt.input)
-			assertpkg.Equal(t, tt.want, got, "shellQuote(%q)", tt.input)
+			assert.Equal(t, tt.want, got, "shellQuote(%q)", tt.input)
 		})
 	}
 }
@@ -246,14 +246,14 @@ func TestSanitizeEmail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.email, func(t *testing.T) {
 			got := sanitizeEmail(tt.email)
-			assertpkg.Equal(t, tt.want, got, "sanitizeEmail(%q)", tt.email)
+			assert.Equal(t, tt.want, got, "sanitizeEmail(%q)", tt.email)
 		})
 	}
 }
 
 func TestTokenPath_SymlinkEscape(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// This test verifies that symlinks inside tokensDir cannot be used
 	// to write tokens outside the tokens directory.
 	//
@@ -335,7 +335,7 @@ func TestHasPathPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := hasPathPrefix(tt.path, tt.dir)
-			assertpkg.Equal(t, tt.want, got, "hasPathPrefix(%q, %q)", tt.path, tt.dir)
+			assert.Equal(t, tt.want, got, "hasPathPrefix(%q, %q)", tt.path, tt.dir)
 		})
 	}
 }
@@ -422,9 +422,9 @@ func TestParseClientSecrets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := parseClientSecrets([]byte(tt.data), Scopes)
 			if tt.wantErr == "" {
-				assertpkg.NoError(t, err)
+				assert.NoError(t, err)
 			} else {
-				assertpkg.ErrorContains(t, err, tt.wantErr)
+				assert.ErrorContains(t, err, tt.wantErr)
 			}
 		})
 	}
@@ -483,7 +483,7 @@ func TestNewCallbackHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			codeChan := make(chan string, 1)
 			errChan := make(chan error, 1)
 
@@ -541,8 +541,8 @@ func TestNewCallbackHandler(t *testing.T) {
 // Regression: a previous version saved under canonicalEmail, which
 // broke HasToken/TokenSource lookups elsewhere in the app.
 func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	const canonicalEmail = "firstlast@gmail.com"
 
 	// Mock Gmail profile endpoint returning the canonical address.
@@ -582,8 +582,8 @@ func TestAuthorize_SavesUnderOriginalIdentifier(t *testing.T) {
 }
 
 func TestAuthorize_CalendarOnlyUsesCalendarProfileID(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -614,8 +614,8 @@ func TestAuthorize_CalendarOnlyUsesCalendarProfileID(t *testing.T) {
 }
 
 func TestAuthorize_SavesActualGrantedScopesFromTokenResponse(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -646,8 +646,8 @@ func TestAuthorize_SavesActualGrantedScopesFromTokenResponse(t *testing.T) {
 }
 
 func TestAuthorize_RejectsMissingGrantedScopeWithoutOverwritingToken(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -685,8 +685,8 @@ func TestAuthorize_RejectsMissingGrantedScopeWithoutOverwritingToken(t *testing.
 }
 
 func TestAuthorizeManualPreservingGrantedScopesRejectsTokenMissingPreservedScope(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -728,8 +728,8 @@ func TestAuthorizeManualPreservingGrantedScopesRejectsTokenMissingPreservedScope
 // tokens where the profile email is for a different account and
 // does NOT persist a token file.
 func TestAuthorize_RejectsMismatch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -771,8 +771,8 @@ func TestAuthorize_RejectsMismatch(t *testing.T) {
 // same domain is rejected (we can't verify aliases without admin
 // API access, so we reject to prevent token pollution).
 func TestAuthorize_WorkspaceAliasMismatch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -832,8 +832,8 @@ func TestAuthorize_CrossDomainReject(t *testing.T) {
 	}
 
 	err := mgr.Authorize(context.Background(), "user@company.com")
-	requirepkg.Error(t, err, "expected error for cross-domain mismatch")
-	assertpkg.ErrorContains(t, err, "token mismatch")
+	require.Error(t, err, "expected error for cross-domain mismatch")
+	assert.ErrorContains(t, err, "token mismatch")
 }
 
 func TestSameGoogleAccount(t *testing.T) {
@@ -863,7 +863,7 @@ func TestSameGoogleAccount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := sameGoogleAccount(tt.expected, tt.canonical)
-			assertpkg.Equal(t, tt.want, got, "sameGoogleAccount(%q, %q)", tt.expected, tt.canonical)
+			assert.Equal(t, tt.want, got, "sameGoogleAccount(%q, %q)", tt.expected, tt.canonical)
 		})
 	}
 }
@@ -891,7 +891,7 @@ func TestNormalizeGmailAddress(t *testing.T) {
 		t.Run(tt.email, func(t *testing.T) {
 			t.Parallel()
 			got := normalizeGmailAddress(tt.email)
-			assertpkg.Equal(t, tt.want, got, "normalizeGmailAddress(%q)", tt.email)
+			assert.Equal(t, tt.want, got, "normalizeGmailAddress(%q)", tt.email)
 		})
 	}
 }
@@ -923,9 +923,9 @@ func TestValidateBrowserURL(t *testing.T) {
 			t.Parallel()
 			err := validateBrowserURL(tt.url)
 			if tt.wantErr == "" {
-				assertpkg.NoError(t, err, "validateBrowserURL(%q)", tt.url)
+				assert.NoError(t, err, "validateBrowserURL(%q)", tt.url)
 			} else {
-				assertpkg.ErrorContains(t, err, tt.wantErr, "validateBrowserURL(%q)", tt.url)
+				assert.ErrorContains(t, err, tt.wantErr, "validateBrowserURL(%q)", tt.url)
 			}
 		})
 	}

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -26,7 +26,7 @@ func importFixture(t *testing.T, st *store.Store, rootDir string) *ImportSummary
 		AttachmentsDir: t.TempDir(),
 	}
 	summary, err := ImportDYI(context.Background(), st, opts)
-	requirepkg.NoError(t, err, "ImportDYI(%s)", rootDir)
+	require.NoError(t, err, "ImportDYI(%s)", rootDir)
 	return summary
 }
 
@@ -38,18 +38,18 @@ func countMessages(t *testing.T, st *store.Store, where string) int {
 		q += " WHERE " + where
 	}
 	err := st.DB().QueryRow(q).Scan(&n)
-	requirepkg.NoError(t, err, "count query")
+	require.NoError(t, err, "count query")
 	return n
 }
 
 func assertSyntheticAttachmentKey(t *testing.T, got string) {
 	t.Helper()
-	assertpkg.Regexp(t, `^fbmessenger:attachment:[0-9a-f]{64}$`, got, "synthetic attachment key")
-	assertpkg.NotRegexp(t, `^[0-9a-f]{64}$`, got, "synthetic attachment key must not look like a real SHA-256 content hash")
+	assert.Regexp(t, `^fbmessenger:attachment:[0-9a-f]{64}$`, got, "synthetic attachment key")
+	assert.NotRegexp(t, `^[0-9a-f]{64}$`, got, "synthetic attachment key must not look like a real SHA-256 content hash")
 }
 
 func TestImportDYI_JSONSimple(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	summary := importFixture(t, st, "testdata/json_simple")
 	// json_simple has 1 inbox thread (3 messages) + 1 archived thread (1 message) = 4
@@ -59,7 +59,7 @@ func TestImportDYI_JSONSimple(t *testing.T) {
 	assert.Equal(4, countMessages(t, st, "message_type='fbmessenger' AND sent_at IS NOT NULL"), "sent_at NULL rows exist")
 	// Exactly one message_type present.
 	rows, err := st.DB().Query("SELECT DISTINCT message_type FROM messages")
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	var types []string
 	for rows.Next() {
@@ -67,7 +67,7 @@ func TestImportDYI_JSONSimple(t *testing.T) {
 		_ = rows.Scan(&s)
 		types = append(types, s)
 	}
-	requirepkg.NoError(t, rows.Err(), "message_type rows")
+	require.NoError(t, rows.Err(), "message_type rows")
 	assert.Equal([]string{"fbmessenger"}, types)
 }
 
@@ -81,8 +81,8 @@ func TestImportDYI_MojibakeRepaired(t *testing.T) {
 	err := st.DB().QueryRow(
 		`SELECT body_text FROM message_bodies WHERE body_text LIKE '%café%'`,
 	).Scan(&body)
-	requirepkg.NoError(t, err, "body query")
-	assertpkg.Contains(t, body, "café")
+	require.NoError(t, err, "body query")
+	assert.Contains(t, body, "café")
 }
 
 func TestImportDYI_DirectChat(t *testing.T) {
@@ -92,13 +92,13 @@ func TestImportDYI_DirectChat(t *testing.T) {
 	err := st.DB().QueryRow(
 		"SELECT conversation_type FROM conversations WHERE source_conversation_id='inbox/alice_ABC123'",
 	).Scan(&ct)
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, "direct_chat", ct, "conv type")
+	require.NoError(t, err)
+	assert.Equal(t, "direct_chat", ct, "conv type")
 }
 
 func TestImportDYI_GroupChat(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_group")
 	var ct string
@@ -128,8 +128,8 @@ func TestImportDYI_GroupChat(t *testing.T) {
 }
 
 func TestImportDYI_MultifileNumericSort(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_multifile")
 	rows, err := st.DB().Query(`
@@ -168,7 +168,7 @@ func TestImportDYI_Idempotent(t *testing.T) {
 	_ = importFixture(t, st, "testdata/json_simple")
 	after := snapshotRowCounts(t, st)
 	for k, v := range before {
-		assertpkg.Equal(t, v, after[k], "%s", k)
+		assert.Equal(t, v, after[k], "%s", k)
 	}
 }
 
@@ -178,7 +178,7 @@ func snapshotRowCounts(t *testing.T, st *store.Store) map[string]int {
 	for _, tbl := range []string{"messages", "participants", "message_recipients", "attachments", "reactions", "conversations", "labels"} {
 		var n int
 		err := st.DB().QueryRow("SELECT COUNT(*) FROM " + tbl).Scan(&n)
-		requirepkg.NoError(t, err, "count %s", tbl)
+		require.NoError(t, err, "count %s", tbl)
 		out[tbl] = n
 	}
 	return out
@@ -189,8 +189,8 @@ func snapshotRowCounts(t *testing.T, st *store.Store) map[string]int {
 // report the bad sibling via MessagesSkipped rather than aborting the
 // entire thread.
 func TestImportDYI_UnnumberedSiblingSkipped(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "mixnames_OK")
@@ -216,7 +216,7 @@ func TestImportDYI_UnnumberedSiblingSkipped(t *testing.T) {
 }
 
 func TestImportDYI_CorruptSkipped(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	summary := importFixture(t, st, "testdata/corrupt")
 	assert.False(summary.HardErrors, "HardErrors")
@@ -227,13 +227,13 @@ func TestImportDYI_CorruptSkipped(t *testing.T) {
 	err := st.DB().QueryRow(
 		"SELECT COUNT(*) FROM conversations WHERE source_conversation_id='inbox/goodsibling_OK'",
 	).Scan(&n)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(1, n, "good sibling not imported")
 }
 
 func TestImportDYI_AttachmentStorage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -265,8 +265,8 @@ func TestImportDYI_AttachmentStorage(t *testing.T) {
 }
 
 func TestImportDYI_AttachmentStorageReimportMigratesLegacyEmptyHashRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -313,8 +313,8 @@ func TestImportDYI_AttachmentStorageReimportMigratesLegacyEmptyHashRow(t *testin
 }
 
 func TestImportDYI_AttachmentStorageReimportRemovesSyntheticPlaceholder(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -373,8 +373,8 @@ func TestImportDYI_AttachmentStorageReimportRemovesSyntheticPlaceholder(t *testi
 }
 
 func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{
 		Me:       "test.user@facebook.messenger",
@@ -450,8 +450,8 @@ func TestImportDYI_AttachmentStorageFailureKeepsSyntheticPlaceholder(t *testing.
 }
 
 func TestImportDYI_AttachmentStorageHashlessReimportRemovesStaleRealHashRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{
 		Me:       "test.user@facebook.messenger",
@@ -495,8 +495,8 @@ func TestImportDYI_AttachmentStorageHashlessReimportRemovesStaleRealHashRow(t *t
 }
 
 func TestImportDYI_AttachmentStorageFailureDoesNotAddPlaceholderBesideStoredAttachment(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -539,8 +539,8 @@ func TestImportDYI_AttachmentStorageFailureDoesNotAddPlaceholderBesideStoredAtta
 }
 
 func TestImportDYI_AttachmentStorageHashlessReimportDoesNotAddPlaceholderBesideStoredAttachment(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -581,8 +581,8 @@ func TestImportDYI_AttachmentStorageHashlessReimportDoesNotAddPlaceholderBesideS
 }
 
 func TestImportDYI_AttachmentStorageReimportRepairsRealHashEmptyPathRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	attachDir := t.TempDir()
 	opts := ImportOptions{
@@ -629,8 +629,8 @@ func TestImportDYI_AttachmentStorageReimportRepairsRealHashEmptyPathRow(t *testi
 }
 
 func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	// Build a fixture whose JSON references ../../etc/passwd.
@@ -663,8 +663,8 @@ func TestImportDYI_AttachmentPathEscapeRejected(t *testing.T) {
 // returns no storage_path/content_hash, so the symlink target is never
 // copied into the attachment store.
 func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "evil_LNK")
@@ -715,8 +715,8 @@ func TestImportDYI_AttachmentSymlinkRejected(t *testing.T) {
 }
 
 func TestImportDYI_MissingAttachment(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "missing_MIS")
@@ -740,8 +740,8 @@ func TestImportDYI_MissingAttachment(t *testing.T) {
 }
 
 func TestImportDYI_MissingAttachmentReimportMigratesLegacyEmptyHashRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "missing_MIS")
@@ -789,8 +789,8 @@ func TestImportDYI_MissingAttachmentReimportMigratesLegacyEmptyHashRow(t *testin
 // distinct synthetic key that is not a real content hash while storage_path
 // stays empty (no bytes copied).
 func TestImportDYI_MultipleMissingAttachments(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "missing_MIS")
@@ -831,8 +831,8 @@ func TestImportDYI_MultipleMissingAttachments(t *testing.T) {
 // "[reacted: ...]" body-append independently of FTS5. The FTS5 MATCH
 // half of the dual-path lives in importer_fts_test.go.
 func TestImportDYI_ReactionsFirstClass(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_simple")
 	var n int
@@ -868,14 +868,14 @@ func TestImportDYI_NonTextMessageBodies(t *testing.T) {
 			SELECT b.body_text FROM message_bodies b
 			JOIN messages m ON m.id = b.message_id
 			WHERE m.source_message_id = ?`), id).Scan(&body)
-		requirepkg.NoError(t, err, "%s", id)
-		assertpkg.Equal(t, wantBody, body, "%s body", id)
+		require.NoError(t, err, "%s", id)
+		assert.Equal(t, wantBody, body, "%s body", id)
 	}
 }
 
 func TestImportDYI_MixedFormatJSONWins(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/mixed")
 	// Exactly one conversation.
@@ -893,8 +893,8 @@ func TestImportDYI_MixedFormatJSONWins(t *testing.T) {
 }
 
 func TestImportDYI_FormatBoth(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	summary, err := ImportDYI(context.Background(), st, ImportOptions{
 		Me:             "test.user@facebook.messenger",
@@ -918,8 +918,8 @@ func TestImportDYI_FormatBoth(t *testing.T) {
 }
 
 func TestImportDYI_IsFromMe(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := ImportDYI(context.Background(), st, ImportOptions{
 		Me:             "test.user@facebook.messenger",
@@ -951,8 +951,8 @@ func TestImportDYI_IsFromMe(t *testing.T) {
 }
 
 func TestImportDYI_LabelTaxonomy(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_simple")
 	// Messenger and Messenger / Inbox and Messenger / Archived must exist.
@@ -985,8 +985,8 @@ func TestImportDYI_LabelTaxonomy(t *testing.T) {
 }
 
 func TestImportDYI_SelfParticipantSeeded(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	// Empty DYI tree with just messages/inbox/.
@@ -1009,8 +1009,8 @@ func TestImportDYI_SelfParticipantSeeded(t *testing.T) {
 }
 
 func TestImportDYI_MeDomainValidation(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := ImportDYI(context.Background(), st, ImportOptions{
 		Me:             "wes@gmail.com",
@@ -1037,7 +1037,7 @@ func writeLargeFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "big_BIG")
-	requirepkg.NoError(t, os.MkdirAll(threadPath, 0755))
+	require.NoError(t, os.MkdirAll(threadPath, 0755))
 	type rawMsg struct {
 		SenderName  string `json:"sender_name"`
 		TimestampMs int64  `json:"timestamp_ms"`
@@ -1069,8 +1069,8 @@ func writeLargeFixture(t *testing.T) string {
 		})
 	}
 	data, err := json.Marshal(exp)
-	requirepkg.NoError(t, err)
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_1.json"), data, 0644))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_1.json"), data, 0644))
 	return tmp
 }
 
@@ -1083,14 +1083,14 @@ func writeMultiThreadFixture(t *testing.T, n int) string {
 	for i := range n {
 		name := fmt.Sprintf("thread_%02d_OK", i)
 		threadPath := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", name)
-		requirepkg.NoError(t, os.MkdirAll(threadPath, 0755))
+		require.NoError(t, os.MkdirAll(threadPath, 0755))
 		body := fmt.Sprintf(
 			`{"participants":[{"name":"Test User"},{"name":"Friend %d"}],"messages":[`+
 				`{"sender_name":"Friend %d","timestamp_ms":%d,"type":"Generic","content":"hello from %d"}`+
 				`],"title":"Friend %d"}`,
 			i, i, 1600000000000+int64(i)*60000, i, i,
 		)
-		requirepkg.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(body), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(threadPath, "message_1.json"), []byte(body), 0644))
 	}
 	return tmp
 }
@@ -1101,8 +1101,8 @@ func writeMultiThreadFixture(t *testing.T, n int) string {
 // already-processed thread is skipped on the second run (while still
 // present in the store from the first run so idempotence holds).
 func TestImportDYI_ResumeFromCheckpoint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := writeMultiThreadFixture(t, 3)
 
@@ -1162,7 +1162,7 @@ func TestImportDYI_ResumeFromCheckpoint(t *testing.T) {
 // TestImportDYI_ResumeWrongRootRejected verifies that a prior
 // checkpoint for a different RootDir is rejected.
 func TestImportDYI_ResumeWrongRootRejected(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := writeMultiThreadFixture(t, 2)
 
@@ -1185,15 +1185,15 @@ func TestImportDYI_ResumeWrongRootRejected(t *testing.T) {
 		AttachmentsDir: t.TempDir(),
 	})
 	require.Error(err, "expected error for wrong root")
-	assertpkg.Contains(t, err.Error(), "different root")
+	assert.Contains(t, err.Error(), "different root")
 }
 
 // TestImportDYI_ResumeFromFailedSync verifies that a checkpoint saved
 // before FailSync is still found on the next run, so interrupted imports
 // can resume instead of restarting from scratch.
 func TestImportDYI_ResumeFromFailedSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := writeMultiThreadFixture(t, 3)
 
@@ -1237,8 +1237,8 @@ func TestImportDYI_ResumeFromFailedSync(t *testing.T) {
 // forward) so a user-visible interrupt during thread 0 is reflected in
 // the next run's summary.
 func TestImportDYI_ResumeFromFirstThreadCheckpoint(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := writeMultiThreadFixture(t, 2)
 
@@ -1278,8 +1278,8 @@ func TestImportDYI_InvalidFormatRejected(t *testing.T) {
 		AttachmentsDir: t.TempDir(),
 		Format:         "jsno",
 	})
-	requirepkg.Error(t, err, "expected error for invalid format")
-	assertpkg.Contains(t, err.Error(), "unknown --format")
+	require.Error(t, err, "expected error for invalid format")
+	assert.Contains(t, err.Error(), "unknown --format")
 }
 
 // TestImportDYI_StaleFailedCheckpointIgnoredAfterCompletion verifies that a
@@ -1290,8 +1290,8 @@ func TestImportDYI_InvalidFormatRejected(t *testing.T) {
 // run, and a re-import would silently resume from the stale checkpoint
 // and skip threads already covered by the successful run.
 func TestImportDYI_StaleFailedCheckpointIgnoredAfterCompletion(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := writeMultiThreadFixture(t, 3)
 
@@ -1327,7 +1327,7 @@ func TestImportDYI_StaleFailedCheckpointIgnoredAfterCompletion(t *testing.T) {
 // rather than treating the completed run as resumable and skipping threads.
 // Regression test for: GetLatestCheckpointedSync matching completed runs.
 func TestImportDYI_ReimportPicksUpNewMessages(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// Copy json_simple fixture to a temp dir so we can mutate it.
 	root := t.TempDir()
 	cpDir(t, "testdata/json_simple", root)
@@ -1362,24 +1362,24 @@ func TestImportDYI_ReimportPicksUpNewMessages(t *testing.T) {
 	// Re-import the same root. The new message must be picked up.
 	s2 := importFixture(t, st, root)
 	after := countMessages(t, st, "message_type='fbmessenger'")
-	assertpkg.Equal(t, before+1, after, "messages after re-import (added=%d)", s2.MessagesAdded)
+	assert.Equal(t, before+1, after, "messages after re-import (added=%d)", s2.MessagesAdded)
 }
 
 // cpDir recursively copies src into dst.
 func cpDir(t *testing.T, src, dst string) {
 	t.Helper()
 	entries, err := os.ReadDir(src)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	for _, e := range entries {
 		sp := filepath.Join(src, e.Name())
 		dp := filepath.Join(dst, e.Name())
 		if e.IsDir() {
-			requirepkg.NoError(t, os.MkdirAll(dp, 0o755))
+			require.NoError(t, os.MkdirAll(dp, 0o755))
 			cpDir(t, sp, dp)
 		} else {
 			data, err := os.ReadFile(sp)
-			requirepkg.NoError(t, err)
-			requirepkg.NoError(t, os.WriteFile(dp, data, 0o644))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(dp, data, 0o644))
 		}
 	}
 }
@@ -1391,7 +1391,7 @@ func cpDir(t *testing.T, src, dst string) {
 // senderID was recorded on the message but not joined to the conversation,
 // skewing participant-based analytics.
 func TestImportDYI_SynthesizedSenderLinkedToConversation(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "alice_ORPH")
@@ -1444,7 +1444,7 @@ func TestImportDYI_SynthesizedSenderLinkedToConversation(t *testing.T) {
 		AND p.email_address = 'facebook.user@facebook.messenger'
 	`).Scan(&n)
 	require.NoError(err)
-	assertpkg.Equal(t, 1, n, "orphan sender not linked to conversation")
+	assert.Equal(t, 1, n, "orphan sender not linked to conversation")
 }
 
 // TestImportDYI_SenderIDPreservedOnReimport verifies that re-importing a
@@ -1454,8 +1454,8 @@ func TestImportDYI_SynthesizedSenderLinkedToConversation(t *testing.T) {
 // is_from_me flag. The importer reads any existing sender data and reuses
 // it when the current run can't produce one.
 func TestImportDYI_SenderIDPreservedOnReimport(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "alice_PRES")
@@ -1585,7 +1585,7 @@ func TestImportDYI_SenderIDPreservedOnReimport(t *testing.T) {
 // imported before synthesized senders were linked) gets re-linked on a
 // subsequent import via the sender_id-preservation rehydration path.
 func TestImportDYI_ReimportRepairsConversationParticipant(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	tmp := t.TempDir()
 	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "alice_REPAIR")
@@ -1668,7 +1668,7 @@ func TestImportDYI_ReimportRepairsConversationParticipant(t *testing.T) {
 		convID, orphanID,
 	).Scan(&n)
 	require.NoError(err)
-	assertpkg.Equal(t, 1, n, "conversation_participants not repaired on re-import")
+	assert.Equal(t, 1, n, "conversation_participants not repaired on re-import")
 }
 
 func TestImportDYI_TimingTripwire(t *testing.T) {
@@ -1680,8 +1680,8 @@ func TestImportDYI_TimingTripwire(t *testing.T) {
 		RootDir:        root,
 		AttachmentsDir: t.TempDir(),
 	})
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	elapsed := time.Since(start)
-	assertpkg.Less(t, elapsed, 30*time.Second, "import took %v", elapsed)
-	assertpkg.Equal(t, int64(largeFixtureSize), summary.MessagesAdded, "MessagesAdded")
+	assert.Less(t, elapsed, 30*time.Second, "import took %v", elapsed)
+	assert.Equal(t, int64(largeFixtureSize), summary.MessagesAdded, "MessagesAdded")
 }

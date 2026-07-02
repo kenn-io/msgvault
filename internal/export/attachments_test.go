@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -21,13 +21,13 @@ func createAttachmentFile(t *testing.T, root string, content []byte) string {
 	t.Helper()
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
 	dir := filepath.Join(root, hash[:2])
-	requirepkg.NoError(t, os.MkdirAll(dir, 0o755))
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(dir, hash), content, 0o644))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, hash), content, 0o644))
 	return hash
 }
 
 func TestFormatExportResult_WriteErrorWithCount(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Test that WriteError flag causes failure message even when Count > 0
 	stats := ExportStats{
 		Count:      5,
@@ -49,8 +49,8 @@ func TestFormatExportResult_WriteErrorWithCount(t *testing.T) {
 }
 
 func TestPathTraversalInContentHash(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// This test verifies that malicious content hashes with path traversal
 	// sequences are rejected and cannot be used to read arbitrary files.
 
@@ -115,9 +115,9 @@ func TestContentHashValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateContentHash(tt.hash)
 			if tt.wantErr {
-				assertpkg.Error(t, err, "ValidateContentHash(%q)", tt.hash)
+				assert.Error(t, err, "ValidateContentHash(%q)", tt.hash)
 			} else {
-				assertpkg.NoError(t, err, "ValidateContentHash(%q)", tt.hash)
+				assert.NoError(t, err, "ValidateContentHash(%q)", tt.hash)
 			}
 		})
 	}
@@ -226,8 +226,8 @@ func TestAttachmentsToDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			attachDir := t.TempDir()
 			outputDir := t.TempDir()
 
@@ -264,19 +264,19 @@ func TestAttachmentsToDir_FilePermissions(t *testing.T) {
 	inputs := []query.AttachmentInfo{{Filename: "doc.pdf", ContentHash: hash}}
 
 	result := AttachmentsToDir(outputDir, attachDir, inputs)
-	requirepkg.Len(t, result.Files, 1, "expected 1 file")
+	require.Len(t, result.Files, 1, "expected 1 file")
 
 	// Windows does not support Unix permissions.
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(result.Files[0].Path)
-		requirepkg.NoError(t, err)
-		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "file permissions")
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "file permissions")
 	}
 }
 
 func TestAttachmentsToDir_DiskConflict(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Pre-existing file on disk should trigger _1 suffix
 	attachDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -304,28 +304,28 @@ func TestCreateExclusiveFile(t *testing.T) {
 	t.Run("new file", func(t *testing.T) {
 		p := filepath.Join(dir, "new.txt")
 		f, path, err := CreateExclusiveFile(p, 0600)
-		requirepkg.NoError(t, err)
+		require.NoError(t, err)
 		_ = f.Close()
-		assertpkg.Equal(t, p, path, "path")
+		assert.Equal(t, p, path, "path")
 		// Windows does not support Unix permissions.
 		if runtime.GOOS != "windows" {
 			info, _ := os.Stat(path)
-			assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "permissions")
+			assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "permissions")
 		}
 	})
 
 	t.Run("conflict appends suffix", func(t *testing.T) {
 		p := filepath.Join(dir, "existing.txt")
-		requirepkg.NoError(t, os.WriteFile(p, []byte("x"), 0644))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0644))
 
 		f, path, err := CreateExclusiveFile(p, 0600)
-		requirepkg.NoError(t, err)
+		require.NoError(t, err)
 		_ = f.Close()
-		assertpkg.Equal(t, "existing_1.txt", filepath.Base(path), "path")
+		assert.Equal(t, "existing_1.txt", filepath.Base(path), "path")
 	})
 
 	t.Run("multiple conflicts", func(t *testing.T) {
-		require := requirepkg.New(t)
+		require := require.New(t)
 		p := filepath.Join(dir, "multi.txt")
 		require.NoError(os.WriteFile(p, []byte("x"), 0644))
 		require.NoError(os.WriteFile(filepath.Join(dir, "multi_1.txt"), []byte("x"), 0644))
@@ -333,81 +333,18 @@ func TestCreateExclusiveFile(t *testing.T) {
 		f, path, err := CreateExclusiveFile(p, 0600)
 		require.NoError(err)
 		_ = f.Close()
-		assertpkg.Equal(t, "multi_2.txt", filepath.Base(path), "path")
+		assert.Equal(t, "multi_2.txt", filepath.Base(path), "path")
 	})
 
 	t.Run("no extension", func(t *testing.T) {
 		p := filepath.Join(dir, "noext")
-		requirepkg.NoError(t, os.WriteFile(p, []byte("x"), 0644))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0644))
 
 		f, path, err := CreateExclusiveFile(p, 0644)
-		requirepkg.NoError(t, err)
+		require.NoError(t, err)
 		_ = f.Close()
-		assertpkg.Equal(t, "noext_1", filepath.Base(path), "path")
+		assert.Equal(t, "noext_1", filepath.Base(path), "path")
 	})
-}
-
-func TestValidateOutputPath(t *testing.T) {
-	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
-	}{
-		{"simple filename", "invoice.pdf", false},
-		{"filename with dot prefix", "./invoice.pdf", false},
-		{"subdirectory", "subdir/file.pdf", false},
-		{"stdout dash", "-", false},
-		{"dot-dot prefix filename", "..backup", false},
-		{"dot-dot middle filename", "foo..bar.txt", false},
-
-		// Rooted/absolute paths (could be malicious attachment names)
-		{"absolute unix path", "/tmp/file.pdf", true},
-		{"absolute path with traversal", "/etc/cron.d/evil", true},
-		{"backslash rooted path", `\tmp\file.pdf`, true},
-
-		// Path traversal attacks (e.g., from email-supplied filenames)
-		{"parent traversal", "../evil.txt", true},
-		{"deep traversal", "../../.ssh/authorized_keys", true},
-		{"traversal via subdir", "foo/../../evil.txt", true},
-	}
-
-	// Windows drive and UNC paths — only meaningful on Windows where
-	// filepath.VolumeName returns non-empty for these forms.
-	if runtime.GOOS == "windows" {
-		tests = append(tests,
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows absolute", `C:\tmp\file.pdf`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows drive-relative", `C:tmp\file.pdf`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows drive-relative traversal", `C:..\evil`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows UNC path", `\\server\share\file.pdf`, true},
-		)
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateOutputPath(tt.path)
-			if tt.wantErr {
-				assertpkg.Error(t, err, "ValidateOutputPath(%q)", tt.path)
-			} else {
-				assertpkg.NoError(t, err, "ValidateOutputPath(%q)", tt.path)
-			}
-		})
-	}
 }
 
 func TestAttachments(t *testing.T) {
@@ -504,8 +441,8 @@ func TestAttachments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			attachDir := t.TempDir()
 			zipPath := filepath.Join(t.TempDir(), "test.zip")
 

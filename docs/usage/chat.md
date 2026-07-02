@@ -3,7 +3,7 @@ title: MCP Server
 description: Expose your email archive to AI assistants via MCP.
 ---
 
-The MCP server operates on your **local archive**, not your live Gmail account. The AI cannot send emails, modify labels, or access your Google credentials. The archive database is opened in read-only mode, so multiple AI sessions can query the archive concurrently without blocking each other. Standard read and FTS search operations work against your local database. If [vector search](/usage/vector-search/) is enabled, semantic and hybrid searches also call the embedding endpoint configured in `[vector.embeddings]`; use a local or self-hosted endpoint if message text must stay on your machine or network. Two tools write to the local filesystem: `stage_deletion` creates a deletion manifest file, and `export_attachment` saves an attachment to a requested path. Neither modifies the database, and actual deletion still requires you to run `msgvault delete-staged` from the CLI. You control when data enters the archive (via sync and import commands) and when anything is deleted (via the explicit [deletion workflow](/usage/deletion/)). Compared to giving an AI assistant direct OAuth access to your mailbox, this is a fundamentally smaller attack surface.
+The MCP server operates on your msgvault archive through the selected daemon, not your live Gmail account. Without `[remote].url`, `msgvault mcp` starts or reuses the local background daemon; with `[remote].url`, it uses that remote server. The AI cannot send emails, modify labels, or access your Google credentials. Standard read and search operations go through the daemon. If [vector search](/usage/vector-search/) is enabled, semantic and hybrid searches also call the embedding endpoint configured in `[vector.embeddings]`; use a local or self-hosted endpoint if message text must stay on your machine or network. The `stage_deletion` tool asks the selected daemon to save a deletion manifest, and `export_attachment` saves an attachment to a requested path on the MCP server's filesystem. Neither modifies the database, and actual deletion still requires you to run `msgvault delete-staged` from the CLI. You control when data enters the archive (via sync and import commands) and when anything is deleted (via the explicit [deletion workflow](/usage/deletion/)). Compared to giving an AI assistant direct OAuth access to your mailbox, this is a fundamentally smaller attack surface.
 
 ## Setup
 
@@ -103,7 +103,7 @@ Claude will automatically call the appropriate msgvault tools to retrieve and an
 
 The `stage_deletion` tool lets an AI assistant help you clean up your inbox. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Results are capped at 100,000 messages per call.
 
-When called, `stage_deletion` creates a local deletion manifest, a JSON file listing the matched messages. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/usage/deletion/) for the full workflow.
+When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/usage/deletion/) for the full workflow.
 
 The tool returns the batch ID, message count, and next steps:
 
@@ -122,18 +122,18 @@ The tool returns the batch ID, message count, and next steps:
 # Start the MCP server (stdio transport)
 msgvault mcp
 
-# Force SQL retrieval for all searches
-msgvault mcp --force-sql
-
 # StreamableHTTP transport on loopback
 msgvault mcp --http 8080
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--force-sql` | `false` | Always use SQL retrieval instead of FTS5 |
+| `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/configuration/#analytics). |
+| `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding. Use only behind your own network/auth layer. |
+
+Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to daemon configuration. Use `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` so local and remote daemon behavior stays consistent.
 
 ## Claude Code Skill
 

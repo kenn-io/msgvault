@@ -51,170 +51,175 @@ Examples:
   msgvault sync-full you@gmail.com --noresume    # Force fresh sync`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if syncLimit < 0 {
-			return usageErr(cmd, errors.New("--limit must be a non-negative number"))
+		if err := validateSyncFullFlags(cmd); err != nil {
+			return err
 		}
-		if syncAfter != "" {
-			if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
-			}
+		if isDaemonCLISubprocess() {
+			return runSyncFullLocal(cmd, args)
 		}
-		if syncBefore != "" {
-			if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
-			}
-		}
+		return runSyncFullHTTP(cmd, args)
+	},
+}
 
-		// Open database
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
+func validateSyncFullFlags(cmd *cobra.Command) error {
+	if syncLimit < 0 {
+		return usageErr(cmd, errors.New("--limit must be a non-negative number"))
+	}
+	if syncAfter != "" {
+		if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
+			return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
+		}
+	}
+	if syncBefore != "" {
+		if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
+			return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
+		}
+	}
+	return nil
+}
+
+func runSyncFullLocal(cmd *cobra.Command, args []string) error {
+	s, cleanup, err := openWritableStoreAndInit()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	dbPath := cfg.DatabaseDSN()
+
+	getOAuthMgr := oauthManagerCache()
+
+	// Determine which sources to sync
+	var sources []*store.Source
+	var syncErrors []string
+	if len(args) == 1 {
+		// Look up all sources matching the identifier and
+		// keep only syncable types (gmail, imap). Non-syncable
+		// sources like mbox/apple-mail imports share the same
+		// identifier namespace but cannot be synced.
+		allMatches, err := s.GetSourcesByIdentifierOrDisplayName(args[0])
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return fmt.Errorf("look up source: %w", err)
 		}
-		defer func() { _ = s.Close() }()
-
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-
-		getOAuthMgr := oauthManagerCache()
-
-		// Determine which sources to sync
-		var sources []*store.Source
-		var syncErrors []string
-		if len(args) == 1 {
-			// Look up all sources matching the identifier and
-			// keep only syncable types (gmail, imap). Non-syncable
-			// sources like mbox/apple-mail imports share the same
-			// identifier namespace but cannot be synced.
-			allMatches, err := s.GetSourcesByIdentifierOrDisplayName(args[0])
-			if err != nil {
-				return fmt.Errorf("look up source: %w", err)
-			}
-			for _, src := range allMatches {
-				if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
-					sources = append(sources, src)
-				}
-			}
-			if len(sources) == 0 {
-				if len(allMatches) > 0 {
-					// Identifier exists but has no syncable source types.
-					return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
-				}
-				// Not in DB yet - assume Gmail (legacy behaviour)
-				sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
-			}
-		} else {
-			// Sync all configured sources
-			allSources, err := s.ListSources("")
-			if err != nil {
-				return fmt.Errorf("list sources: %w", err)
-			}
-			if len(allSources) == 0 {
-				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
-			}
-			for _, src := range allSources {
-				switch src.SourceType {
-				case sourceTypeGmail:
-					if !cfg.OAuth.HasAnyConfig() {
-						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
-						continue
-					}
-					appName := sourceOAuthApp(src)
-					// Service accounts are always ready — no per-user token needed
-					if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-						mgr, err := getOAuthMgr(appName)
-						if err != nil {
-							syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
-							continue
-						}
-						if !mgr.HasToken(src.Identifier) {
-							fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
-							continue
-						}
-					}
-				case sourceTypeIMAP:
-					skipMsg, parseErr := imapSkipReason(src)
-					if parseErr != nil {
-						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
-						continue
-					}
-					if skipMsg != "" {
-						fmt.Println(skipMsg)
-						continue
-					}
-				default:
-					fmt.Printf("Skipping %s (unsupported source type %q)\n", src.Identifier, src.SourceType)
-					continue
-				}
+		for _, src := range allMatches {
+			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
 				sources = append(sources, src)
 			}
-			if len(sources) == 0 {
-				if len(syncErrors) > 0 {
-					return fmt.Errorf("%s", syncErrors[0])
-				}
-				return errors.New("no accounts are ready to sync")
-			}
 		}
-
-		// Set up context with cancellation
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
-
-		// Handle Ctrl+C gracefully
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigChan
-			fmt.Println("\nInterrupted. Saving checkpoint...")
-			cancel()
-		}()
-
-		// Embedding is no longer driven by sync: newly-ingested messages
-		// get embed_gen = NULL by column default and the scan-and-fill
-		// embed worker (msgvault embeddings build / the serve daemon)
-		// picks them up.
-
-		for _, src := range sources {
-			if ctx.Err() != nil {
-				break
+		if len(sources) == 0 {
+			if len(allMatches) > 0 {
+				// Identifier exists but has no syncable source types.
+				return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
 			}
-
-			// Ensure credentials are available before syncing Gmail sources.
-			if src.SourceType == sourceTypeGmail || src.SourceType == "" {
+			// Not in DB yet - assume Gmail (legacy behaviour)
+			sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
+		}
+	} else {
+		// Sync all configured sources
+		allSources, err := s.ListSources("")
+		if err != nil {
+			return fmt.Errorf("list sources: %w", err)
+		}
+		if len(allSources) == 0 {
+			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
+		}
+		for _, src := range allSources {
+			switch src.SourceType {
+			case sourceTypeGmail:
+				if !cfg.OAuth.HasAnyConfig() {
+					fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
+					continue
+				}
 				appName := sourceOAuthApp(src)
+				// Service accounts are always ready — no per-user token needed
 				if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-					if _, err := getOAuthMgr(appName); err != nil {
+					mgr, err := getOAuthMgr(appName)
+					if err != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 						continue
 					}
+					if !mgr.HasToken(src.Identifier) {
+						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
+						continue
+					}
 				}
-			}
-
-			if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+			case sourceTypeIMAP:
+				skipMsg, parseErr := imapSkipReason(src)
+				if parseErr != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
+					continue
+				}
+				if skipMsg != "" {
+					fmt.Println(skipMsg)
+					continue
+				}
+			default:
+				fmt.Printf("Skipping %s (unsupported source type %q)\n", src.Identifier, src.SourceType)
 				continue
 			}
+			sources = append(sources, src)
 		}
-
-		// Rebuild analytics cache.
-		rebuildCacheAfterWrite(dbPath)
-
-		if len(syncErrors) > 0 {
-			fmt.Println()
-			fmt.Println("Errors:")
-			for _, e := range syncErrors {
-				fmt.Printf("  %s\n", e)
+		if len(sources) == 0 {
+			if len(syncErrors) > 0 {
+				return fmt.Errorf("%s", syncErrors[0])
 			}
-			return fmt.Errorf("%d account(s) failed to sync: %s",
-				len(syncErrors), strings.Join(syncErrors, "; "))
+			return errors.New("no accounts are ready to sync")
+		}
+	}
+
+	// Set up context with cancellation
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	// Handle Ctrl+C gracefully
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nInterrupted. Saving checkpoint...")
+		cancel()
+	}()
+
+	// Embedding is no longer driven by sync: newly-ingested messages
+	// get embed_gen = NULL by column default and the scan-and-fill
+	// embed worker (msgvault embeddings build / the serve daemon)
+	// picks them up.
+
+	for _, src := range sources {
+		if ctx.Err() != nil {
+			break
 		}
 
-		return nil
-	},
+		// Ensure credentials are available before syncing Gmail sources.
+		if src.SourceType == sourceTypeGmail || src.SourceType == "" {
+			appName := sourceOAuthApp(src)
+			if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
+				if _, err := getOAuthMgr(appName); err != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+					continue
+				}
+			}
+		}
+
+		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
+			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+			continue
+		}
+	}
+
+	// Rebuild analytics cache.
+	rebuildCacheAfterWrite(dbPath)
+
+	if len(syncErrors) > 0 {
+		fmt.Println()
+		fmt.Println("Errors:")
+		for _, e := range syncErrors {
+			fmt.Printf("  %s\n", e)
+		}
+		return fmt.Errorf("%d account(s) failed to sync: %s",
+			len(syncErrors), strings.Join(syncErrors, "; "))
+	}
+
+	return nil
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given
@@ -498,7 +503,7 @@ func (p *CLIProgress) printProgress() {
 	}
 
 	// Format elapsed time nicely
-	elapsedStr := formatDuration(elapsed)
+	elapsedStr := formatCLIProgressDuration(elapsed, cliProgressDurationSpaced)
 
 	// Format latest message date if available
 	dateStr := ""
@@ -516,22 +521,6 @@ func (p *CLIProgress) OnComplete(summary *gmail.SyncSummary) {
 
 func (p *CLIProgress) OnError(err error) {
 	fmt.Printf("\nError: %v\n", err)
-}
-
-// formatDuration formats a duration as "Xm Ys" or "Xh Ym" for readability.
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := d / time.Hour
-	m := (d % time.Hour) / time.Minute
-	s := (d % time.Minute) / time.Second
-
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm %ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
 }
 
 // imapSkipReason checks whether an IMAP source has the credentials needed to

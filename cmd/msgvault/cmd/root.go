@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
@@ -24,7 +25,7 @@ var (
 	cfgFile    string
 	homeDir    string
 	verbose    bool
-	useLocal   bool // Force local database even when remote is configured
+	useLocal   bool // Use local daemon even when remote is configured
 	logFile    string
 	logLevel   string
 	noLogFile  bool
@@ -71,7 +72,8 @@ in a single binary.`,
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
 		if cmd.Name() == "version" || cmd.Name() == "update" ||
-			cmd.Name() == "quickstart" || cmd.Name() == "completion" ||
+			cmd.Name() == "quickstart" || cmd.Name() == "openapi" ||
+			cmd.Name() == "completion" ||
 			cmd.Name() == cobra.ShellCompRequestCmd ||
 			cmd.Name() == cobra.ShellCompNoDescRequestCmd {
 			cmd.SilenceUsage = false
@@ -107,6 +109,20 @@ in a single binary.`,
 		// File logging is opt-in: requires [log].enabled,
 		// [log].dir, or --log-file. --no-log-file overrides.
 		fileDisabled := noLogFile || (logFile == "" && !cfg.Log.Enabled && cfg.Log.Dir == "")
+
+		// When the stderr fallback is the only sink and the user
+		// hasn't asked for a level, quiet routine INFO noise on an
+		// interactive terminal. The terminal check preserves INFO
+		// for the background daemon child (stderr → serve.log).
+		if levelOverride == nil {
+			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
+				isatty.IsCygwinTerminal(os.Stderr.Fd())
+			if consoleLevel := logging.ResolveConsoleLevel(
+				levelString, verbose, fileDisabled, stderrIsTerminal,
+			); consoleLevel != nil {
+				levelOverride = consoleLevel
+			}
+		}
 
 		// Close a previous log handler if tests re-enter
 		// PersistentPreRunE without going through ExecuteContext.
@@ -266,7 +282,7 @@ func ExecuteContext(ctx context.Context) error {
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.
-	if logger != nil {
+	if logResult != nil && logger != nil {
 		if err != nil {
 			logger.Info("msgvault exit",
 				"outcome", "error", "error", err.Error(),
@@ -536,7 +552,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.msgvault/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&homeDir, "home", "", "home directory (overrides MSGVAULT_HOME)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output (implies --log-level=debug)")
-	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "force local database (override remote config)")
+	rootCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "use local daemon instead of configured remote")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "",
 		"override log file path (default: <data dir>/logs/msgvault-YYYY-MM-DD.log)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "",

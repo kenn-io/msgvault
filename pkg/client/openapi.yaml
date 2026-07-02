@@ -1,0 +1,5036 @@
+components:
+  schemas:
+    AccountInfo:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        last_sync_at:
+          type: string
+        next_sync_at:
+          type: string
+        schedule:
+          type: string
+      required:
+        - id
+        - email
+        - enabled
+      type: object
+    AccountListResponse:
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/AccountInfo"
+          nullable: true
+          type: array
+      required:
+        - accounts
+      type: object
+    AccountStatus:
+      properties:
+        email:
+          type: string
+        last_error:
+          type: string
+        last_run:
+          format: date-time
+          type: string
+        next_run:
+          format: date-time
+          type: string
+        running:
+          type: boolean
+        schedule:
+          type: string
+      required:
+        - email
+        - running
+        - next_run
+        - schedule
+      type: object
+    AddAccountRequest:
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        enabled:
+          type: boolean
+        schedule:
+          type: string
+      required:
+        - email
+        - schedule
+        - enabled
+      type: object
+    AddRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        identifier:
+          type: string
+        signal:
+          type: string
+      required:
+        - account
+        - identifier
+        - signal
+      type: object
+    AddResult:
+      properties:
+        account:
+          type: string
+        identifier:
+          type: string
+        outcome:
+          type: string
+        signal:
+          type: string
+      required:
+        - account
+        - identifier
+        - signal
+        - outcome
+      type: object
+    Address:
+      properties:
+        Email:
+          type: string
+        Name:
+          type: string
+      required:
+        - Email
+        - Name
+      type: object
+    AggregateResponse:
+      properties:
+        rows:
+          items:
+            $ref: "#/components/schemas/AggregateRowJSON"
+          nullable: true
+          type: array
+        view_type:
+          type: string
+      required:
+        - view_type
+        - rows
+      type: object
+    AggregateRowJSON:
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_size:
+          format: int64
+          type: integer
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        total_size:
+          format: int64
+          type: integer
+        total_unique:
+          format: int64
+          type: integer
+      required:
+        - key
+        - count
+        - total_size
+        - attachment_size
+        - attachment_count
+        - total_unique
+      type: object
+    ApiHTTPError:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    AttachmentInfo:
+      properties:
+        content_hash:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - id
+        - filename
+        - mime_type
+        - size_bytes
+      type: object
+    BuildingSummary:
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        progress:
+          $ref: "#/components/schemas/Progress"
+        started_at:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - progress
+      type: object
+    CLIAddCalendarPlanRequest:
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        headless:
+          type: boolean
+        oauth_app:
+          type: string
+        oauth_app_explicit:
+          type: boolean
+      required:
+        - email
+      type: object
+    CLIAddCalendarPlanResponse:
+      properties:
+        body_lines:
+          items:
+            type: string
+          nullable: true
+          type: array
+        cancel_hint:
+          type: string
+        headline:
+          type: string
+        needs_scope_escalation:
+          type: boolean
+      required:
+        - needs_scope_escalation
+      type: object
+    CLICacheBuildEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIDeduplicatePlanItem:
+      properties:
+        backfilled_count:
+          format: int64
+          type: integer
+        duplicate_messages:
+          format: int64
+          type: integer
+        needs_confirmation:
+          type: boolean
+        plan_fingerprint:
+          type: string
+        scope_is_collection:
+          type: boolean
+        scope_label:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        stdout:
+          type: string
+      required:
+        - needs_confirmation
+      type: object
+    CLIDeduplicatePlanRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        collection:
+          type: string
+        content_hash:
+          type: boolean
+        delete_dups_from_source_server:
+          type: boolean
+        prefer:
+          type: string
+      type: object
+    CLIDeduplicatePlanResponse:
+      properties:
+        footer_stdout:
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/CLIDeduplicatePlanItem"
+          nullable: true
+          type: array
+        prefix_stdout:
+          type: string
+      required:
+        - items
+      type: object
+    CLIDeleteStagedPlanRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        batch_id:
+          type: string
+        dry_run:
+          type: boolean
+        list:
+          type: boolean
+        permanent:
+          type: boolean
+        remote_delete_enabled:
+          type: boolean
+        "yes":
+          type: boolean
+      type: object
+    CLIDeleteStagedPlanResponse:
+      properties:
+        blocked_error:
+          type: string
+        confirmation_mode:
+          type: string
+        needs_confirmation:
+          type: boolean
+        needs_execution:
+          type: boolean
+        needs_scope_escalation:
+          type: boolean
+        plan_fingerprint:
+          type: string
+        planned_batch_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        remote_delete_env_var:
+          type: string
+        scope_escalation_body_lines:
+          items:
+            type: string
+          nullable: true
+          type: array
+        scope_escalation_cancel_hint:
+          type: string
+        scope_escalation_headline:
+          type: string
+        stdout:
+          type: string
+      required:
+        - needs_execution
+        - needs_confirmation
+      type: object
+    CLIDeletionManifestResponse:
+      properties:
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+      required:
+        - id
+        - message_count
+      type: object
+    CLIEmbeddingsPlanRequest:
+      additionalProperties: false
+      properties:
+        force:
+          type: boolean
+        generation_id:
+          format: int64
+          type: integer
+        operation:
+          type: string
+      required:
+        - operation
+        - generation_id
+      type: object
+    CLIEmbeddingsPlanResponse:
+      properties:
+        needs_confirmation:
+          type: boolean
+        prompt:
+          type: string
+      required:
+        - needs_confirmation
+      type: object
+    CLIQueryMessageSummary:
+      properties:
+        attachment_count:
+          format: int64
+          type: integer
+        bcc:
+          items:
+            $ref: "#/components/schemas/Address"
+          nullable: true
+          type: array
+        body_text:
+          type: string
+        cc:
+          items:
+            $ref: "#/components/schemas/Address"
+          nullable: true
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        conversation_title:
+          type: string
+        deleted_at:
+          format: date-time
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        message_type:
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        size_estimate:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_conversation_id:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            $ref: "#/components/schemas/Address"
+          nullable: true
+          type: array
+      required:
+        - id
+        - source_message_id
+        - conversation_id
+        - source_conversation_id
+        - subject
+        - snippet
+        - from_email
+        - from_name
+        - sent_at
+        - size_estimate
+        - has_attachments
+        - attachment_count
+        - labels
+      type: object
+    CLIRepairEncodingEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIRunEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIRunRequest:
+      additionalProperties: false
+      properties:
+        args:
+          items:
+            type: string
+          nullable: true
+          type: array
+        cwd:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - args
+      type: object
+    CLISyncEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CLIVerifyEvent:
+      properties:
+        data:
+          type: string
+        error:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CacheStats:
+      properties:
+        attachment_size_bytes:
+          format: int64
+          type: integer
+        last_message_id:
+          format: int64
+          type: integer
+        last_sync_at:
+          format: date-time
+          type: string
+        max_year:
+          format: int64
+          type: integer
+        min_year:
+          format: int64
+          type: integer
+        sources:
+          format: int64
+          type: integer
+        status:
+          type: string
+        total_messages:
+          format: int64
+          type: integer
+        total_size_bytes:
+          format: int64
+          type: integer
+        unique_domains:
+          format: int64
+          type: integer
+        unique_senders:
+          format: int64
+          type: integer
+        warnings:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - status
+      type: object
+    CliAccountResponse:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          format: int64
+          type: integer
+        last_sync:
+          format: date-time
+          nullable: true
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        source_deleted_count:
+          format: int64
+          type: integer
+        type:
+          type: string
+      required:
+        - id
+        - email
+        - type
+        - display_name
+        - message_count
+        - source_deleted_count
+        - last_sync
+      type: object
+    CliAccountsResponse:
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/CliAccountResponse"
+          nullable: true
+          type: array
+      required:
+        - accounts
+      type: object
+    CliCollectionEnvelope:
+      properties:
+        collection:
+          $ref: "#/components/schemas/CliCollectionResponse"
+      required:
+        - collection
+      type: object
+    CliCollectionResponse:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        description:
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        name:
+          type: string
+        source_deleted_count:
+          format: int64
+          type: integer
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/CliCollectionSourceResponse"
+          nullable: true
+          type: array
+      required:
+        - id
+        - name
+        - created_at
+        - source_ids
+        - message_count
+        - source_deleted_count
+      type: object
+    CliCollectionSourceResponse:
+      properties:
+        display_name:
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+      required:
+        - id
+        - identifier
+      type: object
+    CliCollectionsResponse:
+      properties:
+        collections:
+          items:
+            $ref: "#/components/schemas/CliCollectionResponse"
+          nullable: true
+          type: array
+      required:
+        - collections
+      type: object
+    CliDeleteDedupedBatchResponse:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        id:
+          type: string
+      required:
+        - id
+        - count
+      type: object
+    CliDeleteDedupedExecuteRequest:
+      additionalProperties: false
+      properties:
+        all_hidden:
+          type: boolean
+        batch_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        expected_batch_count:
+          format: int64
+          type: integer
+        expected_batches:
+          items:
+            $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
+          type: array
+        expected_total:
+          format: int64
+          type: integer
+        no_backup:
+          type: boolean
+      required:
+        - expected_total
+        - expected_batch_count
+        - expected_batches
+      type: object
+    CliDeleteDedupedExecuteResponse:
+      properties:
+        backup_path:
+          type: string
+        batch_count:
+          format: int64
+          type: integer
+        deleted:
+          format: int64
+          type: integer
+      required:
+        - deleted
+        - batch_count
+      type: object
+    CliDeleteDedupedPlanRequest:
+      additionalProperties: false
+      properties:
+        all_hidden:
+          type: boolean
+        batch_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+      type: object
+    CliDeleteDedupedPlanResponse:
+      properties:
+        batch_count:
+          format: int64
+          type: integer
+        batches:
+          items:
+            $ref: "#/components/schemas/CliDeleteDedupedBatchResponse"
+          nullable: true
+          type: array
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - batch_count
+      type: object
+    CliIdentitiesResponse:
+      properties:
+        rows:
+          items:
+            $ref: "#/components/schemas/CliIdentityRowResponse"
+          nullable: true
+          type: array
+      required:
+        - rows
+      type: object
+    CliIdentityRowResponse:
+      properties:
+        account:
+          type: string
+        confirmed_at:
+          format: date-time
+          type: string
+        identifier:
+          type: string
+        none:
+          type: boolean
+        signals:
+          items:
+            type: string
+          nullable: true
+          type: array
+        source_id:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+      required:
+        - account
+        - source_id
+        - source_type
+        - signals
+      type: object
+    CliInitDBResponse:
+      properties:
+        notice:
+          type: string
+        stats:
+          $ref: "#/components/schemas/StatsResponse"
+      required:
+        - stats
+      type: object
+    CliMessageAddress:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+      required:
+        - email
+        - name
+      type: object
+    CliMessageAttachment:
+      properties:
+        content_hash:
+          type: string
+        filename:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mime_type:
+          type: string
+        size:
+          format: int64
+          type: integer
+        url:
+          type: string
+      required:
+        - id
+        - filename
+        - mime_type
+        - size
+        - content_hash
+      type: object
+    CliMessageResponse:
+      properties:
+        attachments:
+          items:
+            $ref: "#/components/schemas/CliMessageAttachment"
+          nullable: true
+          type: array
+        bcc:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          nullable: true
+          type: array
+        body_html:
+          type: string
+        body_text:
+          type: string
+        cc:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          nullable: true
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          format: date-time
+          nullable: true
+          type: string
+        from:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          nullable: true
+          type: array
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        message_type:
+          type: string
+        received_at:
+          format: date-time
+          nullable: true
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        size_estimate:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_conversation_id:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            $ref: "#/components/schemas/CliMessageAddress"
+          nullable: true
+          type: array
+      required:
+        - id
+        - source_message_id
+        - conversation_id
+        - source_conversation_id
+        - subject
+        - snippet
+        - sent_at
+        - received_at
+        - deleted_at
+        - size_estimate
+        - has_attachments
+        - from
+        - to
+        - cc
+        - bcc
+        - labels
+        - attachments
+        - body_text
+        - body_html
+      type: object
+    CliRebuildFTSEvent:
+      properties:
+        done:
+          format: int64
+          type: integer
+        error:
+          type: string
+        indexed:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+        type:
+          type: string
+      required:
+        - type
+      type: object
+    CliSearchResponse:
+      properties:
+        index_built:
+          type: boolean
+        indexed_messages:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          nullable: true
+          type: array
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+      required:
+        - results
+      type: object
+    CliStatsResponse:
+      properties:
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+        stats:
+          $ref: "#/components/schemas/StatsResponse"
+      required:
+        - stats
+      type: object
+    CreateRequest:
+      additionalProperties: false
+      properties:
+        accounts:
+          items:
+            type: string
+          nullable: true
+          type: array
+        name:
+          type: string
+      required:
+        - name
+        - accounts
+      type: object
+    DeepSearchResponse:
+      properties:
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        offset:
+          format: int64
+          type: integer
+        query:
+          type: string
+      required:
+        - query
+        - messages
+        - count
+        - has_more
+        - offset
+        - limit
+      type: object
+    ErrorResponse:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    Execution:
+      additionalProperties: false
+      properties:
+        completed_at:
+          format: date-time
+          type: string
+        failed:
+          format: int64
+          type: integer
+        failed_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        last_processed_index:
+          format: int64
+          type: integer
+        method:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        succeeded:
+          format: int64
+          type: integer
+      required:
+        - started_at
+        - method
+        - succeeded
+        - failed
+        - last_processed_index
+      type: object
+    FilteredMessagesResponse:
+      properties:
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    Filters:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        after:
+          type: string
+        before:
+          type: string
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        recipients:
+          items:
+            type: string
+          nullable: true
+          type: array
+        sender_domains:
+          items:
+            type: string
+          nullable: true
+          type: array
+        senders:
+          items:
+            type: string
+          nullable: true
+          type: array
+      type: object
+    GenerationSummary:
+      properties:
+        activated_at:
+          type: string
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - fingerprint
+        - state
+        - message_count
+      type: object
+    GmailIDsResponse:
+      properties:
+        gmail_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - gmail_ids
+      type: object
+    HealthResponse:
+      properties:
+        status:
+          type: string
+        vector:
+          $ref: "#/components/schemas/VectorHealth"
+      required:
+        - status
+      type: object
+    HybridGenerationSummary:
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - model
+        - dimension
+        - fingerprint
+        - state
+      type: object
+    HybridSearchItem:
+      properties:
+        bcc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        cc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        message_type:
+          type: string
+        score:
+          $ref: "#/components/schemas/ScoreBreakdown"
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    HybridSearchResponse:
+      properties:
+        generation:
+          $ref: "#/components/schemas/HybridGenerationSummary"
+        mode:
+          type: string
+        pool_saturated:
+          type: boolean
+        query:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/HybridSearchItem"
+          nullable: true
+          type: array
+        returned:
+          format: int64
+          type: integer
+        scope_label:
+          type: string
+        scope_source_count:
+          format: int64
+          type: integer
+        took_ms:
+          format: int64
+          type: integer
+      required:
+        - query
+        - mode
+        - returned
+        - pool_saturated
+        - generation
+        - took_ms
+        - results
+      type: object
+    Manifest:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        description:
+          type: string
+        execution:
+          $ref: "#/components/schemas/Execution"
+        filters:
+          $ref: "#/components/schemas/Filters"
+        gmail_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        id:
+          type: string
+        status:
+          type: string
+        summary:
+          $ref: "#/components/schemas/Summary"
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - id
+        - created_at
+        - created_by
+        - description
+        - filters
+        - gmail_ids
+        - status
+      type: object
+    MessageDetail:
+      properties:
+        attachments:
+          items:
+            $ref: "#/components/schemas/AttachmentInfo"
+          nullable: true
+          type: array
+        bcc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        body:
+          type: string
+        body_html:
+          type: string
+        cc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        message_type:
+          type: string
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - body
+        - attachments
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    MessageListResponse:
+      properties:
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        page:
+          format: int64
+          type: integer
+        page_size:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - page
+        - page_size
+        - messages
+      type: object
+    MessageSummary:
+      properties:
+        bcc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        cc:
+          items:
+            type: string
+          nullable: true
+          type: array
+        conversation_id:
+          format: int64
+          type: integer
+        deleted_at:
+          type: string
+        from:
+          type: string
+        from_email:
+          type: string
+        from_name:
+          type: string
+        from_phone:
+          type: string
+        has_attachments:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        labels:
+          items:
+            type: string
+          nullable: true
+          type: array
+        message_type:
+          type: string
+        sent_at:
+          type: string
+        size_bytes:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        to:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - id
+        - subject
+        - from
+        - to
+        - sent_at
+        - snippet
+        - labels
+        - has_attachments
+        - size_bytes
+      type: object
+    MutationResult:
+      properties:
+        name:
+          type: string
+        source_count:
+          format: int64
+          type: integer
+      required:
+        - name
+      type: object
+    PingInfo:
+      properties:
+        ok:
+          type: boolean
+        pid:
+          format: int64
+          type: integer
+        service:
+          type: string
+        version:
+          type: string
+      required:
+        - ok
+      type: object
+    Progress:
+      properties:
+        done:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - done
+        - total
+      type: object
+    QueryRequest:
+      additionalProperties: false
+      properties:
+        sql:
+          type: string
+      required:
+        - sql
+      type: object
+    QueryResult:
+      properties:
+        columns:
+          items:
+            type: string
+          nullable: true
+          type: array
+        row_count:
+          format: int64
+          type: integer
+        rows:
+          items:
+            items:
+              x-go-type: any
+            nullable: true
+            type: array
+          nullable: true
+          type: array
+      required:
+        - columns
+        - rows
+        - row_count
+      type: object
+    RemoveRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        identifier:
+          type: string
+      required:
+        - account
+        - identifier
+      type: object
+    RemoveResult:
+      properties:
+        account:
+          type: string
+        identifier:
+          type: string
+        no_identity:
+          type: boolean
+        removed:
+          format: int64
+          type: integer
+      required:
+        - account
+        - identifier
+        - removed
+      type: object
+    SchedulerStatusResponse:
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/AccountStatus"
+          nullable: true
+          type: array
+        running:
+          type: boolean
+      required:
+        - running
+        - accounts
+      type: object
+    ScoreBreakdown:
+      properties:
+        bm25:
+          format: double
+          type: number
+        rrf:
+          format: double
+          type: number
+        subject_boosted:
+          type: boolean
+        vector:
+          format: double
+          type: number
+      type: object
+    SearchFastResponse:
+      properties:
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        query:
+          type: string
+        stats:
+          $ref: "#/components/schemas/TotalStatsResponse"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - query
+        - messages
+        - total_count
+      type: object
+    SearchResult:
+      properties:
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        page:
+          format: int64
+          type: integer
+        page_size:
+          format: int64
+          type: integer
+        query:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - query
+        - total
+        - page
+        - page_size
+        - messages
+      type: object
+    SenderCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        sender:
+          type: string
+      required:
+        - sender
+        - count
+      type: object
+    SimilarSearchResponse:
+      properties:
+        generation:
+          $ref: "#/components/schemas/HybridGenerationSummary"
+        messages:
+          items:
+            $ref: "#/components/schemas/MessageSummary"
+          nullable: true
+          type: array
+        returned:
+          format: int64
+          type: integer
+        seed_message_id:
+          format: int64
+          type: integer
+      required:
+        - seed_message_id
+        - returned
+        - generation
+        - messages
+      type: object
+    SourceStatus:
+      properties:
+        active_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        display_name:
+          nullable: true
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        last_successful_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        last_sync_at:
+          nullable: true
+          type: string
+        latest_sync:
+          $ref: "#/components/schemas/SyncRunStatus"
+        source_type:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+        - source_type
+        - identifier
+        - display_name
+        - last_sync_at
+        - updated_at
+        - active_sync
+        - latest_sync
+        - last_successful_sync
+      type: object
+    SourceStatusResponse:
+      properties:
+        sources:
+          items:
+            $ref: "#/components/schemas/SourceStatus"
+          nullable: true
+          type: array
+      required:
+        - sources
+      type: object
+    SourcesRequest:
+      additionalProperties: false
+      properties:
+        accounts:
+          items:
+            type: string
+          nullable: true
+          type: array
+      required:
+        - accounts
+      type: object
+    StatsResponse:
+      properties:
+        active_messages:
+          format: int64
+          type: integer
+        database_size_bytes:
+          format: int64
+          type: integer
+        source_deleted_messages:
+          format: int64
+          type: integer
+        total_accounts:
+          format: int64
+          type: integer
+        total_attachments:
+          format: int64
+          type: integer
+        total_labels:
+          format: int64
+          type: integer
+        total_messages:
+          format: int64
+          type: integer
+        total_threads:
+          format: int64
+          type: integer
+        vector_search:
+          $ref: "#/components/schemas/StatsView"
+        vector_status:
+          type: string
+      required:
+        - total_messages
+        - active_messages
+        - source_deleted_messages
+        - total_threads
+        - total_accounts
+        - total_labels
+        - total_attachments
+        - database_size_bytes
+      type: object
+    StatsView:
+      properties:
+        active_generation:
+          $ref: "#/components/schemas/GenerationSummary"
+        building_generation:
+          $ref: "#/components/schemas/BuildingSummary"
+        enabled:
+          type: boolean
+        missing_embeddings_total:
+          format: int64
+          type: integer
+      required:
+        - enabled
+        - active_generation
+        - missing_embeddings_total
+      type: object
+    StatusMessageResponse:
+      properties:
+        message:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+        - message
+      type: object
+    Summary:
+      additionalProperties: false
+      properties:
+        accounts:
+          items:
+            type: string
+          nullable: true
+          type: array
+        date_range:
+          items:
+            type: string
+          maxItems: 2
+          minItems: 2
+          nullable: true
+          type: array
+        message_count:
+          format: int64
+          type: integer
+        top_senders:
+          items:
+            $ref: "#/components/schemas/SenderCount"
+          nullable: true
+          type: array
+        total_size_bytes:
+          format: int64
+          type: integer
+      required:
+        - message_count
+        - total_size_bytes
+        - date_range
+        - accounts
+        - top_senders
+      type: object
+    SyncRunItemStatus:
+      properties:
+        created_at:
+          type: string
+        error_kind:
+          type: string
+        error_message:
+          type: string
+        phase:
+          type: string
+        source_message_id:
+          type: string
+      required:
+        - source_message_id
+        - phase
+        - error_kind
+        - error_message
+        - created_at
+      type: object
+    SyncRunStatus:
+      properties:
+        completed_at:
+          nullable: true
+          type: string
+        cursor_after:
+          nullable: true
+          type: string
+        cursor_before:
+          nullable: true
+          type: string
+        error_message:
+          nullable: true
+          type: string
+        errors_count:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        item_errors:
+          items:
+            $ref: "#/components/schemas/SyncRunItemStatus"
+          nullable: true
+          type: array
+        messages_added:
+          format: int64
+          type: integer
+        messages_processed:
+          format: int64
+          type: integer
+        messages_updated:
+          format: int64
+          type: integer
+        skipped_count:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        started_at:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - source_id
+        - started_at
+        - completed_at
+        - status
+        - messages_processed
+        - messages_added
+        - messages_updated
+        - errors_count
+        - error_message
+        - cursor_before
+        - cursor_after
+      type: object
+    TextConversationRow:
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        last_message_at:
+          type: string
+        last_preview:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        participant_count:
+          format: int64
+          type: integer
+        source_type:
+          type: string
+        title:
+          type: string
+      required:
+        - conversation_id
+        - title
+        - source_type
+        - message_count
+        - participant_count
+        - last_preview
+      type: object
+    TextConversationsResponse:
+      properties:
+        conversations:
+          items:
+            $ref: "#/components/schemas/TextConversationRow"
+          nullable: true
+          type: array
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - conversations
+      type: object
+    TextMessagesResponse:
+      properties:
+        count:
+          format: int64
+          type: integer
+        has_more:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        messages:
+          items:
+            $ref: "#/components/schemas/CLIQueryMessageSummary"
+          nullable: true
+          type: array
+        offset:
+          format: int64
+          type: integer
+      required:
+        - count
+        - has_more
+        - offset
+        - limit
+        - messages
+      type: object
+    TokenUploadRequest:
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+        client_id:
+          type: string
+        expiry:
+          format: date-time
+          type: string
+        refresh_token:
+          type: string
+        scopes:
+          items:
+            type: string
+          nullable: true
+          type: array
+        tenant_id:
+          type: string
+        token_type:
+          type: string
+      required:
+        - refresh_token
+      type: object
+    TotalStatsResponse:
+      properties:
+        account_count:
+          format: int64
+          type: integer
+        active_messages:
+          format: int64
+          type: integer
+        attachment_count:
+          format: int64
+          type: integer
+        attachment_size:
+          format: int64
+          type: integer
+        label_count:
+          format: int64
+          type: integer
+        message_count:
+          format: int64
+          type: integer
+        source_deleted_messages:
+          format: int64
+          type: integer
+        total_size:
+          format: int64
+          type: integer
+      required:
+        - message_count
+        - active_messages
+        - source_deleted_messages
+        - total_size
+        - attachment_count
+        - attachment_size
+        - label_count
+        - account_count
+      type: object
+    UpdateRequest:
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+      required:
+        - email
+        - display_name
+      type: object
+    UpdateResult:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+      required:
+        - email
+        - display_name
+      type: object
+    VectorHealth:
+      properties:
+        error:
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
+  securitySchemes:
+    apiKey:
+      in: header
+      name: X-Api-Key
+      type: apiKey
+info:
+  title: msgvault API
+  version: 1.0.0
+openapi: 3.0.3
+paths:
+  /api/ping:
+    get:
+      operationId: daemonPing
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PingInfo"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Daemon discovery ping
+      tags:
+        - Daemon
+  /api/v1/accounts:
+    get:
+      operationId: listAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List configured accounts
+      tags:
+        - API
+    post:
+      operationId: addAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddAccountRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Add an account
+      tags:
+        - API
+  /api/v1/aggregates:
+    get:
+      operationId: getAggregates
+      parameters:
+        - description: Aggregate view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: Sort field
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Maximum number of rows to return (default 100; values below 1 fall back to the default)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get aggregate rows
+      tags:
+        - API
+  /api/v1/aggregates/sub:
+    get:
+      operationId: getSubAggregates
+      parameters:
+        - description: Aggregate view type
+          in: query
+          name: view_type
+          required: true
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: date, size, or subject"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get nested aggregate rows
+      tags:
+        - API
+  /api/v1/attachments/{id}:
+    get:
+      operationId: getAttachment
+      parameters:
+        - description: Attachment ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentInfo"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get attachment metadata
+      tags:
+        - API
+  /api/v1/auth/token/{email}:
+    post:
+      operationId: uploadToken
+      parameters:
+        - description: Account email address
+          in: path
+          name: email
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenUploadRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Upload an OAuth token
+      tags:
+        - API
+  /api/v1/cli/account:
+    post:
+      operationId: updateCLIAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Update an account for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/accounts:
+    get:
+      operationId: listCLIAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliAccountsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List accounts for CLI output
+      tags:
+        - API
+  /api/v1/cli/add-calendar/plan:
+    post:
+      operationId: planCLIAddCalendar
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIAddCalendarPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIAddCalendarPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI Calendar account setup
+      tags:
+        - API
+  /api/v1/cli/attachment:
+    get:
+      operationId: getCLIAttachment
+      parameters:
+        - description: Attachment SHA-256 content hash
+          in: query
+          name: content_hash
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one attachment for CLI export
+      tags:
+        - API
+  /api/v1/cli/build-cache:
+    post:
+      operationId: buildCLICache
+      parameters:
+        - description: Rebuild all cache files from scratch
+          in: query
+          name: full_rebuild
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLICacheBuildEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Build the CLI analytics cache
+      tags:
+        - API
+  /api/v1/cli/cache-stats:
+    get:
+      operationId: getCLICacheStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheStats"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get CLI-compatible analytics cache statistics
+      tags:
+        - API
+  /api/v1/cli/collection:
+    get:
+      operationId: getCLICollection
+      parameters:
+        - description: Collection name
+          in: query
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliCollectionEnvelope"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one collection for CLI output
+      tags:
+        - API
+  /api/v1/cli/collections:
+    get:
+      operationId: listCLICollections
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliCollectionsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List collections for CLI output
+      tags:
+        - API
+    post:
+      operationId: createCLICollection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Create a collection for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/collections/{name}:
+    delete:
+      operationId: deleteCLICollection
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Delete a CLI collection
+      tags:
+        - CLI
+  /api/v1/cli/collections/{name}/sources:
+    delete:
+      operationId: removeCLICollectionSources
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Remove accounts from a CLI collection
+      tags:
+        - CLI
+    patch:
+      operationId: addCLICollectionSources
+      parameters:
+        - description: Collection name
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Collection name
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcesRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Add accounts to a CLI collection
+      tags:
+        - CLI
+  /api/v1/cli/deduplicate/plan:
+    post:
+      operationId: planCLIDeduplicate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIDeduplicatePlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeduplicatePlanResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Plan interactive deduplication for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-deduped:
+    post:
+      operationId: executeCLIDeleteDeduped
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliDeleteDedupedExecuteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliDeleteDedupedExecuteResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Delete dedup-hidden messages for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-deduped/plan:
+    post:
+      operationId: planCLIDeleteDeduped
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliDeleteDedupedPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliDeleteDedupedPlanResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Plan deletion of dedup-hidden messages for CLI use
+      tags:
+        - CLI
+  /api/v1/cli/delete-staged/plan:
+    post:
+      operationId: planCLIDeleteStaged
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIDeleteStagedPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeleteStagedPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI staged deletion execution
+      tags:
+        - API
+  /api/v1/cli/deletion-manifests:
+    post:
+      operationId: createCLIDeletionManifest
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Manifest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIDeletionManifestResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a staged deletion manifest
+      tags:
+        - API
+  /api/v1/cli/embeddings/plan:
+    post:
+      operationId: planCLIEmbeddings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIEmbeddingsPlanRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CLIEmbeddingsPlanResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Plan CLI embeddings management
+      tags:
+        - API
+  /api/v1/cli/identities:
+    delete:
+      operationId: removeCLIIdentity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoveResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Remove a confirmed identifier from an account identity
+      tags:
+        - CLI
+    get:
+      operationId: listCLIIdentities
+      parameters:
+        - description: Restrict to a single account
+          explode: false
+          in: query
+          name: account
+          schema:
+            description: Restrict to a single account
+            type: string
+        - description: Restrict to all member accounts of one collection
+          explode: false
+          in: query
+          name: collection
+          schema:
+            description: Restrict to all member accounts of one collection
+            type: string
+        - description: For account scope, return only the primary source instead of related sources
+          explode: false
+          in: query
+          name: primary_only
+          schema:
+            description: For account scope, return only the primary source instead of related sources
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliIdentitiesResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: List confirmed account identities
+      tags:
+        - CLI
+    post:
+      operationId: addCLIIdentity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Add a confirmed identifier to an account identity
+      tags:
+        - CLI
+  /api/v1/cli/init-db:
+    post:
+      operationId: initCLIArchive
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliInitDBResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Initialize the archive for CLI use
+      tags:
+        - API
+  /api/v1/cli/message:
+    get:
+      operationId: getCLIMessage
+      parameters:
+        - description: Message numeric ID or source message ID
+          in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliMessageResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one message for CLI output
+      tags:
+        - API
+  /api/v1/cli/message/raw:
+    get:
+      operationId: getCLIMessageRaw
+      parameters:
+        - description: Message numeric ID or source message ID
+          in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            message/rfc822:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one raw message for CLI export
+      tags:
+        - API
+  /api/v1/cli/rebuild-fts:
+    post:
+      operationId: rebuildCLIFTS
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CliRebuildFTSEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Rebuild the CLI full-text search index
+      tags:
+        - API
+  /api/v1/cli/repair-encoding:
+    post:
+      operationId: repairEncodingCLI
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIRepairEncodingEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Repair CLI archive encoding
+      tags:
+        - API
+  /api/v1/cli/run:
+    post:
+      operationId: runCLI
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CLIRunRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIRunEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run an allowlisted CLI command
+      tags:
+        - API
+  /api/v1/cli/search:
+    get:
+      operationId: searchCLI
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Message type filter; repeat or comma-separate for multiple values
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages for CLI output
+      tags:
+        - API
+  /api/v1/cli/stats:
+    get:
+      operationId: getCLIStats
+      parameters:
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get CLI-compatible archive statistics
+      tags:
+        - API
+  /api/v1/cli/sync:
+    post:
+      operationId: syncCLI
+      parameters:
+        - description: Account email or display name to sync
+          in: query
+          name: email
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLISyncEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run CLI incremental sync
+      tags:
+        - API
+  /api/v1/cli/sync-full:
+    post:
+      operationId: syncFullCLI
+      parameters:
+        - description: Account email or display name to sync
+          in: query
+          name: email
+          schema:
+            type: string
+        - description: Gmail search query
+          in: query
+          name: query
+          schema:
+            type: string
+        - description: Only messages on or after this YYYY-MM-DD date
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Only messages before this YYYY-MM-DD date
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Maximum messages to sync
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Ignore checkpoints and start fresh
+          in: query
+          name: noresume
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLISyncEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run CLI full sync
+      tags:
+        - API
+  /api/v1/cli/verify:
+    post:
+      operationId: verifyCLI
+      parameters:
+        - description: Account email to verify
+          in: query
+          name: email
+          required: true
+          schema:
+            type: string
+        - description: Number of messages to sample for MIME verification
+          in: query
+          name: sample
+          schema:
+            format: int64
+            type: integer
+        - description: Skip SQLite integrity check
+          in: query
+          name: skip_db_check
+          schema:
+            type: boolean
+        - description: Emit JSON summary output
+          in: query
+          name: json
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/CLIVerifyEvent"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/messages:
+    get:
+      operationId: listMessages
+      parameters:
+        - description: One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
+          in: query
+          name: page
+          schema:
+            format: int64
+            type: integer
+        - description: Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
+          in: query
+          name: page_size
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List messages
+      tags:
+        - API
+  /api/v1/messages/filter:
+    get:
+      operationId: filterMessages
+      parameters:
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: date, size, or subject"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilteredMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List filtered messages
+      tags:
+        - API
+  /api/v1/messages/gmail-ids:
+    get:
+      operationId: getGmailIDsByFilter
+      parameters:
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: date, size, or subject"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailIDsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List Gmail message IDs matching a filter
+      tags:
+        - API
+  /api/v1/messages/{id}:
+    get:
+      operationId: getMessage
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageDetail"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/inline:
+    get:
+      operationId: getMessageInlinePart
+      parameters:
+        - description: Message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Inline MIME Content-ID
+          in: query
+          name: cid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get an inline MIME part
+      tags:
+        - API
+  /api/v1/query:
+    post:
+      operationId: runQuery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run an aggregate query
+      tags:
+        - API
+  /api/v1/scheduler/status:
+    get:
+      operationId: getSchedulerStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulerStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get scheduler status
+      tags:
+        - API
+  /api/v1/search:
+    get:
+      operationId: searchMessages
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: "Search mode: fts, vector, or hybrid"
+          in: query
+          name: mode
+          schema:
+            type: string
+        - description: One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
+          in: query
+          name: page
+          schema:
+            format: int64
+            type: integer
+        - description: Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
+          in: query
+          name: page_size
+          schema:
+            format: int64
+            type: integer
+        - description: Include score explanation when mode is vector or hybrid
+          in: query
+          name: explain
+          schema:
+            type: boolean
+        - description: Message type filter; repeat or comma-separate for multiple values
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Restrict to one account/source
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Restrict to one collection
+          in: query
+          name: collection
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SearchResult"
+                  - $ref: "#/components/schemas/HybridSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages
+      tags:
+        - API
+  /api/v1/search/deep:
+    get:
+      operationId: deepSearch
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: date, size, or subject"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeepSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run deep aggregate search
+      tags:
+        - API
+  /api/v1/search/domains:
+    get:
+      operationId: searchMessagesByDomains
+      parameters:
+        - description: Comma-separated participant domains
+          in: query
+          name: domains
+          required: true
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilteredMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search messages by participant domains
+      tags:
+        - API
+  /api/v1/search/fast:
+    get:
+      operationId: fastSearch
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Stats grouping view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: Sender email/address filter
+          in: query
+          name: sender
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: sender_name
+          schema:
+            type: string
+        - description: Recipient email/address filter
+          in: query
+          name: recipient
+          schema:
+            type: string
+        - description: Recipient display-name filter
+          in: query
+          name: recipient_name
+          schema:
+            type: string
+        - description: Domain filter
+          in: query
+          name: domain
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Conversation ID
+          in: query
+          name: conversation_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Comma-separated aggregate view names to match empty values
+          in: query
+          name: empty_targets
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: date, size, or subject"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchFastResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Run fast aggregate search
+      tags:
+        - API
+  /api/v1/search/similar:
+    get:
+      operationId: findSimilarMessages
+      parameters:
+        - description: Seed message ID
+          in: query
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Account email or configured source identifier
+          in: query
+          name: account
+          schema:
+            type: string
+        - description: Message type filter
+          in: query
+          name: message_type
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Only include messages with attachments
+          in: query
+          name: has_attachment
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimilarSearchResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find messages similar to a seed message
+      tags:
+        - API
+  /api/v1/sources/status:
+    get:
+      operationId: listSourceStatus
+      parameters:
+        - description: Restrict to one source type
+          in: query
+          name: source_type
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceStatusResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List source sync status
+      tags:
+        - API
+  /api/v1/stats:
+    get:
+      operationId: getStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get archive statistics
+      tags:
+        - API
+  /api/v1/stats/total:
+    get:
+      operationId: getTotalStats
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Aggregate view type for grouping
+          in: query
+          name: group_by
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotalStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get aggregate totals
+      tags:
+        - API
+  /api/v1/sync/{account}:
+    post:
+      operationId: triggerSync
+      parameters:
+        - description: Account email or configured source identifier
+          in: path
+          name: account
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMessageResponse"
+          description: Accepted
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Trigger account sync
+      tags:
+        - API
+  /api/v1/text/aggregates:
+    get:
+      operationId: getTextAggregates
+      parameters:
+        - description: Text aggregate view type
+          in: query
+          name: view_type
+          schema:
+            type: string
+        - description: "Sort field: count or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get text aggregate rows
+      tags:
+        - API
+  /api/v1/text/conversations:
+    get:
+      operationId: listTextConversations
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Sender phone/address filter
+          in: query
+          name: contact_phone
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: contact_name
+          schema:
+            type: string
+        - description: Source type filter
+          in: query
+          name: source_type
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: last_message, count, or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextConversationsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List text conversations
+      tags:
+        - API
+  /api/v1/text/conversations/{id}/messages:
+    get:
+      operationId: listTextConversationMessages
+      parameters:
+        - description: Conversation ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Sender phone/address filter
+          in: query
+          name: contact_phone
+          schema:
+            type: string
+        - description: Sender display-name filter
+          in: query
+          name: contact_name
+          schema:
+            type: string
+        - description: Source type filter
+          in: query
+          name: source_type
+          schema:
+            type: string
+        - description: Label filter
+          in: query
+          name: label
+          schema:
+            type: string
+        - description: Named time period
+          in: query
+          name: time_period
+          schema:
+            type: string
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: "Sort field: last_message, count, or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List messages in a text conversation
+      tags:
+        - API
+  /api/v1/text/search:
+    get:
+      operationId: searchTextMessages
+      parameters:
+        - description: Search query
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Zero-based row offset
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum number of rows to return
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextMessagesResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search text messages
+      tags:
+        - API
+  /api/v1/text/stats:
+    get:
+      operationId: getTextStats
+      parameters:
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotalStatsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get text message totals
+      tags:
+        - API
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      summary: Health check
+      tags:
+        - System
+    head:
+      operationId: headHealth
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Error
+      summary: Health check
+      tags:
+        - System

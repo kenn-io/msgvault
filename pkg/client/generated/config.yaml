@@ -1,0 +1,9 @@
+package: generated
+skip-prune: true
+output:
+  use-single-file: false
+  directory: ..
+generate:
+  client: true
+  client-with-response: true
+  models: true

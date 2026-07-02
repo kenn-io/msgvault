@@ -4,7 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/collectionops"
+	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -60,28 +61,35 @@ func (s Scope) DisplayName() string {
 	return ""
 }
 
-type accountScopeOptions struct {
-	includeCalendarSources bool
-	sourceFilter           func(*store.Source) bool
-}
-
 // ResolveAccountFlag resolves the value of an --account flag.
 // It rejects collection names with a hint to use --collection.
 func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
-	return resolveAccountFlag(st, input, accountScopeOptions{
-		includeCalendarSources: true,
-	})
+	scope, err := collectionops.ResolveAccount(st, input)
+	return scopeFromResolvedAccount(scope), err
 }
 
 // ResolveEmailAccountFlag resolves an account for commands that operate only
 // on email-like source rows and must not expand into Calendar sources.
 func ResolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
-	return resolveAccountFlag(st, input, accountScopeOptions{
-		sourceFilter: emailAccountSource,
-	})
+	return resolveEmailAccountFlag(st, input)
 }
 
-func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions) (Scope, error) {
+func scopeFromResolvedAccount(scope collectionops.Scope) Scope {
+	return Scope{
+		Input:               scope.Input,
+		Source:              scope.Source,
+		AdditionalSourceIDs: scope.AdditionalSourceIDs,
+	}
+}
+
+func scopeFromResolvedCollection(scope collectionops.CollectionScope) Scope {
+	return Scope{
+		Input:      scope.Input,
+		Collection: scope.Collection,
+	}
+}
+
+func resolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
 	scope := Scope{Input: input}
 	if input == "" {
 		return scope, nil
@@ -90,18 +98,9 @@ func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions)
 	// Try source resolution first.
 	sources, err := st.GetSourcesByIdentifierOrDisplayName(input)
 	if err != nil {
-		return scope, fmt.Errorf("look up source for %q: %w", input, err)
+		return scope, opserr.Internal(fmt.Errorf("look up source for %q: %w", input, err))
 	}
-	if opts.sourceFilter != nil {
-		sources = filterSources(sources, opts.sourceFilter)
-	}
-	var calendarSources []*store.Source
-	if opts.includeCalendarSources {
-		calendarSources, err = st.GetSourcesByTypeAndAccount(gcal.SourceType, input)
-		if err != nil {
-			return scope, fmt.Errorf("look up calendar sources for %q: %w", input, err)
-		}
-	}
+	sources = filterSources(sources, emailAccountSource)
 	if len(sources) > 1 {
 		names := make([]string, 0, len(sources))
 		for _, s := range sources {
@@ -110,26 +109,13 @@ func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions)
 				s.Identifier, s.SourceType, s.ID,
 			))
 		}
-		return scope, fmt.Errorf(
+		return scope, opserr.Invalid(fmt.Errorf(
 			"ambiguous account %q matches multiple sources: %v",
 			input, names,
-		)
+		))
 	}
 	if len(sources) == 1 {
 		scope.Source = sources[0]
-		if opts.includeCalendarSources && sources[0].SourceType != gcal.SourceType &&
-			!store.EqualIdentifier(sources[0].Identifier, input) {
-			resolvedCalendarSources, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, sources[0].Identifier)
-			if err != nil {
-				return scope, fmt.Errorf("look up calendar sources for %q: %w", sources[0].Identifier, err)
-			}
-			calendarSources = appendUniqueSources(calendarSources, resolvedCalendarSources)
-		}
-		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, sources[0].ID)
-		return scope, nil
-	}
-	if len(calendarSources) > 0 {
-		scope.AdditionalSourceIDs = sourceIDsExcept(calendarSources, 0)
 		return scope, nil
 	}
 
@@ -138,20 +124,20 @@ func resolveAccountFlag(st *store.Store, input string, opts accountScopeOptions)
 	_, cerr := st.GetCollectionByName(input)
 	switch {
 	case cerr == nil:
-		return scope, fmt.Errorf(
+		return scope, opserr.Invalid(fmt.Errorf(
 			"%q is a collection, not an account; use --collection %s",
 			input, input,
-		)
+		))
 	case errors.Is(cerr, store.ErrCollectionNotFound):
 		// Neither a source nor a collection.
 	default:
-		return scope, fmt.Errorf("look up collection %q: %w", input, cerr)
+		return scope, opserr.Internal(fmt.Errorf("look up collection %q: %w", input, cerr))
 	}
 
-	return scope, fmt.Errorf(
+	return scope, opserr.NotFound(fmt.Errorf(
 		"no account found for %q (try 'msgvault list-accounts')",
 		input,
-	)
+	))
 }
 
 func filterSources(sources []*store.Source, keep func(*store.Source) bool) []*store.Source {
@@ -168,80 +154,9 @@ func emailAccountSource(src *store.Source) bool {
 	return src != nil && src.SourceType != sourceTypeCalendar
 }
 
-func appendUniqueSources(dst []*store.Source, srcs []*store.Source) []*store.Source {
-	seen := make(map[int64]struct{}, len(dst)+len(srcs))
-	for _, src := range dst {
-		if src == nil {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-	}
-	for _, src := range srcs {
-		if src == nil {
-			continue
-		}
-		if _, ok := seen[src.ID]; ok {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-		dst = append(dst, src)
-	}
-	return dst
-}
-
-func sourceIDsExcept(sources []*store.Source, exclude int64) []int64 {
-	ids := make([]int64, 0, len(sources))
-	seen := map[int64]struct{}{}
-	if exclude != 0 {
-		seen[exclude] = struct{}{}
-	}
-	for _, src := range sources {
-		if src == nil {
-			continue
-		}
-		if _, ok := seen[src.ID]; ok {
-			continue
-		}
-		seen[src.ID] = struct{}{}
-		ids = append(ids, src.ID)
-	}
-	return ids
-}
-
 // ResolveCollectionFlag resolves the value of a --collection flag.
 // It rejects account identifiers with a hint to use --account.
 func ResolveCollectionFlag(st *store.Store, input string) (Scope, error) {
-	scope := Scope{Input: input}
-	if input == "" {
-		return scope, nil
-	}
-
-	// Try collection resolution first.
-	coll, err := st.GetCollectionByName(input)
-	switch {
-	case err == nil:
-		scope.Collection = coll
-		return scope, nil
-	case errors.Is(err, store.ErrCollectionNotFound):
-		// Fall through to source check.
-	default:
-		return scope, fmt.Errorf("look up collection %q: %w", input, err)
-	}
-
-	// No collection found — check whether any source matches and reject with a hint.
-	sources, serr := st.GetSourcesByIdentifierOrDisplayName(input)
-	if serr != nil {
-		return scope, fmt.Errorf("look up source for %q: %w", input, serr)
-	}
-	if len(sources) >= 1 {
-		return scope, fmt.Errorf(
-			"%q is an account, not a collection; use --account %s",
-			input, input,
-		)
-	}
-
-	return scope, fmt.Errorf(
-		"no collection named %q (try 'msgvault collection list')",
-		input,
-	)
+	scope, err := collectionops.ResolveCollection(st, input)
+	return scopeFromResolvedCollection(scope), err
 }

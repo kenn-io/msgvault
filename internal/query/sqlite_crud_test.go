@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -23,7 +23,7 @@ func emptyTargets(views ...ViewType) map[ViewType]bool {
 // TestMessageFilter_Clone verifies that Clone creates an independent copy
 // of the filter, especially the EmptyValueTargets map.
 func TestMessageFilter_Clone(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Create original filter with EmptyValueTargets
 	original := MessageFilter{
 		Sender: "alice@example.com",
@@ -61,12 +61,12 @@ func TestMessageFilter_Clone_NilMap(t *testing.T) {
 	original := MessageFilter{Sender: "bob@example.com"}
 	clone := original.Clone()
 
-	assertpkg.Equal(t, "bob@example.com", clone.Sender)
-	assertpkg.Nil(t, clone.EmptyValueTargets)
+	assert.Equal(t, "bob@example.com", clone.Sender)
+	assert.Nil(t, clone.EmptyValueTargets)
 
 	// Mutating clone should not affect original
 	clone.SetEmptyTarget(ViewSenders)
-	assertpkg.Nil(t, original.EmptyValueTargets, "original EmptyValueTargets should still be nil")
+	assert.Nil(t, original.EmptyValueTargets, "original EmptyValueTargets should still be nil")
 }
 
 // TestMessageFilter_HasEmptyTargets verifies HasEmptyTargets checks for true values.
@@ -105,7 +105,7 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, tt.filter.HasEmptyTargets())
+			assert.Equal(t, tt.want, tt.filter.HasEmptyTargets())
 		})
 	}
 }
@@ -189,7 +189,7 @@ func TestListMessages_Filters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messages := env.MustListMessages(tt.filter)
-			assertpkg.Len(t, messages, tt.wantCount)
+			assert.Len(t, messages, tt.wantCount)
 			if tt.validate != nil {
 				tt.validate(t, messages)
 			}
@@ -208,7 +208,7 @@ func TestListMessages_NoDuplicates(t *testing.T) {
 		seen[m.ID]++
 	}
 	for id, count := range seen {
-		assertpkg.LessOrEqual(t, count, 1, "message ID %d returned %d times (expected once)", id, count)
+		assert.LessOrEqual(t, count, 1, "message ID %d returned %d times (expected once)", id, count)
 	}
 }
 
@@ -218,12 +218,12 @@ func TestListMessagesWithLabels(t *testing.T) {
 	messages := env.MustListMessages(MessageFilter{})
 
 	msg1 := messages[len(messages)-1]
-	assertpkg.Len(t, msg1.Labels, 2, "msg1 labels")
+	assert.Len(t, msg1.Labels, 2, "msg1 labels")
 }
 
 func TestGetMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 1)
@@ -238,8 +238,8 @@ func TestGetMessage(t *testing.T) {
 }
 
 func TestGetMessageWithAttachments(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessage(env.Ctx, 2)
@@ -257,8 +257,8 @@ func TestGetMessageWithAttachments(t *testing.T) {
 }
 
 func TestGetMessageWithURLBackedAttachment(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	_, err := env.DB.Exec(`
@@ -276,8 +276,8 @@ func TestGetMessageWithURLBackedAttachment(t *testing.T) {
 }
 
 func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	result, err := env.DB.Exec(`
@@ -299,22 +299,22 @@ func TestGetMessageBySourceID(t *testing.T) {
 	env := newTestEnv(t)
 
 	msg, err := env.Engine.GetMessageBySourceID(env.Ctx, "msg3")
-	requirepkg.NoError(t, err, "GetMessageBySourceID")
-	requirepkg.NotNil(t, msg, "expected message")
-	assertpkg.Equal(t, "Follow up", msg.Subject)
+	require.NoError(t, err, "GetMessageBySourceID")
+	require.NotNil(t, msg, "expected message")
+	assert.Equal(t, "Follow up", msg.Subject)
 }
 
 func TestListAccounts(t *testing.T) {
 	env := newTestEnv(t)
 
 	accounts, err := env.Engine.ListAccounts(env.Ctx)
-	requirepkg.NoError(t, err, "ListAccounts")
-	requirepkg.Len(t, accounts, 1)
-	assertpkg.Equal(t, "test@gmail.com", accounts[0].Identifier)
+	require.NoError(t, err, "ListAccounts")
+	require.Len(t, accounts, 1)
+	assert.Equal(t, "test@gmail.com", accounts[0].Identifier)
 }
 
 func TestGetTotalStats(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	stats := env.MustGetTotalStats(StatsOptions{})
@@ -325,8 +325,30 @@ func TestGetTotalStats(t *testing.T) {
 	assert.Equal(int64(10000+5000+20000), stats.AttachmentSize, "AttachmentSize")
 }
 
+func TestGetTotalStatsSourceDeletedBreakdown(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	// One of the five seeded messages is deleted from its source account
+	// but retained in the archive.
+	env.MarkDeletedBySourceID("msg3")
+
+	// Default: the archive is the system of record, so the total includes
+	// the source-deleted message and the breakdown splits it out.
+	stats := env.MustGetTotalStats(StatsOptions{})
+	assert.Equal(int64(5), stats.MessageCount, "MessageCount includes source-deleted")
+	assert.Equal(int64(4), stats.ActiveMessageCount, "ActiveMessageCount")
+	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "SourceDeletedMessageCount")
+
+	// hide_deleted excludes the source-deleted message from every field.
+	hidden := env.MustGetTotalStats(StatsOptions{HideDeletedFromSource: true})
+	assert.Equal(int64(4), hidden.MessageCount, "MessageCount with hide_deleted")
+	assert.Equal(int64(4), hidden.ActiveMessageCount, "ActiveMessageCount with hide_deleted")
+	assert.Equal(int64(0), hidden.SourceDeletedMessageCount, "SourceDeletedMessageCount with hide_deleted")
+}
+
 func TestGetTotalStatsWithSourceID(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	src2 := env.AddSource(dbtest.SourceOpts{Identifier: "other@gmail.com", DisplayName: "Other Account"})
@@ -354,7 +376,7 @@ func TestGetTotalStatsWithSourceID(t *testing.T) {
 }
 
 func TestGetTotalStatsWithInvalidSourceID(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	nonExistentID := int64(9999)
@@ -370,16 +392,16 @@ func TestWithAttachmentsOnlyStats(t *testing.T) {
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	assertpkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
+	assert.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	attStats := env.MustGetTotalStats(StatsOptions{WithAttachmentsOnly: true})
-	assertpkg.Equal(t, int64(2), attStats.MessageCount, "messages with attachments")
-	assertpkg.NotZero(t, attStats.AttachmentCount, "non-zero attachment count for messages with attachments")
+	assert.Equal(t, int64(2), attStats.MessageCount, "messages with attachments")
+	assert.NotZero(t, attStats.AttachmentCount, "non-zero attachment count for messages with attachments")
 }
 
 func TestHideDeletedFromSourceSearchFast(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	// Mark message 1 as deleted
@@ -408,28 +430,28 @@ func TestHideDeletedFromSourceStats(t *testing.T) {
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	assertpkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
+	assert.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	// Mark message 1 as deleted
 	env.MarkDeletedByID(1)
 
 	// Without HideDeletedFromSource: still 5
 	stats := env.MustGetTotalStats(StatsOptions{})
-	assertpkg.Equal(t, int64(5), stats.MessageCount, "messages (deleted included)")
+	assert.Equal(t, int64(5), stats.MessageCount, "messages (deleted included)")
 
 	// With HideDeletedFromSource: 4
 	hiddenStats := env.MustGetTotalStats(StatsOptions{HideDeletedFromSource: true})
-	assertpkg.Equal(t, int64(4), hiddenStats.MessageCount, "messages (deleted hidden)")
+	assert.Equal(t, int64(4), hiddenStats.MessageCount, "messages (deleted hidden)")
 }
 
 func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedByID(1)
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "Aggregate(ViewSenders)")
+	require.NoError(t, err, "Aggregate(ViewSenders)")
 	for _, row := range rows {
 		if row.Key == "alice@example.com" {
 			assert.Equal(int64(3), row.Count, "alice count (including deleted)")
@@ -455,8 +477,8 @@ func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
 }
 
 func TestGetMessageIncludesDeleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedByID(1)
@@ -471,8 +493,8 @@ func TestGetMessageIncludesDeleted(t *testing.T) {
 }
 
 func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	env.MarkDeletedBySourceID("msg3")
@@ -487,7 +509,7 @@ func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
 }
 
 func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	env.AddMessage(dbtest.MessageOpts{Subject: "Ghost Message", SentAt: "2024-06-01 10:00:00"})
@@ -515,13 +537,13 @@ func TestMatchEmptySenderName_MixedFromRecipients(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "Mixed From", SentAt: "2024-06-01 10:00:00", FromID: aliceID})
 	lastMsgID := env.LastMessageID()
 	_, err := env.DB.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`, lastMsgID, nullID)
-	requirepkg.NoError(t, err, "insert")
+	require.NoError(t, err, "insert")
 
 	filter := MessageFilter{EmptyValueTargets: emptyTargets(ViewSenderNames)}
 	messages := env.MustListMessages(filter)
 
 	for _, m := range messages {
-		assertpkg.NotEqual(t, "Mixed From", m.Subject,
+		assert.NotEqual(t, "Mixed From", m.Subject,
 			"MatchEmptySenderName should not match message with at least one valid from sender")
 	}
 }
@@ -535,7 +557,7 @@ func TestMatchEmptySenderName_CombinedWithDomain(t *testing.T) {
 	}
 	messages := env.MustListMessages(filter)
 
-	assertpkg.Empty(t, messages, "expected 0 messages for MatchEmptySenderName+Domain")
+	assert.Empty(t, messages, "expected 0 messages for MatchEmptySenderName+Domain")
 }
 
 func TestGetGmailIDsByFilter_Label(t *testing.T) {
@@ -556,8 +578,8 @@ func TestGetGmailIDsByFilter_Label(t *testing.T) {
 			ids, err := env.Engine.GetGmailIDsByFilter(
 				env.Ctx, MessageFilter{Label: tt.label},
 			)
-			requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-			assertpkg.Len(t, ids, tt.wantLen)
+			require.NoError(t, err, "GetGmailIDsByFilter")
+			assert.Len(t, ids, tt.wantLen)
 		})
 	}
 }
@@ -566,8 +588,8 @@ func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice Smith"})
-	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs for Alice Smith")
+	require.NoError(t, err, "GetGmailIDsByFilter")
+	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice Smith")
 }
 
 // addMultiAuthorMessage inserts a message with TWO distinct 'from' rows so the
@@ -594,7 +616,7 @@ func addMultiAuthorMessage(env *testEnv, subject string) string {
 		`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`,
 		msgID, authorBID,
 	)
-	requirepkg.NoError(env.T, err, "insert second from row")
+	require.NoError(env.T, err, "insert second from row")
 	return subject
 }
 
@@ -603,7 +625,7 @@ func addMultiAuthorMessage(env *testEnv, subject string) string {
 // from-row of a multi-author message — a cross-row match (email on Author A,
 // name on Author B) must NOT match, while a same-row match still does.
 func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	subject := addMultiAuthorMessage(env, "Two Authors")
@@ -632,8 +654,8 @@ func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
 // TestListMessages_SenderEmailAndName_SameFromRow for the GetGmailIDsByFilter
 // builder site (deletion/staging path).
 func TestGetGmailIDsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 
 	addMultiAuthorMessage(env, "Two Authors GID")
@@ -684,7 +706,7 @@ func addMultiRecipientMessage(env *testEnv, subject string) string {
 // to/cc/bcc row of a multi-recipient message — a cross-row match (email on
 // Recip A, name on Recip B) must NOT match, while a same-row match still does.
 func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	subject := addMultiRecipientMessage(env, "Two Recipients")
@@ -713,8 +735,8 @@ func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
 // TestListMessages_RecipientEmailAndName_SameToRow for the GetGmailIDsByFilter
 // builder site (deletion/staging path).
 func TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
-	assert := assertpkg.New(t)
-	require := requirepkg.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 
 	addMultiRecipientMessage(env, "Two Recipients GID")
@@ -742,8 +764,8 @@ func TestGetGmailIDsByFilter_RecipientName(t *testing.T) {
 	env := newTestEnv(t)
 
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob Jones"})
-	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs for Bob Jones")
+	require.NoError(t, err, "GetGmailIDsByFilter")
+	assert.Len(t, ids, 3, "expected 3 gmail IDs for Bob Jones")
 }
 
 func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
@@ -754,12 +776,12 @@ func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T)
 		EmptyValueTargets: emptyTargets(ViewRecipients),
 	}
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, filter)
-	requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-	assertpkg.Len(t, ids, 3, "expected 3 gmail IDs")
+	require.NoError(t, err, "GetGmailIDsByFilter")
+	assert.Len(t, ids, 3, "expected 3 gmail IDs")
 }
 
 func TestListMessages_ConversationIDFilter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
@@ -802,7 +824,7 @@ func TestListMessages_ConversationIDFilter(t *testing.T) {
 		Sorting:        MessageSorting{Field: MessageSortByDate, Direction: SortAsc},
 	}
 	messagesAsc := env.MustListMessages(filter2Asc)
-	requirepkg.Len(t, messagesAsc, 2)
+	require.Len(t, messagesAsc, 2)
 	assert.Equal("Thread 2 Message 1", messagesAsc[0].Subject, "first message")
 	assert.Equal("Thread 2 Message 2", messagesAsc[1].Subject, "second message")
 }
@@ -826,7 +848,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
 				t.Helper()
-				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
+				assert.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 		{
@@ -835,7 +857,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
 				t.Helper()
-				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
+				assert.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 		{
@@ -863,8 +885,8 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 				for _, m := range msgs {
 					subjects[m.Subject] = true
 				}
-				assertpkg.True(t, subjects["No Labels"], "expected 'No Labels' message")
-				assertpkg.True(t, subjects["No Recipients"], "expected 'No Recipients' message")
+				assert.True(t, subjects["No Labels"], "expected 'No Labels' message")
+				assert.True(t, subjects["No Recipients"], "expected 'No Recipients' message")
 			},
 		},
 		{
@@ -872,14 +894,14 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			filter: MessageFilter{EmptyValueTargets: emptyTargets(ViewRecipientNames)},
 			validate: func(t *testing.T, msgs []MessageSummary) {
 				t.Helper()
-				requirepkg.NotEmpty(t, msgs, "expected at least 1 message with empty recipient name")
+				require.NotEmpty(t, msgs, "expected at least 1 message with empty recipient name")
 				found := false
 				for _, m := range msgs {
 					if m.Subject == "No Recipients" {
 						found = true
 					}
 				}
-				assertpkg.True(t, found, "expected 'No Recipients' message in results")
+				assert.True(t, found, "expected 'No Recipients' message in results")
 			},
 		},
 		{
@@ -888,7 +910,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 			wantCount: 1,
 			validate: func(t *testing.T, msgs []MessageSummary) {
 				t.Helper()
-				assertpkg.Equal(t, "No Sender", msgs[0].Subject)
+				assert.Equal(t, "No Sender", msgs[0].Subject)
 			},
 		},
 	}
@@ -897,7 +919,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			messages := env.MustListMessages(tt.filter)
 			if tt.wantCount > 0 {
-				requirepkg.Len(t, messages, tt.wantCount)
+				require.Len(t, messages, tt.wantCount)
 			}
 			if tt.validate != nil {
 				tt.validate(t, messages)
@@ -907,8 +929,8 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 }
 
 func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	filter := MessageFilter{
@@ -945,12 +967,12 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 
 	t.Run("ListMessages", func(t *testing.T) {
 		messages := env.MustListMessages(MessageFilter{RecipientName: "Secret Bob"})
-		assertpkg.Len(t, messages, 1)
+		assert.Len(t, messages, 1)
 	})
 
 	t.Run("AggregateByRecipientName", func(t *testing.T) {
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, AggregateOptions{Limit: 100})
-		requirepkg.NoError(t, err, "AggregateByRecipientName")
+		require.NoError(t, err, "AggregateByRecipientName")
 		found := false
 		for _, row := range rows {
 			if row.Key == "Secret Bob" {
@@ -958,25 +980,25 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 				break
 			}
 		}
-		assertpkg.True(t, found, "expected BCC recipient 'Secret Bob' in aggregate, got: %v", rows)
+		assert.True(t, found, "expected BCC recipient 'Secret Bob' in aggregate, got: %v", rows)
 	})
 
 	t.Run("SubAggregate", func(t *testing.T) {
 		rows, err := env.Engine.SubAggregate(env.Ctx, MessageFilter{RecipientName: "Secret Bob"}, ViewSenders, AggregateOptions{Limit: 100})
-		requirepkg.NoError(t, err, "SubAggregate")
-		requirepkg.Len(t, rows, 1)
-		assertpkg.Equal(t, "alice-bcc@example.com", rows[0].Key)
+		require.NoError(t, err, "SubAggregate")
+		require.Len(t, rows, 1)
+		assert.Equal(t, "alice-bcc@example.com", rows[0].Key)
 	})
 
 	t.Run("GetGmailIDsByFilter", func(t *testing.T) {
 		ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Secret Bob"})
-		requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-		assertpkg.Len(t, ids, 1)
+		require.NoError(t, err, "GetGmailIDsByFilter")
+		assert.Len(t, ids, 1)
 	})
 
 	t.Run("Recipient_email_also_finds_BCC", func(t *testing.T) {
 		messages := env.MustListMessages(MessageFilter{Recipient: "secret@example.com"})
-		assertpkg.Len(t, messages, 1)
+		assert.Len(t, messages, 1)
 	})
 }
 
@@ -984,7 +1006,7 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 // preserves both empty constraints. This tests the fix for the bug where
 // EmptyValueTarget could only hold one dimension.
 func TestMultipleEmptyTargets(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnvWithEmptyBuckets(t)
 
 	// Scenario: User drills into "empty sender names" then into "empty labels".
@@ -1068,7 +1090,7 @@ func TestMultipleEmptyTargets(t *testing.T) {
 
 	// Also test via SubAggregate: drilling from empty senders + labels into domains view
 	rows, err := env.Engine.SubAggregate(env.Ctx, filter, ViewDomains, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate with multiple empty targets")
+	require.NoError(t, err, "SubAggregate with multiple empty targets")
 
 	// "No Sender" has no sender so no domain - expect empty or just the empty bucket
 	// Since it has no sender, there's no domain to aggregate on
@@ -1080,12 +1102,12 @@ func TestMultipleEmptyTargets(t *testing.T) {
 // for a bug where SQLiteEngine.GetTotalStats ignored opts.SearchQuery, returning
 // global stats instead of search-filtered stats.
 func TestGetTotalStatsWithSearchQuery(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	// Without search: 5 messages total
 	allStats := env.MustGetTotalStats(StatsOptions{})
-	requirepkg.Equal(t, int64(5), allStats.MessageCount, "total messages")
+	require.Equal(t, int64(5), allStats.MessageCount, "total messages")
 
 	// Search "Hello" matches 2 messages: "Hello World" (id=1, size=1000, no att)
 	// and "Re: Hello" (id=2, size=2000, 2 attachments: 10000+5000 bytes).
@@ -1098,11 +1120,11 @@ func TestGetTotalStatsWithSearchQuery(t *testing.T) {
 }
 
 func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	_, err := env.DB.Exec(`UPDATE messages SET message_type = ? WHERE id = ?`, "sms", int64(2))
-	requirepkg.NoError(t, err, "mark message as sms")
+	require.NoError(t, err, "mark message as sms")
 
 	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "message_type:sms Hello"})
 
@@ -1120,8 +1142,8 @@ func TestGetTotalStatsWithSearchQuery_FromFilter(t *testing.T) {
 	// "from:alice" should match 3 messages (ids 1,2,3)
 	stats := env.MustGetTotalStats(StatsOptions{SearchQuery: "from:alice@example.com"})
 
-	assertpkg.Equal(t, int64(3), stats.MessageCount, "SearchQuery=from:alice messages")
-	assertpkg.Equal(t, int64(1000+2000+1500), stats.TotalSize, "SearchQuery=from:alice total size")
+	assert.Equal(t, int64(3), stats.MessageCount, "SearchQuery=from:alice messages")
+	assert.Equal(t, int64(1000+2000+1500), stats.TotalSize, "SearchQuery=from:alice total size")
 }
 
 // TestGetTotalStatsWithSearchQuery_Combined verifies that SearchQuery combines
@@ -1135,13 +1157,13 @@ func TestGetTotalStatsWithSearchQuery_Combined(t *testing.T) {
 		WithAttachmentsOnly: true,
 	})
 
-	assertpkg.Equal(t, int64(1), stats.MessageCount, "SearchQuery+WithAttachments messages")
-	assertpkg.Equal(t, int64(2000), stats.TotalSize, "SearchQuery+WithAttachments total size")
+	assert.Equal(t, int64(1), stats.MessageCount, "SearchQuery+WithAttachments messages")
+	assert.Equal(t, int64(2000), stats.TotalSize, "SearchQuery+WithAttachments total size")
 }
 
 func TestSearchFastWithStats_MessageTypeStats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	smsID := env.AddMessage(dbtest.MessageOpts{
@@ -1173,19 +1195,19 @@ func TestGetMessageRaw(t *testing.T) {
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'none')`,
 		msgID, rawMIME,
 	)
-	requirepkg.NoError(t, err, "insert message_raw")
+	require.NoError(t, err, "insert message_raw")
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
-	requirepkg.NoError(t, err, "GetMessageRaw")
-	assertpkg.Equal(t, rawMIME, got)
+	require.NoError(t, err, "GetMessageRaw")
+	assert.Equal(t, rawMIME, got)
 }
 
 func TestGetMessageRaw_NotFound(t *testing.T) {
 	env := newTestEnv(t)
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, 999999)
-	requirepkg.NoError(t, err, "GetMessageRaw unexpected error")
-	assertpkg.Nil(t, got)
+	require.NoError(t, err, "GetMessageRaw unexpected error")
+	assert.Nil(t, got)
 }
 
 // TestGetMessageRaw_FiltersDeletedFromSource verifies that GetMessageRaw
@@ -1193,7 +1215,7 @@ func TestGetMessageRaw_NotFound(t *testing.T) {
 // set, keeping the raw-MIME endpoint aligned with how list/search hide
 // deleted-from-source messages.
 func TestGetMessageRaw_FiltersDeletedFromSource(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
@@ -1211,14 +1233,14 @@ func TestGetMessageRaw_FiltersDeletedFromSource(t *testing.T) {
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, msgID)
 	require.NoError(err, "GetMessageRaw")
-	assertpkg.Nil(t, got, "expected nil for deleted-from-source message")
+	assert.Nil(t, got, "expected nil for deleted-from-source message")
 }
 
 // TestGetMessage_PopulatesDeletedAt verifies that the engine's GetMessage
 // surfaces deleted_from_source_at via MessageDetail.DeletedAt so the API
 // can include it in detail responses.
 func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 
 	msgID := env.AddMessage(dbtest.MessageOpts{Subject: "Soft-deleted", SentAt: "2024-06-01 12:00:00"})
@@ -1231,5 +1253,5 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 	msg, err := env.Engine.GetMessage(env.Ctx, msgID)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil for deleted message; expected the message with DeletedAt set")
-	assertpkg.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
+	assert.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
 }

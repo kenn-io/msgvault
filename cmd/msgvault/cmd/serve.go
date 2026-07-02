@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -35,7 +37,7 @@ var serveCmd = &cobra.Command{
 	Long: `Run msgvault as a long-running daemon that syncs email accounts on schedule.
 
 The daemon runs in the foreground and performs:
-  - HTTP API server on configured port (default: 8080)
+  - HTTP API server (auto-selects an open port unless [server] api_port is set)
   - Scheduled incremental syncs based on account config
   - Automatic cache rebuilds after each sync
 
@@ -56,8 +58,29 @@ Use Ctrl+C to stop the daemon gracefully.`,
 	RunE: runServe,
 }
 
+const daemonIdleTimeoutEnv = "MSGVAULT_DAEMON_IDLE_TIMEOUT"
+
+var buildCacheSubprocessForRun = buildCacheSubprocess
+
+type serveRuntimeAPIServer interface {
+	Shutdown(ctx context.Context) error
+}
+
+type serveRuntimeScheduler interface {
+	Stop() context.Context
+}
+
+type serveRuntimeOperationGate interface {
+	StartDrain()
+	Wait(ctx context.Context) error
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
+	serveCmd.AddCommand(serveStartCmd)
+	serveCmd.AddCommand(serveStatusCmd)
+	serveCmd.AddCommand(serveStopCmd)
+	serveCmd.AddCommand(serveRestartCmd)
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -69,9 +92,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Warn("api_key is very short — use a randomly generated key of at least 32 characters")
 	}
 
-	// Validate config
+	// Missing provider credentials should not prevent the daemon from serving
+	// read-only HTTP requests against an import-only archive.
 	if !hasServeOAuthConfig(cfg) {
-		return errOAuthNotConfigured()
+		logger.Warn("OAuth/Microsoft credentials not configured - daemon will serve API requests, but scheduled provider syncs require credentials")
 	}
 
 	// Check for scheduled accounts (warn but don't fail - allows token upload first)
@@ -81,17 +105,54 @@ func runServe(cmd *cobra.Command, args []string) error {
 			"hint", "Add accounts to config.toml or upload tokens via API first")
 	}
 
+	bindAddr := cfg.Server.BindAddr
+	if bindAddr == "" {
+		bindAddr = defaultDaemonBindAddr
+	}
+	apiListener, err := listenServeAPI(bindAddr, cfg.Server.APIPort)
+	if err != nil {
+		return err
+	}
+	listenerReserved := true
+	defer func() {
+		if listenerReserved {
+			_ = apiListener.Close()
+		}
+	}()
+
+	// Record the ACTUAL bound port, not cfg.Server.APIPort: when api_port is
+	// unset (0) the listener binds an ephemeral port, and this is the port
+	// clients discover through the daemon runtime record.
+	boundPort, err := listenerPort(apiListener)
+	if err != nil {
+		return err
+	}
+
+	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, boundPort, Version)
+	if err != nil {
+		return fmt.Errorf("claim daemon ownership: %w", err)
+	}
+	defer func() {
+		if err := ownership.Close(); err != nil {
+			logger.Warn("release daemon ownership failed", "error", err)
+		}
+	}()
+
 	// Open database
 	dbPath := cfg.DatabaseDSN()
+	logger.Info("daemon startup step", "step", "open_archive_database", "database", daemonStartupDatabaseLabel(dbPath))
 	s, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = s.Close() }()
+	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
+	logger.Info("daemon startup step", "step", "init_archive_schema")
 	if err := s.InitSchema(); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	logger.Info("daemon startup step complete", "step", "init_archive_schema")
 	// Legacy [identity] migration is deferred to the first scheduled sync's
 	// runPostSourceCreateMigrations call, which fires AFTER that sync's
 	// confirmDefaultIdentity. Calling the migration here would race
@@ -103,75 +164,42 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// (which may open files and run migrations) respects Ctrl+C.
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
+	idleTracker := newDaemonIdleTracker(cfg, cancel)
+	operationGate := api.NewSerialOperationGate()
 
-	// Build optional vector-search components. Returns (nil, nil) when
-	// cfg.Vector.Enabled is false, or an error when enabled but the
-	// binary was built without -tags sqlite_vec.
-	vf, err := setupVectorFeatures(ctx, s, dbPath, false)
-	if err != nil {
+	// Vector misconfiguration still fails startup fast; the expensive
+	// backend open/migrate/backfill runs in the background after the API
+	// server is listening (startVectorInit below), so the TUI and other
+	// clients are not blocked by vector maintenance.
+	if err := precheckVectorFeatures(dbPath); err != nil {
 		return fmt.Errorf("vector features: %w", err)
 	}
-	defer func() {
-		if vf != nil && vf.Close != nil {
-			if closeErr := vf.Close(); closeErr != nil {
-				logger.Warn("closing vectors.db failed", "error", closeErr)
-			}
-		}
-	}()
+	if !cfg.Vector.Enabled {
+		logger.Info("daemon startup step", "step", "skip_vector_backend", "enabled", false)
+	}
 
-	// Create query engine for TUI aggregate support.
-	// Prefer DuckDB over Parquet when the cache is complete and fresh;
-	// otherwise fall back to SQLite so remote endpoints still work.
-	// PostgreSQL bypasses the cache entirely — it is a SQLite-only ETL.
-	analyticsDir := cfg.AnalyticsDir()
-	var engine query.Engine
-	if s.IsPostgreSQL() {
-		engine = query.NewEngine(s.DB(), true)
-	} else {
-		staleness := cacheNeedsBuild(dbPath, analyticsDir)
-		if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
-			// DisableSQLiteScanner keeps DuckDB's bundled SQLite library
-			// from ATTACHing the live database for the daemon's entire
-			// lifetime, which would corrupt the daemon's own go-sqlite3
-			// connections' WAL/lock state (issue #379). Detail queries
-			// route through the shared go-sqlite3 connection instead;
-			// aggregates still read Parquet.
-			duckEngine, engineErr := query.NewDuckDBEngine(
-				analyticsDir, dbPath, s.DB(),
-				query.DuckDBOptions{DisableSQLiteScanner: true},
-			)
-			if engineErr != nil {
-				logger.Warn("DuckDB engine failed, falling back to SQLite",
-					"error", engineErr)
-				engine = query.NewEngine(s.DB(), false)
-			} else {
-				engine = duckEngine
-			}
-		} else {
-			if staleness.Reason != "" {
-				logger.Info("parquet cache not usable, using SQLite engine",
-					"reason", staleness.Reason)
-			} else {
-				logger.Info("parquet cache not built - using SQLite engine (run 'msgvault build-cache' for faster aggregates)")
-			}
-			engine = query.NewEngine(s.DB(), false)
-		}
+	logger.Info("daemon startup step", "step", "init_analytics_engine")
+	engine, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = engine.Close() }()
+	logger.Info("daemon startup step complete", "step", "init_analytics_engine")
 
 	getOAuthMgr := oauthManagerCache()
 
 	// Create sync function for the scheduler. Under scan-and-fill the
 	// Syncer no longer needs an enqueuer — newly-ingested messages get
-	// embed_gen = NULL by column default and the embed worker (wired
-	// separately below from vf) discovers them on its next run, so the
-	// sync path no longer threads vf.
+	// embed_gen = NULL by column default and the embed worker (registered
+	// by the background startVectorInit) discovers them on its next run, so
+	// the sync path no longer threads the vector features.
 	syncFunc := func(ctx context.Context, email string) error {
 		return runScheduledSync(ctx, email, s, getOAuthMgr)
 	}
 
 	// Create and configure scheduler
-	sched := scheduler.New(syncFunc).WithLogger(logger)
+	sched := scheduler.New(syncFunc).WithLogger(logger).
+		WithWorkTracker(combineWorkTrackers(idleTracker, operationGate))
 
 	// Add all scheduled accounts
 	count, errs := sched.AddAccountsFromConfig(cfg)
@@ -227,30 +255,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Register the embed job (cron-driven plus optional post-sync hook).
-	// Only when vector search is enabled and wired.
-	if vf != nil {
-		embedJob := &scheduler.EmbedJob{
-			Worker:           vf.Worker,
-			Backend:          vf.Backend,
-			Store:            s,
-			Fingerprint:      vf.Cfg.GenerationFingerprint(),
-			BackstopInterval: vf.Cfg.Embed.BackstopInterval,
-			BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
-			Log:              logger,
-		}
-		schedule := cfg.Vector.Embed.Schedule.Cron
-		if err := sched.SetEmbedJob(
-			embedJob, schedule, cfg.Vector.Embed.Schedule.RunAfterSync,
-		); err != nil {
-			return fmt.Errorf("register embed job: %w", err)
-		}
-		logger.Info("embed scheduled",
-			"cron", schedule,
-			"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync,
-		)
-	}
-
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -263,33 +267,49 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and start API server
 	apiOpts := api.ServerOptions{
-		Config:    cfg,
-		Store:     storeAdapter,
-		Engine:    engine,
-		Scheduler: schedAdapter,
-		Logger:    logger,
+		Config: cfg,
+		Store:  storeAdapter,
+		Engine: engine,
+		SQLQueryRunner: func(ctx context.Context, sql string) (*query.QueryResult, error) {
+			return runDaemonSQLQuery(ctx, cfg, s, engine, sql)
+		},
+		ShutdownToken: ownership.shutdownToken,
+		ShutdownFunc:  cancel,
+		Scheduler:     schedAdapter,
+		Logger:        logger,
+		DaemonVersion: Version,
+		IdleTracker:   idleTracker,
+		OperationGate: operationGate,
 	}
-	if vf != nil {
-		apiOpts.HybridEngine = vf.HybridEngine
-		apiOpts.Backend = vf.Backend
-		apiOpts.VectorCfg = vf.Cfg
+	if cfg.Vector.Enabled {
+		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer := api.NewServerWithOptions(apiOpts)
 
 	// Start API server in goroutine
+	apiAddr := apiListener.Addr().String()
+	logger.Info("daemon startup step", "step", "start_api_server", "bind", apiAddr)
 	serverErr := make(chan error, 1)
+	listenerReserved = false
 	go func() {
-		if err := apiServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := apiServer.StartOnListener(apiListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()
-
-	bindAddr := cfg.Server.BindAddr
-	if bindAddr == "" {
-		bindAddr = "127.0.0.1"
+	if idleTracker != nil {
+		idleTracker.Touch()
+		go idleTracker.Run(ctx)
+		logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
 	}
+
+	vectorInit := startVectorInit(
+		ctx, s, dbPath,
+		combineWorkTrackers(idleTracker, operationGate),
+		apiServer, sched,
+	)
+
 	fmt.Printf("msgvault daemon started\n")
-	fmt.Printf("  API server: http://%s\n", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.Server.APIPort)))
+	fmt.Printf("  API server: http://%s\n", apiAddr)
 	fmt.Printf("  Scheduled accounts: %d\n", count)
 	fmt.Printf("  Data directory: %s\n", cfg.Data.DataDir)
 	fmt.Println()
@@ -303,6 +323,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Wait for shutdown signal or server error
+	var serverStartupErr error
 	select {
 	case sig := <-sigChan:
 		logger.Info("received shutdown signal", "signal", sig)
@@ -310,30 +331,259 @@ func runServe(cmd *cobra.Command, args []string) error {
 	case err := <-serverErr:
 		logger.Error("API server error", "error", err)
 		fmt.Printf("\nAPI server error: %v\n", err)
+		serverStartupErr = err
 	case <-ctx.Done():
 		logger.Info("context cancelled")
 	}
 
-	// Graceful shutdown
-	fmt.Println("Shutting down API server...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Stop background work first: vector init honors ctx, so cancelling
+	// lets the operation-gate drain inside shutdownServeRuntime complete.
+	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
-	if err := apiServer.Shutdown(shutdownCtx); err != nil {
-		logger.Error("API server shutdown error", "error", err)
+	shutdownErr := shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, sched, operationGate)
+	// Wait for the background vector init regardless of the shutdown
+	// outcome: the deferred s.Close() must not run under a still-running
+	// init goroutine, and vectors.db needs closing whenever init finished.
+	// Bound the wait by the time REMAINING on shutdownCtx rather than a
+	// fresh full drain window — shutdownServeRuntime already consumed part
+	// of it, and `serve stop` budgets only one drain window before it kills
+	// the daemon (serveStopGraceTimeout).
+	if vectorInit.WaitContext(shutdownCtx) {
+		vectorInit.CloseFeatures()
+	} else {
+		logger.Warn("vector init did not stop within the shutdown drain timeout; skipping vectors.db close")
 	}
-
-	fmt.Println("Waiting for running syncs to complete...")
-	schedCtx := sched.Stop()
-
-	// Wait for scheduler to stop (with timeout)
-	select {
-	case <-schedCtx.Done():
-		fmt.Println("Shutdown complete.")
-	case <-time.After(30 * time.Second):
-		fmt.Println("Shutdown timed out after 30 seconds.")
+	if shutdownErr != nil {
+		logger.Error("daemon shutdown error", "error", shutdownErr)
+		return shutdownErr
+	}
+	if serverStartupErr != nil {
+		return fmt.Errorf("API server: %w", serverStartupErr)
 	}
 
 	return nil
+}
+
+func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+	if bindAddr == "" {
+		bindAddr = defaultDaemonBindAddr
+	}
+	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if port != 0 {
+			return nil, fmt.Errorf(
+				"API server address unavailable at %s: %w "+
+					"(set a different [server] api_port, or unset it to auto-select an open port)",
+				addr, err)
+		}
+		return nil, fmt.Errorf("API server address unavailable at %s: %w", addr, err)
+	}
+	return ln, nil
+}
+
+// listenerPort extracts the TCP port a listener bound to. With an ephemeral
+// (api_port = 0) bind this is the OS-assigned port that clients discover
+// through the daemon runtime record.
+func listenerPort(ln net.Listener) (int, error) {
+	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
+		return tcpAddr.Port, nil
+	}
+	_, portText, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		return 0, fmt.Errorf("parse API listener address %q: %w", ln.Addr().String(), err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0, fmt.Errorf("parse API listener port %q: %w", portText, err)
+	}
+	return port, nil
+}
+
+func daemonStartupDatabaseLabel(dsn string) string {
+	if store.IsPostgresURL(dsn) {
+		return "postgres://<redacted>"
+	}
+	return dsn
+}
+
+func shutdownServeRuntime(
+	ctx context.Context,
+	out io.Writer,
+	apiServer serveRuntimeAPIServer,
+	sched serveRuntimeScheduler,
+	gate serveRuntimeOperationGate,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if out == nil {
+		out = io.Discard
+	}
+	if gate != nil {
+		gate.StartDrain()
+	}
+	_, _ = fmt.Fprintln(out, "Shutting down API server...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveAPIShutdownTimeout)
+	defer shutdownCancel()
+	var shutdownErr error
+	if apiServer != nil {
+		shutdownErr = apiServer.Shutdown(shutdownCtx)
+	}
+
+	_, _ = fmt.Fprintln(out, "Waiting for running syncs to complete...")
+	var schedCtx context.Context
+	if sched != nil {
+		schedCtx = sched.Stop()
+	}
+	if schedCtx != nil {
+		select {
+		case <-schedCtx.Done():
+		case <-time.After(serveSchedulerStopTimeout):
+			_, _ = fmt.Fprintln(out, "Shutdown timed out after 30 seconds.")
+		}
+	}
+
+	if gate != nil {
+		_, _ = fmt.Fprintln(out, "Waiting for active archive operations to complete...")
+		if err := gate.Wait(ctx); err != nil {
+			return fmt.Errorf("wait for active archive operations: %w", err)
+		}
+	}
+	_, _ = fmt.Fprintln(out, "Shutdown complete.")
+	if shutdownErr != nil {
+		return fmt.Errorf("API server shutdown: %w", shutdownErr)
+	}
+	return nil
+}
+
+func runDaemonSQLQuery(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	engine query.Engine,
+	sqlStr string,
+) (*query.QueryResult, error) {
+	if c == nil || s == nil {
+		return nil, errors.New("daemon query unavailable")
+	}
+	if s.IsPostgreSQL() {
+		if querier, ok := engine.(query.SQLQuerier); ok {
+			return querier.QuerySQL(ctx, sqlStr)
+		}
+		return nil, errors.New("SQL query requires DuckDB engine")
+	}
+
+	dbPath := c.DatabaseDSN()
+	analyticsDir := c.AnalyticsDir()
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if !staleness.NeedsBuild {
+		if querier, ok := engine.(query.SQLQuerier); ok {
+			return querier.QuerySQL(ctx, sqlStr)
+		}
+	}
+
+	if staleness.NeedsBuild {
+		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
+			return nil, fmt.Errorf("build cache: %w", err)
+		}
+		logger.Info("rebuilt analytics cache for SQL query",
+			"reason", staleness.Reason,
+			"full_rebuild", staleness.FullRebuild)
+	}
+
+	duckEngine, err := openDaemonDuckDBEngine(c, s)
+	if err != nil {
+		return nil, fmt.Errorf("open DuckDB query engine: %w", err)
+	}
+	defer func() { _ = duckEngine.Close() }()
+
+	return duckEngine.QuerySQL(ctx, sqlStr)
+}
+
+func openDaemonAnalyticsEngine(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+) (query.Engine, error) {
+	if c == nil || s == nil {
+		return nil, errors.New("daemon analytics engine unavailable")
+	}
+	if s.IsPostgreSQL() {
+		return query.NewEngine(s.DB(), true), nil
+	}
+
+	engineMode := c.Analytics.Engine
+	if engineMode == "" {
+		engineMode = config.AnalyticsEngineAuto
+	}
+	if engineMode == config.AnalyticsEngineSQL {
+		logger.Info("using live SQL analytics engine",
+			"engine", engineMode)
+		return query.NewEngine(s.DB(), false), nil
+	}
+
+	dbPath := c.DatabaseDSN()
+	analyticsDir := c.AnalyticsDir()
+	staleness := cacheNeedsBuild(dbPath, analyticsDir)
+	if staleness.NeedsBuild && c.Analytics.AutoBuildCache && engineMode == config.AnalyticsEngineDuckDB {
+		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
+			return nil, fmt.Errorf("build analytics cache: %w", err)
+		}
+		logger.Info("rebuilt analytics cache",
+			"reason", staleness.Reason,
+			"full_rebuild", staleness.FullRebuild)
+		staleness = cacheNeedsBuild(dbPath, analyticsDir)
+	}
+
+	if !staleness.NeedsBuild && query.HasCompleteParquetData(analyticsDir) {
+		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		if err != nil {
+			if engineMode == config.AnalyticsEngineDuckDB {
+				return nil, err
+			}
+			logger.Warn("DuckDB engine failed, falling back to live SQL",
+				"error", err)
+			return query.NewEngine(s.DB(), false), nil
+		}
+		return duckEngine, nil
+	}
+
+	if engineMode == config.AnalyticsEngineDuckDB {
+		reason := staleness.Reason
+		if reason == "" {
+			reason = "analytics cache is missing or incomplete"
+		}
+		return nil, fmt.Errorf("analytics engine=duckdb requires a usable cache: %s", reason)
+	}
+	if staleness.Reason != "" {
+		logger.Info("analytics cache not usable, using live SQL engine",
+			"reason", staleness.Reason,
+			"auto_build_cache", c.Analytics.AutoBuildCache)
+	} else {
+		logger.Info("analytics cache not built - using live SQL engine (run 'msgvault build-cache' for faster aggregates)",
+			"auto_build_cache", c.Analytics.AutoBuildCache)
+	}
+	return query.NewEngine(s.DB(), false), nil
+}
+
+func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
+	if c == nil || s == nil {
+		return nil, errors.New("daemon DuckDB engine unavailable")
+	}
+	// DisableSQLiteScanner keeps DuckDB's bundled SQLite library from
+	// ATTACHing the live database for the daemon's lifetime, which can
+	// interfere with the daemon's own go-sqlite3 WAL/lock state. Detail
+	// queries route through the shared go-sqlite3 connection instead;
+	// aggregates still read Parquet.
+	return query.NewDuckDBEngine(
+		c.AnalyticsDir(),
+		c.DatabaseDSN(),
+		s.DB(),
+		query.DuckDBOptions{DisableSQLiteScanner: true},
+	)
 }
 
 func hasServeOAuthConfig(c *config.Config) bool {
@@ -341,6 +591,31 @@ func hasServeOAuthConfig(c *config.Config) bool {
 		return false
 	}
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTracker {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
+		return nil
+	}
+	timeout := c.Server.DaemonIdleTimeout
+	if raw := os.Getenv(daemonIdleTimeoutEnv); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			logger.Warn("invalid daemon idle timeout override ignored",
+				"env", daemonIdleTimeoutEnv,
+				"value", raw,
+				"error", err)
+		} else {
+			timeout = parsed
+		}
+	}
+	if timeout <= 0 {
+		return nil
+	}
+	return api.NewIdleTracker(timeout, func() {
+		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		stop()
+	})
 }
 
 // storeAPIAdapter adapts store.Store to the API store interfaces.
@@ -352,9 +627,26 @@ type storeAPIAdapter struct {
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
+var _ api.CLIStore = (*storeAPIAdapter)(nil)
+var _ api.CLIStartupMigrationStore = (*storeAPIAdapter)(nil)
+var _ api.CLICacheBuilder = (*storeAPIAdapter)(nil)
+var _ api.CLISyncRunner = (*storeAPIAdapter)(nil)
+var _ api.CLIVerifyRunner = (*storeAPIAdapter)(nil)
+var _ api.CLIRepairEncodingRunner = (*storeAPIAdapter)(nil)
+var _ api.CLIRunner = (*storeAPIAdapter)(nil)
+var _ api.CLIAddCalendarPlanner = (*storeAPIAdapter)(nil)
+var _ api.CLIDeleteStagedPlanner = (*storeAPIAdapter)(nil)
+var _ api.CLIDeletionManifestSaver = (*storeAPIAdapter)(nil)
+var _ api.CLIDeduplicatePlanner = (*storeAPIAdapter)(nil)
+var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
+var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
+}
+
+func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
+	return a.store.GetStatsForScope(sourceIDs)
 }
 
 func (a *storeAPIAdapter) ListMessages(offset, limit int) ([]api.APIMessage, int64, error) {
@@ -377,8 +669,259 @@ func (a *storeAPIAdapter) SearchMessagesQuery(q *search.Query, offset, limit int
 	return a.store.SearchMessagesQuery(q, offset, limit)
 }
 
+func (a *storeAPIAdapter) SearchMessagesContext(ctx context.Context, query string, offset, limit int) ([]api.APIMessage, int64, error) {
+	return a.store.SearchMessagesContext(ctx, query, offset, limit)
+}
+
+func (a *storeAPIAdapter) SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]api.APIMessage, int64, error) {
+	return a.store.SearchMessagesQueryContext(ctx, q, offset, limit)
+}
+
+func (a *storeAPIAdapter) NeedsFTSBackfill() bool {
+	return a.store.NeedsFTSBackfill()
+}
+
+func (a *storeAPIAdapter) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	return a.store.BackfillFTS(progress)
+}
+
+func (a *storeAPIAdapter) RebuildFTS(progress func(done, total int64)) (int64, error) {
+	return a.store.RebuildFTS(progress)
+}
+
+func (a *storeAPIAdapter) RunStartupMigrations(
+	legacyIdentityAddresses []string,
+) (store.StartupMigrationResult, error) {
+	return a.store.RunStartupMigrations(legacyIdentityAddresses)
+}
+
+func (a *storeAPIAdapter) BuildCLICache(
+	ctx context.Context,
+	fullRebuild bool,
+	emit func(api.CLICacheBuildEvent) error,
+) error {
+	return buildCacheSubprocessStream(ctx, fullRebuild, emit)
+}
+
+func (a *storeAPIAdapter) RunCLISync(
+	ctx context.Context,
+	req api.CLISyncRequest,
+	emit func(api.CLISyncEvent) error,
+) error {
+	return runDaemonCLISubprocessStream(ctx, cliSyncSubprocessArgs(req), func(stream, data string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLISyncEvent{Type: stream, Data: data})
+	})
+}
+
+func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
+	if req.Full {
+		args := []string{"sync-full"}
+		if req.Query != "" {
+			args = append(args, "--query", req.Query)
+		}
+		if req.NoResume {
+			args = append(args, "--noresume")
+		}
+		if req.Before != "" {
+			args = append(args, "--before", req.Before)
+		}
+		if req.After != "" {
+			args = append(args, "--after", req.After)
+		}
+		if req.Limit > 0 {
+			args = append(args, "--limit", strconv.Itoa(req.Limit))
+		}
+		if req.Email != "" {
+			args = append(args, req.Email)
+		}
+		return args
+	}
+	args := []string{"sync"}
+	if req.Email != "" {
+		args = append(args, req.Email)
+	}
+	return args
+}
+
+func (a *storeAPIAdapter) RunCLIVerify(
+	ctx context.Context,
+	req api.CLIVerifyRequest,
+	emit func(api.CLIVerifyEvent) error,
+) error {
+	return runDaemonCLISubprocessStream(ctx, cliVerifySubprocessArgs(req), func(stream, data string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIVerifyEvent{Type: stream, Data: data})
+	})
+}
+
+func cliVerifySubprocessArgs(req api.CLIVerifyRequest) []string {
+	args := []string{"verify"}
+	if req.SampleSize != 100 {
+		args = append(args, "--sample", strconv.Itoa(req.SampleSize))
+	}
+	if req.SkipDBCheck {
+		args = append(args, "--skip-db-check")
+	}
+	if req.JSON {
+		args = append(args, "--json")
+	}
+	args = append(args, req.Email)
+	return args
+}
+
+func (a *storeAPIAdapter) RunCLIRepairEncoding(
+	ctx context.Context,
+	emit func(api.CLIRepairEncodingEvent) error,
+) error {
+	return runDaemonCLISubprocessStream(ctx, []string{"repair-encoding"}, func(stream, data string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIRepairEncodingEvent{Type: stream, Data: data})
+	})
+}
+
+func (a *storeAPIAdapter) RunCLICommand(
+	ctx context.Context,
+	req api.CLIRunRequest,
+	emit func(api.CLIRunEvent) error,
+) error {
+	return runDaemonCLISubprocessStreamWithEnv(ctx, req.Args, req.Env, req.Cwd, func(stream, data string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIRunEvent{Type: stream, Data: data})
+	})
+}
+
+func (a *storeAPIAdapter) PlanCLIAddCalendar(
+	ctx context.Context,
+	req api.CLIAddCalendarPlanRequest,
+) (api.CLIAddCalendarPlanResponse, error) {
+	return planCLIAddCalendar(ctx, a.store, req)
+}
+
+func (a *storeAPIAdapter) PlanCLIEmbeddings(
+	ctx context.Context,
+	req api.CLIEmbeddingsPlanRequest,
+) (api.CLIEmbeddingsPlanResponse, error) {
+	return planCLIEmbeddings(ctx, req)
+}
+
+func (a *storeAPIAdapter) PlanCLIDeleteStaged(
+	ctx context.Context,
+	req api.CLIDeleteStagedPlanRequest,
+) (api.CLIDeleteStagedPlanResponse, error) {
+	return planCLIDeleteStaged(ctx, a.store, req)
+}
+
+func (a *storeAPIAdapter) SaveCLIDeletionManifest(_ context.Context, manifest *deletion.Manifest) error {
+	mgr, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	if err != nil {
+		return fmt.Errorf("create deletion manager: %w", err)
+	}
+	return mgr.SaveManifest(manifest)
+}
+
+func (a *storeAPIAdapter) PlanCLIDeduplicate(
+	ctx context.Context,
+	req api.CLIDeduplicatePlanRequest,
+) (api.CLIDeduplicatePlanResponse, error) {
+	return planCLIDeduplicate(ctx, a.store, req)
+}
+
+func (a *storeAPIAdapter) CountAllDeduped() (int64, int64, error) {
+	return a.store.CountAllDeduped()
+}
+
+func (a *storeAPIAdapter) CountDedupedBatches(batchIDs []string) ([]store.DedupedBatchCount, int64, error) {
+	return a.store.CountDedupedBatches(batchIDs)
+}
+
+func (a *storeAPIAdapter) DeleteAllDeduped() (int64, int64, error) {
+	return a.store.DeleteAllDeduped()
+}
+
+func (a *storeAPIAdapter) DeleteDedupedBatch(batchID string) (int64, error) {
+	return a.store.DeleteDedupedBatch(batchID)
+}
+
+func (a *storeAPIAdapter) BackupDatabase(dst string) error {
+	return a.store.BackupDatabase(dst)
+}
+
+func (a *storeAPIAdapter) CountMessagesForSource(sourceID int64) (int64, error) {
+	return a.store.CountMessagesForSource(sourceID)
+}
+
+func (a *storeAPIAdapter) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
+	return a.store.CountSourceDeletedMessages(sourceIDs...)
+}
+
 func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {
 	return a.store.ListSources(sourceType)
+}
+
+func (a *storeAPIAdapter) GetSourcesByIdentifierOrDisplayName(query string) ([]*store.Source, error) {
+	return a.store.GetSourcesByIdentifierOrDisplayName(query)
+}
+
+func (a *storeAPIAdapter) GetSourcesByTypeAndAccount(
+	sourceType, accountEmail string,
+) ([]*store.Source, error) {
+	return a.store.GetSourcesByTypeAndAccount(sourceType, accountEmail)
+}
+
+func (a *storeAPIAdapter) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
+	return a.store.GetCollectionByName(name)
+}
+
+func (a *storeAPIAdapter) ListCollections() ([]*store.CollectionWithSources, error) {
+	return a.store.ListCollections()
+}
+
+func (a *storeAPIAdapter) CreateCollection(
+	name, description string,
+	sourceIDs []int64,
+) (*store.Collection, error) {
+	return a.store.CreateCollection(name, description, sourceIDs)
+}
+
+func (a *storeAPIAdapter) AddSourcesToCollection(name string, sourceIDs []int64) error {
+	return a.store.AddSourcesToCollection(name, sourceIDs)
+}
+
+func (a *storeAPIAdapter) RemoveSourcesFromCollection(name string, sourceIDs []int64) error {
+	return a.store.RemoveSourcesFromCollection(name, sourceIDs)
+}
+
+func (a *storeAPIAdapter) DeleteCollection(name string) error {
+	return a.store.DeleteCollection(name)
+}
+
+func (a *storeAPIAdapter) UpdateSourceDisplayName(sourceID int64, displayName string) error {
+	return a.store.UpdateSourceDisplayName(sourceID, displayName)
+}
+
+func (a *storeAPIAdapter) GetSourceByID(id int64) (*store.Source, error) {
+	return a.store.GetSourceByID(id)
+}
+
+func (a *storeAPIAdapter) ListAccountIdentities(sourceID int64) ([]store.AccountIdentity, error) {
+	return a.store.ListAccountIdentities(sourceID)
+}
+
+func (a *storeAPIAdapter) AddAccountIdentity(sourceID int64, address, signal string) error {
+	return a.store.AddAccountIdentity(sourceID, address, signal)
+}
+
+func (a *storeAPIAdapter) RemoveAccountIdentity(sourceID int64, address string) (int64, error) {
+	return a.store.RemoveAccountIdentity(sourceID, address)
 }
 
 func (a *storeAPIAdapter) GetActiveSync(sourceID int64) (*store.SyncRun, error) {
@@ -522,45 +1065,6 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	return errors.Join(errs...)
 }
 
-// findScheduledSyncSource resolves the source row for a scheduler
-// identifier. Returns (nil, nil) when no syncable source matches —
-// callers fall back to the Gmail token-first workflow.
-//
-// Matches against both sources.identifier and sources.display_name so
-// an IMAP account listed in config.toml as a plain email
-// (`email = "user@example.com"`) resolves to the row whose identifier
-// is the `imaps://...` URL but whose display_name is that email.
-//
-// When multiple rows match (rare; e.g. an mbox import plus a Gmail
-// account with the same name), the first syncable row (gmail/imap)
-// wins, with gmail taking precedence over imap.
-func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, error) {
-	sources, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
-	if err != nil {
-		return nil, err
-	}
-	var imapSrc *store.Source
-	var teamsSrc *store.Source
-	for _, src := range sources {
-		switch src.SourceType {
-		case sourceTypeGmail:
-			return src, nil
-		case sourceTypeIMAP:
-			if imapSrc == nil {
-				imapSrc = src
-			}
-		case sourceTypeTeams:
-			if teamsSrc == nil {
-				teamsSrc = src
-			}
-		}
-	}
-	if imapSrc != nil {
-		return imapSrc, nil
-	}
-	return teamsSrc, nil
-}
-
 // findScheduledSyncSources resolves ALL syncable source rows for a
 // scheduler identifier. Returns at most one row per syncable type
 // (gmail, imap, teams), in that stable order. Non-syncable types
@@ -569,8 +1073,7 @@ func findScheduledSyncSource(s *store.Store, identifier string) (*store.Source, 
 // Returns an empty slice (not nil) when no syncable source matches —
 // callers should fall back to the Gmail token-first workflow.
 //
-// Matches against both sources.identifier and sources.display_name
-// (same semantics as findScheduledSyncSource).
+// Matches against both sources.identifier and sources.display_name.
 func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, error) {
 	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
 	if err != nil {

@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // assertPermNoMoreThan checks that the file at path has permissions no more
@@ -16,9 +16,9 @@ import (
 func assertPermNoMoreThan(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)
-	requirepkg.NoError(t, err, "Stat")
+	require.NoError(t, err, "Stat")
 	got := info.Mode().Perm()
-	assertpkg.Zero(t, got&^want, "perm = %04o, has bits beyond %04o (extra: %04o)", got, want, got&^want)
+	assert.Zero(t, got&^want, "perm = %04o, has bits beyond %04o (extra: %04o)", got, want, got&^want)
 }
 
 func TestSecureWriteFile(t *testing.T) {
@@ -35,11 +35,11 @@ func TestSecureWriteFile(t *testing.T) {
 			path := filepath.Join(dir, "testfile")
 			data := []byte("hello secure world")
 
-			requirepkg.NoError(t, SecureWriteFile(path, data, tt.perm), "SecureWriteFile")
+			require.NoError(t, SecureWriteFile(path, data, tt.perm), "SecureWriteFile")
 
 			got, err := os.ReadFile(path)
-			requirepkg.NoError(t, err, "ReadFile")
-			assertpkg.Equal(t, string(data), string(got))
+			require.NoError(t, err, "ReadFile")
+			assert.Equal(t, string(data), string(got))
 
 			if runtime.GOOS != "windows" {
 				assertPermNoMoreThan(t, path, tt.perm)
@@ -61,11 +61,11 @@ func TestSecureMkdirAll(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "a", "b", "c")
 
-			requirepkg.NoError(t, SecureMkdirAll(path, tt.perm), "SecureMkdirAll")
+			require.NoError(t, SecureMkdirAll(path, tt.perm), "SecureMkdirAll")
 
 			info, err := os.Stat(path)
-			requirepkg.NoError(t, err, "Stat")
-			assertpkg.True(t, info.IsDir(), "expected directory")
+			require.NoError(t, err, "Stat")
+			assert.True(t, info.IsDir(), "expected directory")
 
 			if runtime.GOOS != "windows" {
 				assertPermNoMoreThan(t, path, tt.perm)
@@ -75,7 +75,7 @@ func TestSecureMkdirAll(t *testing.T) {
 }
 
 func TestSecureChmod(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "testfile")
 
@@ -87,7 +87,7 @@ func TestSecureChmod(t *testing.T) {
 		// Chmod sets exact mode (not subject to umask), so we can assert exactly.
 		info, err := os.Stat(path)
 		require.NoError(err, "Stat")
-		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	}
 }
 
@@ -101,7 +101,7 @@ func TestSecureOpenFile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			dir := t.TempDir()
 			path := filepath.Join(dir, "testfile")
 
@@ -115,7 +115,7 @@ func TestSecureOpenFile(t *testing.T) {
 
 			got, err := os.ReadFile(path)
 			require.NoError(err, "ReadFile")
-			assertpkg.Equal(t, "data", string(got))
+			assert.Equal(t, "data", string(got))
 
 			if runtime.GOOS != "windows" {
 				assertPermNoMoreThan(t, path, tt.perm)
@@ -129,11 +129,11 @@ func TestSecureWriteFile_NonexistentParent(t *testing.T) {
 	path := filepath.Join(dir, "no", "such", "dir", "file")
 
 	err := SecureWriteFile(path, []byte("data"), 0600)
-	requirepkg.Error(t, err, "expected error for nonexistent parent dir")
+	require.Error(t, err, "expected error for nonexistent parent dir")
 }
 
 func TestSecureOpenFile_ReadOnly(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "testfile")
 	require.NoError(os.WriteFile(path, []byte("existing"), 0644), "WriteFile")
@@ -145,5 +145,5 @@ func TestSecureOpenFile_ReadOnly(t *testing.T) {
 	buf := make([]byte, 100)
 	n, err := f.Read(buf)
 	require.NoError(err, "Read")
-	assertpkg.Equal(t, "existing", string(buf[:n]))
+	assert.Equal(t, "existing", string(buf[:n]))
 }

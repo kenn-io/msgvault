@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -36,33 +37,48 @@ const participantDisplaySQL = `COALESCE(
 		''
 	)`
 
+const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
+const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
+const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
+const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+			` + participantSenderEmailSQL + ` as from_email,
+			` + participantSenderNameSQL + ` as from_name,
+			` + participantSenderPhoneSQL + ` as from_phone`
+
 // APIMessage represents a message for API responses.
 type APIMessage struct {
-	ID             int64
-	ConversationID int64
-	Subject        string
-	MessageType    string
-	From           string
-	To             []string
-	Cc             []string
-	Bcc            []string
-	SentAt         time.Time
-	Snippet        string
-	Labels         []string
-	HasAttachments bool
-	SizeEstimate   int64
-	DeletedAt      *time.Time
-	Body           string
-	Headers        map[string]string
-	Attachments    []APIAttachment
+	ID                   int64
+	SourceMessageID      string
+	ConversationID       int64
+	SourceConversationID string
+	Subject              string
+	MessageType          string
+	From                 string
+	FromEmail            string
+	FromName             string
+	FromPhone            string
+	To                   []string
+	Cc                   []string
+	Bcc                  []string
+	SentAt               time.Time
+	Snippet              string
+	Labels               []string
+	HasAttachments       bool
+	SizeEstimate         int64
+	DeletedAt            *time.Time
+	Body                 string
+	Headers              map[string]string
+	Attachments          []APIAttachment
 }
 
 // APIAttachment represents attachment metadata for API responses.
 type APIAttachment struct {
-	Filename string
-	MimeType string
-	Size     int64
-	URL      string
+	ID          int64
+	Filename    string
+	MimeType    string
+	Size        int64
+	ContentHash string
+	URL         string
 }
 
 // ListMessages returns a paginated list of messages with batch-loaded recipients and labels.
@@ -82,10 +98,12 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			%s as from_email,
+			%s,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -97,10 +115,11 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 			ORDER BY mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE %s
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantDisplaySQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(query, limit, offset)
 	if err != nil {
@@ -137,10 +156,12 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
+			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			%s as from_email,
+			%s,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -153,8 +174,9 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 			ORDER BY mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id = ?
-	`, participantDisplaySQL)
+	`, participantSummarySenderSQL)
 
 	var m APIMessage
 	// sentAt is a COALESCE expression; use nullableTimestamp so
@@ -162,7 +184,23 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	// TIMESTAMP column but routing it through the same scanner
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
-	err := s.db.QueryRow(query, id).Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate, &deletedAt)
+	err := s.db.QueryRow(query, id).Scan(
+		&m.ID,
+		&m.SourceMessageID,
+		&m.ConversationID,
+		&m.SourceConversationID,
+		&m.Subject,
+		&m.MessageType,
+		&m.From,
+		&m.FromEmail,
+		&m.FromName,
+		&m.FromPhone,
+		&sentAt,
+		&m.Snippet,
+		&m.HasAttachments,
+		&m.SizeEstimate,
+		&deletedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("message %d: %w", id, ErrMessageNotFound)
 	}
@@ -210,19 +248,25 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	}
 
 	// Get attachments
-	attRows, err := s.db.Query("SELECT filename, mime_type, size, storage_path FROM attachments WHERE message_id = ?", id)
-	if err == nil {
-		defer func() { _ = attRows.Close() }()
-		for attRows.Next() {
-			var att APIAttachment
-			var storagePath string
-			if err := attRows.Scan(&att.Filename, &att.MimeType, &att.Size, &storagePath); err == nil {
-				if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
-					att.URL = storagePath
-				}
-				m.Attachments = append(m.Attachments, att)
-			}
+	attRows, err := s.db.Query("SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path FROM attachments WHERE message_id = ?", id)
+	if err != nil {
+		return nil, fmt.Errorf("get attachments: %w", err)
+	}
+	defer func() { _ = attRows.Close() }()
+	for attRows.Next() {
+		var att APIAttachment
+		var storagePath string
+		if err := attRows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &storagePath); err != nil {
+			return nil, fmt.Errorf("scan attachment: %w", err)
 		}
+		if strings.HasPrefix(storagePath, "http://") || strings.HasPrefix(storagePath, "https://") {
+			att.ContentHash = ""
+			att.URL = storagePath
+		}
+		m.Attachments = append(m.Attachments, att)
+	}
+	if err := attRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate attachments: %w", err)
 	}
 
 	m.Headers = make(map[string]string)
@@ -255,10 +299,12 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 	q := fmt.Sprintf(`
 		SELECT
 			m.id,
+			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			%s as from_email,
+			%s,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -270,8 +316,9 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 			ORDER BY mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, participantDisplaySQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
@@ -315,6 +362,15 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 // reach the MATCH parser. Routing through BuildFTSArg sanitizes per
 // dialect and reuses the FALSE fallback for tokenless inputs.
 func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error) {
+	return s.SearchMessagesContext(context.Background(), query, offset, limit)
+}
+
+// SearchMessagesContext is the context-aware form of SearchMessages. The
+// context is threaded to the underlying SQLite driver so an abandoned or
+// timed-out request aborts the query instead of running to completion.
+func (s *Store) SearchMessagesContext(
+	ctx context.Context, query string, offset, limit int,
+) ([]APIMessage, int64, error) {
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
 		// Whitespace-only / empty input: no search performed. Returning
@@ -323,8 +379,8 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 		// queries errored at the FTS parser. Treat as "no matches".
 		return []APIMessage{}, 0, nil
 	}
-	return s.SearchMessagesQuery(
-		&search.Query{TextTerms: terms}, offset, limit,
+	return s.SearchMessagesQueryContext(
+		ctx, &search.Query{TextTerms: terms}, offset, limit,
 	)
 }
 
@@ -333,7 +389,16 @@ func (s *Store) SearchMessages(query string, offset, limit int) ([]APIMessage, i
 func (s *Store) SearchMessagesQuery(
 	q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	return s.searchMessagesQueryImpl(q, offset, limit, s.fts5Available)
+	return s.SearchMessagesQueryContext(context.Background(), q, offset, limit)
+}
+
+// SearchMessagesQueryContext is the context-aware form of
+// SearchMessagesQuery. Request paths pass the request context so query
+// cancellation (client disconnect or server-side timeout) stops the scan.
+func (s *Store) SearchMessagesQueryContext(
+	ctx context.Context, q *search.Query, offset, limit int,
+) ([]APIMessage, int64, error) {
+	return s.searchMessagesQueryImpl(ctx, q, offset, limit, s.fts5Available)
 }
 
 // searchMessagesQueryImpl runs the actual query. The ftsAvailable flag is
@@ -341,7 +406,7 @@ func (s *Store) SearchMessagesQuery(
 // (searchMessagesQueryNoFTS) can force the LIKE path even when
 // s.fts5Available was true at startup.
 func (s *Store) searchMessagesQueryImpl(
-	q *search.Query, offset, limit int, ftsAvailable bool,
+	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
 ) ([]APIMessage, int64, error) {
 	var conditions []string
 	var args []any
@@ -496,6 +561,22 @@ func (s *Store) searchMessagesQueryImpl(
 			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
 	}
 
+	// Account scoping (in: / API account/collection filter). The HTTP
+	// search endpoints resolve an account or collection to its source IDs
+	// and put them here; without this condition the scope is validated at
+	// the front door and then silently dropped, returning every account's
+	// messages. Uses the same IN-placeholder style as message_type so it
+	// works on both SQLite and PostgreSQL after Rebind.
+	if len(q.AccountIDs) > 0 {
+		placeholders := make([]string, len(q.AccountIDs))
+		for i, id := range q.AccountIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		conditions = append(conditions,
+			"m.source_id IN ("+strings.Join(placeholders, ",")+")")
+	}
+
 	// has:attachment
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions,
@@ -544,9 +625,9 @@ func (s *Store) searchMessagesQueryImpl(
 	`, ftsJoin, whereClause)
 
 	var total int64
-	if err := s.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
-		if ftsEnabled {
-			return s.searchMessagesQueryNoFTS(q, offset, limit)
+	if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+		if ftsEnabled && ctx.Err() == nil {
+			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, fmt.Errorf("count search results: %w", err)
 	}
@@ -559,10 +640,12 @@ func (s *Store) searchMessagesQueryImpl(
 	searchSQL := fmt.Sprintf(`
 		SELECT
 			m.id,
+			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			%s as from_email,
+			%s,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -575,10 +658,11 @@ func (s *Store) searchMessagesQueryImpl(
 			ORDER BY mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, participantDisplaySQL, ftsJoin, whereClause, orderBy)
+	`, participantSummarySenderSQL, ftsJoin, whereClause, orderBy)
 
 	// If the dialect's order-by fragment has ? placeholders, bind the FTS
 	// expression that many extra times — right after the WHERE args and
@@ -589,11 +673,13 @@ func (s *Store) searchMessagesQueryImpl(
 		resultArgs = append(resultArgs, ftsExpr)
 	}
 	resultArgs = append(resultArgs, limit, offset)
-	rows, err := s.db.Query(searchSQL, resultArgs...)
+	rows, err := s.db.QueryContext(ctx, searchSQL, resultArgs...)
 	if err != nil {
-		// FTS5 not available -- fall back if we used it.
-		if ftsEnabled {
-			return s.searchMessagesQueryNoFTS(q, offset, limit)
+		// FTS5 not available -- fall back if we used it. Skip the fallback
+		// when the context was cancelled: the error is the abort we asked
+		// for, not an FTS capability problem, and re-running would ignore it.
+		if ftsEnabled && ctx.Err() == nil {
+			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
 		}
 		return nil, 0, err
 	}
@@ -618,9 +704,9 @@ func (s *Store) searchMessagesQueryImpl(
 // startup probe said FTS5 was available; passing ftsAvailable=false
 // forces the subject+snippet LIKE branch in searchMessagesQueryImpl.
 func (s *Store) searchMessagesQueryNoFTS(
-	q *search.Query, offset, limit int,
+	ctx context.Context, q *search.Query, offset, limit int,
 ) ([]APIMessage, int64, error) {
-	return s.searchMessagesQueryImpl(q, offset, limit, false)
+	return s.searchMessagesQueryImpl(ctx, q, offset, limit, false)
 }
 
 // escapeLike escapes SQL LIKE special characters (%, _) so they are
@@ -651,10 +737,12 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 	searchQuery := fmt.Sprintf(`
 		SELECT
 			m.id,
+			COALESCE(m.source_message_id, '') as source_message_id,
 			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
 			COALESCE(m.subject, '') as subject,
 			COALESCE(m.message_type, '') as message_type,
-			%s as from_email,
+			%s,
 			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
 			COALESCE(m.snippet, '') as snippet,
 			m.has_attachments,
@@ -666,11 +754,12 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 			ORDER BY mr2.id LIMIT 1
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE %s
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantDisplaySQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
 
 	rows, err := s.db.Query(searchQuery, likePattern, likePattern, limit, offset)
 	if err != nil {
@@ -734,10 +823,11 @@ func (n *nullableTimestamp) Scan(src any) error {
 	}
 }
 
-// scanMessageRows scans the standard 9-column message row set
-// (id, conversation_id, subject, message_type, from_email, sent_at,
-// snippet, has_attachments, size_estimate). All SELECT statements that
-// feed this scanner must produce the same column order.
+// scanMessageRows scans the standard message row set
+// (id, source_message_id, conversation_id, source_conversation_id, subject,
+// message_type, from_display, from_email, from_name, from_phone, sent_at,
+// snippet, has_attachments, size_estimate). All SELECT statements that feed
+// this scanner must produce the same column order.
 // Timestamps go through nullableTimestamp because the sent_at column
 // is a COALESCE(m.sent_at, m.received_at, m.internal_date) computed
 // expression with no declared datetime type, which on SQLite can come
@@ -749,7 +839,22 @@ func scanMessageRows(rows *loggedRows) ([]APIMessage, []int64, error) {
 	for rows.Next() {
 		var m APIMessage
 		var sentAt nullableTimestamp
-		err := rows.Scan(&m.ID, &m.ConversationID, &m.Subject, &m.MessageType, &m.From, &sentAt, &m.Snippet, &m.HasAttachments, &m.SizeEstimate)
+		err := rows.Scan(
+			&m.ID,
+			&m.SourceMessageID,
+			&m.ConversationID,
+			&m.SourceConversationID,
+			&m.Subject,
+			&m.MessageType,
+			&m.From,
+			&m.FromEmail,
+			&m.FromName,
+			&m.FromPhone,
+			&sentAt,
+			&m.Snippet,
+			&m.HasAttachments,
+			&m.SizeEstimate,
+		)
 		if err != nil {
 			return nil, nil, err
 		}

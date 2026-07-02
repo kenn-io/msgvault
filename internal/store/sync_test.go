@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -14,8 +14,8 @@ import (
 // TestScanSource_NullLastSyncAt_Valid verifies that a new source with NULL
 // last_sync_at is handled correctly (Valid=false).
 func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a fresh source (should have NULL last_sync_at)
@@ -35,7 +35,7 @@ func TestScanSource_NullLastSyncAt_Valid(t *testing.T) {
 // the go-sqlite3 driver normalizes to zero time (from invalid input).
 // The driver converts unparseable DATETIME values to "0001-01-01T00:00:00Z".
 func TestScanSyncRun_ZeroTime(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	f := storetest.New(t)
 
@@ -55,13 +55,13 @@ func TestScanSyncRun_ZeroTime(t *testing.T) {
 	require.NotNil(run, "expected sync run, got nil")
 
 	// The driver normalizes invalid timestamps to zero time
-	assertpkg.True(t, run.StartedAt.IsZero(), "StartedAt = %v, expected zero time", run.StartedAt)
+	assert.True(t, run.StartedAt.IsZero(), "StartedAt = %v, expected zero time", run.StartedAt)
 }
 
 // TestScanSource_ZeroTime verifies that sources with timestamps that the driver
 // normalizes to zero time are handled correctly.
 func TestScanSource_ZeroTime(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "tests go-sqlite3 driver normalization of invalid DATETIME strings to zero time; PG TIMESTAMPTZ rejects invalid strings outright")
 	st := testutil.NewTestStore(t)
 
@@ -83,14 +83,14 @@ func TestScanSource_ZeroTime(t *testing.T) {
 	require.NotNil(retrieved, "expected source, got nil")
 
 	// The driver normalizes invalid timestamps to zero time
-	assertpkg.True(t, retrieved.CreatedAt.IsZero(), "CreatedAt = %v, expected zero time", retrieved.CreatedAt)
+	assert.True(t, retrieved.CreatedAt.IsZero(), "CreatedAt = %v, expected zero time", retrieved.CreatedAt)
 }
 
 // TestParseDBTime_MultipleFormats verifies that the timestamp parser accepts
 // both SQLite datetime('now') format and RFC3339 format from go-sqlite3.
 func TestParseDBTime_MultipleFormats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	// Start a sync (uses datetime('now') which go-sqlite3 normalizes to RFC3339)
@@ -110,8 +110,8 @@ func TestParseDBTime_MultipleFormats(t *testing.T) {
 }
 
 func TestStore_GetLatestSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	_, err := f.Store.GetLatestSync(f.Source.ID)
@@ -130,8 +130,8 @@ func TestStore_GetLatestSync(t *testing.T) {
 }
 
 func TestStore_SyncRunItems(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -172,8 +172,8 @@ func TestStore_SyncRunItems(t *testing.T) {
 }
 
 func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	syncID := f.StartSync()
@@ -197,8 +197,8 @@ func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {
 // TestListSources_ParsesTimestamps verifies that ListSources correctly parses
 // timestamps for all returned sources.
 func TestListSources_ParsesTimestamps(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a few sources
@@ -229,17 +229,17 @@ func TestScanSource_UnrecognizedFormat(t *testing.T) {
 
 	// Verify that parseDBTime rejects unrecognized formats
 	_, err := store.ParseDBTime(badTimestamp)
-	requirepkg.Error(t, err, "expected error for unrecognized timestamp format")
+	require.Error(t, err, "expected error for unrecognized timestamp format")
 
 	// Error should include the bad value for debugging
-	assertpkg.ErrorContains(t, err, badTimestamp, "error should include the bad value")
+	assert.ErrorContains(t, err, badTimestamp, "error should include the bad value")
 }
 
 // TestScanSource_NullRequiredTimestamp verifies that parseRequiredTime returns
 // an error when a required timestamp field (created_at/updated_at) is NULL.
 func TestScanSource_NullRequiredTimestamp(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create a source
@@ -260,8 +260,8 @@ func TestScanSource_NullRequiredTimestamp(t *testing.T) {
 }
 
 func TestStore_HasAnyActiveSync(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	running, err := f.Store.HasAnyActiveSync()

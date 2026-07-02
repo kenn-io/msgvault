@@ -215,9 +215,6 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadMessages()
 
 	case "d", "D": // Stage for deletion (selection or current row)
-		if m.isRemote {
-			return m.showFlash("Deletion not available in remote mode")
-		}
 		if !m.hasSelection() && len(m.rows) > 0 && m.cursor < len(m.rows) {
 			// No selection - select current row first
 			m.selection.aggregateKeys[m.rows[m.cursor].Key] = true
@@ -391,9 +388,6 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearAllSelections()
 
 	case "d", "D": // Stage for deletion (selection or current row)
-		if m.isRemote {
-			return m.showFlash("Deletion not available in remote mode")
-		}
 		if !m.hasSelection() && len(m.messages) > 0 && m.cursor < len(m.messages) {
 			// No selection - select current row first
 			m.selection.messageIDs[m.messages[m.cursor].ID] = true
@@ -795,9 +789,6 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Export attachments
 	case "e":
-		if m.isRemote {
-			return m.showFlash("Export not available in remote mode")
-		}
 		if m.messageDetail != nil && len(m.messageDetail.Attachments) > 0 {
 			m.modal = modalExportAttachments
 			m.modalCursor = 0

@@ -9,7 +9,7 @@ description: Common questions about msgvault, Gmail API safety, and what the too
 
 <p class="faq-question">Is it safe to use with AI agents (MCP, Claude, etc.)?</p>
 
-For normal use, yes. The MCP server exposes read, search, and deletion-staging operations (no sync, no sending, no direct deletion). An AI agent operating through the MCP server can read and search your local archive, and can stage messages for deletion by creating a local manifest file. Staged deletions are not executed until you explicitly run `msgvault delete-staged` from the CLI.
+For normal use, yes. The MCP server exposes read, search, and deletion-staging operations (no sync, no sending, no direct deletion). An AI agent operating through the MCP server can read and search the selected msgvault archive, and can stage messages for deletion by asking the selected daemon to save a manifest. Staged deletions are not executed until you explicitly run `msgvault delete-staged` from the CLI.
 
 However, you should be aware of prompt injection risks. If an adversary can influence the prompts your LLM processes (through malicious email content, for example), the agent could be manipulated into reading sensitive messages such as password reset links or two-factor codes. In a worst case scenario, this could allow an attacker to compromise accounts by combining prompt injection with the ability to read your inbox.
 
@@ -21,7 +21,7 @@ The MCP server's lack of sync capability offers some protection here, since an a
 
 <p class="faq-question">Where is my email data stored?</p>
 
-Everything stays on your local machine. msgvault stores messages in a SQLite database and Parquet analytics files inside your `MSGVAULT_HOME` directory (defaults to `~/.msgvault`). No data is sent to any remote server. See [Data Storage](/architecture/storage/) for details.
+By default, everything stays on your local machine. msgvault stores messages in a SQLite database and Parquet analytics files inside your `MSGVAULT_HOME` directory (defaults to `~/.msgvault`). If you configure a remote deployment, that archive lives on your own server. See [Data Storage](/architecture/storage/) for details.
 
 <p class="faq-question">Can I use msgvault with non-Gmail accounts?</p>
 

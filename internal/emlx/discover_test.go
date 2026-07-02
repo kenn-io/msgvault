@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testMailboxGUID is the synthetic mailbox GUID used by the V10 fixtures.
@@ -17,11 +17,11 @@ const testMailboxGUID = "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 func mkMailbox(t *testing.T, base string, emlxFiles ...string) {
 	t.Helper()
 	msgDir := filepath.Join(base, "Messages")
-	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
+	require.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
 	for _, name := range emlxFiles {
 		data := "10\nFrom: x\r\n\r\n"
 		path := filepath.Join(msgDir, name)
-		requirepkg.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
+		require.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
 	}
 }
 
@@ -32,16 +32,16 @@ func mkV10Mailbox(
 ) {
 	t.Helper()
 	msgDir := filepath.Join(base, testMailboxGUID, "Data", "Messages")
-	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
+	require.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir %q", msgDir)
 	for _, name := range emlxFiles {
 		data := "10\nFrom: x\r\n\r\n"
 		path := filepath.Join(msgDir, name)
-		requirepkg.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
+		require.NoError(t, os.WriteFile(path, []byte(data), 0600), "write %q", path)
 	}
 }
 
 func TestDiscoverMailboxes_SingleMailbox(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "INBOX.mbox")
 	mkMailbox(t, mboxDir, "1.emlx", "2.emlx")
@@ -55,8 +55,8 @@ func TestDiscoverMailboxes_SingleMailbox(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_RecursiveWalk(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	mail := filepath.Join(root, "Mail")
 
@@ -96,15 +96,15 @@ func TestDiscoverMailboxes_EmptyMailbox(t *testing.T) {
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Empty.mbox")
 	// Create Messages/ but no .emlx files.
-	requirepkg.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
+	require.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
 
 	mailboxes, err := DiscoverMailboxes(root)
-	requirepkg.NoError(t, err, "DiscoverMailboxes")
-	requirepkg.Empty(t, mailboxes)
+	require.NoError(t, err, "DiscoverMailboxes")
+	require.Empty(t, mailboxes)
 }
 
 func TestDiscoverMailboxes_PartialEmlxSkipped(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
 	mkMailbox(t, mboxDir, "1.emlx", "2.partial.emlx")
@@ -119,15 +119,15 @@ func TestDiscoverMailboxes_PartialEmlxSkipped(t *testing.T) {
 func TestDiscoverMailboxes_NotADirectory(t *testing.T) {
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "notdir")
-	requirepkg.NoError(t, os.WriteFile(file, []byte("x"), 0600), "write")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0600), "write")
 
 	_, err := DiscoverMailboxes(file)
-	requirepkg.Error(t, err, "expected error for non-directory")
+	require.Error(t, err, "expected error for non-directory")
 }
 
 func TestDiscoverMailboxes_NestedMbox(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	mail := filepath.Join(root, "Mail")
 
@@ -193,12 +193,12 @@ func TestLabelFromPath(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := LabelFromPath(tc.root, tc.path)
-		assertpkg.Equal(t, tc.want, got, "LabelFromPath(%q, %q)", tc.root, tc.path)
+		assert.Equal(t, tc.want, got, "LabelFromPath(%q, %q)", tc.root, tc.path)
 	}
 }
 
 func TestDiscoverMailboxes_FilesSorted(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
 	mkMailbox(t, mboxDir, "300.emlx", "10.emlx", "2.emlx", "1.emlx")
@@ -216,8 +216,8 @@ func TestDiscoverMailboxes_FilesSorted(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_V10Layout(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	v10 := filepath.Join(root, "V10")
 	acctGUID := "13C9A646-EE0A-4698-B5A2-E07FFBDDEED3"
@@ -269,8 +269,8 @@ func TestDiscoverMailboxes_V10Layout(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
@@ -291,7 +291,7 @@ func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
 	mkV10Mailbox(t, mboxDir,
@@ -302,11 +302,11 @@ func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
 	require.NoError(err, "DiscoverMailboxes")
 	require.Len(mailboxes, 1)
 	require.Len(mailboxes[0].Files, 1)
-	assertpkg.Equal(t, "1.emlx", filepath.Base(mailboxes[0].Files[0]))
+	assert.Equal(t, "1.emlx", filepath.Base(mailboxes[0].Files[0]))
 }
 
 func TestDiscoverMailboxes_MixedLegacyAndV10(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
@@ -323,7 +323,7 @@ func TestDiscoverMailboxes_MixedLegacyAndV10(t *testing.T) {
 	// MsgDir should point to the V10 path, not the empty legacy one.
 	wantSuffix := filepath.Join(guid, "Data", "Messages")
 	rel, _ := filepath.Rel(mboxDir, mailboxes[0].MsgDir)
-	assertpkg.Equal(t, wantSuffix, rel, "MsgDir relative")
+	assert.Equal(t, wantSuffix, rel, "MsgDir relative")
 }
 
 // mkV10PartitionedMailbox creates a V10 mailbox with .emlx files in
@@ -341,9 +341,9 @@ func mkV10PartitionedMailbox(t *testing.T, base, guid string) {
 
 	writeEmlxFile := func(dir, name string) {
 		t.Helper()
-		requirepkg.NoError(t, os.MkdirAll(dir, 0700), "mkdir %q", dir)
+		require.NoError(t, os.MkdirAll(dir, 0700), "mkdir %q", dir)
 		path := filepath.Join(dir, name)
-		requirepkg.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
+		require.NoError(t, os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
 	}
 
 	writeEmlxFile(filepath.Join(dataDir, "Messages"), "1.emlx")
@@ -352,8 +352,8 @@ func mkV10PartitionedMailbox(t *testing.T, base, guid string) {
 }
 
 func TestDiscoverMailboxes_V10Partitioned(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
@@ -387,7 +387,7 @@ func TestDiscoverMailboxes_V10Partitioned(t *testing.T) {
 }
 
 func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "INBOX.mbox")
@@ -414,7 +414,7 @@ func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
 
 	for _, path := range mb.Files {
 		_, err := os.Stat(path)
-		assertpkg.NoError(t, err, "stat %q", path)
+		assert.NoError(t, err, "stat %q", path)
 	}
 }
 
@@ -422,7 +422,7 @@ func TestDiscoverMailboxes_V10PartitionedOnly(t *testing.T) {
 // Data/Messages/ does not exist at all — only numeric partition dirs.
 // This matches real Apple Mail behavior for large mailboxes.
 func TestDiscoverMailboxes_V10NoTopLevelMessages(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
 	mboxDir := filepath.Join(root, "Sent Messages.mbox")
@@ -453,7 +453,7 @@ func TestDiscoverMailboxes_V10NoTopLevelMessages(t *testing.T) {
 
 	for _, path := range mb.Files {
 		_, err := os.Stat(path)
-		assertpkg.NoError(t, err, "stat %q", path)
+		assert.NoError(t, err, "stat %q", path)
 	}
 }
 
@@ -472,6 +472,6 @@ func TestIsUUID(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := IsUUID(tc.input)
-		assertpkg.Equal(t, tc.want, got, "IsUUID(%q)", tc.input)
+		assert.Equal(t, tc.want, got, "IsUUID(%q)", tc.input)
 	}
 }

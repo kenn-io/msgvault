@@ -59,9 +59,13 @@ Examples:
 
   # Legacy two-arg form (deprecated, still works)
   msgvault import-emlx me@gmail.com ~/Library/Mail/V10/SOME-GUID
-`,
+	`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+
 		// Use a local copy so we don't mutate the package-global
 		// flag variable (which persists across Execute() calls).
 		identifier := importEmlxIdentifier
@@ -146,19 +150,12 @@ Examples:
 			}
 		}()
 
-		dbPath := cfg.DatabaseDSN()
-		st, err := store.Open(dbPath)
+		st, cleanup, err := openWritableStoreAndInitForIngest()
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return err
 		}
-		defer func() { _ = st.Close() }()
-
-		if err := st.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrationsForIngest(st); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
+		defer cleanup()
+		dbPath := cfg.DatabaseDSN()
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importEmlxNoAttachments {

@@ -86,6 +86,9 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 // rewrites them to $N. This guards the serve/MCP PG path too, since both
 // route through Engine.BuildFilter -> the package-level BuildFilter.
 func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	db := openFilterPGTestDB(t)
 	ctx := context.Background()
 	rebind := (&store.PostgreSQLDialect{}).Rebind
@@ -93,14 +96,15 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	// passes-with: addresses and labels resolve via substring LIKE on pgx.
 	q := search.Parse(`from:example.com to:alice label:work`)
 	f, err := BuildFilter(ctx, db, rebind, q)
-	require.NoError(t, err, "BuildFilter must succeed with the dialect rebind on pgx")
+	require.NoError(
+		err, "BuildFilter must succeed with the dialect rebind on pgx")
 
-	require.Len(t, f.SenderGroups, 1, "one from: token -> one group")
-	assert.Len(t, f.SenderGroups[0], 3, "from:example.com matches alice/bob/dave.work")
-	require.Len(t, f.ToGroups, 1, "one to: token -> one group")
-	assert.Len(t, f.ToGroups[0], 1, "to:alice matches exactly one participant")
-	require.Len(t, f.LabelGroups, 1, "one label: token -> one group")
-	assert.Len(t, f.LabelGroups[0], 1, "label:work matches Work case-insensitively")
+	require.Len(f.SenderGroups, 1, "one from: token -> one group")
+	assert.Len(f.SenderGroups[0], 3, "from:example.com matches alice/bob/dave.work")
+	require.Len(f.ToGroups, 1, "one to: token -> one group")
+	assert.Len(f.ToGroups[0], 1, "to:alice matches exactly one participant")
+	require.Len(f.LabelGroups, 1, "one label: token -> one group")
+	assert.Len(f.LabelGroups[0], 1, "label:work matches Work case-insensitively")
 
 	// fails-without: the bare ? placeholders error on pgx, proving the
 	// rebind is load-bearing. pgx parses `LIKE ? ESCAPE '\'` as an
@@ -109,7 +113,7 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	// Postgres error (carries a SQLSTATE) the rebind eliminates.
 	identity := func(s string) string { return s }
 	_, err = BuildFilter(ctx, db, identity, search.Parse(`from:alice`))
-	require.Error(t, err, "un-rebound ? placeholders must fail on pgx")
-	assert.Contains(t, err.Error(), "SQLSTATE",
+	require.Error(err, "un-rebound ? placeholders must fail on pgx")
+	assert.Contains(err.Error(), "SQLSTATE",
 		"expected a pgx server error for bare ? placeholders; got %v", err)
 }

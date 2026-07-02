@@ -8,14 +8,14 @@ import (
 	"runtime"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -39,13 +39,13 @@ func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
 
 	// Ensure nothing was written.
 	_, statErr := os.Stat(attachmentsDir)
-	assertpkg.Error(t, statErr,
+	assert.Error(t, statErr,
 		"attachments dir should not have been created for invalid content hash")
 }
 
 func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -91,7 +91,7 @@ func TestStoreAttachment_ComputesContentHashWhenMissing(t *testing.T) {
 }
 
 func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlink support")
 	}
@@ -141,5 +141,5 @@ func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
 	var count int
 	err = st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, msgID).Scan(&count)
 	require.NoError(err, "count attachments")
-	assertpkg.Equal(t, 0, count)
+	assert.Equal(t, 0, count)
 }

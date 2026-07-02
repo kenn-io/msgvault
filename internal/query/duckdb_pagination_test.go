@@ -6,7 +6,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDuckDBPaginationStability_IdenticalSortKey is the C3 regression for the
@@ -61,7 +61,7 @@ func TestDuckDBPaginationStability_IdenticalSortKey(t *testing.T) {
 				},
 				Pagination: Pagination{Limit: 1, Offset: offset},
 			})
-			requirepkg.NoError(t, err, "ListMessages offset=%d", offset)
+			require.NoError(t, err, "ListMessages offset=%d", offset)
 			if len(msgs) == 0 {
 				return 0, false
 			}
@@ -77,7 +77,7 @@ func TestDuckDBPaginationStability_IdenticalSortKey(t *testing.T) {
 				SortDirection: SortDesc,
 				Pagination:    Pagination{Limit: 1, Offset: offset},
 			})
-			requirepkg.NoError(t, err, "ListConversations offset=%d", offset)
+			require.NoError(t, err, "ListConversations offset=%d", offset)
 			if len(rows) == 0 {
 				return 0, false
 			}
@@ -92,7 +92,7 @@ func pageDuckOneByOne(t *testing.T, n int, fetch func(offset int) (int64, bool))
 	seen := make([]int64, 0, n)
 	for offset := range n {
 		id, ok := fetch(offset)
-		requirepkg.Truef(t, ok, "page at offset=%d returned no row (pagination skipped a row)", offset)
+		require.Truef(t, ok, "page at offset=%d returned no row (pagination skipped a row)", offset)
 		seen = append(seen, id)
 	}
 	return seen
@@ -103,12 +103,12 @@ func assertDuckPagesDisjointComplete(t *testing.T, want map[int64]struct{}, got 
 	gotSet := make(map[int64]struct{}, len(got))
 	for _, id := range got {
 		_, dup := gotSet[id]
-		requirepkg.Falsef(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
+		require.Falsef(t, dup, "id %d appeared on more than one page (unstable pagination)", id)
 		gotSet[id] = struct{}{}
 	}
-	requirepkg.Len(t, got, len(want), "paged ids should cover every row exactly once")
+	require.Len(t, got, len(want), "paged ids should cover every row exactly once")
 	for id := range want {
 		_, ok := gotSet[id]
-		requirepkg.Truef(t, ok, "expected id %d missing from paged results (row skipped)", id)
+		require.Truef(t, ok, "expected id %d missing from paged results (row skipped)", id)
 	}
 }

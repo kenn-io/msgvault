@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -31,7 +31,7 @@ func TestEscapeLike(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertpkg.Equal(t, tt.want, escapeLike(tt.input), "escapeLike(%q)", tt.input)
+			assert.Equal(t, tt.want, escapeLike(tt.input), "escapeLike(%q)", tt.input)
 		})
 	}
 }
@@ -41,8 +41,8 @@ func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	st, err := Open(dbPath)
-	requirepkg.NoError(t, err, "Open")
-	requirepkg.NoError(t, st.InitSchema(), "InitSchema")
+	require.NoError(t, err, "Open")
+	require.NoError(t, st.InitSchema(), "InitSchema")
 	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
@@ -60,7 +60,7 @@ func seedMessage(t *testing.T, st *Store, sourceID, convID int64, sourceMessageI
 		Snippet:         sql.NullString{String: snippet, Valid: true},
 		SizeEstimate:    100,
 	})
-	requirepkg.NoError(t, err, "UpsertMessage(%q)", sourceMessageID)
+	require.NoError(t, err, "UpsertMessage(%q)", sourceMessageID)
 	return id
 }
 
@@ -150,7 +150,7 @@ func TestParseSQLiteTime(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseSQLiteTime(tt.input)
-			assertpkg.True(t, got.Equal(tt.want),
+			assert.True(t, got.Equal(tt.want),
 				"parseSQLiteTime(%q) = %v, want %v", tt.input, got, tt.want)
 		})
 	}
@@ -183,21 +183,21 @@ func TestNullableTimestampScan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var n nullableTimestamp
-			requirepkg.NoError(t, n.Scan(tt.src), "Scan(%T %v)", tt.src, tt.src)
-			assertpkg.Equal(t, tt.wantValid, n.Valid, "Valid")
-			assertpkg.True(t, n.Time.Equal(tt.wantTime), "Time = %v, want %v", n.Time, tt.wantTime)
+			require.NoError(t, n.Scan(tt.src), "Scan(%T %v)", tt.src, tt.src)
+			assert.Equal(t, tt.wantValid, n.Valid, "Valid")
+			assert.True(t, n.Time.Equal(tt.wantTime), "Time = %v, want %v", n.Time, tt.wantTime)
 		})
 	}
 
 	t.Run("unsupported type errors", func(t *testing.T) {
 		var n nullableTimestamp
-		requirepkg.Error(t, n.Scan(42), "Scan(int): expected error")
+		require.Error(t, n.Scan(42), "Scan(int): expected error")
 	})
 }
 
 func TestGetMessageCcBcc(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openTestStore(t)
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
@@ -258,8 +258,8 @@ func TestGetMessageCcBcc(t *testing.T) {
 }
 
 func TestListMessagesCcBcc(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openTestStore(t)
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
@@ -316,8 +316,8 @@ func TestListMessagesCcBcc(t *testing.T) {
 // these rendered with blank From/To because the SELECT only read
 // p.email_address.
 func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openTestStore(t)
 
 	source, err := st.GetOrCreateSource("synctech-sms", "+15550000001")
@@ -434,7 +434,7 @@ func TestListAndSearchSurfacePhoneAndIdentifierParticipants(t *testing.T) {
 func sourceMessageIDForTest(t *testing.T, st *Store, id int64) string {
 	t.Helper()
 	var sourceMsgID string
-	requirepkg.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), id).Scan(&sourceMsgID),
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), id).Scan(&sourceMsgID),
 		"lookup source_message_id")
 	return sourceMsgID
 }
@@ -444,9 +444,9 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 
 	// Create a source and conversation
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
-	requirepkg.NoError(t, err, "GetOrCreateSource")
+	require.NoError(t, err, "GetOrCreateSource")
 	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
-	requirepkg.NoError(t, err, "EnsureConversation")
+	require.NoError(t, err, "EnsureConversation")
 
 	// Seed messages: one with literal %, one with literal _, one plain,
 	// plus confounding rows that would match if wildcards weren't escaped.
@@ -491,9 +491,9 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messages, total, err := st.searchMessagesLike(tt.query, 0, 100)
-			requirepkg.NoError(t, err, "searchMessagesLike(%q)", tt.query)
-			assertpkg.Equal(t, tt.wantCount, total, "total")
-			assertpkg.Len(t, messages, tt.wantLen, "len(messages)")
+			require.NoError(t, err, "searchMessagesLike(%q)", tt.query)
+			assert.Equal(t, tt.wantCount, total, "total")
+			assert.Len(t, messages, tt.wantLen, "len(messages)")
 		})
 	}
 }
@@ -508,8 +508,8 @@ func TestSearchMessagesLikeLiteralWildcards(t *testing.T) {
 // is exercised here on SQLite; the cross-backend store-API paths are covered by
 // TestStoreAPI_PaginationStability_IdenticalSentAt.
 func TestSearchMessagesLikePaginationStability(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := openTestStore(t)
 
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")

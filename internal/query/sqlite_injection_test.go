@@ -3,8 +3,8 @@ package query
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSQLInjection_InvalidViewType tests that invalid ViewType values are rejected.
@@ -18,7 +18,7 @@ func TestSQLInjection_InvalidViewType(t *testing.T) {
 	invalidViewType := ViewType(999)
 
 	_, err := env.Engine.Aggregate(env.Ctx, invalidViewType, DefaultAggregateOptions())
-	assertpkg.ErrorContains(t, err, "unsupported view type")
+	assert.ErrorContains(t, err, "unsupported view type")
 }
 
 // TestSQLInjection_InvalidSortField tests that invalid SortField values are handled safely.
@@ -34,7 +34,7 @@ func TestSQLInjection_InvalidSortField(t *testing.T) {
 	// because it allows arbitrary sort field values without explicit validation.
 	// After the fix, this should return an error.
 	_, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.ErrorContains(t, err, "unsupported sort field")
+	require.ErrorContains(t, err, "unsupported sort field")
 }
 
 // TestSQLInjection_InvalidMessageSortField tests that invalid MessageSortField values
@@ -53,7 +53,7 @@ func TestSQLInjection_InvalidMessageSortField(t *testing.T) {
 	// The current implementation falls through to default, which is unsafe.
 	// After the fix, this should return an error.
 	_, err := env.Engine.ListMessages(env.Ctx, filter)
-	requirepkg.ErrorContains(t, err, "unsupported message sort field")
+	require.ErrorContains(t, err, "unsupported message sort field")
 }
 
 // TestSQLInjection_InvalidTimeGranularity tests that invalid TimeGranularity values
@@ -66,7 +66,7 @@ func TestSQLInjection_InvalidTimeGranularity(t *testing.T) {
 
 	// When aggregating by time with an invalid granularity, should return error
 	_, err := env.Engine.Aggregate(env.Ctx, ViewTime, opts)
-	requirepkg.ErrorContains(t, err, "unsupported time granularity")
+	require.ErrorContains(t, err, "unsupported time granularity")
 }
 
 // TestSQLInjection_FilterStringsAreSafelyParameterized verifies that filter
@@ -90,28 +90,28 @@ func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
 			filter := MessageFilter{Sender: payload}
 			// Should not panic or cause SQL error - just return empty results
 			msgs, err := env.Engine.ListMessages(env.Ctx, filter)
-			requirepkg.NoError(t, err, "unexpected error with payload %q", payload)
+			require.NoError(t, err, "unexpected error with payload %q", payload)
 			// Should return 0 results (no match), not all messages
-			assertpkg.Empty(t, msgs, "expected 0 results for SQL injection payload")
+			assert.Empty(t, msgs, "expected 0 results for SQL injection payload")
 		})
 
 		t.Run("Label_"+payload[:min(20, len(payload))], func(t *testing.T) {
 			filter := MessageFilter{Label: payload}
 			msgs, err := env.Engine.ListMessages(env.Ctx, filter)
-			requirepkg.NoError(t, err, "unexpected error with payload %q", payload)
-			assertpkg.Empty(t, msgs, "expected 0 results for SQL injection payload")
+			require.NoError(t, err, "unexpected error with payload %q", payload)
+			assert.Empty(t, msgs, "expected 0 results for SQL injection payload")
 		})
 	}
 
 	// Verify the database is still intact after all injection attempts
 	var count int
 	err := env.DB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
-	requirepkg.NoError(t, err, "failed to count messages after injection tests")
-	assertpkg.Equal(t, 5, count, "expected 5 messages in database after injection tests (standard seed data)")
+	require.NoError(t, err, "failed to count messages after injection tests")
+	assert.Equal(t, 5, count, "expected 5 messages in database after injection tests (standard seed data)")
 }
 
 func TestListMessagesFiltersByMessageType(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 	_, err := env.DB.Exec(`
 		INSERT INTO participants (id, phone_number, display_name) VALUES (99, '+15551234567', 'SMS Sender');

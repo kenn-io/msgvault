@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,12 +20,16 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
 	_ "github.com/mattn/go-sqlite3"    // SQLite driver (database/sql)
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/cacheops"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 var fullRebuild bool
+
+const buildCacheDaemonSubprocessEnv = "MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID"
 
 // buildCacheMu serializes concurrent buildCache calls. The scheduler may
 // trigger syncs for multiple accounts in parallel, each of which calls
@@ -93,52 +99,99 @@ The cache files are stored in ~/.msgvault/analytics/:
 By default, this performs an incremental update (only adding new messages).
 Use --full-rebuild to recreate all cache files from scratch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dbPath := cfg.DatabaseDSN()
-		analyticsDir := cfg.AnalyticsDir()
-
-		// The Parquet cache is a SQLite → DuckDB ETL; feeding a
-		// postgres:// DSN to the SQLite driver inside buildCache
-		// fails immediately with a confusing driver error.
-		if store.IsPostgresURL(dbPath) {
-			return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+		if isDaemonBuildCacheChild() {
+			return runBuildCacheLocal(fullRebuild)
 		}
-
-		// Check database exists
-		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-			return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)
-		}
-
-		// Ensure schema is up to date before building cache.
-		// Legacy databases may be missing columns (e.g. attachment_count,
-		// sender_id, message_type, phone_number) that the export queries
-		// reference. Running migrations first adds them.
-		s, err := store.Open(dbPath)
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-		if err := s.InitSchema(); err != nil {
-			_ = s.Close()
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			_ = s.Close()
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-		_ = s.Close()
-
-		result, err := buildCache(dbPath, analyticsDir, fullRebuild)
-		if err != nil {
-			return err
-		}
-
-		if result.Skipped {
-			fmt.Println("No new messages to export.")
-		} else {
-			fmt.Printf("Exported %d messages to %s\n", result.ExportedCount, result.OutputDir)
-		}
-		fmt.Println("\nCache build complete! The TUI will now use fast cached queries.")
-		return nil
+		return runBuildCacheHTTP(cmd, fullRebuild)
 	},
+}
+
+func runBuildCacheHTTP(cmd *cobra.Command, fullRebuild bool) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	return st.BuildCLICache(cmd.Context(), fullRebuild, func(stream, data string) error {
+		switch stream {
+		case cliStreamStdout:
+			_, err := fmt.Fprint(cmd.OutOrStdout(), data)
+			if err != nil {
+				return fmt.Errorf("write build-cache stdout: %w", err)
+			}
+		case cliStreamStderr:
+			_, err := fmt.Fprint(cmd.ErrOrStderr(), data)
+			if err != nil {
+				return fmt.Errorf("write build-cache stderr: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func runBuildCacheLocal(fullRebuild bool) error {
+	dbPath := cfg.DatabaseDSN()
+	analyticsDir := cfg.AnalyticsDir()
+
+	// The Parquet cache is a SQLite -> DuckDB ETL; feeding a postgres:// DSN to
+	// the SQLite driver inside buildCache fails immediately with a confusing
+	// driver error.
+	if store.IsPostgresURL(dbPath) {
+		return errors.New("build-cache is SQLite-only; PostgreSQL backends do not use the Parquet analytics cache")
+	}
+
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return fmt.Errorf("database not found: %s\nRun 'msgvault init-db' first", dbPath)
+	}
+
+	release, err := acquireBuildCacheWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	// Ensure schema is up to date before building cache.
+	// Legacy databases may be missing columns (e.g. attachment_count,
+	// sender_id, message_type, phone_number) that the export queries
+	// reference. Running migrations first adds them.
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	if err := s.InitSchema(); err != nil {
+		_ = s.Close()
+		return fmt.Errorf("init schema: %w", err)
+	}
+	if err := runStartupMigrations(s); err != nil {
+		_ = s.Close()
+		return fmt.Errorf("startup migrations: %w", err)
+	}
+	_ = s.Close()
+
+	result, err := buildCache(dbPath, analyticsDir, fullRebuild)
+	if err != nil {
+		return err
+	}
+
+	if result.Skipped {
+		fmt.Println("No new messages to export.")
+	} else {
+		fmt.Printf("Exported %d messages to %s\n", result.ExportedCount, result.OutputDir)
+	}
+	fmt.Println("\nCache build complete! The TUI will now use fast cached queries.")
+	return nil
+}
+
+func acquireBuildCacheWriteLock(cfg *config.Config) (func(), error) {
+	if isDaemonBuildCacheChild() {
+		return func() {}, nil
+	}
+	return acquireDirectSQLiteWriteLock(cfg)
+}
+
+func isDaemonBuildCacheChild() bool {
+	return os.Getenv(buildCacheDaemonSubprocessEnv) == strconv.Itoa(os.Getppid())
 }
 
 type buildResult struct {
@@ -590,121 +643,104 @@ var cacheStatsCmd = &cobra.Command{
 	Use:     "cache-stats",
 	Aliases: []string{"parquet-stats"}, // Backward compatibility
 	Short:   "Show statistics about the analytics cache",
-	Long:    `Display statistics about the analytics cache, including row counts and file sizes.`,
+	Long: `Display statistics about the analytics cache, including row counts and file sizes.
+
+Total messages counts the analytics-cache population: it includes messages
+deleted from their source account (the archive retains them) but excludes
+dedup-hidden rows and messages without a timestamp. This differs from the
+'stats' command, which reports active messages from the SQLite system of
+record.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		analyticsDir := cfg.AnalyticsDir()
-		messagesDir := filepath.Join(analyticsDir, tableMessages)
-
-		// Check if directory exists and contains parquet files
-		if _, err := os.Stat(messagesDir); os.IsNotExist(err) {
-			fmt.Println("No cache files found.")
-			fmt.Printf("Run 'msgvault build-cache' to create them.\n")
-			return nil
-		}
-
-		// Check for actual parquet files (directory might exist but be empty)
-		parquetFiles, err := filepath.Glob(filepath.Join(messagesDir, "**", "*.parquet"))
+		st, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("check for cache files: %w", err)
+			return err
 		}
-		// Also check one level deep (year=*/data_0.parquet pattern)
-		if len(parquetFiles) == 0 {
-			parquetFiles, _ = filepath.Glob(filepath.Join(messagesDir, "*", "*.parquet"))
-		}
-		if len(parquetFiles) == 0 {
-			fmt.Println("No cache data found (directory exists but contains no data).")
-			fmt.Printf("Run 'msgvault build-cache' to populate it.\n")
-			return nil
-		}
+		defer func() { _ = st.Close() }()
 
-		// Open DuckDB
-		db, err := sql.Open("duckdb", "")
+		stats, err := st.GetCLICacheStats(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("open duckdb: %w", err)
+			return fmt.Errorf("cache stats: %w", err)
 		}
-		defer func() { _ = db.Close() }()
-
-		// Query stats by joining Parquet files
-		escapedDir := strings.ReplaceAll(analyticsDir, "'", "''")
-		statsSQL := fmt.Sprintf(`
-		WITH msg AS (
-			SELECT * FROM read_parquet('%s/messages/**/*.parquet', hive_partitioning=true)
-		),
-		mr AS (
-			SELECT * FROM read_parquet('%s/message_recipients/*.parquet')
-		),
-		p AS (
-			SELECT * FROM read_parquet('%s/participants/*.parquet')
-		)
-		SELECT
-			COUNT(*) as total_messages,
-			COUNT(DISTINCT m.source_id) as sources,
-			(SELECT COUNT(DISTINCT p2.email_address)
-			 FROM mr mr2
-			 JOIN p p2 ON p2.id = mr2.participant_id
-			 WHERE mr2.recipient_type = 'from') as unique_senders,
-			(SELECT COUNT(DISTINCT p2.domain)
-			 FROM mr mr2
-			 JOIN p p2 ON p2.id = mr2.participant_id
-			 WHERE mr2.recipient_type = 'from') as unique_domains,
-			MIN(m.year) as min_year,
-			MAX(m.year) as max_year,
-			COALESCE(SUM(m.size_estimate), 0) as total_size
-		FROM msg m
-		`, escapedDir, escapedDir, escapedDir)
-
-		var totalMessages, sources, uniqueSenders, uniqueDomains int64
-		var minYear, maxYear sql.NullInt64
-		var totalSize int64
-
-		err = db.QueryRow(statsSQL).Scan(
-			&totalMessages,
-			&sources,
-			&uniqueSenders,
-			&uniqueDomains,
-			&minYear,
-			&maxYear,
-			&totalSize,
-		)
-		if err != nil {
-			return fmt.Errorf("query stats: %w", err)
-		}
-
-		// Get attachment stats separately
-		attachmentsDir := filepath.Join(analyticsDir, tableAttachments)
-		var attachmentSize int64
-		if _, err := os.Stat(attachmentsDir); err == nil {
-			attachSQL := fmt.Sprintf(`
-			SELECT COALESCE(SUM(size), 0) FROM read_parquet('%s/attachments/*.parquet')
-			`, escapedDir)
-			if err := db.QueryRow(attachSQL).Scan(&attachmentSize); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not read attachment stats: %v\n", err)
-			}
-		}
-
-		fmt.Println("Cache Statistics:")
-		fmt.Printf("  Total messages:    %d\n", totalMessages)
-		fmt.Printf("  Accounts:          %d\n", sources)
-		fmt.Printf("  Unique senders:    %d\n", uniqueSenders)
-		fmt.Printf("  Unique domains:    %d\n", uniqueDomains)
-		if minYear.Valid && maxYear.Valid {
-			fmt.Printf("  Year range:        %d-%d\n", minYear.Int64, maxYear.Int64)
-		}
-		fmt.Printf("  Total size:        %.1f MB\n", float64(totalSize)/1024/1024)
-		fmt.Printf("  Attachment size:   %.1f MB\n", float64(attachmentSize)/1024/1024)
-
-		// Show sync state
-		stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-		if data, err := os.ReadFile(stateFile); err == nil {
-			var state syncState
-			if json.Unmarshal(data, &state) == nil {
-				fmt.Printf("  Last sync:         %s\n", state.LastSyncAt.Format("2006-01-02 15:04:05"))
-				fmt.Printf("  Last message ID:   %d\n", state.LastMessageID)
-			}
-		}
-
-		return nil
+		return printCacheStats(cmd.OutOrStdout(), cmd.ErrOrStderr(), stats)
 	},
+}
+
+func printCacheStats(out io.Writer, errOut io.Writer, stats *cacheops.CacheStats) error {
+	if stats == nil {
+		stats = &cacheops.CacheStats{Status: cacheops.StatusNoCacheFiles}
+	}
+	for _, warning := range stats.Warnings {
+		if err := writeCacheStatsLine(errOut, "Warning: %s\n", warning); err != nil {
+			return err
+		}
+	}
+
+	switch stats.Status {
+	case cacheops.StatusNoCacheFiles:
+		if err := writeCacheStatsLine(out, "No cache files found.\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to create them.\n"); err != nil {
+			return err
+		}
+	case cacheops.StatusNoCacheData:
+		if err := writeCacheStatsLine(out, "No cache data found (directory exists but contains no data).\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "Run 'msgvault build-cache' to populate it.\n"); err != nil {
+			return err
+		}
+	case cacheops.StatusReady:
+		if err := writeCacheStatsLine(out, "Cache Statistics:\n"); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "  Total messages:    %d (includes messages deleted from source)\n", stats.TotalMessages); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "  Accounts:          %d\n", stats.Sources); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "  Unique senders:    %d\n", stats.UniqueSenders); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "  Unique domains:    %d\n", stats.UniqueDomains); err != nil {
+			return err
+		}
+		if stats.MinYear != nil && stats.MaxYear != nil {
+			if err := writeCacheStatsLine(out, "  Year range:        %d-%d\n", *stats.MinYear, *stats.MaxYear); err != nil {
+				return err
+			}
+		}
+		if err := writeCacheStatsLine(out, "  Total size:        %.1f MB\n", float64(stats.TotalSizeBytes)/1024/1024); err != nil {
+			return err
+		}
+		if err := writeCacheStatsLine(out, "  Attachment size:   %.1f MB\n", float64(stats.AttachmentSizeBytes)/1024/1024); err != nil {
+			return err
+		}
+		if stats.LastSyncAt != nil {
+			if err := writeCacheStatsLine(out, "  Last sync:         %s\n", stats.LastSyncAt.Format("2006-01-02 15:04:05")); err != nil {
+				return err
+			}
+		}
+		if stats.LastMessageID != nil {
+			if err := writeCacheStatsLine(out, "  Last message ID:   %d\n", *stats.LastMessageID); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unknown cache stats status %q", stats.Status)
+	}
+
+	return nil
+}
+
+func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	if err != nil {
+		return fmt.Errorf("write cache stats: %w", err)
+	}
+	return nil
 }
 
 // setupSQLiteSource makes SQLite tables available to DuckDB as sqlite_db.*.
@@ -909,15 +945,85 @@ func rebuildCacheAfterWrite(dbPath string) {
 // keeps the child from writing to the daemon's log file; its output is
 // captured and surfaced on failure instead.
 func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locate msgvault executable: %w", err)
-	}
-
 	// Serialize with each other so parallel per-account syncs in the
 	// daemon don't spawn concurrent cache builds racing on shared files.
 	buildCacheMu.Lock()
 	defer buildCacheMu.Unlock()
+
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	if err != nil {
+		return err
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("build-cache subprocess: %w; output: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func buildCacheSubprocessStream(
+	ctx context.Context,
+	fullRebuild bool,
+	emit func(api.CLICacheBuildEvent) error,
+) error {
+	buildCacheMu.Lock()
+	defer buildCacheMu.Unlock()
+
+	cmd, err := newBuildCacheSubprocessCommand(ctx, fullRebuild)
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("open build-cache subprocess stdout: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("open build-cache subprocess stderr: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start build-cache subprocess: %w", err)
+	}
+
+	var emitMu sync.Mutex
+	emitLocked := func(event api.CLICacheBuildEvent) error {
+		if emit == nil {
+			return nil
+		}
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		return emit(event)
+	}
+
+	streamErrCh := make(chan error, 2)
+	go func() {
+		streamErrCh <- streamBuildCachePipe(stdout, cliStreamStdout, emitLocked)
+	}()
+	go func() {
+		streamErrCh <- streamBuildCachePipe(stderr, cliStreamStderr, emitLocked)
+	}()
+
+	firstStreamErr := <-streamErrCh
+	secondStreamErr := <-streamErrCh
+	waitErr := cmd.Wait()
+	if firstStreamErr != nil {
+		return firstStreamErr
+	}
+	if secondStreamErr != nil {
+		return secondStreamErr
+	}
+	if waitErr != nil {
+		return fmt.Errorf("build-cache subprocess: %w", waitErr)
+	}
+	return nil
+}
+
+func newBuildCacheSubprocessCommand(ctx context.Context, fullRebuild bool) (*exec.Cmd, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate msgvault executable: %w", err)
+	}
 
 	args := globalConfigFlagArgs()
 	args = append(args, "--no-log-file", "build-cache")
@@ -925,15 +1031,61 @@ func buildCacheSubprocess(ctx context.Context, fullRebuild bool) error {
 		args = append(args, "--full-rebuild")
 	}
 
-	// exe is this binary (os.Executable) and args are our own fixed
-	// subcommand plus operator-controlled config flags, not untrusted input.
+	// exe is this binary (os.Executable) and args are our own fixed subcommand
+	// plus operator-controlled config flags, not untrusted input.
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("build-cache subprocess: %w; output: %s",
-			err, strings.TrimSpace(string(out)))
+	cmd.Env = buildCacheDaemonChildEnv(os.Environ(), os.Getpid())
+	return cmd, nil
+}
+
+func streamBuildCachePipe(
+	r io.Reader,
+	eventType string,
+	emit func(api.CLICacheBuildEvent) error,
+) error {
+	buf := make([]byte, 32*1024)
+	var firstErr error
+	for {
+		n, err := r.Read(buf)
+		if n > 0 && firstErr == nil {
+			if emitErr := emit(api.CLICacheBuildEvent{
+				Type: eventType,
+				Data: string(buf[:n]),
+			}); emitErr != nil {
+				firstErr = emitErr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return firstErr
+		}
+		if err != nil {
+			if firstErr != nil {
+				return firstErr
+			}
+			return fmt.Errorf("read build-cache subprocess %s: %w", eventType, err)
+		}
 	}
-	return nil
+}
+
+func buildCacheDaemonChildEnv(base []string, parentPID int) []string {
+	out := make([]string, 0, len(base)+1)
+	prefix := buildCacheDaemonSubprocessEnv + "="
+	value := prefix + strconv.Itoa(parentPID)
+	replaced := false
+	for _, entry := range base {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				out = append(out, value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, value)
+	}
+	return out
 }
 
 // globalConfigFlagArgs reconstructs the persistent flags that affect

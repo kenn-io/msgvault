@@ -19,6 +19,11 @@ import (
 // It receives the account email and should perform incremental sync + cache build.
 type SyncFunc func(ctx context.Context, email string) error
 
+type WorkTracker interface {
+	BeginWork() (func(), bool)
+	BeginWorkContext(ctx context.Context) (func(), bool)
+}
+
 // AccountStatus represents the sync status of a scheduled account.
 type AccountStatus struct {
 	Email     string    `json:"email"`
@@ -49,6 +54,7 @@ type Scheduler struct {
 	cron     *cron.Cron
 	syncFunc SyncFunc
 	logger   *slog.Logger
+	work     WorkTracker
 
 	mu        sync.RWMutex
 	jobs      map[string]cron.EntryID // email -> cron entry ID
@@ -106,6 +112,11 @@ func New(syncFunc SyncFunc) *Scheduler {
 // WithLogger sets the logger for the scheduler.
 func (s *Scheduler) WithLogger(logger *slog.Logger) *Scheduler {
 	s.logger = logger
+	return s
+}
+
+func (s *Scheduler) WithWorkTracker(tracker WorkTracker) *Scheduler {
+	s.work = tracker
 	return s
 }
 
@@ -237,6 +248,11 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		if s.isStopped() {
 			return
 		}
+		done, ok := s.beginWork()
+		if !ok {
+			return
+		}
+		defer done()
 		job.Run(s.ctx)
 	})
 	if err != nil {
@@ -319,6 +335,13 @@ func (s *Scheduler) runSync(email string) {
 		s.running[email] = false
 		s.mu.Unlock()
 	}()
+
+	done, ok := s.beginWork()
+	if !ok {
+		s.logger.Info("scheduled sync skipped: daemon is draining", "email", email)
+		return
+	}
+	defer done()
 
 	s.logger.Info("starting scheduled sync", "email", email)
 	start := time.Now()
@@ -427,6 +450,15 @@ func (s *Scheduler) TriggerJob(name string) error {
 	s.mu.Unlock()
 	defer s.wg.Done()
 
+	done, ok := s.beginWork()
+	if !ok {
+		s.mu.Lock()
+		s.genericRunning[name] = false
+		s.mu.Unlock()
+		return nil
+	}
+	defer done()
+
 	err := run(s.ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -438,6 +470,13 @@ func (s *Scheduler) TriggerJob(name string) error {
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
 	return nil
+}
+
+func (s *Scheduler) beginWork() (func(), bool) {
+	if s.work == nil {
+		return func() {}, true
+	}
+	return s.work.BeginWorkContext(s.ctx)
 }
 
 // Status returns the current status of all scheduled accounts.

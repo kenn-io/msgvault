@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMigrate_FreshAndIdempotent(t *testing.T) {
@@ -21,7 +21,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "first migrate")
+	require.NoError(t, Migrate(ctx, db, 768), "first migrate")
 
 	for _, tbl := range []string{
 		"index_generations", "embeddings", "embed_runs",
@@ -29,11 +29,11 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 	} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
-		requirepkg.NoErrorf(t, err, "table %s missing", tbl)
+		require.NoErrorf(t, err, "table %s missing", tbl)
 	}
 
 	// Idempotent: running again must not error.
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate")
+	require.NoError(t, Migrate(ctx, db, 768), "second migrate")
 }
 
 // TestMigrate_LegacyToChunked builds a pre-chunking vectors.db
@@ -51,8 +51,8 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 //     rowids;
 //   - a second Migrate is a no-op (idempotent).
 func TestMigrate_LegacyToChunked(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -200,8 +200,8 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 // embedding_ids per (gen, msg) pair and preserving every legacy
 // vec0 row through the rebuild.
 func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
@@ -296,6 +296,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 	assert.Equal(2, n, "embeddings rows")
 	require.NoError(db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT embedding_id) FROM embeddings`).Scan(&n), "count distinct eid")
+
 	assert.Equal(2, n, "distinct embedding_ids (one per (gen, msg))")
 
 	// vec0 join still resolves cleanly for the row that was actually
@@ -306,6 +307,7 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 		SELECT COUNT(*) FROM vectors_vec_d768 v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = 1 AND e.message_id = 10`).Scan(&n), "join")
+
 	assert.Equal(1, n, "join rows")
 }
 
@@ -314,12 +316,12 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 	db := openTestDB(t, filepath.Join(t.TempDir(), "v.db"))
 	t.Cleanup(func() { _ = db.Close() })
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate 768")
-	requirepkg.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
+	require.NoError(t, Migrate(ctx, db, 768), "migrate 768")
+	require.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
 	var name string
 	err := db.QueryRow(
 		`SELECT name FROM sqlite_master WHERE name = 'vectors_vec_d1024'`).Scan(&name)
-	assertpkg.NoError(t, err, "vectors_vec_d1024 not created")
+	assert.NoError(t, err, "vectors_vec_d1024 not created")
 }
 
 // TestMigrate_KeepsDeadPendingEmbeddings pins that Migrate ALONE no longer
@@ -331,6 +333,10 @@ func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
 // read-only opens too, where dropping (before the signal is honored on a later
 // writable open) would be wrong.
 func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db := openTestDB(t, path)
@@ -341,26 +347,33 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 		generation_id INTEGER NOT NULL,
 		message_id    INTEGER NOT NULL
 	)`)
-	requirepkg.NoError(t, err, "create legacy pending_embeddings")
+	require.NoError(
+		err, "create legacy pending_embeddings")
 
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "migrate")
+	require.NoError(
+		Migrate(ctx, db, 768), "migrate")
 
 	exists, err := tableExists(ctx, db, "pending_embeddings")
-	requirepkg.NoError(t, err, "probe pending_embeddings")
-	assertpkg.True(t, exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+	require.NoError(
+		err, "probe pending_embeddings")
 
-	// Idempotent: a second Migrate still leaves it (the drop is Open's job).
-	requirepkg.NoError(t, Migrate(ctx, db, 768), "second migrate (idempotent)")
+	assert.True(exists, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
+	require.NoError(
+
+		Migrate(ctx, db, 768), "second migrate (idempotent)")
+
 	exists, err = tableExists(ctx, db, "pending_embeddings")
-	requirepkg.NoError(t, err, "probe pending_embeddings after second migrate")
-	assertpkg.True(t, exists, "second Migrate still must not drop pending_embeddings")
+	require.NoError(
+		err, "probe pending_embeddings after second migrate")
+
+	assert.True(exists, "second Migrate still must not drop pending_embeddings")
 }
 
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	requirepkg.NoError(t, RegisterExtension(), "register")
+	require.NoError(t, RegisterExtension(), "register")
 	db, err := sql.Open(DriverName(), path)
-	requirepkg.NoError(t, err, "open")
+	require.NoError(t, err, "open")
 	return db
 }
 
@@ -376,8 +389,8 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 // db.Conn() calls or db.ExecContext() calls can all be served by the
 // same pooled conn, which would let a buggy hook hide undetected.
 func TestForeignKeys_PerConnection(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vectors.db")

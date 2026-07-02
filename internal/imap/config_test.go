@@ -3,8 +3,8 @@ package imap
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIdentifier(t *testing.T) {
@@ -52,7 +52,7 @@ func TestIdentifier(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.cfg.Identifier()
-			assertpkg.Equal(t, tt.want, got, "Identifier()")
+			assert.Equal(t, tt.want, got, "Identifier()")
 		})
 	}
 }
@@ -78,7 +78,7 @@ func TestAddr_IPv6(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.cfg.Addr()
-			assertpkg.Equal(t, tt.want, got, "Addr()")
+			assert.Equal(t, tt.want, got, "Addr()")
 		})
 	}
 }
@@ -92,7 +92,7 @@ func TestIdentifier_STARTTLSDistinctFromPlaintext(t *testing.T) {
 		Host: "mail.example.com", Port: 143,
 		Username: "user@example.com",
 	}
-	assertpkg.NotEqual(t, plain.Identifier(), starttls.Identifier(),
+	assert.NotEqual(t, plain.Identifier(), starttls.Identifier(),
 		"STARTTLS and plaintext should have distinct identifiers")
 }
 
@@ -116,10 +116,10 @@ func TestParseIdentifier_RoundTrip(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			id := tt.cfg.Identifier()
 			parsed, err := ParseIdentifier(id)
-			requirepkg.NoError(t, err, "ParseIdentifier(%q)", id)
+			require.NoError(t, err, "ParseIdentifier(%q)", id)
 			assert.Equal(tt.cfg.Host, parsed.Host, "Host")
 			assert.Equal(tt.cfg.Port, parsed.Port, "Port")
 			assert.Equal(tt.cfg.TLS, parsed.TLS, "TLS")
@@ -131,22 +131,22 @@ func TestParseIdentifier_RoundTrip(t *testing.T) {
 
 func TestParseIdentifier_InvalidScheme(t *testing.T) {
 	_, err := ParseIdentifier("pop3://user@host:110")
-	assertpkg.Error(t, err, "expected error for unsupported scheme")
+	assert.Error(t, err, "expected error for unsupported scheme")
 }
 
 func TestConfigAuthMethod_DefaultsToPassword(t *testing.T) {
 	// Existing JSON without auth_method should default to password
 	cfg, err := ConfigFromJSON(`{"host":"imap.example.com","port":993,"tls":true,"username":"user"}`)
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	if cfg.AuthMethod != "" {
-		assertpkg.Equal(t, AuthPassword, cfg.AuthMethod, "AuthMethod should be empty or %q", AuthPassword)
+		assert.Equal(t, AuthPassword, cfg.AuthMethod, "AuthMethod should be empty or %q", AuthPassword)
 	}
-	assertpkg.Equal(t, AuthPassword, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
+	assert.Equal(t, AuthPassword, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
 }
 
 func TestConfigAuthMethod_XOAuth2(t *testing.T) {
 	cfg, err := ConfigFromJSON(`{"host":"outlook.office365.com","port":993,"tls":true,"username":"user@company.com","auth_method":"xoauth2"}`)
-	requirepkg.NoError(t, err)
-	assertpkg.Equal(t, AuthXOAuth2, cfg.AuthMethod, "AuthMethod")
-	assertpkg.Equal(t, AuthXOAuth2, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
+	require.NoError(t, err)
+	assert.Equal(t, AuthXOAuth2, cfg.AuthMethod, "AuthMethod")
+	assert.Equal(t, AuthXOAuth2, cfg.EffectiveAuthMethod(), "EffectiveAuthMethod()")
 }

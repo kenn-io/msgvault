@@ -26,6 +26,8 @@ BUILD_TAGS := fts5 sqlite_vec
 # Omitting sqlite_vec compiles those out and the target gives false confidence.
 PG_TEST_TAGS := fts5 sqlite_vec pgvector
 
+OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
+
 # Keep golangci-lint results scoped to this git worktree. Its cache can contain
 # absolute source paths, so sharing the default user cache across worktrees can
 # replay diagnostics for deleted worktree paths.
@@ -33,7 +35,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release install clean test test-v test-pg fmt lint lint-ci testify-helper-check tidy openapi api-generate openapi-check api-check shootout run-shootout install-hooks bench docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 # Build the binary (debug)
 build:
@@ -85,6 +87,27 @@ test-pg:
 		exit 1; \
 	fi
 	go test -tags "$(PG_TEST_TAGS)" ./...
+
+# Regenerate the committed OpenAPI schemas and generated Go client.
+# api/openapi.yaml is the published OpenAPI 3.1 schema; pkg/client/openapi.yaml
+# is the OpenAPI 3.0 schema used by the Go client generator.
+api-generate:
+	@mkdir -p api pkg/client/generated
+	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi > "$$tmp"; if [ -f api/openapi.yaml ] && cmp -s "$$tmp" api/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" api/openapi.yaml; fi; trap - EXIT
+	set -e; tmp="$$(mktemp)"; trap 'rm -f "$$tmp"' EXIT; go run ./cmd/msgvault openapi --version 3.0 --format yaml > "$$tmp"; if [ -f pkg/client/openapi.yaml ] && cmp -s "$$tmp" pkg/client/openapi.yaml; then rm "$$tmp"; else mv "$$tmp" pkg/client/openapi.yaml; fi; trap - EXIT
+	cd pkg/client/generated && find . -maxdepth 1 -type f -name '*.go' ! -name 'generate.go' -delete && go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5 -config config.yaml ../openapi.yaml
+
+openapi-check: api-generate
+	@git diff --exit-code -- $(OPENAPI_ARTIFACTS) || (echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; exit 1)
+	@if [ -n "$$(git status --porcelain --untracked-files=all -- $(OPENAPI_ARTIFACTS))" ]; then \
+		git status --short --untracked-files=all -- $(OPENAPI_ARTIFACTS); \
+		echo "OpenAPI generated assets are stale; run 'make api-generate' and commit the changes." >&2; \
+		exit 1; \
+	fi
+
+api-check: openapi-check
+
+openapi: api-generate
 
 # Format code
 fmt:
@@ -193,6 +216,9 @@ help:
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
 	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
+	@echo "  openapi        - Regenerate OpenAPI specs and generated Go client"
+	@echo "  openapi-check  - Check committed OpenAPI specs and generated Go client are up to date"
+	@echo "  api-check      - Alias for openapi-check"
 	@echo "  install-hooks  - Install pre-commit hook via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""

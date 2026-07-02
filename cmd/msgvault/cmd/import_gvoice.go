@@ -38,13 +38,17 @@ Examples:
 }
 
 func runImportGvoice(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
 	takeoutDir := args[0]
 
-	s, err := openStoreAndInitForIngest()
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer cleanup()
 
 	clientOpts, err := buildGvoiceOpts()
 	if err != nil {

@@ -325,10 +325,9 @@ msgvault search "planning offsite agenda" --mode vector --explain
 msgvault search "..." --json --mode hybrid    # JSON output with scores
 ```
 
-CLI vector and hybrid modes run against the local archive. If
-`[remote].url` is configured, `msgvault search --mode vector|hybrid`
-is rejected; call the remote server's HTTP `/api/v1/search` endpoint
-directly for remote vector search.
+CLI vector and hybrid modes use the configured remote server when
+`[remote].url` is set; otherwise they use the local daemon. The selected
+server must have vector search configured.
 
 **HTTP:**
 

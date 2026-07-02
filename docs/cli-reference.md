@@ -10,7 +10,7 @@ description: Complete command reference for all msgvault commands.
 | `--config` | Path to config file (default: `~/.msgvault/config.toml`) |
 | `--home` | Home directory for all data (overrides `MSGVAULT_HOME`) |
 | `-v`, `--verbose` | Verbose output (implies `--log-level=debug`) |
-| `--local` | Force local database mode when `[remote]` is configured |
+| `--local` | Use the local daemon instead of a configured remote for archive-access commands |
 | `--log-file <path>` | Override log file path (default: `<data_dir>/logs/msgvault-YYYY-MM-DD.log`) |
 | `--log-level <level>` | Log level: `debug`, `info`, `warn`, `error` (default: `info`) |
 | `--no-log-file` | Disable file logging for this run (stderr output stays on) |
@@ -20,9 +20,25 @@ description: Complete command reference for all msgvault commands.
 
 ---
 
+## HTTP-Backed CLI Behavior
+
+Commands that access archive state keep their usual stdout/stderr output while using the same API path as remote access:
+
+1. If `[remote].url` is configured and `--local` is not passed, the CLI talks to that remote server.
+2. Otherwise, archive-access commands discover or start the local background daemon and talk to it over HTTP.
+3. `--local` selects the local daemon even when `[remote].url` is configured; it is not a request to open SQLite in the CLI process.
+
+This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
+
+The local daemon publishes its binary version and API schema version. By default, a newer compatible CLI restarts an older local daemon before issuing the request; configure `[server].daemon_auto_restart` as `newer`, `never`, or `always` to control that lifecycle behavior. Remote servers are not restarted by clients, so compatibility is negotiated from the API schema version exposed in the OpenAPI document.
+
+---
+
 ## init-db
 
-Initialize the SQLite database.
+Initialize the archive schema through the configured remote server or the local
+daemon. When no remote is configured, the CLI starts the local daemon if needed
+and the daemon owns the database initialization work.
 
 ```bash
 msgvault init-db
@@ -123,6 +139,11 @@ msgvault sync-full [email] [flags]
 | `--noresume` | Ignore checkpoints, start fresh |
 | `--verbose` | Detailed progress output |
 
+The CLI sends the sync request to the configured remote server or local daemon
+and streams the daemon's stdout/stderr back to the terminal. This keeps local
+and remote full sync behavior aligned and avoids running a separate direct
+SQLite writer beside `msgvault serve`.
+
 ---
 
 ## sync
@@ -132,6 +153,10 @@ Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP ac
 ```bash
 msgvault sync [email]
 ```
+
+The CLI sends the incremental sync request to the configured remote server or
+local daemon and streams the daemon's stdout/stderr back to the terminal. The
+daemon serializes this work with other archive mutations.
 
 ---
 
@@ -418,8 +443,11 @@ msgvault tui [flags]
 
 | Flag | Description |
 |---|---|
-| `--force-sql` | Force SQLite queries instead of Parquet |
-| `--no-cache-build` | Skip automatic cache build/update |
+| `--local` | Use the local daemon instead of the configured remote server |
+
+Analytics engine and cache behavior are daemon-managed. Configure `[analytics].engine` and `[analytics].auto_build_cache` in `config.toml` to force live SQL, require DuckDB, or disable automatic cache builds. See [Configuration: analytics](/configuration/#analytics).
+
+Deprecated in 0.17.0: the older TUI-only `--force-sql`, `--no-cache-build`, and `--no-sqlite-scanner` flags are hidden and no longer control the foreground CLI. Use `[analytics].engine = "sql"` for live SQL, `[analytics].auto_build_cache = false` to skip daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host.
 
 ---
 
@@ -495,7 +523,9 @@ msgvault export-token <email> [flags]
 
 ## verify
 
-Verify local archive integrity against Gmail.
+Verify archive integrity against Gmail through the configured remote server or
+local daemon. The command streams the daemon's stdout/stderr back to the
+terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -504,6 +534,8 @@ msgvault verify <email> [flags]
 | Flag | Description |
 |---|---|
 | `--sample N` | Messages to sample (default: 100) |
+| `--skip-db-check` | Skip SQLite integrity check |
+| `--json` | Emit machine-readable JSON summary |
 
 ---
 
@@ -525,6 +557,8 @@ msgvault stats [flags]
 ## identity
 
 Manage the confirmed "me" identifiers for each account.
+
+The identity subcommands use the configured remote server or local daemon by default. `--local` uses the local daemon even when a remote is configured.
 
 ```bash
 msgvault identity list [flags]
@@ -552,6 +586,9 @@ msgvault identity remove <account> <identifier>
 ## collection
 
 Manage named groups of accounts.
+
+The collection subcommands use the configured remote server or local daemon by
+default. `--local` uses the local daemon even when a remote is configured.
 
 ```bash
 msgvault collection create <name> --accounts <account1,account2,...>
@@ -592,14 +629,18 @@ By default, each source is deduplicated independently. `--collection` is the exp
 
 ## delete-deduped
 
-Permanently delete dedup-hidden messages from the local archive.
+Permanently delete dedup-hidden messages from the selected msgvault archive.
 
 ```bash
 msgvault delete-deduped --batch <batch-id>
 msgvault delete-deduped --all-hidden
 ```
 
-This is local-only and cannot be undone with `deduplicate --undo`.
+The CLI sends the request to the configured remote daemon, or to the
+auto-started local daemon when no remote is configured. It no longer opens the
+SQLite database directly. The delete cannot be undone with `deduplicate --undo`;
+when backups are enabled, the daemon writes the backup next to the database it
+owns before deleting.
 
 | Flag | Description |
 |---|---|
@@ -663,7 +704,8 @@ msgvault list-labels [flags]
 
 ## build-cache
 
-Build or update the Parquet analytics cache.
+Build or update the Parquet analytics cache through the configured remote server
+or the local daemon.
 
 ```bash
 msgvault build-cache [flags]
@@ -672,6 +714,15 @@ msgvault build-cache [flags]
 | Flag | Description |
 |---|---|
 | `--full-rebuild` | Discard existing cache and rebuild |
+
+The CLI sends the request over HTTP and streams the daemon's stdout/stderr back
+to the terminal. A local daemon runs the DuckDB export in an isolated child
+process so DuckDB's bundled SQLite library never opens the archive inside the
+long-lived daemon process. With `[remote].url` configured, the remote daemon
+builds its own cache; use `--local` only to target this machine's local daemon.
+
+For automatic cache rebuilds after daemon-owned syncs, configure
+`[analytics].auto_build_cache` in `config.toml`.
 
 ---
 
@@ -770,6 +821,10 @@ Show statistics about the analytics cache.
 msgvault cache-stats
 ```
 
+The command queries the configured msgvault server over HTTP. With local configuration,
+the CLI auto-starts or reuses the local daemon, and the daemon reads the analytics
+cache files. With remote configuration, the remote server reports its own cache state.
+
 ---
 
 ## query
@@ -800,7 +855,8 @@ msgvault mcp [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--force-sql` | `false` | Always use SQL retrieval instead of FTS5 |
+| `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/configuration/#analytics). |
+| `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding. The MCP server has no built-in auth; put it behind a trusted network or authenticated reverse proxy. |
 
@@ -808,15 +864,42 @@ See [MCP Server](/usage/chat/) for configuration and tool reference.
 
 ---
 
+## openapi
+
+Print the checked-in msgvault OpenAPI contract without starting the daemon or opening the archive database.
+
+```bash
+msgvault openapi [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--version` | `3.1` | OpenAPI version to emit: `3.1` or `3.0` |
+| `--format` | `yaml` | Output format: `yaml` or `json` |
+
+The OpenAPI `info.version` is the API schema version, not the msgvault binary version. Use it to reason about forward/backward compatibility when a local or remote CLI talks to a server. The running daemon also serves the same contract at `/openapi.json`; generated client artifacts are built from the OpenAPI 3.0 form for tool compatibility.
+
+---
+
 ## serve
 
-Start the web server with optional background sync scheduling.
+Start the web server with optional background sync scheduling, or manage the local background daemon used by HTTP-backed CLI commands.
 
 ```bash
 msgvault serve
+msgvault serve start
+msgvault serve status
+msgvault serve stop
+msgvault serve restart
 ```
 
-The `serve` command has no CLI flags. All configuration (port, bind address, API key, CORS, account schedules, SyncTech SMS sources, and vector embedding schedule) is read from your `config.toml`. See [Web Server](/api-server/) for endpoint documentation and [Configuration](/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/configuration/#vectorembedschedule).
+`msgvault serve` runs in the foreground and stays up until interrupted. `msgvault serve start` starts the daemon in the background, `status` reports the recorded daemon URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; incompatible running daemons are reported with a prompt to stop them first.
+
+The `serve` command and lifecycle subcommands have no CLI flags. All configuration (port, bind address, API key, CORS, account schedules, SyncTech SMS sources, background idle timeout, daemon restart policy, and vector embedding schedule) is read from your `config.toml`. See [Web Server](/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/configuration/#vectorembedschedule).
+
+Background daemons started by `serve start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon. Foreground `msgvault serve` is not idle-stopped.
+
+`[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts only older compatible daemons, `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema.
 
 ---
 
@@ -868,7 +951,8 @@ msgvault list-accounts [flags]
 
 ## update-account
 
-Update account settings.
+Update account settings through the configured remote server or local daemon.
+Use `--local` to force the local daemon when a remote is configured.
 
 ```bash
 msgvault update-account <email> [flags]
@@ -882,7 +966,7 @@ msgvault update-account <email> [flags]
 
 ## remove-account
 
-Remove an account and all its local data. Deletes messages, labels, sync state, OAuth or IMAP credentials, and attachment files unique to this account. This is irreversible and operates only on the local archive; it does not touch the remote provider.
+Remove an account and all its archived data from the selected msgvault archive. Deletes messages, labels, sync state, OAuth or IMAP credentials, and attachment files unique to this account. This is irreversible but does not touch the remote mail provider.
 
 ```bash
 msgvault remove-account <email> [flags]
@@ -954,7 +1038,9 @@ Execution requires `MSGVAULT_ENABLE_REMOTE_DELETE=1`. `--list` and `--dry-run` w
 
 ## repair-encoding
 
-Fix UTF-8 encoding issues in existing messages.
+Fix UTF-8 encoding issues in existing messages through the configured remote
+server or local daemon. The command streams the daemon's stdout/stderr back to
+the terminal, and the daemon serializes the repair with other archive mutations.
 
 ```bash
 msgvault repair-encoding
@@ -1030,7 +1116,7 @@ msgvault completion powershell | Out-String | Invoke-Expression
 
 ## logs
 
-View and tail structured log files. File logging must be enabled first (see [Configuration: Log](/configuration/#log)).
+View and tail structured log files from the selected daemon. With `[remote].url` configured, this shows remote daemon logs; otherwise it starts or contacts the local daemon. File logging must be enabled first (see [Configuration: Log](/configuration/#log)).
 
 ```bash
 msgvault logs [flags]
@@ -1044,7 +1130,7 @@ msgvault logs [flags]
 | `--level <level>` | — | Filter by log level: `debug`, `info`, `warn`, `error` |
 | `--grep <string>` | — | Substring filter applied to the raw JSON record |
 | `--all` | `false` | Read every log file in the logs directory, not just today's |
-| `--path` | `false` | Print the log directory path and exit |
+| `--path` | `false` | Print the selected daemon's log directory path and exit |
 
 Examples:
 

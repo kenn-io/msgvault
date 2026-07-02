@@ -41,18 +41,22 @@ func genMessageCount(t *testing.T, b *Backend, gen vector.GenerationID) int {
 // write tx and aborts with ErrGenerationRetired, leaving zero rows and an
 // unchanged message_count.
 func TestBackend_Upsert_RejectsRetiredGeneration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	gen := buildGenWithVectors(t, b, "model-a", 4, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
 	})
-	require.Equal(t, 2, countEmbeddingRows(t, b, gen), "precondition: vectors present before retire")
+	require.Equal(2, countEmbeddingRows(t, b, gen), "precondition: vectors present before retire")
 	mcBefore := genMessageCount(t, b, gen)
-	require.Equal(t, 2, mcBefore, "precondition: message_count reflects 2 messages")
+	require.Equal(2, mcBefore, "precondition: message_count reflects 2 messages")
+	require.NoError(
+		b.RetireGeneration(ctx, gen, false), "RetireGeneration")
 
-	require.NoError(t, b.RetireGeneration(ctx, gen, false), "RetireGeneration")
-	require.Equal(t, 0, countEmbeddingRows(t, b, gen), "retire deletes the gen's embeddings")
+	require.Equal(0, countEmbeddingRows(t, b, gen), "retire deletes the gen's embeddings")
 
 	// A stale worker's Upsert lands AFTER the retire+delete. It must be
 	// rejected with the sentinel and write nothing.
@@ -60,12 +64,11 @@ func TestBackend_Upsert_RejectsRetiredGeneration(t *testing.T) {
 		{MessageID: 1, ChunkIndex: 0, Vector: unitVec(4, 0)},
 		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
 	})
-	require.ErrorIs(t, err, vector.ErrGenerationRetired,
+	require.ErrorIs(err, vector.ErrGenerationRetired,
 		"Upsert to a retired generation must fail with ErrGenerationRetired")
-
-	assert.Equal(t, 0, countEmbeddingRows(t, b, gen),
+	assert.Equal(0, countEmbeddingRows(t, b, gen),
 		"rejected Upsert must not re-pollute the retired generation")
-	assert.Equal(t, mcBefore, genMessageCount(t, b, gen),
+	assert.Equal(mcBefore, genMessageCount(t, b, gen),
 		"rejected Upsert must not drift message_count")
 }
 
@@ -73,24 +76,29 @@ func TestBackend_Upsert_RejectsRetiredGeneration(t *testing.T) {
 // cf-1 guard: a normal Upsert to a still-building generation continues to
 // succeed and write rows.
 func TestBackend_Upsert_AcceptsBuildingGeneration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 
 	for _, id := range []int64{1, 2} {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO messages (id) VALUES ($1) ON CONFLICT DO NOTHING`, id)
-		require.NoErrorf(t, err, "seed message %d", id)
+		require.NoErrorf(err, "seed message %d", id)
 	}
 	gen, err := b.CreateGeneration(ctx, "model-a", 4, "model-a")
-	require.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, ChunkIndex: 0, Vector: unitVec(4, 0)},
-		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
-	}), "Upsert to a building generation must succeed")
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, ChunkIndex: 0, Vector: unitVec(4, 0)},
+			{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
+		}), "Upsert to a building generation must succeed")
 
-	assert.Equal(t, 2, countEmbeddingRows(t, b, gen), "building-gen Upsert writes rows")
-	assert.Equal(t, 2, genMessageCount(t, b, gen), "building-gen Upsert bumps message_count")
-	assert.Equal(t, string(vector.GenerationBuilding), genState(t, b, gen),
+	assert.Equal(2, countEmbeddingRows(t, b, gen), "building-gen Upsert writes rows")
+	assert.Equal(2, genMessageCount(t, b, gen), "building-gen Upsert bumps message_count")
+	assert.Equal(string(vector.GenerationBuilding), genState(t, b, gen),
 		"generation stays building after Upsert")
 }
 
@@ -140,6 +148,9 @@ func buildGenWithVectors(t *testing.T, b *Backend, model string, dim int, vecs m
 // shared graph's ef_search budget. The index_generations row stays (so history
 // and lifecycle queries still see it); only its embeddings are removed.
 func TestBackend_RetireGeneration_DeletesEmbeddings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	gen := buildGenWithVectors(t, b, "model-a", 4, map[int64][]float32{
@@ -147,13 +158,13 @@ func TestBackend_RetireGeneration_DeletesEmbeddings(t *testing.T) {
 		2: unitVec(4, 1),
 		3: unitVec(4, 2),
 	})
-	require.Equal(t, 3, countEmbeddingRows(t, b, gen), "precondition: vectors present before retire")
+	require.Equal(3, countEmbeddingRows(t, b, gen), "precondition: vectors present before retire")
+	require.NoError(
+		b.RetireGeneration(ctx, gen, false), "RetireGeneration")
 
-	require.NoError(t, b.RetireGeneration(ctx, gen, false), "RetireGeneration")
-
-	assert.Equal(t, 0, countEmbeddingRows(t, b, gen),
+	assert.Equal(0, countEmbeddingRows(t, b, gen),
 		"retired generation's embedding rows must be deleted")
-	assert.Equal(t, string(vector.GenerationRetired), genState(t, b, gen),
+	assert.Equal(string(vector.GenerationRetired), genState(t, b, gen),
 		"index_generations row must remain, flipped to retired")
 }
 
@@ -163,6 +174,9 @@ func TestBackend_RetireGeneration_DeletesEmbeddings(t *testing.T) {
 // retired in the same tx; that transition must also delete the demoted
 // generation's vectors so they do not accumulate in the shared HNSW graph.
 func TestBackend_ActivateGeneration_AutoRetireDeletesPrevious(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	// Generation A: active, same dimension as B.
@@ -170,8 +184,10 @@ func TestBackend_ActivateGeneration_AutoRetireDeletesPrevious(t *testing.T) {
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A")
-	require.Equal(t, 2, countEmbeddingRows(t, b, genA), "A populated before re-embed")
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A")
+
+	require.Equal(2, countEmbeddingRows(t, b, genA), "A populated before re-embed")
 
 	// Generation B: a new building generation at the same dimension (the
 	// normal re-embed flow). Activating it auto-retires A.
@@ -179,13 +195,14 @@ func TestBackend_ActivateGeneration_AutoRetireDeletesPrevious(t *testing.T) {
 		1: unitVec(4, 2),
 		2: unitVec(4, 3),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
 
-	assert.Equal(t, string(vector.GenerationRetired), genState(t, b, genA),
+	assert.Equal(string(vector.GenerationRetired), genState(t, b, genA),
 		"A must be retired by B's activation")
-	assert.Equal(t, 0, countEmbeddingRows(t, b, genA),
+	assert.Equal(0, countEmbeddingRows(t, b, genA),
 		"auto-retired generation A's embedding rows must be deleted by B's activation")
-	assert.Equal(t, 2, countEmbeddingRows(t, b, genB),
+	assert.Equal(2, countEmbeddingRows(t, b, genB),
 		"newly-activated generation B's rows must be untouched")
 
 	// RETURNING-id provability: the demote folds into one
@@ -195,13 +212,15 @@ func TestBackend_ActivateGeneration_AutoRetireDeletesPrevious(t *testing.T) {
 	// embeddings were the ones deleted, while the new active gen (genB) keeps
 	// its rows.
 	retired := singleRetiredGen(t, b)
-	assert.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
-	assert.Equal(t, 0, countEmbeddingRows(t, b, retired),
+	assert.Equal(genA, retired, "the previously-active gen must be the sole retired row")
+	assert.Equal(0, countEmbeddingRows(t, b, retired),
 		"embeddings deleted for exactly the RETURNING'd (retired) id")
 
 	active, err := b.ActiveGeneration(ctx)
-	require.NoError(t, err, "ActiveGeneration after activate B")
-	assert.Equal(t, genB, active.ID, "B is the serving generation")
+	require.NoError(
+		err, "ActiveGeneration after activate B")
+
+	assert.Equal(genB, active.ID, "B is the serving generation")
 }
 
 // singleRetiredGen returns the id of the one generation in state='retired',
@@ -220,12 +239,16 @@ func singleRetiredGen(t *testing.T, b *Backend) vector.GenerationID {
 // auto-retire delete is scoped to the DEMOTED generation only: a third,
 // still-building generation at the same dimension keeps its rows.
 func TestBackend_ActivateGeneration_PreservesBuildingGenerations(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	genA := buildGenWithVectors(t, b, "model-a", 4, map[int64][]float32{
 		1: unitVec(4, 0),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A")
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A")
 
 	// A second generation B that we activate (auto-retiring A) — but first
 	// stage it as building. Only one building generation may exist at a time,
@@ -233,16 +256,20 @@ func TestBackend_ActivateGeneration_PreservesBuildingGenerations(t *testing.T) {
 	genB := buildGenWithVectors(t, b, "model-b", 4, map[int64][]float32{
 		1: unitVec(4, 1),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (retires A)")
-	require.Equal(t, 0, countEmbeddingRows(t, b, genA), "A deleted")
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, true), "activate B (retires A)")
+
+	require.Equal(0, countEmbeddingRows(t, b, genA), "A deleted")
 
 	genC := buildGenWithVectors(t, b, "model-c", 4, map[int64][]float32{
 		1: unitVec(4, 2),
 	})
-	// C is still building; activating it retires B but must leave C's own rows.
-	require.NoError(t, b.ActivateGeneration(ctx, genC, true), "activate C (retires B)")
-	assert.Equal(t, 0, countEmbeddingRows(t, b, genB), "B deleted on C's activation")
-	assert.Equal(t, 1, countEmbeddingRows(t, b, genC), "C's own rows preserved")
+	require.NoError(
+
+		b.ActivateGeneration(ctx, genC, true), "activate C (retires B)")
+
+	assert.Equal(0, countEmbeddingRows(t, b, genB), "B deleted on C's activation")
+	assert.Equal(1, countEmbeddingRows(t, b, genC), "C's own rows preserved")
 }
 
 // TestBackend_RetireGeneration_ActiveGuard pins the retire-TOCTOU
@@ -256,41 +283,49 @@ func TestBackend_ActivateGeneration_PreservesBuildingGenerations(t *testing.T) {
 //   - force=true retires the active generation, deleting embeddings.
 //   - force=false against a NON-active (building) generation retires fine.
 func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	genA := buildGenWithVectors(t, b, "model-a", 4, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
 	})
-	require.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A")
-	require.Equal(t, 2, countEmbeddingRows(t, b, genA), "precondition: A has embeddings")
-	require.Equal(t, string(vector.GenerationActive), genState(t, b, genA), "precondition: A active")
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A")
+
+	require.Equal(2, countEmbeddingRows(t, b, genA), "precondition: A has embeddings")
+	require.Equal(string(vector.GenerationActive), genState(t, b, genA), "precondition: A active")
 
 	// (1) Non-forced retire of the ACTIVE gen is refused atomically.
 	err := b.RetireGeneration(ctx, genA, false)
-	require.ErrorIs(t, err, vector.ErrRefuseRetireActive,
+	require.ErrorIs(err, vector.ErrRefuseRetireActive,
 		"non-forced retire of active gen must return ErrRefuseRetireActive")
-	assert.Equal(t, string(vector.GenerationActive), genState(t, b, genA),
+	assert.Equal(string(vector.GenerationActive), genState(t, b, genA),
 		"refused retire must leave the active gen's state unchanged")
-	assert.Equal(t, 2, countEmbeddingRows(t, b, genA),
+	assert.Equal(2, countEmbeddingRows(t, b, genA),
 		"refused retire must NOT delete the active gen's embeddings")
+	require.NoError(
 
-	// (2) Forced retire succeeds: state flips to retired, embeddings deleted.
-	require.NoError(t, b.RetireGeneration(ctx, genA, true),
+		b.RetireGeneration(ctx, genA, true),
 		"forced retire of active gen must succeed")
-	assert.Equal(t, string(vector.GenerationRetired), genState(t, b, genA),
+
+	assert.Equal(string(vector.GenerationRetired), genState(t, b, genA),
 		"forced retire flips state to retired")
-	assert.Equal(t, 0, countEmbeddingRows(t, b, genA),
+	assert.Equal(0, countEmbeddingRows(t, b, genA),
 		"forced retire deletes the gen's embeddings")
 
 	// (3) A NON-active (building) generation retires fine without force.
 	genB := buildGenWithVectors(t, b, "model-b", 4, map[int64][]float32{
 		3: unitVec(4, 2),
 	})
-	require.Equal(t, string(vector.GenerationBuilding), genState(t, b, genB), "precondition: B building")
-	require.NoError(t, b.RetireGeneration(ctx, genB, false),
+	require.Equal(string(vector.GenerationBuilding), genState(t, b, genB), "precondition: B building")
+	require.NoError(
+		b.RetireGeneration(ctx, genB, false),
 		"non-forced retire of a non-active gen must succeed")
-	assert.Equal(t, string(vector.GenerationRetired), genState(t, b, genB),
+
+	assert.Equal(string(vector.GenerationRetired), genState(t, b, genB),
 		"non-active gen retires to retired without force")
 }
 
@@ -319,6 +354,9 @@ func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 //     They are kept here as a positive guard that the fix does not regress
 //     active-generation recall, and that every returned hit belongs to B.
 func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, _ := newBackendForTest(t)
 
 	const k = 5
@@ -326,7 +364,8 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 	// graph would starve B's candidates. (The production path raises it at
 	// connect time; here we set it explicitly so the test is self-contained.)
 	_, err := b.db.ExecContext(ctx, `SET hnsw.ef_search = 40`)
-	require.NoError(t, err, "set ef_search")
+	require.NoError(
+		err, "set ef_search")
 
 	// Generation A: many vectors clustered VERY close to the query axis. These
 	// are the contaminants — if retained in the shared graph they dominate the
@@ -337,8 +376,10 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 		aVecs[id] = nearQueryVec(int(id), 0.005)
 	}
 	genA := buildGenWithVectors(t, b, "model-a", recallDim, aVecs)
-	require.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A")
-	require.Equal(t, aCount, countEmbeddingRows(t, b, genA), "A populated")
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A")
+
+	require.Equal(aCount, countEmbeddingRows(t, b, genA), "A populated")
 
 	// Generation B: exactly k messages at a moderate distance from the query.
 	// They are the only correct answers once B is the serving generation.
@@ -348,14 +389,14 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 		bVecs[id] = midQueryVec(j + 2)
 	}
 	genB := buildGenWithVectors(t, b, "model-b", recallDim, bVecs)
+	require.NoError(
 
-	// Activate B: auto-retires A AND (with the fix) deletes A's vectors.
-	require.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B")
+		b.ActivateGeneration(ctx, genB, true), "activate B")
 
-	// (i) Retired generation A's rows are deleted.
-	require.Equal(t, 0, countEmbeddingRows(t, b, genA),
-		"A's embedding rows must be deleted so the shared HNSW graph is generation-clean")
-	require.Equal(t, k, countEmbeddingRows(t, b, genB), "B's rows intact")
+	require. // (i) Retired generation A's rows are deleted.
+			Equal(0, countEmbeddingRows(t, b, genA),
+			"A's embedding rows must be deleted so the shared HNSW graph is generation-clean")
+	require.Equal(k, countEmbeddingRows(t, b, genB), "B's rows intact")
 
 	query := make([]float32, recallDim)
 	query[0] = 1
@@ -363,11 +404,13 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 	// (ii) Search against the active generation returns full k recall, and
 	// every hit belongs to B (ids >= 1000), uncontaminated by A.
 	hits, err := b.Search(ctx, genB, query, k, vector.Filter{})
-	require.NoError(t, err, "Search")
-	require.Lenf(t, hits, k,
+	require.NoError(
+		err, "Search")
+
+	require.Lenf(hits, k,
 		"active-generation Search must return full k=%d recall after delete-on-retire", k)
 	for _, h := range hits {
-		assert.GreaterOrEqualf(t, h.MessageID, int64(1000),
+		assert.GreaterOrEqualf(h.MessageID, int64(1000),
 			"hit %d must belong to active generation B, not retired A", h.MessageID)
 	}
 
@@ -379,11 +422,13 @@ func TestBackend_DeleteOnRetire_KeepsActiveRecallClean(t *testing.T) {
 		Limit:      k,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	require.Lenf(t, fhits, k,
+	require.NoError(
+		err, "FusedSearch")
+
+	require.Lenf(fhits, k,
 		"active-generation FusedSearch must return full k=%d recall after delete-on-retire", k)
 	for _, h := range fhits {
-		assert.GreaterOrEqualf(t, h.MessageID, int64(1000),
+		assert.GreaterOrEqualf(h.MessageID, int64(1000),
 			"fused hit %d must belong to active generation B, not retired A", h.MessageID)
 	}
 }

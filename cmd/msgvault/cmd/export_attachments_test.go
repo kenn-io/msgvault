@@ -3,21 +3,23 @@ package cmd
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestExportAttachmentsCmd_Registration(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Verify the command is registered and has expected configuration
 	cmd, _, err := rootCmd.Find([]string{"export-attachments"})
 	require.NoError(err, "export-attachments command not found")
@@ -29,71 +31,45 @@ func TestExportAttachmentsCmd_Registration(t *testing.T) {
 	assert.Equal("o", f.Shorthand, "output shorthand")
 }
 
-// setupExportAttachmentsTest creates a temp directory with a SQLite database
-// containing a message with attachments and corresponding content-addressed
-// files on disk. Returns the data dir.
-func setupExportAttachmentsTest(t *testing.T) (dataDir string) {
+func setupExportAttachmentsHTTPTest(t *testing.T) ([]byte, []byte, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
-	dataDir = t.TempDir()
-
-	dbPath := filepath.Join(dataDir, "msgvault.db")
-	s, err := store.Open(dbPath)
-	requirepkg.NoError(t, err)
-	requirepkg.NoError(t, s.InitSchema())
-
-	db := s.DB()
-
-	// Insert source, conversation, message
-	_, err = db.Exec("INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'test@gmail.com')")
-	requirepkg.NoError(t, err)
-	_, err = db.Exec("INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'conv1', 'email_thread')")
-	requirepkg.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, subject, sent_at, has_attachments)
-		VALUES (1, 1, 'gmail_abc123', 1, 'email', 'Test Message', '2024-06-01 10:00:00', 1)`)
-	requirepkg.NoError(t, err)
-
-	// Create attachment files on disk and insert metadata
-	attDir := filepath.Join(dataDir, "attachments")
-	createTestAttachment(t, db, attDir, 1, 1, "report.pdf", []byte("PDF content here"))
-	createTestAttachment(t, db, attDir, 2, 1, "photo.jpg", []byte("JPEG image data"))
-
-	_ = s.Close()
-	return dataDir
-}
-
-// createTestAttachment creates a content-addressed file and inserts the
-// attachment metadata into the database.
-func createTestAttachment(t *testing.T, db *sql.DB, attDir string, attID, msgID int64, filename string, content []byte) {
-	t.Helper()
-	hash := fmt.Sprintf("%x", sha256.Sum256(content))
-
-	// Write content-addressed file
-	dir := filepath.Join(attDir, hash[:2])
-	requirepkg.NoError(t, os.MkdirAll(dir, 0755))
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(dir, hash), content, 0644))
-
-	// Insert attachment record
-	storagePath := hash[:2] + "/" + hash
-	_, err := db.Exec(
-		`INSERT INTO attachments (id, message_id, filename, mime_type, size, content_hash, storage_path)
-		 VALUES (?, ?, ?, 'application/octet-stream', ?, ?, ?)`,
-		attID, msgID, filename, len(content), hash, storagePath,
+	dataDir := t.TempDir()
+	reportData := []byte("PDF content here")
+	photoData := []byte("JPEG image data")
+	reportHash := fmt.Sprintf("%x", sha256.Sum256(reportData))
+	photoHash := fmt.Sprintf("%x", sha256.Sum256(photoData))
+	server, messageRequests, attachmentRequests := exportAttachmentsHTTPDaemon(
+		t,
+		reportHash,
+		reportData,
+		photoHash,
+		photoData,
 	)
-	requirepkg.NoError(t, err, "insert attachment")
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+	configureExportAttachmentsDaemonTest(t, dataDir)
+	return reportData, photoData, messageRequests, attachmentRequests
 }
 
-func TestExportAttachments_FullFlow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
-	dataDir := setupExportAttachmentsTest(t)
-
-	// Set global cfg to point to our test data
+func configureExportAttachmentsDaemonTest(t *testing.T, dataDir string) {
+	t.Helper()
 	oldCfg := cfg
+	oldUseLocal := useLocal
 	cfg = &config.Config{
 		HomeDir: dataDir,
 		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
-	defer func() { cfg = oldCfg }()
+	useLocal = true
+	t.Cleanup(func() {
+		cfg = oldCfg
+		useLocal = oldUseLocal
+	})
+}
+
+func TestExportAttachments_FullFlow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setupExportAttachmentsHTTPTest(t)
 
 	outputDir := t.TempDir()
 	exportAttachmentsOutput = outputDir
@@ -115,15 +91,42 @@ func TestExportAttachments_FullFlow(t *testing.T) {
 	assert.True(names["photo.jpg"], "expected photo.jpg in output")
 }
 
-func TestExportAttachments_GmailIDFallback(t *testing.T) {
-	dataDir := setupExportAttachmentsTest(t)
+func TestExportAttachmentsUsesLocalDaemonHTTPAndPreservesDirectoryOutput(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	outputDir := t.TempDir()
+	reportData, photoData, messageRequests, attachmentRequests := setupExportAttachmentsHTTPTest(t)
 
-	oldCfg := cfg
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
-	}
-	defer func() { cfg = oldCfg }()
+	oldOutput := exportAttachmentsOutput
+	defer func() {
+		exportAttachmentsOutput = oldOutput
+	}()
+	exportAttachmentsOutput = outputDir
+
+	doneErr := captureStderr(t)
+	cmd := exportAttachmentsCmd
+	cmd.SetContext(context.Background())
+
+	err := runExportAttachments(cmd, []string{"gmail_abc123"})
+	stderr := doneErr()
+	require.NoError(err, "runExportAttachments")
+
+	reportOut, err := os.ReadFile(filepath.Join(outputDir, "report.pdf"))
+	require.NoError(err, "read report")
+	photoOut, err := os.ReadFile(filepath.Join(outputDir, "photo.jpg"))
+	require.NoError(err, "read photo")
+	assert.Equal(reportData, reportOut, "report data")
+	assert.Equal(photoData, photoOut, "photo data")
+	assert.Equal(1, int(messageRequests.Load()), "message endpoint calls")
+	assert.Equal(2, int(attachmentRequests.Load()), "attachment endpoint calls")
+	assert.Contains(stderr, "  report.pdf (", "report stderr")
+	assert.Contains(stderr, "  photo.jpg (", "photo stderr")
+	assert.Contains(stderr, "Exported 2 attachment(s)", "summary")
+	assert.Contains(stderr, "to "+outputDir, "summary dir")
+}
+
+func TestExportAttachments_GmailIDFallback(t *testing.T) {
+	setupExportAttachmentsHTTPTest(t)
 
 	outputDir := t.TempDir()
 	exportAttachmentsOutput = outputDir
@@ -132,38 +135,24 @@ func TestExportAttachments_GmailIDFallback(t *testing.T) {
 	// Use Gmail source ID instead of numeric ID
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
-	requirepkg.NoError(t, runExportAttachments(cmd, []string{"gmail_abc123"}), "runExportAttachments with Gmail ID")
+	require.NoError(t, runExportAttachments(cmd, []string{"gmail_abc123"}), "runExportAttachments with Gmail ID")
 
 	entries, _ := os.ReadDir(outputDir)
-	requirepkg.Len(t, entries, 2, "expected 2 files from Gmail ID lookup")
+	require.Len(t, entries, 2, "expected 2 files from Gmail ID lookup")
 }
 
 func TestExportAttachments_MessageNotFound(t *testing.T) {
-	dataDir := setupExportAttachmentsTest(t)
-
-	oldCfg := cfg
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
-	}
-	defer func() { cfg = oldCfg }()
+	setupExportAttachmentsHTTPTest(t)
 
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"99999"})
-	requirepkg.Error(t, err, "expected error for nonexistent message")
-	assertpkg.ErrorContains(t, err, "message not found")
+	require.Error(t, err, "expected error for nonexistent message")
+	assert.ErrorContains(t, err, "message not found")
 }
 
 func TestExportAttachments_OutputDirValidation(t *testing.T) {
-	dataDir := setupExportAttachmentsTest(t)
-
-	oldCfg := cfg
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
-	}
-	defer func() { cfg = oldCfg }()
+	setupExportAttachmentsHTTPTest(t)
 
 	// Point to a non-existent directory
 	exportAttachmentsOutput = filepath.Join(t.TempDir(), "does-not-exist")
@@ -172,29 +161,82 @@ func TestExportAttachments_OutputDirValidation(t *testing.T) {
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"1"})
-	requirepkg.Error(t, err, "expected error for non-existent output directory")
-	assertpkg.ErrorContains(t, err, "output directory")
+	require.Error(t, err, "expected error for non-existent output directory")
+	assert.ErrorContains(t, err, "output directory")
 }
 
 func TestExportAttachments_NotADirectory(t *testing.T) {
-	dataDir := setupExportAttachmentsTest(t)
-
-	oldCfg := cfg
-	cfg = &config.Config{
-		HomeDir: dataDir,
-		Data:    config.DataConfig{DataDir: dataDir},
-	}
-	defer func() { cfg = oldCfg }()
+	setupExportAttachmentsHTTPTest(t)
 
 	// Point to a file, not a directory
 	tmpFile := filepath.Join(t.TempDir(), "afile.txt")
-	requirepkg.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0644))
+	require.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0644))
 	exportAttachmentsOutput = tmpFile
 	defer func() { exportAttachmentsOutput = "" }()
 
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
 	err := runExportAttachments(cmd, []string{"1"})
-	requirepkg.Error(t, err, "expected error for file as output dir")
-	assertpkg.ErrorContains(t, err, "not a directory")
+	require.Error(t, err, "expected error for file as output dir")
+	assert.ErrorContains(t, err, "not a directory")
+}
+
+func exportAttachmentsHTTPDaemon(
+	t *testing.T,
+	reportHash string,
+	reportData []byte,
+	photoHash string,
+	photoData []byte,
+) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	messageRequests := &atomic.Int32{}
+	attachmentRequests := &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/message", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if id != "1" && id != "gmail_abc123" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		messageRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"id": 1,
+			"source_message_id": "gmail_abc123",
+			"conversation_id": 1,
+			"subject": "Test Message",
+			"sent_at": "2024-06-01T10:00:00Z",
+			"has_attachments": true,
+			"attachments": [
+				{"id": 1, "filename": "report.pdf", "mime_type": "application/pdf", "size": %d, "content_hash": %q},
+				{"id": 2, "filename": "photo.jpg", "mime_type": "image/jpeg", "size": %d, "content_hash": %q}
+			]
+		}`, len(reportData), reportHash, len(photoData), photoHash)
+	})
+	mux.HandleFunc("/api/v1/cli/attachment", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		attachmentRequests.Add(1)
+		switch r.URL.Query().Get("content_hash") {
+		case reportHash:
+			_, _ = w.Write(reportData)
+		case photoHash:
+			_, _ = w.Write(photoData)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, messageRequests, attachmentRequests
 }

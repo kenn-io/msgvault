@@ -73,9 +73,13 @@ func withAccount() mcp.ToolOption {
 // the search_messages tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	Engine         query.Engine
-	AttachmentsDir string
-	DataDir        string
+	Engine           query.Engine
+	AttachmentsDir   string
+	AttachmentReader AttachmentReader
+	ManifestSaver    DeletionManifestSaver
+	HybridSearcher   HybridSearcher
+	SimilarSearcher  SimilarSearcher
+	DataDir          string
 
 	// HybridEngine is optional. When nil, search_messages rejects
 	// mode=vector and mode=hybrid with a vector_not_enabled error.
@@ -102,15 +106,19 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	)
 
 	h := &handlers{
-		engine:         opts.Engine,
-		attachmentsDir: opts.AttachmentsDir,
-		dataDir:        opts.DataDir,
-		hybridEngine:   opts.HybridEngine,
-		vectorCfg:      opts.VectorCfg,
-		backend:        opts.Backend,
+		engine:           opts.Engine,
+		attachmentsDir:   opts.AttachmentsDir,
+		attachmentReader: opts.AttachmentReader,
+		manifestSaver:    opts.ManifestSaver,
+		hybridSearcher:   opts.HybridSearcher,
+		similarSearcher:  opts.SimilarSearcher,
+		dataDir:          opts.DataDir,
+		hybridEngine:     opts.HybridEngine,
+		vectorCfg:        opts.VectorCfg,
+		backend:          opts.Backend,
 	}
 
-	vectorAvailable := opts.HybridEngine != nil
+	vectorAvailable := opts.HybridEngine != nil || opts.HybridSearcher != nil
 	s.AddTool(searchMessagesTool(vectorAvailable), h.searchMessages)
 	s.AddTool(getMessageTool(), h.getMessage)
 	s.AddTool(getAttachmentTool(), h.getAttachment)
@@ -120,7 +128,7 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	s.AddTool(aggregateTool(), h.aggregate)
 	s.AddTool(stageDeletionTool(), h.stageDeletion)
 	s.AddTool(searchByDomainsTool(), h.searchByDomains)
-	if opts.Backend != nil {
+	if opts.Backend != nil || opts.SimilarSearcher != nil {
 		s.AddTool(findSimilarMessagesTool(), h.findSimilarMessages)
 	}
 

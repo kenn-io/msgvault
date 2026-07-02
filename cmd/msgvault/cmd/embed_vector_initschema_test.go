@@ -67,7 +67,11 @@ func dropEmbedGenColumn(t *testing.T, db *sql.DB) {
 // (store.Open -> s.InitSchema() -> sqlitevec.Open -> s.CoverageCounts)
 // succeeds because InitSchema adds embed_gen before any embed_gen access.
 func TestEmbed_UpgradedDBMissingEmbedGen_NeedsInitSchema(t *testing.T) {
-	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
+	assert := assert.New(t)
+	require := require.New(t)
+	require.NoError(
+		sqlitevec.RegisterExtension(), "RegisterExtension")
+
 	ctx := context.Background()
 
 	// --- 1. Failure mode without InitSchema -------------------------------
@@ -80,15 +84,20 @@ func TestEmbed_UpgradedDBMissingEmbedGen_NeedsInitSchema(t *testing.T) {
 	// succeed here — we drop the column only afterwards to reproduce the
 	// upgraded-but-not-reinitialized shape for the failing reopen.
 	sSeed, err := store.Open(mainPath)
-	require.NoError(t, err, "store.Open for fixture (column present)")
-	require.NoError(t, sSeed.InitSchema(), "InitSchema for fixture")
+	require.NoError(
+		err, "store.Open for fixture (column present)")
+
+	require.NoError(
+		sSeed.InitSchema(), "InitSchema for fixture")
+
 	_, err = sSeed.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
 VALUES (1, 1, 1, 'm1', 'email');
 `)
-	require.NoError(t, err, "seed message")
+	require.NoError(
+		err, "seed message")
 
 	mainRaw := sSeed.DB()
 
@@ -98,16 +107,27 @@ VALUES (1, 1, 1, 'm1', 'email');
 	seed, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: mainRaw,
 	})
-	require.NoError(t, err, "seed backend Open")
+	require.NoError(
+		err, "seed backend Open")
+
 	gen, err := seed.CreateGeneration(ctx, "model", 4, "model:4")
-	require.NoError(t, err, "seed CreateGeneration")
-	require.NoError(t, seed.Upsert(ctx, gen, []vector.Chunk{{
-		MessageID: 1, ChunkIndex: 0, Vector: []float32{0, 0, 0, 1},
-	}}), "seed Upsert")
-	require.NoError(t, seed.ActivateGeneration(ctx, gen, true), "seed Activate")
-	require.NoError(t, seed.Close(), "close seed backend")
+	require.NoError(
+		err, "seed CreateGeneration")
+
+	require.NoError(
+		seed.Upsert(ctx, gen, []vector.Chunk{{
+			MessageID: 1, ChunkIndex: 0, Vector: []float32{0, 0, 0, 1},
+		}}), "seed Upsert")
+
+	require.NoError(
+		seed.ActivateGeneration(ctx, gen, true), "seed Activate")
+
+	require.NoError(
+		seed.Close(), "close seed backend")
+
 	_, err = mainRaw.Exec(`DELETE FROM applied_migrations WHERE name = 'embed_gen_backfill_active_v1'`)
-	require.NoError(t, err, "clear backfill ledger")
+	require.NoError(
+		err, "clear backfill ledger")
 
 	// Now reproduce the pre-upgrade shape: drop embed_gen. Msg 1 is stamped
 	// for the active gen, but the column no longer exists.
@@ -124,9 +144,10 @@ VALUES (1, 1, 1, 'm1', 'email');
 	if err == nil {
 		_ = reopen.Close()
 	}
-	require.Error(t, err, "open must fail on a messages table lacking embed_gen")
-	assert.Contains(t, err.Error(), "embed_gen", "failure should be the missing embed_gen column")
-	require.NoError(t, sSeed.Close(), "close seed store")
+	require.Error(err, "open must fail on a messages table lacking embed_gen")
+	assert.Contains(err.Error(), "embed_gen", "failure should be the missing embed_gen column")
+	require.NoError(
+		sSeed.Close(), "close seed store")
 
 	// --- 2. The fix: InitSchema first, then the embed path succeeds --------
 	dir3 := t.TempDir()
@@ -136,9 +157,12 @@ VALUES (1, 1, 1, 'm1', 'email');
 	// This is what runEmbed now does: Open + InitSchema BEFORE touching the
 	// vector backend / embed_gen.
 	s, err := store.Open(mainPath3)
-	require.NoError(t, err, "store.Open")
+	require.NoError(
+		err, "store.Open")
+
 	defer func() { _ = s.Close() }()
-	require.NoError(t, s.InitSchema(), "InitSchema must add the embed_gen column")
+	require.NoError(
+		s.InitSchema(), "InitSchema must add the embed_gen column")
 
 	// Backend Open now runs BackfillEmbedGenForUpgrade against a schema that
 	// HAS embed_gen — no error.
@@ -148,12 +172,16 @@ VALUES (1, 1, 1, 'm1', 'email');
 		Dimension: 4,
 		MainDB:    s.DB(),
 	})
-	require.NoError(t, err, "backend Open after InitSchema must succeed")
+	require.NoError(
+		err, "backend Open after InitSchema must succeed")
+
 	defer func() { _ = b3.Close() }()
 
 	// CoverageCounts (the other embed_gen reader in runEmbed) also succeeds.
 	live, _, _, missing, err := s.CoverageCounts(ctx, 1)
-	require.NoError(t, err, "CoverageCounts after InitSchema must succeed")
-	assert.Equal(t, int64(1), live, "one live message")
-	assert.Equal(t, int64(1), missing, "unstamped message reads as missing for gen 1")
+	require.NoError(
+		err, "CoverageCounts after InitSchema must succeed")
+
+	assert.Equal(int64(1), live, "one live message")
+	assert.Equal(int64(1), missing, "unstamped message reads as missing for gen 1")
 }

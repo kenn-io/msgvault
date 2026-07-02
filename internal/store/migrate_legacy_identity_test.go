@@ -3,15 +3,15 @@ package store_test
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -40,7 +40,7 @@ func TestMigrateLegacyIdentityConfig_Basic(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -53,12 +53,12 @@ func TestMigrateLegacyIdentityConfig_MergesExistingSignal(t *testing.T) {
 	ids, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(ids, 1)
-	assertpkg.Equal(t, "account-identifier,config_migration", ids[0].SourceSignal, "source_signal")
+	assert.Equal(t, "account-identifier,config_migration", ids[0].SourceSignal, "source_signal")
 }
 
 func TestMigrateLegacyIdentityConfig_SecondCallNoOp(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -76,7 +76,7 @@ func TestMigrateLegacyIdentityConfig_SecondCallNoOp(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_DeferredUntilSourceExists(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	applied, deferred, sources, addrs, err := st.MigrateLegacyIdentityConfig([]string{"alice@example.com"})
@@ -102,8 +102,8 @@ func TestMigrateLegacyIdentityConfig_DeferredUntilSourceExists(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_EmptyAddresses(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -121,7 +121,7 @@ func TestMigrateLegacyIdentityConfig_EmptyAddresses(t *testing.T) {
 }
 
 func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -131,11 +131,11 @@ func TestMigrateLegacyIdentityConfig_TrimsWhitespace(t *testing.T) {
 	ids, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(ids, 1)
-	assertpkg.Equal(t, "ME@Example.COM", ids[0].Address, "address")
+	assert.Equal(t, "ME@Example.COM", ids[0].Address, "address")
 }
 
 func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
@@ -146,7 +146,7 @@ func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
 	rows, err := st.ListAccountIdentities(f.Source.ID)
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(rows, 1)
-	assertpkg.Equal(t, "Alice@Example.com", rows[0].Address, "address")
+	assert.Equal(t, "Alice@Example.com", rows[0].Address, "address")
 }
 
 // TestMigrateLegacyIdentityConfig_DedupesEmailCaseVariants verifies that
@@ -156,8 +156,8 @@ func TestMigrateLegacyIdentityConfig_PreservesCase(t *testing.T) {
 // row per source. Synthetic identifiers (Matrix MXIDs, chat handles)
 // remain case-sensitive and are NOT collapsed by dedupe.
 func TestMigrateLegacyIdentityConfig_DedupesEmailCaseVariants(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	st := f.Store
 

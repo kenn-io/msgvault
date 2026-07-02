@@ -81,6 +81,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Check OpenAPI artifacts
+        run: make openapi-check
+
       - name: Lint
         run: make lint-ci
 

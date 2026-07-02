@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -35,7 +35,7 @@ func TestSearchResultsDisplay(t *testing.T) {
 	}, 0)
 
 	assertLevel(t, m, levelMessageList)
-	assertpkg.Len(t, m.messages, 2)
+	assert.Len(t, m.messages, 2)
 	assertLoading(t, m, false, false)
 }
 
@@ -49,7 +49,7 @@ func TestSearchResultsStale(t *testing.T) {
 	}, 0)
 
 	// Messages should not be updated (still nil/empty)
-	assertpkg.Empty(t, m.messages, "stale ignored")
+	assert.Empty(t, m.messages, "stale ignored")
 }
 
 // TestInlineSearchTabToggle verifies Tab key behavior across different search states.
@@ -106,7 +106,7 @@ func TestInlineSearchTabToggle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			model := NewBuilder().WithPageSize(10).WithSize(100, 20).
 				WithLevel(tt.level).
 				WithActiveSearch(tt.query, tt.initialMode).
@@ -151,7 +151,7 @@ func TestSpinnerAppearsInViewWhenLoading(t *testing.T) {
 			break
 		}
 	}
-	assertpkg.False(t, hasSpinner, "expected no spinner when loading = false")
+	assert.False(t, hasSpinner, "expected no spinner when loading = false")
 
 	// Now set loading state
 	model.inlineSearchLoading = true
@@ -166,7 +166,7 @@ func TestSpinnerAppearsInViewWhenLoading(t *testing.T) {
 			break
 		}
 	}
-	assertpkg.True(t, hasSpinner, "expected spinner in view when inlineSearchLoading = true, got:\n%s", view2)
+	assert.True(t, hasSpinner, "expected spinner in view when inlineSearchLoading = true, got:\n%s", view2)
 }
 
 // TestSearchBackClears verifies going back clears search state.
@@ -182,7 +182,7 @@ func TestSearchBackClears(t *testing.T) {
 	m := asModel(t, newModel)
 
 	assertSearchQuery(t, m, "")
-	assertpkg.Empty(t, m.searchFilter.Sender, "expected empty searchFilter after goBack")
+	assert.Empty(t, m.searchFilter.Sender, "expected empty searchFilter after goBack")
 }
 
 // TestSearchFromSubAggregate verifies search from sub-aggregate view.
@@ -252,7 +252,7 @@ func TestSearchPaginationUpdatesContextStats(t *testing.T) {
 
 	m := applySearchResultsAppend(t, model, 1, make([]query.MessageSummary, 50), -1)
 
-	assertpkg.Len(t, m.messages, 100, "after append")
+	assert.Len(t, m.messages, 100, "after append")
 	assertContextStats(t, m, 100, -1, -1)
 }
 
@@ -277,9 +277,9 @@ func TestFastSearchPaginationTriggersOnNavigation(t *testing.T) {
 		// Press down arrow — cursor moves to 91, which is within threshold
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 91, m.cursor)
-		assertpkg.NotNil(t, cmd, "expected load-more command to be returned for fast search pagination")
-		assertpkg.True(t, m.searchLoadingMore)
+		assert.Equal(t, 91, m.cursor)
+		assert.NotNil(t, cmd, "expected load-more command to be returned for fast search pagination")
+		assert.True(t, m.searchLoadingMore)
 	})
 
 	t.Run("down arrow far from end does not trigger load", func(t *testing.T) {
@@ -297,8 +297,8 @@ func TestFastSearchPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 11, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command when cursor is far from end")
+		assert.Equal(t, 11, m.cursor)
+		assert.Nil(t, cmd, "expected no command when cursor is far from end")
 	})
 
 	t.Run("no pagination when all results loaded", func(t *testing.T) {
@@ -316,8 +316,8 @@ func TestFastSearchPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 41, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command when all results are loaded")
+		assert.Equal(t, 41, m.cursor)
+		assert.Nil(t, cmd, "expected no command when all results are loaded")
 	})
 
 	t.Run("cursor at last item pressing down still triggers load", func(t *testing.T) {
@@ -336,9 +336,9 @@ func TestFastSearchPaginationTriggersOnNavigation(t *testing.T) {
 		// Press down — cursor can't move (clamped at 99), but pagination should still trigger
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 99, m.cursor, "expected cursor unchanged")
-		assertpkg.NotNil(t, cmd, "expected load-more command even when cursor can't move beyond end")
-		assertpkg.True(t, m.searchLoadingMore)
+		assert.Equal(t, 99, m.cursor, "expected cursor unchanged")
+		assert.NotNil(t, cmd, "expected load-more command even when cursor can't move beyond end")
+		assert.True(t, m.searchLoadingMore)
 	})
 
 	t.Run("no pagination for deep search mode", func(t *testing.T) {
@@ -356,8 +356,8 @@ func TestFastSearchPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 91, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command for deep search mode (uses different pagination)")
+		assert.Equal(t, 91, m.cursor)
+		assert.Nil(t, cmd, "expected no command for deep search mode (uses different pagination)")
 	})
 }
 
@@ -376,9 +376,9 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, messageListPageSize-9, m.cursor)
-		assertpkg.NotNil(t, cmd, "expected load-more command to be returned for message list pagination")
-		assertpkg.True(t, m.msgListLoadingMore)
+		assert.Equal(t, messageListPageSize-9, m.cursor)
+		assert.NotNil(t, cmd, "expected load-more command to be returned for message list pagination")
+		assert.True(t, m.msgListLoadingMore)
 	})
 
 	t.Run("far from end does not trigger load", func(t *testing.T) {
@@ -393,8 +393,8 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 11, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command when cursor is far from end")
+		assert.Equal(t, 11, m.cursor)
+		assert.Nil(t, cmd, "expected no command when cursor is far from end")
 	})
 
 	t.Run("short last page means no more data", func(t *testing.T) {
@@ -410,8 +410,8 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, 291, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command when last page was short (all data loaded)")
+		assert.Equal(t, 291, m.cursor)
+		assert.Nil(t, cmd, "expected no command when last page was short (all data loaded)")
 	})
 
 	t.Run("no pagination during search", func(t *testing.T) {
@@ -447,12 +447,12 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 
 		m, cmd := applyMessageListKeyWithCmd(t, model, keyDown())
 
-		assertpkg.Equal(t, messageListPageSize-9, m.cursor)
-		assertpkg.Nil(t, cmd, "expected no command when contextStats shows all messages loaded")
+		assert.Equal(t, messageListPageSize-9, m.cursor)
+		assert.Nil(t, cmd, "expected no command when contextStats shows all messages loaded")
 	})
 
 	t.Run("append mode preserves cursor and appends messages", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		msgs := makeMessages(messageListPageSize)
 		model := NewBuilder().
 			WithMessages(msgs...).
@@ -496,14 +496,14 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 		}
 		m := sendMsg(t, model, loadMsg)
 
-		assertpkg.True(t, m.msgListComplete, "after empty append")
-		assertpkg.Len(t, m.messages, messageListPageSize, "expected messages unchanged")
+		assert.True(t, m.msgListComplete, "after empty append")
+		assert.Len(t, m.messages, messageListPageSize, "expected messages unchanged")
 
 		// Subsequent navigation near end should NOT trigger another load
 		m.cursor = messageListPageSize - 5
 		m2, cmd := applyMessageListKeyWithCmd(t, m, keyDown())
 
-		assertpkg.Nil(t, cmd, "expected no command after end-of-data is known")
+		assert.Nil(t, cmd, "expected no command after end-of-data is known")
 		_ = m2
 	})
 
@@ -523,7 +523,7 @@ func TestMessageListPaginationTriggersOnNavigation(t *testing.T) {
 		}
 		m := sendMsg(t, model, loadMsg)
 
-		assertpkg.False(t, m.msgListComplete, "after fresh load")
+		assert.False(t, m.msgListComplete, "after fresh load")
 	})
 }
 
@@ -556,8 +556,8 @@ func TestMessageListPaginationBreadcrumbRestore(t *testing.T) {
 		m, _ := sendKey(t, model, keyEsc())
 
 		assertLevel(t, m, levelMessageList)
-		assertpkg.Equal(t, totalMsgs, m.msgListOffset, "after goBack")
-		assertpkg.Len(t, m.messages, totalMsgs, "after goBack")
+		assert.Equal(t, totalMsgs, m.msgListOffset, "after goBack")
+		assert.Len(t, m.messages, totalMsgs, "after goBack")
 	})
 
 	t.Run("goBack resets stale msgListLoadingMore", func(t *testing.T) {
@@ -584,7 +584,7 @@ func TestMessageListPaginationBreadcrumbRestore(t *testing.T) {
 		m, _ := sendKey(t, model, keyEsc())
 
 		assertLevel(t, m, levelMessageList)
-		assertpkg.False(t, m.msgListLoadingMore, "after goBack, but it was still true")
+		assert.False(t, m.msgListLoadingMore, "after goBack, but it was still true")
 	})
 
 	t.Run("goBack preserves msgListComplete flag", func(t *testing.T) {
@@ -606,7 +606,7 @@ func TestMessageListPaginationBreadcrumbRestore(t *testing.T) {
 		m, _ := sendKey(t, model, keyEsc())
 
 		assertLevel(t, m, levelMessageList)
-		assertpkg.True(t, m.msgListComplete, "after goBack (restored from breadcrumb)")
+		assert.True(t, m.msgListComplete, "after goBack (restored from breadcrumb)")
 	})
 }
 
@@ -678,8 +678,8 @@ func TestSearchStatsUpdateOnSubsequentSearch(t *testing.T) {
 
 	// ALL stats fields must reflect the second search, not the first
 	assertContextStats(t, m2, 3, 12000, 1)
-	assertpkg.Equal(t, int64(5000), m2.contextStats.AttachmentSize)
-	assertpkg.Equal(t, int64(1), m2.contextStats.AccountCount)
+	assert.Equal(t, int64(5000), m2.contextStats.AttachmentSize)
+	assert.Equal(t, int64(1), m2.contextStats.AccountCount)
 }
 
 // TestSearchStatsUpdateOnDeleteKey verifies that deleting characters (broadening
@@ -756,7 +756,7 @@ func TestFreshStatsOverrideDrillDownStats(t *testing.T) {
 // TestAggregateSearchFilterSetsContextStats verifies contextStats is calculated from
 // filtered aggregate rows when a search filter is active.
 func TestAggregateSearchFilterSetsContextStats(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := newTestModelAtLevel(levelAggregates).
 		withSearchQuery("test query").
 		withAggregateRequestID()
@@ -769,7 +769,7 @@ func TestAggregateSearchFilterSetsContextStats(t *testing.T) {
 	newModel, _ := model.Update(msg)
 	m := asModel(t, newModel)
 
-	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set when search filter is active")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set when search filter is active")
 
 	wantCount, wantSize, wantAttachments := sumAggregateStats(testAggregateRows)
 	assert.Equal(wantCount, m.contextStats.MessageCount)
@@ -800,10 +800,10 @@ func TestAggregateSearchFilterUsesFilteredStats(t *testing.T) {
 	newModel, _ := model.Update(msg)
 	m := asModel(t, newModel)
 
-	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set")
 	// Should use filteredStats (100), not sum of row counts (175)
-	assertpkg.Equal(t, int64(100), m.contextStats.MessageCount, "from filteredStats, not row sum 175")
-	assertpkg.Equal(t, int64(5000), m.contextStats.TotalSize)
+	assert.Equal(t, int64(100), m.contextStats.MessageCount, "from filteredStats, not row sum 175")
+	assert.Equal(t, int64(5000), m.contextStats.TotalSize)
 }
 
 // TestAggregateNoSearchFilterClearsContextStats verifies contextStats is cleared
@@ -821,7 +821,7 @@ func TestAggregateNoSearchFilterClearsContextStats(t *testing.T) {
 	newModel, _ := model.Update(msg)
 	m := asModel(t, newModel)
 
-	assertpkg.Nil(t, m.contextStats, "expected contextStats to be nil when no search filter at aggregate level")
+	assert.Nil(t, m.contextStats, "expected contextStats to be nil when no search filter at aggregate level")
 }
 
 // TestSubAggregateSearchFilterSetsContextStats verifies contextStats is calculated
@@ -844,10 +844,10 @@ func TestSubAggregateSearchFilterSetsContextStats(t *testing.T) {
 	newModel, _ := model.Update(msg)
 	m := asModel(t, newModel)
 
-	requirepkg.NotNil(t, m.contextStats, "expected contextStats to be set at sub-aggregate with search filter")
+	require.NotNil(t, m.contextStats, "expected contextStats to be set at sub-aggregate with search filter")
 
 	wantCount, _, _ := sumAggregateStats(rows)
-	assertpkg.Equal(t, wantCount, m.contextStats.MessageCount)
+	assert.Equal(t, wantCount, m.contextStats.MessageCount)
 }
 
 // TestHeaderViewShowsFilteredStatsOnSearch verifies the header shows contextStats
@@ -864,8 +864,8 @@ func TestHeaderViewShowsFilteredStatsOnSearch(t *testing.T) {
 	header := model.headerView()
 
 	// Should show filtered stats (42 msgs), not global stats (1000 msgs)
-	assertpkg.Contains(t, header, "42 msgs", "expected header to show filtered stats")
-	assertpkg.NotContains(t, header, "1000 msgs", "header should not show global stats when search filter active")
+	assert.Contains(t, header, "42 msgs", "expected header to show filtered stats")
+	assert.NotContains(t, header, "1000 msgs", "header should not show global stats when search filter active")
 }
 
 // TestDrillDownWithSearchQueryPreservesSearch verifies that drilling down from a
@@ -886,7 +886,7 @@ func TestDrillDownWithSearchQueryPreservesSearch(t *testing.T) {
 	assertCmd(t, cmd, true)
 
 	// Should use loadSearch (searchRequestID incremented twice: invalidate + new search)
-	assertpkg.Equal(t, initialSearchRequestID+2, m.searchRequestID, "expected searchRequestID to increment by 2")
+	assert.Equal(t, initialSearchRequestID+2, m.searchRequestID, "expected searchRequestID to increment by 2")
 }
 
 // TestDrillDownWithoutSearchQueryUsesLoadMessages verifies that drilling down
@@ -906,8 +906,8 @@ func TestDrillDownWithoutSearchQueryUsesLoadMessages(t *testing.T) {
 	assertLevel(t, m, levelMessageList)
 	assertCmd(t, cmd, true) // Should return command to load messages
 
-	assertpkg.Equal(t, initialLoadRequestID+1, m.loadRequestID, "expected loadRequestID to increment by 1")
-	assertpkg.Equal(t, initialSearchRequestID+1, m.searchRequestID, "expected searchRequestID to increment by 1")
+	assert.Equal(t, initialLoadRequestID+1, m.loadRequestID, "expected loadRequestID to increment by 1")
+	assert.Equal(t, initialSearchRequestID+1, m.searchRequestID, "expected searchRequestID to increment by 1")
 }
 
 // TestSubAggregateDrillDownWithSearchQueryPreservesSearch verifies drill-down from
@@ -929,7 +929,7 @@ func TestSubAggregateDrillDownWithSearchQueryPreservesSearch(t *testing.T) {
 	assertSearchQuery(t, m, "urgent") // Search preserved
 	assertCmd(t, cmd, true)
 
-	assertpkg.Equal(t, initialSearchRequestID+2, m.searchRequestID, "expected searchRequestID to increment by 2")
+	assert.Equal(t, initialSearchRequestID+2, m.searchRequestID, "expected searchRequestID to increment by 2")
 }
 
 // TestDrillDownSearchBreadcrumbRoundTrip verifies that searching at aggregate level,
@@ -1010,7 +1010,7 @@ func TestEscBehaviorInheritedVsLocalSearch(t *testing.T) {
 		m := applyAggregateKey(t, model, keyEnter())
 		m.messages = []query.MessageSummary{{ID: 1}, {ID: 2}}
 
-		requirepkg.Nil(t, m.preSearchMessages, "inherited search should not have preSearchMessages")
+		require.Nil(t, m.preSearchMessages, "inherited search should not have preSearchMessages")
 
 		// Single Esc goes back to aggregate with search intact
 		m2 := applyMessageListKey(t, m, keyEsc())
@@ -1035,13 +1035,13 @@ func TestEscBehaviorInheritedVsLocalSearch(t *testing.T) {
 		m.searchQuery = "test"
 		m.messages = []query.MessageSummary{{ID: 99}}
 
-		requirepkg.NotNil(t, m.preSearchMessages, "local search should have preSearchMessages")
+		require.NotNil(t, m.preSearchMessages, "local search should have preSearchMessages")
 
 		// First Esc clears the local search, restores pre-search messages
 		m2 := applyMessageListKey(t, m, keyEsc())
 		assertLevel(t, m2, levelMessageList)
 		assertSearchQuery(t, m2, "")
-		assertpkg.Len(t, m2.messages, 3, "expected pre-search messages restored")
+		assert.Len(t, m2.messages, 3, "expected pre-search messages restored")
 
 		// Second Esc goes back to aggregate
 		m3 := applyMessageListKey(t, m2, keyEsc())
@@ -1073,8 +1073,8 @@ func TestStaleSearchResponseIgnoredAfterDrillDown(t *testing.T) {
 	m2 := applySearchResults(t, m, staleRequestID, []query.MessageSummary{{ID: 999, Subject: "Stale search result"}}, 0)
 
 	// The stale response should be ignored — messages unchanged
-	requirepkg.Len(t, m2.messages, 1, "stale ignored")
-	assertpkg.Equal(t, int64(100), m2.messages[0].ID, "expected message ID 100 (original)")
+	require.Len(t, m2.messages, 1, "stale ignored")
+	assert.Equal(t, int64(100), m2.messages[0].ID, "expected message ID 100 (original)")
 }
 
 // TestStaleSearchIgnoredAfterInheritedEsc verifies that after pressing Esc to
@@ -1104,7 +1104,7 @@ func TestStaleSearchIgnoredAfterInheritedEsc(t *testing.T) {
 	// Must be ignored — level and rows unchanged
 	assertLevel(t, m3, levelAggregates)
 	if len(m3.messages) == 1 {
-		assertpkg.NotEqual(t, int64(999), m3.messages[0].ID, "stale search response should have been ignored")
+		assert.NotEqual(t, int64(999), m3.messages[0].ID, "stale search response should have been ignored")
 	}
 }
 
@@ -1127,9 +1127,9 @@ func TestAKeyWithActiveSearchUsesLoadSearch(t *testing.T) {
 	assertCmd(t, cmd, true)
 
 	// searchRequestID should increment (invalidate + new search)
-	assertpkg.Greater(t, m.searchRequestID, initialSearchID)
+	assert.Greater(t, m.searchRequestID, initialSearchID)
 	// loadRequestID should also increment to invalidate stale loads
-	assertpkg.Greater(t, m.loadRequestID, initialLoadID)
+	assert.Greater(t, m.loadRequestID, initialLoadID)
 }
 
 // TestInheritedSearchLocalReSearchSnapshots verifies that pressing /
@@ -1150,8 +1150,8 @@ func TestInheritedSearchLocalReSearchSnapshots(t *testing.T) {
 	cmd := m.activateInlineSearch("search")
 	assertCmd(t, cmd, true)
 
-	requirepkg.NotNil(t, m.preSearchMessages, "activateInlineSearch should snapshot inherited results")
-	assertpkg.Len(t, m.preSearchMessages, 2, "snapshot")
+	require.NotNil(t, m.preSearchMessages, "activateInlineSearch should snapshot inherited results")
+	assert.Len(t, m.preSearchMessages, 2, "snapshot")
 
 	// Simulate new search committed
 	m.inlineSearchActive = false
@@ -1162,14 +1162,14 @@ func TestInheritedSearchLocalReSearchSnapshots(t *testing.T) {
 	m2 := applyMessageListKey(t, m, keyEsc())
 	assertLevel(t, m2, levelMessageList)
 	assertSearchQuery(t, m2, "")
-	assertpkg.Len(t, m2.messages, 2, "expected inherited messages restored")
+	assert.Len(t, m2.messages, 2, "expected inherited messages restored")
 }
 
 // TestPreSearchSnapshotRestoreOnEsc verifies that activating inline search at the
 // message list level snapshots state, and Esc restores it instantly without re-query.
 func TestPreSearchSnapshotRestoreOnEsc(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	originalMsgs := []query.MessageSummary{{ID: 1, Subject: "Msg1"}, {ID: 2, Subject: "Msg2"}}
 	originalStats := &query.TotalStats{MessageCount: 100, TotalSize: 5000}
 
@@ -1246,7 +1246,7 @@ func TestTwoStepEscClearsSearchThenGoesBack(t *testing.T) {
 
 	assertSearchQuery(t, m2, "")
 	assertLevel(t, m2, levelMessageList)
-	assertpkg.Len(t, m2.messages, 3, "expected pre-search messages restored")
+	assert.Len(t, m2.messages, 3, "expected pre-search messages restored")
 
 	// Second Esc — should goBack to aggregates
 	m3 := applyMessageListKey(t, m2, keyEsc())
@@ -1274,8 +1274,8 @@ func TestZeroSearchResultsRendersSearchBar(t *testing.T) {
 		view := m.View()
 		assertViewFitsHeight(t, view, 30)
 
-		assertpkg.Contains(t, view, "No results found")
-		assertpkg.Contains(t, view, "[Fast]/", "expected search bar with '[Fast]/' prefix")
+		assert.Contains(t, view, "No results found")
+		assert.Contains(t, view, "[Fast]/", "expected search bar with '[Fast]/' prefix")
 	})
 
 	t.Run("completed search with zero results shows count", func(t *testing.T) {
@@ -1293,13 +1293,13 @@ func TestZeroSearchResultsRendersSearchBar(t *testing.T) {
 		view := m.View()
 		assertViewFitsHeight(t, view, 30)
 
-		assertpkg.Contains(t, view, "No results found")
-		assertpkg.Contains(t, view, "(0 results)", "in info line")
-		assertpkg.Contains(t, view, "nonexistent_query", "expected search query shown in info line")
+		assert.Contains(t, view, "No results found")
+		assert.Contains(t, view, "(0 results)", "in info line")
+		assert.Contains(t, view, "nonexistent_query", "expected search query shown in info line")
 	})
 
 	t.Run("non-search empty state still shows No messages", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		model := NewBuilder().
 			WithLevel(levelMessageList).
 			WithLoading(false).
@@ -1349,7 +1349,7 @@ func TestStaleLoadMessagesDoesNotOverwriteSearch(t *testing.T) {
 
 	// Simulate: search results arrive and are applied.
 	model = applySearchResults(t, model, model.searchRequestID, searchResults, 2)
-	requirepkg.Len(t, model.messages, 2, "expected search results")
+	require.Len(t, model.messages, 2, "expected search results")
 
 	// Simulate: the stale loadMessages response arrives with the OLD requestID.
 	staleMsg := messagesLoadedMsg{
@@ -1359,8 +1359,8 @@ func TestStaleLoadMessagesDoesNotOverwriteSearch(t *testing.T) {
 	model = sendMsg(t, model, staleMsg)
 
 	// The stale response must be ignored — search results should remain.
-	requirepkg.Len(t, model.messages, 2, "stale loadMessages overwrote search results")
-	assertpkg.Equal(t, "Search Hit 1", model.messages[0].Subject)
+	require.Len(t, model.messages, 2, "stale loadMessages overwrote search results")
+	assert.Equal(t, "Search Hit 1", model.messages[0].Subject)
 }
 
 // TestSearchClearsStaleMessages verifies that starting an inline search
@@ -1375,7 +1375,7 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 		WithPageSize(20).WithSize(100, 30).
 		Build()
 
-	requirepkg.Len(t, model.messages, 50, "expected pre-loaded messages")
+	require.Len(t, model.messages, 50, "expected pre-loaded messages")
 
 	// Simulate debounce firing with a search query.
 	debounceMsg := searchDebounceMsg{
@@ -1387,7 +1387,7 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 
 	// Messages should be nil immediately — not showing stale results while
 	// waiting for the async search to complete.
-	assertpkg.Nil(t, model.messages, "expected messages to be nil after search starts")
+	assert.Nil(t, model.messages, "expected messages to be nil after search starts")
 }
 
 // TestHighlightedColumnsAligned verifies that highlighting search terms in

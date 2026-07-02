@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/fbmessenger"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -48,11 +47,11 @@ Examples:
   msgvault import-messenger --me test.user@facebook.messenger ~/downloads/facebook-export
   msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
   msgvault import-messenger --me test.user@facebook.messenger --limit 100 ./dyi
-`,
+	`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := MustBeLocal("import-messenger"); err != nil {
-			return err
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		return runImportMessenger(cmd, args[0])
 	},
@@ -66,15 +65,11 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() { _ = s.Close() }()
-
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
+	defer cleanup()
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
@@ -114,6 +109,10 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 			return nil
 		}
 		return fmt.Errorf("import failed: %w", err)
+	}
+
+	if err := runPostSourceCreateMigrations(s); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())

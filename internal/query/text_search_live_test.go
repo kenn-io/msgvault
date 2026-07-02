@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // openTextSearchDB creates a minimal in-memory SQLite DB with one text
@@ -16,7 +16,7 @@ import (
 func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	requirepkg.NoError(t, err, "open")
+	require.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
 
 	_, err = db.Exec(`
@@ -61,19 +61,19 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 	}
 
 	_, err = db.Exec(`INSERT INTO sources (id, identifier) VALUES (1, 'test@example.com')`)
-	requirepkg.NoError(t, err, "insert source")
+	require.NoError(t, err, "insert source")
 	_, err = db.Exec(`INSERT INTO conversations (id, source_id) VALUES (1, 1)`)
-	requirepkg.NoError(t, err, "insert conv")
+	require.NoError(t, err, "insert conv")
 	res, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, message_type) VALUES (1, 1, 1, 'hello world', 'imessage')`)
-	requirepkg.NoError(t, err, "insert message")
+	require.NoError(t, err, "insert message")
 	msgID, _ := res.LastInsertId()
 	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, 'hello world', 'hello world')`, msgID)
-	requirepkg.NoError(t, err, "insert fts")
+	require.NoError(t, err, "insert fts")
 	return db, msgID
 }
 
 func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	db, msgID := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
 	ctx := context.Background()
@@ -89,7 +89,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 
 	results, err = engine.TextSearch(ctx, "hello", 10, 0)
 	require.NoError(err, "TextSearch after dedup delete")
-	assertpkg.Empty(t, results, "want 0 results after dedup delete")
+	assert.Empty(t, results, "want 0 results after dedup delete")
 }
 
 func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
@@ -99,15 +99,15 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 
 	// Soft-delete via source deletion (deleted_from_source_at).
 	_, err := db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
-	requirepkg.NoError(t, err, "set deleted_from_source_at")
+	require.NoError(t, err, "set deleted_from_source_at")
 
 	results, err := engine.TextSearch(ctx, "hello", 10, 0)
-	requirepkg.NoError(t, err, "TextSearch after source delete")
-	assertpkg.Empty(t, results, "want 0 results after source delete")
+	require.NoError(t, err, "TextSearch after source delete")
+	assert.Empty(t, results, "want 0 results after source delete")
 }
 
 func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	db, _ := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
 	ctx := context.Background()
@@ -118,7 +118,7 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	insertTextSearchMessage(t, db, 5, "synctech_sms_call", "missed call body")
 
 	results, err := engine.TextSearch(ctx, "body", 10, 0)
-	requirepkg.NoError(t, err, "TextSearch")
+	require.NoError(t, err, "TextSearch")
 	var types []string
 	for _, r := range results {
 		types = append(types, r.MessageType)
@@ -130,15 +130,15 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 }
 
 func TestIsTextMessageTypeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
-	assertpkg.True(t, IsTextMessageType("mms"), "mms should be a text message type")
-	assertpkg.True(t, IsTextMessageType("teams"), "teams should be a text message type")
-	assertpkg.False(t, IsTextMessageType("synctech_sms_call"), "synctech_sms_call should not be a text message type")
+	assert.True(t, IsTextMessageType("mms"), "mms should be a text message type")
+	assert.True(t, IsTextMessageType("teams"), "teams should be a text message type")
+	assert.False(t, IsTextMessageType("synctech_sms_call"), "synctech_sms_call should not be a text message type")
 }
 
 func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, body string) {
 	t.Helper()
 	_, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, snippet, message_type) VALUES (?, 1, 1, ?, ?, ?)`, id, body, body, messageType)
-	requirepkg.NoError(t, err, "insert %s message", messageType)
+	require.NoError(t, err, "insert %s message", messageType)
 	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, id, body, body)
-	requirepkg.NoError(t, err, "insert %s fts", messageType)
+	require.NoError(t, err, "insert %s fts", messageType)
 }

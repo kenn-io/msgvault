@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -32,9 +32,9 @@ func TestDetailLineCountResetOnLoad(t *testing.T) {
 	m := applyMessageListKey(t, model, keyEnter())
 
 	// detailLineCount and detailScroll should be reset
-	assertpkg.Equal(t, 0, m.detailLineCount, "expected detailLineCount = 0 on load start")
-	assertpkg.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 on load start")
-	assertpkg.Nil(t, m.messageDetail, "expected messageDetail = nil on load start")
+	assert.Equal(t, 0, m.detailLineCount, "expected detailLineCount = 0 on load start")
+	assert.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 on load start")
+	assert.Nil(t, m.messageDetail, "expected messageDetail = nil on load start")
 }
 
 func TestDetailScrollClamping(t *testing.T) {
@@ -52,14 +52,14 @@ func TestDetailScrollClamping(t *testing.T) {
 	// Max scroll should be lineCount - detailPageSize = 25 - 12 = 13
 	// (detailPageSize = pageSize + 2 because detail view has no table header/separator)
 	expectedMax := 13
-	assertpkg.Equal(t, expectedMax, model.detailScroll, "expected detailScroll clamped")
+	assert.Equal(t, expectedMax, model.detailScroll, "expected detailScroll clamped")
 
 	// Test when content fits in one page
 	model.detailLineCount = 5 // Less than detailPageSize (12)
 	model.detailScroll = 10
 	model.clampDetailScroll()
 
-	assertpkg.Equal(t, 0, model.detailScroll, "expected detailScroll = 0 when content fits page")
+	assert.Equal(t, 0, model.detailScroll, "expected detailScroll = 0 when content fits page")
 }
 
 func TestResizeRecalculatesDetailLineCount(t *testing.T) {
@@ -83,14 +83,14 @@ func TestResizeRecalculatesDetailLineCount(t *testing.T) {
 	// Line count should be recalculated (narrower width = more wrapping = more lines)
 	if m.detailLineCount == initialLineCount && m.width != 80 {
 		// Note: This might be equal if wrapping doesn't change, but width should be updated
-		assertpkg.Equal(t, 40, m.width, "expected width = 40 after resize")
+		assert.Equal(t, 40, m.width, "expected width = 40 after resize")
 	}
 
 	// Scroll should be clamped if it exceeds new bounds
 	m.detailScroll = 1000
 	m.clampDetailScroll()
 	maxScroll := max(m.detailLineCount-m.pageSize, 0)
-	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "expected detailScroll clamped")
+	assert.LessOrEqual(t, m.detailScroll, maxScroll, "expected detailScroll clamped")
 }
 
 func TestEndKeyWithZeroLineCount(t *testing.T) {
@@ -105,7 +105,7 @@ func TestEndKeyWithZeroLineCount(t *testing.T) {
 	m := applyDetailKey(t, model, key('G'))
 
 	// Should not crash and scroll should remain 0
-	assertpkg.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 with zero line count")
+	assert.Equal(t, 0, m.detailScroll, "expected detailScroll = 0 with zero line count")
 }
 
 func TestFillScreenDetailLineCount(t *testing.T) {
@@ -120,21 +120,21 @@ func TestFillScreenDetailLineCount(t *testing.T) {
 	view := model.messageDetailView()
 	lines := strings.Split(view, "\n")
 	// View should have detailPageSize lines (last line has no trailing newline)
-	assertpkg.Len(t, lines, expectedLines, "loading state")
+	assert.Len(t, lines, expectedLines, "loading state")
 
 	// Test error state
 	model.loading = false
 	model.err = errors.New("test error")
 	view = model.messageDetailView()
 	lines = strings.Split(view, "\n")
-	assertpkg.Len(t, lines, expectedLines, "error state")
+	assert.Len(t, lines, expectedLines, "error state")
 
 	// Test nil detail state
 	model.err = nil
 	model.messageDetail = nil
 	view = model.messageDetailView()
 	lines = strings.Split(view, "\n")
-	assertpkg.Len(t, lines, expectedLines, "nil detail state")
+	assert.Len(t, lines, expectedLines, "nil detail state")
 }
 
 func TestScrollClampingAfterResize(t *testing.T) {
@@ -154,7 +154,7 @@ func TestScrollClampingAfterResize(t *testing.T) {
 
 	// detailScroll should be clamped to max (50 - 27 = 23 for detailPageSize)
 	maxScroll := max(model.detailLineCount-m.detailPageSize(), 0)
-	assertpkg.LessOrEqual(t, m.detailScroll, maxScroll, "detailScroll exceeds maxScroll after resize")
+	assert.LessOrEqual(t, m.detailScroll, maxScroll, "detailScroll exceeds maxScroll after resize")
 }
 
 // =============================================================================
@@ -164,7 +164,7 @@ func TestScrollClampingAfterResize(t *testing.T) {
 // TestDetailNavigationPrevNext verifies left/right arrow navigation in message detail view.
 // Left = previous in list (lower index), Right = next in list (higher index).
 func TestDetailNavigationPrevNext(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -196,7 +196,7 @@ func TestDetailNavigationPrevNext(t *testing.T) {
 
 // TestDetailNavigationAtBoundary verifies flash message at first/last message.
 func TestDetailNavigationAtBoundary(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -244,14 +244,14 @@ func TestDetailNavigationHLKeys(t *testing.T) {
 	// Press 'l' to go to next message in list (higher index)
 	m, _ := sendKey(t, model, key('l'))
 
-	assertpkg.Equal(t, 2, m.detailMessageIndex, "after 'l'")
+	assert.Equal(t, 2, m.detailMessageIndex, "after 'l'")
 
 	// Reset and press 'h' to go to previous message in list (lower index)
 	m.detailMessageIndex = 1
 	m.cursor = 1
 	m, _ = sendKey(t, m, key('h'))
 
-	assertpkg.Equal(t, 0, m.detailMessageIndex, "after 'h'")
+	assert.Equal(t, 0, m.detailMessageIndex, "after 'h'")
 }
 
 // TestDetailNavigationEmptyList verifies navigation with empty message list.
@@ -263,13 +263,13 @@ func TestDetailNavigationEmptyList(t *testing.T) {
 	newModel, _ := model.navigateDetailNext()
 	m := asModel(t, newModel)
 
-	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
+	assert.Equal(t, "No messages loaded", m.flashMessage)
 
 	// Press left arrow - should show flash, not panic
 	newModel, _ = m.navigateDetailPrev()
 	m = asModel(t, newModel)
 
-	assertpkg.Equal(t, "No messages loaded", m.flashMessage)
+	assert.Equal(t, "No messages loaded", m.flashMessage)
 }
 
 // TestDetailNavigationOutOfBoundsIndex verifies clamping of stale index.
@@ -287,14 +287,14 @@ func TestDetailNavigationOutOfBoundsIndex(t *testing.T) {
 
 	// Index should be clamped to 0, then show "At first message"
 	// because we can't go before the only message
-	assertpkg.Equal(t, 0, m.detailMessageIndex, "expected detailMessageIndex clamped")
-	assertpkg.Equal(t, "At first message", m.flashMessage)
+	assert.Equal(t, 0, m.detailMessageIndex, "expected detailMessageIndex clamped")
+	assert.Equal(t, "At first message", m.flashMessage)
 }
 
 // TestDetailNavigationOutOfBoundsWithMultipleMessages verifies that when the index is
 // out of bounds but there are multiple messages, navigation succeeds after clamping.
 func TestDetailNavigationOutOfBoundsWithMultipleMessages(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "First message"},
@@ -353,14 +353,14 @@ func TestDetailNavigationCursorPreservedOnGoBack(t *testing.T) {
 	// Cursor should be preserved at position 2 (where we navigated to)
 	// not restored to position 0 (where we entered)
 	assertLevel(t, m, levelMessageList)
-	assertpkg.Equal(t, 2, m.cursor, "expected cursor preserved from navigation")
+	assert.Equal(t, 2, m.cursor, "expected cursor preserved from navigation")
 }
 
 // TestDetailNavigationFromThreadView verifies that left/right navigation in detail view
 // uses threadMessages (not messages) when entered from thread view, and keeps
 // threadCursor and threadScrollOffset in sync.
 func TestDetailNavigationFromThreadView(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithMessages(
 			query.MessageSummary{ID: 1, Subject: "List msg 1"},

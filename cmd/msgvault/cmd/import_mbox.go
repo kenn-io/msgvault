@@ -52,6 +52,10 @@ Examples:
 `,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+
 		identifier := args[0]
 		exportPath := args[1]
 
@@ -97,19 +101,12 @@ Examples:
 			}
 		}()
 
-		dbPath := cfg.DatabaseDSN()
-		st, err := store.Open(dbPath)
+		st, cleanup, err := openWritableStoreAndInitForIngest()
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return err
 		}
-		defer func() { _ = st.Close() }()
-
-		if err := st.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrationsForIngest(st); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
+		defer cleanup()
+		dbPath := cfg.DatabaseDSN()
 
 		attachmentsDir := cfg.AttachmentsDir()
 		if importMboxNoAttachments {

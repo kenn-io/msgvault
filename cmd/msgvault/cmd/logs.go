@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,8 +29,10 @@ var (
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View and tail msgvault's structured log files",
-	Long: `Show msgvault's structured log output from the on-disk JSON logs
-written to <data dir>/logs.
+	Long: `Show msgvault's structured log output from the selected daemon's
+on-disk logs: the JSON logs under <data dir>/logs and the background
+daemon's <data dir>/serve.log. With [remote].url configured, this shows the
+remote daemon's logs; otherwise it starts or contacts the local daemon.
 
 By default this prints the last 50 lines of today's log file in a
 compact, human-friendly format (level + run_id + message + the
@@ -46,18 +49,37 @@ Examples:
   msgvault logs --grep deduplicate    # substring over the JSON
   msgvault logs --all                 # every log file we still have
   msgvault logs --path                # print the log path and exit`,
+	Args: cobra.NoArgs,
 	RunE: runLogsCmd,
 }
 
+// validLogLevels lists the accepted --level values, matching slog's levels.
+var validLogLevels = []string{"debug", "info", "warn", "error"}
+
 func runLogsCmd(cmd *cobra.Command, args []string) error {
+	// Validate --level up front (on the client, before proxying to the
+	// daemon) so a typo fails fast with the allowed set instead of
+	// silently matching nothing.
+	if logsLevel != "" && !slices.Contains(validLogLevels, strings.ToLower(logsLevel)) {
+		return usageErr(cmd, fmt.Errorf(
+			"invalid --level: %q (want one of: %s)",
+			logsLevel, strings.Join(validLogLevels, ", "),
+		))
+	}
+
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	}
+
 	dir := cfg.LogsDir()
+	serveLogPath := filepath.Join(cfg.Data.DataDir, "serve.log")
 
 	if logsPath {
 		fmt.Println(dir)
 		return nil
 	}
 
-	files, err := findLogFiles(dir, logsAll)
+	files, err := findLogFiles(dir, serveLogPath, logsAll)
 	if err != nil {
 		return err
 	}
@@ -92,9 +114,40 @@ func runLogsCmd(cmd *cobra.Command, args []string) error {
 	return followLogFile(cmd.Context(), latest, filter, cmd.OutOrStdout())
 }
 
-// findLogFiles returns the sorted list of log files to read.
-// When all is false, it returns only today's file (if it exists).
-func findLogFiles(dir string, all bool) ([]string, error) {
+// findLogFiles returns the sorted list of log files to read. The daemon's
+// serveLogPath (the background daemon's serve.log, written outside the logs
+// dir) is always included when it exists, so `logs` can surface the running
+// daemon's output. When all is false, it returns today's structured log file
+// (if present) plus serve.log; when all is true it returns every regular file
+// in the logs directory (not just the msgvault-YYYY-MM-DD.log pattern) plus
+// serve.log.
+func findLogFiles(dir, serveLogPath string, all bool) ([]string, error) {
+	appendIfExists := func(files []string, path string) []string {
+		if path == "" {
+			return files
+		}
+		if _, err := os.Stat(path); err == nil {
+			return append(files, path)
+		}
+		return files
+	}
+
+	dirFiles, err := logDirFiles(dir, all)
+	if err != nil {
+		return nil, err
+	}
+
+	files := appendIfExists(dirFiles, serveLogPath)
+	sort.Slice(files, func(i, j int) bool {
+		return logFileSortKey(files[i]) < logFileSortKey(files[j])
+	})
+	return files, nil
+}
+
+// logDirFiles returns the log files inside dir. When all is false it returns
+// today's structured file if it exists (falling through to the full scan
+// otherwise); when all is true it returns every regular file in the dir.
+func logDirFiles(dir string, all bool) ([]string, error) {
 	if _, err := os.Stat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -110,7 +163,7 @@ func findLogFiles(dir string, all bool) ([]string, error) {
 		if _, err := os.Stat(path); err == nil {
 			return []string{path}, nil
 		}
-		// Fall through to the --all scan; maybe we only have
+		// Fall through to the full scan; maybe we only have
 		// yesterday's file.
 	}
 
@@ -123,16 +176,8 @@ func findLogFiles(dir string, all bool) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		n := e.Name()
-		if !strings.HasPrefix(n, "msgvault-") ||
-			(!strings.HasSuffix(n, ".log") && !strings.Contains(n, ".log.")) {
-			continue
-		}
-		files = append(files, filepath.Join(dir, n))
+		files = append(files, filepath.Join(dir, e.Name()))
 	}
-	sort.Slice(files, func(i, j int) bool {
-		return logFileSortKey(files[i]) < logFileSortKey(files[j])
-	})
 	return files, nil
 }
 
@@ -187,6 +232,103 @@ func (f logFilter) matches(raw []byte, rec map[string]any) bool {
 	return true
 }
 
+// renderLogLine decodes a single raw log line and, if it passes filter,
+// returns its human-readable form. It accepts JSON records (the structured
+// logs directory) and logfmt records (the daemon's serve.log); lines that are
+// neither (e.g. serve.log restart banners) are passed through verbatim as long
+// as no level filter is active.
+func renderLogLine(raw []byte, filter logFilter) (string, bool) {
+	if rec, ok := parseLogRecord(raw); ok {
+		if !filter.matches(raw, rec) {
+			return "", false
+		}
+		return formatLogRecord(rec), true
+	}
+	// An unstructured line carries no level, so a level filter excludes it.
+	if filter.Level != "" {
+		return "", false
+	}
+	if filter.Grep != "" && !strings.Contains(string(raw), filter.Grep) {
+		return "", false
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return "", false
+	}
+	return string(raw), true
+}
+
+// parseLogRecord decodes a log line as either a JSON object (structured logs)
+// or a logfmt line (the slog text handler used for serve.log).
+func parseLogRecord(raw []byte) (map[string]any, bool) {
+	var rec map[string]any
+	if json.Unmarshal(raw, &rec) == nil && rec != nil {
+		return rec, true
+	}
+	return parseLogfmtRecord(raw)
+}
+
+// parseLogfmtRecord parses a slog text-handler (logfmt) line into a record.
+// It returns ok=false for lines that are not key=value structured logs.
+func parseLogfmtRecord(raw []byte) (map[string]any, bool) {
+	s := string(raw)
+	rec := make(map[string]any)
+	for i := 0; i < len(s); {
+		for i < len(s) && s[i] == ' ' {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		keyStart := i
+		for i < len(s) && s[i] != '=' && s[i] != ' ' {
+			i++
+		}
+		if i >= len(s) || s[i] != '=' {
+			return nil, false
+		}
+		key := s[keyStart:i]
+		i++ // consume '='
+		var val string
+		val, i = readLogfmtValue(s, i)
+		rec[key] = val
+	}
+	for _, k := range []string{"msg", "level", "time"} {
+		if _, ok := rec[k]; ok {
+			return rec, true
+		}
+	}
+	return nil, false
+}
+
+// readLogfmtValue reads a logfmt value starting at index i, honoring Go-style
+// double-quoted values, and returns the value with the index just past it.
+func readLogfmtValue(s string, i int) (string, int) {
+	if i >= len(s) || s[i] != '"' {
+		start := i
+		for i < len(s) && s[i] != ' ' {
+			i++
+		}
+		return s[start:i], i
+	}
+	var b strings.Builder
+	i++ // opening quote
+	for i < len(s) {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) {
+			b.WriteByte(s[i+1])
+			i += 2
+			continue
+		}
+		if c == '"' {
+			i++ // closing quote
+			break
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String(), i
+}
+
 // printLogFiles prints the last tailN filtered lines across the
 // supplied files. Keeping a fixed-size ring buffer keeps memory
 // bounded even on very large log files.
@@ -212,17 +354,9 @@ func printLogFiles(
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024)
 		for scanner.Scan() {
-			raw := scanner.Bytes()
-			var rec map[string]any
-			if err := json.Unmarshal(raw, &rec); err != nil {
-				// Non-JSON lines (shouldn't happen in file
-				// output, but be safe).
-				continue
+			if line, ok := renderLogLine(scanner.Bytes(), filter); ok {
+				push(line)
 			}
-			if !filter.matches(raw, rec) {
-				continue
-			}
-			push(formatLogRecord(rec))
 		}
 		_ = f.Close()
 		if err := scanner.Err(); err != nil {
@@ -271,10 +405,9 @@ func followLogFile(
 				partial = append(partial[:0], line...)
 				// fall through to the sleep
 			} else {
-				var rec map[string]any
-				if json.Unmarshal(line, &rec) == nil &&
-					filter.matches(line, rec) {
-					_, _ = fmt.Fprintln(out, formatLogRecord(rec))
+				trimmed := line[:len(line)-1]
+				if rendered, ok := renderLogLine(trimmed, filter); ok {
+					_, _ = fmt.Fprintln(out, rendered)
 				}
 				continue
 			}

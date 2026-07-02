@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -16,7 +16,7 @@ import (
 func newFilterTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
-	requirepkg.NoError(t, err, "open")
+	require.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
 
 	schema := `
@@ -30,7 +30,7 @@ CREATE TABLE labels (
 );
 `
 	_, err = db.Exec(schema)
-	requirepkg.NoError(t, err, "schema")
+	require.NoError(t, err, "schema")
 	participants := []string{
 		"alice@example.com",
 		"bob@example.com",
@@ -39,11 +39,11 @@ CREATE TABLE labels (
 	}
 	for _, p := range participants {
 		_, err := db.Exec(`INSERT INTO participants (email_address) VALUES (?)`, p)
-		requirepkg.NoError(t, err, "insert participant")
+		require.NoError(t, err, "insert participant")
 	}
 	for _, l := range []string{"INBOX", "Work", "Archive"} {
 		_, err := db.Exec(`INSERT INTO labels (name) VALUES (?)`, l)
-		requirepkg.NoError(t, err, "insert label")
+		require.NoError(t, err, "insert label")
 	}
 	return db
 }
@@ -59,8 +59,8 @@ func sortedIDs(ids []int64) []int64 {
 // existing SQLite search path, so vector/hybrid and FTS agree on which
 // participants match a token.
 func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -84,8 +84,8 @@ func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
 // TestBuildFilter_SizeAndSubjectAndDate confirms that larger:/smaller:,
 // subject:, and date bounds flow through to the Filter struct unchanged.
 func TestBuildFilter_SizeAndSubjectAndDate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -110,16 +110,28 @@ func TestBuildFilter_MessageType(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	f, err := BuildFilter(ctx, db, nil, search.Parse(`message_type=sms message_type:mms lunch`))
-	requirepkg.NoError(t, err, "BuildFilter")
+	require.NoError(t, err, "BuildFilter")
 
-	assertpkg.Equal(t, []string{"sms", "mms"}, f.MessageTypes, "MessageTypes")
+	assert.Equal(t, []string{"sms", "mms"}, f.MessageTypes, "MessageTypes")
+}
+
+func TestBuildFilter_SourceIDs(t *testing.T) {
+	ctx := context.Background()
+	db := newFilterTestDB(t)
+	q := search.Parse(`lunch`)
+	q.AccountIDs = []int64{17, 23}
+
+	f, err := BuildFilter(ctx, db, nil, q)
+	require.NoError(t, err, "BuildFilter")
+
+	assert.Equal(t, []int64{17, 23}, f.SourceIDs, "SourceIDs")
 }
 
 // TestBuildFilter_LabelsAndAttachments checks the label: and
 // has:attachment operators.
 func TestBuildFilter_LabelsAndAttachments(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -141,8 +153,8 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 
 	q := search.Parse(`lunch plans`)
 	f, err := BuildFilter(ctx, db, nil, q)
-	requirepkg.NoError(t, err, "BuildFilter")
-	assertpkg.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
+	require.NoError(t, err, "BuildFilter")
+	assert.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
 }
 
 // TestBuildFilter_NonexistentSenderReturnsSentinel guards the
@@ -151,7 +163,7 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 // SenderGroups slice, which the backend treats as "no filter" —
 // broadening the search instead of returning zero hits.
 func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -160,14 +172,14 @@ func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.SenderGroups, 1, "want one group with sentinel; got %v", f.SenderGroups)
 	require.Len(f.SenderGroups[0], 1)
-	assertpkg.Negative(t, f.SenderGroups[0][0], "want negative sentinel id")
+	assert.Negative(t, f.SenderGroups[0][0], "want negative sentinel id")
 }
 
 // TestBuildFilter_NonexistentLabelReturnsSentinel: same as above but
 // for labels. Critical because the label path used to do exact-name
 // lookups with IN (...), and an unknown label silently became a no-op.
 func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -176,7 +188,7 @@ func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	require.NoError(err, "BuildFilter")
 	require.Lenf(f.LabelGroups, 1, "want one group with sentinel; got %v", f.LabelGroups)
 	require.Len(f.LabelGroups[0], 1)
-	assertpkg.Negative(t, f.LabelGroups[0][0], "want negative sentinel id")
+	assert.Negative(t, f.LabelGroups[0][0], "want negative sentinel id")
 }
 
 // TestBuildFilter_RepeatedSenderTokens_PerTokenGroups asserts that
@@ -193,8 +205,8 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	t.Run("two real tokens become two non-sentinel groups", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		q := search.Parse(`from:alice from:bob`)
 		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
@@ -208,8 +220,8 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 	})
 
 	t.Run("one missing token sentinels only that group", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		q := search.Parse(`from:alice from:nobody@nowhere.invalid`)
 		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
@@ -221,8 +233,8 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 	})
 
 	t.Run("substring tokens collect all matching participants per group", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		// from:example.com → alice, bob, dave.work all match @example.com.
 		// from:work → only dave.work. Two groups, IDs preserved per group.
 		q := search.Parse(`from:example.com from:work`)
@@ -243,8 +255,8 @@ func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
 // `to` recipient matching bob — preserving the SQLite path's per-token
 // AND semantics for multi-valued recipient fields.
 func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -268,8 +280,8 @@ func TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups(t *testing.T) {
 // match), so the message set narrows to zero — same effect as the FTS
 // path, but without conflating the two tokens at resolution time.
 func TestBuildFilter_RepeatedRecipientTokens_OneEmptySentinelsThatGroup(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	db := newFilterTestDB(t)
 
@@ -290,8 +302,8 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 	db := newFilterTestDB(t)
 
 	t.Run("two real labels become two groups", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		q := search.Parse(`label:Work label:Archive`)
 		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
@@ -305,8 +317,8 @@ func TestBuildFilter_RepeatedLabelTokens_PerTokenGroups(t *testing.T) {
 	})
 
 	t.Run("one missing token sentinels only that group", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		q := search.Parse(`label:Work label:nonexistent-xyz`)
 		f, err := BuildFilter(ctx, db, nil, q)
 		require.NoError(err, "BuildFilter")
@@ -343,10 +355,10 @@ func TestBuildFilter_LabelsMatchCaseInsensitiveSubstring(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			q := search.Parse(c.query)
 			f, err := BuildFilter(ctx, db, nil, q)
-			requirepkg.NoError(t, err, "BuildFilter")
-			requirepkg.Lenf(t, f.LabelGroups, c.wantGroups,
+			require.NoError(t, err, "BuildFilter")
+			require.Lenf(t, f.LabelGroups, c.wantGroups,
 				"query %q: LabelGroups %v", c.query, f.LabelGroups)
-			assertpkg.Lenf(t, f.LabelGroups[0], c.wantInOnly,
+			assert.Lenf(t, f.LabelGroups[0], c.wantInOnly,
 				"query %q: LabelGroups[0] %v", c.query, f.LabelGroups[0])
 		})
 	}

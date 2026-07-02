@@ -212,7 +212,7 @@ func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 	}
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	addCmd := newAddCalendarCmd()
+	addCmd := newAddCalendarLocalCmd()
 	addCmd.SetArgs([]string{"--headless", "Alice.Example@Example.COM"})
 
 	getOutput := captureStdout(t)

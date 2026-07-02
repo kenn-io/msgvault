@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNormalizePhone(t *testing.T) {
@@ -23,7 +23,7 @@ func TestNormalizePhone(t *testing.T) {
 
 	for _, tt := range tests {
 		got := normalizePhone(tt.user, tt.server)
-		assertpkg.Equal(t, tt.want, got, "normalizePhone(%q, %q)", tt.user, tt.server)
+		assert.Equal(t, tt.want, got, "normalizePhone(%q, %q)", tt.user, tt.server)
 	}
 }
 
@@ -47,25 +47,25 @@ func TestMapMediaType(t *testing.T) {
 
 	for _, tt := range tests {
 		got := mapMediaType(tt.waType)
-		assertpkg.Equal(t, tt.want, got, "mapMediaType(%d)", tt.waType)
+		assert.Equal(t, tt.want, got, "mapMediaType(%d)", tt.waType)
 	}
 }
 
 func TestIsMediaType(t *testing.T) {
-	assertpkg.True(t, isMediaType(1), "isMediaType(1) should be true (image)")
-	assertpkg.False(t, isMediaType(0), "isMediaType(0) should be false (text)")
-	assertpkg.False(t, isMediaType(7), "isMediaType(7) should be false (system)")
+	assert.True(t, isMediaType(1), "isMediaType(1) should be true (image)")
+	assert.False(t, isMediaType(0), "isMediaType(0) should be false (text)")
+	assert.False(t, isMediaType(7), "isMediaType(7) should be false (system)")
 }
 
 func TestIsSkippedType(t *testing.T) {
 	skipped := []int{7, 9, 10, 15, 64, 66, 99, 11}
 	for _, typ := range skipped {
-		assertpkg.True(t, isSkippedType(typ), "isSkippedType(%d) should be true", typ)
+		assert.True(t, isSkippedType(typ), "isSkippedType(%d) should be true", typ)
 	}
 
 	notSkipped := []int{0, 1, 2, 3, 4, 5, 13, 90}
 	for _, typ := range notSkipped {
-		assertpkg.False(t, isSkippedType(typ), "isSkippedType(%d) should be false", typ)
+		assert.False(t, isSkippedType(typ), "isSkippedType(%d) should be false", typ)
 	}
 }
 
@@ -100,13 +100,13 @@ func TestIsGroupChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isGroupChat(tt.chat)
-			assertpkg.Equal(t, tt.want, got, "isGroupChat()")
+			assert.Equal(t, tt.want, got, "isGroupChat()")
 		})
 	}
 }
 
 func TestMapConversation(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Direct chat.
 	direct := waChat{
 		RawString: "447700900000@s.whatsapp.net",
@@ -142,7 +142,7 @@ func TestMapConversation(t *testing.T) {
 }
 
 func TestMapMessage(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	msg := waMessage{
 		RowID:       42,
 		ChatRowID:   1,
@@ -183,8 +183,8 @@ func TestMapMessageSnippetTruncation(t *testing.T) {
 	}
 
 	result := mapMessage(msg, 1, 1, sql.NullInt64{})
-	requirepkg.True(t, result.Snippet.Valid, "Snippet should be valid")
-	assertpkg.Len(t, []rune(result.Snippet.String), 100, "Snippet rune count")
+	require.True(t, result.Snippet.Valid, "Snippet should be valid")
+	assert.Len(t, []rune(result.Snippet.String), 100, "Snippet rune count")
 }
 
 func TestMapGroupRole(t *testing.T) {
@@ -200,7 +200,7 @@ func TestMapGroupRole(t *testing.T) {
 
 	for _, tt := range tests {
 		got := mapGroupRole(tt.admin)
-		assertpkg.Equal(t, tt.want, got, "mapGroupRole(%d)", tt.admin)
+		assert.Equal(t, tt.want, got, "mapGroupRole(%d)", tt.admin)
 	}
 }
 
@@ -209,15 +209,15 @@ func TestMapReaction(t *testing.T) {
 		ReactionValue: sql.NullString{String: "❤️", Valid: true},
 	}
 	val := mapReaction(r)
-	assertpkg.Equal(t, "emoji", reactionTypeEmoji, "reaction type")
-	assertpkg.Equal(t, "❤️", val, "reaction value")
+	assert.Equal(t, "emoji", reactionTypeEmoji, "reaction type")
+	assert.Equal(t, "❤️", val, "reaction value")
 
 	// Empty reaction.
 	empty := waReaction{
 		ReactionValue: sql.NullString{},
 	}
 	val = mapReaction(empty)
-	assertpkg.Empty(t, val, "empty reaction value")
+	assert.Empty(t, val, "empty reaction value")
 }
 
 func TestResolveLidSender(t *testing.T) {
@@ -261,7 +261,7 @@ func TestResolveLidSender(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveLidSender(tt.jidRowID, tt.server, lidMap)
-			assertpkg.Equal(t, tt.want, got, "resolveLidSender()")
+			assert.Equal(t, tt.want, got, "resolveLidSender()")
 		})
 	}
 }
@@ -274,7 +274,7 @@ func TestChatTitle(t *testing.T) {
 		Server:    "g.us",
 		RawString: "120363001234567890@g.us",
 	}
-	assertpkg.Equal(t, "Work Chat", chatTitle(group), "chatTitle(group)")
+	assert.Equal(t, "Work Chat", chatTitle(group), "chatTitle(group)")
 
 	// Direct chat.
 	direct := waChat{
@@ -282,11 +282,11 @@ func TestChatTitle(t *testing.T) {
 		Server:    "s.whatsapp.net",
 		RawString: "447700900000@s.whatsapp.net",
 	}
-	assertpkg.Equal(t, "+447700900000", chatTitle(direct), "chatTitle(direct)")
+	assert.Equal(t, "+447700900000", chatTitle(direct), "chatTitle(direct)")
 }
 
 func TestMapMessageSentAtIsUTC(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	// 2024-01-10T12:00:00Z in milliseconds. On a machine east of UTC
 	// (e.g. NZ) a non-UTC SentAt would read back as Jan 11 and carry the
@@ -294,7 +294,7 @@ func TestMapMessageSentAtIsUTC(t *testing.T) {
 	msg := waMessage{Timestamp: 1704888000000}
 	got := mapMessage(msg, 1, 1, sql.NullInt64{})
 
-	requirepkg.True(t, got.SentAt.Valid, "SentAt should be set")
+	require.True(t, got.SentAt.Valid, "SentAt should be set")
 	assert.Equal("UTC", got.SentAt.Time.Location().String(), "SentAt must be normalized to UTC")
 	y, m, d := got.SentAt.Time.Date()
 	assert.Equal(2024, y, "year")

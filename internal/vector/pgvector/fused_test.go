@@ -122,6 +122,9 @@ func seedThree(t *testing.T) *fusedFixture {
 }
 
 func TestFusedSearch_FTSOnly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
@@ -130,32 +133,39 @@ func TestFusedSearch_FTSOnly(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated should be false (pool size 2 < KPerSignal 10)")
-	require.Len(t, hits, 2, "hits should be msgs 1 and 3 (mention 'quantum'); hits=%+v", hits)
+	require.NoError(
+		err, "FusedSearch")
+
+	assert.False(saturated, "saturated should be false (pool size 2 < KPerSignal 10)")
+	require.Len(hits, 2, "hits should be msgs 1 and 3 (mention 'quantum'); hits=%+v", hits)
 	seen := map[int64]bool{}
 	for i, h := range hits {
 		seen[h.MessageID] = true
-		assert.Truef(t, math.IsNaN(h.VectorScore), "hit[%d].VectorScore = %v, want NaN (FTS-only)", i, h.VectorScore)
-		assert.Falsef(t, math.IsNaN(h.BM25Score), "hit[%d].BM25Score = NaN, want a number (FTS-only)", i)
-		assert.Greaterf(t, h.RRFScore, 0.0, "hit[%d].RRFScore = %v, want > 0", i, h.RRFScore)
+		assert.Truef(math.IsNaN(h.VectorScore), "hit[%d].VectorScore = %v, want NaN (FTS-only)", i, h.VectorScore)
+		assert.Falsef(math.IsNaN(h.BM25Score), "hit[%d].BM25Score = NaN, want a number (FTS-only)", i)
+		assert.Greaterf(h.RRFScore, 0.0, "hit[%d].RRFScore = %v, want > 0", i, h.RRFScore)
 	}
-	assert.True(t, seen[1] && seen[3], "expected msgs 1 and 3, got %v", seen)
+	assert.True(seen[1] && seen[3], "expected msgs 1 and 3, got %v", seen)
 	// Hits ordered by RRFScore descending.
 	for i := 1; i < len(hits); i++ {
-		assert.GreaterOrEqualf(t, hits[i-1].RRFScore, hits[i].RRFScore,
+		assert.GreaterOrEqualf(hits[i-1].RRFScore, hits[i].RRFScore,
 			"RRF not descending at %d: %v then %v", i, hits[i-1].RRFScore, hits[i].RRFScore)
 	}
 }
 
 func TestFusedSearch_MessageTypeFilter(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newFusedFixture(t)
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	f.seedMsg(t, 1, "lunch plan", "sms lunch details", 10, base, false)
 	f.seedMsg(t, 2, "lunch receipt", "email lunch details", 10, base.Add(time.Hour), false)
 	f.seedMsg(t, 3, "dinner plan", "sms dinner details", 10, base.Add(2*time.Hour), false)
 	_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET message_type = CASE id WHEN 2 THEN 'email' ELSE 'sms' END`)
-	require.NoError(t, err, "seed message_type")
+	require.NoError(
+		err, "seed message_type")
+
 	f.embedAll(t, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
@@ -170,13 +180,18 @@ func TestFusedSearch_MessageTypeFilter(t *testing.T) {
 		RRFK:       60,
 		Filter:     vector.Filter{MessageTypes: []string{"sms"}},
 	})
-	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated should be false")
-	require.Len(t, hits, 1, "message_type filter should exclude email FTS hits; hits=%+v", hits)
-	assert.Equal(t, int64(1), hits[0].MessageID)
+	require.NoError(
+		err, "FusedSearch")
+
+	assert.False(saturated, "saturated should be false")
+	require.Len(hits, 1, "message_type filter should exclude email FTS hits; hits=%+v", hits)
+	assert.Equal(int64(1), hits[0].MessageID)
 }
 
 func TestFusedSearch_ANNOnly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		QueryVec:   unitVec(4, 0),
@@ -185,17 +200,22 @@ func TestFusedSearch_ANNOnly(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated should be false")
-	require.NotEmpty(t, hits, "expected hits, got none")
-	assert.Equal(t, int64(1), hits[0].MessageID, "top hit should be 1 (query points along axis 0)")
+	require.NoError(
+		err, "FusedSearch")
+
+	assert.False(saturated, "saturated should be false")
+	require.NotEmpty(hits, "expected hits, got none")
+	assert.Equal(int64(1), hits[0].MessageID, "top hit should be 1 (query points along axis 0)")
 	for i, h := range hits {
-		assert.Truef(t, math.IsNaN(h.BM25Score), "hit[%d].BM25Score = %v, want NaN (ANN-only)", i, h.BM25Score)
-		assert.Falsef(t, math.IsNaN(h.VectorScore), "hit[%d].VectorScore = NaN, want a number (ANN-only)", i)
+		assert.Truef(math.IsNaN(h.BM25Score), "hit[%d].BM25Score = %v, want NaN (ANN-only)", i, h.BM25Score)
+		assert.Falsef(math.IsNaN(h.VectorScore), "hit[%d].VectorScore = NaN, want a number (ANN-only)", i)
 	}
 }
 
 func TestFusedSearch_Hybrid(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
@@ -205,12 +225,14 @@ func TestFusedSearch_Hybrid(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated should be false")
-	// Expect: msg 2 via ANN; msgs 1 and 3 via FTS — union of 3.
-	require.Len(t, hits, 3, "hits should be the union of 3; hits=%+v", hits)
+	require.NoError(
+		err, "FusedSearch")
+
+	assert.False(saturated, "saturated should be false")
+	require. // Expect: msg 2 via ANN; msgs 1 and 3 via FTS — union of 3.
+			Len(hits, 3, "hits should be the union of 3; hits=%+v", hits)
 	for i := 1; i < len(hits); i++ {
-		assert.GreaterOrEqualf(t, hits[i-1].RRFScore, hits[i].RRFScore,
+		assert.GreaterOrEqualf(hits[i-1].RRFScore, hits[i].RRFScore,
 			"RRF not descending at %d: %v then %v", i, hits[i-1].RRFScore, hits[i].RRFScore)
 	}
 }
@@ -241,6 +263,9 @@ func TestFusedSearch_MultiChunk_OneHitPerMessage(t *testing.T) {
 
 	// ANN-only: isolates the ann_pool dedup from any FTS contribution.
 	t.Run("ann_only", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
 		hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 			QueryVec:   unitVec(4, 0),
 			Generation: f.gen,
@@ -248,32 +273,37 @@ func TestFusedSearch_MultiChunk_OneHitPerMessage(t *testing.T) {
 			Limit:      10,
 			RRFK:       60,
 		})
-		require.NoError(t, err, "FusedSearch")
-		// Exactly two rows — one per message, no duplicate for msg 1's
-		// second chunk.
-		require.Len(t, hits, 2, "want one row per message; hits=%+v", hits)
+		require.NoError(
+			err, "FusedSearch")
+
+		require. // Exactly two rows — one per message, no duplicate for msg 1's
+			// second chunk.
+			Len(hits, 2, "want one row per message; hits=%+v", hits)
 		counts := map[int64]int{}
 		for _, h := range hits {
 			counts[h.MessageID]++
 		}
-		assert.Equal(t, 1, counts[1], "msg 1 must appear exactly once (its two chunks collapse)")
-		assert.Equal(t, 1, counts[2], "msg 2 must appear exactly once")
-		// The close chunk (distance 0) wins the MIN, so msg 1's
-		// VectorScore (= 1 - distance) is ~1.0 and it ranks first.
-		assert.Equal(t, int64(1), hits[0].MessageID, "msg 1 wins on its close chunk")
+		assert.Equal(1, counts[1], "msg 1 must appear exactly once (its two chunks collapse)")
+		assert.Equal(1, counts[2], "msg 2 must appear exactly once")
+		assert. // The close chunk (distance 0) wins the MIN, so msg 1's
+			// VectorScore (= 1 - distance) is ~1.0 and it ranks first.
+			Equal(int64(1), hits[0].MessageID, "msg 1 wins on its close chunk")
 		var msg1 vector.FusedHit
 		for _, h := range hits {
 			if h.MessageID == 1 {
 				msg1 = h
 			}
 		}
-		assert.InDelta(t, 1.0, msg1.VectorScore, 1e-6,
+		assert.InDelta(1.0, msg1.VectorScore, 1e-6,
 			"msg 1 effective VectorScore must reflect MIN distance (close chunk), got %v", msg1.VectorScore)
 	})
 
 	// Hybrid: the far chunk must not earn msg 1 a second ann_ranked row
 	// that would give it extra RRF weight and crowd out the competitor.
 	t.Run("hybrid", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
 		hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 			FTSTerms:   []string{"report"},
 			QueryVec:   unitVec(4, 0),
@@ -282,17 +312,19 @@ func TestFusedSearch_MultiChunk_OneHitPerMessage(t *testing.T) {
 			Limit:      10,
 			RRFK:       60,
 		})
-		require.NoError(t, err, "FusedSearch")
-		require.Len(t, hits, 2, "want exactly msgs 1 and 2, each once; hits=%+v", hits)
+		require.NoError(
+			err, "FusedSearch")
+
+		require.Len(hits, 2, "want exactly msgs 1 and 2, each once; hits=%+v", hits)
 		counts := map[int64]int{}
 		for _, h := range hits {
 			counts[h.MessageID]++
 		}
-		assert.Equal(t, 1, counts[1], "msg 1 must appear exactly once in hybrid mode")
-		assert.Equal(t, 1, counts[2], "competitor msg 2 must not be crowded out")
+		assert.Equal(1, counts[1], "msg 1 must appear exactly once in hybrid mode")
+		assert.Equal(1, counts[2], "competitor msg 2 must not be crowded out")
 		// RRF descending invariant holds.
 		for i := 1; i < len(hits); i++ {
-			assert.GreaterOrEqualf(t, hits[i-1].RRFScore, hits[i].RRFScore,
+			assert.GreaterOrEqualf(hits[i-1].RRFScore, hits[i].RRFScore,
 				"RRF not descending at %d: %v then %v", i, hits[i-1].RRFScore, hits[i].RRFScore)
 		}
 	})
@@ -313,6 +345,9 @@ func TestFusedSearch_Saturated(t *testing.T) {
 }
 
 func TestFusedSearch_FilterBySource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := seedThree(t)
 	hits, saturated, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
@@ -322,12 +357,14 @@ func TestFusedSearch_FilterBySource(t *testing.T) {
 		RRFK:       60,
 		Filter:     vector.Filter{SourceIDs: []int64{20}},
 	})
-	require.NoError(t, err, "FusedSearch")
-	// SourceIDs={20} only allows msg 2 through, which doesn't match 'quantum'.
-	assert.Empty(t, hits, "want empty (source 20 has no quantum match)")
-	// Empty result drives the saturation fallback: with an empty pool
-	// (0 ≤ KPerSignal=10) there is no overflow, so saturated must be false.
-	assert.False(t, saturated, "empty filtered pool cannot saturate")
+	require.NoError(
+		err, "FusedSearch")
+
+	assert. // SourceIDs={20} only allows msg 2 through, which doesn't match 'quantum'.
+		Empty(hits, "want empty (source 20 has no quantum match)")
+	assert. // Empty result drives the saturation fallback: with an empty pool
+		// (0 ≤ KPerSignal=10) there is no overflow, so saturated must be false.
+		False(saturated, "empty filtered pool cannot saturate")
 
 	hits, saturated, err = f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
@@ -337,19 +374,26 @@ func TestFusedSearch_FilterBySource(t *testing.T) {
 		RRFK:       60,
 		Filter:     vector.Filter{SourceIDs: []int64{10}},
 	})
-	require.NoError(t, err, "FusedSearch (source 10)")
-	assert.Len(t, hits, 2, "want msgs 1+3 in source 10 that match quantum")
-	assert.False(t, saturated, "pool size 2 < KPerSignal 10 must not saturate")
+	require.NoError(
+		err, "FusedSearch (source 10)")
+
+	assert.Len(hits, 2, "want msgs 1+3 in source 10 that match quantum")
+	assert.False(saturated, "pool size 2 < KPerSignal 10 must not saturate")
 }
 
 func TestFusedSearch_FilterByMessageType(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newFusedFixture(t)
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	f.seedMsg(t, 1, "email topic", "topic body", 10, base, false)
 	f.seedMsg(t, 2, "sms topic", "topic body", 10, base.Add(time.Hour), false)
 	_, err := f.db.ExecContext(f.ctx,
 		`UPDATE messages SET message_type = CASE id WHEN 1 THEN 'email' ELSE 'sms' END WHERE id IN (1, 2)`)
-	require.NoError(t, err, "seed message_type")
+	require.NoError(
+		err, "seed message_type")
+
 	f.embedAll(t, map[int64][]float32{
 		1: unitVec(4, 0),
 		2: unitVec(4, 1),
@@ -363,9 +407,11 @@ func TestFusedSearch_FilterByMessageType(t *testing.T) {
 		Limit:      10,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	assert.False(t, saturated, "saturated should be false")
-	assert.Equal(t, []int64{2}, fusedIDs(hits), "message_type=sms hits")
+	require.NoError(
+		err, "FusedSearch")
+
+	assert.False(saturated, "saturated should be false")
+	assert.Equal([]int64{2}, fusedIDs(hits), "message_type=sms hits")
 }
 
 func TestFusedSearch_FilterByDateRange(t *testing.T) {
@@ -387,11 +433,15 @@ func TestFusedSearch_FilterByDateRange(t *testing.T) {
 }
 
 func TestFusedSearch_FilterByLabel(t *testing.T) {
+	require := require.New(t)
+
 	f := seedThree(t)
 	// Tag msg 3 with label_id 42 only.
 	_, err := f.db.ExecContext(f.ctx,
 		`INSERT INTO message_labels (message_id, label_id) VALUES (3, 42)`)
-	require.NoError(t, err, "insert label")
+	require.NoError(
+		err, "insert label")
+
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
@@ -400,18 +450,24 @@ func TestFusedSearch_FilterByLabel(t *testing.T) {
 		RRFK:       60,
 		Filter:     vector.Filter{LabelGroups: [][]int64{{42}}},
 	})
-	require.NoError(t, err, "FusedSearch")
-	require.Len(t, hits, 1, "want exactly msg 3 (labeled 42)")
+	require.NoError(
+		err, "FusedSearch")
+
+	require.Len(hits, 1, "want exactly msg 3 (labeled 42)")
 	assert.Equal(t, int64(3), hits[0].MessageID, "want exactly msg 3 (labeled 42)")
 }
 
 func TestFusedSearch_FilterBySender(t *testing.T) {
+	require := require.New(t)
+
 	f := seedThree(t)
 	// Add a 'from' recipient row for msg 1 only, participant_id=99.
 	_, err := f.db.ExecContext(f.ctx,
 		`INSERT INTO message_recipients (message_id, recipient_type, participant_id)
          VALUES (1, 'from', 99)`)
-	require.NoError(t, err, "insert from-recipient")
+	require.NoError(
+		err, "insert from-recipient")
+
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:   []string{"quantum"},
 		Generation: f.gen,
@@ -420,8 +476,10 @@ func TestFusedSearch_FilterBySender(t *testing.T) {
 		RRFK:       60,
 		Filter:     vector.Filter{SenderGroups: [][]int64{{99}}},
 	})
-	require.NoError(t, err, "FusedSearch")
-	require.Len(t, hits, 1, "want exactly msg 1 (only from=99)")
+	require.NoError(
+		err, "FusedSearch")
+
+	require.Len(hits, 1, "want exactly msg 1 (only from=99)")
 	assert.Equal(t, int64(1), hits[0].MessageID, "want exactly msg 1 (only from=99)")
 }
 
@@ -502,6 +560,9 @@ func TestFusedSearch_DimensionMismatch(t *testing.T) {
 // on RRF alone. Msg 2 (vector match) has the boosted subject token
 // "vector"; msgs 1 and 3 win on FTS but don't contain "vector".
 func TestFusedSearch_SubjectBoost(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := seedThree(t)
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{
 		FTSTerms:     []string{"quantum"},
@@ -513,10 +574,12 @@ func TestFusedSearch_SubjectBoost(t *testing.T) {
 		SubjectBoost: 50.0,
 		SubjectTerms: []string{"vector"},
 	})
-	require.NoError(t, err, "FusedSearch")
-	require.NotEmpty(t, hits, "expected hits")
-	assert.Equal(t, int64(2), hits[0].MessageID, "top hit should be msg 2 (subject boosted)")
-	assert.True(t, hits[0].SubjectBoosted, "hit[0].SubjectBoosted should be true")
+	require.NoError(
+		err, "FusedSearch")
+
+	require.NotEmpty(hits, "expected hits")
+	assert.Equal(int64(2), hits[0].MessageID, "top hit should be msg 2 (subject boosted)")
+	assert.True(hits[0].SubjectBoosted, "hit[0].SubjectBoosted should be true")
 }
 
 // TestFusedSearch_SkipsDeletedMessages confirms the live-message

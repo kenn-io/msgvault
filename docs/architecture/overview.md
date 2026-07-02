@@ -26,7 +26,7 @@ msgvault/
 │   ├── emlx/                # Apple Mail .emlx parser
 │   ├── pst/                 # Outlook PST reader
 │   ├── applemail/           # Apple Mail account discovery
-│   ├── remote/              # Remote API engine for TUI
+│   ├── daemonclient/        # HTTP/OpenAPI client for local and remote daemons
 │   ├── vector/              # Local vector index, embedding worker, hybrid search
 │   ├── whatsapp/            # WhatsApp backup import
 │   ├── imessage/            # iMessage import
@@ -53,7 +53,7 @@ msgvault/
 | `internal/emlx` | Apple Mail .emlx parser and mailbox discovery |
 | `internal/pst` | Outlook PST archive reader |
 | `internal/applemail` | Apple Mail account discovery via `Accounts4.sqlite` |
-| `internal/remote` | HTTP engine implementing `query.Engine` for remote TUI |
+| `internal/daemonclient` | HTTP/OpenAPI client, CLI facades, and `query.Engine` adapter for local and remote daemons |
 | `internal/vector` | Vector index backend, embedding client/worker, and semantic/hybrid search |
 | `internal/gmail` | Gmail API client with token bucket rate limiting |
 | `internal/oauth` | OAuth2 browser and device authorization flows |

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -105,6 +106,8 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
+	log := slog.Default()
+	log.Info("vector migration step", "step", "embeddings_to_chunked")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin migration tx: %w", err)
@@ -180,6 +183,7 @@ func migrateEmbeddingsToChunked(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("commit migration tx: %w", err)
 	}
 	committed = true
+	log.Info("vector migration step complete", "step", "embeddings_to_chunked")
 	return nil
 }
 
@@ -274,6 +278,8 @@ func migrateVecTablesToChunked(ctx context.Context, db *sql.DB) error {
 // state, so a subsequent Migrate() retry observes the unchanged
 // schema and runs cleanly.
 func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, dim int) error {
+	log := slog.Default()
+	log.Info("vector migration step", "step", "rebuild_vec_table_for_chunking", "table", name, "dimension", dim)
 	type vecRow struct {
 		gen   int64
 		msgID int64
@@ -391,6 +397,7 @@ func rebuildVecTableForChunking(ctx context.Context, db *sql.DB, name string, di
 		return fmt.Errorf("commit rebuild tx: %w", err)
 	}
 	committed = true
+	log.Info("vector migration step complete", "step", "rebuild_vec_table_for_chunking", "table", name, "dimension", dim)
 	return nil
 }
 

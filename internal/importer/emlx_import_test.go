@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -21,14 +21,14 @@ import (
 func mkEmlx(t *testing.T, dir, name string, raw []byte) {
 	t.Helper()
 	data := fmt.Sprintf("%d\n%s", len(raw), raw)
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0600), "write emlx")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0600), "write emlx")
 }
 
 // mkMailboxDir creates an Apple Mail mailbox directory with .emlx files.
 func mkMailboxDir(t *testing.T, base string, emlxFiles map[string][]byte) {
 	t.Helper()
 	msgDir := filepath.Join(base, "Messages")
-	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
+	require.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
 	for name, raw := range emlxFiles {
 		mkEmlx(t, msgDir, name, raw)
 	}
@@ -39,14 +39,14 @@ func openTestStore(t *testing.T) (*store.Store, string) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st, err := store.Open(dbPath)
-	requirepkg.NoError(t, err, "open store")
+	require.NoError(t, err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
-	requirepkg.NoError(t, st.InitSchema(), "init schema")
+	require.NoError(t, st.InitSchema(), "init schema")
 	return st, tmp
 }
 
 func TestImportEmlxDir_SingleMailbox(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -105,7 +105,7 @@ func TestImportEmlxDir_SingleMailbox(t *testing.T) {
 }
 
 func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -167,7 +167,7 @@ func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
 
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Empty.mbox")
-	requirepkg.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
+	require.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -175,12 +175,12 @@ func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	requirepkg.NoError(t, err, "ImportEmlxDir")
-	requirepkg.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
+	require.NoError(t, err, "ImportEmlxDir")
+	require.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
 }
 
 func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -212,11 +212,11 @@ func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
 
 	// The valid message should still be imported.
 	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
-	assertpkg.NotZero(t, summary.Errors, "expected errors > 0")
+	assert.NotZero(t, summary.Errors, "expected errors > 0")
 }
 
 func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -273,7 +273,7 @@ func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Mailboxes", "Test.mbox")
 	msgDir := filepath.Join(mboxDir, "Messages")
-	requirepkg.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
+	require.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
 
 	raw := email.NewMessage().
 		From("Alice <alice@example.com>").
@@ -292,16 +292,16 @@ func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	requirepkg.NoError(t, err, "ImportEmlxDir")
+	require.NoError(t, err, "ImportEmlxDir")
 	// Only the non-partial file should be imported.
-	requirepkg.Equal(t, int64(1), summary.MessagesAdded, "MessagesAdded")
+	require.Equal(t, int64(1), summary.MessagesAdded, "MessagesAdded")
 }
 
 func TestImportEmlxDir_NoMailboxes(t *testing.T) {
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
-	requirepkg.NoError(t, os.MkdirAll(root, 0700), "mkdir")
+	require.NoError(t, os.MkdirAll(root, 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -309,8 +309,8 @@ func TestImportEmlxDir_NoMailboxes(t *testing.T) {
 			NoResume:   true,
 		},
 	)
-	requirepkg.NoError(t, err, "ImportEmlxDir")
-	requirepkg.Equal(t, 0, summary.MailboxesTotal, "MailboxesTotal")
+	require.NoError(t, err, "ImportEmlxDir")
+	require.Equal(t, 0, summary.MailboxesTotal, "MailboxesTotal")
 }
 
 func TestImportEmlxDir_OversizedFileRejected(t *testing.T) {
@@ -334,9 +334,9 @@ func TestImportEmlxDir_OversizedFileRejected(t *testing.T) {
 			MaxMessageBytes:    10, // Tiny limit to trigger rejection.
 		},
 	)
-	requirepkg.NoError(t, err, "ImportEmlxDir")
-	requirepkg.Equal(t, int64(0), summary.MessagesAdded, "MessagesAdded")
-	assertpkg.NotZero(t, summary.Errors, "expected errors > 0 for oversized file")
+	require.NoError(t, err, "ImportEmlxDir")
+	require.Equal(t, int64(0), summary.MessagesAdded, "MessagesAdded")
+	assert.NotZero(t, summary.Errors, "expected errors > 0 for oversized file")
 }
 
 func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
@@ -361,7 +361,7 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 		NoResume:           true,
 		CheckpointInterval: 1,
 	})
-	requirepkg.NoError(t, err, "ImportEmlxDir")
+	require.NoError(t, err, "ImportEmlxDir")
 
 	// Sync run should still be in "running" state (not completed),
 	// so resume can pick it up.
@@ -369,12 +369,12 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 	err = st.DB().QueryRow(
 		`SELECT status FROM sync_runs ORDER BY started_at DESC LIMIT 1`,
 	).Scan(&status)
-	requirepkg.NoError(t, err, "select sync")
-	requirepkg.Equal(t, store.SyncStatusRunning, status)
+	require.NoError(t, err, "select sync")
+	require.Equal(t, store.SyncStatusRunning, status)
 }
 
 func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -419,7 +419,7 @@ func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
 }
 
 func TestImportEmlxDir_Idempotent(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
@@ -457,8 +457,8 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 }
 
 func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -500,7 +500,7 @@ func TestImportEmlxDir_MailboxPathMismatchRejectsResume(t *testing.T) {
 }
 
 func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -543,7 +543,7 @@ func TestImportEmlxDir_NegativeIndexRejectsResume(t *testing.T) {
 }
 
 func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	raw := email.NewMessage().
@@ -577,11 +577,11 @@ func TestImportEmlxDir_RootMismatchRejectsResume(t *testing.T) {
 		},
 	)
 	require.Error(err, "expected error for root mismatch")
-	assertpkg.ErrorContains(t, err, "--no-resume")
+	assert.ErrorContains(t, err, "--no-resume")
 }
 
 func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")

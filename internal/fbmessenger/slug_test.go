@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSlug(t *testing.T) {
@@ -19,12 +19,12 @@ func TestSlug(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		assertpkg.Equal(t, c.want, Slug(c.in), "Slug(%q)", c.in)
+		assert.Equal(t, c.want, Slug(c.in), "Slug(%q)", c.in)
 	}
 }
 
 func TestAddressFallbackForEmptySlug(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	a := Address("小明")
 	assert.True(strings.HasPrefix(a.Email, "user.") && strings.HasSuffix(a.Email, "@facebook.messenger"),
 		"unexpected fallback email: %q", a.Email)
@@ -35,13 +35,13 @@ func TestAddressFallbackForEmptySlug(t *testing.T) {
 
 func TestAddressRegular(t *testing.T) {
 	a := Address("Test User")
-	assertpkg.Equal(t, "test.user@facebook.messenger", a.Email)
-	assertpkg.Equal(t, "Test User", a.Name)
-	assertpkg.Equal(t, "facebook.messenger", a.Domain)
+	assert.Equal(t, "test.user@facebook.messenger", a.Email)
+	assert.Equal(t, "Test User", a.Name)
+	assert.Equal(t, "facebook.messenger", a.Domain)
 }
 
 func TestDecodeMojibake(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// "é" (U+00E9) encoded as UTF-8 is bytes 0xC3 0xA9. Interpreted as
 	// Latin-1, those are runes U+00C3 U+00A9, which Facebook then emits
 	// as JSON. DecodeMojibake must reverse that.
@@ -63,6 +63,6 @@ func TestDecodeMojibake(t *testing.T) {
 }
 
 func TestStripDomain(t *testing.T) {
-	assertpkg.Equal(t, "test.user", StripDomain("test.user@facebook.messenger"))
-	assertpkg.Equal(t, "test.user", StripDomain("test.user"))
+	assert.Equal(t, "test.user", StripDomain("test.user@facebook.messenger"))
+	assert.Equal(t, "test.user", StripDomain("test.user"))
 }

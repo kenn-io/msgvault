@@ -3,7 +3,7 @@ package query
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestPostgreSQLBuildFTSTerm asserts the PostgreSQL dialect renders a
@@ -35,7 +35,7 @@ func TestPostgreSQLBuildFTSTerm(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			expr, arg := d.BuildFTSTerm(tc.terms)
 			assert.Equal("m.search_fts @@ to_tsquery('simple', ?)", expr)
 			assert.Equal(tc.wantArg, arg)
@@ -45,7 +45,7 @@ func TestPostgreSQLBuildFTSTerm(t *testing.T) {
 	// "or" must appear as a prefix lexeme, proving it is NOT treated as a
 	// tsquery boolean operator (which would corrupt the parity term set).
 	_, arg := d.BuildFTSTerm([]string{"monthly", "bill", "or", "invoice"})
-	assertpkg.Contains(t, arg, "or:*")
+	assert.Contains(t, arg, "or:*")
 }
 
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a
@@ -82,7 +82,7 @@ func TestSQLiteBuildFTSTerm(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			expr, arg := d.BuildFTSTerm(tc.terms)
 			assert.Equal("messages_fts MATCH ?", expr)
 			assert.Equal(tc.wantArg, arg)

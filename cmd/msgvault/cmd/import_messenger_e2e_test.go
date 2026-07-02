@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -45,8 +46,10 @@ func saveMessengerState(t *testing.T) func() {
 }
 
 func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	markDaemonCLISubprocessForTest(t)
+
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
@@ -77,8 +80,10 @@ func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 }
 
 func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	markDaemonCLISubprocessForTest(t)
+
+	require := require.New(t)
+	assert := assert.New(t)
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
@@ -108,7 +113,58 @@ func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
 	assert.Equal("fbmessenger_html", rawFormat, "raw_format")
 }
 
+func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmp := t.TempDir()
+	t.Cleanup(saveMessengerState(t))
+	testCfg := lifecycleTestConfig(tmp)
+	testCfg.Identity.Addresses = []string{"legacy@example.com"}
+	withStoreResolverConfig(t, testCfg)
+
+	st, err := store.Open(testCfg.DatabaseDSN())
+	require.NoError(err, "open seed store")
+	require.NoError(st.InitSchema(), "init seed schema")
+	emailSource, err := st.GetOrCreateSource("gmail", "mailbox@example.com")
+	require.NoError(err, "create eligible email source")
+	require.NoError(st.Close(), "close seed store")
+
+	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/json_simple")
+	require.NoError(err)
+	importMessengerMe = "test.user@facebook.messenger"
+	importMessengerFormat = "auto"
+	importMessengerCheckpointEvery = 200
+
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{Use: "import-messenger"}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&stdout)
+	cmd.SetErr(io.Discard)
+
+	require.NoError(runImportMessenger(cmd, fixture), "import-messenger")
+	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
+
+	st, err = store.Open(testCfg.DatabaseDSN())
+	require.NoError(err, "open store after import")
+	t.Cleanup(func() { _ = st.Close() })
+
+	emailIDs, err := st.ListAccountIdentities(emailSource.ID)
+	require.NoError(err, "ListAccountIdentities gmail")
+	require.Len(emailIDs, 1, "post-source migration should run for eligible email sources")
+	assert.Equal("legacy@example.com", emailIDs[0].Address, "migrated identity address")
+
+	messengerSources, err := st.GetSourcesByIdentifier("test.user@facebook.messenger")
+	require.NoError(err, "get messenger source")
+	require.Len(messengerSources, 1, "messenger source")
+	assert.Equal("facebook_messenger", messengerSources[0].SourceType, "messenger source type")
+	messengerIDs, err := st.ListAccountIdentities(messengerSources[0].ID)
+	require.NoError(err, "ListAccountIdentities messenger")
+	assert.Empty(messengerIDs, "legacy email identities must not be written to the Messenger source")
+}
+
 func TestImportMessenger_MissingDir(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+
 	tmp := t.TempDir()
 	t.Cleanup(saveMessengerState(t))
 
@@ -121,8 +177,8 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 		filepath.Join(tmp, "does", "not", "exist"),
 	})
 	err := rootCmd.ExecuteContext(context.Background())
-	requirepkg.Error(t, err, "expected error for missing dir")
+	require.Error(t, err, "expected error for missing dir")
 	msg := err.Error()
-	assertpkg.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
+	assert.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
 		"error should describe missing path, got %v", err)
 }

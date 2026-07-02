@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +17,14 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const (
+	removeAccountCommandName   = "remove-account"
+	removeAccountConfirmedFlag = "confirmed"
+)
+
 func newRemoveAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove-account <email>",
+		Use:   removeAccountCommandName + " <email>",
 		Short: "Remove an account and all its data",
 		Long: `Remove an account and all associated messages, labels, and sync data
 from the local database. This is irreversible.
@@ -40,6 +46,10 @@ Examples:
 		RunE: runRemoveAccount,
 	}
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().Bool(removeAccountConfirmedFlag, false, "Internal: confirmation was already accepted by the frontend CLI")
+	if err := cmd.Flags().MarkHidden(removeAccountConfirmedFlag); err != nil {
+		panic(err)
+	}
 	cmd.Flags().String(
 		"type", "",
 		"Source type to remove (gmail, mbox, etc.)",
@@ -48,10 +58,50 @@ Examples:
 }
 
 func runRemoveAccount(cmd *cobra.Command, args []string) error {
-	if err := MustBeLocal("remove-account"); err != nil {
-		return err
+	if !isDaemonCLISubprocess() {
+		return runRemoveAccountHTTP(cmd, args)
 	}
+	return runRemoveAccountLocal(cmd, args)
+}
 
+func runRemoveAccountHTTP(cmd *cobra.Command, args []string) error {
+	yes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		return fmt.Errorf("read --yes flag: %w", err)
+	}
+	if !yes {
+		ok, err := confirmRemoveAccount(cmd.InOrStdin(), cmd.OutOrStdout())
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := cmd.Flags().Set(removeAccountConfirmedFlag, "true"); err != nil {
+			return fmt.Errorf("set --%s after confirmation: %w", removeAccountConfirmedFlag, err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
+	_, _ = fmt.Fprint(w, "\nRemove this account and all its data? [y/N] ")
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return false, fmt.Errorf("read confirmation: %w", err)
+		}
+		return false, errors.New("no confirmation input (stdin closed); use --yes")
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	if !isYesAnswer(answer) {
+		_, _ = fmt.Fprintln(w, "Aborted.")
+		return false, nil
+	}
+	return true, nil
+}
+
+func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	yes, err := cmd.Flags().GetBool("yes")
 	if err != nil {
 		return fmt.Errorf("read --yes flag: %w", err)
@@ -60,22 +110,17 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read --type flag: %w", err)
 	}
-
+	confirmed, err := cmd.Flags().GetBool(removeAccountConfirmedFlag)
+	if err != nil {
+		return fmt.Errorf("read --%s flag: %w", removeAccountConfirmedFlag, err)
+	}
 	email := args[0]
 
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
+	s, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() { _ = s.Close() }()
-
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(s); err != nil {
-		return fmt.Errorf("startup migrations: %w", err)
-	}
+	defer cleanup()
 
 	source, err := resolveSource(s, email, sourceType)
 	if err != nil {
@@ -102,7 +147,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Type:     %s\n", source.SourceType)
 	fmt.Printf("Messages: %s\n", formatCount(msgCount))
 
-	if !yes {
+	if !yes && !confirmed {
 		fmt.Print("\nRemove this account and all its data? [y/N] ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
@@ -112,7 +157,7 @@ func runRemoveAccount(cmd *cobra.Command, args []string) error {
 			return errors.New("no confirmation input (stdin closed); use --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if answer != "y" && answer != "yes" {
+		if !isYesAnswer(answer) {
 			fmt.Println("Aborted.")
 			return nil
 		}

@@ -4,15 +4,17 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -30,6 +32,16 @@ type MessageStore interface {
 	GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 	SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error)
 	SearchMessagesQuery(q *search.Query, offset, limit int) ([]APIMessage, int64, error)
+}
+
+// ctxMessageSearcher is an optional extension of MessageStore for stores that
+// accept a context on the search path. handleSearch prefers it so an
+// abandoned or timed-out request cancels the underlying query instead of
+// running it to completion. Stores that predate it still satisfy MessageStore
+// and fall back to the non-context methods.
+type ctxMessageSearcher interface {
+	SearchMessagesContext(ctx context.Context, query string, offset, limit int) ([]APIMessage, int64, error)
+	SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]APIMessage, int64, error)
 }
 
 // SourceStatusStore defines the source/sync read operations used by the
@@ -63,35 +75,88 @@ type Server struct {
 	cfg            *config.Config
 	store          MessageStore
 	engine         query.Engine // Query engine for aggregates and TUI support
-	hybridEngine   *hybrid.Engine
-	vectorCfg      vector.Config
-	backend        vector.Backend
+	sqlQueryRunner SQLQueryRunner
+	shutdownToken  string
+	shutdownFunc   func()
 	scheduler      SyncScheduler
 	logger         *slog.Logger
 	requestTimeout time.Duration
-	router         chi.Router
-	server         *http.Server
-	rateLimiter    *RateLimiter
-	cfgMu          sync.RWMutex // protects cfg.Accounts
+	// queryTimeout caps POST /api/v1/query. Defaults to QueryEndpointTimeout;
+	// tests override it to exercise the timeout path without a real slow query.
+	queryTimeout time.Duration
+	// inProgressThreshold/Interval control the in-flight request WARN. Default
+	// to the package constants; tests shrink them to exercise the path.
+	inProgressThreshold time.Duration
+	inProgressInterval  time.Duration
+	daemonVersion       string
+	router              http.Handler
+	server              *http.Server
+	rateLimiter         *RateLimiter
+	idleTracker         *IdleTracker
+	operationGate       OperationGate
+	cfgMu               sync.RWMutex // protects cfg.Accounts
+	// vectorMu guards the vector subsystem state: the daemon installs
+	// hybridEngine/backend/vectorCfg from a background init goroutine
+	// after the server is already handling requests.
+	vectorMu     sync.RWMutex
+	hybridEngine *hybrid.Engine
+	vectorCfg    vector.Config
+	backend      vector.Backend
+	vectorStatus VectorStatus
+	vectorErr    string
 }
+
+type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
+
+const (
+	DaemonLongRequestTimeout = 30 * time.Minute
+	// QueryEndpointTimeout is the hard ceiling for POST /api/v1/query. The raw
+	// SQL endpoint is the F2 runaway culprit: a single bad SELECT over the full
+	// archive pegged every core for minutes. 120s is generous for legitimate
+	// analytics while still bounding a pathological query.
+	QueryEndpointTimeout = 120 * time.Second
+	queryEndpointPath    = "/api/v1/query"
+	DaemonShutdownPath   = "/api/daemon/shutdown"
+	defaultBindAddr      = "127.0.0.1"
+	// inProgressLogThreshold is how long a request may run before the logger
+	// emits a WARN "http request in progress" line, and inProgressLogInterval
+	// how often it repeats thereafter. Requests are otherwise logged only on
+	// completion, so a runaway in-flight request was invisible in serve.log.
+	inProgressLogThreshold = 10 * time.Second
+	inProgressLogInterval  = 30 * time.Second
+	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
+	// #nosec G101
+	DaemonShutdownTokenHeader = "X-Msgvault-Daemon-Token"
+)
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config       *config.Config
-	Store        MessageStore
-	Engine       query.Engine // Optional: query engine for aggregates and TUI support
-	HybridEngine *hybrid.Engine
-	VectorCfg    vector.Config
-	Backend      vector.Backend
-	Scheduler    SyncScheduler
-	Logger       *slog.Logger
-	// RequestTimeout caps each request via chi's gentle Timeout
-	// middleware. Zero defaults to 60s. The underlying http.Server's
-	// WriteTimeout is set to RequestTimeout + 5s so the chi timeout
-	// always fires first, preserving the structured error response.
-	// Tests use a much shorter value to exercise the chi-timeout-fires
-	// path.
+	Config         *config.Config
+	Store          MessageStore
+	Engine         query.Engine // Optional: query engine for aggregates and TUI support
+	SQLQueryRunner SQLQueryRunner
+	ShutdownToken  string
+	ShutdownFunc   func()
+	HybridEngine   *hybrid.Engine
+	VectorCfg      vector.Config
+	Backend        vector.Backend
+	// VectorStatus is the initial vector subsystem status. Zero value
+	// derives it: ready when Backend is non-nil, disabled otherwise. The
+	// serve daemon passes VectorStatusInitializing and installs the
+	// components later via SetVectorFeatures.
+	VectorStatus  VectorStatus
+	Scheduler     SyncScheduler
+	Logger        *slog.Logger
+	IdleTracker   *IdleTracker
+	OperationGate OperationGate
+	// RequestTimeout caps each request by adding a deadline to the request
+	// context. Zero defaults to 60s. The underlying http.Server's WriteTimeout
+	// is set to RequestTimeout + 5s so handlers that honor cancellation can
+	// return structured error responses before the connection deadline.
 	RequestTimeout time.Duration
+	// DaemonVersion is returned by the unauthenticated kit-compatible
+	// /api/ping endpoint used for local daemon discovery. Empty is allowed.
+	DaemonVersion string
 }
 
 // NewServer creates a new API server.
@@ -111,134 +176,151 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		timeout = 60 * time.Second
 	}
 	s := &Server{
-		cfg:            opts.Config,
-		store:          opts.Store,
-		engine:         opts.Engine,
-		hybridEngine:   opts.HybridEngine,
-		vectorCfg:      opts.VectorCfg,
-		backend:        opts.Backend,
-		scheduler:      opts.Scheduler,
-		logger:         opts.Logger,
-		requestTimeout: timeout,
+		cfg:                 opts.Config,
+		store:               opts.Store,
+		engine:              opts.Engine,
+		sqlQueryRunner:      opts.SQLQueryRunner,
+		shutdownToken:       opts.ShutdownToken,
+		shutdownFunc:        opts.ShutdownFunc,
+		hybridEngine:        opts.HybridEngine,
+		vectorCfg:           opts.VectorCfg,
+		backend:             opts.Backend,
+		scheduler:           opts.Scheduler,
+		logger:              opts.Logger,
+		requestTimeout:      timeout,
+		queryTimeout:        QueryEndpointTimeout,
+		inProgressThreshold: inProgressLogThreshold,
+		inProgressInterval:  inProgressLogInterval,
+		daemonVersion:       opts.DaemonVersion,
+		idleTracker:         opts.IdleTracker,
+		operationGate:       opts.OperationGate,
+	}
+	s.vectorStatus = opts.VectorStatus
+	if s.vectorStatus == "" {
+		if opts.Backend != nil {
+			s.vectorStatus = VectorStatusReady
+		} else {
+			s.vectorStatus = VectorStatusDisabled
+		}
 	}
 	s.router = s.setupRouter()
 	return s
 }
 
-// setupRouter configures the chi router with all routes and middleware.
-func (s *Server) setupRouter() chi.Router {
-	r := chi.NewRouter()
+// setupRouter configures the Huma API router and standard HTTP middleware.
+func (s *Server) setupRouter() http.Handler {
+	mux := http.NewServeMux()
+	api := s.setupHumaAPI(mux)
+	apiV1 := s.setupAPIV1Group(api)
+	s.registerHumaRoutes(api, apiV1)
+	registerPprofHandlers(mux)
 
-	// Standard middleware
-	r.Use(chimw.RequestID)
-	r.Use(s.loggerMiddleware)
-	r.Use(chimw.Recoverer)
-	// chi/v5's Timeout is "gentle": it wraps the request context with a
-	// deadline and, after next.ServeHTTP returns, conditionally writes
-	// a 504. Because handlers are inline, our structured 503 (e.g.
-	// embedding_timeout) is written first; chi's deferred WriteHeader
-	// is then a no-op against the already-written response.
-	// TestHandleSearch_HybridEmbeddingTimeoutFiresChi locks this
-	// contract — if a future chi version switches to a preemptive
-	// timeout (http.TimeoutHandler-style), that test will fail.
-	r.Use(chimw.Timeout(s.requestTimeout))
+	// Catch-all so unknown paths and trailing-slash misses return the JSON
+	// ErrorResponse envelope the contract declares, instead of Go's default
+	// text/plain "404 page not found". More specific patterns (API routes,
+	// /debug/pprof/, /openapi.*, /docs) still take precedence over "/".
+	mux.HandleFunc("/", s.handleNotFound)
 
 	// CORS middleware (config-driven; disabled when no origins configured)
 	corsConfig := CORSConfig{
 		AllowedOrigins:   s.cfg.Server.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key"},
+		AllowedMethods:   defaultCORSAllowedMethods(),
+		AllowedHeaders:   defaultCORSAllowedHeaders(),
 		AllowCredentials: s.cfg.Server.CORSCredentials,
 		MaxAge:           s.cfg.Server.CORSMaxAge,
 	}
 	if corsConfig.MaxAge == 0 && len(corsConfig.AllowedOrigins) > 0 {
 		corsConfig.MaxAge = 86400
 	}
-	r.Use(CORSMiddleware(corsConfig))
 
 	// Rate limiting (10 req/sec with burst of 20)
 	s.rateLimiter = NewRateLimiter(10, 20)
-	r.Use(RateLimitMiddleware(s.rateLimiter))
 
-	// Health check (no auth required)
-	r.Get("/health", s.handleHealth)
-	r.Head("/health", s.handleHealth)
+	var h http.Handler = mux
+	h = RateLimitMiddleware(s.rateLimiter)(h)
+	h = CORSMiddleware(corsConfig)(h)
+	h = operationGateMiddleware(s.operationGate)(h)
+	h = s.timeoutMiddleware(h)
+	if s.idleTracker != nil {
+		h = s.idleTracker.Wrap(h)
+	}
+	h = s.recoverMiddleware(h)
+	h = s.loggerMiddleware(h)
+	h = requestIDMiddleware(h)
+	return h
+}
 
-	// API routes (auth required)
-	r.Route("/api/v1", func(r chi.Router) {
-		// Apply API key authentication
-		r.Use(s.authMiddleware)
-
-		// Stats
-		r.Get("/stats", s.handleStats)
-
-		// Messages
-		r.Get("/messages", s.handleListMessages)
-		r.Get("/messages/{id}", s.handleGetMessage)
-		r.Get("/messages/{id}/inline", s.handleMessageInline)
-
-		// Search
-		r.Get("/search", s.handleSearch)
-
-		// TUI aggregate endpoints (require query engine)
-		r.Post("/query", s.handleQuery)
-		r.Get("/aggregates", s.handleAggregates)
-		r.Get("/aggregates/sub", s.handleSubAggregates)
-		r.Get("/messages/filter", s.handleFilteredMessages)
-		r.Get("/stats/total", s.handleTotalStats)
-		r.Get("/search/fast", s.handleFastSearch)
-		r.Get("/search/deep", s.handleDeepSearch)
-
-		// Accounts and sync
-		r.Get("/accounts", s.handleListAccounts)
-		r.Post("/accounts", s.handleAddAccount)
-		r.Get("/sources/status", s.handleSourceStatus)
-		r.Post("/sync/{account}", s.handleTriggerSync)
-
-		// Scheduler status
-		r.Get("/scheduler/status", s.handleSchedulerStatus)
-
-		// Token upload for headless OAuth
-		r.Post("/auth/token/{email}", s.handleUploadToken)
-	})
-
-	return r
+// registerPprofHandlers wires the standard net/http/pprof handlers under
+// /debug/pprof/, each gated to loopback callers. There is no config knob: the
+// daemon binds loopback by default and the loopback check (via r.RemoteAddr,
+// not spoofable headers) is the guard. This gives on-box goroutine/CPU/heap
+// introspection for diagnosing a busy daemon, without exposing profiles to any
+// non-local client even when the daemon is bound to a routable address.
+func registerPprofHandlers(mux *http.ServeMux) {
+	loopbackOnly := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !isLoopbackRequest(r) {
+				http.NotFound(w, r)
+				return
+			}
+			h(w, r)
+		}
+	}
+	// pprof.Index also serves the named profiles (heap, goroutine, allocs, …).
+	mux.HandleFunc("/debug/pprof/", loopbackOnly(pprof.Index))
+	mux.HandleFunc("/debug/pprof/cmdline", loopbackOnly(pprof.Cmdline))
+	mux.HandleFunc("/debug/pprof/profile", loopbackOnly(pprof.Profile))
+	mux.HandleFunc("/debug/pprof/symbol", loopbackOnly(pprof.Symbol))
+	mux.HandleFunc("/debug/pprof/trace", loopbackOnly(pprof.Trace))
 }
 
 // Start begins listening for HTTP requests.
 // Returns an error if the security posture is invalid.
 func (s *Server) Start() error {
-	if err := s.cfg.Server.ValidateSecure(); err != nil {
-		return err
-	}
-
 	bindAddr := s.cfg.Server.BindAddr
 	if bindAddr == "" {
-		bindAddr = "127.0.0.1"
+		bindAddr = defaultBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(s.cfg.Server.APIPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	return s.StartOnListener(ln)
+}
+
+// StartOnListener serves HTTP requests on an already-bound listener. The serve
+// daemon uses this to reserve its configured API port before expensive archive
+// startup work begins.
+func (s *Server) StartOnListener(ln net.Listener) error {
+	if ln == nil {
+		return errors.New("nil listener")
+	}
+	if err := s.cfg.Server.ValidateSecure(); err != nil {
+		_ = ln.Close()
+		return err
+	}
 
 	if s.cfg.Server.APIKey == "" {
 		s.logger.Warn("API server running without authentication — set [server] api_key in config.toml")
 	}
 
-	// WriteTimeout must comfortably exceed the chi request timeout so
-	// the inner timeout always fires first; otherwise a request whose
-	// chi deadline equals the server WriteTimeout could lose the race
-	// and have its TCP connection torn down before the structured
-	// error response reaches the client. The 5s buffer covers chi's
-	// deferred WriteHeader plus response flush overhead.
-	writeTimeout := s.requestTimeout + 5*time.Second
+	// WriteTimeout must comfortably exceed the request-context timeout;
+	// otherwise a request whose context deadline equals the server
+	// WriteTimeout could lose the race and have its TCP connection torn down
+	// before the structured error response reaches the client.
+	writeBudget := max(s.requestTimeout, DaemonLongRequestTimeout)
+	writeTimeout := writeBudget + 5*time.Second
 	s.server = &http.Server{
-		Addr:         addr,
+		Addr:         ln.Addr().String(),
 		Handler:      s.router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	s.logger.Info("starting API server", "addr", addr)
-	return s.server.ListenAndServe()
+	s.logger.Info("starting API server", "addr", ln.Addr().String())
+	return s.server.Serve(ln)
 }
 
 // Shutdown gracefully shuts down the server.
@@ -253,25 +335,76 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-// Router returns the chi router for testing.
-func (s *Server) Router() chi.Router {
+// Router returns the HTTP router for testing.
+func (s *Server) Router() http.Handler {
 	return s.router
 }
 
-// loggerMiddleware logs HTTP requests.
+func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
+		if !bounded {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// requestTimeoutForPath returns the context deadline to impose on a request
+// and whether one applies at all. POST /api/v1/query gets its own generous
+// ceiling; the streaming/long-running CLI operations stay unbounded (they
+// report progress and are gated by the operation gate); everything else gets
+// the standard per-request timeout.
+func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
+	if path == queryEndpointPath {
+		return s.queryTimeout, true
+	}
+	if isLongDaemonRequest(path) {
+		return 0, false
+	}
+	return s.requestTimeout, true
+}
+
+func isLongDaemonRequest(path string) bool {
+	switch path {
+	case "/api/v1/cli/build-cache",
+		"/api/v1/cli/deduplicate/plan",
+		"/api/v1/cli/rebuild-fts",
+		"/api/v1/cli/repair-encoding",
+		"/api/v1/cli/run",
+		"/api/v1/cli/search",
+		"/api/v1/cli/sync",
+		"/api/v1/cli/sync-full",
+		"/api/v1/cli/verify":
+		return true
+	default:
+		return false
+	}
+}
+
+// loggerMiddleware logs HTTP requests on completion and, for requests that
+// overrun inProgressThreshold, emits a repeating WARN so a runaway in-flight
+// request is visible in serve.log instead of only appearing (if ever) once it
+// finishes.
 func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
+		ww := newTrackingResponseWriter(w)
+
+		stopWatch := s.watchInProgressRequest(r, start)
 
 		defer func() {
+			stopWatch()
 			s.logger.Info("http request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"duration", time.Since(start),
-				"request_id", chimw.GetReqID(r.Context()),
+				"request_id", requestIDFromContext(r.Context()),
 			)
 		}()
 
@@ -279,43 +412,193 @@ func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware validates the API key.
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
+// watchInProgressRequest starts a goroutine that logs a WARN if the request is
+// still running after inProgressThreshold, repeating every inProgressInterval.
+// The returned stop function ends the goroutine (called on request completion)
+// and must be invoked exactly once, so the watcher never leaks.
+func (s *Server) watchInProgressRequest(r *http.Request, start time.Time) func() {
+	threshold := s.inProgressThreshold
+	if threshold <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	method, path := r.Method, r.URL.Path
+	requestID := requestIDFromContext(r.Context())
+	go func() {
+		timer := time.NewTimer(threshold)
+		defer timer.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-timer.C:
+				s.logger.Warn("http request in progress",
+					"method", method,
+					"path", path,
+					"request_id", requestID,
+					"elapsed", time.Since(start),
+				)
+				if s.inProgressInterval <= 0 {
+					return
+				}
+				timer.Reset(s.inProgressInterval)
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
+}
+
+func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth if no API key configured
-		if s.cfg.Server.APIKey == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Check Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			// Also check X-API-Key header
-			authHeader = r.Header.Get("X-Api-Key")
-		}
-
-		// Strip "Bearer " prefix if present
-		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			authHeader = authHeader[7:]
-		}
-
-		if subtle.ConstantTimeCompare([]byte(authHeader), []byte(s.cfg.Server.APIKey)) != 1 {
-			s.logger.Warn("unauthorized API request",
-				"path", r.URL.Path,
-				"remote_addr", r.RemoteAddr,
-			)
-			writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
-			return
-		}
-
-		next.ServeHTTP(w, r)
+		ww := newTrackingResponseWriter(w)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				s.logger.Error("panic serving request",
+					"panic", recovered,
+					"path", r.URL.Path,
+					"request_id", requestIDFromContext(r.Context()),
+				)
+				if !ww.WroteHeader() {
+					writeError(ww, http.StatusInternalServerError, "internal_error", "Internal server error")
+				}
+			}
+		}()
+		next.ServeHTTP(ww, r)
 	})
+}
+
+type requestIDKey struct{}
+
+var nextRequestID atomic.Uint64
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if id == "" {
+			id = fmt.Sprintf("msgvault-%d", nextRequestID.Add(1))
+		}
+		w.Header().Set("X-Request-Id", id)
+		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		// Also stash it where the SQL logger reads it, so a "sql slow"
+		// line can be correlated with this request's "http request" line.
+		ctx = store.WithRequestID(ctx, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+
+type trackingResponseWriter struct {
+	http.ResponseWriter
+
+	status int
+	bytes  int
+}
+
+func newTrackingResponseWriter(w http.ResponseWriter) *trackingResponseWriter {
+	return &trackingResponseWriter{ResponseWriter: w}
+}
+
+func (w *trackingResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *trackingResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
+}
+
+func (w *trackingResponseWriter) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *trackingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *trackingResponseWriter) Status() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (w *trackingResponseWriter) BytesWritten() int {
+	return w.bytes
+}
+
+func (w *trackingResponseWriter) WroteHeader() bool {
+	return w.status != 0
+}
+
+func (s *Server) apiRequestAuthorized(r *http.Request) bool {
+	// Skip auth if no API key configured.
+	if s.cfg.Server.APIKey == "" {
+		return true
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		authHeader = r.Header.Get("X-Api-Key")
+	}
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		authHeader = authHeader[7:]
+	}
+
+	return subtle.ConstantTimeCompare([]byte(authHeader), []byte(s.cfg.Server.APIKey)) == 1
+}
+
+func (s *Server) logUnauthorizedAPIRequest(r *http.Request) {
+	s.logger.Warn("unauthorized API request",
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
+}
+
+func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
+	if s.shutdownToken == "" || s.shutdownFunc == nil {
+		writeError(w, http.StatusNotFound, "shutdown_unavailable", "Daemon shutdown is not available")
+		return
+	}
+
+	got := r.Header.Get(DaemonShutdownTokenHeader)
+	if subtle.ConstantTimeCompare([]byte(got), []byte(s.shutdownToken)) != 1 {
+		s.logger.Warn("unauthorized daemon shutdown request", "remote_addr", r.RemoteAddr)
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing daemon shutdown token")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"status":"shutting_down"}`))
+	go s.shutdownFunc()
 }
 
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Vector: s.vectorHealth()})
+}
+
+// handleNotFound is the mux catch-all for unmatched paths. It returns the
+// standard JSON ErrorResponse envelope so clients that parse the documented
+// error shape do not choke on Go's default text/plain 404.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.Method+" "+r.URL.Path)
 }

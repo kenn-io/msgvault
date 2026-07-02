@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1144,6 +1143,8 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages
 			WHERE id IN (
@@ -1156,13 +1157,20 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages m
 			WHERE %s
 		`, whereClause)
 	}
 
-	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(&stats.MessageCount, &stats.TotalSize); err != nil {
+	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(
+		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
+		&stats.TotalSize,
+	); err != nil {
 		return nil, fmt.Errorf("message stats: %w", err)
 	}
 
@@ -1813,7 +1821,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// type (e.g. Texts mode → sms/mms). Without this, SearchFast within a
 	// type-scoped view would silently widen back to all message types.
 	if filter.MessageType != "" {
-		messageTypes, noMatches := scopedMessageTypes(merged.MessageTypes, filter.MessageType)
+		messageTypes, noMatches := ScopedMessageTypes(merged.MessageTypes, filter.MessageType)
 		merged.MessageTypes = messageTypes
 		if noMatches {
 			merged.AccountIDs = []int64{}
@@ -1874,23 +1882,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// contexts will not be scoped to the current view.
 
 	return &merged
-}
-
-func containsMessageType(types []string, want string) bool {
-	return slices.Contains(types, want)
-}
-
-func scopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
-	if filterType == "" {
-		return append([]string(nil), queryTypes...), false
-	}
-	if len(queryTypes) == 0 {
-		return []string{filterType}, false
-	}
-	if containsMessageType(queryTypes, filterType) {
-		return []string{filterType}, false
-	}
-	return []string{filterType}, true
 }
 
 // timePeriodToBounds converts a time period string to half-open date

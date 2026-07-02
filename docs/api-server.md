@@ -8,7 +8,7 @@ description: REST API for programmatic access to your msgvault archive, with opt
 
 `msgvault serve` starts an HTTP server that exposes your email archive over a REST API. It optionally runs a background sync scheduler to keep accounts up to date on a cron-based schedule.
 
-The API queries the same archive database and attachment store as the CLI and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for local integrations, dashboards, and automation scripts.
+The API is registered through Huma and exposes a generated OpenAPI document at `/openapi.json`; interactive docs are available at `/docs`. You can also run `msgvault openapi` to print the same checked-in contract without starting a daemon or opening the archive database. The OpenAPI `info.version` is the API schema version used for client/server compatibility; the running daemon binary version is exposed separately in the generated document metadata. The API queries the same archive database and attachment store as the CLI and TUI. SQLite is the default archive database; PostgreSQL is supported when `[data].database_url` is a PostgreSQL DSN. Keyword search and ordinary archive reads stay local to that database. If vector search is enabled, semantic and hybrid search also call the embedding endpoint configured in `[vector.embeddings]`. The server is designed for local integrations, dashboards, and automation scripts.
 
 ## Quick Start
 
@@ -34,6 +34,9 @@ curl http://localhost:8080/health
 
 # Archive stats (auth required)
 curl -H "Authorization: Bearer your-secret-key" http://localhost:8080/api/v1/stats
+
+# Generated OpenAPI document
+curl http://localhost:8080/openapi.json
 ```
 
 ## Authentication
@@ -591,6 +594,8 @@ enabled = true
 
 The scheduler starts automatically with `msgvault serve` when account schedules are configured. It resolves each entry to a syncable source type, including Gmail and IMAP. Use the `/api/v1/scheduler/status` endpoint to monitor schedule state, and `/api/v1/sync/{account}` to trigger a manual sync outside the schedule.
 
+The same HTTP server backs configured remote CLI access and the local background daemon used by archive-access CLI commands.
+
 !!! note
     Each account must have completed an initial full sync (`msgvault sync-full`) before scheduled sync will work. Gmail scheduled syncs use incremental history sync. IMAP scheduled syncs run the IMAP sync path and skip messages already present locally.
 
@@ -615,13 +620,28 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 | Key | Default | Description |
 |---|---|---|
-| `api_port` | `8080` | Port the server listens on |
+| `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address |
 | `api_key` | — | API key for authentication |
 | `allow_insecure` | `false` | Allow non-loopback binding without `api_key` |
 | `cors_origins` | `[]` | Allowed CORS origins |
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds (defaults to `86400` when `cors_origins` is set) |
+| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+
+`daemon_idle_timeout` only affects daemons started by `msgvault serve start` or auto-started by a CLI command. A foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the configured timeout for lifecycle-managed background daemons.
+
+`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary, `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients.
+
+### `[analytics]`
+
+| Key | Default | Description |
+|---|---|---|
+| `engine` | `auto` | Aggregate engine for TUI and aggregate HTTP views: `auto`, `sql`, or `duckdb` |
+| `auto_build_cache` | `true` | Build stale or missing Parquet cache files before the daemon opens DuckDB |
+
+`engine = "sql"` forces live SQL for aggregate views. `engine = "duckdb"` requires a usable Parquet cache and fails daemon startup if the cache cannot be built or opened. `auto_build_cache = false` leaves cache rebuilds to explicit `msgvault build-cache` runs. These settings replace the TUI/MCP analytics flags deprecated in 0.17.0; see [Configuration: analytics](/configuration/#analytics).
 
 ### `[[accounts]]`
 

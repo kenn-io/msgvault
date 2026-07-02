@@ -7,19 +7,19 @@ import (
 	"sync"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
 func TestGraphTokenPath(t *testing.T) {
 	dir := filepath.Join("tmp", "tokens")
 	m := &GraphManager{tokensDir: dir}
-	assertpkg.Equal(t, filepath.Join(dir, "teams_user@example.com.json"), m.TokenPath("user@example.com"))
+	assert.Equal(t, filepath.Join(dir, "teams_user@example.com.json"), m.TokenPath("user@example.com"))
 }
 
 func TestGraphScopes(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	got := GraphScopes()
 	assert.Contains(got, "https://graph.microsoft.com/Chat.Read")
 	assert.Contains(got, "https://graph.microsoft.com/ChannelMessage.Read.All")
@@ -32,13 +32,13 @@ func TestGraphScopes(t *testing.T) {
 
 func TestNewGraphManager_DefaultsTenant(t *testing.T) {
 	m := NewGraphManager("client", "", "tmp/tokens", nil)
-	assertpkg.Equal(t, DefaultTenant, m.tenantID, "tenantID should default to common")
-	requirepkg.NotNil(t, m.logger, "logger should default")
+	assert.Equal(t, DefaultTenant, m.tenantID, "tenantID should default to common")
+	require.NotNil(t, m.logger, "logger should default")
 }
 
 func TestGraphManager_SaveLoadHasToken(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	m := NewGraphManager("client", "common", dir, slog.Default())
 
@@ -63,8 +63,8 @@ func TestGraphManager_SaveLoadHasToken(t *testing.T) {
 }
 
 func TestGraphManager_Authorize_PersistsGraphToken(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	m := NewGraphManager("test-client", "common", dir, slog.Default())
 	m.verifyIDTokenFn = testVerifyFn
@@ -102,9 +102,9 @@ func TestGraphManager_Authorize_Mismatch(t *testing.T) {
 		return tok, "nonce", nil
 	}
 	err := m.Authorize(t.Context(), "user@company.com")
-	requirepkg.Error(t, err, "expected mismatch error")
+	require.Error(t, err, "expected mismatch error")
 	mismatch := &TokenMismatchError{}
-	assertpkg.ErrorAs(t, err, &mismatch, "expected *TokenMismatchError")
+	assert.ErrorAs(t, err, &mismatch, "expected *TokenMismatchError")
 }
 
 func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
@@ -114,15 +114,15 @@ func TestGraphManager_TokenSource_NoIMAPValidation(t *testing.T) {
 	// Save a Graph token. There is no IMAP scope; the IMAP Manager would
 	// reject this, but GraphManager must accept it.
 	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
-	requirepkg.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
+	require.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
 
 	ts, err := m.TokenSource(t.Context(), "user@company.com")
-	requirepkg.NoError(t, err)
-	requirepkg.NotNil(t, ts, "TokenSource returned nil")
+	require.NoError(t, err)
+	require.NotNil(t, ts, "TokenSource returned nil")
 }
 
 func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	m := NewGraphManager("test-client", "common", dir, slog.Default())
 
@@ -149,18 +149,18 @@ func TestGraphManager_TokenSource_StaleGraphScopesReturnsError(t *testing.T) {
 func TestGraphManager_TokenSource_MissingToken(t *testing.T) {
 	m := NewGraphManager("test-client", "common", t.TempDir(), slog.Default())
 	_, err := m.TokenSource(t.Context(), "nobody@example.com")
-	requirepkg.Error(t, err, "expected error for missing token")
-	assertpkg.ErrorContains(t, err, "no valid token")
+	require.Error(t, err, "expected error for missing token")
+	assert.ErrorContains(t, err, "no valid token")
 }
 
 func TestGraphManager_TokenSource_Concurrent(t *testing.T) {
 	dir := t.TempDir()
 	m := NewGraphManager("test-client", "common", dir, slog.Default())
 	token := &oauth2.Token{AccessToken: "graph-access", RefreshToken: "graph-refresh", TokenType: "Bearer"}
-	requirepkg.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
+	require.NoError(t, m.saveToken("user@company.com", token, GraphScopes(), "org-tid"))
 
 	fn, err := m.TokenSource(t.Context(), "user@company.com")
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
 	for range 10 {

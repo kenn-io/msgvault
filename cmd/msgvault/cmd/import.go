@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/whatsapp"
 )
@@ -36,8 +35,8 @@ Examples:
   msgvault import-whatsapp --phone "+447700900000" --media-dir /path/to/Media /path/to/msgstore.db`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := MustBeLocal("import-whatsapp"); err != nil {
-			return err
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		return runWhatsAppImport(cmd, args[0])
 	},
@@ -64,20 +63,12 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 		}
 	}
 
-	// Open database.
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
+	s, cleanup, err := openWritableStoreAndInitForIngest()
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() { _ = s.Close() }()
-
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrationsForIngest(s); err != nil {
-		return fmt.Errorf("startup migrations: %w", err)
-	}
+	defer cleanup()
+	dbPath := cfg.DatabaseDSN()
 
 	// Set up context with cancellation.
 	ctx, cancel := context.WithCancel(cmd.Context())
@@ -203,7 +194,7 @@ func (p *ImportCLIProgress) OnProgress(processed, added, skipped int64) {
 		rate = float64(added) / elapsed.Seconds()
 	}
 
-	elapsedStr := formatDuration(elapsed)
+	elapsedStr := formatCLIProgressDuration(elapsed, cliProgressDurationSpaced)
 
 	chatStr := ""
 	if p.currentChat != "" {
@@ -242,8 +233,8 @@ var importCmd = &cobra.Command{
 	Hidden:     true,
 	Args:       cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := MustBeLocal("import"); err != nil {
-			return err
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		if strings.ToLower(importType) != "whatsapp" {
 			return fmt.Errorf(

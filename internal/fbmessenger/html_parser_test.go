@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseHTMLThread_Simple(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/html_simple"
 	th, err := ParseHTMLThread(root, threadDir(t, root, "alice_ABC123"))
 	require.NoError(err, "parse")
@@ -35,7 +35,7 @@ func TestParseHTMLThread_Simple(t *testing.T) {
 }
 
 func TestParseHTMLThread_WithMedia(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	root := "testdata/html_with_media"
 	th, err := ParseHTMLThread(root, threadDir(t, root, "bob_XYZ789"))
 	require.NoError(err, "parse")
@@ -43,12 +43,12 @@ func TestParseHTMLThread_WithMedia(t *testing.T) {
 	m := th.Messages[0]
 	require.Len(m.Attachments, 1)
 	_, err = os.Stat(m.Attachments[0].AbsPath)
-	assertpkg.NoError(t, err, "attachment should exist on disk")
+	assert.NoError(t, err, "attachment should exist on disk")
 }
 
 func TestParseHTMLThread_TimestampLayouts(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	want := time.Date(2019, 10, 19, 14, 37, 0, 0, time.UTC)
 	for _, name := range []string{"layout1.html", "layout2.html", "layout3.html"} {
 		data, err := os.ReadFile(filepath.Join("testdata/html_timestamps", name))
@@ -71,8 +71,8 @@ func TestParseHTMLThread_TimestampLayouts(t *testing.T) {
 // the message block where they appear in the DOM, not to the first empty or
 // attachment-less message.
 func TestParseHTMLThread_ImagePositioning(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	root := "testdata/html_multi_media"
 	th, err := ParseHTMLThread(root, threadDir(t, root, "carol_IMG456"))
 	require.NoError(err, "parse")
@@ -86,7 +86,7 @@ func TestParseHTMLThread_ImagePositioning(t *testing.T) {
 }
 
 func TestParseHTMLThread_StructuralParsing(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	// Replace known class names with random strings; the parser must
 	// still find participants, bodies, and timestamps.
 	data, err := os.ReadFile("testdata/html_simple/your_activity_across_facebook/messages/inbox/alice_ABC123/message_1.html")
@@ -102,5 +102,5 @@ func TestParseHTMLThread_StructuralParsing(t *testing.T) {
 	th, err := ParseHTMLThread(tmp, threadPath)
 	require.NoError(err, "parse")
 	require.Len(th.Messages, 3)
-	assertpkg.Len(t, th.Participants, 2)
+	assert.Len(t, th.Participants, 2)
 }
