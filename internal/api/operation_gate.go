@@ -148,10 +148,11 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 			shouldGate, err := operationGateRequest(r)
 			if err != nil {
 				if errors.Is(err, errCLIRunGateInspectionBodyTooLarge) {
-					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+					writeError(w, http.StatusRequestEntityTooLarge, "request_too_large",
+						"request body is too large to inspect before routing")
 					return
 				}
-				http.Error(w, "request body unreadable", http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, "invalid_request", "request body could not be read")
 				return
 			}
 			if !shouldGate {
@@ -160,7 +161,7 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 			}
 			done, ok := gate.BeginWorkContext(r.Context())
 			if !ok {
-				http.Error(w, "server is busy or shutting down", http.StatusServiceUnavailable)
+				writeError(w, http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
 				return
 			}
 			defer done()

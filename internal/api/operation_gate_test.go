@@ -155,6 +155,11 @@ func TestOperationGateMiddlewareRejectsOversizedCLIRunInspectionBody(t *testing.
 	handler.ServeHTTP(resp, req)
 
 	assert.Equal(http.StatusRequestEntityTooLarge, resp.Code, "status")
+	assert.Equal("application/json", resp.Header().Get("Content-Type"), "content type")
+	var errResp ErrorResponse
+	if assert.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope") {
+		assert.Equal("request_too_large", errResp.Error, "error code")
+	}
 	assert.False(handlerCalled, "handler should not receive oversized classification body")
 	begin, done := gate.counts()
 	assert.Equal(0, begin, "begin calls")
@@ -193,7 +198,12 @@ func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 	assert.False(called, "handler should not run")
 	assert.Equal(http.StatusServiceUnavailable, resp.Code, "status")
-	assert.Contains(resp.Body.String(), "server is busy or shutting down")
+	assert.Equal("application/json", resp.Header().Get("Content-Type"), "content type")
+	var errResp ErrorResponse
+	if assert.NoError(json.Unmarshal(resp.Body.Bytes(), &errResp), "decode error envelope") {
+		assert.Equal("server_busy", errResp.Error, "error code")
+		assert.Equal("server is busy or shutting down", errResp.Message, "error message")
+	}
 	begin, done := gate.counts()
 	assert.Equal(1, begin, "begin calls")
 	assert.Equal(0, done, "done calls")

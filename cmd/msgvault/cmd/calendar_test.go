@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -335,30 +336,14 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 }
 
 type fakeCalendarTokenProber struct {
-	hasToken bool
-	source   oauth2.TokenSource
-	sourcefn func() (oauth2.TokenSource, error)
+	hasToken   bool
+	refreshErr error
 }
 
 func (f fakeCalendarTokenProber) HasToken(string) bool { return f.hasToken }
 
-func (f fakeCalendarTokenProber) TokenSource(context.Context, string) (oauth2.TokenSource, error) {
-	if f.sourcefn != nil {
-		return f.sourcefn()
-	}
-	return f.source, nil
-}
-
-type probeTokenSource struct {
-	token *oauth2.Token
-	err   error
-}
-
-func (f probeTokenSource) Token() (*oauth2.Token, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.token, nil
+func (f fakeCalendarTokenProber) ForceRefresh(context.Context, string) error {
+	return f.refreshErr
 }
 
 func TestCalendarTokenExpiredOrRevoked(t *testing.T) {
@@ -374,34 +359,33 @@ func TestCalendarTokenExpiredOrRevoked(t *testing.T) {
 			want:  false,
 		},
 		{
-			name: "refresh returning invalid_grant is expired or revoked",
+			name: "forced refresh returning invalid_grant is expired or revoked",
 			prber: fakeCalendarTokenProber{
-				hasToken: true,
-				source:   probeTokenSource{err: invalidGrant},
+				hasToken:   true,
+				refreshErr: invalidGrant,
 			},
 			want: true,
 		},
 		{
-			name: "TokenSource construction failing with invalid_grant is expired or revoked",
+			name: "wrapped invalid_grant is expired or revoked",
 			prber: fakeCalendarTokenProber{
-				hasToken: true,
-				sourcefn: func() (oauth2.TokenSource, error) { return nil, invalidGrant },
+				hasToken:   true,
+				refreshErr: fmt.Errorf("refresh token: %w", invalidGrant),
 			},
 			want: true,
 		},
 		{
-			name: "a valid token that refreshes is not expired",
+			name: "a token that refreshes is not expired",
 			prber: fakeCalendarTokenProber{
 				hasToken: true,
-				source:   probeTokenSource{token: &oauth2.Token{AccessToken: "ok"}},
 			},
 			want: false,
 		},
 		{
 			name: "a transient refresh error is not treated as expiry",
 			prber: fakeCalendarTokenProber{
-				hasToken: true,
-				source:   probeTokenSource{err: errors.New("network unreachable")},
+				hasToken:   true,
+				refreshErr: errors.New("network unreachable"),
 			},
 			want: false,
 		},

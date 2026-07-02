@@ -644,7 +644,7 @@ func calendarAddTokenReusable(mgr calendarTokenClientMatcher, email string, app 
 // expired or revoked Calendar refresh token.
 type calendarTokenRefreshProber interface {
 	HasToken(email string) bool
-	TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error)
+	ForceRefresh(ctx context.Context, email string) error
 }
 
 // calendarTokenExpiredOrRevoked reports whether a stored Calendar token can no
@@ -652,18 +652,16 @@ type calendarTokenRefreshProber interface {
 // HasToken/HasScope/TokenMatchesClient, so add-calendar would otherwise treat it
 // as reusable and fail later in buildCalendarClient with a non-interactive
 // invalid_grant. Detecting it up front lets add-calendar reauthorize (browser)
-// or print headless copy-token instructions instead. Transient failures
-// (network, context cancellation) are not treated as expiry, so a flaky probe
-// does not force a needless reauthorization.
+// or print headless copy-token instructions instead. The probe forces a refresh
+// grant rather than reading the cached access token, so a revoked refresh token
+// is caught even while the stored access token is still unexpired. Transient
+// failures (network, context cancellation) are not treated as expiry, so a
+// flaky probe does not force a needless reauthorization.
 func calendarTokenExpiredOrRevoked(ctx context.Context, mgr calendarTokenRefreshProber, email string) bool {
 	if !mgr.HasToken(email) {
 		return false
 	}
-	ts, err := mgr.TokenSource(ctx, email)
-	if err != nil {
-		return isAuthInvalidError(err)
-	}
-	if _, err := ts.Token(); err != nil {
+	if err := mgr.ForceRefresh(ctx, email); err != nil {
 		return isAuthInvalidError(err)
 	}
 	return false
