@@ -258,10 +258,19 @@ func BuildHandler(opts Options) (*Result, error) {
 // daemon child, whose stderr is redirected to serve.log (not a
 // terminal) and whose startup lines are parsed by the autostart
 // progress reporter.
+//
+// daemonCLISubprocess quiets the same routine INFO noise for the
+// non-TTY CLI subprocess the daemon spawns to serve proxied CLI
+// commands: its stderr is a pipe streamed verbatim to the user's
+// console, so its structured startup/exit lines are noise even though
+// stderrIsTerminal is false.
 func ResolveConsoleLevel(
-	explicitLevel string, verbose, fileDisabled, stderrIsTerminal bool,
+	explicitLevel string, verbose, fileDisabled, stderrIsTerminal, daemonCLISubprocess bool,
 ) *slog.Level {
-	if verbose || explicitLevel != "" || !fileDisabled || !stderrIsTerminal {
+	if verbose || explicitLevel != "" || !fileDisabled {
+		return nil
+	}
+	if !stderrIsTerminal && !daemonCLISubprocess {
 		return nil
 	}
 	lv := slog.LevelWarn

@@ -175,12 +175,13 @@ func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 func TestResolveConsoleLevel(t *testing.T) {
 	warn := slog.LevelWarn
 	tests := []struct {
-		name             string
-		explicitLevel    string
-		verbose          bool
-		fileDisabled     bool
-		stderrIsTerminal bool
-		want             *slog.Level
+		name                string
+		explicitLevel       string
+		verbose             bool
+		fileDisabled        bool
+		stderrIsTerminal    bool
+		daemonCLISubprocess bool
+		want                *slog.Level
 	}{
 		{
 			name:             "terminal file-disabled no-explicit → warn",
@@ -193,6 +194,26 @@ func TestResolveConsoleLevel(t *testing.T) {
 			fileDisabled:     true,
 			stderrIsTerminal: false,
 			want:             nil,
+		},
+		{
+			name:                "daemon CLI subprocess file-disabled → warn",
+			fileDisabled:        true,
+			stderrIsTerminal:    false,
+			daemonCLISubprocess: true,
+			want:                &warn,
+		},
+		{
+			name:                "daemon CLI subprocess with file logging → unchanged",
+			fileDisabled:        false,
+			daemonCLISubprocess: true,
+			want:                nil,
+		},
+		{
+			name:                "daemon CLI subprocess verbose wins",
+			verbose:             true,
+			fileDisabled:        true,
+			daemonCLISubprocess: true,
+			want:                nil,
 		},
 		{
 			name:             "file logging enabled → unchanged",
@@ -218,7 +239,8 @@ func TestResolveConsoleLevel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ResolveConsoleLevel(
-				tt.explicitLevel, tt.verbose, tt.fileDisabled, tt.stderrIsTerminal,
+				tt.explicitLevel, tt.verbose, tt.fileDisabled,
+				tt.stderrIsTerminal, tt.daemonCLISubprocess,
 			)
 			if tt.want == nil {
 				assert.Nil(t, got)

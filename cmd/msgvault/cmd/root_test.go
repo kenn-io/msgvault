@@ -487,7 +487,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			interactive: false,
 			wantErr:     true,
-			errContains: "non-interactive session",
+			errContains: "add-account test@gmail.com --force",
 		},
 		{
 			name: "invalid_grant, reauth fails",
@@ -575,9 +575,10 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			"expected error to wrap *oauth.TokenMismatchError, got %T: %v", err, err)
 	})
 
-	// Additional assertion for non-interactive case: verify the error
-	// mentions running from an interactive terminal
-	t.Run("non-interactive error mentions interactive terminal", func(t *testing.T) {
+	// Additional assertion for the non-interactive case: verify the error
+	// points at the actionable remedy (add-account --force), which works even
+	// from the daemon's non-TTY CLI subprocess.
+	t.Run("non-interactive error points at add-account --force", func(t *testing.T) {
 		mock := &mockReauthorizer{
 			tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
 				return nil, invalidGrant
@@ -586,7 +587,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false)
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "interactive terminal")
+		assert.ErrorContains(t, err, "add-account x@gmail.com --force")
 	})
 }
 

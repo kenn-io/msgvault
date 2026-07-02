@@ -127,7 +127,7 @@ in a single binary.`,
 			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stderr.Fd())
 			if consoleLevel := logging.ResolveConsoleLevel(
-				levelString, verbose, fileDisabled, stderrIsTerminal,
+				levelString, verbose, fileDisabled, stderrIsTerminal, isDaemonCLISubprocess(),
 			); consoleLevel != nil {
 				levelOverride = consoleLevel
 			}
@@ -474,13 +474,15 @@ func getTokenSourceWithReauth(
 		return nil, fmt.Errorf("get token source for %s: %w", email, err)
 	}
 
-	// Non-interactive session cannot open a browser for reauth
+	// Non-interactive session cannot open a browser for reauth.
+	// This runs inside the daemon's non-TTY CLI subprocess, where the
+	// remedy is to re-authorize out of band: add-account's browser flow
+	// works even from here because it opens its own loopback callback.
 	if !interactive {
 		return nil, fmt.Errorf(
-			"token for %s is expired or revoked, but cannot re-authorize "+
-				"in a non-interactive session (run this command from an "+
-				"interactive terminal to re-authorize automatically)",
-			email,
+			"token for %s is expired or revoked; re-authorize with "+
+				"'msgvault add-account %s --force'",
+			email, email,
 		)
 	}
 
