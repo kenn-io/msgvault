@@ -476,13 +476,16 @@ func getTokenSourceWithReauth(
 
 	// Non-interactive session cannot open a browser for reauth.
 	// This runs inside the daemon's non-TTY CLI subprocess, where the
-	// remedy is to re-authorize out of band: add-account's browser flow
-	// works even from here because it opens its own loopback callback.
+	// remedy is to re-authorize out of band. On a desktop, add-account's
+	// --force browser flow works even from here (it opens its own loopback
+	// callback). On a headless server with no browser, --headless prints
+	// device-code instructions instead (--force is browser-only).
 	if !interactive {
 		return nil, fmt.Errorf(
 			"token for %s is expired or revoked; re-authorize with "+
-				"'msgvault add-account %s --force'",
-			email, email,
+				"'msgvault add-account %s --force' (or "+
+				"'msgvault add-account %s --headless' on a server without a browser)",
+			email, email, email,
 		)
 	}
 

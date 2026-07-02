@@ -576,9 +576,10 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 	})
 
 	// Additional assertion for the non-interactive case: verify the error
-	// points at the actionable remedy (add-account --force), which works even
-	// from the daemon's non-TTY CLI subprocess.
-	t.Run("non-interactive error points at add-account --force", func(t *testing.T) {
+	// points at both actionable remedies — add-account --force (browser, works
+	// even from the daemon's non-TTY CLI subprocess) and --headless (device
+	// code, for a headless server with no browser).
+	t.Run("non-interactive error points at add-account remedies", func(t *testing.T) {
 		mock := &mockReauthorizer{
 			tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
 				return nil, invalidGrant
@@ -586,8 +587,8 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			hasTokenVal: true,
 		}
 		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false)
-		require.Error(t, err)
-		assert.ErrorContains(t, err, "add-account x@gmail.com --force")
+		require.ErrorContains(t, err, "add-account x@gmail.com --force")
+		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
 	})
 }
 
