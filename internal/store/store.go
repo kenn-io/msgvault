@@ -858,13 +858,24 @@ func (s *Store) NeedsFTSBackfill() bool {
 }
 
 // Stats holds database statistics.
+//
+// MessageCount is the count of active messages: those still present in the
+// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// SourceDeletedCount is the count of archived messages that were deleted from
+// the source account but are retained in the archive (deleted_at IS NULL AND
+// deleted_from_source_at IS NOT NULL). The archive is the system of record,
+// so the canonical total is MessageCount + SourceDeletedCount; callers that
+// display a total must label the two populations rather than pick one
+// silently. Dedup-hidden rows (deleted_at IS NOT NULL) are excluded from
+// both counts.
 type Stats struct {
-	MessageCount    int64
-	ThreadCount     int64
-	AttachmentCount int64
-	LabelCount      int64
-	SourceCount     int64
-	DatabaseSize    int64
+	MessageCount       int64
+	SourceDeletedCount int64
+	ThreadCount        int64
+	AttachmentCount    int64
+	LabelCount         int64
+	SourceCount        int64
+	DatabaseSize       int64
 }
 
 // GetStats returns statistics about the database.
@@ -900,6 +911,11 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true),
 				nil,
 				&stats.MessageCount,
+			},
+			{
+				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere(""),
+				nil,
+				&stats.SourceDeletedCount,
 			},
 			{
 				"SELECT COUNT(*) FROM conversations WHERE EXISTS (" +
@@ -955,6 +971,11 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
 				cloneArgs(),
 				&stats.MessageCount,
+			},
+			{
+				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("") + " AND " + inClause,
+				cloneArgs(),
+				&stats.SourceDeletedCount,
 			},
 			{
 				"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,

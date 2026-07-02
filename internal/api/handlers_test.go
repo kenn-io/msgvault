@@ -52,12 +52,13 @@ func newTestServerWithMockStore(t *testing.T) (*Server, *mockStore) {
 
 	store := &mockStore{
 		stats: &StoreStats{
-			MessageCount:    10,
-			ThreadCount:     5,
-			SourceCount:     1,
-			LabelCount:      3,
-			AttachmentCount: 2,
-			DatabaseSize:    1024,
+			MessageCount:       10,
+			SourceDeletedCount: 4,
+			ThreadCount:        5,
+			SourceCount:        1,
+			LabelCount:         3,
+			AttachmentCount:    2,
+			DatabaseSize:       1024,
 		},
 		messages: []APIMessage{
 			{
@@ -144,6 +145,8 @@ func TestHandleStats(t *testing.T) {
 	require.NoError(json.Unmarshal(bodyBytes, &resp), "failed to decode response")
 
 	assert.Equal(int64(10), resp.TotalMessages, "total_messages")
+	assert.Equal(int64(10), resp.ActiveMessages, "active_messages")
+	assert.Equal(int64(4), resp.SourceDeletedMessages, "source_deleted_messages")
 	assert.Equal(int64(1), resp.TotalAccounts, "total_accounts")
 
 	// No backend wired → vector_search field must be ABSENT, not
@@ -3409,12 +3412,14 @@ func TestHandleTotalStats(t *testing.T) {
 	assert := assert.New(t)
 	engine := &querytest.MockEngine{
 		Stats: &query.TotalStats{
-			MessageCount:    1000,
-			TotalSize:       5000000,
-			AttachmentCount: 100,
-			AttachmentSize:  1000000,
-			LabelCount:      10,
-			AccountCount:    2,
+			MessageCount:              1000,
+			ActiveMessageCount:        700,
+			SourceDeletedMessageCount: 300,
+			TotalSize:                 5000000,
+			AttachmentCount:           100,
+			AttachmentSize:            1000000,
+			LabelCount:                10,
+			AccountCount:              2,
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
@@ -3430,6 +3435,8 @@ func TestHandleTotalStats(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "failed to decode response")
 
 	assert.Equal(int64(1000), resp.MessageCount, "message_count")
+	assert.Equal(int64(700), resp.ActiveMessages, "active_messages")
+	assert.Equal(int64(300), resp.SourceDeletedMessages, "source_deleted_messages")
 	assert.Equal(int64(5000000), resp.TotalSize, "total_size")
 }
 

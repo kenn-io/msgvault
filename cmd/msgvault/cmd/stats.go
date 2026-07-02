@@ -116,7 +116,13 @@ func printScopedStats(
 }
 
 func printStats(w io.Writer, s *store.Stats) {
-	_, _ = fmt.Fprintf(w, "  Messages:    %d\n", s.MessageCount)
+	if s.SourceDeletedCount > 0 {
+		total := s.MessageCount + s.SourceDeletedCount
+		_, _ = fmt.Fprintf(w, "  Messages:    %s (%s active, %s deleted from source)\n",
+			formatCount(total), formatCount(s.MessageCount), formatCount(s.SourceDeletedCount))
+	} else {
+		_, _ = fmt.Fprintf(w, "  Messages:    %s\n", formatCount(s.MessageCount))
+	}
 	_, _ = fmt.Fprintf(w, "  Threads:     %d\n", s.ThreadCount)
 	_, _ = fmt.Fprintf(w, "  Attachments: %d\n", s.AttachmentCount)
 	_, _ = fmt.Fprintf(w, "  Labels:      %d\n", s.LabelCount)

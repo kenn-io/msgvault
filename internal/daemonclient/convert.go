@@ -45,12 +45,13 @@ func cliStatsFromGenerated(resp *generated.GetCLIStatsResponse) *CLIStats {
 
 func storeStatsFromGenerated(stats generated.StatsResponse) *store.Stats {
 	return &store.Stats{
-		MessageCount:    stats.TotalMessages,
-		ThreadCount:     stats.TotalThreads,
-		SourceCount:     stats.TotalAccounts,
-		LabelCount:      stats.TotalLabels,
-		AttachmentCount: stats.TotalAttachments,
-		DatabaseSize:    stats.DatabaseSizeBytes,
+		MessageCount:       stats.TotalMessages,
+		SourceDeletedCount: stats.SourceDeletedMessages,
+		ThreadCount:        stats.TotalThreads,
+		SourceCount:        stats.TotalAccounts,
+		LabelCount:         stats.TotalLabels,
+		AttachmentCount:    stats.TotalAttachments,
+		DatabaseSize:       stats.DatabaseSizeBytes,
 	}
 }
 
@@ -388,12 +389,13 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 	out := make([]CLIAccount, len(resp.Accounts))
 	for i, account := range resp.Accounts {
 		out[i] = CLIAccount{
-			ID:           account.ID,
-			Email:        account.Email,
-			Type:         account.Type,
-			DisplayName:  account.DisplayName,
-			MessageCount: account.MessageCount,
-			LastSync:     account.LastSync,
+			ID:                 account.ID,
+			Email:              account.Email,
+			Type:               account.Type,
+			DisplayName:        account.DisplayName,
+			MessageCount:       account.MessageCount,
+			SourceDeletedCount: account.SourceDeletedCount,
+			LastSync:           account.LastSync,
 		}
 	}
 	return out
@@ -412,13 +414,14 @@ func cliCollectionsFromGenerated(resp *generated.ListCLICollectionsResponse) []C
 
 func cliCollectionFromGenerated(collection generated.CliCollectionResponse) CLICollection {
 	return CLICollection{
-		ID:           collection.ID,
-		Name:         collection.Name,
-		Description:  stringValue(collection.Description),
-		CreatedAt:    collection.CreatedAt,
-		SourceIDs:    collection.SourceIds,
-		MessageCount: collection.MessageCount,
-		Sources:      cliCollectionSourcesFromGenerated(collection.Sources),
+		ID:                 collection.ID,
+		Name:               collection.Name,
+		Description:        stringValue(collection.Description),
+		CreatedAt:          collection.CreatedAt,
+		SourceIDs:          collection.SourceIds,
+		MessageCount:       collection.MessageCount,
+		SourceDeletedCount: collection.SourceDeletedCount,
+		Sources:            cliCollectionSourcesFromGenerated(collection.Sources),
 	}
 }
 

@@ -47,6 +47,7 @@ type CLIStore interface {
 	AddAccountIdentity(sourceID int64, address, signal string) error
 	RemoveAccountIdentity(sourceID int64, address string) (int64, error)
 	CountMessagesForSource(sourceID int64) (int64, error)
+	CountSourceDeletedMessages(sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfill() bool
 	BackfillFTS(progress func(done, total int64)) (int64, error)
 	RebuildFTS(progress func(done, total int64)) (int64, error)
@@ -433,13 +434,14 @@ var (
 )
 
 type cliCollectionResponse struct {
-	ID           int64                         `json:"id"`
-	Name         string                        `json:"name"`
-	Description  string                        `json:"description,omitempty"`
-	CreatedAt    time.Time                     `json:"created_at"`
-	SourceIDs    []int64                       `json:"source_ids"`
-	MessageCount int64                         `json:"message_count"`
-	Sources      []cliCollectionSourceResponse `json:"sources,omitempty"`
+	ID                 int64                         `json:"id"`
+	Name               string                        `json:"name"`
+	Description        string                        `json:"description,omitempty"`
+	CreatedAt          time.Time                     `json:"created_at"`
+	SourceIDs          []int64                       `json:"source_ids"`
+	MessageCount       int64                         `json:"message_count"`
+	SourceDeletedCount int64                         `json:"source_deleted_count"`
+	Sources            []cliCollectionSourceResponse `json:"sources,omitempty"`
 }
 
 type cliCollectionSourceResponse struct {
@@ -459,12 +461,13 @@ type cliIdentityRowResponse struct {
 }
 
 type cliAccountResponse struct {
-	ID           int64      `json:"id"`
-	Email        string     `json:"email"`
-	Type         string     `json:"type"`
-	DisplayName  string     `json:"display_name"`
-	MessageCount int64      `json:"message_count"`
-	LastSync     *time.Time `json:"last_sync"`
+	ID                 int64      `json:"id"`
+	Email              string     `json:"email"`
+	Type               string     `json:"type"`
+	DisplayName        string     `json:"display_name"`
+	MessageCount       int64      `json:"message_count"`
+	SourceDeletedCount int64      `json:"source_deleted_count"`
+	LastSync           *time.Time `json:"last_sync"`
 }
 
 type cliMessageResponse struct {
@@ -1438,11 +1441,21 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
 			return
 		}
+		sourceDeleted, err := cliStore.CountSourceDeletedMessages(src.ID)
+		if err != nil {
+			s.logger.Error("failed to count CLI account source-deleted messages",
+				"source_id", src.ID,
+				"identifier", src.Identifier,
+				"error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list accounts")
+			return
+		}
 		account := cliAccountResponse{
-			ID:           src.ID,
-			Email:        src.Identifier,
-			Type:         src.SourceType,
-			MessageCount: count,
+			ID:                 src.ID,
+			Email:              src.Identifier,
+			Type:               src.SourceType,
+			MessageCount:       count,
+			SourceDeletedCount: sourceDeleted,
 		}
 		if src.DisplayName.Valid {
 			account.DisplayName = src.DisplayName.String
@@ -1928,13 +1941,14 @@ func cliCollectionResponseFromStore(
 		return cliCollectionResponse{}, nil
 	}
 	resp := cliCollectionResponse{
-		ID:           coll.ID,
-		Name:         coll.Name,
-		Description:  coll.Description,
-		CreatedAt:    coll.CreatedAt,
-		SourceIDs:    append([]int64(nil), coll.SourceIDs...),
-		MessageCount: coll.MessageCount,
-		Sources:      make([]cliCollectionSourceResponse, 0, len(coll.SourceIDs)),
+		ID:                 coll.ID,
+		Name:               coll.Name,
+		Description:        coll.Description,
+		CreatedAt:          coll.CreatedAt,
+		SourceIDs:          append([]int64(nil), coll.SourceIDs...),
+		MessageCount:       coll.MessageCount,
+		SourceDeletedCount: coll.SourceDeletedCount,
+		Sources:            make([]cliCollectionSourceResponse, 0, len(coll.SourceIDs)),
 	}
 	for _, sid := range coll.SourceIDs {
 		src, err := st.GetSourceByID(sid)
@@ -2015,12 +2029,14 @@ func statsResponseFromStore(stats *store.Stats) StatsResponse {
 		return StatsResponse{}
 	}
 	return StatsResponse{
-		TotalMessages: stats.MessageCount,
-		TotalThreads:  stats.ThreadCount,
-		TotalAccounts: stats.SourceCount,
-		TotalLabels:   stats.LabelCount,
-		TotalAttach:   stats.AttachmentCount,
-		DatabaseSize:  stats.DatabaseSize,
+		TotalMessages:         stats.MessageCount,
+		ActiveMessages:        stats.MessageCount,
+		SourceDeletedMessages: stats.SourceDeletedCount,
+		TotalThreads:          stats.ThreadCount,
+		TotalAccounts:         stats.SourceCount,
+		TotalLabels:           stats.LabelCount,
+		TotalAttach:           stats.AttachmentCount,
+		DatabaseSize:          stats.DatabaseSize,
 	}
 }
 

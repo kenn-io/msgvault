@@ -64,7 +64,7 @@ func TestCacheStatsUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert.Equal(int32(1), requests.Load(), "HTTP requests")
 	assert.Empty(stderr.String(), "stderr")
 	assert.Equal(`Cache Statistics:
-  Total messages:    42
+  Total messages:    42 (includes messages deleted from source)
   Accounts:          3
   Unique senders:    9
   Unique domains:    4

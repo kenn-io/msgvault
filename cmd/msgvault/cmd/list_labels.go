@@ -13,6 +13,10 @@ var listLabelsCmd = &cobra.Command{
 Use this command to see how your email is organized by label. This includes
 both system labels (INBOX, SENT, etc.) and custom labels.
 
+Counts come from the analytics cache and include messages deleted from their
+source account (the archive retains them), so per-label totals may exceed the
+active message count shown by 'stats'.
+
 Examples:
   msgvault list-labels
   msgvault list-labels --limit 50

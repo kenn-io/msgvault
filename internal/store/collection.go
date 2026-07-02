@@ -22,8 +22,9 @@ type Collection struct {
 type CollectionWithSources struct {
 	Collection
 
-	SourceIDs    []int64
-	MessageCount int64
+	SourceIDs          []int64
+	MessageCount       int64
+	SourceDeletedCount int64
 }
 
 // DefaultCollectionName is the always-present collection that mirrors
@@ -339,18 +340,23 @@ func (s *Store) hydrateCollection(
 	}
 	_ = rows.Close()
 
-	var count int64
+	var count, sourceDeleted int64
 	if len(sourceIDs) > 0 {
 		count, err = s.CountActiveMessages(sourceIDs...)
+		if err != nil {
+			return nil, err
+		}
+		sourceDeleted, err = s.CountSourceDeletedMessages(sourceIDs...)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return &CollectionWithSources{
-		Collection:   *c,
-		SourceIDs:    sourceIDs,
-		MessageCount: count,
+		Collection:         *c,
+		SourceIDs:          sourceIDs,
+		MessageCount:       count,
+		SourceDeletedCount: sourceDeleted,
 	}, nil
 }
 

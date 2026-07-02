@@ -851,6 +851,10 @@ func (a *storeAPIAdapter) CountMessagesForSource(sourceID int64) (int64, error) 
 	return a.store.CountMessagesForSource(sourceID)
 }
 
+func (a *storeAPIAdapter) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
+	return a.store.CountSourceDeletedMessages(sourceIDs...)
+}
+
 func (a *storeAPIAdapter) ListSources(sourceType string) ([]*store.Source, error) {
 	return a.store.ListSources(sourceType)
 }

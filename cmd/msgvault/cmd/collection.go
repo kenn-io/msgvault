@@ -148,7 +148,12 @@ func renderCollectionShow(out io.Writer, coll daemonclient.CLICollection) {
 		_, _ = fmt.Fprintf(out, "Description: %s\n", coll.Description)
 	}
 	_, _ = fmt.Fprintf(out, "Sources: %d\n", len(coll.SourceIDs))
-	_, _ = fmt.Fprintf(out, "Messages: %s\n", formatCount(coll.MessageCount))
+	if coll.SourceDeletedCount > 0 {
+		_, _ = fmt.Fprintf(out, "Messages: %s active (+%s deleted from source)\n",
+			formatCount(coll.MessageCount), formatCount(coll.SourceDeletedCount))
+	} else {
+		_, _ = fmt.Fprintf(out, "Messages: %s\n", formatCount(coll.MessageCount))
+	}
 	_, _ = fmt.Fprintf(out, "Created: %s\n", coll.CreatedAt.Format("2006-01-02 15:04"))
 
 	if len(coll.SourceIDs) > 0 {

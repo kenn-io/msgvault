@@ -325,6 +325,28 @@ func TestGetTotalStats(t *testing.T) {
 	assert.Equal(int64(10000+5000+20000), stats.AttachmentSize, "AttachmentSize")
 }
 
+func TestGetTotalStatsSourceDeletedBreakdown(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	// One of the five seeded messages is deleted from its source account
+	// but retained in the archive.
+	env.MarkDeletedBySourceID("msg3")
+
+	// Default: the archive is the system of record, so the total includes
+	// the source-deleted message and the breakdown splits it out.
+	stats := env.MustGetTotalStats(StatsOptions{})
+	assert.Equal(int64(5), stats.MessageCount, "MessageCount includes source-deleted")
+	assert.Equal(int64(4), stats.ActiveMessageCount, "ActiveMessageCount")
+	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "SourceDeletedMessageCount")
+
+	// hide_deleted excludes the source-deleted message from every field.
+	hidden := env.MustGetTotalStats(StatsOptions{HideDeletedFromSource: true})
+	assert.Equal(int64(4), hidden.MessageCount, "MessageCount with hide_deleted")
+	assert.Equal(int64(4), hidden.ActiveMessageCount, "ActiveMessageCount with hide_deleted")
+	assert.Equal(int64(0), hidden.SourceDeletedMessageCount, "SourceDeletedMessageCount with hide_deleted")
+}
+
 func TestGetTotalStatsWithSourceID(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)

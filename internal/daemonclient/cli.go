@@ -212,25 +212,27 @@ type SimilarSearch struct {
 }
 
 type CLIAccount struct {
-	ID           int64      `json:"id"`
-	Email        string     `json:"email"`
-	Type         string     `json:"type"`
-	DisplayName  string     `json:"display_name"`
-	MessageCount int64      `json:"message_count"`
-	LastSync     *time.Time `json:"last_sync"`
+	ID                 int64      `json:"id"`
+	Email              string     `json:"email"`
+	Type               string     `json:"type"`
+	DisplayName        string     `json:"display_name"`
+	MessageCount       int64      `json:"message_count"`
+	SourceDeletedCount int64      `json:"source_deleted_count"`
+	LastSync           *time.Time `json:"last_sync"`
 }
 
 type CLIAccountUpdateRequest = accountops.UpdateRequest
 type CLIAccountUpdateResult = accountops.UpdateResult
 
 type CLICollection struct {
-	ID           int64                 `json:"id"`
-	Name         string                `json:"name"`
-	Description  string                `json:"description,omitempty"`
-	CreatedAt    time.Time             `json:"created_at"`
-	SourceIDs    []int64               `json:"source_ids"`
-	MessageCount int64                 `json:"message_count"`
-	Sources      []CLICollectionSource `json:"sources,omitempty"`
+	ID                 int64                 `json:"id"`
+	Name               string                `json:"name"`
+	Description        string                `json:"description,omitempty"`
+	CreatedAt          time.Time             `json:"created_at"`
+	SourceIDs          []int64               `json:"source_ids"`
+	MessageCount       int64                 `json:"message_count"`
+	SourceDeletedCount int64                 `json:"source_deleted_count"`
+	Sources            []CLICollectionSource `json:"sources,omitempty"`
 }
 
 type CLICollectionSource struct {

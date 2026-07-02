@@ -491,12 +491,13 @@ func (c CacheStats) Validate() error {
 }
 
 type CliAccountResponse struct {
-	DisplayName  string     `json:"display_name" validate:"required"`
-	Email        string     `json:"email" validate:"required"`
-	ID           int64      `json:"id"`
-	LastSync     *time.Time `json:"last_sync,omitempty" validate:"required"`
-	MessageCount int64      `json:"message_count"`
-	Type         string     `json:"type" validate:"required"`
+	DisplayName        string     `json:"display_name" validate:"required"`
+	Email              string     `json:"email" validate:"required"`
+	ID                 int64      `json:"id"`
+	LastSync           *time.Time `json:"last_sync,omitempty" validate:"required"`
+	MessageCount       int64      `json:"message_count"`
+	SourceDeletedCount int64      `json:"source_deleted_count"`
+	Type               string     `json:"type" validate:"required"`
 }
 
 func (c CliAccountResponse) Validate() error {
@@ -544,13 +545,14 @@ func (c CliCollectionEnvelope) Validate() error {
 }
 
 type CliCollectionResponse struct {
-	CreatedAt    time.Time                     `json:"created_at" validate:"required"`
-	Description  *string                       `json:"description,omitempty"`
-	ID           int64                         `json:"id"`
-	MessageCount int64                         `json:"message_count"`
-	Name         string                        `json:"name" validate:"required"`
-	SourceIds    []int64                       `json:"source_ids,omitempty" validate:"required"`
-	Sources      []CliCollectionSourceResponse `json:"sources,omitempty"`
+	CreatedAt          time.Time                     `json:"created_at" validate:"required"`
+	Description        *string                       `json:"description,omitempty"`
+	ID                 int64                         `json:"id"`
+	MessageCount       int64                         `json:"message_count"`
+	Name               string                        `json:"name" validate:"required"`
+	SourceDeletedCount int64                         `json:"source_deleted_count"`
+	SourceIds          []int64                       `json:"source_ids,omitempty" validate:"required"`
+	Sources            []CliCollectionSourceResponse `json:"sources,omitempty"`
 }
 
 func (c CliCollectionResponse) Validate() error {
@@ -1634,15 +1636,17 @@ func (s SourcesRequest) Validate() error {
 
 type StatsResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema            *string    `json:"$schema,omitempty"`
-	DatabaseSizeBytes int64      `json:"database_size_bytes"`
-	TotalAccounts     int64      `json:"total_accounts"`
-	TotalAttachments  int64      `json:"total_attachments"`
-	TotalLabels       int64      `json:"total_labels"`
-	TotalMessages     int64      `json:"total_messages"`
-	TotalThreads      int64      `json:"total_threads"`
-	VectorSearch      *StatsView `json:"vector_search,omitempty"`
-	VectorStatus      *string    `json:"vector_status,omitempty"`
+	Schema                *string    `json:"$schema,omitempty"`
+	ActiveMessages        int64      `json:"active_messages"`
+	DatabaseSizeBytes     int64      `json:"database_size_bytes"`
+	SourceDeletedMessages int64      `json:"source_deleted_messages"`
+	TotalAccounts         int64      `json:"total_accounts"`
+	TotalAttachments      int64      `json:"total_attachments"`
+	TotalLabels           int64      `json:"total_labels"`
+	TotalMessages         int64      `json:"total_messages"`
+	TotalThreads          int64      `json:"total_threads"`
+	VectorSearch          *StatsView `json:"vector_search,omitempty"`
+	VectorStatus          *string    `json:"vector_status,omitempty"`
 }
 
 func (s StatsResponse) Validate() error {
@@ -1879,13 +1883,15 @@ func (t TokenUploadRequest) Validate() error {
 
 type TotalStatsResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema          *string `json:"$schema,omitempty"`
-	AccountCount    int64   `json:"account_count"`
-	AttachmentCount int64   `json:"attachment_count"`
-	AttachmentSize  int64   `json:"attachment_size"`
-	LabelCount      int64   `json:"label_count"`
-	MessageCount    int64   `json:"message_count"`
-	TotalSize       int64   `json:"total_size"`
+	Schema                *string `json:"$schema,omitempty"`
+	AccountCount          int64   `json:"account_count"`
+	ActiveMessages        int64   `json:"active_messages"`
+	AttachmentCount       int64   `json:"attachment_count"`
+	AttachmentSize        int64   `json:"attachment_size"`
+	LabelCount            int64   `json:"label_count"`
+	MessageCount          int64   `json:"message_count"`
+	SourceDeletedMessages int64   `json:"source_deleted_messages"`
+	TotalSize             int64   `json:"total_size"`
 }
 
 type UpdateRequest struct {

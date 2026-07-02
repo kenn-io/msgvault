@@ -62,12 +62,13 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount) []accountStats {
 	stats := make([]accountStats, len(accounts))
 	for i, account := range accounts {
 		stats[i] = accountStats{
-			ID:           account.ID,
-			Email:        account.Email,
-			Type:         account.Type,
-			DisplayName:  account.DisplayName,
-			MessageCount: account.MessageCount,
-			LastSync:     account.LastSync,
+			ID:                 account.ID,
+			Email:              account.Email,
+			Type:               account.Type,
+			DisplayName:        account.DisplayName,
+			MessageCount:       account.MessageCount,
+			SourceDeletedCount: account.SourceDeletedCount,
+			LastSync:           account.LastSync,
 		}
 	}
 	return stats
@@ -86,21 +87,34 @@ func outputAccountsTable(stats []accountStats) {
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			lastSync = s.LastSync.Format("2006-01-02 15:04")
 		}
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Email, s.Type, displayName, formatCount(s.MessageCount), lastSync)
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Email, s.Type, displayName, formatMessagesCell(s), lastSync)
 	}
 
 	_ = w.Flush()
+}
+
+// formatMessagesCell renders the active message count and, when the account
+// has archived messages that were deleted from the source, appends the
+// deleted count so the primary column keeps its active-only meaning while
+// still surfacing the retained-but-source-deleted population.
+func formatMessagesCell(s accountStats) string {
+	if s.SourceDeletedCount > 0 {
+		return fmt.Sprintf("%s (+%s deleted from source)",
+			formatCount(s.MessageCount), formatCount(s.SourceDeletedCount))
+	}
+	return formatCount(s.MessageCount)
 }
 
 func outputAccountsJSON(stats []accountStats) error {
 	output := make([]map[string]any, len(stats))
 	for i, s := range stats {
 		entry := map[string]any{
-			"id":            s.ID,
-			keyEmail:        s.Email,
-			"type":          s.Type,
-			"display_name":  s.DisplayName,
-			"message_count": s.MessageCount,
+			"id":                   s.ID,
+			keyEmail:               s.Email,
+			"type":                 s.Type,
+			"display_name":         s.DisplayName,
+			"message_count":        s.MessageCount,
+			"source_deleted_count": s.SourceDeletedCount,
 		}
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			entry["last_sync"] = s.LastSync.Format(time.RFC3339)
@@ -134,12 +148,13 @@ func formatCount(n int64) string {
 }
 
 type accountStats struct {
-	ID           int64
-	Email        string
-	Type         string
-	DisplayName  string
-	MessageCount int64
-	LastSync     *time.Time
+	ID                 int64
+	Email              string
+	Type               string
+	DisplayName        string
+	MessageCount       int64
+	SourceDeletedCount int64
+	LastSync           *time.Time
 }
 
 func init() {

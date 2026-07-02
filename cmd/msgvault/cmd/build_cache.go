@@ -643,7 +643,13 @@ var cacheStatsCmd = &cobra.Command{
 	Use:     "cache-stats",
 	Aliases: []string{"parquet-stats"}, // Backward compatibility
 	Short:   "Show statistics about the analytics cache",
-	Long:    `Display statistics about the analytics cache, including row counts and file sizes.`,
+	Long: `Display statistics about the analytics cache, including row counts and file sizes.
+
+Total messages counts the analytics-cache population: it includes messages
+deleted from their source account (the archive retains them) but excludes
+dedup-hidden rows and messages without a timestamp. This differs from the
+'stats' command, which reports active messages from the SQLite system of
+record.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		st, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -688,7 +694,7 @@ func printCacheStats(out io.Writer, errOut io.Writer, stats *cacheops.CacheStats
 		if err := writeCacheStatsLine(out, "Cache Statistics:\n"); err != nil {
 			return err
 		}
-		if err := writeCacheStatsLine(out, "  Total messages:    %d\n", stats.TotalMessages); err != nil {
+		if err := writeCacheStatsLine(out, "  Total messages:    %d (includes messages deleted from source)\n", stats.TotalMessages); err != nil {
 			return err
 		}
 		if err := writeCacheStatsLine(out, "  Accounts:          %d\n", stats.Sources); err != nil {

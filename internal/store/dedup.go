@@ -497,6 +497,26 @@ func (s *Store) CountActiveMessages(sourceIDs ...int64) (int64, error) {
 	return count, err
 }
 
+// CountSourceDeletedMessages returns the count of archived messages that were
+// deleted from their source account (retained in the archive). It is the exact
+// complement of CountActiveMessages within the non-dedup-hidden population, so
+// active + source-deleted is the canonical archived total.
+func (s *Store) CountSourceDeletedMessages(sourceIDs ...int64) (int64, error) {
+	query := "SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("")
+	var args []any
+	if len(sourceIDs) > 0 {
+		placeholders := make([]string, len(sourceIDs))
+		for i, id := range sourceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	var count int64
+	err := s.db.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
 func (s *Store) CountMessagesWithoutRFC822ID(sourceIDs ...int64) (int64, error) {
 	q := `SELECT COUNT(*) FROM messages m
 		JOIN message_raw mr ON mr.message_id = m.id

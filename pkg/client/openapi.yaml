@@ -714,6 +714,9 @@ components:
         message_count:
           format: int64
           type: integer
+        source_deleted_count:
+          format: int64
+          type: integer
         type:
           type: string
       required:
@@ -722,6 +725,7 @@ components:
         - type
         - display_name
         - message_count
+        - source_deleted_count
         - last_sync
       type: object
     CliAccountsResponse:
@@ -768,6 +772,9 @@ components:
           type: integer
         name:
           type: string
+        source_deleted_count:
+          format: int64
+          type: integer
         source_ids:
           items:
             format: int64
@@ -785,6 +792,7 @@ components:
         - created_at
         - source_ids
         - message_count
+        - source_deleted_count
       type: object
     CliCollectionSourceResponse:
       properties:
@@ -2060,7 +2068,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        active_messages:
+          format: int64
+          type: integer
         database_size_bytes:
+          format: int64
+          type: integer
+        source_deleted_messages:
           format: int64
           type: integer
         total_accounts:
@@ -2084,6 +2098,8 @@ components:
           type: string
       required:
         - total_messages
+        - active_messages
+        - source_deleted_messages
         - total_threads
         - total_accounts
         - total_labels
@@ -2362,6 +2378,9 @@ components:
         account_count:
           format: int64
           type: integer
+        active_messages:
+          format: int64
+          type: integer
         attachment_count:
           format: int64
           type: integer
@@ -2374,11 +2393,16 @@ components:
         message_count:
           format: int64
           type: integer
+        source_deleted_messages:
+          format: int64
+          type: integer
         total_size:
           format: int64
           type: integer
       required:
         - message_count
+        - active_messages
+        - source_deleted_messages
         - total_size
         - attachment_count
         - attachment_size

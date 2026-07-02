@@ -34,15 +34,24 @@ const maxPageSize = 500
 const sourceStatusItemErrorLimit = 10
 
 // StatsResponse represents the archive statistics.
+//
+// TotalMessages counts active messages only (present in the source account);
+// it retains this pre-existing semantic for backward compatibility. The
+// archive is the system of record and also retains messages deleted from the
+// source, so the canonical archived total is ActiveMessages +
+// SourceDeletedMessages. Clients should prefer the explicit fields when
+// presenting a total.
 type StatsResponse struct {
-	TotalMessages int64             `json:"total_messages"`
-	TotalThreads  int64             `json:"total_threads"`
-	TotalAccounts int64             `json:"total_accounts"`
-	TotalLabels   int64             `json:"total_labels"`
-	TotalAttach   int64             `json:"total_attachments"`
-	DatabaseSize  int64             `json:"database_size_bytes"`
-	VectorSearch  *vector.StatsView `json:"vector_search,omitempty"`
-	VectorStatus  string            `json:"vector_status,omitempty"`
+	TotalMessages         int64             `json:"total_messages"`
+	ActiveMessages        int64             `json:"active_messages"`
+	SourceDeletedMessages int64             `json:"source_deleted_messages"`
+	TotalThreads          int64             `json:"total_threads"`
+	TotalAccounts         int64             `json:"total_accounts"`
+	TotalLabels           int64             `json:"total_labels"`
+	TotalAttach           int64             `json:"total_attachments"`
+	DatabaseSize          int64             `json:"database_size_bytes"`
+	VectorSearch          *vector.StatsView `json:"vector_search,omitempty"`
+	VectorStatus          string            `json:"vector_status,omitempty"`
 }
 
 // APIMessage is an alias for store.APIMessage — single source of truth for
@@ -1544,13 +1553,21 @@ type AggregateRowJSON struct {
 }
 
 // TotalStatsResponse represents detailed stats with filters.
+//
+// MessageCount is the total over the filtered population; unless the request
+// sets hide_deleted=true it includes messages deleted from their source
+// account (the archive retains them). ActiveMessages and
+// SourceDeletedMessages break that total into its two populations so a client
+// can label it rather than guess which semantic the number carries.
 type TotalStatsResponse struct {
-	MessageCount    int64 `json:"message_count"`
-	TotalSize       int64 `json:"total_size"`
-	AttachmentCount int64 `json:"attachment_count"`
-	AttachmentSize  int64 `json:"attachment_size"`
-	LabelCount      int64 `json:"label_count"`
-	AccountCount    int64 `json:"account_count"`
+	MessageCount          int64 `json:"message_count"`
+	ActiveMessages        int64 `json:"active_messages"`
+	SourceDeletedMessages int64 `json:"source_deleted_messages"`
+	TotalSize             int64 `json:"total_size"`
+	AttachmentCount       int64 `json:"attachment_count"`
+	AttachmentSize        int64 `json:"attachment_size"`
+	LabelCount            int64 `json:"label_count"`
+	AccountCount          int64 `json:"account_count"`
 }
 
 // SearchFastResponse represents fast search results with stats.
@@ -2008,12 +2025,14 @@ func toTotalStatsResponse(stats *query.TotalStats) *TotalStatsResponse {
 		return nil
 	}
 	return &TotalStatsResponse{
-		MessageCount:    stats.MessageCount,
-		TotalSize:       stats.TotalSize,
-		AttachmentCount: stats.AttachmentCount,
-		AttachmentSize:  stats.AttachmentSize,
-		LabelCount:      stats.LabelCount,
-		AccountCount:    stats.AccountCount,
+		MessageCount:          stats.MessageCount,
+		ActiveMessages:        stats.ActiveMessageCount,
+		SourceDeletedMessages: stats.SourceDeletedMessageCount,
+		TotalSize:             stats.TotalSize,
+		AttachmentCount:       stats.AttachmentCount,
+		AttachmentSize:        stats.AttachmentSize,
+		LabelCount:            stats.LabelCount,
+		AccountCount:          stats.AccountCount,
 	}
 }
 

@@ -1143,6 +1143,8 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages
 			WHERE id IN (
@@ -1155,13 +1157,20 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages m
 			WHERE %s
 		`, whereClause)
 	}
 
-	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(&stats.MessageCount, &stats.TotalSize); err != nil {
+	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(
+		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
+		&stats.TotalSize,
+	); err != nil {
 		return nil, fmt.Errorf("message stats: %w", err)
 	}
 

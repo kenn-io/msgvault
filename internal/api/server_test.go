@@ -237,6 +237,10 @@ func (m *mockStore) CountMessagesForSource(int64) (int64, error) {
 	return 0, nil
 }
 
+func (m *mockStore) CountSourceDeletedMessages(...int64) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockStore) NeedsFTSBackfill() bool {
 	return m.needsFTSBackfill
 }
