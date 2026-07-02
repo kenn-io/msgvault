@@ -269,7 +269,7 @@ func (s *Server) setupRouter() http.Handler {
 	api := s.setupHumaAPI(mux)
 	apiV1 := s.setupAPIV1Group(api)
 	s.registerHumaRoutes(api, apiV1)
-	registerPprofHandlers(mux)
+	s.registerPprofHandlers(mux)
 
 	// Catch-all so unknown paths and trailing-slash misses return the JSON
 	// ErrorResponse envelope the contract declares, instead of Go's default
@@ -307,15 +307,17 @@ func (s *Server) setupRouter() http.Handler {
 }
 
 // registerPprofHandlers wires the standard net/http/pprof handlers under
-// /debug/pprof/, each gated to loopback callers. There is no config knob: the
-// daemon binds loopback by default and the loopback check (via r.RemoteAddr,
-// not spoofable headers) is the guard. This gives on-box goroutine/CPU/heap
-// introspection for diagnosing a busy daemon, without exposing profiles to any
-// non-local client even when the daemon is bound to a routable address.
-func registerPprofHandlers(mux *http.ServeMux) {
-	loopbackOnly := func(h http.HandlerFunc) http.HandlerFunc {
+// /debug/pprof/, each gated to trusted loopback callers. The guard requires
+// both that the request is loopback (via r.RemoteAddr, not spoofable headers)
+// AND that it passes apiRequestAuthorized — so when an API key is configured,
+// unauthenticated traffic that reaches loopback through a same-host reverse
+// proxy, TLS terminator, or SSH tunnel cannot read profiles. In keyless local
+// mode apiRequestAuthorized returns true, preserving on-box goroutine/CPU/heap
+// introspection for the TUI/CLI autostart case. There is no config knob.
+func (s *Server) registerPprofHandlers(mux *http.ServeMux) {
+	trustedLoopbackOnly := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if !isLoopbackRequest(r) {
+			if !isLoopbackRequest(r) || !s.apiRequestAuthorized(r) {
 				http.NotFound(w, r)
 				return
 			}
@@ -323,11 +325,11 @@ func registerPprofHandlers(mux *http.ServeMux) {
 		}
 	}
 	// pprof.Index also serves the named profiles (heap, goroutine, allocs, …).
-	mux.HandleFunc("/debug/pprof/", loopbackOnly(pprof.Index))
-	mux.HandleFunc("/debug/pprof/cmdline", loopbackOnly(pprof.Cmdline))
-	mux.HandleFunc("/debug/pprof/profile", loopbackOnly(pprof.Profile))
-	mux.HandleFunc("/debug/pprof/symbol", loopbackOnly(pprof.Symbol))
-	mux.HandleFunc("/debug/pprof/trace", loopbackOnly(pprof.Trace))
+	mux.HandleFunc("/debug/pprof/", trustedLoopbackOnly(pprof.Index))
+	mux.HandleFunc("/debug/pprof/cmdline", trustedLoopbackOnly(pprof.Cmdline))
+	mux.HandleFunc("/debug/pprof/profile", trustedLoopbackOnly(pprof.Profile))
+	mux.HandleFunc("/debug/pprof/symbol", trustedLoopbackOnly(pprof.Symbol))
+	mux.HandleFunc("/debug/pprof/trace", trustedLoopbackOnly(pprof.Trace))
 }
 
 // Start begins listening for HTTP requests.

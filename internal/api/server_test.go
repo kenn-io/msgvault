@@ -116,6 +116,42 @@ func TestPprofEndpointLoopbackOnly(t *testing.T) {
 	}
 }
 
+// TestPprofEndpointRequiresAuthWhenKeyConfigured covers the same-host reverse
+// proxy case: when an API key is configured, unauthenticated traffic that
+// arrives as loopback (e.g. forwarded by a local TLS terminator) must not read
+// profiles; only a request carrying the valid key is served.
+func TestPprofEndpointRequiresAuthWhenKeyConfigured(t *testing.T) {
+	const key = "secret-key"
+	srv := NewServer(
+		&config.Config{Server: config.ServerConfig{APIKey: key}},
+		nil, nil, testLogger(),
+	)
+
+	cases := []struct {
+		name       string
+		remoteAddr string
+		reqKey     string
+		wantStatus int
+	}{
+		{"loopback valid key allowed", "127.0.0.1:54321", key, http.StatusOK},
+		{"loopback missing key blocked", "127.0.0.1:54321", "", http.StatusNotFound},
+		{"loopback bad key blocked", "127.0.0.1:54321", "wrong", http.StatusNotFound},
+		{"remote valid key blocked", "8.8.8.8:54321", key, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if tc.reqKey != "" {
+				req.Header.Set("X-Api-Key", tc.reqKey)
+			}
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+			assert.Equal(t, tc.wantStatus, resp.Code, "body: %s", resp.Body.String())
+		})
+	}
+}
+
 // findJSONLogLine returns the first JSON slog record whose msg matches.
 func findJSONLogLine(t *testing.T, out, msg string) map[string]any {
 	t.Helper()
