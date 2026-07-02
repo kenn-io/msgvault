@@ -753,3 +753,63 @@ func TestManifest_Save_FilePermissions(t *testing.T) {
 		assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "file permissions")
 	}
 }
+
+func TestValidateManifestID(t *testing.T) {
+	require := require.New(t)
+	valid := []string{
+		"20260208-202335-batch",
+		"20260208-202335-Sender_Name-1",
+		"abc",
+		"A1_b2-c3",
+	}
+	for _, id := range valid {
+		require.NoError(ValidateManifestID(id), "id %q should be valid", id)
+	}
+	invalid := []string{
+		"",
+		"   ",
+		"..",
+		"../escape",
+		"../../tokens/foo",
+		"a/b",
+		`a\b`,
+		"/etc/passwd",
+		"has space",
+		"dot.name",
+		"emoji😀",
+	}
+	for _, id := range invalid {
+		require.Error(ValidateManifestID(id), "id %q should be rejected", id)
+	}
+}
+
+func TestSaveManifestRejectsTraversalID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+
+	m := newTestManifest(t, "traversal", "gmail-1")
+	m.ID = "../../escape"
+
+	err := mgr.SaveManifest(m)
+	require.Error(err, "SaveManifest should reject a traversal ID")
+
+	// Nothing may be written outside the deletions base directory.
+	escaped := filepath.Join(mgr.baseDir, "..", "..", "escape.json")
+	_, statErr := os.Stat(escaped)
+	assert.True(os.IsNotExist(statErr), "no file should be written outside baseDir")
+}
+
+func TestGetMoveCancelRejectTraversalID(t *testing.T) {
+	require := require.New(t)
+	mgr := testManager(t)
+
+	_, _, getErr := mgr.GetManifest("../../etc/passwd")
+	require.Error(getErr, "GetManifest should reject a traversal ID")
+
+	moveErr := mgr.MoveManifest("../../escape", StatusPending, StatusInProgress)
+	require.Error(moveErr, "MoveManifest should reject a traversal ID")
+
+	cancelErr := mgr.CancelManifest("../../escape")
+	require.Error(cancelErr, "CancelManifest should reject a traversal ID")
+}

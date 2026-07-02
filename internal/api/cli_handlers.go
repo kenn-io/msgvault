@@ -962,6 +962,9 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 	if strings.TrimSpace(manifest.ID) == "" {
 		return newAPIHTTPError(http.StatusBadRequest, "missing_manifest_id", "Deletion manifest ID is required")
 	}
+	if err := deletion.ValidateManifestID(manifest.ID); err != nil {
+		return newAPIHTTPError(http.StatusBadRequest, "invalid_manifest_id", err.Error())
+	}
 	if len(manifest.GmailIDs) == 0 {
 		return newAPIHTTPError(http.StatusBadRequest, "empty_manifest", "Deletion manifest must include at least one Gmail ID")
 	}

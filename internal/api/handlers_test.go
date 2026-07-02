@@ -271,6 +271,35 @@ func TestHandleCLICreateDeletionManifest(t *testing.T) {
 	assert.Equal(2, decoded.MessageCount)
 }
 
+func TestHandleCLICreateDeletionManifestRejectsTraversalID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	manifest := deletion.NewManifest("tui selection", []string{"gid1"})
+	manifest.ID = "../../tokens/escape"
+	saveCalled := false
+	st := &mockStore{
+		saveManifestFunc: func(_ context.Context, _ *deletion.Manifest) error {
+			saveCalled = true
+			return nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	body, err := json.Marshal(manifest)
+	require.NoError(err, "marshal manifest")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/deletion-manifests", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+
+	require.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+	assert.False(saveCalled, "save must not run for an invalid manifest ID")
+
+	var decoded ErrorResponse
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &decoded), "decode error response")
+	assert.Equal("invalid_manifest_id", decoded.Error, "error code")
+}
+
 func TestHandleCLIIdentities(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
