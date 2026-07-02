@@ -415,12 +415,25 @@ func (e *SQLiteEngine) ListConversationMessages(
 	return scanMessageSummariesWithBody(rows)
 }
 
+// sanitizeTextSearchMatch tokenizes a raw user query and builds an FTS5
+// MATCH argument via the store SQLite dialect's BuildFTSArg, which quotes
+// each term for prefix match and drops tokens the FTS5 tokenizer would
+// discard. It returns "" when the query has no usable tokens (empty or
+// punctuation-only input), signaling the caller to return zero rows rather
+// than dispatch a MATCH that the FTS5 parser rejects with a syntax error.
+// Both the SQLite and DuckDB text engines run the same messages_fts MATCH
+// against SQLite, so they share this single sanitizer.
+func sanitizeTextSearchMatch(query string) string {
+	return (&store.SQLiteDialect{}).BuildFTSArg(strings.Fields(query))
+}
+
 // TextSearch performs plain full-text search over text messages.
 // Uses FTS5 if available; otherwise returns empty results.
 func (e *SQLiteEngine) TextSearch(
 	ctx context.Context, query string, limit, offset int,
 ) ([]MessageSummary, error) {
-	if query == "" {
+	match := sanitizeTextSearchMatch(query)
+	if match == "" {
 		return nil, nil
 	}
 	if !e.hasFTSTable(ctx) {
@@ -459,7 +472,7 @@ func (e *SQLiteEngine) TextSearch(
 		LIMIT ? OFFSET ?
 	`, store.LiveMessagesWhere("m", true))
 
-	rows, err := e.db.QueryContext(ctx, sqlQuery, query, limit, offset)
+	rows, err := e.db.QueryContext(ctx, sqlQuery, match, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("text search: %w", err)
 	}

@@ -413,7 +413,8 @@ func (e *DuckDBEngine) TextSearch(
 	if e.sqliteDB == nil {
 		return nil, nil
 	}
-	if query == "" {
+	match := sanitizeTextSearchMatch(query)
+	if match == "" {
 		return nil, nil
 	}
 	if limit == 0 {
@@ -451,7 +452,7 @@ func (e *DuckDBEngine) TextSearch(
 	`, store.LiveMessagesWhere("m", true))
 
 	rows, err := e.sqliteDB.QueryContext(ctx, sqlQuery,
-		query, limit, offset)
+		match, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("text search: %w", err)
 	}

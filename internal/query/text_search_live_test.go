@@ -106,6 +106,66 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 	assert.Empty(t, results, "want 0 results after source delete")
 }
 
+// TestTextSearch_SanitizesFTSInput verifies that FTS5 metacharacters and
+// tokenless input never reach the MATCH parser: injection/punctuation-only
+// queries return zero rows cleanly (no error), while a normal term still
+// matches. Covers both the SQLite and DuckDB text engines, which share the
+// sanitizer and run the same messages_fts MATCH against SQLite.
+func TestTextSearch_SanitizesFTSInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantMatch bool
+	}{
+		{"bare_double_quote", `"`, false},
+		{"open_paren", "(", false},
+		{"sql_injection", "'; DROP TABLE--", false},
+		{"punctuation_only", "!!!", false},
+		{"empty", "", false},
+		{"unicode_emoji", "café 😀", false},
+		{"normal_term", "hello", true},
+		{"two_terms", "hello world", true},
+	}
+
+	engines := []struct {
+		name string
+		make func(t *testing.T, db *sql.DB) TextEngine
+	}{
+		{"sqlite", func(_ *testing.T, db *sql.DB) TextEngine {
+			return NewSQLiteEngine(db)
+		}},
+		{"duckdb", func(_ *testing.T, db *sql.DB) TextEngine {
+			// DuckDBEngine.TextSearch runs its FTS MATCH against the
+			// SQLite connection, so a minimal engine with only sqliteDB
+			// set exercises the same sanitize + query path.
+			return &DuckDBEngine{sqliteDB: db}
+		}},
+	}
+
+	for _, eng := range engines {
+		t.Run(eng.name, func(t *testing.T) {
+			db, _ := openTextSearchDB(t)
+			engine := eng.make(t, db)
+			ctx := context.Background()
+
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					results, err := engine.TextSearch(ctx, tc.query, 10, 0)
+					require.NoError(t, err,
+						"TextSearch(%q) must not error", tc.query)
+					if tc.wantMatch {
+						assert.NotEmpty(t, results,
+							"TextSearch(%q) should match the fixture", tc.query)
+					} else {
+						assert.Empty(t, results,
+							"TextSearch(%q) should return zero rows", tc.query)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	assert := assert.New(t)
 	db, _ := openTextSearchDB(t)
