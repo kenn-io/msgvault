@@ -165,6 +165,15 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// isLoopbackRequest reports whether the request originates from a loopback
+// address. It uses r.RemoteAddr (via clientIP), never forwarded-for headers,
+// so it cannot be spoofed by a remote client. Shared by the rate-limiter
+// exemption and the pprof gate.
+func isLoopbackRequest(r *http.Request) bool {
+	parsed := net.ParseIP(clientIP(r))
+	return parsed != nil && parsed.IsLoopback()
+}
+
 // RateLimitMiddleware returns a middleware that rate limits requests by IP.
 // Loopback clients are exempt: the local TUI/CLI legitimately bursts far past
 // the remote budget (daemon discovery alone fires a dozen parallel pings, and
@@ -174,12 +183,12 @@ func clientIP(r *http.Request) string {
 func RateLimitMiddleware(limiter *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(r)
-			if parsed := net.ParseIP(ip); parsed != nil && parsed.IsLoopback() {
+			if isLoopbackRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
+			ip := clientIP(r)
 			if !limiter.Allow(ip) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "1")

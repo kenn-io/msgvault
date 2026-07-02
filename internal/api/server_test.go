@@ -91,6 +91,29 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 	assert.Equal(t, queryEndpointPath, inProgress["path"])
 }
 
+func TestPprofEndpointLoopbackOnly(t *testing.T) {
+	srv, _ := newTestServerWithMockStore(t)
+
+	cases := []struct {
+		name       string
+		remoteAddr string
+		wantStatus int
+	}{
+		{"loopback allowed", "127.0.0.1:54321", http.StatusOK},
+		{"ipv6 loopback allowed", "[::1]:54321", http.StatusOK},
+		{"remote blocked", "8.8.8.8:54321", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+			req.RemoteAddr = tc.remoteAddr
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+			assert.Equal(t, tc.wantStatus, resp.Code, "body: %s", resp.Body.String())
+		})
+	}
+}
+
 // findJSONLogLine returns the first JSON slog record whose msg matches.
 func findJSONLogLine(t *testing.T, out, msg string) map[string]any {
 	t.Helper()

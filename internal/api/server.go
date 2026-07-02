@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -212,6 +213,7 @@ func (s *Server) setupRouter() http.Handler {
 	api := s.setupHumaAPI(mux)
 	apiV1 := s.setupAPIV1Group(api)
 	s.registerHumaRoutes(api, apiV1)
+	registerPprofHandlers(mux)
 
 	// CORS middleware (config-driven; disabled when no origins configured)
 	corsConfig := CORSConfig{
@@ -240,6 +242,30 @@ func (s *Server) setupRouter() http.Handler {
 	h = s.loggerMiddleware(h)
 	h = requestIDMiddleware(h)
 	return h
+}
+
+// registerPprofHandlers wires the standard net/http/pprof handlers under
+// /debug/pprof/, each gated to loopback callers. There is no config knob: the
+// daemon binds loopback by default and the loopback check (via r.RemoteAddr,
+// not spoofable headers) is the guard. This gives on-box goroutine/CPU/heap
+// introspection for diagnosing a busy daemon, without exposing profiles to any
+// non-local client even when the daemon is bound to a routable address.
+func registerPprofHandlers(mux *http.ServeMux) {
+	loopbackOnly := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !isLoopbackRequest(r) {
+				http.NotFound(w, r)
+				return
+			}
+			h(w, r)
+		}
+	}
+	// pprof.Index also serves the named profiles (heap, goroutine, allocs, …).
+	mux.HandleFunc("/debug/pprof/", loopbackOnly(pprof.Index))
+	mux.HandleFunc("/debug/pprof/cmdline", loopbackOnly(pprof.Cmdline))
+	mux.HandleFunc("/debug/pprof/profile", loopbackOnly(pprof.Profile))
+	mux.HandleFunc("/debug/pprof/symbol", loopbackOnly(pprof.Symbol))
+	mux.HandleFunc("/debug/pprof/trace", loopbackOnly(pprof.Trace))
 }
 
 // Start begins listening for HTTP requests.
