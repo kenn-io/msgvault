@@ -1,7 +1,9 @@
 package daemonclient
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1020,29 +1022,24 @@ func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResul
 	if err != nil {
 		return nil, err
 	}
-	return queryResultFromGenerated(resp.JSON200), nil
+	return queryResultFromBody(resp.Body)
 }
 
-func queryResultFromGenerated(result *generated.QueryResult) *query.QueryResult {
-	if result == nil {
-		return &query.QueryResult{}
+// queryResultFromBody re-decodes the raw response body with UseNumber so
+// numeric cells stay json.Number. The generated client's plain
+// json.Unmarshal turns every number into float64, which loses precision
+// above 2^53 and renders in scientific notation.
+func queryResultFromBody(body []byte) (*query.QueryResult, error) {
+	if len(body) == 0 {
+		return &query.QueryResult{}, nil
 	}
-	return &query.QueryResult{
-		Columns:  append([]string(nil), result.Columns...),
-		Rows:     cloneQueryRows(result.Rows),
-		RowCount: int(result.RowCount),
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var result query.QueryResult
+	if err := dec.Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode query result: %w", err)
 	}
-}
-
-func cloneQueryRows(rows [][]any) [][]any {
-	if rows == nil {
-		return nil
-	}
-	out := make([][]any, len(rows))
-	for i, row := range rows {
-		out[i] = append([]any(nil), row...)
-	}
-	return out
+	return &result, nil
 }
 
 func cliAccountUpdateResultFromGenerated(result *generated.UpdateResult) *CLIAccountUpdateResult {

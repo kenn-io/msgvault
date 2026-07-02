@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -88,13 +89,20 @@ func writeJSON(
 	return enc.Encode(result)
 }
 
-// displayVal formats a value for CSV/table output. SQL NULLs
-// become empty strings; other values use fmt.Sprintf.
+// displayVal formats a value for CSV/table output. SQL NULLs become
+// empty strings; floats use plain decimal notation (fmt's %v switches
+// to scientific notation at ~1e6); other values use fmt.Sprintf.
 func displayVal(v any) string {
-	if v == nil {
+	switch v := v.(type) {
+	case nil:
 		return ""
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	default:
+		return fmt.Sprintf("%v", v)
 	}
-	return fmt.Sprintf("%v", v)
 }
 
 func writeCSV(

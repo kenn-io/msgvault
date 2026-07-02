@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
@@ -64,6 +65,52 @@ func TestQueryCommand_UsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T) {
 		"rows": [["Hello"]],
 		"row_count": 1
 	}`, stdout.String(), "stdout JSON")
+}
+
+func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
+	result := &query.QueryResult{
+		Columns: []string{"name", "message_count", "id", "ratio"},
+		Rows: [][]any{
+			{"UNREAD", float64(1662130), json.Number("9007199254740993"), 2.5},
+			{nil, float64(0), json.Number("1722776"), float64(-1234567)},
+		},
+		RowCount: 2,
+	}
+
+	tests := []struct {
+		format string
+		want   []string
+	}{
+		{
+			format: "table",
+			want: []string{
+				"1662130", "9007199254740993", "2.5",
+				"1722776", "-1234567",
+			},
+		},
+		{
+			format: "csv",
+			want: []string{
+				"UNREAD,1662130,9007199254740993,2.5",
+				",0,1722776,-1234567",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var out bytes.Buffer
+			require.NoError(writeQueryResult(&out, result, tt.format), "write %s", tt.format)
+			got := out.String()
+			for _, want := range tt.want {
+				assert.Contains(got, want, "%s output", tt.format)
+			}
+			assert.NotContains(got, "e+06", "%s output must not use scientific notation", tt.format)
+			assert.NotContains(got, "e+15", "%s output must not use scientific notation", tt.format)
+		})
+	}
 }
 
 func queryHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {

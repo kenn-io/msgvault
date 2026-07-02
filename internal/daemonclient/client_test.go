@@ -93,6 +93,37 @@ func TestGeneratedClientUsesTransportAndAuth(t *testing.T) {
 	assert.InDelta(float64(1), got.Rows[0][0], 0, "scalar cell")
 }
 
+func TestRunSQLQueryPreservesIntegerPrecision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/query", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{
+			"columns": ["name", "message_count", "id"],
+			"rows": [["UNREAD", 1662130, 9007199254740993]],
+			"row_count": 1
+		}`))
+		assert.NoError(err, "write response")
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
+	require.NoError(err, "New")
+
+	got, err := c.RunSQLQuery(context.Background(), "SELECT name, message_count, id FROM v_labels")
+	require.NoError(err, "RunSQLQuery")
+
+	assert.Equal([]string{"name", "message_count", "id"}, got.Columns, "columns")
+	assert.Equal(1, got.RowCount, "row count")
+	require.Len(got.Rows, 1, "rows")
+	assert.Equal(
+		[]any{"UNREAD", json.Number("1662130"), json.Number("9007199254740993")},
+		got.Rows[0],
+		"row cells keep exact integer values",
+	)
+}
+
 func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/query", r.URL.Path, "path")
