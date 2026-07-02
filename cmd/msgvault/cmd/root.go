@@ -110,11 +110,17 @@ in a single binary.`,
 		// [log].dir, or --log-file. --no-log-file overrides.
 		fileDisabled := noLogFile || (logFile == "" && !cfg.Log.Enabled && cfg.Log.Dir == "")
 
+		// SQL tracing (--log-sql or [log].sql_trace) emits at INFO, so treat
+		// it as an implicit request for info-level logging: skip the
+		// interactive-terminal quieting below that would otherwise raise the
+		// console level to WARN and suppress the very output the user asked for.
+		sqlTrace := logSQL || cfg.Log.SQLTrace
+
 		// When the stderr fallback is the only sink and the user
 		// hasn't asked for a level, quiet routine INFO noise on an
 		// interactive terminal. The terminal check preserves INFO
 		// for the background daemon child (stderr → serve.log).
-		if levelOverride == nil {
+		if levelOverride == nil && !sqlTrace {
 			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stderr.Fd())
 			if consoleLevel := logging.ResolveConsoleLevel(
@@ -148,7 +154,6 @@ in a single binary.`,
 		// Configure the store's SQL logging adapter now that
 		// slog.Default is set. Flag overrides config; a zero
 		// SlowMs falls back to the built-in default (100 ms).
-		sqlTrace := logSQL || cfg.Log.SQLTrace
 		slowMs := logSQLSlow
 		if slowMs == 0 {
 			slowMs = cfg.Log.SQLSlowMs

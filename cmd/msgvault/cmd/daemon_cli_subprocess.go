@@ -98,7 +98,11 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string) error {
 		return nil
 	}
 	var exitErr *exec.ExitError
-	if errors.As(waitErr, &exitErr) {
+	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
+		// A normal non-zero exit: the command ran and streamed its own error,
+		// so collapse to the silent sentinel. A signal-terminated process
+		// (Exited() is false, ExitCode() == -1) streamed nothing, so keep it
+		// wrapped with context below.
 		return errors.New(cliSubprocessExitSentinel)
 	}
 	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)

@@ -607,6 +607,40 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 	assert.Nil(lock, "must not hand out the launch lock while a child is starting")
 }
 
+// TestDaemonStartInProgressDetectsInitializingChild verifies the predicate the
+// launch-lock guard relies on: a live process holding a runtime record that is
+// not answering the daemon ping (a `serve start` child still initializing)
+// reports in-progress, so both the direct and waited launch-lock acquisition
+// paths refuse to spawn a duplicate daemon. An empty data dir reports false.
+func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	empty := t.TempDir()
+	inProgress, err := daemonStartInProgress(context.Background(), empty)
+	require.NoError(err, "no records should not error")
+	assert.False(inProgress, "no runtime records means no start in progress")
+
+	dataDir := t.TempDir()
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: "127.0.0.1:1",
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:       "127.0.0.1",
+			runtimePort:       "1",
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	inProgress, err = daemonStartInProgress(context.Background(), dataDir)
+	require.NoError(err, "live-but-unready record should not error")
+	assert.True(inProgress, "an initializing child must report a start in progress")
+}
+
 func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

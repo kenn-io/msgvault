@@ -32,13 +32,28 @@ type vectorInitHandle struct {
 }
 
 // WaitContext blocks until the init goroutine finishes or ctx is done.
-// Returns true if the goroutine finished, false if ctx ended first.
+// Returns true if the goroutine finished, false if ctx ended first. When both
+// h.done and ctx are ready it deterministically prefers h.done so a completed
+// init still reports true (and its backend gets closed) even if the shutdown
+// budget expired in the same instant.
 func (h *vectorInitHandle) WaitContext(ctx context.Context) bool {
 	select {
 	case <-h.done:
 		return true
+	default:
+	}
+	select {
+	case <-h.done:
+		return true
 	case <-ctx.Done():
-		return false
+		// ctx won the race: re-check h.done in case it was also ready, so a
+		// finished init is never misreported as timed out.
+		select {
+		case <-h.done:
+			return true
+		default:
+			return false
+		}
 	}
 }
 

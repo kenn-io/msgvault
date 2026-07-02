@@ -18,7 +18,7 @@ func TestPrecheckVectorFeaturesDisabled(t *testing.T) {
 	c.Vector.Enabled = false
 	withTestConfig(t, c)
 
-	assert.NoError(t, precheckVectorFeatures("/tmp/msgvault.db"))
+	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath))
 }
 
 // TestPrecheckVectorFeaturesRejectsBadCron verifies the precheck validates
@@ -33,7 +33,7 @@ func TestPrecheckVectorFeaturesRejectsBadCron(t *testing.T) {
 	c.Vector.Embed.Schedule.Cron = "not a cron"
 	withTestConfig(t, c)
 
-	err := precheckVectorFeatures("/tmp/msgvault.db")
+	err := precheckVectorFeatures(precheckTestMainPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cron")
 }
@@ -48,7 +48,7 @@ func TestPrecheckVectorFeaturesRejectsInvalidConfig(t *testing.T) {
 	// so Validate() fails.
 	withTestConfig(t, c)
 
-	assert.Error(t, precheckVectorFeatures("/tmp/msgvault.db"))
+	assert.Error(t, precheckVectorFeatures(precheckTestMainPath))
 }
 
 // TestPrecheckVectorFeaturesAcceptsValidConfig verifies the precheck
@@ -61,5 +61,5 @@ func TestPrecheckVectorFeaturesAcceptsValidConfig(t *testing.T) {
 	c.Vector.Embeddings.Dimension = 768
 	withTestConfig(t, c)
 
-	assert.NoError(t, precheckVectorFeatures("/tmp/msgvault.db"))
+	assert.NoError(t, precheckVectorFeatures(precheckTestMainPath))
 }

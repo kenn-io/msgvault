@@ -47,6 +47,11 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 			line: "time=2026-07-01T12:00:00Z level=INFO step=init_archive_schema",
 			want: "time=2026-07-01T12:00:00Z level=INFO step=init_archive_schema",
 		},
+		{
+			name: "panic record with unknown attrs falls back verbatim",
+			line: `time=2026-07-01T12:00:00Z level=ERROR msg="msgvault panic" panic="runtime error: nil map" stack="goroutine 1"`,
+			want: `time=2026-07-01T12:00:00Z level=ERROR msg="msgvault panic" panic="runtime error: nil map" stack="goroutine 1"`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

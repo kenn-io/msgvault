@@ -41,6 +41,30 @@ func TestFindLogFilesAllIncludesNonPatternFiles(t *testing.T) {
 	assert.Contains(t, files, serveLog, "--all must include serve.log")
 }
 
+// TestFindLogFilesNonAllFallbackExcludesNonPatternFiles verifies that when
+// today's structured log is missing, the non-all fallback scan is limited to
+// structured msgvault-*.log files (plus serve.log) and does not surface
+// unrelated files sitting in the logs dir. The unrestricted scan is --all only.
+func TestFindLogFilesNonAllFallbackExcludesNonPatternFiles(t *testing.T) {
+	assert := assert.New(t)
+	dir := t.TempDir()
+	// Yesterday's structured log (should be picked up by the fallback).
+	structured := filepath.Join(dir, "msgvault-2000-01-01.log")
+	writeFile(t, structured, "{}\n")
+	// An unrelated file (should NOT be picked up without --all).
+	unrelated := filepath.Join(dir, "embed-full.log")
+	writeFile(t, unrelated, "{}\n")
+	dataDir := t.TempDir()
+	serveLog := filepath.Join(dataDir, "serve.log")
+	writeFile(t, serveLog, "banner\n")
+
+	files, err := findLogFiles(dir, serveLog, false)
+	require.NoError(t, err, "findLogFiles")
+	assert.Contains(files, structured, "structured log must be discovered in the fallback")
+	assert.Contains(files, serveLog, "serve.log must be discovered")
+	assert.NotContains(files, unrelated, "non-all fallback must not surface unrelated files")
+}
+
 func TestFindLogFilesServeLogMissing(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()

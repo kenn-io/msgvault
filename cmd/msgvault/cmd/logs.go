@@ -176,7 +176,15 @@ func logDirFiles(dir string, all bool) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		files = append(files, filepath.Join(dir, e.Name()))
+		name := e.Name()
+		// The unrestricted scan (every regular file) is only for --all. The
+		// non-all fallback (today's structured log missing) must stay limited
+		// to structured msgvault-*.log files so `logs` never surfaces
+		// unrelated files that happen to sit in the logs dir.
+		if !all && !strings.HasPrefix(name, "msgvault-") {
+			continue
+		}
+		files = append(files, filepath.Join(dir, name))
 	}
 	return files, nil
 }

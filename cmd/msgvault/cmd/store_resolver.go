@@ -192,6 +192,23 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	}
 
 	launchLock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
+	if ok {
+		// Acquiring the launch lock is not proof no daemon start is underway: a
+		// prior `serve start` releases the lock after its short readiness wait
+		// while its background child may still be initializing (a live runtime
+		// record not yet answering the ping). Spawning now would race a
+		// duplicate daemon onto the port/ownership lock. Release and fall into
+		// the wait path, mirroring the waited-acquisition guard below.
+		inProgress, err := daemonStartInProgress(ctx, c.Data.DataDir)
+		if err != nil {
+			_ = launchLock.Unlock()
+			return nil, err
+		}
+		if inProgress {
+			_ = launchLock.Unlock()
+			ok = false
+		}
+	}
 	if !ok {
 		_, _ = fmt.Fprintf(os.Stderr,
 			"Another msgvault daemon start is in progress; waiting up to %s for readiness.\n",
@@ -321,11 +338,27 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 	}
 }
 
+// humanizeDaemonLogLineKnownKeys are the logfmt keys the humanizer knows how
+// to summarize or safely drop. A line carrying any other key (e.g. a panic
+// record's panic/stack attrs) is returned raw instead, so summarizing never
+// hides critical diagnostics.
+var humanizeDaemonLogLineKnownKeys = map[string]bool{
+	"time":   true,
+	"level":  true,
+	"msg":    true,
+	"step":   true,
+	"detail": true,
+	"error":  true,
+	"run_id": true,
+	"source": true,
+}
+
 // humanizeDaemonLogLine turns a logfmt serve.log line into something
 // readable for an interactive user. It keeps the msg value, appends
 // the step (underscores replaced by spaces), and appends any error,
-// dropping time/level/run_id and everything else. On any parse
-// trouble it returns the raw line so no information is hidden.
+// dropping time/level/run_id/detail. When the line carries any key the
+// humanizer does not recognize (e.g. panic/stack), it returns the raw line so
+// no information is hidden. On any parse trouble it also returns the raw line.
 func humanizeDaemonLogLine(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -334,6 +367,11 @@ func humanizeDaemonLogLine(line string) string {
 	fields, ok := parseLogfmt(line)
 	if !ok {
 		return line
+	}
+	for key := range fields {
+		if !humanizeDaemonLogLineKnownKeys[key] {
+			return line
+		}
 	}
 	msg, hasMsg := fields["msg"]
 	if !hasMsg || msg == "" {

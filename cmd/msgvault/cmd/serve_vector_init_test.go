@@ -92,6 +92,22 @@ func TestVectorInitHandleWaitContextReturnsFalseWhenCancelled(t *testing.T) {
 		"a done context must stop the wait before init finishes")
 }
 
+// TestVectorInitHandleWaitContextPrefersDoneWhenBothReady verifies that when
+// both the init has finished and the shutdown context is already expired,
+// WaitContext deterministically reports done (true). Without the preference,
+// the plain select could pick the ctx case and skip CloseFeatures, leaking
+// vectors.db. Iterated so a flaky random-select regression is caught.
+func TestVectorInitHandleWaitContextPrefersDoneWhenBothReady(t *testing.T) {
+	for range 200 {
+		h := &vectorInitHandle{done: make(chan struct{})}
+		close(h.done)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.True(t, h.WaitContext(ctx),
+			"finished init must report done even when ctx is also ready")
+	}
+}
+
 func TestStartVectorInitDisabledFinishesImmediately(t *testing.T) {
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = false
