@@ -542,6 +542,22 @@ func (s *Store) searchMessagesQueryImpl(
 			"m.message_type IN ("+strings.Join(placeholders, ",")+")")
 	}
 
+	// Account scoping (in: / API account/collection filter). The HTTP
+	// search endpoints resolve an account or collection to its source IDs
+	// and put them here; without this condition the scope is validated at
+	// the front door and then silently dropped, returning every account's
+	// messages. Uses the same IN-placeholder style as message_type so it
+	// works on both SQLite and PostgreSQL after Rebind.
+	if len(q.AccountIDs) > 0 {
+		placeholders := make([]string, len(q.AccountIDs))
+		for i, id := range q.AccountIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		conditions = append(conditions,
+			"m.source_id IN ("+strings.Join(placeholders, ",")+")")
+	}
+
 	// has:attachment
 	if q.HasAttachment != nil && *q.HasAttachment {
 		conditions = append(conditions,
