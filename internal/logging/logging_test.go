@@ -84,6 +84,44 @@ func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
 	assert.Contains(t, stderr.String(), "dbg-line", "debug line missing")
 }
 
+func TestBuildHandler_HumanConsoleRendersForPeople(t *testing.T) {
+	var stderr bytes.Buffer
+	warn := slog.LevelWarn
+	res, err := BuildHandler(Options{
+		FileDisabled:  true,
+		LevelOverride: &warn,
+		Stderr:        &stderr,
+		HumanConsole:  true,
+	})
+	require.NoError(t, err, "BuildHandler")
+	defer res.Close()
+
+	logger := slog.New(res.Handler)
+	logger.Info("routine noise")
+	logger.Warn("history expired", "email", "user@example.com")
+	logger.Error("sync failed", "error", "boom")
+
+	out := stderr.String()
+	assert.Equal(t,
+		"Warning: history expired (email=user@example.com)\n"+
+			"Error: sync failed (error=boom)\n",
+		out)
+	assert.NotContains(t, out, "run_id", "run_id belongs in the file log only")
+	assert.NotContains(t, out, "time=", "timestamps belong in the file log only")
+}
+
+func TestHumanConsoleHandlerWithAttrsAndGroups(t *testing.T) {
+	var out bytes.Buffer
+	h := newHumanConsoleHandler(&out, slog.LevelInfo)
+	logger := slog.New(h.WithAttrs([]slog.Attr{
+		slog.String("run_id", "abc123"),
+		slog.String("account", "user@example.com"),
+	}))
+	logger.WithGroup("sync").Info("started", "limit", 10)
+
+	assert.Equal(t, "started (account=user@example.com, limit=10)\n", out.String())
+}
+
 func TestRotate_RotatesDailyFileOverLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

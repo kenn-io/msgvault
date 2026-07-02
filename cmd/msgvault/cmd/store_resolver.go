@@ -212,7 +212,7 @@ func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRun
 	if !ok {
 		_, _ = fmt.Fprintf(os.Stderr,
 			"Another msgvault daemon start is in progress; waiting up to %s for readiness.\n",
-			localDaemonAutoStartReadyTimeout)
+			compactDuration(localDaemonAutoStartReadyTimeout))
 		rt, acquiredLock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
 			ctx, c.Data.DataDir, c.Server.DaemonAutoRestart, localDaemonAutoStartReadyTimeout,
 		)
@@ -291,8 +291,8 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 		_, _ = fmt.Fprintf(os.Stderr, "Logs: %s\n", proc.LogPath)
 	}
 	_, _ = fmt.Fprintf(os.Stderr,
-		"Waiting for daemon readiness; startup may run database, vector, or analytics migrations on large archives. Timeout: %s.\n",
-		localDaemonAutoStartReadyTimeout)
+		"Waiting for the daemon to become ready (large archives may run migrations; timeout %s).\n",
+		compactDuration(localDaemonAutoStartReadyTimeout))
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -322,11 +322,11 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 				lastLine = line
 			case proc.LogPath != "":
 				_, _ = fmt.Fprintf(os.Stderr,
-					"Still waiting for local msgvault daemon (%s elapsed). Logs: %s\n",
+					"Daemon startup (%s): still waiting. Logs: %s\n",
 					elapsed, proc.LogPath)
 			default:
 				_, _ = fmt.Fprintf(os.Stderr,
-					"Still waiting for local msgvault daemon (%s elapsed).\n",
+					"Daemon startup (%s): still waiting.\n",
 					elapsed)
 			}
 			timer.Reset(localDaemonStartupProgressInterval)
@@ -336,6 +336,19 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 		close(done)
 		<-finished
 	}
+}
+
+// compactDuration renders a duration without zero-valued trailing units,
+// so a 30-minute timeout reads "30m" instead of "30m0s".
+func compactDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 // humanizeDaemonLogLineKnownKeys are the logfmt keys the humanizer knows how
@@ -378,10 +391,22 @@ func humanizeDaemonLogLine(line string) string {
 		return line
 	}
 	var sb strings.Builder
-	sb.WriteString(msg)
-	if step := fields["step"]; step != "" {
-		sb.WriteString(": ")
-		sb.WriteString(strings.ReplaceAll(step, "_", " "))
+	step := strings.ReplaceAll(fields["step"], "_", " ")
+	switch {
+	// The startup-step records repeat their own context in msg
+	// ("daemon startup step: init archive schema" under a "Daemon
+	// startup (2s):" prefix); collapse them to just the step.
+	case msg == "daemon startup step" && step != "":
+		sb.WriteString(step)
+	case msg == "daemon startup step complete" && step != "":
+		sb.WriteString(step)
+		sb.WriteString(" (done)")
+	default:
+		sb.WriteString(msg)
+		if step != "" {
+			sb.WriteString(": ")
+			sb.WriteString(step)
+		}
 	}
 	if errVal := fields["error"]; errVal != "" {
 		sb.WriteString(" : ")

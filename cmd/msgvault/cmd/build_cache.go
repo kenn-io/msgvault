@@ -226,7 +226,7 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 					lastMessageID = 0
 				} else {
 					lastMessageID = state.LastMessageID
-					fmt.Printf("Incremental export from message_id > %d\n", lastMessageID)
+					fmt.Println("Updating analytics cache...")
 				}
 			}
 		}

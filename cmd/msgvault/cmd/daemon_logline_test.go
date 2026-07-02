@@ -13,14 +13,19 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 		want string
 	}{
 		{
-			name: "step is humanized and metadata dropped",
+			name: "startup step collapses to the step name",
 			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" run_id=abc123 step=init_archive_schema`,
-			want: "daemon startup step: init archive schema",
+			want: "init archive schema",
 		},
 		{
 			name: "quoted detail is dropped",
 			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=build_cache detail="scanning 12000 messages"`,
-			want: "daemon startup step: build cache",
+			want: "build cache",
+		},
+		{
+			name: "startup step completion collapses to step (done)",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step complete" step=init_archive_schema`,
+			want: "init archive schema (done)",
 		},
 		{
 			name: "error with escaped quotes is appended",

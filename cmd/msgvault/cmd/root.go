@@ -123,6 +123,10 @@ in a single binary.`,
 		// hasn't asked for a level, quiet routine INFO noise on an
 		// interactive terminal. The terminal check preserves INFO
 		// for the background daemon child (stderr → serve.log).
+		// The same condition means a person is reading stderr, so
+		// render records human-style (no timestamps or run_id)
+		// instead of logfmt.
+		humanConsole := false
 		if levelOverride == nil && !sqlTrace {
 			stderrIsTerminal := isatty.IsTerminal(os.Stderr.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stderr.Fd())
@@ -130,6 +134,7 @@ in a single binary.`,
 				levelString, verbose, fileDisabled, stderrIsTerminal, isDaemonCLISubprocess(),
 			); consoleLevel != nil {
 				levelOverride = consoleLevel
+				humanConsole = true
 			}
 		}
 
@@ -146,6 +151,7 @@ in a single binary.`,
 			FileDisabled:  fileDisabled,
 			LevelOverride: levelOverride,
 			LevelString:   levelString,
+			HumanConsole:  humanConsole,
 		})
 		if err != nil {
 			return fmt.Errorf("build logger: %w", err)
