@@ -742,6 +742,36 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Partial covering index for the ListMessages page (GET /api/v1/messages).
+	// That query counts and paginates live messages ordered by
+	// COALESCE(sent_at, received_at, internal_date) DESC, id DESC. Without an
+	// index matching both the live-messages predicate and that sort key, SQLite
+	// falls back to a full scan of the messages table (multiple GB on a large
+	// archive) plus a temp-B-tree sort for every page — measured at seconds per
+	// 5-row page. The partial expression index lets COUNT read only the compact
+	// index and lets the page query walk it in order and stop at LIMIT,
+	// eliminating both the full scan and the sort (~29x faster COUNT, no sort).
+	//
+	// Runs after the legacy ADD COLUMN loop above so deleted_at /
+	// deleted_from_source_at exist on upgraded DBs. SQLite only: PostgreSQL
+	// autovacuum keeps planner statistics current and picks its own plan, and
+	// the index expression syntax differs; the measured regression is specific
+	// to the statistics-free SQLite archive. Built under runMaintenance so the
+	// one-time index build over a large table is not cut off by the pool-wide
+	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
+	if !s.IsPostgreSQL() {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
+				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
+				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create idx_messages_live_sent_at: %w", err)
+		}
+	}
+
 	// Backfill last_modified for rows that predate the column. SQLite cannot
 	// ADD COLUMN with a non-constant default, so the legacy ADD COLUMN above
 	// leaves existing rows NULL; this one-shot UPDATE sets them to
@@ -850,6 +880,11 @@ func (s *Store) dedupeAttachmentsBeforeUniqueIndex(ctx context.Context, tx *logg
 }
 
 // NeedsFTSBackfill reports whether the FTS index needs to be populated.
+//
+// This runs an anti-join that scans every message when the index is already
+// complete (the healthy steady state), so it is expensive on a large archive.
+// Callers on hot request paths must not invoke it per request — see the
+// server-level memoization in handleCLISearch.
 func (s *Store) NeedsFTSBackfill() bool {
 	if !s.fts5Available {
 		return false
