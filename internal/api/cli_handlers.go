@@ -1279,6 +1279,10 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 
 	queryStr := r.URL.Query().Get("q")
 	parsed := search.Parse(queryStr)
+	if err := parsed.Err(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
 	for _, raw := range r.URL.Query()["message_type"] {
 		for typ := range strings.SplitSeq(raw, ",") {
 			typ = strings.TrimSpace(strings.ToLower(typ))

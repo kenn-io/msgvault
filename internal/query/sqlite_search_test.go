@@ -453,7 +453,8 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			merged := MergeFilterIntoQuery(tc.initial, tc.filter)
-			diff := cmp.Diff(tc.expected, merged, cmpopts.EquateEmpty())
+			diff := cmp.Diff(tc.expected, merged, cmpopts.EquateEmpty(),
+				cmpopts.IgnoreUnexported(search.Query{}))
 			assert.Empty(t, diff, "MergeFilterIntoQuery mismatch (-want +got):\n%s", diff)
 		})
 	}

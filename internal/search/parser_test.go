@@ -381,6 +381,60 @@ func TestParse_RelativeDates(t *testing.T) {
 	}
 }
 
+// TestParse_InvalidOperatorValues verifies that a known operator given an
+// unparseable value records an error on the Query (surfaced via Err) instead
+// of silently dropping the filter and running a wider search. Each class of
+// typed operator (date, relative age, size, has) is covered. The offending
+// value and operator name must appear in the message.
+func TestParse_InvalidOperatorValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		query     string
+		wantValue string
+		wantOp    string
+	}{
+		{"before bad date", "test before:2025-13-45", "2025-13-45", "before:"},
+		{"after bad date", "after:2025-99-01", "2025-99-01", "after:"},
+		{"larger bad size", "larger:5X", "5X", "larger:"},
+		{"smaller bad size", "smaller:abc", "abc", "smaller:"},
+		{"older_than bad age", "older_than:99q", "99q", "older_than:"},
+		{"newer_than bad age", "newer_than:7z", "7z", "newer_than:"},
+		{"has bad value", "has:banana", "banana", "has:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			err := Parse(tc.query).Err()
+			require.Error(t, err, "Parse(%q).Err()", tc.query)
+			assert.Contains(err.Error(), tc.wantValue, "error names bad value")
+			assert.Contains(err.Error(), tc.wantOp, "error names operator")
+		})
+	}
+}
+
+// TestParse_ValidOperatorValues_NoError verifies clean queries and known
+// operators with valid values never populate Err.
+func TestParse_ValidOperatorValues_NoError(t *testing.T) {
+	queries := []string{
+		"test",
+		"from:alice@example.com meeting",
+		"before:2024-01-01 after:2023-01-01",
+		"larger:5M smaller:1G",
+		"older_than:7d newer_than:1w",
+		"has:attachment",
+		"has:attachments",
+		"subject:",  // empty value: intentional no-op, not an error
+		"label:",    // empty value: intentional no-op, not an error
+		"foo:bar",   // unknown operator: kept as text, not an error
+		"list:name", // recognized-but-unsupported operator: kept as text
+	}
+	for _, q := range queries {
+		t.Run(q, func(t *testing.T) {
+			assert.NoError(t, Parse(q).Err(), "Parse(%q).Err()", q)
+		})
+	}
+}
+
 // TestParse_TopLevelWrapper ensures the convenience Parse() function
 // works correctly with relative date operators (verifies wiring to NewParser).
 func TestParse_TopLevelWrapper(t *testing.T) {

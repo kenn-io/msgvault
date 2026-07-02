@@ -479,7 +479,11 @@ func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
 
 	err := root.Execute()
 	require.Error(t, err, "expected error for invalid query")
-	assert.ErrorContains(t, err, "empty search query", "want 'empty search query' (not a DB error)")
+	// A known operator with an unparseable value must fail fast, naming the
+	// bad value — not silently drop the filter and report "empty search
+	// query", and not reach the (nonexistent) DB.
+	require.ErrorContains(t, err, "not-a-date", "error names the invalid value")
+	require.ErrorContains(t, err, "before:", "error names the operator")
 }
 
 func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {

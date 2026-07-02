@@ -574,6 +574,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	parsedQuery := parseSearchQueryRequest(r, query)
+	if err := parsedQuery.Err(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
 	parsedQuery.HideDeleted = true
 
 	account := r.URL.Query().Get("account")

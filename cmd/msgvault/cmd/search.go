@@ -70,6 +70,14 @@ Examples:
 		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
 			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
+
+		// Reject known operators with invalid values (e.g. before:2025-13-45)
+		// rather than silently dropping the filter and running a wider query.
+		// Checked before the empty-query test so the user sees the offending
+		// value instead of a misleading "empty search query".
+		if err := search.Parse(queryStr).Err(); err != nil {
+			return usageErr(cmd, err)
+		}
 		if searchMode == "fts" {
 			parsed := search.Parse(queryStr)
 			parsed.MessageTypes = append(parsed.MessageTypes, searchMessageTypes...)

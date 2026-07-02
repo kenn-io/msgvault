@@ -2366,6 +2366,39 @@ func TestHandleSearch(t *testing.T) {
 	assert.Equal(t, "Test", resp.Query, "query")
 }
 
+func TestHandleSearchInvalidOperatorValueReturns400(t *testing.T) {
+	cases := []struct {
+		name      string
+		query     string
+		wantValue string
+	}{
+		{"bad_date", "test before:2025-13-45", "2025-13-45"},
+		{"bad_size", "larger:5X", "5X"},
+		{"bad_age", "older_than:99q", "99q"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			srv, st := newTestServerWithMockStore(t)
+
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/search?q="+url.QueryEscape(tc.query), nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+			assert.Equal(int32(0), st.searchMessagesCalls.Load(), "SearchMessages must not run")
+			assert.Equal(int32(0), st.searchMessagesQueryCalls.Load(), "SearchMessagesQuery must not run")
+
+			var resp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error body")
+			assert.Equal("invalid_query", resp.Error, "error code")
+			assert.Contains(resp.Message, tc.wantValue, "message names bad value")
+		})
+	}
+}
+
 func TestHandleSearchPlainTextAccountScopeUsesStructuredSearch(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
