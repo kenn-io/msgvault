@@ -1102,6 +1102,18 @@ func globalConfigFlagArgs() []string {
 	if useLocal {
 		args = append(args, "--local")
 	}
+	// Forward the logging flags so an explicit level survives into subprocesses.
+	// The daemon CLI subprocess otherwise quiets to WARN, defeating a user's
+	// explicit --log-level/--verbose/--log-sql request.
+	if logLevel != "" {
+		args = append(args, "--log-level", logLevel)
+	}
+	if verbose {
+		args = append(args, "--verbose")
+	}
+	if logSQL {
+		args = append(args, "--log-sql")
+	}
 	return args
 }
 

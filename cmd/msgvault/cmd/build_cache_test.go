@@ -1763,31 +1763,48 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 func TestGlobalConfigFlagArgs(t *testing.T) {
 	// Save and restore the package globals these flags bind to.
 	origCfg, origHome, origLocal := cfgFile, homeDir, useLocal
-	t.Cleanup(func() { cfgFile, homeDir, useLocal = origCfg, origHome, origLocal })
+	origLevel, origVerbose, origSQL := logLevel, verbose, logSQL
+	t.Cleanup(func() {
+		cfgFile, homeDir, useLocal = origCfg, origHome, origLocal
+		logLevel, verbose, logSQL = origLevel, origVerbose, origSQL
+	})
 
 	tests := []struct {
-		name    string
-		cfgFile string
-		homeDir string
-		local   bool
-		want    []string
+		name     string
+		cfgFile  string
+		homeDir  string
+		local    bool
+		logLevel string
+		verbose  bool
+		logSQL   bool
+		want     []string
 	}{
 		{name: "none set", want: nil},
 		{name: "config only", cfgFile: "/etc/msgvault.toml", want: []string{"--config", "/etc/msgvault.toml"}},
 		{name: "home only", homeDir: "/data/msgvault", want: []string{"--home", "/data/msgvault"}},
 		{name: "local only", local: true, want: []string{"--local"}},
+		{name: "log-level only", logLevel: "info", want: []string{"--log-level", "info"}},
+		{name: "verbose only", verbose: true, want: []string{"--verbose"}},
+		{name: "log-sql only", logSQL: true, want: []string{"--log-sql"}},
 		{
-			name:    "all set",
-			cfgFile: "/etc/msgvault.toml",
-			homeDir: "/data/msgvault",
-			local:   true,
-			want:    []string{"--config", "/etc/msgvault.toml", "--home", "/data/msgvault", "--local"},
+			name:     "all set",
+			cfgFile:  "/etc/msgvault.toml",
+			homeDir:  "/data/msgvault",
+			local:    true,
+			logLevel: "debug",
+			verbose:  true,
+			logSQL:   true,
+			want: []string{
+				"--config", "/etc/msgvault.toml", "--home", "/data/msgvault", "--local",
+				"--log-level", "debug", "--verbose", "--log-sql",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfgFile, homeDir, useLocal = tt.cfgFile, tt.homeDir, tt.local
+			logLevel, verbose, logSQL = tt.logLevel, tt.verbose, tt.logSQL
 			assert.Equal(t, tt.want, globalConfigFlagArgs())
 		})
 	}
