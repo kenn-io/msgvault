@@ -200,6 +200,11 @@ type mockStore struct {
 	planDedupFunc    func(context.Context, CLIDeduplicatePlanRequest) (CLIDeduplicatePlanResponse, error)
 	saveManifestFunc func(context.Context, *deletion.Manifest) error
 
+	// Error injection for the context-aware read paths, used to verify
+	// handlers map context deadline/cancellation to a structured 503.
+	statsErr     error
+	summariesErr error
+
 	// Call counts so tests can assert that bulk hydration paths use
 	// GetMessagesSummariesByIDs (one round-trip) instead of looping
 	// GetMessage (per-hit N+1).
@@ -251,6 +256,30 @@ func (m *mockStore) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error)
 		}
 	}
 	return out, nil
+}
+
+// The Context variants make mockStore satisfy CtxMessageStore, so handler
+// tests exercise the same context-aware read path used in production.
+func (m *mockStore) GetStatsContext(_ context.Context) (*StoreStats, error) {
+	if m.statsErr != nil {
+		return nil, m.statsErr
+	}
+	return m.GetStats()
+}
+
+func (m *mockStore) ListMessagesContext(_ context.Context, offset, limit int) ([]APIMessage, int64, error) {
+	return m.ListMessages(offset, limit)
+}
+
+func (m *mockStore) GetMessageContext(_ context.Context, id int64) (*APIMessage, error) {
+	return m.GetMessage(id)
+}
+
+func (m *mockStore) GetMessagesSummariesByIDsContext(_ context.Context, ids []int64) ([]APIMessage, error) {
+	if m.summariesErr != nil {
+		return nil, m.summariesErr
+	}
+	return m.GetMessagesSummariesByIDs(ids)
 }
 
 func (m *mockStore) SearchMessages(query string, offset, limit int) ([]APIMessage, int64, error) {

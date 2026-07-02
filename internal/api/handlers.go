@@ -455,6 +455,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := s.getStats(r.Context())
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("failed to get stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 		return
@@ -836,6 +839,9 @@ func (s *Server) handleHybridSearch(
 	}
 	summaries, err := s.getMessagesSummariesByIDs(r.Context(), hitIDs)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Warn("hydrate hybrid hits failed", "ids", len(hitIDs), "error", err)
 		summaries = nil
 	}
@@ -963,6 +969,9 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 
 	summaries, err := s.getMessagesSummariesByIDs(r.Context(), wantIDs)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Warn("hydrate similar hits failed", "ids", len(wantIDs), "error", err)
 		summaries = nil
 	}

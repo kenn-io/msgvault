@@ -626,6 +626,7 @@ type storeAPIAdapter struct {
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
+var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStartupMigrationStore = (*storeAPIAdapter)(nil)
@@ -643,6 +644,26 @@ var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
+}
+
+func (a *storeAPIAdapter) GetStatsContext(ctx context.Context) (*api.StoreStats, error) {
+	return a.store.GetStatsContext(ctx)
+}
+
+func (a *storeAPIAdapter) ListMessagesContext(
+	ctx context.Context, offset, limit int,
+) ([]api.APIMessage, int64, error) {
+	return a.store.ListMessagesContext(ctx, offset, limit)
+}
+
+func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
+	return a.store.GetMessageContext(ctx, id)
+}
+
+func (a *storeAPIAdapter) GetMessagesSummariesByIDsContext(
+	ctx context.Context, ids []int64,
+) ([]api.APIMessage, error) {
+	return a.store.GetMessagesSummariesByIDsContext(ctx, ids)
 }
 
 func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {

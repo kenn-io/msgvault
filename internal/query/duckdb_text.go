@@ -466,7 +466,7 @@ func (e *DuckDBEngine) GetTextStats(
 ) (*TotalStats, error) {
 	stats := &TotalStats{}
 
-	conditions := []string{textTypeFilter()}
+	conditions := []string{textTypeFilter(), store.LiveMessagesWhere("msg", false)}
 	var args []any
 
 	if opts.SourceID != nil {

@@ -4520,6 +4520,112 @@ func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
 	assert.Equal(int64(3), resp.Messages[1].ID, "second result")
 }
 
+// TestHandleStats_ContextErrorReturns503 verifies a stats read that overran
+// its context budget surfaces as a structured 503, not a generic 500.
+func TestHandleStats_ContextErrorReturns503(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	store := &mockStore{statsErr: context.DeadlineExceeded}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  store,
+		Logger: testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal("query_timeout", resp.Error, "error code")
+}
+
+// TestHandleSearch_HybridHydrationContextErrorReturns503 verifies that a
+// canceled hydration on the hybrid path is surfaced as a structured 503
+// instead of a 200 with missing results.
+func TestHandleSearch_HybridHydrationContextErrorReturns503(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	store := &mockStore{
+		messages: []APIMessage{
+			{ID: 1, Subject: "first", From: "a@x", Snippet: "..."},
+		},
+		summariesErr: context.Canceled,
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 1, Model: "fake", Dimension: 4,
+			Fingerprint: "fake:4", State: vector.GenerationActive,
+		},
+		searchHits: []vector.Hit{{MessageID: 1, Score: 0.9, Rank: 1}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: "fake:4", RRFK: 60, KPerSignal: 10,
+	})
+	srv := NewServerWithOptions(ServerOptions{
+		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:        store,
+		HybridEngine: engine,
+		Backend:      backend,
+		Logger:       testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=test&mode=vector", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal("query_canceled", resp.Error, "error code")
+}
+
+// TestHandleSimilarSearch_HydrationContextErrorReturns503 verifies the similar
+// search path surfaces a canceled hydration as a structured 503.
+func TestHandleSimilarSearch_HydrationContextErrorReturns503(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	store := &mockStore{
+		messages: []APIMessage{
+			{ID: 1, Subject: "seed", From: "seed@example.com", Snippet: "..."},
+			{ID: 2, Subject: "second", From: "a@example.com", Snippet: "..."},
+		},
+		summariesErr: context.Canceled,
+	}
+	cfg := vector.Config{
+		Embeddings: vector.EmbeddingsConfig{Model: "fake", Dimension: 4},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 7, Model: "fake", Dimension: 4,
+			Fingerprint: cfg.GenerationFingerprint(), State: vector.GenerationActive,
+		},
+		loadVec: []float32{1, 0, 0, 0},
+		searchHits: []vector.Hit{
+			{MessageID: 1, Score: 1, Rank: 1},
+			{MessageID: 2, Score: 0.9, Rank: 2},
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:     store,
+		VectorCfg: cfg,
+		Backend:   backend,
+		Logger:    testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1&limit=2", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal("query_canceled", resp.Error, "error code")
+}
+
 // TestHandleSearch_HybridPoolSaturatedAlwaysEmitted regression-guards
 // the wire-level contract that pool_saturated is always present on a
 // successful hybrid response (never omitted, never null). Without an

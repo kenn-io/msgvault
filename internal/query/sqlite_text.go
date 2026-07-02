@@ -474,7 +474,7 @@ func (e *SQLiteEngine) GetTextStats(
 ) (*TotalStats, error) {
 	stats := &TotalStats{}
 
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if opts.SourceID != nil {

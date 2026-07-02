@@ -396,8 +396,13 @@ func TestGetTextStatsSourceDeletedBreakdown(t *testing.T) {
 	deletedID := env.AddMessage(dbtest.MessageOpts{Subject: "sms three", MessageType: "sms", SizeEstimate: 100})
 	env.MarkDeletedBySourceID(fmt.Sprintf("msg%d", deletedID))
 
+	// A dedup-hidden row (deleted_at IS NOT NULL) must be excluded from
+	// every breakdown, matching the other read paths.
+	dedupID := env.AddMessage(dbtest.MessageOpts{Subject: "sms dup", MessageType: "sms", SizeEstimate: 100})
+	env.MarkDedupLoserByID(dedupID)
+
 	stats := env.MustGetTextStats(TextStatsOptions{})
-	assert.Equal(int64(3), stats.MessageCount, "MessageCount includes source-deleted")
+	assert.Equal(int64(3), stats.MessageCount, "MessageCount excludes dedup-hidden, includes source-deleted")
 	assert.Equal(int64(2), stats.ActiveMessageCount, "ActiveMessageCount")
 	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "SourceDeletedMessageCount")
 }
