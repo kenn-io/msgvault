@@ -44,6 +44,28 @@ func openLoggedMem(t *testing.T) *loggedDB {
 	return newLoggedDB(db, nil)
 }
 
+// TestLoggedDB_RequestIDFromContext proves the request id stashed via
+// WithRequestID flows through loggedDB into the emitted log line, so a slow or
+// failing query can be correlated with the API request that issued it.
+func TestLoggedDB_RequestIDFromContext(t *testing.T) {
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+
+	buf := captureSlog(t)
+	db := openLoggedMem(t)
+
+	ctx := WithRequestID(context.Background(), "msgvault-99")
+	rows, err := db.QueryContext(ctx, "SELECT id FROM t")
+	require.NoError(t, err, "query")
+	for rows.Next() {
+	}
+	require.NoError(t, rows.Close(), "close")
+
+	rec := findLogLine(t, buf)
+	assert.Equal(t, "msgvault-99", rec["request_id"],
+		"log line must carry the context request id")
+}
+
 func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	assert := assert.New(t)
 	// Force full trace so every exec shows up at INFO.
@@ -76,7 +98,7 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 
 	buf := captureSlog(t)
 	logStmtWith(
-		"exec", "INSERT INTO t VALUES (?)", []any{"v"},
+		"exec", "msgvault-42", "INSERT INTO t VALUES (?)", []any{"v"},
 		nil, 100*time.Millisecond,
 	)
 
@@ -84,6 +106,8 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 	require.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
 	assert.Equal(t, "WARN", rec["level"], "level")
 	assert.InDelta(t, float64(100), rec["duration_ms"], 1e-9, "duration_ms")
+	assert.Equal(t, "msgvault-42", rec["request_id"],
+		"slow line must carry the issuing request id")
 }
 
 func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
@@ -345,7 +369,7 @@ func TestLogStmt_SlowQueryIncludesArgsShape(t *testing.T) {
 
 	buf := captureSlog(t)
 	logStmtWith(
-		"query", "SELECT * FROM t WHERE id = ? AND src = ?",
+		"query", "", "SELECT * FROM t WHERE id = ? AND src = ?",
 		[]any{int64(42), "gmail"},
 		nil, 100*time.Millisecond,
 	)
@@ -374,7 +398,7 @@ func TestLogStmt_FullTraceOmitsArgs(t *testing.T) {
 
 	buf := captureSlog(t)
 	logStmtWith(
-		"query", "SELECT * FROM t WHERE id = ?",
+		"query", "", "SELECT * FROM t WHERE id = ?",
 		[]any{int64(42)},
 		nil, 1*time.Millisecond,
 	)

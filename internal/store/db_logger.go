@@ -27,8 +27,39 @@ type SQLLogOptions struct {
 	FullTrace bool
 
 	// MaxStmtChars truncates logged SQL at this many characters.
-	// 0 disables truncation. Defaults to 300.
+	// 0 disables truncation. Defaults to 2000 so a slow query's WHERE /
+	// GROUP BY / ORDER BY is not cut mid-clause, which made runaway
+	// queries hard to identify from serve.log.
 	MaxStmtChars int
+}
+
+// sqlLogDefaultMaxChars is the default statement-truncation budget. Large
+// enough that most real queries log in full; runaway queries are the ones we
+// most need to read whole.
+const sqlLogDefaultMaxChars = 2000
+
+// requestIDContextKey carries the API request id into the SQL logger so a
+// "sql slow" line can be correlated with the "http request" line that issued
+// it. The api layer stashes the id via WithRequestID; loggedDB reads it off
+// the query context.
+type requestIDContextKey struct{}
+
+// WithRequestID returns a context carrying id for SQL-log correlation. A
+// no-op when id is empty so callers need not branch.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDContextKey{}, id)
+}
+
+// RequestIDFromContext returns the request id stashed by WithRequestID, or "".
+func RequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(requestIDContextKey{}).(string)
+	return id
 }
 
 // Package-level atomic config so every *loggedDB instance in the
@@ -43,7 +74,7 @@ var (
 
 func init() {
 	sqlLogSlowMs.Store(100)
-	sqlLogMaxChars.Store(300)
+	sqlLogMaxChars.Store(sqlLogDefaultMaxChars)
 }
 
 // ConfigureSQLLogging sets the process-wide SQL logging behaviour.
@@ -55,7 +86,7 @@ func ConfigureSQLLogging(opts SQLLogOptions) {
 	}
 	maxChars := opts.MaxStmtChars
 	if maxChars == 0 {
-		maxChars = 300
+		maxChars = sqlLogDefaultMaxChars
 	}
 	sqlLogSlowMs.Store(slow)
 	sqlLogFull.Store(opts.FullTrace)
@@ -106,16 +137,18 @@ func (d *loggedDB) QueryContext(
 	ctx context.Context, query string, args ...any,
 ) (*loggedRows, error) {
 	query = d.rebind(query)
+	reqID := RequestIDFromContext(ctx)
 	start := time.Now()
 	rows, err := d.DB.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
 	if err != nil {
-		logStmtWith("query", query, args, err, time.Since(start))
+		logStmtWith("query", reqID, query, args, err, time.Since(start))
 		return nil, err
 	}
 	return &loggedRows{
 		Rows:  rows,
 		query: query,
 		args:  args,
+		reqID: reqID,
 		start: start,
 	}, nil
 }
@@ -135,7 +168,7 @@ func (d *loggedDB) QueryRowContext(
 	query = d.rebind(query)
 	start := time.Now()
 	row := d.DB.QueryRowContext(ctx, query, args...)
-	logStmtWith("queryrow", query, args, nil, time.Since(start))
+	logStmtWith("queryrow", RequestIDFromContext(ctx), query, args, nil, time.Since(start))
 	return row
 }
 
@@ -161,7 +194,7 @@ func (d *loggedDB) ExecContext(
 			rowsAffected = n
 		}
 	}
-	logStmtWith("exec", query, args, err, elapsed,
+	logStmtWith("exec", RequestIDFromContext(ctx), query, args, err, elapsed,
 		slog.Int64("rows_affected", rowsAffected),
 	)
 	return res, err
@@ -226,16 +259,18 @@ func (t *loggedTx) QueryContext(
 	ctx context.Context, query string, args ...any,
 ) (*loggedRows, error) {
 	query = t.rebind(query)
+	reqID := RequestIDFromContext(ctx)
 	start := time.Now()
 	rows, err := t.Tx.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
 	if err != nil {
-		logStmtWith("query", query, args, err, time.Since(start))
+		logStmtWith("query", reqID, query, args, err, time.Since(start))
 		return nil, err
 	}
 	return &loggedRows{
 		Rows:  rows,
 		query: query,
 		args:  args,
+		reqID: reqID,
 		start: start,
 	}, nil
 }
@@ -281,6 +316,7 @@ type loggedRows struct {
 
 	query     string
 	args      []any
+	reqID     string
 	start     time.Time
 	finalized bool
 }
@@ -327,7 +363,7 @@ func (r *loggedRows) finalize(closeErr error) {
 	if logErr == nil {
 		logErr = r.Err()
 	}
-	logStmtWith("query", r.query, r.args, logErr, time.Since(r.start))
+	logStmtWith("query", r.reqID, r.query, r.args, logErr, time.Since(r.start))
 }
 
 // logStmtWith is the explicit form that lets callers add extra
@@ -339,7 +375,7 @@ func (r *loggedRows) finalize(closeErr error) {
 // excerpts, addresses, tokens, or other potentially sensitive
 // values. Info/Debug get only nargs.
 func logStmtWith(
-	kind, query string, args []any,
+	kind, reqID, query string, args []any,
 	err error, elapsed time.Duration, extra ...slog.Attr,
 ) {
 	stmt := normalizeStmt(query, int(sqlLogMaxChars.Load()))
@@ -353,6 +389,11 @@ func logStmtWith(
 		"stmt", stmt,
 		"nargs", len(args),
 		"duration_ms", ms,
+	}
+	// request_id ties a slow/failed query back to the "http request" line
+	// that issued it (empty for background/non-request queries).
+	if reqID != "" {
+		attrs = append(attrs, "request_id", reqID)
 	}
 	for _, a := range extra {
 		attrs = append(attrs, a)

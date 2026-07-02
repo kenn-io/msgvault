@@ -82,14 +82,18 @@ type Server struct {
 	requestTimeout time.Duration
 	// queryTimeout caps POST /api/v1/query. Defaults to QueryEndpointTimeout;
 	// tests override it to exercise the timeout path without a real slow query.
-	queryTimeout  time.Duration
-	daemonVersion string
-	router        http.Handler
-	server        *http.Server
-	rateLimiter   *RateLimiter
-	idleTracker   *IdleTracker
-	operationGate OperationGate
-	cfgMu         sync.RWMutex // protects cfg.Accounts
+	queryTimeout time.Duration
+	// inProgressThreshold/Interval control the in-flight request WARN. Default
+	// to the package constants; tests shrink them to exercise the path.
+	inProgressThreshold time.Duration
+	inProgressInterval  time.Duration
+	daemonVersion       string
+	router              http.Handler
+	server              *http.Server
+	rateLimiter         *RateLimiter
+	idleTracker         *IdleTracker
+	operationGate       OperationGate
+	cfgMu               sync.RWMutex // protects cfg.Accounts
 	// vectorMu guards the vector subsystem state: the daemon installs
 	// hybridEngine/backend/vectorCfg from a background init goroutine
 	// after the server is already handling requests.
@@ -113,6 +117,12 @@ const (
 	queryEndpointPath    = "/api/v1/query"
 	DaemonShutdownPath   = "/api/daemon/shutdown"
 	defaultBindAddr      = "127.0.0.1"
+	// inProgressLogThreshold is how long a request may run before the logger
+	// emits a WARN "http request in progress" line, and inProgressLogInterval
+	// how often it repeats thereafter. Requests are otherwise logged only on
+	// completion, so a runaway in-flight request was invisible in serve.log.
+	inProgressLogThreshold = 10 * time.Second
+	inProgressLogInterval  = 30 * time.Second
 	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
 	// #nosec G101
 	DaemonShutdownTokenHeader = "X-Msgvault-Daemon-Token"
@@ -165,22 +175,24 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		timeout = 60 * time.Second
 	}
 	s := &Server{
-		cfg:            opts.Config,
-		store:          opts.Store,
-		engine:         opts.Engine,
-		sqlQueryRunner: opts.SQLQueryRunner,
-		shutdownToken:  opts.ShutdownToken,
-		shutdownFunc:   opts.ShutdownFunc,
-		hybridEngine:   opts.HybridEngine,
-		vectorCfg:      opts.VectorCfg,
-		backend:        opts.Backend,
-		scheduler:      opts.Scheduler,
-		logger:         opts.Logger,
-		requestTimeout: timeout,
-		queryTimeout:   QueryEndpointTimeout,
-		daemonVersion:  opts.DaemonVersion,
-		idleTracker:    opts.IdleTracker,
-		operationGate:  opts.OperationGate,
+		cfg:                 opts.Config,
+		store:               opts.Store,
+		engine:              opts.Engine,
+		sqlQueryRunner:      opts.SQLQueryRunner,
+		shutdownToken:       opts.ShutdownToken,
+		shutdownFunc:        opts.ShutdownFunc,
+		hybridEngine:        opts.HybridEngine,
+		vectorCfg:           opts.VectorCfg,
+		backend:             opts.Backend,
+		scheduler:           opts.Scheduler,
+		logger:              opts.Logger,
+		requestTimeout:      timeout,
+		queryTimeout:        QueryEndpointTimeout,
+		inProgressThreshold: inProgressLogThreshold,
+		inProgressInterval:  inProgressLogInterval,
+		daemonVersion:       opts.DaemonVersion,
+		idleTracker:         opts.IdleTracker,
+		operationGate:       opts.OperationGate,
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {
@@ -341,13 +353,19 @@ func isLongDaemonRequest(path string) bool {
 	}
 }
 
-// loggerMiddleware logs HTTP requests.
+// loggerMiddleware logs HTTP requests on completion and, for requests that
+// overrun inProgressThreshold, emits a repeating WARN so a runaway in-flight
+// request is visible in serve.log instead of only appearing (if ever) once it
+// finishes.
 func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := newTrackingResponseWriter(w)
 
+		stopWatch := s.watchInProgressRequest(r, start)
+
 		defer func() {
+			stopWatch()
 			s.logger.Info("http request",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -360,6 +378,43 @@ func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(ww, r)
 	})
+}
+
+// watchInProgressRequest starts a goroutine that logs a WARN if the request is
+// still running after inProgressThreshold, repeating every inProgressInterval.
+// The returned stop function ends the goroutine (called on request completion)
+// and must be invoked exactly once, so the watcher never leaks.
+func (s *Server) watchInProgressRequest(r *http.Request, start time.Time) func() {
+	threshold := s.inProgressThreshold
+	if threshold <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	method, path := r.Method, r.URL.Path
+	requestID := requestIDFromContext(r.Context())
+	go func() {
+		timer := time.NewTimer(threshold)
+		defer timer.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-timer.C:
+				s.logger.Warn("http request in progress",
+					"method", method,
+					"path", path,
+					"request_id", requestID,
+					"elapsed", time.Since(start),
+				)
+				if s.inProgressInterval <= 0 {
+					return
+				}
+				timer.Reset(s.inProgressInterval)
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
@@ -393,6 +448,9 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-Id", id)
 		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		// Also stash it where the SQL logger reads it, so a "sql slow"
+		// line can be correlated with this request's "http request" line.
+		ctx = store.WithRequestID(ctx, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

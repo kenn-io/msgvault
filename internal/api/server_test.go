@@ -1,12 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,9 +20,95 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+// syncBuffer is a concurrency-safe buffer for capturing slog output written
+// from the logger goroutine while the test goroutine reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n, err := b.buf.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("syncBuffer write: %w", err)
+	}
+	return n, nil
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestLoggerMiddlewareLogsInProgressRequest verifies that a request which
+// overruns the in-progress threshold emits a repeating WARN carrying the
+// request id, and that the watcher goroutine does not fire for fast requests.
+func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
+	buf := &syncBuffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	release := make(chan struct{})
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Logger: logger,
+		SQLQueryRunner: func(_ context.Context, _ string) (*query.QueryResult, error) {
+			<-release // hold the request open past the in-progress threshold
+			return &query.QueryResult{}, nil
+		},
+	})
+	srv.inProgressThreshold = 20 * time.Millisecond
+	srv.inProgressInterval = 20 * time.Millisecond
+
+	req := httptest.NewRequest(http.MethodPost, queryEndpointPath,
+		bytes.NewReader([]byte(`{"sql":"SELECT 1"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(resp, req)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(buf.String(), "http request in progress")
+	}, 2*time.Second, 10*time.Millisecond, "no in-progress WARN emitted")
+
+	close(release)
+	<-done
+
+	inProgress := findJSONLogLine(t, buf.String(), "http request in progress")
+	assert.Equal(t, "WARN", inProgress["level"])
+	assert.NotEmpty(t, inProgress["request_id"], "in-progress line must carry request_id")
+	assert.Equal(t, queryEndpointPath, inProgress["path"])
+}
+
+// findJSONLogLine returns the first JSON slog record whose msg matches.
+func findJSONLogLine(t *testing.T, out, msg string) map[string]any {
+	t.Helper()
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] == msg {
+			return rec
+		}
+	}
+	require.FailNowf(t, "log line not found", "msg=%q out=%s", msg, out)
+	return nil
+}
 
 // testLogger returns a logger for tests that discards output.
 func testLogger() *slog.Logger {
