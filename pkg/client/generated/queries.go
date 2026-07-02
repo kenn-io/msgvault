@@ -10,7 +10,7 @@ type GetAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType *string `json:"view_type,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: count, size, attachment_size, or name
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc
@@ -45,6 +45,36 @@ type GetSubAggregatesQuery struct {
 	// ViewType Aggregate view type
 	ViewType string `json:"view_type" validate:"required"`
 
+	// Sort Sort field: count, size, attachment_size, or name
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc
+	Direction *string `json:"direction,omitempty"`
+
+	// Limit Maximum number of rows to return (default 100; values below 1 fall back to the default)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// TimeGranularity Time bucket granularity
+	TimeGranularity *string `json:"time_granularity,omitempty"`
+
+	// SourceID Source ID
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// AttachmentsOnly Only include messages with attachments
+	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
+
+	// HideDeleted Exclude deleted messages
+	HideDeleted *bool `json:"hide_deleted,omitempty"`
+
+	// SearchQuery Search query
+	SearchQuery *string `json:"search_query,omitempty"`
+
+	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
+	After *string `json:"after,omitempty"`
+
+	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
+	Before *string `json:"before,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 
@@ -69,44 +99,14 @@ type GetSubAggregatesQuery struct {
 	// TimePeriod Named time period
 	TimePeriod *string `json:"time_period,omitempty"`
 
-	// TimeGranularity Time bucket granularity
-	TimeGranularity *string `json:"time_granularity,omitempty"`
-
 	// ConversationID Conversation ID
 	ConversationID *int64 `json:"conversation_id,omitempty"`
-
-	// SourceID Source ID
-	SourceID *int64 `json:"source_id,omitempty"`
-
-	// AttachmentsOnly Only include messages with attachments
-	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
-
-	// HideDeleted Exclude deleted messages
-	HideDeleted *bool `json:"hide_deleted,omitempty"`
-
-	// After Lower date/time bound (RFC3339 or YYYY-MM-DD)
-	After *string `json:"after,omitempty"`
-
-	// Before Upper date/time bound (RFC3339 or YYYY-MM-DD)
-	Before *string `json:"before,omitempty"`
 
 	// EmptyTargets Comma-separated aggregate view names to match empty values
 	EmptyTargets *string `json:"empty_targets,omitempty"`
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
-
-	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
-	Limit *int64 `json:"limit,omitempty"`
-
-	// Sort Sort field: date, size, or subject
-	Sort *string `json:"sort,omitempty"`
-
-	// Direction Sort direction: asc or desc
-	Direction *string `json:"direction,omitempty"`
-
-	// SearchQuery Search query
-	SearchQuery *string `json:"search_query,omitempty"`
 }
 
 func (g GetSubAggregatesQuery) Validate() error {

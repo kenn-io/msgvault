@@ -2266,7 +2266,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List configured accounts
+      summary: List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources
       tags:
         - API
     post:
@@ -2310,7 +2310,7 @@ paths:
           name: view_type
           schema:
             type: string
-        - description: Sort field
+        - description: "Sort field: count, size, attachment_size, or name"
           in: query
           name: sort
           schema:
@@ -2390,6 +2390,58 @@ paths:
           required: true
           schema:
             type: string
+        - description: "Sort field: count, size, attachment_size, or name"
+          in: query
+          name: sort
+          schema:
+            type: string
+        - description: "Sort direction: asc or desc"
+          in: query
+          name: direction
+          schema:
+            type: string
+        - description: Maximum number of rows to return (default 100; values below 1 fall back to the default)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Time bucket granularity
+          in: query
+          name: time_granularity
+          schema:
+            type: string
+        - description: Source ID
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Only include messages with attachments
+          in: query
+          name: attachments_only
+          schema:
+            type: boolean
+        - description: Exclude deleted messages
+          in: query
+          name: hide_deleted
+          schema:
+            type: boolean
+        - description: Search query
+          in: query
+          name: search_query
+          schema:
+            type: string
+        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -2430,43 +2482,12 @@ paths:
           name: time_period
           schema:
             type: string
-        - description: Time bucket granularity
-          in: query
-          name: time_granularity
-          schema:
-            type: string
         - description: Conversation ID
           in: query
           name: conversation_id
           schema:
             format: int64
             type: integer
-        - description: Source ID
-          in: query
-          name: source_id
-          schema:
-            format: int64
-            type: integer
-        - description: Only include messages with attachments
-          in: query
-          name: attachments_only
-          schema:
-            type: boolean
-        - description: Exclude deleted messages
-          in: query
-          name: hide_deleted
-          schema:
-            type: boolean
-        - description: Lower date/time bound (RFC3339 or YYYY-MM-DD)
-          in: query
-          name: after
-          schema:
-            type: string
-        - description: Upper date/time bound (RFC3339 or YYYY-MM-DD)
-          in: query
-          name: before
-          schema:
-            type: string
         - description: Comma-separated aggregate view names to match empty values
           in: query
           name: empty_targets
@@ -2478,27 +2499,6 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
-          in: query
-          name: limit
-          schema:
-            format: int64
-            type: integer
-        - description: "Sort field: date, size, or subject"
-          in: query
-          name: sort
-          schema:
-            type: string
-        - description: "Sort direction: asc or desc"
-          in: query
-          name: direction
-          schema:
-            type: string
-        - description: Search query
-          in: query
-          name: search_query
-          schema:
-            type: string
       responses:
         "200":
           content:

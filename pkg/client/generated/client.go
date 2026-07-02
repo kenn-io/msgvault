@@ -35,7 +35,7 @@ type ClientInterface interface {
 	DaemonPing(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonPingResponse, error)
 	DaemonPingWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*DaemonPingResp, error)
 
-	// ListAccounts List configured accounts
+	// ListAccounts List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources
 	ListAccounts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAccountsResponse, error)
 	ListAccountsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAccountsResp, error)
 
@@ -342,7 +342,7 @@ func (c *Client) DaemonPing(ctx context.Context, reqEditors ...runtime.RequestEd
 	return responseParser(ctx, resp)
 }
 
-// ListAccounts List configured accounts
+// ListAccounts List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources
 func (c *Client) ListAccounts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAccountsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

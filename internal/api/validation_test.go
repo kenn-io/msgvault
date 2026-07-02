@@ -107,8 +107,8 @@ func TestOutOfRangePaginationClamps(t *testing.T) {
 		wantPage     int
 		wantPageSize int
 	}{
-		{"page_size too big clamps to 20", "/api/v1/messages?page=1&page_size=100000", 1, 20},
-		{"page_size zero clamps to 20", "/api/v1/messages?page=1&page_size=0", 1, 20},
+		{"page_size too big clamps to max", "/api/v1/messages?page=1&page_size=100000", 1, 100},
+		{"page_size zero falls back to default", "/api/v1/messages?page=1&page_size=0", 1, 20},
 		{"negative page clamps to 1", "/api/v1/messages?page=-5&page_size=10", 1, 10},
 	}
 	for _, tc := range tests {

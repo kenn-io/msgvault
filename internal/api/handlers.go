@@ -501,8 +501,10 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	if !ok || pageSize < 1 || pageSize > 100 {
+	if !ok || pageSize < 1 {
 		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
 	}
 
 	offset := (page - 1) * pageSize
@@ -696,8 +698,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	if !ok || pageSize < 1 || pageSize > 100 {
+	if !ok || pageSize < 1 {
 		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
 	}
 
 	offset := (page - 1) * pageSize

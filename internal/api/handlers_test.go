@@ -2242,6 +2242,67 @@ func TestHandleListMessagesPagination(t *testing.T) {
 	assert.InDelta(float64(10), resp["page_size"], 1e-9, "page_size")
 }
 
+// TestPageSizeClamping verifies that /messages and /search clamp an
+// over-max page_size to the max (100) rather than collapsing it to the
+// default (20), while absent/too-small values fall back to the default and
+// non-numeric values are rejected with 400.
+func TestPageSizeClamping(t *testing.T) {
+	cases := []struct {
+		name         string
+		query        string
+		wantStatus   int
+		wantPageSize int
+	}{
+		{"over_max_clamps", "page_size=101", http.StatusOK, 100},
+		{"far_over_max_clamps", "page_size=100000", http.StatusOK, 100},
+		{"at_max_unchanged", "page_size=100", http.StatusOK, 100},
+		{"in_range_unchanged", "page_size=5", http.StatusOK, 5},
+		{"absent_default", "", http.StatusOK, 20},
+		{"zero_default", "page_size=0", http.StatusOK, 20},
+		{"negative_default", "page_size=-1", http.StatusOK, 20},
+		{"garbage_rejected", "page_size=abc", http.StatusBadRequest, 0},
+	}
+
+	endpoints := []struct {
+		name string
+		path string
+	}{
+		{"messages", "/api/v1/messages"},
+		{"search", "/api/v1/search?q=test"},
+	}
+
+	for _, ep := range endpoints {
+		t.Run(ep.name, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					srv, _ := newTestServerWithMockStore(t)
+					sep := "?"
+					if strings.Contains(ep.path, "?") {
+						sep = "&"
+					}
+					reqURL := ep.path
+					if tc.query != "" {
+						reqURL += sep + tc.query
+					}
+					req := httptest.NewRequest(http.MethodGet, reqURL, nil)
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+
+					assert.Equal(t, tc.wantStatus, w.Code, "status")
+					if tc.wantStatus != http.StatusOK {
+						return
+					}
+					var resp map[string]any
+					require.NoError(t, json.NewDecoder(w.Body).Decode(&resp),
+						"decode response")
+					assert.InDelta(t, float64(tc.wantPageSize),
+						resp["page_size"], 1e-9, "page_size")
+				})
+			}
+		})
+	}
+}
+
 func TestHandleSourceStatus(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

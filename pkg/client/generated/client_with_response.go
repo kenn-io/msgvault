@@ -58,7 +58,7 @@ func (c *Client) DaemonPingWithResponse(ctx context.Context, reqEditors ...runti
 	}
 }
 
-// ListAccounts List configured accounts
+// ListAccounts List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources
 func (c *Client) ListAccountsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListAccountsResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

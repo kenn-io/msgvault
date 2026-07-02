@@ -285,7 +285,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "searchTextMessages", http.MethodGet, "/text/search", "Search text messages", s.handleTextSearch)
 	registerAPIV1RawHumaJSONRoute[TotalStatsResponse](apiV1, "getTextStats", http.MethodGet, "/text/stats", "Get text message totals", s.handleTextStats)
 
-	registerAPIV1RawHumaJSONRoute[AccountListResponse](apiV1, "listAccounts", http.MethodGet, "/accounts", "List configured accounts", s.handleListAccounts)
+	registerAPIV1RawHumaJSONRoute[AccountListResponse](apiV1, "listAccounts", http.MethodGet, "/accounts", "List scheduler-configured accounts (with sync schedules); use /cli/accounts for all archived sources", s.handleListAccounts)
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
 	registerAPIV1RawHumaJSONRoute[StatusMessageResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
@@ -457,9 +457,13 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("view_type", "Aggregate view type", false),
 		}, aggregateOptionParams()...)
 	case "getSubAggregates":
+		// Aggregate params first so the sort/limit docs reflect
+		// parseAggregateOptions (the handler's actual source for those
+		// values) rather than the message-filter sort enum, which the
+		// sub-aggregate endpoint does not accept.
 		return append([]*huma.Param{
 			queryStringParam("view_type", "Aggregate view type", true),
-		}, mergeParams(messageFilterParams(), aggregateOptionParams())...)
+		}, mergeParams(aggregateOptionParams(), messageFilterParams())...)
 	case "filterMessages":
 		return messageFilterParams()
 	case "getGmailIDsByFilter":
@@ -553,7 +557,7 @@ func paginationParams(pageName, pageSizeName string) []*huma.Param {
 
 func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
-		queryStringParam("sort", "Sort field", false),
+		queryStringParam("sort", "Sort field: count, size, attachment_size, or name", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 		queryIntegerParam("limit", "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
 		queryStringParam("time_granularity", "Time bucket granularity", false),
