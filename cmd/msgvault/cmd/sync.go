@@ -34,7 +34,8 @@ synced using a full sync instead.
 If no email is specified, syncs all accounts that have credentials configured.
 Accounts without tokens or history IDs are skipped.
 
-If history is too old (Gmail returns 404), falls back to suggesting a full sync.
+If history is too old (Gmail returns 404), automatically falls back to a full
+sync, which is resumable and skips already-archived messages.
 
 Examples:
   msgvault sync                 # Sync all accounts
@@ -267,11 +268,15 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 			fmt.Println("\nSync interrupted. Run again to resume.")
 			return nil
 		}
-		// Check for history expired error
+		// The history baseline is gone (Gmail keeps only ~7 days), so an
+		// incremental sync can never succeed again for this account. Fall
+		// back to a full sync instead of telling the user to run one:
+		// it is resumable and skips already-archived messages.
 		if errors.Is(err, sync.ErrHistoryExpired) {
-			fmt.Println("\nHistory ID has expired. Gmail only keeps ~7 days of history.")
-			fmt.Println("Run 'sync-full' to catch up on missed changes.")
-			return nil
+			fmt.Println("\nHistory ID has expired (Gmail keeps only ~7 days of history).")
+			fmt.Println("Falling back to a full sync; already-archived messages are skipped.")
+			fmt.Println()
+			return runFullSync(ctx, s, getOAuthMgr, source)
 		}
 		return fmt.Errorf("sync failed: %w", err)
 	}

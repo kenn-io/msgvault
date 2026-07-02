@@ -469,7 +469,10 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 	env.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	assert.Error(t, err, "expected error for expired history")
+	require.Error(t, err, "expected error for expired history")
+	// Callers (sync CLI, daemon scheduler) key their full-sync fallback on
+	// this sentinel, so it must survive wrapping.
+	assert.ErrorIs(t, err, ErrHistoryExpired)
 }
 
 func TestIncrementalSyncProfileError(t *testing.T) {

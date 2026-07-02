@@ -91,9 +91,9 @@ func (s *Syncer) Incremental(ctx context.Context, source *store.Source) (summary
 			// Check for 404 - history too old
 			var notFound *gmail.NotFoundError
 			if errors.As(err, &notFound) {
-				s.logger.Warn("history too old, falling back to full sync")
+				s.logger.Info("gmail history expired; full sync required")
 				_ = s.store.FailSync(syncID, "history too old")
-				// Caller should trigger full sync
+				// Callers fall back to a full sync on ErrHistoryExpired.
 				return nil, ErrHistoryExpired
 			}
 			_ = s.store.FailSync(syncID, err.Error())
