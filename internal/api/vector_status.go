@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"go.kenn.io/msgvault/internal/vector"
@@ -67,6 +68,37 @@ func (s *Server) SetVectorStale(detail string) {
 	defer s.vectorMu.Unlock()
 	s.vectorStatus = VectorStatusStale
 	s.vectorErr = detail
+}
+
+// refreshVectorStatusIfStale re-runs the generation freshness check when the
+// cached status is stale. The stale status is latched once at init completion,
+// so without this a `--full-rebuild` (or the daemon embed job) that reactivates
+// a matching generation would keep /health, /api/v1/stats, and serve status
+// reporting stale until a daemon restart. Cheap no-op unless the status is
+// currently stale; leaves the status untouched on a still-stale, building, or
+// transient-error result.
+func (s *Server) refreshVectorStatusIfStale(ctx context.Context) {
+	s.vectorMu.RLock()
+	stale := s.vectorStatus == VectorStatusStale
+	backend := s.backend
+	cfg := s.vectorCfg
+	s.vectorMu.RUnlock()
+	if !stale || backend == nil {
+		return
+	}
+	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err != nil {
+		// Still stale, still building, or a transient backend error: leave the
+		// stale status in place. Only a clean resolve clears it.
+		return
+	}
+	s.vectorMu.Lock()
+	// Guard against clobbering a status a concurrent writer changed (e.g. a
+	// reinit that flipped to error) while we held no lock.
+	if s.vectorStatus == VectorStatusStale {
+		s.vectorStatus = VectorStatusReady
+		s.vectorErr = ""
+	}
+	s.vectorMu.Unlock()
 }
 
 // VectorStatus returns the vector subsystem status and, when the status is

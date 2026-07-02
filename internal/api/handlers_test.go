@@ -1706,6 +1706,55 @@ func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
 	assert.Equal(int64(3), events[2].Indexed, "indexed")
 }
 
+// TestHandleCLIRebuildFTSInvalidatesCompletenessCache verifies the memoized
+// "FTS index complete" flag is cleared while a rebuild runs (so concurrent CLI
+// searches re-probe instead of trusting a stale cache) and re-set only after a
+// successful rebuild.
+func TestHandleCLIRebuildFTSInvalidatesCompletenessCache(t *testing.T) {
+	assert := assert.New(t)
+
+	var duringRebuild bool
+	st := &mockStore{}
+	srv := newCLIHandlerTestServer(st)
+	// The FTS index was previously confirmed complete.
+	srv.ftsIndexComplete.Store(true)
+	// Capture the flag state observed at the start of the rebuild.
+	st.rebuildFTSFunc = func(progress func(done, total int64)) (int64, error) {
+		duringRebuild = srv.ftsIndexComplete.Load()
+		progress(1, 1)
+		return 1, nil
+	}
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+	requireNDJSONResponse(t, resp)
+	_ = decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
+
+	assert.False(duringRebuild, "completeness flag must be cleared before the rebuild runs")
+	assert.True(srv.ftsIndexComplete.Load(), "flag must be re-set after a successful rebuild")
+}
+
+// TestHandleCLIRebuildFTSFailureLeavesCacheInvalidated verifies a failed
+// rebuild leaves the completeness flag cleared, so later CLI searches re-detect
+// the (possibly incomplete) index instead of trusting a stale cache.
+func TestHandleCLIRebuildFTSFailureLeavesCacheInvalidated(t *testing.T) {
+	assert := assert.New(t)
+
+	st := &mockStore{
+		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+			return 0, errors.New("rebuild exploded mid-batch")
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	srv.ftsIndexComplete.Store(true)
+
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+	requireNDJSONResponse(t, resp)
+	_ = decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
+
+	assert.False(srv.ftsIndexComplete.Load(),
+		"a failed rebuild must not leave the completeness flag set")
+}
+
 func TestHandleCLIRebuildFTSFlushesProgressThroughMiddleware(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3627,6 +3676,109 @@ func TestSearchParsedMessageTypeFilterReachesEngine(t *testing.T) {
 			srv.Router().ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		})
+	}
+}
+
+// TestFastDeepSearchRejectInvalidOperatorValue verifies the fast and deep
+// search endpoints reject a query with an invalid known-operator value with a
+// 400 invalid_query instead of silently dropping the operator and running a
+// widened query. Regression coverage for the fast/deep gap in the CLI/API
+// search validation.
+func TestFastDeepSearchRejectInvalidOperatorValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "fast_bad_date", path: "/api/v1/search/fast?q=" + url.QueryEscape("before:not-a-date")},
+		{name: "fast_bad_size", path: "/api/v1/search/fast?q=" + url.QueryEscape("larger:5X")},
+		{name: "deep_bad_date", path: "/api/v1/search/deep?q=" + url.QueryEscape("before:not-a-date")},
+		{name: "deep_bad_size", path: "/api/v1/search/deep?q=" + url.QueryEscape("larger:5X")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var searchRan, fastRan bool
+			engine := &querytest.MockEngine{
+				Stats: &query.TotalStats{},
+				SearchFunc: func(_ context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					searchRan = true
+					return nil, nil
+				},
+				SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					fastRan = true
+					return &query.SearchFastResult{Stats: &query.TotalStats{}}, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+			var resp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
+			assert.Equal("invalid_query", resp.Error, "error code")
+			assert.False(searchRan, "deep search engine must not run")
+			assert.False(fastRan, "fast search engine must not run")
+		})
+	}
+}
+
+// TestFastDeepSearchContextErrorReturns503 verifies that a context
+// deadline/cancellation from the engine surfaces as a structured 503 rather
+// than a generic 500 on the fast and deep search endpoints.
+func TestFastDeepSearchContextErrorReturns503(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "fast", path: "/api/v1/search/fast?q=invoice", wantErr: "query_timeout"},
+		{name: "deep", path: "/api/v1/search/deep?q=invoice", wantErr: "query_timeout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			engine := &querytest.MockEngine{
+				SearchFunc: func(_ context.Context, _ *search.Query, _, _ int) ([]query.MessageSummary, error) {
+					return nil, context.DeadlineExceeded
+				},
+				SearchFastWithStatsFunc: func(_ context.Context, _ *search.Query, _ string, _ query.MessageFilter, _ query.ViewType, _, _ int) (*query.SearchFastResult, error) {
+					return nil, context.DeadlineExceeded
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+			var resp ErrorResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
+			assert.Equal(tc.wantErr, resp.Error, "error code")
+		})
+	}
+}
+
+// TestSubAggregatesAcceptsAggregateSort verifies the sub-aggregate endpoint
+// honors aggregate sort values (count, name, attachment_size) instead of
+// rejecting them via the message-filter parser's message-sort validation.
+func TestSubAggregatesAcceptsAggregateSort(t *testing.T) {
+	for _, sortVal := range []string{"count", "name", "attachment_size", "size"} {
+		t.Run(sortVal, func(t *testing.T) {
+			require := require.New(t)
+			engine := &querytest.MockEngine{}
+			srv := newTestServerWithEngine(t, engine)
+
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/aggregates/sub?view_type=labels&sender=alice@example.com&sort="+sortVal, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+
+			require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 		})
 	}
 }

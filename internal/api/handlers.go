@@ -453,7 +453,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := s.store.GetStats()
+	stats, err := s.getStats(r.Context())
 	if err != nil {
 		s.logger.Error("failed to get stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
@@ -470,6 +470,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	resp := statsResponseFromStore(stats)
 	resp.VectorSearch = vs
+	s.refreshVectorStatusIfStale(r.Context())
 	if status, _ := s.VectorStatus(); status != VectorStatusDisabled {
 		resp.VectorStatus = string(status)
 	}
@@ -503,8 +504,11 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * pageSize
 
-	messages, total, err := s.store.ListMessages(offset, pageSize)
+	messages, total, err := s.listMessages(r.Context(), offset, pageSize)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("failed to list messages", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve messages")
 		return
@@ -558,12 +562,15 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := s.store.GetMessage(id)
+	msg, err := s.getMessage(r.Context(), id)
 	if errors.Is(err, store.ErrMessageNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("failed to get message", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve message")
 		return
@@ -827,7 +834,7 @@ func (s *Server) handleHybridSearch(
 	for i, h := range hits {
 		hitIDs[i] = h.MessageID
 	}
-	summaries, err := s.store.GetMessagesSummariesByIDs(hitIDs)
+	summaries, err := s.getMessagesSummariesByIDs(r.Context(), hitIDs)
 	if err != nil {
 		s.logger.Warn("hydrate hybrid hits failed", "ids", len(hitIDs), "error", err)
 		summaries = nil
@@ -954,7 +961,7 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		wantIDs = append(wantIDs, hit.MessageID)
 	}
 
-	summaries, err := s.store.GetMessagesSummariesByIDs(wantIDs)
+	summaries, err := s.getMessagesSummariesByIDs(r.Context(), wantIDs)
 	if err != nil {
 		s.logger.Warn("hydrate similar hits failed", "ids", len(wantIDs), "error", err)
 		summaries = nil
@@ -1893,6 +1900,22 @@ func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 // parseMessageFilter extracts filter parameters from query parameters.
 // Unparseable integers/dates and unknown enum values return a paramError so the
 // handler can reject them with a 400 instead of silently ignoring the filter.
+// requestWithoutParams returns a shallow copy of r whose URL query has the
+// named parameters removed. The original request is left untouched. Used to
+// hand a filter parser a request view that excludes params owned by another
+// parser on the same endpoint.
+func requestWithoutParams(r *http.Request, keys ...string) *http.Request {
+	q := r.URL.Query()
+	for _, k := range keys {
+		q.Del(k)
+	}
+	clone := *r
+	u := *r.URL
+	u.RawQuery = q.Encode()
+	clone.URL = &u
+	return &clone
+}
+
 func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	var filter query.MessageFilter
 	filter.Pagination.Limit = -1 // sentinel: "not provided"
@@ -2304,7 +2327,13 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter, err := parseMessageFilter(r)
+	// The sub-aggregate endpoint reuses the message-filter parser for
+	// drill-down scope, but sort/direction/limit/offset are owned by
+	// parseAggregateOptions. Aggregate sort values (count, name,
+	// attachment_size) are not valid message sorts, so parse the filter from
+	// a request view with those aggregate-owned params removed to avoid a
+	// spurious 400 from parseMessageFilter's message-sort validation.
+	filter, err := parseMessageFilter(requestWithoutParams(r, "sort", "direction", "limit", "offset"))
 	if err != nil {
 		s.rejectBadParam(w, err)
 		return
@@ -2582,6 +2611,10 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := search.Parse(queryStr)
+	if err := q.Err(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
 
 	// Reject filter fields that the search engines cannot honor.
 	// SenderName/RecipientName use display names that aren't indexed
@@ -2621,6 +2654,9 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("fast search failed", "query", queryStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return
@@ -2659,6 +2695,10 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := search.Parse(queryStr)
+	if err := q.Err(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
 
 	// Reject filter fields that this deep-search engine path cannot
 	// honor. Without this check the parameters parse
@@ -2690,6 +2730,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	// Fetch one extra row to determine has_more accurately.
 	messages, err := s.engine.Search(r.Context(), merged, limit+1, offset)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("deep search failed", "query", queryStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Search failed")
 		return

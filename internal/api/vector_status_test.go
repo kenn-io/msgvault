@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -159,6 +160,75 @@ func TestHealthReportsStaleVectorStatus(t *testing.T) {
 	require.NotNil(body.Vector)
 	assert.Equal("stale", body.Vector.Status)
 	assert.Contains(body.Vector.Error, "old:1")
+}
+
+// resolvingVectorBackend reports a single active generation with a fixed
+// fingerprint, so refreshVectorStatusIfStale can re-run the same generation
+// check the query path uses and clear a stale status once the index matches.
+type resolvingVectorBackend struct {
+	vector.Backend
+
+	fingerprint string
+}
+
+func (b *resolvingVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
+}
+
+// TestHealthClearsStaleAfterReactivation verifies the latched stale status is
+// re-validated when reporting health: once the active generation's fingerprint
+// matches the configured one again (e.g. after a --full-rebuild), /health flips
+// back to ready without a daemon restart.
+func TestHealthClearsStaleAfterReactivation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	cfg := vector.Config{}
+	backend := &resolvingVectorBackend{fingerprint: cfg.GenerationFingerprint()}
+	opts := testServerOptions(t, backend)
+	opts.VectorStatus = VectorStatusInitializing
+	srv := NewServerWithOptions(opts)
+	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"")
+
+	// Sanity: status is stale before the health check re-validates.
+	status, _ := srv.VectorStatus()
+	require.Equal(VectorStatusStale, status, "precondition: latched stale")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(http.StatusOK, rec.Code)
+	var body HealthResponse
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotNil(body.Vector)
+	assert.Equal("ready", body.Vector.Status, "stale must clear once the index matches again")
+}
+
+// TestHealthKeepsStaleWhenStillMismatched verifies the refresh leaves the stale
+// status in place while the active generation's fingerprint still mismatches.
+func TestHealthKeepsStaleWhenStillMismatched(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	cfg := vector.Config{}
+	backend := &resolvingVectorBackend{fingerprint: "still-old:1"}
+	opts := testServerOptions(t, backend)
+	opts.VectorStatus = VectorStatusInitializing
+	srv := NewServerWithOptions(opts)
+	srv.SetVectorFeatures(nil, backend, cfg)
+	srv.SetVectorStale("active=\"still-old:1\" configured=\"new:2\"")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(http.StatusOK, rec.Code)
+	var body HealthResponse
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotNil(body.Vector)
+	assert.Equal("stale", body.Vector.Status, "still-mismatched index stays stale")
 }
 
 func TestSetVectorFeaturesConcurrentReads(t *testing.T) {

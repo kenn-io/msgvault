@@ -44,6 +44,52 @@ type ctxMessageSearcher interface {
 	SearchMessagesQueryContext(ctx context.Context, q *search.Query, offset, limit int) ([]APIMessage, int64, error)
 }
 
+// ctxMessageStore is an optional extension of MessageStore for stores that
+// accept a context on the non-search read paths. Request handlers prefer it so
+// the request_id carried on r.Context() (via store.WithRequestID) reaches every
+// request-owned SQL query for slow/error logging, and so an abandoned request
+// cancels the underlying queries. Stores that predate it fall back to the
+// non-context methods.
+type ctxMessageStore interface {
+	GetStatsContext(ctx context.Context) (*StoreStats, error)
+	ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error)
+	GetMessageContext(ctx context.Context, id int64) (*APIMessage, error)
+	GetMessagesSummariesByIDsContext(ctx context.Context, ids []int64) ([]APIMessage, error)
+}
+
+// getStats calls the context-aware store variant when available, so
+// request-owned stats queries carry the request context.
+func (s *Server) getStats(ctx context.Context) (*StoreStats, error) {
+	if cs, ok := s.store.(ctxMessageStore); ok {
+		return cs.GetStatsContext(ctx)
+	}
+	return s.store.GetStats()
+}
+
+// listMessages calls the context-aware store variant when available.
+func (s *Server) listMessages(ctx context.Context, offset, limit int) ([]APIMessage, int64, error) {
+	if cs, ok := s.store.(ctxMessageStore); ok {
+		return cs.ListMessagesContext(ctx, offset, limit)
+	}
+	return s.store.ListMessages(offset, limit)
+}
+
+// getMessage calls the context-aware store variant when available.
+func (s *Server) getMessage(ctx context.Context, id int64) (*APIMessage, error) {
+	if cs, ok := s.store.(ctxMessageStore); ok {
+		return cs.GetMessageContext(ctx, id)
+	}
+	return s.store.GetMessage(id)
+}
+
+// getMessagesSummariesByIDs calls the context-aware store variant when available.
+func (s *Server) getMessagesSummariesByIDs(ctx context.Context, ids []int64) ([]APIMessage, error) {
+	if cs, ok := s.store.(ctxMessageStore); ok {
+		return cs.GetMessagesSummariesByIDsContext(ctx, ids)
+	}
+	return s.store.GetMessagesSummariesByIDs(ids)
+}
+
 // SourceStatusStore defines the source/sync read operations used by the
 // source status endpoint.
 type SourceStatusStore interface {
@@ -616,6 +662,7 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.refreshVectorStatusIfStale(r.Context())
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Vector: s.vectorHealth()})
 }
 

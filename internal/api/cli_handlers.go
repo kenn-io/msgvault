@@ -1389,6 +1389,14 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {
 		return nil
 	}
 
+	// A rebuild clears and repopulates the FTS index in batches. Invalidate
+	// the memoized completeness flag before starting so any concurrent CLI
+	// search re-probes (and serializes behind this POST via the operation
+	// gate) instead of trusting a stale "complete" cache while the index is
+	// mid-rebuild or left incomplete by a failed rebuild. Only a successful
+	// rebuild re-sets the flag.
+	s.ftsIndexComplete.Store(false)
+
 	var writeErr error
 	indexed, err := cliStore.RebuildFTS(func(done, total int64) {
 		if writeErr != nil {
@@ -1410,6 +1418,9 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {
 		}
 		return
 	}
+	// The rebuild fully repopulated the index; safe to re-memoize so later CLI
+	// searches skip the expensive backfill probe again.
+	s.ftsIndexComplete.Store(true)
 	if writeErr == nil {
 		writeErr = writeEvent(cliRebuildFTSEvent{
 			Type:    "complete",
