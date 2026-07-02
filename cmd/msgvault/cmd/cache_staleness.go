@@ -61,6 +61,18 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 		}
 	}
 
+	// A cache written under a different Parquet schema layout is stale even
+	// when message counts match, so bumping cacheSchemaVersion must force a
+	// full rebuild. buildCache re-checks this, but the daemon only calls it
+	// when this gate reports NeedsBuild.
+	if state.SchemaVersion != cacheSchemaVersion {
+		return cacheStaleness{
+			NeedsBuild: true, FullRebuild: true,
+			Reason: fmt.Sprintf("cache schema v%d != current v%d",
+				state.SchemaVersion, cacheSchemaVersion),
+		}
+	}
+
 	db, err := store.Open(dbPath)
 	if err != nil {
 		return cacheStaleness{

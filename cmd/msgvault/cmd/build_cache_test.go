@@ -1250,7 +1250,11 @@ func writeSyncState(t *testing.T, analyticsDir string, lastMessageID int64) {
 func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, syncAt time.Time) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
-	state := syncState{LastMessageID: lastMessageID, LastSyncAt: syncAt}
+	state := syncState{
+		LastMessageID: lastMessageID,
+		LastSyncAt:    syncAt,
+		SchemaVersion: cacheSchemaVersion,
+	}
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
 	require.NoError(t, os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644), "write sync state")
@@ -1532,6 +1536,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 		LastMessageID:          5,
 		LastSyncAt:             stateTime,
 		LastCompletedSyncRunID: 7,
+		SchemaVersion:          cacheSchemaVersion,
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")
@@ -1572,6 +1577,43 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 
 	got := cacheNeedsBuild(dbPath, analyticsDir)
 	require.False(got.NeedsBuild, "cacheNeedsBuild() = %+v, want no rebuild for already-processed sync run", got)
+}
+
+// TestCacheNeedsBuild_SchemaVersionMismatch covers the regression where a
+// complete cache that is otherwise up to date (maxLiveID == LastMessageID,
+// all required parquet present) was reported fresh after cacheSchemaVersion
+// was bumped, leaving the daemon serving stale-layout parquet. A recorded
+// schema version other than the current one now forces a full rebuild.
+func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
+	require := require.New(t)
+	tmpDir := setupTestSQLiteEmpty(t)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	analyticsDir := filepath.Join(tmpDir, "analytics")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err, "open db")
+	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+	require.NoError(err, "insert message")
+	require.NoError(db.Close(), "close db")
+
+	// State matches the DB (id 10) and every required parquet exists, so the
+	// only staleness signal is the outdated schema version.
+	require.NoError(os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
+	state := syncState{
+		LastMessageID: 10,
+		LastSyncAt:    time.Now(),
+		SchemaVersion: cacheSchemaVersion - 1,
+	}
+	data, err := json.Marshal(state)
+	require.NoError(err, "marshal sync state")
+	require.NoError(os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644), "write sync state")
+	createFakeParquet(t, analyticsDir)
+
+	got := cacheNeedsBuild(dbPath, analyticsDir)
+	require.True(got.NeedsBuild, "cacheNeedsBuild() = %+v, want NeedsBuild=true on schema mismatch", got)
+	require.True(got.FullRebuild, "cacheNeedsBuild() = %+v, want FullRebuild=true on schema mismatch", got)
+	require.Contains(got.Reason, "schema", "cacheNeedsBuild() reason should mention schema")
 }
 
 // TestCacheNeedsBuild_DedupHidesAfterLastSync covers the regression
@@ -1744,7 +1786,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 	for range b.N {
 		// Reset sync state to re-trigger incremental export
 		stateFile := filepath.Join(analyticsDir, "_last_sync.json")
-		state := syncState{LastMessageID: 10000, LastSyncAt: time.Now()}
+		state := syncState{LastMessageID: 10000, LastSyncAt: time.Now(), SchemaVersion: cacheSchemaVersion}
 		data, err := json.Marshal(state)
 		if err != nil {
 			b.Fatalf("marshal sync state: %v", err)
