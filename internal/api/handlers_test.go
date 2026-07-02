@@ -920,6 +920,8 @@ func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
 }
 
 func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	started := make(chan struct{})
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
@@ -947,16 +949,16 @@ func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "query runner never started")
+		require.FailNow("query runner never started")
 	}
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "request did not return after query timeout")
+		require.FailNow("request did not return after query timeout")
 	}
 
-	require.Equal(t, http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
-	assert.Contains(t, resp.Body.String(), "query_timeout")
+	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+	assert.Contains(resp.Body.String(), "query_timeout")
 }
 
 func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {

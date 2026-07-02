@@ -91,6 +91,7 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 }
 
 func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
+	assert := assert.New(t)
 	// Drive the emitter directly with a synthetic elapsed time
 	// to avoid flakiness from "actually make a query slow".
 	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
@@ -104,9 +105,9 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 
 	rec := findLogLineByMsg(t, buf, "sql slow")
 	require.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
-	assert.Equal(t, "WARN", rec["level"], "level")
-	assert.InDelta(t, float64(100), rec["duration_ms"], 1e-9, "duration_ms")
-	assert.Equal(t, "msgvault-42", rec["request_id"],
+	assert.Equal("WARN", rec["level"], "level")
+	assert.InDelta(float64(100), rec["duration_ms"], 1e-9, "duration_ms")
+	assert.Equal("msgvault-42", rec["request_id"],
 		"slow line must carry the issuing request id")
 }
 

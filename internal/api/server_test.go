@@ -52,6 +52,8 @@ func (b *syncBuffer) String() string {
 // overruns the in-progress threshold emits a repeating WARN carrying the
 // request id, and that the watcher goroutine does not fire for fast requests.
 func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	buf := &syncBuffer{}
 	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -78,7 +80,7 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 		close(done)
 	}()
 
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		return strings.Contains(buf.String(), "http request in progress")
 	}, 2*time.Second, 10*time.Millisecond, "no in-progress WARN emitted")
 
@@ -86,9 +88,9 @@ func TestLoggerMiddlewareLogsInProgressRequest(t *testing.T) {
 	<-done
 
 	inProgress := findJSONLogLine(t, buf.String(), "http request in progress")
-	assert.Equal(t, "WARN", inProgress["level"])
-	assert.NotEmpty(t, inProgress["request_id"], "in-progress line must carry request_id")
-	assert.Equal(t, queryEndpointPath, inProgress["path"])
+	assert.Equal("WARN", inProgress["level"])
+	assert.NotEmpty(inProgress["request_id"], "in-progress line must carry request_id")
+	assert.Equal(queryEndpointPath, inProgress["path"])
 }
 
 func TestPprofEndpointLoopbackOnly(t *testing.T) {

@@ -16,9 +16,11 @@ import (
 // test guards that the engine passes the request context all the way down.
 func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
 
 	engine, err := NewDuckDBEngine("", "", nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -38,10 +40,10 @@ func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 	_, err = engine.QuerySQL(ctx, slowSQL)
 	elapsed := time.Since(start)
 
-	require.Error(t, err, "cancelled slow query must return an error")
-	assert.Less(t, elapsed, 30*time.Second,
+	require.Error(err, "cancelled slow query must return an error")
+	assert.Less(elapsed, 30*time.Second,
 		"cancelled query should abort promptly, not run to completion")
-	assert.Error(t, ctx.Err(), "context should be cancelled")
+	assert.Error(ctx.Err(), "context should be cancelled")
 }
 
 // TestDuckDBQueryConcurrencyCap verifies the engine admits at most
@@ -50,16 +52,18 @@ func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 // context error, then succeeds once a slot is released.
 func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, 2, duckDBQueryConcurrency, "test assumes a cap of 2")
+	require := require.New(t)
+	assert := assert.New(t)
+	require.Equal(2, duckDBQueryConcurrency, "test assumes a cap of 2")
 
 	engine, err := NewDuckDBEngine("", "", nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	release1, err := engine.acquireQuerySlot(context.Background())
-	require.NoError(t, err)
+	require.NoError(err)
 	release2, err := engine.acquireQuerySlot(context.Background())
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Both slots held: a third acquirer must wait, and its context deadline
 	// must free it rather than block forever.
@@ -68,14 +72,14 @@ func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 	start := time.Now()
 	_, err = engine.acquireQuerySlot(waitCtx)
 	elapsed := time.Since(start)
-	require.ErrorIs(t, err, context.DeadlineExceeded,
+	require.ErrorIs(err, context.DeadlineExceeded,
 		"third acquire must fail with the waiter's context deadline")
-	assert.Less(t, elapsed, 2*time.Second, "waiter should return near its deadline")
+	assert.Less(elapsed, 2*time.Second, "waiter should return near its deadline")
 
 	// Freeing a slot lets a new acquirer through.
 	release1()
 	release3, err := engine.acquireQuerySlot(context.Background())
-	require.NoError(t, err, "acquire must succeed after a slot is released")
+	require.NoError(err, "acquire must succeed after a slot is released")
 	release3()
 	release2()
 }
