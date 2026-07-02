@@ -16,9 +16,20 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // DuckDB driver (database/sql)
+	"golang.org/x/sync/semaphore"
+
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+// duckDBQueryConcurrency caps how many heavy analytic queries execute
+// concurrently against the DuckDB engine. A single DuckDB query already
+// parallelizes across every core (SET threads = GOMAXPROCS), so a handful of
+// concurrent heavy queries starve the box — the F2 runaway-query incident
+// pegged the daemon at ~1600% CPU. Waiters block on a context-aware weighted
+// semaphore, so a cancelled or timed-out request releases its place in line
+// instead of piling up.
+const duckDBQueryConcurrency = 2
 
 // DuckDBEngine implements Engine using DuckDB for fast Parquet queries.
 // It uses a hybrid approach:
@@ -42,6 +53,12 @@ type DuckDBEngine struct {
 	sqliteEngine     *SQLiteEngine // Reusable engine for FTS cache, created once if sqliteDB is set
 	hasSQLiteScanner bool          // true if DuckDB's sqlite extension is loaded
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
+
+	// querySem bounds concurrent heavy query execution (see
+	// duckDBQueryConcurrency). Acquired at the top of each expensive public
+	// method via acquireQuerySlot; cheap PK/detail lookups are not gated so
+	// they are never starved behind a slow aggregate.
+	querySem *semaphore.Weighted
 
 	// optionalCols tracks which columns exist in each Parquet table's schema.
 	// Used to gracefully handle stale cache files that lack newer columns
@@ -145,6 +162,7 @@ func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, o
 		sqliteDB:         sqliteDB,
 		sqliteEngine:     sqliteEngine,
 		hasSQLiteScanner: hasSQLiteScanner,
+		querySem:         semaphore.NewWeighted(duckDBQueryConcurrency),
 	}
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
@@ -193,6 +211,12 @@ func (e *DuckDBEngine) Close() error {
 func (e *DuckDBEngine) QuerySQL(
 	ctx context.Context, sqlStr string,
 ) (*QueryResult, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Refresh views if the cache changed since startup, so the registered
 	// views match the current Parquet schema.
 	e.ensureFreshOptionalCols()
@@ -232,6 +256,21 @@ func (e *DuckDBEngine) QuerySQL(
 	}
 	result.RowCount = len(result.Rows)
 	return result, nil
+}
+
+// acquireQuerySlot blocks until a DuckDB query slot is free or ctx is done,
+// bounding concurrent heavy queries (see duckDBQueryConcurrency). The returned
+// release function frees the slot and must be deferred by the caller. Callers
+// must not nest acquisitions — every gated method is a top-level entry point
+// that does not call another gated method, so the two slots cannot deadlock.
+func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
+	if e.querySem == nil {
+		return func() {}, nil
+	}
+	if err := e.querySem.Acquire(ctx, 1); err != nil {
+		return nil, fmt.Errorf("acquire query slot: %w", err)
+	}
+	return func() { e.querySem.Release(1) }, nil
 }
 
 // hasSQLite returns true if DuckDB's sqlite_scanner extension is loaded,
@@ -991,6 +1030,11 @@ func (e *DuckDBEngine) aggregateByView(ctx context.Context, view ViewType, opts 
 
 // Aggregate performs grouping based on the provided ViewType.
 func (e *DuckDBEngine) Aggregate(ctx context.Context, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return e.aggregateByView(ctx, groupBy, opts)
 }
 
@@ -1224,6 +1268,12 @@ func inferTimeGranularity(base TimeGranularity, period string) TimeGranularity {
 // SubAggregate performs aggregation on a filtered subset of messages.
 // This is used for sub-grouping after drill-down.
 func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, groupBy ViewType, opts AggregateOptions) ([]AggregateRow, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	def, err := getViewDef(groupBy, opts.TimeGranularity, "agg")
 	if err != nil {
 		return nil, err
@@ -1301,6 +1351,12 @@ func (e *DuckDBEngine) executeAggregateQuery(ctx context.Context, query string, 
 
 // GetTotalStats returns overall statistics from Parquet.
 func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*TotalStats, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	stats := &TotalStats{}
 
 	var conditions []string
@@ -1353,7 +1409,7 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	`, e.parquetCTEs(), whereClause)
 
 	var attachmentSize sql.NullFloat64
-	err := e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
+	err = e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
 		&stats.MessageCount,
 		&stats.ActiveMessageCount,
 		&stats.SourceDeletedMessageCount,
@@ -2154,6 +2210,12 @@ type ParquetSyncState struct {
 // This is much faster than FTS search for large archives.
 // Searches: subject, sender email/name (case-insensitive).
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	conditions, args := e.buildSearchConditions(q, filter)
 
 	if limit == 0 {
@@ -2274,6 +2336,12 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 // SearchFastCount returns the total count of messages matching a search query.
 // This is used for pagination UI to show "N of M results".
 func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	conditions, args := e.buildSearchConditions(q, filter)
 
 	// Count with JOINs for filters that need them
@@ -2510,6 +2578,12 @@ func (e *DuckDBEngine) computeSearchStats(ctx context.Context) *TotalStats {
 // old cache.
 func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	conditions, args := e.buildSearchConditions(q, filter)
 
 	if limit == 0 {

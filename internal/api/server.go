@@ -80,13 +80,16 @@ type Server struct {
 	scheduler      SyncScheduler
 	logger         *slog.Logger
 	requestTimeout time.Duration
-	daemonVersion  string
-	router         http.Handler
-	server         *http.Server
-	rateLimiter    *RateLimiter
-	idleTracker    *IdleTracker
-	operationGate  OperationGate
-	cfgMu          sync.RWMutex // protects cfg.Accounts
+	// queryTimeout caps POST /api/v1/query. Defaults to QueryEndpointTimeout;
+	// tests override it to exercise the timeout path without a real slow query.
+	queryTimeout  time.Duration
+	daemonVersion string
+	router        http.Handler
+	server        *http.Server
+	rateLimiter   *RateLimiter
+	idleTracker   *IdleTracker
+	operationGate OperationGate
+	cfgMu         sync.RWMutex // protects cfg.Accounts
 	// vectorMu guards the vector subsystem state: the daemon installs
 	// hybridEngine/backend/vectorCfg from a background init goroutine
 	// after the server is already handling requests.
@@ -102,8 +105,14 @@ type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, e
 
 const (
 	DaemonLongRequestTimeout = 30 * time.Minute
-	DaemonShutdownPath       = "/api/daemon/shutdown"
-	defaultBindAddr          = "127.0.0.1"
+	// QueryEndpointTimeout is the hard ceiling for POST /api/v1/query. The raw
+	// SQL endpoint is the F2 runaway culprit: a single bad SELECT over the full
+	// archive pegged every core for minutes. 120s is generous for legitimate
+	// analytics while still bounding a pathological query.
+	QueryEndpointTimeout = 120 * time.Second
+	queryEndpointPath    = "/api/v1/query"
+	DaemonShutdownPath   = "/api/daemon/shutdown"
+	defaultBindAddr      = "127.0.0.1"
 	// DaemonShutdownTokenHeader is an HTTP header name, not a credential.
 	// #nosec G101
 	DaemonShutdownTokenHeader = "X-Msgvault-Daemon-Token"
@@ -168,6 +177,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		scheduler:      opts.Scheduler,
 		logger:         opts.Logger,
 		requestTimeout: timeout,
+		queryTimeout:   QueryEndpointTimeout,
 		daemonVersion:  opts.DaemonVersion,
 		idleTracker:    opts.IdleTracker,
 		operationGate:  opts.OperationGate,
@@ -288,14 +298,30 @@ func (s *Server) Router() http.Handler {
 
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isLongDaemonRequest(r.URL.Path) {
+		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
+		if !bounded {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// requestTimeoutForPath returns the context deadline to impose on a request
+// and whether one applies at all. POST /api/v1/query gets its own generous
+// ceiling; the streaming/long-running CLI operations stay unbounded (they
+// report progress and are gated by the operation gate); everything else gets
+// the standard per-request timeout.
+func (s *Server) requestTimeoutForPath(path string) (time.Duration, bool) {
+	if path == queryEndpointPath {
+		return s.queryTimeout, true
+	}
+	if isLongDaemonRequest(path) {
+		return 0, false
+	}
+	return s.requestTimeout, true
 }
 
 func isLongDaemonRequest(path string) bool {
@@ -308,8 +334,7 @@ func isLongDaemonRequest(path string) bool {
 		"/api/v1/cli/search",
 		"/api/v1/cli/sync",
 		"/api/v1/cli/sync-full",
-		"/api/v1/cli/verify",
-		"/api/v1/query":
+		"/api/v1/cli/verify":
 		return true
 	default:
 		return false

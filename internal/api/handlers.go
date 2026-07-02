@@ -1544,6 +1544,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 				errSQLQueryEngineUnavailable.Error())
 			return
 		}
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, "query_error", err.Error())
 		return
 	}
@@ -2156,6 +2159,9 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.engine.Aggregate(r.Context(), viewType, opts)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("aggregate query failed", "view_type", viewTypeStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Aggregate query failed")
 		return
@@ -2197,6 +2203,9 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.engine.SubAggregate(r.Context(), filter, viewType, opts)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("sub-aggregate query failed", "view_type", viewTypeStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Sub-aggregate query failed")
 		return
@@ -2238,6 +2247,9 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 
 	messages, err := s.engine.ListMessages(r.Context(), filter)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("filtered messages query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Message query failed")
 		return
@@ -2408,6 +2420,9 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := s.engine.GetTotalStats(r.Context(), opts)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("total stats query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Stats query failed")
 		return

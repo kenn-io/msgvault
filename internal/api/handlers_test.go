@@ -919,6 +919,46 @@ func TestHandleCLIRunBypassesStandardRequestTimeout(t *testing.T) {
 	assert.Contains(resp.Body.String(), `"type":"complete"`, "body")
 }
 
+func TestHandleQueryEnforcesQueryTimeout(t *testing.T) {
+	started := make(chan struct{})
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Logger: testLogger(),
+		SQLQueryRunner: func(ctx context.Context, _ string) (*query.QueryResult, error) {
+			close(started)
+			<-ctx.Done() // simulate a runaway query that only stops on cancellation
+			return nil, ctx.Err()
+		},
+	})
+	// Test seam: shrink the query ceiling so the timeout fires immediately.
+	srv.queryTimeout = 20 * time.Millisecond
+
+	body := strings.NewReader(`{"sql":"SELECT 1"}`)
+	req := httptest.NewRequest(http.MethodPost, queryEndpointPath, body)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		srv.Router().ServeHTTP(resp, req)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "query runner never started")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "request did not return after query timeout")
+	}
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
+	assert.Contains(t, resp.Body.String(), "query_timeout")
+}
+
 func TestHandleCLIRunRejectsDisallowedEnv(t *testing.T) {
 	assert := assert.New(t)
 
