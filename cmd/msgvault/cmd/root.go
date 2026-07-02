@@ -446,6 +446,30 @@ type scopePreservingReauthorizer interface {
 	AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error
 }
 
+// reauthHint returns caller-specific, out-of-band re-authorization guidance for
+// an expired/revoked token in a non-interactive session. Gmail and Calendar use
+// different commands (add-account vs add-calendar), so the shared reauth helper
+// must be told which one to point the user at.
+type reauthHint func(email string) string
+
+// gmailReauthHint points at add-account, the Gmail authorization command.
+func gmailReauthHint(email string) string {
+	return fmt.Sprintf(
+		"re-authorize with 'msgvault add-account %s --force' (or "+
+			"'msgvault add-account %s --headless' on a server without a browser)",
+		email, email,
+	)
+}
+
+// calendarReauthHint points at add-calendar, the Calendar authorization command.
+func calendarReauthHint(email string) string {
+	return fmt.Sprintf(
+		"re-authorize with 'msgvault add-calendar %s' (or "+
+			"'msgvault add-calendar %s --headless' on a server without a browser)",
+		email, email,
+	)
+}
+
 // getTokenSourceWithReauth tries to get a token source for the given email.
 // If the token exists but is expired/revoked (invalid_grant), it automatically
 // deletes the old token and re-initiates the OAuth browser flow.
@@ -453,11 +477,14 @@ type scopePreservingReauthorizer interface {
 // deleting the token.
 // The interactive parameter controls whether the function can open a browser
 // for re-authorization. Callers should pass the result of an isatty check.
+// The recovery hint supplies the caller-specific out-of-band re-authorization
+// guidance printed when a non-interactive session cannot open a browser.
 func getTokenSourceWithReauth(
 	ctx context.Context,
 	mgr tokenReauthorizer,
 	email string,
 	interactive bool,
+	recovery reauthHint,
 ) (oauth2.TokenSource, error) {
 	tokenSource, err := mgr.TokenSource(ctx, email)
 	if err == nil {
@@ -482,10 +509,8 @@ func getTokenSourceWithReauth(
 	// device-code instructions instead (--force is browser-only).
 	if !interactive {
 		return nil, fmt.Errorf(
-			"token for %s is expired or revoked; re-authorize with "+
-				"'msgvault add-account %s --force' (or "+
-				"'msgvault add-account %s --headless' on a server without a browser)",
-			email, email, email,
+			"token for %s is expired or revoked; %s",
+			email, recovery(email),
 		)
 	}
 

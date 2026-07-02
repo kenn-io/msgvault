@@ -233,7 +233,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 		}
 		interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 			isatty.IsCygwinTerminal(os.Stdin.Fd())
-		tokenSource, tsErr = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive)
+		tokenSource, tsErr = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive, gmailReauthHint)
 		if tsErr != nil {
 			return tsErr
 		}

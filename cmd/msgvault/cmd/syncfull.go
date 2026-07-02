@@ -255,7 +255,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 			}
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
-			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive)
+			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive, gmailReauthHint)
 			if err != nil {
 				return nil, err
 			}

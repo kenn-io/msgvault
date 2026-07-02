@@ -239,7 +239,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 			interactive = isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
 		}
-		tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive)
+		tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive, gmailReauthHint)
 		if err != nil {
 			return err
 		}

@@ -391,6 +391,17 @@ func (m *mockReauthorizer) AuthorizeManual(ctx context.Context, email string) er
 	return nil
 }
 
+// AuthorizePreservingGrantedScopes is the browser scope-preserving reauth the
+// sync preflight uses. It shares authorizeCount/authorizeFn with Authorize so
+// preflight tests can assert the reauth happened without a separate seam.
+func (m *mockReauthorizer) AuthorizePreservingGrantedScopes(ctx context.Context, email string) error {
+	m.authorizeCount++
+	if m.authorizeFn != nil {
+		return m.authorizeFn(ctx, email)
+	}
+	return nil
+}
+
 type preservingMockReauthorizer struct {
 	*mockReauthorizer
 
@@ -529,7 +540,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			ctx := context.Background()
-			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive)
+			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive, gmailReauthHint)
 
 			if tt.wantErr {
 				require.Error(err)
@@ -563,7 +574,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 				return mismatch
 			},
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true)
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true, gmailReauthHint)
 		require.Error(t, err)
 		msg := err.Error()
 		for _, want := range []string{"remove-account", "add-account", "primary address"} {
@@ -586,9 +597,24 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			hasTokenVal: true,
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false)
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
 		require.ErrorContains(t, err, "add-account x@gmail.com --force")
 		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
+	})
+
+	// A Calendar caller must be pointed at add-calendar, not the Gmail
+	// add-account flow (wrong scopes for a Calendar token failure).
+	t.Run("non-interactive calendar error points at add-calendar", func(t *testing.T) {
+		mock := &mockReauthorizer{
+			tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+				return nil, invalidGrant
+			},
+			hasTokenVal: true,
+		}
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, calendarReauthHint)
+		require.ErrorContains(t, err, "add-calendar x@gmail.com")
+		require.ErrorContains(t, err, "add-calendar x@gmail.com --headless")
+		require.NotContains(t, err.Error(), "add-account")
 	})
 }
 
@@ -606,7 +632,7 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 		return fakeTokenSource{}, nil
 	}
 
-	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true)
+	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true, gmailReauthHint)
 
 	require.NoError(err)
 	assert.NotNil(ts)

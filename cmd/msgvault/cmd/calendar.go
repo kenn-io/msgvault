@@ -705,7 +705,7 @@ func buildCalendarClient(ctx context.Context, accountEmail, oauthApp string, int
 		if err := requireCalendarTokenForSync(mgr, accountEmail); err != nil {
 			return nil, err
 		}
-		tokenSource, err = getTokenSourceWithReauth(ctx, mgr, accountEmail, interactive)
+		tokenSource, err = getTokenSourceWithReauth(ctx, mgr, accountEmail, interactive, calendarReauthHint)
 		if err != nil {
 			return nil, err
 		}
