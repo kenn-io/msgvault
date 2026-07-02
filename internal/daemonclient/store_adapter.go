@@ -21,8 +21,18 @@ func (c *Client) GetStats() (*store.Stats, error) {
 	return storeStatsFromGenerated(*resp.JSON200), nil
 }
 
-// VectorSearchAvailable reports whether the daemon advertises vector search
-// support through the public stats endpoint.
+// VectorSearchAvailable reports whether the daemon can serve vector search,
+// so callers (e.g. the MCP server) know whether to register vector-backed
+// tools. It reads the public stats endpoint.
+//
+// Vector init is asynchronous: a daemon can be serving while the subsystem is
+// still `initializing`, at which point vector stats are nil but the tools
+// should still be registered. The daemon reports its subsystem state in
+// `vector_status` (values from internal/api/vector_status.go:
+// disabled/initializing/ready/stale/error). Any non-disabled status is treated
+// as capable — including `error`, so a tool call surfaces the daemon's 503
+// detail rather than the tool silently going missing. Older daemons that omit
+// `vector_status` fall back to the `vector_search.enabled` flag.
 func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetStatsResp, error) {
 		return client.GetStatsWithResponse(ctx)
@@ -30,11 +40,22 @@ func (c *Client) VectorSearchAvailable(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if resp == nil || resp.JSON200 == nil || resp.JSON200.VectorSearch == nil {
+	if resp == nil || resp.JSON200 == nil {
+		return false, nil
+	}
+	if status := resp.JSON200.VectorStatus; status != nil && *status != "" {
+		return *status != vectorStatusDisabled, nil
+	}
+	if resp.JSON200.VectorSearch == nil {
 		return false, nil
 	}
 	return resp.JSON200.VectorSearch.Enabled, nil
 }
+
+// vectorStatusDisabled mirrors api.VectorStatusDisabled. It is duplicated here
+// rather than imported because internal/api imports this package, so importing
+// it back would create a cycle.
+const vectorStatusDisabled = "disabled"
 
 // parseTime parses RFC3339 time string.
 func parseTime(s string) time.Time {

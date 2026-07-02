@@ -776,6 +776,71 @@ func TestGetStatsUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal(int64(1024), stats.DatabaseSize, "DatabaseSize")
 }
 
+func TestVectorSearchAvailable(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "status initializing is capable",
+			body: `{"vector_status":"initializing"}`,
+			want: true,
+		},
+		{
+			name: "status ready is capable",
+			body: `{"vector_status":"ready","vector_search":{"enabled":true}}`,
+			want: true,
+		},
+		{
+			name: "status stale is capable",
+			body: `{"vector_status":"stale"}`,
+			want: true,
+		},
+		{
+			name: "status error is capable",
+			body: `{"vector_status":"error"}`,
+			want: true,
+		},
+		{
+			name: "status disabled is not capable",
+			body: `{"vector_status":"disabled"}`,
+			want: false,
+		},
+		{
+			name: "old daemon without status falls back to enabled flag",
+			body: `{"vector_search":{"enabled":true}}`,
+			want: true,
+		},
+		{
+			name: "old daemon without status and disabled flag is not capable",
+			body: `{"vector_search":{"enabled":false}}`,
+			want: false,
+		},
+		{
+			name: "old daemon without vector fields is not capable",
+			body: `{}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/stats", r.URL.Path, "path")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			s := newTestStore(srv, "key")
+			got, err := s.VectorSearchAvailable(context.Background())
+			require.NoError(t, err, "VectorSearchAvailable")
+			assert.Equal(t, tt.want, got, "capable")
+		})
+	}
+}
+
 func TestGetCLIStats_Success(t *testing.T) {
 	assert := assert.New(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
