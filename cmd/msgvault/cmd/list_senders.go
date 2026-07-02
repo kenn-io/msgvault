@@ -17,6 +17,7 @@ Examples:
   msgvault list-senders --limit 20
   msgvault list-senders --after 2024-01-01 --before 2024-06-01
   msgvault list-senders --json`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewSenders, "No senders found.", "Sender", "sender")
 	},

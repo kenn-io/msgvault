@@ -17,6 +17,7 @@ Examples:
   msgvault list-domains --limit 20
   msgvault list-domains --after 2024-01-01
   msgvault list-domains --json`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewDomains, "No domains found.", "Domain", "domain")
 	},

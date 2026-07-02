@@ -65,13 +65,6 @@ func runExportAttachment(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Validate output path before doing any work
-	if exportAttachmentOutput != "" && exportAttachmentOutput != "-" {
-		if err := export.ValidateOutputPath(exportAttachmentOutput); err != nil {
-			return err
-		}
-	}
-
 	return runExportAttachmentHTTP(cmd, contentHash)
 }
 

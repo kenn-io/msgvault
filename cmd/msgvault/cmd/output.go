@@ -24,9 +24,10 @@ var (
 func parseCommonFlags() (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
 
-	if aggLimit > 0 {
-		opts.Limit = aggLimit
+	if aggLimit <= 0 {
+		return opts, fmt.Errorf("limit must be a positive integer, got %d", aggLimit)
 	}
+	opts.Limit = aggLimit
 
 	if aggAfter != "" {
 		t, err := time.Parse("2006-01-02", aggAfter)
@@ -89,7 +90,16 @@ func outputAggregateTable(
 		)
 	}
 	_ = w.Flush()
-	fmt.Printf("\nShowing %d results\n", len(rows))
+	fmt.Printf("\n%s\n", formatShowingResults(len(rows)))
+}
+
+// formatShowingResults renders the results footer with singular/plural
+// agreement ("Showing 1 result" vs "Showing 2 results").
+func formatShowingResults(n int) string {
+	if n == 1 {
+		return "Showing 1 result"
+	}
+	return fmt.Sprintf("Showing %d results", n)
 }
 
 // outputAggregateJSON prints aggregate results as JSON.

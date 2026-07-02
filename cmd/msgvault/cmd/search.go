@@ -71,6 +71,25 @@ Examples:
 			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
 
+		// Validate --message-type against the known set, like --mode, so a
+		// typo (e.g. carrier_pigeon) fails fast instead of silently
+		// returning no results.
+		for _, mt := range searchMessageTypes {
+			if !query.IsKnownMessageType(mt) {
+				return usageErr(cmd, fmt.Errorf(
+					"invalid --message-type: %q (want one of: %s)",
+					mt, strings.Join(query.KnownMessageTypes, ", "),
+				))
+			}
+		}
+
+		if searchLimit <= 0 {
+			return usageErr(cmd, fmt.Errorf("--limit must be a positive integer, got %d", searchLimit))
+		}
+		if searchOffset < 0 {
+			return usageErr(cmd, fmt.Errorf("--offset must be non-negative, got %d", searchOffset))
+		}
+
 		// Reject known operators with invalid values (e.g. before:2025-13-45)
 		// rather than silently dropping the filter and running a wider query.
 		// Checked before the empty-query test so the user sees the offending
@@ -206,7 +225,7 @@ func outputSearchResultsTable(results []query.MessageSummary) error {
 	}
 
 	_ = w.Flush()
-	fmt.Printf("\nShowing %d results\n", len(results))
+	fmt.Printf("\n%s\n", formatShowingResults(len(results)))
 	return nil
 }
 

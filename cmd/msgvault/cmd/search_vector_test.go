@@ -91,7 +91,7 @@ func TestSearchCmd_VectorModeCollectionUsesLocalDaemonHTTPAndPreservesBanner(t *
 
 	assert.Equal(1, int(requests.Load()), "search endpoint calls")
 	assert.Contains(out, "Lunch *", "boosted marker")
-	assert.Contains(out, `Showing 1 results (generation #7 active, fingerprint="fake:4")`, "summary")
+	assert.Contains(out, `Showing 1 result (generation #7 active, fingerprint="fake:4")`, "summary")
 	assert.Contains(errOut, `Searching collection "Important" (2 accounts)`, "collection banner")
 }
 

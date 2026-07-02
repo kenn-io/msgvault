@@ -347,69 +347,6 @@ func TestCreateExclusiveFile(t *testing.T) {
 	})
 }
 
-func TestValidateOutputPath(t *testing.T) {
-	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
-	}{
-		{"simple filename", "invoice.pdf", false},
-		{"filename with dot prefix", "./invoice.pdf", false},
-		{"subdirectory", "subdir/file.pdf", false},
-		{"stdout dash", "-", false},
-		{"dot-dot prefix filename", "..backup", false},
-		{"dot-dot middle filename", "foo..bar.txt", false},
-
-		// Rooted/absolute paths (could be malicious attachment names)
-		{"absolute unix path", "/tmp/file.pdf", true},
-		{"absolute path with traversal", "/etc/cron.d/evil", true},
-		{"backslash rooted path", `\tmp\file.pdf`, true},
-
-		// Path traversal attacks (e.g., from email-supplied filenames)
-		{"parent traversal", "../evil.txt", true},
-		{"deep traversal", "../../.ssh/authorized_keys", true},
-		{"traversal via subdir", "foo/../../evil.txt", true},
-	}
-
-	// Windows drive and UNC paths — only meaningful on Windows where
-	// filepath.VolumeName returns non-empty for these forms.
-	if runtime.GOOS == "windows" {
-		tests = append(tests,
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows absolute", `C:\tmp\file.pdf`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows drive-relative", `C:tmp\file.pdf`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows drive-relative traversal", `C:..\evil`, true},
-			struct {
-				name    string
-				path    string
-				wantErr bool
-			}{"windows UNC path", `\\server\share\file.pdf`, true},
-		)
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateOutputPath(tt.path)
-			if tt.wantErr {
-				assert.Error(t, err, "ValidateOutputPath(%q)", tt.path)
-			} else {
-				assert.NoError(t, err, "ValidateOutputPath(%q)", tt.path)
-			}
-		})
-	}
-}
-
 func TestAttachments(t *testing.T) {
 	tests := []struct {
 		name           string

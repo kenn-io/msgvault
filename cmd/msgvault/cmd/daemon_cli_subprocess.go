@@ -78,10 +78,30 @@ func runDaemonCLISubprocessStreamWithEnv(
 	if secondStreamErr != nil {
 		return secondStreamErr
 	}
-	if waitErr != nil {
-		return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)
+	return classifyDaemonCLIWaitErr(waitErr, args)
+}
+
+// cliSubprocessExitSentinel marks a daemon CLI subprocess that ran and exited
+// non-zero. It crosses the daemon→client boundary as a plain string (via the
+// NDJSON error event), so both the subprocess runner and the proxy client
+// match on this exact value.
+const cliSubprocessExitSentinel = "msgvault: cli subprocess exited non-zero"
+
+// classifyDaemonCLIWaitErr maps a subprocess Wait() error to what the proxy
+// should report. A non-zero exit (the command ran and failed) becomes the
+// sentinel: its real error was already streamed to the caller's stderr, so the
+// client must not print a second, redundant "CLI subprocess ...: exit status
+// 1" wrapper. Any other failure (couldn't start, signal, etc.) is wrapped with
+// context because nothing else surfaced it.
+func classifyDaemonCLIWaitErr(waitErr error, args []string) error {
+	if waitErr == nil {
+		return nil
 	}
-	return nil
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		return errors.New(cliSubprocessExitSentinel)
+	}
+	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)
 }
 
 func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, env map[string]string, cwd string) (*exec.Cmd, error) {

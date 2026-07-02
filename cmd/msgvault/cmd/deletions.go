@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,13 +26,17 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+var listDeletionsJSON bool
+
 var listDeletionsCmd = &cobra.Command{
 	Use:   "list-deletions",
 	Short: "List pending and recent deletion batches",
 	Long: `List all deletion batches across all statuses.
 
 Shows pending, in-progress, completed, and failed deletion batches
-with their ID, status, message count, and creation date.`,
+with their ID, status, message count, and creation date. Use --json for
+full, untruncated batch IDs suitable for show-deletion and delete-staged.`,
+	Args: cobra.NoArgs,
 	RunE: runListDeletions,
 }
 
@@ -69,6 +74,10 @@ func runListDeletionsForManager(mgr *deletion.Manager, w io.Writer) error {
 		return fmt.Errorf("list cancelled deletions: %w", err)
 	}
 
+	if listDeletionsJSON {
+		return writeDeletionsJSON(w, pending, inProgress, completed, failed, cancelled)
+	}
+
 	if len(pending) == 0 && len(inProgress) == 0 && len(completed) == 0 && len(failed) == 0 && len(cancelled) == 0 {
 		_, _ = fmt.Fprintln(w, "No deletion batches found.")
 		_, _ = fmt.Fprintln(w, "\nTo stage messages for deletion, use the TUI or create a manifest manually.")
@@ -80,16 +89,21 @@ func runListDeletionsForManager(mgr *deletion.Manager, w io.Writer) error {
 			return
 		}
 		_, _ = fmt.Fprintf(w, "\n%s:\n", status)
-		_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10s  %s\n", "ID", "Status", "Messages", "Created")
-		_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10s  %s\n", "---", "------", "--------", "-------")
+		// Batch IDs are the key users feed to show-deletion/delete-staged,
+		// so never truncate them; tabwriter keeps the columns aligned even
+		// when IDs vary in length.
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "  ID\tStatus\tMessages\tCreated")
+		_, _ = fmt.Fprintln(tw, "  --\t------\t--------\t-------")
 		for _, m := range manifests {
-			_, _ = fmt.Fprintf(w, "  %-25s  %-10s  %10d  %s\n",
-				truncate(m.ID, 25),
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\n",
+				m.ID,
 				m.Status,
 				len(m.GmailIDs),
 				m.CreatedAt.Format("2006-01-02 15:04"),
 			)
 		}
+		_ = tw.Flush()
 	}
 
 	printManifestTable("Pending", pending)
@@ -99,6 +113,28 @@ func runListDeletionsForManager(mgr *deletion.Manager, w io.Writer) error {
 	printManifestTable("Cancelled (recent)", limitManifests(cancelled, 10))
 
 	return nil
+}
+
+// writeDeletionsJSON emits every deletion batch as a JSON array with full
+// (untruncated) IDs so the output can be fed directly to show-deletion or
+// delete-staged. Unlike the table view it is not limited to recent batches.
+func writeDeletionsJSON(w io.Writer, groups ...[]*deletion.Manifest) error {
+	out := make([]map[string]any, 0)
+	for _, manifests := range groups {
+		for _, m := range manifests {
+			out = append(out, map[string]any{
+				"id":            m.ID,
+				"status":        m.Status,
+				"message_count": len(m.GmailIDs),
+				"description":   m.Description,
+				"account":       m.Filters.Account,
+				"created_at":    m.CreatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 var showDeletionCmd = &cobra.Command{
@@ -1416,6 +1452,7 @@ func init() {
 	_ = deleteStagedCmd.Flags().MarkHidden(deleteStagedScopeEscalationConfirmedFlag)
 
 	deleteStagedCmd.MarkFlagsMutuallyExclusive("permanent", "yes")
+	listDeletionsCmd.Flags().BoolVar(&listDeletionsJSON, flagJSON, false, "Output as JSON with full batch IDs")
 	rootCmd.AddCommand(listDeletionsCmd)
 	rootCmd.AddCommand(showDeletionCmd)
 	cancelDeletionCmd.Flags().BoolVar(&cancelAll, "all", false, "Cancel all pending and in-progress batches")

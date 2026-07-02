@@ -650,6 +650,7 @@ deleted from their source account (the archive retains them) but excludes
 dedup-hidden rows and messages without a timestamp. This differs from the
 'stats' command, which reports active messages from the SQLite system of
 record.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		st, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {

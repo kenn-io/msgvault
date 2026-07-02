@@ -21,6 +21,7 @@ Examples:
   msgvault list-labels
   msgvault list-labels --limit 50
   msgvault list-labels --json`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewLabels, "No labels found.", "Label", "label")
 	},

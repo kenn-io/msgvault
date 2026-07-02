@@ -111,8 +111,8 @@ func outputHybridResultsTable(resp *daemonclient.CLIHybridSearch, explain bool) 
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flush table output: %w", err)
 	}
-	fmt.Printf("\nShowing %d results (generation #%d %s, fingerprint=%q)\n",
-		len(resp.Results), resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
+	fmt.Printf("\n%s (generation #%d %s, fingerprint=%q)\n",
+		formatShowingResults(len(resp.Results)), resp.Generation.ID, resp.Generation.State, resp.Generation.Fingerprint)
 	return nil
 }
 

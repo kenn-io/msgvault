@@ -39,6 +39,7 @@ watermark, catching any straggler messages the incremental scan skipped.`,
 var embeddingsListCmd = &cobra.Command{
 	Use:   cmdUseList,
 	Short: "List vector embedding generations",
+	Args:  cobra.NoArgs,
 	RunE:  runEmbeddingsListCommand,
 }
 var embeddingsRetireCmd = &cobra.Command{

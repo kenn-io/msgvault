@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -40,7 +41,7 @@ func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[s
 		return err
 	}
 
-	return st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{Args: args, Env: env, Cwd: cwd}, func(stream, data string) error {
+	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{Args: args, Env: env, Cwd: cwd}, func(stream, data string) error {
 		switch stream {
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
@@ -53,7 +54,20 @@ func runDaemonCLICommandHTTPWithEnv(cmd *cobra.Command, args []string, env map[s
 		}
 		return nil
 	})
+	if runErr != nil && strings.Contains(runErr.Error(), cliSubprocessExitSentinel) {
+		// The daemon subprocess already streamed its real error to our
+		// stderr and exited non-zero. Propagate a non-zero exit without
+		// letting cobra print a second, redundant error line.
+		cmd.SilenceErrors = true
+		return errCLISubprocessProxied
+	}
+	return runErr
 }
+
+// errCLISubprocessProxied signals that a daemon-proxied CLI subprocess ran and
+// failed. The real error was already shown to the user via streamed stderr, so
+// callers exit non-zero without printing anything further.
+var errCLISubprocessProxied = errors.New("cli subprocess failed")
 
 func daemonCLIRunCwd(info HTTPStoreInfo) (string, error) {
 	if info.Kind != HTTPStoreLocalDaemon {

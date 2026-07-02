@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -47,13 +48,36 @@ func TestListDeletions_ShowsCancelled(t *testing.T) {
 	require.NoError(runListDeletionsForManager(mgr, &buf), "runListDeletionsForManager")
 
 	assert.Contains(buf.String(), "Cancelled", "output missing 'Cancelled' header")
-	// The ID is truncated to 25 chars in the table; check the first 20 chars
-	// (the timestamp prefix) which always survive truncation.
-	idPrefix := manifest.ID
-	if len(idPrefix) > 20 {
-		idPrefix = idPrefix[:20]
-	}
-	assert.Contains(buf.String(), idPrefix, "output missing manifest ID prefix %q", idPrefix)
+	// The full batch ID must appear untruncated so it can be fed to
+	// show-deletion / delete-staged (F6).
+	assert.Contains(buf.String(), manifest.ID, "output missing full manifest ID %q", manifest.ID)
+}
+
+func TestListDeletions_JSONEmitsFullIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	mgr, err := deletion.NewManager(tmpDir)
+	require.NoError(err, "NewManager")
+
+	manifest := deletion.NewManifest("a very long description that would otherwise be truncated in the table", []string{"abc123", "def456"})
+	require.NoError(manifest.Save(filepath.Join(tmpDir, "pending", manifest.ID+".json")), "save manifest")
+
+	oldJSON := listDeletionsJSON
+	listDeletionsJSON = true
+	t.Cleanup(func() { listDeletionsJSON = oldJSON })
+
+	var buf bytes.Buffer
+	require.NoError(runListDeletionsForManager(mgr, &buf), "runListDeletionsForManager")
+
+	var out []map[string]any
+	require.NoError(json.Unmarshal(buf.Bytes(), &out), "decode JSON output")
+	require.Len(out, 1, "one batch")
+	assert.Equal(manifest.ID, out[0]["id"], "full id")
+	assert.Equal("pending", out[0]["status"], "status")
+	count, ok := out[0]["message_count"].(float64)
+	require.True(ok, "message_count is a JSON number")
+	assert.Equal(2, int(count), "message_count")
 }
 
 func TestDeleteStagedFailsFastWhenArchiveOwned(t *testing.T) {

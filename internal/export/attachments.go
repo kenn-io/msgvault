@@ -214,32 +214,6 @@ func SanitizeFilename(s string) string {
 	return string(result)
 }
 
-// ValidateOutputPath checks that an output file path does not escape the
-// current working directory. This guards against email-supplied filenames
-// being passed to --output (e.g., an attachment named
-// "../../.ssh/authorized_keys" or "/etc/cron.d/evil").
-// Both absolute paths and ".." traversal are rejected.
-func ValidateOutputPath(outputPath string) error {
-	cleaned := filepath.Clean(outputPath)
-	if filepath.IsAbs(cleaned) {
-		return fmt.Errorf("output path %q is absolute; use a relative path", outputPath)
-	}
-	// Reject Windows drive-relative (C:foo) and UNC (\\server\share) paths,
-	// which filepath.IsAbs does not catch.
-	if filepath.VolumeName(cleaned) != "" {
-		return fmt.Errorf("output path %q contains a drive or UNC prefix; use a relative path", outputPath)
-	}
-	// Reject rooted paths (leading / or \) which are drive-relative on Windows
-	// and absolute on Unix. filepath.IsAbs misses these on Windows.
-	if len(cleaned) > 0 && (cleaned[0] == '/' || cleaned[0] == '\\') {
-		return fmt.Errorf("output path %q is rooted; use a relative path", outputPath)
-	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("output path %q escapes the working directory", outputPath)
-	}
-	return nil
-}
-
 // StoragePath returns the content-addressed file path for an attachment:
 // attachmentsDir/<hash[:2]>/<hash>. Returns an error if the content hash
 // is invalid (prevents panics from short/empty strings).

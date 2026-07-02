@@ -20,6 +20,7 @@ var statsCmd = &cobra.Command{
 
 Uses configured remote server or the local daemon by default.
 Use --local to use the local daemon even when a remote is configured.`,
+	Args: cobra.NoArgs,
 	RunE: runStats,
 }
 

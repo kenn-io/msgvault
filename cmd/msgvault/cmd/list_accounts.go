@@ -27,6 +27,7 @@ Shows account email, message count, and last sync time.
 Examples:
 	msgvault list-accounts
 	msgvault list-accounts --json`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return listHTTPAccounts(cmd)
 	},
