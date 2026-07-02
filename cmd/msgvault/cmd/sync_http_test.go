@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	extOAuth2 "golang.org/x/oauth2"
 )
 
 func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
@@ -114,6 +117,169 @@ func configureRemoteSyncTest(t *testing.T, remoteURL string) {
 	oldLogger := logger
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	t.Cleanup(func() { logger = oldLogger })
+}
+
+// newValidPreflightManager returns a mock whose token source always succeeds.
+func newValidPreflightManager() *mockReauthorizer {
+	return &mockReauthorizer{
+		hasTokenVal: true,
+		tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+			return fakeTokenSource{}, nil
+		},
+	}
+}
+
+// newExpiredPreflightManager returns a mock whose token source reports
+// invalid_grant, the auth-invalid signal that warrants reauth.
+func newExpiredPreflightManager() *mockReauthorizer {
+	return &mockReauthorizer{
+		hasTokenVal: true,
+		tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+			return nil, &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
+		},
+	}
+}
+
+// basePreflight builds a local+interactive+configured preflight over the given
+// Gmail accounts, wiring ManagerFor to the supplied per-app mock map.
+func basePreflight(managers map[string]*mockReauthorizer, accounts ...preflightAccount) preflightConfig {
+	return preflightConfig{
+		Local:             true,
+		Interactive:       true,
+		OAuthConfigured:   true,
+		Out:               &bytes.Buffer{},
+		ServiceAccountKey: func(string) string { return "" },
+		ListGmailAccounts: func(context.Context) ([]preflightAccount, error) {
+			return accounts, nil
+		},
+		ManagerFor: func(appName string) (preflightReauthManager, error) {
+			return managers[appName], nil
+		},
+	}
+}
+
+func TestPreflightReauth(t *testing.T) {
+	acct := preflightAccount{Email: "alice@example.com"}
+
+	tests := []struct {
+		name          string
+		manager       *mockReauthorizer
+		config        func(map[string]*mockReauthorizer) preflightConfig
+		wantErr       bool
+		wantAuthorize int
+	}{
+		{
+			name:          "valid token → no reauth",
+			manager:       newValidPreflightManager(),
+			config:        func(m map[string]*mockReauthorizer) preflightConfig { return basePreflight(m, acct) },
+			wantAuthorize: 0,
+		},
+		{
+			name:          "expired token, interactive+local → authorize",
+			manager:       newExpiredPreflightManager(),
+			config:        func(m map[string]*mockReauthorizer) preflightConfig { return basePreflight(m, acct) },
+			wantAuthorize: 1,
+		},
+		{
+			name:          "no token → skip (no enroll)",
+			manager:       &mockReauthorizer{hasTokenVal: false},
+			config:        func(m map[string]*mockReauthorizer) preflightConfig { return basePreflight(m, acct) },
+			wantAuthorize: 0,
+		},
+		{
+			name:    "non-interactive → skip",
+			manager: newExpiredPreflightManager(),
+			config: func(m map[string]*mockReauthorizer) preflightConfig {
+				c := basePreflight(m, acct)
+				c.Interactive = false
+				return c
+			},
+			wantAuthorize: 0,
+		},
+		{
+			name:    "remote daemon → skip",
+			manager: newExpiredPreflightManager(),
+			config: func(m map[string]*mockReauthorizer) preflightConfig {
+				c := basePreflight(m, acct)
+				c.Local = false
+				return c
+			},
+			wantAuthorize: 0,
+		},
+		{
+			name:    "oauth not configured → skip",
+			manager: newExpiredPreflightManager(),
+			config: func(m map[string]*mockReauthorizer) preflightConfig {
+				c := basePreflight(m, acct)
+				c.OAuthConfigured = false
+				return c
+			},
+			wantAuthorize: 0,
+		},
+		{
+			name:    "service account → skip",
+			manager: newExpiredPreflightManager(),
+			config: func(m map[string]*mockReauthorizer) preflightConfig {
+				c := basePreflight(m, acct)
+				c.ServiceAccountKey = func(string) string { return "/keys/sa.json" }
+				return c
+			},
+			wantAuthorize: 0,
+		},
+		{
+			name: "authorize failure → error",
+			manager: func() *mockReauthorizer {
+				m := newExpiredPreflightManager()
+				m.authorizeFn = func(_ context.Context, _ string) error {
+					return errors.New("browser flow failed")
+				}
+				return m
+			}(),
+			config:        func(m map[string]*mockReauthorizer) preflightConfig { return basePreflight(m, acct) },
+			wantErr:       true,
+			wantAuthorize: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			managers := map[string]*mockReauthorizer{"": tt.manager}
+			err := preflightReauth(context.Background(), tt.config(managers), "")
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantAuthorize, tt.manager.authorizeCount, "authorize count")
+		})
+	}
+}
+
+// TestPreflightReauth_SpecificEmail verifies only the requested Gmail account
+// is probed, leaving other accounts untouched.
+func TestPreflightReauth_SpecificEmail(t *testing.T) {
+	alice := newExpiredPreflightManager()
+	bob := newExpiredPreflightManager()
+	managers := map[string]*mockReauthorizer{"alice-app": alice, "bob-app": bob}
+	c := basePreflight(managers,
+		preflightAccount{Email: "alice@example.com", OAuthApp: "alice-app"},
+		preflightAccount{Email: "bob@example.com", OAuthApp: "bob-app"},
+	)
+
+	require.NoError(t, preflightReauth(context.Background(), c, "bob@example.com"))
+	assert.Equal(t, 0, alice.authorizeCount, "alice must not be re-authorized")
+	assert.Equal(t, 1, bob.authorizeCount, "bob must be re-authorized")
+}
+
+// TestPreflightReauth_IMAPRequestSkips verifies a request for a non-Gmail
+// account (absent from the Gmail account list) triggers no reauth.
+func TestPreflightReauth_IMAPRequestSkips(t *testing.T) {
+	gmailMgr := newExpiredPreflightManager()
+	managers := map[string]*mockReauthorizer{"": gmailMgr}
+	c := basePreflight(managers, preflightAccount{Email: "alice@example.com"})
+
+	require.NoError(t, preflightReauth(context.Background(), c, "imap-user@example.com"))
+	assert.Equal(t, 0, gmailMgr.authorizeCount, "no reauth for non-Gmail request")
 }
 
 func resetSyncFullFlagsForTest(t *testing.T) {
