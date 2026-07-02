@@ -29,7 +29,9 @@ func TestAggregations(t *testing.T) {
 			name:    "BySenderName",
 			aggName: "AggregateBySenderName",
 			view:    ViewSenderNames,
-			want:    []aggExpectation{{"Alice Smith", 3}, {"Bob Jones", 2}},
+			// Per-message From-header names (message_recipients.display_name),
+			// not the sticky participants.display_name ("Alice Smith").
+			want: []aggExpectation{{"Alice", 3}, {"Bob", 2}},
 		},
 		{
 			name:    "ByRecipient",
@@ -53,7 +55,8 @@ func TestAggregations(t *testing.T) {
 			name:    "ByRecipientName",
 			aggName: "AggregateByRecipientName",
 			view:    ViewRecipientNames,
-			want:    []aggExpectation{{"Bob Jones", 3}, {"Alice Smith", 2}, {"Carol White", 1}},
+			// Per-message display names, not sticky participants.display_name.
+			want: []aggExpectation{{"Bob", 3}, {"Alice", 2}, {"Carol", 1}},
 		},
 	}
 
@@ -240,6 +243,76 @@ func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	})
 }
 
+// TestAggregateBySenderName_PerMessageNames verifies that the SenderNames
+// aggregate groups by the actual per-message From-header display name
+// (message_recipients.display_name), not the single sticky
+// participants.display_name. A high-volume address (e.g. a mailing list)
+// sends under many author names over time; crediting all of its traffic to
+// one arbitrary stored name misrepresents the data (see break-test F4).
+func TestAggregateBySenderName_PerMessageNames(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	// One address with a single sticky participant name...
+	listID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("git@apache.org"),
+		DisplayName: new("amoeba (via GitHub)"),
+		Domain:      "apache.org",
+	})
+	// ...but messages sent under two distinct per-message names.
+	m1 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 1", SentAt: "2024-06-01 10:00:00", FromID: listID})
+	m2 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 2", SentAt: "2024-06-02 10:00:00", FromID: listID})
+	m3 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 3", SentAt: "2024-06-03 10:00:00", FromID: listID})
+	env.SetFromName(m1, "alice via GitHub")
+	env.SetFromName(m2, "alice via GitHub")
+	env.SetFromName(m3, "bob via GitHub")
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
+	require.NoError(t, err, "AggregateBySenderName")
+
+	counts := aggRowMap(t, rows)
+	assert.Equal(int64(2), counts["alice via GitHub"], "per-message name count")
+	assert.Equal(int64(1), counts["bob via GitHub"], "per-message name count")
+	assert.NotContains(counts, "amoeba (via GitHub)",
+		"sticky participant name must not absorb all of the address's traffic")
+
+	// Drill-down by the per-message name must return exactly those messages.
+	listed := env.MustListMessages(MessageFilter{SenderName: "alice via GitHub"})
+	assert.Len(listed, 2, "ListMessages by per-message sender name")
+}
+
+// TestAggregateByRecipientName_PerMessageNames is the recipient-side analog of
+// TestAggregateBySenderName_PerMessageNames.
+func TestAggregateByRecipientName_PerMessageNames(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	senderID := env.MustLookupParticipant("alice@example.com")
+	listID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("list@apache.org"),
+		DisplayName: new("Subscribed"),
+		Domain:      "apache.org",
+	})
+	m1 := env.AddMessage(dbtest.MessageOpts{Subject: "R1", SentAt: "2024-06-01 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	m2 := env.AddMessage(dbtest.MessageOpts{Subject: "R2", SentAt: "2024-06-02 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	m3 := env.AddMessage(dbtest.MessageOpts{Subject: "R3", SentAt: "2024-06-03 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	env.SetRecipientName(m1, listID, "dev list")
+	env.SetRecipientName(m2, listID, "dev list")
+	env.SetRecipientName(m3, listID, "users list")
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
+	require.NoError(t, err, "AggregateByRecipientName")
+
+	counts := aggRowMap(t, rows)
+	assert.Equal(int64(2), counts["dev list"], "per-message name count")
+	assert.Equal(int64(1), counts["users list"], "per-message name count")
+	assert.NotContains(counts, "Subscribed",
+		"sticky participant name must not absorb all of the address's traffic")
+
+	listed := env.MustListMessages(MessageFilter{RecipientName: "dev list"})
+	assert.Len(listed, 2, "ListMessages by per-message recipient name")
+}
+
 func TestAggregateByTime(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -342,7 +415,7 @@ func TestSubAggregates(t *testing.T) {
 			name:   "BySenderName",
 			filter: MessageFilter{Recipient: "alice@example.com"},
 			view:   ViewSenderNames,
-			want:   []aggExpectation{{"Bob Jones", 2}},
+			want:   []aggExpectation{{"Bob", 2}},
 		},
 		{
 			name:   "ByRecipient",
@@ -360,11 +433,11 @@ func TestSubAggregates(t *testing.T) {
 			name:   "ByRecipientName",
 			filter: MessageFilter{Sender: "alice@example.com"},
 			view:   ViewRecipientNames,
-			want:   []aggExpectation{{"Bob Jones", 3}, {"Carol White", 1}},
+			want:   []aggExpectation{{"Bob", 3}, {"Carol", 1}},
 		},
 		{
 			name:   "RecipientNameWithRecipient",
-			filter: MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob Jones"},
+			filter: MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob"},
 			view:   ViewSenders,
 			want:   []aggExpectation{{"alice@example.com", 3}},
 		},

@@ -39,6 +39,28 @@ func (e *testEnv) MustListMessages(filter MessageFilter) []MessageSummary {
 	return messages
 }
 
+// SetFromName sets the per-message From-header display name
+// (message_recipients.display_name) for a message's 'from' row.
+func (e *testEnv) SetFromName(messageID int64, name string) {
+	e.T.Helper()
+	_, err := e.DB.Exec(
+		`UPDATE message_recipients SET display_name = ? WHERE message_id = ? AND recipient_type = 'from'`,
+		name, messageID)
+	require.NoError(e.T, err, "SetFromName")
+}
+
+// SetRecipientName sets the per-message display name
+// (message_recipients.display_name) for a message's to/cc/bcc row addressed
+// to the given participant.
+func (e *testEnv) SetRecipientName(messageID, participantID int64, name string) {
+	e.T.Helper()
+	_, err := e.DB.Exec(
+		`UPDATE message_recipients SET display_name = ?
+		 WHERE message_id = ? AND participant_id = ? AND recipient_type IN ('to', 'cc', 'bcc')`,
+		name, messageID, participantID)
+	require.NoError(e.T, err, "SetRecipientName")
+}
+
 // MustSearch calls Search and fails the test on error.
 func (e *testEnv) MustSearch(q *search.Query, limit, offset int) []MessageSummary {
 	e.T.Helper()

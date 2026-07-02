@@ -141,27 +141,27 @@ func TestListMessages_Filters(t *testing.T) {
 		},
 		{
 			name:      "Filter by sender name",
-			filter:    MessageFilter{SenderName: "Alice Smith"},
+			filter:    MessageFilter{SenderName: "Alice"},
 			wantCount: 3,
 		},
 		{
 			name:      "Filter by recipient name",
-			filter:    MessageFilter{RecipientName: "Bob Jones"},
+			filter:    MessageFilter{RecipientName: "Bob"},
 			wantCount: 3,
 		},
 		{
 			name:      "Combined recipient and recipient name",
-			filter:    MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob Jones"},
+			filter:    MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob"},
 			wantCount: 3,
 		},
 		{
 			name:      "Mismatched recipient and recipient name",
-			filter:    MessageFilter{Recipient: "bob@company.org", RecipientName: "Alice Smith"},
+			filter:    MessageFilter{Recipient: "bob@company.org", RecipientName: "Alice"},
 			wantCount: 0,
 		},
 		{
 			name:      "RecipientName with MatchEmptyRecipient (contradictory)",
-			filter:    MessageFilter{RecipientName: "Bob Jones", EmptyValueTargets: emptyTargets(ViewRecipients)},
+			filter:    MessageFilter{RecipientName: "Bob", EmptyValueTargets: emptyTargets(ViewRecipients)},
 			wantCount: 0,
 		},
 		{
@@ -200,7 +200,7 @@ func TestListMessages_Filters(t *testing.T) {
 func TestListMessages_NoDuplicates(t *testing.T) {
 	env := newTestEnv(t)
 
-	filter := MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob Jones"}
+	filter := MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob"}
 	messages := env.MustListMessages(filter)
 
 	seen := make(map[int64]int)
@@ -587,9 +587,9 @@ func TestGetGmailIDsByFilter_Label(t *testing.T) {
 func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 	env := newTestEnv(t)
 
-	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice Smith"})
+	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"})
 	require.NoError(t, err, "GetGmailIDsByFilter")
-	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice Smith")
+	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice")
 }
 
 // addMultiAuthorMessage inserts a message with TWO distinct 'from' rows so the
@@ -763,16 +763,16 @@ func TestGetGmailIDsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
 func TestGetGmailIDsByFilter_RecipientName(t *testing.T) {
 	env := newTestEnv(t)
 
-	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob Jones"})
+	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob"})
 	require.NoError(t, err, "GetGmailIDsByFilter")
-	assert.Len(t, ids, 3, "expected 3 gmail IDs for Bob Jones")
+	assert.Len(t, ids, 3, "expected 3 gmail IDs for Bob")
 }
 
 func TestGetGmailIDsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
 	env := newTestEnv(t)
 
 	filter := MessageFilter{
-		RecipientName:     "Bob Jones",
+		RecipientName:     "Bob",
 		EmptyValueTargets: emptyTargets(ViewRecipients),
 	}
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, filter)
@@ -935,7 +935,7 @@ func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
 
 	filter := MessageFilter{
 		Recipient:         "bob@company.org",
-		RecipientName:     "Bob Jones",
+		RecipientName:     "Bob",
 		EmptyValueTargets: emptyTargets(ViewRecipients),
 	}
 

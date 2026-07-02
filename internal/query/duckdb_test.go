@@ -581,6 +581,40 @@ func TestDuckDBEngine_AggregateBySenderName(t *testing.T) {
 	})
 }
 
+// TestDuckDBEngine_AggregateBySenderName_PerMessageNames verifies the Parquet
+// engine groups the SenderNames aggregate by the per-message From-header
+// display name (message_recipients.display_name), not the sticky
+// participants.display_name (see break-test F4).
+func TestDuckDBEngine_AggregateBySenderName_PerMessageNames(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@gmail.com")
+	// Sticky participant name that must NOT absorb all traffic.
+	listID := b.AddParticipant("git@apache.org", "apache.org", "amoeba (via GitHub)")
+	m1 := b.AddMessage(MessageOpt{Subject: "PR 1", SentAt: makeDate(6, 1), SizeEstimate: 1000})
+	m2 := b.AddMessage(MessageOpt{Subject: "PR 2", SentAt: makeDate(6, 2), SizeEstimate: 1000})
+	m3 := b.AddMessage(MessageOpt{Subject: "PR 3", SentAt: makeDate(6, 3), SizeEstimate: 1000})
+	b.AddFrom(m1, listID, "alice via GitHub")
+	b.AddFrom(m2, listID, "alice via GitHub")
+	b.AddFrom(m3, listID, "bob via GitHub")
+	b.SetEmptyAttachments()
+	engine := b.BuildEngine()
+
+	ctx := context.Background()
+	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
+	require.NoError(t, err, "AggregateBySenderName")
+
+	// assertAggregateCounts rejects any extra key, so the sticky participant
+	// name "amoeba (via GitHub)" would fail the test if it appeared.
+	assertAggregateCounts(t, results, map[string]int64{
+		"alice via GitHub": 2,
+		"bob via GitHub":   1,
+	})
+
+	listed, err := engine.ListMessages(ctx, MessageFilter{SenderName: "alice via GitHub"})
+	require.NoError(t, err, "ListMessages")
+	assert.Len(t, listed, 2, "ListMessages by per-message sender name")
+}
+
 func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
 	engine := newParquetEngine(t)
 	ctx := context.Background()
@@ -751,8 +785,11 @@ func TestDuckDBEngine_AggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	spaces := b.AddParticipant("spaces@test.com", "test.com", "   ")
 	msg1 := b.AddMessage(MessageOpt{Subject: "Hello", SentAt: makeDate(1, 15), SizeEstimate: 1000})
 	msg2 := b.AddMessage(MessageOpt{Subject: "World", SentAt: makeDate(1, 16), SizeEstimate: 1000})
-	b.AddFrom(msg1, empty, "Empty")
-	b.AddFrom(msg2, spaces, "Spaces")
+	// Per-message names are also empty/whitespace, so the whole chain
+	// (mr.display_name → participant.display_name → phone) is empty and the
+	// key falls back to the email address.
+	b.AddFrom(msg1, empty, "")
+	b.AddFrom(msg2, spaces, "   ")
 	b.SetEmptyAttachments()
 	engine := b.BuildEngine()
 
@@ -2420,9 +2457,9 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 		`).
 		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
 			(1::BIGINT, 1::BIGINT, 'from', 'Sender'),
-			(1::BIGINT, 2::BIGINT, 'to', 'Empty'),
+			(1::BIGINT, 2::BIGINT, 'to', ''),
 			(2::BIGINT, 1::BIGINT, 'from', 'Sender'),
-			(2::BIGINT, 3::BIGINT, 'cc', 'Spaces')
+			(2::BIGINT, 3::BIGINT, 'cc', '   ')
 		`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
