@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,8 +34,31 @@ Examples:
 	msgvault show-message 18f0abc123def --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return showHTTPMessage(cmd, args[0])
+		id, err := resolveMessageIDArg(args[0])
+		if err != nil {
+			return err
+		}
+		return showHTTPMessage(cmd, id)
 	},
+}
+
+// resolveMessageIDArg validates a positional message-reference argument for
+// commands that accept either an internal numeric ID or a source/Gmail message
+// ID. Empty or whitespace-only input, and malformed numeric input such as
+// "42.5" or "1e3", are rejected up front with a clear error so the user is not
+// misled by a downstream "message not found". Any other non-empty value is
+// forwarded unchanged (it may be a Gmail/source ID like "18f0abc123def").
+func resolveMessageIDArg(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid message ID: %q (expected a number or Gmail ID)", raw)
+	}
+	if _, intErr := strconv.ParseInt(trimmed, 10, 64); intErr != nil {
+		if _, floatErr := strconv.ParseFloat(trimmed, 64); floatErr == nil {
+			return "", fmt.Errorf("invalid message ID: %q (expected a whole number)", trimmed)
+		}
+	}
+	return trimmed, nil
 }
 
 func showHTTPMessage(cmd *cobra.Command, idStr string) error {

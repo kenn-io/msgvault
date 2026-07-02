@@ -347,6 +347,19 @@ func rotate(path string, keep int) error {
 	return nil
 }
 
+// ValidateLevel reports whether s is an accepted log level. The empty string
+// is valid and selects the default (info). Matching is case-insensitive and
+// ignores surrounding whitespace, mirroring parseLevel. Unknown values return
+// an error listing the accepted levels.
+func ValidateLevel(s string) error {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "debug", "info", "warn", "warning", "error":
+		return nil
+	default:
+		return fmt.Errorf("invalid log level %q (valid: debug, info, warn, error)", s)
+	}
+}
+
 // parseLevel maps a user-friendly level string to slog.Level.
 // Defaults to Info for unknown or empty values.
 func parseLevel(s string) slog.Level {

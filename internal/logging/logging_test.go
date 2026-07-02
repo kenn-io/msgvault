@@ -131,6 +131,20 @@ func TestParseLevel(t *testing.T) {
 	}
 }
 
+func TestValidateLevel(t *testing.T) {
+	valid := []string{"", "info", "INFO", " info ", "debug", "warn", "warning", "error", "ERROR"}
+	for _, in := range valid {
+		require.NoError(t, ValidateLevel(in), "ValidateLevel(%q)", in)
+	}
+
+	invalid := []string{"bogus", "verbose", "trace", "warns", "0"}
+	for _, in := range invalid {
+		err := ValidateLevel(in)
+		require.Error(t, err, "ValidateLevel(%q)", in)
+		assert.Contains(t, err.Error(), "debug, info, warn, error", "lists valid levels")
+	}
+}
+
 func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 	assert := assert.New(t)
 	var textBuf, jsonBuf bytes.Buffer

@@ -105,6 +105,9 @@ in a single binary.`,
 		if levelString == "" {
 			levelString = cfg.Log.Level
 		}
+		if err := logging.ValidateLevel(levelString); err != nil {
+			return err
+		}
 		logsDir := cfg.LogsDir()
 		// File logging is opt-in: requires [log].enabled,
 		// [log].dir, or --log-file. --no-log-file overrides.

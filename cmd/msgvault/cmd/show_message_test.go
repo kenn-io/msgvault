@@ -145,3 +145,37 @@ func messageHTTPNotFoundDaemon(t *testing.T) *httptest.Server {
 	t.Cleanup(server.Close)
 	return server
 }
+
+func TestResolveMessageIDArg(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "plain numeric", in: "42", want: "42"},
+		{name: "leading zeros", in: "007", want: "007"},
+		{name: "leading plus", in: "+42", want: "+42"},
+		{name: "surrounding whitespace", in: " 42 ", want: "42"},
+		{name: "gmail hex id", in: "18f0abc123def", want: "18f0abc123def"},
+		{name: "source id with dash", in: "remote-42", want: "remote-42"},
+		{name: "empty", in: "", wantErr: true},
+		{name: "whitespace only", in: "   ", wantErr: true},
+		{name: "decimal", in: "42.5", wantErr: true},
+		{name: "scientific", in: "1e3", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			got, err := resolveMessageIDArg(tt.in)
+			if tt.wantErr {
+				require.Error(err, "resolveMessageIDArg(%q)", tt.in)
+				assert.Contains(err.Error(), "invalid message ID", "error text")
+				return
+			}
+			require.NoError(err, "resolveMessageIDArg(%q)", tt.in)
+			assert.Equal(tt.want, got, "resolveMessageIDArg(%q)", tt.in)
+		})
+	}
+}

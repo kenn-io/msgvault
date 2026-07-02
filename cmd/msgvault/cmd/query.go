@@ -64,6 +64,7 @@ func writeQueryResult(w io.Writer, result *query.QueryResult, format string) err
 	if result == nil {
 		return errors.New("nil query result")
 	}
+	format = strings.ToLower(strings.TrimSpace(format))
 	switch format {
 	case outputFormatJSON:
 		return writeJSON(w, result.Columns, result.Rows)

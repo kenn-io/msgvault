@@ -120,6 +120,22 @@ func TestStageForDeletion_FromAggregateSelection(t *testing.T) {
 	assert.Equal(t, "tui", manifest.CreatedBy)
 }
 
+func TestStageForDeletion_StoresFullDescription(t *testing.T) {
+	env := newTestEnv(t, "gid1")
+
+	// A sender key longer than the old 30-char display cap; the stored
+	// description must retain the full value for JSON/detail consumers.
+	sender := "notifications-long-address@example-subdomain.example.com"
+	manifest := env.StageForDeletion(stageArgs{
+		aggregates: testutil.MakeSet(sender),
+		view:       query.ViewSenders,
+	})
+
+	want := "Senders-" + sender
+	assert.Equal(t, want, manifest.Description, "full description stored")
+	assert.Greater(t, len(manifest.Description), 30, "description exceeds display cap")
+}
+
 func TestStageForDeletion_FromMessageSelection(t *testing.T) {
 	env := newTestEnv(t)
 

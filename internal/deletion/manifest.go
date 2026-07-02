@@ -3,6 +3,7 @@ package deletion
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -319,6 +320,9 @@ func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
 
 // GetManifest loads a manifest by ID from any status directory.
 func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, "", errors.New("batch ID is required")
+	}
 	filename := id + ".json"
 	for _, status := range persistedStatuses {
 		dir := m.dirForStatus(status)

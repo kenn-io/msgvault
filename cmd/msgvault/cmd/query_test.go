@@ -113,6 +113,27 @@ func TestWriteQueryResult_PlainDecimalNumbers(t *testing.T) {
 	}
 }
 
+func TestWriteQueryResult_FormatCaseInsensitive(t *testing.T) {
+	result := &query.QueryResult{
+		Columns:  []string{"n"},
+		Rows:     [][]any{{json.Number("1")}},
+		RowCount: 1,
+	}
+	for _, format := range []string{"JSON", "Json", "CSV", "Table", " table ", "TABLE"} {
+		t.Run(format, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, writeQueryResult(&out, result, format),
+				"writeQueryResult(%q)", format)
+			assert.NotEmpty(t, out.String(), "output for %q", format)
+		})
+	}
+
+	var out bytes.Buffer
+	err := writeQueryResult(&out, result, "xml")
+	require.Error(t, err, "unknown format")
+	assert.Contains(t, err.Error(), "unknown format", "error text")
+}
+
 func queryHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	assert := assert.New(t)

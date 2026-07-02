@@ -449,6 +449,17 @@ func TestManager_GetManifest_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestManager_GetManifest_EmptyID(t *testing.T) {
+	mgr := testManager(t)
+
+	for _, id := range []string{"", "   "} {
+		_, _, err := mgr.GetManifest(id)
+		require.Error(t, err, "GetManifest(%q) should error", id)
+		assert.Contains(t, err.Error(), "batch ID is required", "clear error for %q", id)
+		assert.NotContains(t, err.Error(), "  ", "no double space for %q", id)
+	}
+}
+
 func TestManager_Transitions(t *testing.T) {
 	tests := []struct {
 		name string

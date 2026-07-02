@@ -34,7 +34,11 @@ Examples:
   msgvault export-eml 18f0abc123def -o important.eml`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runExportEML(cmd, args[0], exportEMLOutput)
+		id, err := resolveMessageIDArg(args[0])
+		if err != nil {
+			return err
+		}
+		return runExportEML(cmd, id, exportEMLOutput)
 	},
 }
 

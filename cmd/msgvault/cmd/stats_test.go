@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -284,4 +285,28 @@ func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.
 		},
 	})
 	require.NoError(t, err, "write daemon runtime")
+}
+
+// TestPrintStats_ThousandsGroupingUniform verifies every count in the stats
+// output uses the same thousands-grouping so Messages/Threads/Attachments/
+// Labels/Accounts are formatted consistently.
+func TestPrintStats_ThousandsGroupingUniform(t *testing.T) {
+	assert := assert.New(t)
+	var out bytes.Buffer
+	printStats(&out, &store.Stats{
+		MessageCount:    2470176,
+		ThreadCount:     561070,
+		AttachmentCount: 202662,
+		LabelCount:      1183,
+		SourceCount:     12345,
+		DatabaseSize:    1024 * 1024,
+	})
+	got := out.String()
+	assert.Contains(got, "Messages:    2,470,176", "messages grouped")
+	assert.Contains(got, "Threads:     561,070", "threads grouped")
+	assert.Contains(got, "Attachments: 202,662", "attachments grouped")
+	assert.Contains(got, "Labels:      1,183", "labels grouped")
+	assert.Contains(got, "Accounts:    12,345", "accounts grouped")
+	assert.NotContains(got, "561070", "no bare thread count")
+	assert.NotContains(got, "202662", "no bare attachment count")
 }

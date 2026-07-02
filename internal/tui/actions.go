@@ -198,9 +198,8 @@ func (c *ActionController) buildManifestDescription(ctx DeletionContext) string 
 		description = "selection"
 	}
 
-	if len(description) > 30 {
-		description = description[:30]
-	}
+	// Store the full description; truncation is a display-only concern applied
+	// by the table views, so JSON and detail output carry the complete value.
 	return description
 }
 

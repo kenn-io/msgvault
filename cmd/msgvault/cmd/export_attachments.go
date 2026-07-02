@@ -33,7 +33,10 @@ Examples:
 }
 
 func runExportAttachments(cmd *cobra.Command, args []string) error {
-	idStr := args[0]
+	idStr, err := resolveMessageIDArg(args[0])
+	if err != nil {
+		return err
+	}
 	return runExportAttachmentsHTTP(cmd, idStr)
 }
 
@@ -88,6 +91,15 @@ func resolveExportAttachmentsOutputDir() (string, error) {
 		return "", fmt.Errorf("resolve output path: %w", err)
 	}
 	info, err := os.Stat(outputDir)
+	if errors.Is(err, os.ErrNotExist) {
+		// Create the requested output directory (and any parents) so the
+		// command behaves like its sibling exporters, which create the file
+		// or path they are asked to write to.
+		if mkErr := os.MkdirAll(outputDir, 0o755); mkErr != nil {
+			return "", fmt.Errorf("create output directory: %w", mkErr)
+		}
+		info, err = os.Stat(outputDir)
+	}
 	if err != nil {
 		return "", fmt.Errorf("output directory: %w", err)
 	}

@@ -145,10 +145,13 @@ var showDeletionCmd = &cobra.Command{
 }
 
 func runShowDeletion(cmd *cobra.Command, args []string) error {
+	batchID := strings.TrimSpace(args[0])
+	if batchID == "" {
+		return errors.New("batch ID is required")
+	}
 	if !isDaemonCLISubprocess() {
 		return runDaemonCLICommandHTTPFromCobra(cmd, args)
 	}
-	batchID := args[0]
 
 	deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
 	manager, err := deletion.NewManager(deletionsDir)

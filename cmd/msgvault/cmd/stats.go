@@ -124,10 +124,10 @@ func printStats(w io.Writer, s *store.Stats) {
 	} else {
 		_, _ = fmt.Fprintf(w, "  Messages:    %s\n", formatCount(s.MessageCount))
 	}
-	_, _ = fmt.Fprintf(w, "  Threads:     %d\n", s.ThreadCount)
-	_, _ = fmt.Fprintf(w, "  Attachments: %d\n", s.AttachmentCount)
-	_, _ = fmt.Fprintf(w, "  Labels:      %d\n", s.LabelCount)
-	_, _ = fmt.Fprintf(w, "  Accounts:    %d\n", s.SourceCount)
+	_, _ = fmt.Fprintf(w, "  Threads:     %s\n", formatCount(s.ThreadCount))
+	_, _ = fmt.Fprintf(w, "  Attachments: %s\n", formatCount(s.AttachmentCount))
+	_, _ = fmt.Fprintf(w, "  Labels:      %s\n", formatCount(s.LabelCount))
+	_, _ = fmt.Fprintf(w, "  Accounts:    %s\n", formatCount(s.SourceCount))
 	_, _ = fmt.Fprintf(w, "  Size:        %.2f MB\n", float64(s.DatabaseSize)/(1024*1024))
 }
 

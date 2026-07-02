@@ -66,6 +66,40 @@ func configureExportAttachmentsDaemonTest(t *testing.T, dataDir string) {
 	})
 }
 
+func TestResolveExportAttachmentsOutputDir_CreatesMissingDir(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldOutput := exportAttachmentsOutput
+	t.Cleanup(func() { exportAttachmentsOutput = oldOutput })
+
+	target := filepath.Join(t.TempDir(), "nested", "attachments")
+	exportAttachmentsOutput = target
+
+	got, err := resolveExportAttachmentsOutputDir()
+	require.NoError(err, "resolveExportAttachmentsOutputDir")
+
+	info, statErr := os.Stat(target)
+	require.NoError(statErr, "stat created dir")
+	assert.True(info.IsDir(), "created path is a directory")
+
+	absTarget, err := filepath.Abs(target)
+	require.NoError(err, "abs target")
+	assert.Equal(absTarget, got, "returned absolute output dir")
+}
+
+func TestResolveExportAttachmentsOutputDir_RejectsFilePath(t *testing.T) {
+	oldOutput := exportAttachmentsOutput
+	t.Cleanup(func() { exportAttachmentsOutput = oldOutput })
+
+	filePath := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o600), "write file")
+	exportAttachmentsOutput = filePath
+
+	_, err := resolveExportAttachmentsOutputDir()
+	require.Error(t, err, "expected error for file output path")
+	assert.Contains(t, err.Error(), "not a directory", "error text")
+}
+
 func TestExportAttachments_FullFlow(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -151,18 +185,24 @@ func TestExportAttachments_MessageNotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "message not found")
 }
 
-func TestExportAttachments_OutputDirValidation(t *testing.T) {
+func TestExportAttachments_OutputDirAutoCreated(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	setupExportAttachmentsHTTPTest(t)
 
-	// Point to a non-existent directory
-	exportAttachmentsOutput = filepath.Join(t.TempDir(), "does-not-exist")
+	// Point to a non-existent nested directory; it should be created like the
+	// sibling exporters create the file/path they are asked to write to.
+	outputDir := filepath.Join(t.TempDir(), "does-not-exist", "nested")
+	exportAttachmentsOutput = outputDir
 	defer func() { exportAttachmentsOutput = "" }()
 
 	cmd := exportAttachmentsCmd
 	cmd.SetContext(context.Background())
-	err := runExportAttachments(cmd, []string{"1"})
-	require.Error(t, err, "expected error for non-existent output directory")
-	assert.ErrorContains(t, err, "output directory")
+	require.NoError(runExportAttachments(cmd, []string{"1"}), "runExportAttachments")
+
+	entries, err := os.ReadDir(outputDir)
+	require.NoError(err, "read created output dir")
+	assert.Len(entries, 2, "expected 2 exported files")
 }
 
 func TestExportAttachments_NotADirectory(t *testing.T) {
