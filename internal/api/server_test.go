@@ -209,6 +209,7 @@ type mockStore struct {
 	searchMessagesCalls      atomic.Int32
 	searchMessagesQueryCalls atomic.Int32
 	searchMessagesQueryLast  *search.Query
+	needsFTSBackfillCalls    atomic.Int32
 
 	sourcesByLookup    map[string][]*store.Source
 	sourcesByLookupErr error
@@ -365,6 +366,7 @@ func (m *mockStore) CountSourceDeletedMessages(...int64) (int64, error) {
 }
 
 func (m *mockStore) NeedsFTSBackfill() bool {
+	m.needsFTSBackfillCalls.Add(1)
 	return m.needsFTSBackfill
 }
 

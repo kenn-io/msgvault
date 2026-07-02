@@ -1320,32 +1320,41 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		ScopeLabel:       scope.displayName(),
 		ScopeSourceCount: len(scope.sourceIDs()),
 	}
-	if cliStore.NeedsFTSBackfill() {
-		n, err := func() (int64, error) {
-			done, ok := s.beginOperationGateWork(r.Context())
-			if !ok {
-				return 0, newAPIHTTPError(http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
-			}
-			defer done()
-			if !cliStore.NeedsFTSBackfill() {
-				return 0, nil
-			}
-			return cliStore.BackfillFTS(nil)
-		}()
-		if err != nil {
-			var apiErr *apiHTTPError
-			if errors.As(err, &apiErr) {
-				writeAPIHTTPError(w, apiErr)
+	// Gate the backfill probe on a memoized completion flag: NeedsFTSBackfill
+	// scans every message when the index is already complete, so probing it on
+	// every request dominated CLI search latency. Once the index is confirmed
+	// complete, skip the probe entirely for the process lifetime.
+	if !s.ftsIndexComplete.Load() {
+		if cliStore.NeedsFTSBackfill() {
+			n, err := func() (int64, error) {
+				done, ok := s.beginOperationGateWork(r.Context())
+				if !ok {
+					return 0, newAPIHTTPError(http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
+				}
+				defer done()
+				if !cliStore.NeedsFTSBackfill() {
+					return 0, nil
+				}
+				return cliStore.BackfillFTS(nil)
+			}()
+			if err != nil {
+				var apiErr *apiHTTPError
+				if errors.As(err, &apiErr) {
+					writeAPIHTTPError(w, apiErr)
+					return
+				}
+				s.logger.Error("failed to build CLI search index", "error", err)
+				writeError(w, http.StatusInternalServerError, "build_search_index_failed",
+					fmt.Sprintf("build search index: %v", err))
 				return
 			}
-			s.logger.Error("failed to build CLI search index", "error", err)
-			writeError(w, http.StatusInternalServerError, "build_search_index_failed",
-				fmt.Sprintf("build search index: %v", err))
-			return
-		}
-		if n > 0 || !cliStore.NeedsFTSBackfill() {
-			resp.IndexBuilt = true
-			resp.IndexedMessages = n
+			if n > 0 || !cliStore.NeedsFTSBackfill() {
+				resp.IndexBuilt = true
+				resp.IndexedMessages = n
+				s.ftsIndexComplete.Store(true)
+			}
+		} else {
+			s.ftsIndexComplete.Store(true)
 		}
 	}
 

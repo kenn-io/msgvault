@@ -1649,6 +1649,36 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 }
 
+// TestHandleCLISearchMemoizesFTSComplete verifies that once the FTS index is
+// confirmed complete, subsequent CLI searches do not re-run the expensive
+// NeedsFTSBackfill probe (an anti-join that scans every message on a healthy
+// index). This is the fix for the CLI-search-slow-vs-fast-search divergence.
+func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
+	assert := assert.New(t)
+	st := &mockStore{needsFTSBackfill: false}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{{ID: 1, Subject: "match"}}, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	for range 3 {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+	}
+
+	assert.Equal(int32(1), st.needsFTSBackfillCalls.Load(),
+		"NeedsFTSBackfill should be probed once, then memoized")
+}
+
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

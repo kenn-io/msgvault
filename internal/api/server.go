@@ -94,7 +94,17 @@ type Server struct {
 	rateLimiter         *RateLimiter
 	idleTracker         *IdleTracker
 	operationGate       OperationGate
-	cfgMu               sync.RWMutex // protects cfg.Accounts
+	// ftsIndexComplete memoizes that the FTS index is fully populated so
+	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
+	// anti-join that scans every message when the index is complete (the
+	// healthy steady state) — tens of seconds on a large archive — which
+	// dominated CLI search latency (the fast /api/v1/search path never probes).
+	// Set once the index is confirmed complete; not reset, so a hole created
+	// mid-session by a rare inline UpsertFTS failure is only auto-repaired after
+	// a restart or `rebuild-fts` (the same limitation the /api/v1/search path
+	// already has, since it never backfills).
+	ftsIndexComplete atomic.Bool
+	cfgMu            sync.RWMutex // protects cfg.Accounts
 	// vectorMu guards the vector subsystem state: the daemon installs
 	// hybridEngine/backend/vectorCfg from a background init goroutine
 	// after the server is already handling requests.
