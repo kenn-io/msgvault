@@ -456,12 +456,14 @@ func totalStatsFromGenerated(resp *generated.TotalStatsResponse) *query.TotalSta
 		return nil
 	}
 	return &query.TotalStats{
-		MessageCount:    resp.MessageCount,
-		TotalSize:       resp.TotalSize,
-		AttachmentCount: resp.AttachmentCount,
-		AttachmentSize:  resp.AttachmentSize,
-		LabelCount:      resp.LabelCount,
-		AccountCount:    resp.AccountCount,
+		MessageCount:              resp.MessageCount,
+		ActiveMessageCount:        resp.ActiveMessages,
+		SourceDeletedMessageCount: resp.SourceDeletedMessages,
+		TotalSize:                 resp.TotalSize,
+		AttachmentCount:           resp.AttachmentCount,
+		AttachmentSize:            resp.AttachmentSize,
+		LabelCount:                resp.LabelCount,
+		AccountCount:              resp.AccountCount,
 	}
 }
 

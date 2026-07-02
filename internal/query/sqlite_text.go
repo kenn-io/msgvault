@@ -492,6 +492,8 @@ func (e *SQLiteEngine) GetTextStats(
 	msgQuery := fmt.Sprintf(`
 		SELECT
 			COUNT(*) AS message_count,
+			COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0) AS active_count,
+			COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS source_deleted_count,
 			COALESCE(SUM(m.size_estimate), 0) AS total_size,
 			COUNT(DISTINCT m.source_id) AS account_count
 		FROM messages m
@@ -500,6 +502,8 @@ func (e *SQLiteEngine) GetTextStats(
 
 	if err := e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
 		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
 		&stats.TotalSize,
 		&stats.AccountCount,
 	); err != nil {

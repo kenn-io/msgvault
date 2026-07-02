@@ -821,7 +821,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -831,18 +831,13 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		%s
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, filterJoins, whereClause, orderBy)
+	`, sqliteSenderNameExpr, sqliteSenderJoin, filterJoins, whereClause, orderBy)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -928,7 +923,7 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -938,15 +933,10 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true))
+	`, sqliteSenderNameExpr, sqliteSenderJoin, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true))
 
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
@@ -1682,7 +1672,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -1692,18 +1682,13 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		%s
 		WHERE %s
 		ORDER BY m.sent_at DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, ftsJoin, whereClause)
+	`, sqliteSenderNameExpr, sqliteSenderJoin, ftsJoin, whereClause)
 
 	args = append(args, limit, offset)
 

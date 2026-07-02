@@ -2529,6 +2529,8 @@ func (e *DuckDBEngine) computeSearchStats(ctx context.Context) *TotalStats {
 		WITH %s
 		SELECT
 			COUNT(*) as message_count,
+			COALESCE(SUM(CASE WHEN sm.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0) as active_count,
+			COALESCE(SUM(CASE WHEN sm.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0) as source_deleted_count,
 			COALESCE(SUM(sm.size_estimate), 0) as total_size,
 			CAST(COALESCE(SUM(att.attachment_count), 0) AS BIGINT) as attachment_count,
 			CAST(COALESCE(SUM(att.attachment_size), 0) AS BIGINT) as attachment_size,
@@ -2541,6 +2543,8 @@ func (e *DuckDBEngine) computeSearchStats(ctx context.Context) *TotalStats {
 	var attachmentSize sql.NullFloat64
 	if err := e.db.QueryRowContext(ctx, msgStatsQuery).Scan(
 		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
 		&stats.TotalSize,
 		&stats.AttachmentCount,
 		&attachmentSize,

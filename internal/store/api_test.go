@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -193,6 +194,39 @@ func TestNullableTimestampScan(t *testing.T) {
 		var n nullableTimestamp
 		require.Error(t, n.Scan(42), "Scan(int): expected error")
 	})
+}
+
+// TestContextAwareReadsHonorCancellation verifies the context-aware store read
+// paths thread the caller's context into their SQL, so an abandoned or
+// timed-out request is cancelled instead of running (including batch hydration)
+// to completion on a background context.
+func TestContextAwareReadsHonorCancellation(t *testing.T) {
+	require := require.New(t)
+	st := openTestStore(t)
+
+	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	require.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	require.NoError(err, "EnsureConversation")
+	msgID := seedMessage(t, st, source.ID, convID, "msg-ctx", "Ctx test", "snippet")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err = st.ListMessagesContext(ctx, 0, 10)
+	require.ErrorIs(err, context.Canceled, "ListMessagesContext must honor a cancelled context")
+
+	_, err = st.GetMessageContext(ctx, msgID)
+	require.ErrorIs(err, context.Canceled, "GetMessageContext must honor a cancelled context")
+
+	_, err = st.GetMessagesSummariesByIDsContext(ctx, []int64{msgID})
+	require.ErrorIs(err, context.Canceled, "GetMessagesSummariesByIDsContext must honor a cancelled context")
+
+	_, err = st.GetStatsContext(ctx)
+	require.ErrorIs(err, context.Canceled, "GetStatsContext must honor a cancelled context")
+
+	_, _, err = st.SearchMessagesQueryContext(ctx, &search.Query{TextTerms: []string{"ctx"}}, 0, 10)
+	require.ErrorIs(err, context.Canceled, "SearchMessagesQueryContext must honor a cancelled context")
 }
 
 func TestGetMessageCcBcc(t *testing.T) {

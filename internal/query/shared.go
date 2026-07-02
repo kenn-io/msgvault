@@ -60,6 +60,24 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 	)
 }
 
+// sqliteSenderNameExpr hydrates a message summary's FromName with the same
+// per-message display-name preference sender-name aggregation uses: the
+// message's own "from" recipient display_name (mr_from) wins over the
+// participant's sticky name, so drilling into a per-message sender-name bucket
+// shows the same name the bucket was keyed by. Pairs with sqliteSenderJoin.
+var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
+
+// sqliteSenderJoin binds a message's first "from" recipient row (mr_from) and
+// the resolved sender participant (p_sender), falling back to the direct
+// m.sender_id participant only when the message has no "from" recipient row.
+// The leading newline/indentation matches the surrounding query literals.
+const sqliteSenderJoin = `LEFT JOIN message_recipients mr_from ON mr_from.id = (
+			SELECT mr.id FROM message_recipients mr
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+			ORDER BY mr.id LIMIT 1
+		)
+		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(mr_from.participant_id, m.sender_id)`
+
 // rebindFunc converts a query written with ? placeholders into the
 // driver-native form. Helpers in this file accept it explicitly so the
 // PostgreSQL path (pgx/v5/stdlib needs $1, $2, …) and the SQLite/DuckDB

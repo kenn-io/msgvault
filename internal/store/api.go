@@ -81,14 +81,23 @@ type APIAttachment struct {
 	URL         string
 }
 
-// ListMessages returns a paginated list of messages with batch-loaded recipients and labels.
+// ListMessages returns a paginated list of messages with batch-loaded
+// recipients and labels.
 func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
+	return s.ListMessagesContext(context.Background(), offset, limit)
+}
+
+// ListMessagesContext is the context-aware form of ListMessages. Request
+// paths pass the request context so the count, list, and hydration queries
+// carry the request_id for SQL logging and are cancelled together when the
+// request is abandoned or times out.
+func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int) ([]APIMessage, int64, error) {
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
 	var total int64
-	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true),
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM messages WHERE "+LiveMessagesWhere("", true),
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -121,7 +130,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 		LIMIT ? OFFSET ?
 	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
 
-	rows, err := s.db.Query(query, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -138,7 +147,7 @@ func (s *Store) ListMessages(offset, limit int) ([]APIMessage, int64, error) {
 	}
 
 	// Batch-load recipients and labels for all messages
-	if err := s.batchPopulate(messages, ids); err != nil {
+	if err := s.batchPopulateContext(ctx, messages, ids); err != nil {
 		return nil, 0, err
 	}
 
@@ -153,6 +162,13 @@ var ErrMessageNotFound = errors.New("message not found")
 // GetMessage returns a single message with full details.
 // Only this method accesses message_bodies (single PK lookup).
 func (s *Store) GetMessage(id int64) (*APIMessage, error) {
+	return s.GetMessageContext(context.Background(), id)
+}
+
+// GetMessageContext is the context-aware form of GetMessage. Request paths
+// pass the request context so the base row, recipient, label, body, and
+// attachment queries carry the request_id for SQL logging and cancel together.
+func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -184,7 +200,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	// TIMESTAMP column but routing it through the same scanner
 	// keeps the API consistent and tolerant of either driver.
 	var sentAt, deletedAt nullableTimestamp
-	err := s.db.QueryRow(query, id).Scan(
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID,
 		&m.SourceMessageID,
 		&m.ConversationID,
@@ -216,28 +232,28 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	}
 
 	// Get recipients (single message, per-row is fine)
-	m.To, err = s.getRecipients(m.ID, "to")
+	m.To, err = s.getRecipients(ctx, m.ID, "to")
 	if err != nil {
 		return nil, err
 	}
-	m.Cc, err = s.getRecipients(m.ID, "cc")
+	m.Cc, err = s.getRecipients(ctx, m.ID, "cc")
 	if err != nil {
 		return nil, err
 	}
-	m.Bcc, err = s.getRecipients(m.ID, "bcc")
+	m.Bcc, err = s.getRecipients(ctx, m.ID, "bcc")
 	if err != nil {
 		return nil, err
 	}
 
 	// Get labels (single message, per-row is fine)
-	m.Labels, err = s.getLabels(m.ID)
+	m.Labels, err = s.getLabels(ctx, m.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get body (single PK lookup — only place we touch message_bodies)
 	var bodyText, bodyHTML sql.NullString
-	err = s.db.QueryRow("SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", id).Scan(&bodyText, &bodyHTML)
+	err = s.db.QueryRowContext(ctx, "SELECT body_text, body_html FROM message_bodies WHERE message_id = ?", id).Scan(&bodyText, &bodyHTML)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get message body: %w", err)
 	}
@@ -248,7 +264,7 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 	}
 
 	// Get attachments
-	attRows, err := s.db.Query("SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path FROM attachments WHERE message_id = ?", id)
+	attRows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), storage_path FROM attachments WHERE message_id = ?", id)
 	if err != nil {
 		return nil, fmt.Errorf("get attachments: %w", err)
 	}
@@ -287,6 +303,14 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 // hit (body + attachments + 3 recipients + labels + base) and
 // dominates p50 search latency past a handful of results.
 func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
+	return s.GetMessagesSummariesByIDsContext(context.Background(), ids)
+}
+
+// GetMessagesSummariesByIDsContext is the context-aware form of
+// GetMessagesSummariesByIDs. Request paths pass the request context so the
+// summary and hydration queries carry the request_id for SQL logging and are
+// cancelled together with the request.
+func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int64) ([]APIMessage, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -319,7 +343,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
 	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
 	}
@@ -332,7 +356,7 @@ func (s *Store) GetMessagesSummariesByIDs(ids []int64) ([]APIMessage, error) {
 	if len(messages) == 0 {
 		return nil, nil
 	}
-	if err := s.batchPopulate(messages, foundIDs); err != nil {
+	if err := s.batchPopulateContext(ctx, messages, foundIDs); err != nil {
 		return nil, err
 	}
 
@@ -691,7 +715,7 @@ func (s *Store) searchMessagesQueryImpl(
 	}
 
 	if len(ids) > 0 {
-		if err := s.batchPopulate(messages, ids); err != nil {
+		if err := s.batchPopulateContext(ctx, messages, ids); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -897,19 +921,28 @@ func parseSQLiteTime(s string) time.Time {
 
 // batchPopulate batch-loads recipients and labels for a slice of messages.
 func (s *Store) batchPopulate(messages []APIMessage, ids []int64) error {
-	recipientMap, err := s.batchGetRecipients(ids, "to")
+	return s.batchPopulateContext(context.Background(), messages, ids)
+}
+
+// batchPopulateContext is the context-aware form of batchPopulate. Request
+// paths pass the request context so recipient/label hydration is cancelled
+// (and the request_id carried on the context reaches the SQL logger) alongside
+// the count/result queries, instead of running to completion on a background
+// context after the request budget is exceeded.
+func (s *Store) batchPopulateContext(ctx context.Context, messages []APIMessage, ids []int64) error {
+	recipientMap, err := s.batchGetRecipients(ctx, ids, "to")
 	if err != nil {
 		return err
 	}
-	ccMap, err := s.batchGetRecipients(ids, "cc")
+	ccMap, err := s.batchGetRecipients(ctx, ids, "cc")
 	if err != nil {
 		return err
 	}
-	bccMap, err := s.batchGetRecipients(ids, "bcc")
+	bccMap, err := s.batchGetRecipients(ctx, ids, "bcc")
 	if err != nil {
 		return err
 	}
-	labelMap, err := s.batchGetLabels(ids)
+	labelMap, err := s.batchGetLabels(ctx, ids)
 	if err != nil {
 		return err
 	}
@@ -923,7 +956,7 @@ func (s *Store) batchPopulate(messages []APIMessage, ids []int64) error {
 }
 
 // batchGetRecipients loads recipients for multiple messages in a single query.
-func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (map[int64][]string, error) {
+func (s *Store) batchGetRecipients(ctx context.Context, messageIDs []int64, recipientType string) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
 		return map[int64][]string{}, nil
 	}
@@ -943,7 +976,7 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
 	`, participantDisplaySQL, strings.Join(placeholders, ","))
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("batch get recipients: %w", err)
 	}
@@ -967,7 +1000,7 @@ func (s *Store) batchGetRecipients(messageIDs []int64, recipientType string) (ma
 }
 
 // batchGetLabels loads labels for multiple messages in a single query.
-func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
+func (s *Store) batchGetLabels(ctx context.Context, messageIDs []int64) (map[int64][]string, error) {
 	if len(messageIDs) == 0 {
 		return map[int64][]string{}, nil
 	}
@@ -986,7 +1019,7 @@ func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
 		WHERE ml.message_id IN (%s)
 	`, strings.Join(placeholders, ","))
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("batch get labels: %w", err)
 	}
@@ -1009,14 +1042,14 @@ func (s *Store) batchGetLabels(messageIDs []int64) (map[int64][]string, error) {
 
 // Single-message helpers (still used by GetMessage for single PK lookups)
 
-func (s *Store) getRecipients(messageID int64, recipientType string) ([]string, error) {
+func (s *Store) getRecipients(ctx context.Context, messageID int64, recipientType string) ([]string, error) {
 	query := fmt.Sprintf(`
 		SELECT %s
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? AND mr.recipient_type = ?
 	`, participantDisplaySQL)
-	rows, err := s.db.Query(query, messageID, recipientType)
+	rows, err := s.db.QueryContext(ctx, query, messageID, recipientType)
 	if err != nil {
 		return nil, fmt.Errorf("get recipients: %w", err)
 	}
@@ -1038,14 +1071,14 @@ func (s *Store) getRecipients(messageID int64, recipientType string) ([]string, 
 	return recipients, nil
 }
 
-func (s *Store) getLabels(messageID int64) ([]string, error) {
+func (s *Store) getLabels(ctx context.Context, messageID int64) ([]string, error) {
 	query := `
 		SELECT l.name
 		FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ?
 	`
-	rows, err := s.db.Query(query, messageID)
+	rows, err := s.db.QueryContext(ctx, query, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("get labels: %w", err)
 	}

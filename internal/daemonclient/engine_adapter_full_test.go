@@ -738,12 +738,14 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal("urgent", r.URL.Query().Get("search_query"), "search_query")
 		assert.Equal("labels", r.URL.Query().Get("group_by"), "group_by")
 		writeJSONResponse(t, w, map[string]any{
-			"message_count":    5,
-			"total_size":       100,
-			"attachment_count": 2,
-			"attachment_size":  25,
-			"label_count":      3,
-			"account_count":    1,
+			"message_count":           5,
+			"active_messages":         4,
+			"source_deleted_messages": 1,
+			"total_size":              100,
+			"attachment_count":        2,
+			"attachment_size":         25,
+			"label_count":             3,
+			"account_count":           1,
 		})
 	})
 
@@ -759,6 +761,8 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 	require.NoError(err, "GetTotalStats")
 	require.NotNil(stats, "stats")
 	assert.Equal(int64(5), stats.MessageCount)
+	assert.Equal(int64(4), stats.ActiveMessageCount, "active breakdown must survive the adapter")
+	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "source-deleted breakdown must survive the adapter")
 	assert.Equal(int64(25), stats.AttachmentSize)
 	assert.Equal(int64(1), stats.AccountCount)
 }

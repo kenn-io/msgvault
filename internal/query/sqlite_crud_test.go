@@ -347,6 +347,61 @@ func TestGetTotalStatsSourceDeletedBreakdown(t *testing.T) {
 	assert.Equal(int64(0), hidden.SourceDeletedMessageCount, "SourceDeletedMessageCount with hide_deleted")
 }
 
+// TestListMessagesFromNameUsesPerMessageDisplayName verifies SQLite message
+// summaries hydrate FromName from the message's own "from" recipient
+// display_name (the per-message Gmail "From: Name <...>" override), matching
+// the name sender-name aggregation buckets by — not the participant's sticky
+// display_name. Otherwise drilling into a per-message sender-name bucket shows
+// a different name than the bucket it came from.
+func TestListMessagesFromNameUsesPerMessageDisplayName(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	env := newTestEnv(t)
+
+	email := "sender@example.com"
+	sticky := "Sticky Participant Name"
+	senderID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email: &email, DisplayName: &sticky, Domain: "example.com",
+	})
+	msgID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "per-message name test",
+		FromID:  senderID,
+	})
+	env.SetFromName(msgID, "Per Message Override")
+
+	msgs := env.MustListMessages(MessageFilter{})
+	var got *MessageSummary
+	for i := range msgs {
+		if msgs[i].ID == msgID {
+			got = &msgs[i]
+			break
+		}
+	}
+	require.NotNil(got, "message %d in list", msgID)
+	assert.Equal("Per Message Override", got.FromName,
+		"FromName must reflect the per-message from display_name, not the sticky participant name")
+	assert.Equal(email, got.FromEmail, "FromEmail still from the participant")
+}
+
+// TestGetTextStatsSourceDeletedBreakdown verifies GetTextStats populates the
+// active/source-deleted breakdown alongside the total message count, so
+// /api/v1/text/stats reports non-zero breakdown fields.
+func TestGetTextStatsSourceDeletedBreakdown(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	// Seed three text-type (SMS) messages; mark one deleted from its source.
+	env.AddMessage(dbtest.MessageOpts{Subject: "sms one", MessageType: "sms", SizeEstimate: 100})
+	env.AddMessage(dbtest.MessageOpts{Subject: "sms two", MessageType: "sms", SizeEstimate: 100})
+	deletedID := env.AddMessage(dbtest.MessageOpts{Subject: "sms three", MessageType: "sms", SizeEstimate: 100})
+	env.MarkDeletedBySourceID(fmt.Sprintf("msg%d", deletedID))
+
+	stats := env.MustGetTextStats(TextStatsOptions{})
+	assert.Equal(int64(3), stats.MessageCount, "MessageCount includes source-deleted")
+	assert.Equal(int64(2), stats.ActiveMessageCount, "ActiveMessageCount")
+	assert.Equal(int64(1), stats.SourceDeletedMessageCount, "SourceDeletedMessageCount")
+}
+
 func TestGetTotalStatsWithSourceID(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)

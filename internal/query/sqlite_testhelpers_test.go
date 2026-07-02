@@ -77,6 +77,14 @@ func (e *testEnv) MustGetTotalStats(opts StatsOptions) *TotalStats {
 	return stats
 }
 
+// MustGetTextStats calls GetTextStats and fails the test on error.
+func (e *testEnv) MustGetTextStats(opts TextStatsOptions) *TotalStats {
+	e.T.Helper()
+	stats, err := e.Engine.GetTextStats(e.Ctx, opts)
+	require.NoError(e.T, err, "GetTextStats")
+	return stats
+}
+
 // EnableFTS creates the FTS5 table, populates it, and re-creates the engine
 // to clear cached FTS state.
 func (e *testEnv) EnableFTS() {

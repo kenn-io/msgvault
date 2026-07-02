@@ -919,12 +919,24 @@ func (s *Store) GetStats() (*Stats, error) {
 	return s.GetStatsForScope(nil)
 }
 
+// GetStatsContext is the context-aware form of GetStats. Request paths pass
+// the request context so the count queries carry the request_id for SQL
+// logging and are cancelled with the request.
+func (s *Store) GetStatsContext(ctx context.Context) (*Stats, error) {
+	return s.GetStatsForScopeContext(ctx, nil)
+}
+
 // GetStatsForScope returns statistics scoped to the given source IDs.
 // When sourceIDs is nil or empty, returns global counts.
 // All message-derived counts (threads, attachments, labels) exclude
 // dedup-hidden and source-deleted messages via LiveMessagesWhere.
 // DatabaseSize is always the global file size — it cannot be decomposed per source.
 func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
+	return s.GetStatsForScopeContext(context.Background(), sourceIDs)
+}
+
+// GetStatsForScopeContext is the context-aware form of GetStatsForScope.
+func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*Stats, error) {
 	stats := &Stats{}
 
 	var queries []struct {
@@ -1045,9 +1057,9 @@ func (s *Store) GetStatsForScope(sourceIDs []int64) (*Stats, error) {
 	for _, q := range queries {
 		var row *sql.Row
 		if len(q.args) > 0 {
-			row = s.db.QueryRow(q.query, q.args...)
+			row = s.db.QueryRowContext(ctx, q.query, q.args...)
 		} else {
-			row = s.db.QueryRow(q.query)
+			row = s.db.QueryRowContext(ctx, q.query)
 		}
 		if err := row.Scan(q.dest); err != nil {
 			if s.dialect.IsNoSuchTableError(err) {
