@@ -393,6 +393,7 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 			Email:              account.Email,
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,
+			OAuthApp:           stringValue(account.OauthApp),
 			MessageCount:       account.MessageCount,
 			SourceDeletedCount: account.SourceDeletedCount,
 			LastSync:           account.LastSync,

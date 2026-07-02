@@ -576,6 +576,8 @@ components:
         message_count:
           format: int64
           type: integer
+        oauth_app:
+          type: string
         source_deleted_count:
           format: int64
           type: integer

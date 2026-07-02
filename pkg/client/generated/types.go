@@ -450,6 +450,7 @@ type CliAccountResponse struct {
 	ID                 int64      `json:"id"`
 	LastSync           *time.Time `json:"last_sync,omitempty" validate:"required"`
 	MessageCount       int64      `json:"message_count"`
+	OauthApp           *string    `json:"oauth_app,omitempty"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	Type               string     `json:"type" validate:"required"`
 }

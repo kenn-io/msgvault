@@ -465,6 +465,7 @@ type cliAccountResponse struct {
 	Email              string     `json:"email"`
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
+	OAuthApp           string     `json:"oauth_app,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
@@ -1482,6 +1483,9 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		if src.DisplayName.Valid {
 			account.DisplayName = src.DisplayName.String
+		}
+		if src.OAuthApp.Valid {
+			account.OAuthApp = src.OAuthApp.String
 		}
 		if src.LastSyncAt.Valid {
 			lastSync := src.LastSyncAt.Time.UTC()

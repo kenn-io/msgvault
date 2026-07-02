@@ -216,6 +216,7 @@ type CLIAccount struct {
 	Email              string     `json:"email"`
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
+	OAuthApp           string     `json:"oauth_app,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`

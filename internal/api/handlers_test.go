@@ -1960,6 +1960,47 @@ func TestHandleCLIAccountsReturnsSourceCounts(t *testing.T) {
 	assert.Equal(int64(1), resp.Accounts[0].MessageCount, "MessageCount")
 }
 
+func TestHandleCLIAccountsReturnsOAuthApp(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+
+	named, err := st.GetOrCreateSource("gmail", "acme@example.com")
+	require.NoError(err, "GetOrCreateSource named")
+	require.NoError(
+		st.UpdateSourceOAuthApp(named.ID, sql.NullString{String: "acme", Valid: true}),
+		"UpdateSourceOAuthApp",
+	)
+	_, err = st.GetOrCreateSource("gmail", "default@example.com")
+	require.NoError(err, "GetOrCreateSource default")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp struct {
+		Accounts []struct {
+			Email    string `json:"email"`
+			OAuthApp string `json:"oauth_app"`
+		} `json:"accounts"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+
+	byEmail := map[string]string{}
+	for _, a := range resp.Accounts {
+		byEmail[a.Email] = a.OAuthApp
+	}
+	assert.Equal("acme", byEmail["acme@example.com"], "named account oauth_app")
+	assert.Empty(byEmail["default@example.com"], "default account oauth_app empty")
+}
+
 func TestHandleCLIUpdateAccountDisplayName(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
