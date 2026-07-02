@@ -211,6 +211,10 @@ func (e *DuckDBEngine) Close() error {
 func (e *DuckDBEngine) QuerySQL(
 	ctx context.Context, sqlStr string,
 ) (*QueryResult, error) {
+	if err := EnsureReadOnly(sqlStr); err != nil {
+		return nil, err
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err

@@ -1016,7 +1016,9 @@ func (c *Client) OpenCLIAttachment(ctx context.Context, contentHash string) (io.
 }
 
 func (c *Client) RunSQLQuery(ctx context.Context, sql string) (*query.QueryResult, error) {
-	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.RunQueryResp, error) {
+	// CLIResponse surfaces the daemon's user-facing message (e.g. the read-only
+	// guard rejection) directly, without the "API error (400)" wrapper.
+	resp, err := CLIResponse(c, func(client *apiclient.Client) (*generated.RunQueryResp, error) {
 		return client.RunQueryWithResponse(ctx, &generated.RunQueryRequestOptions{
 			Body: &generated.RunQueryBody{SQL: sql},
 		})
