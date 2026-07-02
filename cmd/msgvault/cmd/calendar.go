@@ -109,6 +109,15 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
 			tokenReusable := calendarAddTokenReusable(mgr, email, appDecision)
 
+			// A token that exists, carries the calendar scope, and matches the
+			// client still looks reusable even when its refresh token is expired
+			// or revoked. Probe it so a dead token is reauthorized here instead
+			// of falling through to buildCalendarClient and failing with a
+			// non-interactive invalid_grant that the recovery hint would only
+			// tell the user to repeat.
+			tokenExpiredOrRevoked := hasToken && hasCalendarScope && tokenReusable &&
+				calendarTokenExpiredOrRevoked(ctx, mgr, email)
+
 			// A headless host cannot complete Google's browser consent, and the
 			// OAuth device flow does not support Calendar scopes. If this account
 			// still needs Calendar authorization, mirror add-account --headless:
@@ -116,7 +125,7 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			// browser or touching the existing Gmail token. Once the dual-scope
 			// token is copied in, re-running add-calendar --headless skips this
 			// and registers the calendars (an API call that needs no browser).
-			if calAddHeadless && (!hasToken || !hasCalendarScope || !tokenReusable) {
+			if calAddHeadless && (!hasToken || !hasCalendarScope || !tokenReusable || tokenExpiredOrRevoked) {
 				oauth.PrintCalendarHeadlessInstructions(email, cfg.TokensDir(), oauthApp)
 				return nil
 			}
@@ -125,6 +134,11 @@ func newAddCalendarLocalCmd() *cobra.Command {
 			case !hasToken:
 				fmt.Printf("Authorizing %s for Calendar...\n", email)
 				if err := mgr.Authorize(ctx, email); err != nil {
+					return wrapOAuthError(err)
+				}
+			case tokenExpiredOrRevoked:
+				fmt.Printf("Calendar token for %s is expired or revoked. Re-authorizing...\n", email)
+				if err := mgr.AuthorizePreservingGrantedScopes(ctx, email); err != nil {
 					return wrapOAuthError(err)
 				}
 			case !hasCalendarScope:
@@ -624,6 +638,35 @@ func calendarAddTokenReusable(mgr calendarTokenClientMatcher, email string, app 
 		return mgr.TokenMatchesClient(email)
 	}
 	return true
+}
+
+// calendarTokenRefreshProber is the subset of oauth.Manager used to detect an
+// expired or revoked Calendar refresh token.
+type calendarTokenRefreshProber interface {
+	HasToken(email string) bool
+	TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error)
+}
+
+// calendarTokenExpiredOrRevoked reports whether a stored Calendar token can no
+// longer be refreshed (Google returns invalid_grant). Such a token still passes
+// HasToken/HasScope/TokenMatchesClient, so add-calendar would otherwise treat it
+// as reusable and fail later in buildCalendarClient with a non-interactive
+// invalid_grant. Detecting it up front lets add-calendar reauthorize (browser)
+// or print headless copy-token instructions instead. Transient failures
+// (network, context cancellation) are not treated as expiry, so a flaky probe
+// does not force a needless reauthorization.
+func calendarTokenExpiredOrRevoked(ctx context.Context, mgr calendarTokenRefreshProber, email string) bool {
+	if !mgr.HasToken(email) {
+		return false
+	}
+	ts, err := mgr.TokenSource(ctx, email)
+	if err != nil {
+		return isAuthInvalidError(err)
+	}
+	if _, err := ts.Token(); err != nil {
+		return isAuthInvalidError(err)
+	}
+	return false
 }
 
 type calendarSyncOAuthApp struct {
