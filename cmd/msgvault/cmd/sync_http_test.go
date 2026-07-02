@@ -282,6 +282,36 @@ func TestPreflightReauth_IMAPRequestSkips(t *testing.T) {
 	assert.Equal(t, 0, gmailMgr.authorizeCount, "no reauth for non-Gmail request")
 }
 
+// TestPreflightReauth_DisplayName verifies a request that matches a Gmail
+// account's display name (not its email) still re-authorizes it. sync/sync-full
+// accept a display name via GetSourcesByIdentifierOrDisplayName.
+func TestPreflightReauth_DisplayName(t *testing.T) {
+	work := newExpiredPreflightManager()
+	personal := newExpiredPreflightManager()
+	managers := map[string]*mockReauthorizer{"work-app": work, "personal-app": personal}
+	c := basePreflight(managers,
+		preflightAccount{Email: "alice@example.com", DisplayName: "Work Gmail", OAuthApp: "work-app"},
+		preflightAccount{Email: "bob@example.com", DisplayName: "Personal", OAuthApp: "personal-app"},
+	)
+
+	require.NoError(t, preflightReauth(context.Background(), c, "Work Gmail"))
+	assert.Equal(t, 1, work.authorizeCount, "display-name match must be re-authorized")
+	assert.Equal(t, 0, personal.authorizeCount, "non-matching account untouched")
+}
+
+// TestPreflightReauth_NoMatch verifies a request that matches neither an email
+// nor a display name re-authorizes nothing.
+func TestPreflightReauth_NoMatch(t *testing.T) {
+	mgr := newExpiredPreflightManager()
+	managers := map[string]*mockReauthorizer{"": mgr}
+	c := basePreflight(managers,
+		preflightAccount{Email: "alice@example.com", DisplayName: "Work Gmail"},
+	)
+
+	require.NoError(t, preflightReauth(context.Background(), c, "Nonexistent"))
+	assert.Equal(t, 0, mgr.authorizeCount, "no reauth when nothing matches")
+}
+
 func resetSyncFullFlagsForTest(t *testing.T) {
 	t.Helper()
 

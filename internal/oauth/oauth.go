@@ -264,6 +264,17 @@ func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, em
 	return scoped.AuthorizeManual(ctx, email)
 }
 
+// AuthorizePreservingGrantedScopes is the browser twin of
+// AuthorizeManualPreservingGrantedScopes: it opens the browser and reauthorizes
+// with the manager's required scopes plus any scopes already recorded on the
+// token file. Google's forced consent REPLACES the granted scope set, so
+// re-authorizing with the bare required scopes would silently drop previously
+// granted grants (Calendar, permanent-delete); the union preserves them.
+func (m *Manager) AuthorizePreservingGrantedScopes(ctx context.Context, email string) error {
+	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
+	return scoped.Authorize(ctx, email)
+}
+
 func (m *Manager) withScopes(scopes []string) *Manager {
 	scoped := *m
 	config := *m.config

@@ -67,13 +67,14 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 type preflightReauthManager interface {
 	HasToken(email string) bool
 	TokenSource(ctx context.Context, email string) (oauth2.TokenSource, error)
-	Authorize(ctx context.Context, email string) error
+	AuthorizePreservingGrantedScopes(ctx context.Context, email string) error
 }
 
 // preflightAccount is a single Gmail account the preflight may re-authorize.
 type preflightAccount struct {
-	Email    string
-	OAuthApp string
+	Email       string
+	DisplayName string
+	OAuthApp    string
 }
 
 // preflightConfig carries the seams the sync preflight depends on. The
@@ -117,7 +118,11 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo) preflightCo
 				if a.Type != sourceTypeGmail {
 					continue
 				}
-				gmail = append(gmail, preflightAccount{Email: a.Email, OAuthApp: a.OAuthApp})
+				gmail = append(gmail, preflightAccount{
+					Email:       a.Email,
+					DisplayName: a.DisplayName,
+					OAuthApp:    a.OAuthApp,
+				})
 			}
 			return gmail, nil
 		},
@@ -137,7 +142,7 @@ func buildSyncPreflight(st *daemonclient.Client, info HTTPStoreInfo) preflightCo
 // which cannot open a browser itself. It is strictly best-effort: it only
 // re-authorizes tokens that already exist and have expired/been revoked, and
 // it never enrolls a new account (that is add-account's job).
-func preflightReauth(ctx context.Context, p preflightConfig, reqEmail string) error {
+func preflightReauth(ctx context.Context, p preflightConfig, reqIdentifier string) error {
 	if !p.Local || !p.Interactive || !p.OAuthConfigured {
 		return nil
 	}
@@ -146,8 +151,8 @@ func preflightReauth(ctx context.Context, p preflightConfig, reqEmail string) er
 	if err != nil {
 		return fmt.Errorf("list accounts for reauth preflight: %w", err)
 	}
-	if reqEmail != "" {
-		targets = filterPreflightAccounts(targets, reqEmail)
+	if reqIdentifier != "" {
+		targets = filterPreflightAccounts(targets, reqIdentifier)
 	}
 
 	for _, target := range targets {
@@ -158,16 +163,21 @@ func preflightReauth(ctx context.Context, p preflightConfig, reqEmail string) er
 	return nil
 }
 
-// filterPreflightAccounts keeps only the account whose email matches the
-// requested identifier (case-insensitive). A request for an IMAP or unknown
-// account yields no Gmail targets, so the preflight skips it.
-func filterPreflightAccounts(accounts []preflightAccount, reqEmail string) []preflightAccount {
+// filterPreflightAccounts keeps the Gmail accounts whose email OR display name
+// matches the requested identifier (case-insensitive). Both are accepted
+// because sync/sync-full resolve their argument via
+// GetSourcesByIdentifierOrDisplayName. All matches are returned so a display
+// name shared by several accounts re-authorizes every one of them. A request
+// for an IMAP or unknown account matches nothing, so the preflight skips it.
+func filterPreflightAccounts(accounts []preflightAccount, reqIdentifier string) []preflightAccount {
+	var matched []preflightAccount
 	for _, a := range accounts {
-		if strings.EqualFold(a.Email, reqEmail) {
-			return []preflightAccount{a}
+		if strings.EqualFold(a.Email, reqIdentifier) ||
+			strings.EqualFold(a.DisplayName, reqIdentifier) {
+			matched = append(matched, a)
 		}
 	}
-	return nil
+	return matched
 }
 
 func preflightReauthAccount(ctx context.Context, p preflightConfig, target preflightAccount) error {
@@ -203,7 +213,7 @@ func preflightReauthAccount(ctx context.Context, p preflightConfig, target prefl
 			"Token for %s is expired; opening browser to re-authorize...\n",
 			target.Email)
 	}
-	if err := mgr.Authorize(ctx, target.Email); err != nil {
+	if err := mgr.AuthorizePreservingGrantedScopes(ctx, target.Email); err != nil {
 		return fmt.Errorf("re-authorize %s: %w", target.Email, err)
 	}
 	return nil
