@@ -407,29 +407,50 @@ func TestDaemonCLIArgsFromCobraHandlesNestedCommandsAndFalseBool(t *testing.T) {
 	require.NoError(root.Execute(), "execute")
 }
 
-func TestDaemonCLIArgsFromCobraSkipsRootPersistentFlags(t *testing.T) {
+func TestDaemonCLIArgsFromCobraForwardsLoggingButSkipsOtherRootPersistentFlags(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	var cfgFile string
-	var verbose bool
+	var cfgFile, logLevelFlag string
+	var verbose, logSQLFlag bool
+	var slowMs int64
 	root := &cobra.Command{Use: "msgvault"}
 	root.PersistentFlags().StringVar(&cfgFile, "config", "", "")
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "")
+	root.PersistentFlags().StringVar(&logLevelFlag, "log-level", "", "")
+	root.PersistentFlags().BoolVar(&logSQLFlag, "log-sql", false, "")
+	root.PersistentFlags().Int64Var(&slowMs, "log-sql-slow-ms", 0, "")
 
 	child := &cobra.Command{
 		Use: "deduplicate",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			got, err := daemonCLIArgsFromCobra(cmd, args)
 			require.NoError(err, "daemon args")
-			assert.Equal([]string{"deduplicate", "--dry-run"}, got, "daemon args")
+			// --config is re-resolved by the daemon and stripped; the logging
+			// flags express per-invocation intent and pass through (sorted by
+			// flag name alongside the command's own flags).
+			assert.Equal([]string{
+				"deduplicate",
+				"--dry-run",
+				"--log-level=debug",
+				"--log-sql",
+				"--log-sql-slow-ms=250",
+				"--verbose",
+			}, got, "daemon args")
 			return nil
 		},
 	}
 	var dryRun bool
 	child.Flags().BoolVar(&dryRun, "dry-run", false, "")
 	root.AddCommand(child)
-	root.SetArgs([]string{"--config", "/tmp/config.toml", "--verbose", "deduplicate", "--dry-run"})
+	root.SetArgs([]string{
+		"--config", "/tmp/config.toml",
+		"--log-level", "debug",
+		"--log-sql",
+		"--log-sql-slow-ms", "250",
+		"--verbose",
+		"deduplicate", "--dry-run",
+	})
 
 	require.NoError(root.Execute(), "execute")
 }

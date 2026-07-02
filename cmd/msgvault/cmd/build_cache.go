@@ -1114,6 +1114,9 @@ func globalConfigFlagArgs() []string {
 	if logSQL {
 		args = append(args, "--log-sql")
 	}
+	if logSQLSlow != 0 {
+		args = append(args, "--log-sql-slow-ms", strconv.FormatInt(logSQLSlow, 10))
+	}
 	return args
 }
 

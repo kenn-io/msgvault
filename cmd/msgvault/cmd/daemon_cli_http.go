@@ -17,6 +17,19 @@ const (
 	cliStreamStderr = "stderr"
 )
 
+// loggingPassthroughFlags are root persistent flags whose values express
+// per-invocation logging intent (verbosity, SQL tracing). Every other root
+// persistent flag is stripped from CLIRunRequest.Args because the daemon
+// re-resolves configuration from its own environment; these must instead
+// survive into the request so an explicit `msgvault --log-level debug <cmd>`
+// on the client is honored by the daemon-spawned CLI subprocess.
+var loggingPassthroughFlags = map[string]bool{
+	"log-level":       true,
+	"verbose":         true,
+	"log-sql":         true,
+	"log-sql-slow-ms": true,
+}
+
 func runDaemonCLICommandHTTPFromCobra(cmd *cobra.Command, args []string) error {
 	return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, args, nil)
 }
@@ -88,7 +101,7 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 
 	flags := make([]*pflag.Flag, 0)
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		if isRootPersistentFlag(cmd, flag) {
+		if isRootPersistentFlag(cmd, flag) && !loggingPassthroughFlags[flag.Name] {
 			return
 		}
 		flags = append(flags, flag)
