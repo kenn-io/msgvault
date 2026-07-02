@@ -215,6 +215,12 @@ func (s *Server) setupRouter() http.Handler {
 	s.registerHumaRoutes(api, apiV1)
 	registerPprofHandlers(mux)
 
+	// Catch-all so unknown paths and trailing-slash misses return the JSON
+	// ErrorResponse envelope the contract declares, instead of Go's default
+	// text/plain "404 page not found". More specific patterns (API routes,
+	// /debug/pprof/, /openapi.*, /docs) still take precedence over "/".
+	mux.HandleFunc("/", s.handleNotFound)
+
 	// CORS middleware (config-driven; disabled when no origins configured)
 	corsConfig := CORSConfig{
 		AllowedOrigins:   s.cfg.Server.CORSOrigins,
@@ -588,4 +594,11 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Vector: s.vectorHealth()})
+}
+
+// handleNotFound is the mux catch-all for unmatched paths. It returns the
+// standard JSON ErrorResponse envelope so clients that parse the documented
+// error shape do not choke on Go's default text/plain 404.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "No route matches "+r.Method+" "+r.URL.Path)
 }

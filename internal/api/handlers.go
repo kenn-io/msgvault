@@ -484,12 +484,20 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	page, _, err := queryInt(r, "page")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if page < 1 {
 		page = 1
 	}
-	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	if pageSize < 1 || pageSize > 100 {
+	pageSize, ok, err := queryInt(r, "page_size")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	if !ok || pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
 
@@ -633,14 +641,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mode == "vector" || mode == "hybrid" {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page, _, err := queryInt(r, "page")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
 		if page > 1 {
 			writeError(w, http.StatusBadRequest, "pagination_unsupported",
 				"mode=vector|hybrid only supports page=1")
 			return
 		}
-		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-		if pageSize < 1 {
+		pageSize, ok, err := queryInt(r, "page_size")
+		if err != nil {
+			s.rejectBadParam(w, err)
+			return
+		}
+		if !ok || pageSize < 1 {
 			pageSize = 20
 		}
 		_, _, vectorCfg := s.vectorComponents()
@@ -657,12 +673,20 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	page, _, err := queryInt(r, "page")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if page < 1 {
 		page = 1
 	}
-	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	if pageSize < 1 || pageSize > 100 {
+	pageSize, ok, err := queryInt(r, "page_size")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	if !ok || pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
 
@@ -671,7 +695,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var (
 		messages []store.APIMessage
 		total    int64
-		err      error
 	)
 	useQuery := parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0
 	if searcher, ok := s.store.(ctxMessageSearcher); ok {
@@ -879,7 +902,11 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit, _, err := queryInt(r, "limit")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if limit < 1 {
 		limit = 20
 	}
@@ -987,15 +1014,15 @@ func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPEr
 	if messageType := strings.TrimSpace(r.URL.Query().Get("message_type")); messageType != "" {
 		filter.MessageTypes = []string{strings.ToLower(messageType)}
 	}
-	if v := r.URL.Query().Get("after"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			filter.After = &t
-		}
+	if after, ok, err := queryDate(r, "after"); err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	} else if ok {
+		filter.After = &after
 	}
-	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			filter.Before = &t
-		}
+	if before, ok, err := queryDate(r, "before"); err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	} else if ok {
+		filter.Before = &before
 	}
 	if v := r.URL.Query().Get("has_attachment"); v != "" {
 		hasAttachment := v == "true"
@@ -1535,6 +1562,14 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_sql", "Field 'sql' is required")
 		return
 	}
+	// Reject writes and multi-statement input before execution. The engine
+	// enforces this too (for in-process callers), but checking here guarantees
+	// the endpoint contract and returns a clear 400 without touching the query
+	// runner.
+	if err := query.EnsureReadOnly(req.SQL); err != nil {
+		writeError(w, http.StatusBadRequest, "not_read_only", err.Error())
+		return
+	}
 
 	result, err := s.runSQLQuery(r.Context(), req.SQL)
 	if err != nil {
@@ -1545,6 +1580,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if s.writeIfContextError(w, err) {
+			return
+		}
+		if errors.Is(err, query.ErrQueryNotReadOnly) {
+			writeError(w, http.StatusBadRequest, "not_read_only", err.Error())
 			return
 		}
 		writeError(w, http.StatusBadRequest, "query_error", err.Error())
@@ -1637,6 +1676,12 @@ type TextMessagesResponse struct {
 	Messages []query.MessageSummary `json:"messages"`
 }
 
+// aggregateViewTypes are the accepted view_type values, surfaced in 400 messages.
+var aggregateViewTypes = []string{
+	"senders", "sender_names", "recipients", "recipient_names",
+	"domains", "labels", "time",
+}
+
 // parseViewType parses a view type string into query.ViewType.
 func parseViewType(s string) (query.ViewType, bool) {
 	switch strings.ToLower(s) {
@@ -1681,39 +1726,54 @@ func viewTypeString(v query.ViewType) string {
 	}
 }
 
-// parseSortField parses a sort field string into query.SortField.
-func parseSortField(s string) query.SortField {
+// Accepted values for enum query parameters, surfaced in 400 messages.
+var (
+	aggregateSortFields = []string{"count", "size", "attachment_size", "name"}
+	messageSortFields   = []string{"date", "size", "subject"}
+	textSortFields      = []string{"last_message", "count", "name"}
+	sortDirections      = []string{"asc", "desc"}
+	timeGranularities   = []string{"year", "month", "day"}
+)
+
+// parseSortField parses an aggregate sort field. ok is false for unknown values.
+func parseSortField(s string) (query.SortField, bool) {
 	switch strings.ToLower(s) {
 	case "count":
-		return query.SortByCount
+		return query.SortByCount, true
 	case "size":
-		return query.SortBySize
+		return query.SortBySize, true
 	case "attachment_size":
-		return query.SortByAttachmentSize
+		return query.SortByAttachmentSize, true
 	case "name":
-		return query.SortByName
+		return query.SortByName, true
 	default:
-		return query.SortByCount
+		return query.SortByCount, false
 	}
 }
 
-// parseSortDirection parses a direction string into query.SortDirection.
-func parseSortDirection(s string) query.SortDirection {
-	if strings.ToLower(s) == "asc" {
-		return query.SortAsc
+// parseSortDirection parses a direction string. ok is false for unknown values.
+func parseSortDirection(s string) (query.SortDirection, bool) {
+	switch strings.ToLower(s) {
+	case "asc":
+		return query.SortAsc, true
+	case "desc":
+		return query.SortDesc, true
+	default:
+		return query.SortDesc, false
 	}
-	return query.SortDesc
 }
 
-// parseTimeGranularity parses a granularity string into query.TimeGranularity.
-func parseTimeGranularity(s string) query.TimeGranularity {
+// parseTimeGranularity parses a granularity string. ok is false for unknown values.
+func parseTimeGranularity(s string) (query.TimeGranularity, bool) {
 	switch strings.ToLower(s) {
 	case "year":
-		return query.TimeYear
+		return query.TimeYear, true
+	case "month":
+		return query.TimeMonth, true
 	case "day":
-		return query.TimeDay
+		return query.TimeDay, true
 	default:
-		return query.TimeMonth
+		return query.TimeMonth, false
 	}
 }
 
@@ -1755,39 +1815,57 @@ func textViewTypeString(v query.TextViewType) string {
 	}
 }
 
-func parseTextSortField(s string) query.TextSortField {
+func parseTextSortField(s string) (query.TextSortField, bool) {
 	switch strings.ToLower(s) {
+	case "last_message":
+		return query.TextSortByLastMessage, true
 	case "count":
-		return query.TextSortByCount
+		return query.TextSortByCount, true
 	case "name":
-		return query.TextSortByName
+		return query.TextSortByName, true
 	default:
-		return query.TextSortByLastMessage
+		return query.TextSortByLastMessage, false
 	}
 }
 
 // parseAggregateOptions extracts common aggregate options from query parameters.
-func parseAggregateOptions(r *http.Request) query.AggregateOptions {
+// Unparseable integers/dates and unknown enum values return a paramError so the
+// handler can reject them with a 400; out-of-range limits are clamped.
+func parseAggregateOptions(r *http.Request) (query.AggregateOptions, error) {
 	opts := query.DefaultAggregateOptions()
 
 	if v := r.URL.Query().Get("sort"); v != "" {
-		opts.SortField = parseSortField(v)
+		field, ok := parseSortField(v)
+		if !ok {
+			return opts, enumParamError("sort", v, aggregateSortFields)
+		}
+		opts.SortField = field
 	}
 	if v := r.URL.Query().Get("direction"); v != "" {
-		opts.SortDirection = parseSortDirection(v)
-	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err := strconv.Atoi(v); err == nil && limit > 0 {
-			opts.Limit = limit
+		dir, ok := parseSortDirection(v)
+		if !ok {
+			return opts, enumParamError("direction", v, sortDirections)
 		}
+		opts.SortDirection = dir
+	}
+	limit, ok, err := queryInt(r, "limit")
+	if err != nil {
+		return opts, err
+	}
+	if ok && limit > 0 {
+		opts.Limit = limit
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {
-		opts.TimeGranularity = parseTimeGranularity(v)
-	}
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			opts.SourceID = &id
+		gran, ok := parseTimeGranularity(v)
+		if !ok {
+			return opts, enumParamError("time_granularity", v, timeGranularities)
 		}
+		opts.TimeGranularity = gran
+	}
+	if sourceID, ok, err := queryInt64(r, "source_id"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.SourceID = &sourceID
 	}
 	if r.URL.Query().Get("attachments_only") == "true" {
 		opts.WithAttachmentsOnly = true
@@ -1798,30 +1876,24 @@ func parseAggregateOptions(r *http.Request) query.AggregateOptions {
 	if v := r.URL.Query().Get("search_query"); v != "" {
 		opts.SearchQuery = v
 	}
-	if v := r.URL.Query().Get("after"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			u := t.UTC()
-			opts.After = &u
-		} else if t, err := time.Parse("2006-01-02", v); err == nil {
-			u := t.UTC()
-			opts.After = &u
-		}
+	if after, ok, err := queryDate(r, "after"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.After = &after
 	}
-	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			u := t.UTC()
-			opts.Before = &u
-		} else if t, err := time.Parse("2006-01-02", v); err == nil {
-			u := t.UTC()
-			opts.Before = &u
-		}
+	if before, ok, err := queryDate(r, "before"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.Before = &before
 	}
 
-	return opts
+	return opts, nil
 }
 
 // parseMessageFilter extracts filter parameters from query parameters.
-func parseMessageFilter(r *http.Request) query.MessageFilter {
+// Unparseable integers/dates and unknown enum values return a paramError so the
+// handler can reject them with a 400 instead of silently ignoring the filter.
+func parseMessageFilter(r *http.Request) (query.MessageFilter, error) {
 	var filter query.MessageFilter
 	filter.Pagination.Limit = -1 // sentinel: "not provided"
 
@@ -1837,17 +1909,21 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 		filter.TimeRange.Period = v
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {
-		filter.TimeRange.Granularity = parseTimeGranularity(v)
-	}
-	if v := r.URL.Query().Get("conversation_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter.ConversationID = &id
+		gran, ok := parseTimeGranularity(v)
+		if !ok {
+			return filter, enumParamError("time_granularity", v, timeGranularities)
 		}
+		filter.TimeRange.Granularity = gran
 	}
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter.SourceID = &id
-		}
+	if id, ok, err := queryInt64(r, "conversation_id"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.ConversationID = &id
+	}
+	if id, ok, err := queryInt64(r, "source_id"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.SourceID = &id
 	}
 	if r.URL.Query().Get("attachments_only") == "true" {
 		filter.WithAttachmentsOnly = true
@@ -1856,49 +1932,45 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 		filter.HideDeletedFromSource = true
 	}
 
-	// Date range filters (RFC3339 or 2006-01-02), normalized to UTC
-	if v := r.URL.Query().Get("after"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			u := t.UTC()
-			filter.After = &u
-		} else if t, err := time.Parse("2006-01-02", v); err == nil {
-			u := t.UTC()
-			filter.After = &u
-		}
+	if after, ok, err := queryDate(r, "after"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.After = &after
 	}
-	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			u := t.UTC()
-			filter.Before = &u
-		} else if t, err := time.Parse("2006-01-02", v); err == nil {
-			u := t.UTC()
-			filter.Before = &u
-		}
+	if before, ok, err := queryDate(r, "before"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.Before = &before
 	}
 
 	// EmptyValueTargets — comma-separated view type names
 	if v := r.URL.Query().Get("empty_targets"); v != "" {
 		for name := range strings.SplitSeq(v, ",") {
-			if vt, ok := parseViewType(strings.TrimSpace(name)); ok {
-				filter.SetEmptyTarget(vt)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
 			}
+			vt, ok := parseViewType(name)
+			if !ok {
+				return filter, enumParamError("empty_targets", name, aggregateViewTypes)
+			}
+			filter.SetEmptyTarget(vt)
 		}
 	}
 
-	// Pagination
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if offset, err := strconv.Atoi(v); err == nil && offset >= 0 {
-			filter.Pagination.Offset = offset
-		}
+	// Pagination. A non-numeric value is rejected; a negative offset/limit is
+	// clamped (limit=0 has a count-only meaning on some endpoints). The -1
+	// limit sentinel means "not provided" — callers apply their own default.
+	if offset, ok, err := queryInt(r, "offset"); err != nil {
+		return filter, err
+	} else if ok && offset >= 0 {
+		filter.Pagination.Offset = offset
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err := strconv.Atoi(v); err == nil && limit >= 0 {
-			filter.Pagination.Limit = limit
-		}
+	if limit, ok, err := queryInt(r, "limit"); err != nil {
+		return filter, err
+	} else if ok && limit >= 0 {
+		filter.Pagination.Limit = limit
 	}
-	// -1 sentinel means "not provided" — leave for callers that need
-	// endpoint-specific defaults (fast search: 100, deep search: 100).
-	// Endpoints that don't override should call applyDefaultLimit.
 
 	// Sorting
 	if v := r.URL.Query().Get("sort"); v != "" {
@@ -1909,64 +1981,82 @@ func parseMessageFilter(r *http.Request) query.MessageFilter {
 			filter.Sorting.Field = query.MessageSortBySize
 		case "subject":
 			filter.Sorting.Field = query.MessageSortBySubject
+		default:
+			return filter, enumParamError("sort", v, messageSortFields)
 		}
 	}
 	if v := r.URL.Query().Get("direction"); v != "" {
-		filter.Sorting.Direction = parseSortDirection(v)
+		dir, ok := parseSortDirection(v)
+		if !ok {
+			return filter, enumParamError("direction", v, sortDirections)
+		}
+		filter.Sorting.Direction = dir
 	}
 
-	return filter
+	return filter, nil
 }
 
-func parseTextFilter(r *http.Request) query.TextFilter {
+func parseTextFilter(r *http.Request) (query.TextFilter, error) {
 	var filter query.TextFilter
 	filter.ContactPhone = r.URL.Query().Get("contact_phone")
 	filter.ContactName = r.URL.Query().Get("contact_name")
 	filter.SourceType = r.URL.Query().Get("source_type")
 	filter.Label = r.URL.Query().Get("label")
 
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter.SourceID = &id
-		}
+	if id, ok, err := queryInt64(r, "source_id"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.SourceID = &id
 	}
 	if v := r.URL.Query().Get("time_period"); v != "" {
 		filter.TimeRange.Period = v
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {
-		filter.TimeRange.Granularity = parseTimeGranularity(v)
-	}
-	if v := r.URL.Query().Get("after"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			filter.After = &t
+		gran, ok := parseTimeGranularity(v)
+		if !ok {
+			return filter, enumParamError("time_granularity", v, timeGranularities)
 		}
+		filter.TimeRange.Granularity = gran
 	}
-	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			filter.Before = &t
-		}
+	if after, ok, err := queryDate(r, "after"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.After = &after
 	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if offset, err := strconv.Atoi(v); err == nil && offset >= 0 {
-			filter.Pagination.Offset = offset
-		}
+	if before, ok, err := queryDate(r, "before"); err != nil {
+		return filter, err
+	} else if ok {
+		filter.Before = &before
 	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err := strconv.Atoi(v); err == nil && limit >= 0 {
-			filter.Pagination.Limit = limit
-		}
+	if offset, ok, err := queryInt(r, "offset"); err != nil {
+		return filter, err
+	} else if ok && offset >= 0 {
+		filter.Pagination.Offset = offset
+	}
+	if limit, ok, err := queryInt(r, "limit"); err != nil {
+		return filter, err
+	} else if ok && limit >= 0 {
+		filter.Pagination.Limit = limit
 	}
 	if v := r.URL.Query().Get("sort"); v != "" {
-		filter.SortField = parseTextSortField(v)
+		field, ok := parseTextSortField(v)
+		if !ok {
+			return filter, enumParamError("sort", v, textSortFields)
+		}
+		filter.SortField = field
 	}
 	if v := r.URL.Query().Get("direction"); v != "" {
-		filter.SortDirection = parseSortDirection(v)
+		dir, ok := parseSortDirection(v)
+		if !ok {
+			return filter, enumParamError("direction", v, sortDirections)
+		}
+		filter.SortDirection = dir
 	}
 
-	return filter
+	return filter, nil
 }
 
-func parseTextAggregateOptions(r *http.Request) query.TextAggregateOptions {
+func parseTextAggregateOptions(r *http.Request) (query.TextAggregateOptions, error) {
 	opts := query.TextAggregateOptions{
 		SortField:       query.TextSortByCount,
 		SortDirection:   query.SortDesc,
@@ -1974,41 +2064,53 @@ func parseTextAggregateOptions(r *http.Request) query.TextAggregateOptions {
 		TimeGranularity: query.TimeMonth,
 	}
 
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			opts.SourceID = &id
-		}
+	if id, ok, err := queryInt64(r, "source_id"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.SourceID = &id
 	}
 	if v := r.URL.Query().Get("sort"); v != "" {
-		opts.SortField = parseTextSortField(v)
+		field, ok := parseTextSortField(v)
+		if !ok {
+			return opts, enumParamError("sort", v, textSortFields)
+		}
+		opts.SortField = field
 	}
 	if v := r.URL.Query().Get("direction"); v != "" {
-		opts.SortDirection = parseSortDirection(v)
-	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err := strconv.Atoi(v); err == nil && limit > 0 {
-			opts.Limit = limit
+		dir, ok := parseSortDirection(v)
+		if !ok {
+			return opts, enumParamError("direction", v, sortDirections)
 		}
+		opts.SortDirection = dir
+	}
+	if limit, ok, err := queryInt(r, "limit"); err != nil {
+		return opts, err
+	} else if ok && limit > 0 {
+		opts.Limit = limit
 	}
 	if v := r.URL.Query().Get("time_granularity"); v != "" {
-		opts.TimeGranularity = parseTimeGranularity(v)
+		gran, ok := parseTimeGranularity(v)
+		if !ok {
+			return opts, enumParamError("time_granularity", v, timeGranularities)
+		}
+		opts.TimeGranularity = gran
 		opts.TimeGranularitySet = true
 	}
 	if v := r.URL.Query().Get("search_query"); v != "" {
 		opts.SearchQuery = v
 	}
-	if v := r.URL.Query().Get("after"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			opts.After = &t
-		}
+	if after, ok, err := queryDate(r, "after"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.After = &after
 	}
-	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := parseAPITime(v); err == nil {
-			opts.Before = &t
-		}
+	if before, ok, err := queryDate(r, "before"); err != nil {
+		return opts, err
+	} else if ok {
+		opts.Before = &before
 	}
 
-	return opts
+	return opts, nil
 }
 
 // toAggregateRowJSON converts query.AggregateRow to JSON format.
@@ -2155,7 +2257,11 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := parseAggregateOptions(r)
+	opts, err := parseAggregateOptions(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 
 	rows, err := s.engine.Aggregate(r.Context(), viewType, opts)
 	if err != nil {
@@ -2198,8 +2304,16 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := parseMessageFilter(r)
-	opts := parseAggregateOptions(r)
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	opts, err := parseAggregateOptions(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 
 	rows, err := s.engine.SubAggregate(r.Context(), filter, viewType, opts)
 	if err != nil {
@@ -2230,7 +2344,11 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	filter := parseMessageFilter(r)
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if filter.Pagination.Limit <= 0 {
 		filter.Pagination.Limit = maxPageSize
 	}
@@ -2280,7 +2398,12 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ids, err := s.engine.GetGmailIDsByFilter(r.Context(), parseMessageFilter(r))
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	ids, err := s.engine.GetGmailIDsByFilter(r.Context(), filter)
 	if err != nil {
 		s.logger.Error("gmail id filter query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Gmail ID query failed")
@@ -2332,7 +2455,11 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := parseMessageFilter(r)
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if filter.Pagination.Limit <= 0 {
 		filter.Pagination.Limit = maxPageSize
 	}
@@ -2398,10 +2525,11 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 
 	var opts query.StatsOptions
 
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			opts.SourceID = &id
-		}
+	if id, ok, err := queryInt64(r, "source_id"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.SourceID = &id
 	}
 	if r.URL.Query().Get("attachments_only") == "true" {
 		opts.WithAttachmentsOnly = true
@@ -2413,9 +2541,12 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		opts.SearchQuery = v
 	}
 	if v := r.URL.Query().Get("group_by"); v != "" {
-		if viewType, ok := parseViewType(v); ok {
-			opts.GroupBy = viewType
+		viewType, ok := parseViewType(v)
+		if !ok {
+			s.rejectBadParam(w, enumParamError("group_by", v, aggregateViewTypes))
+			return
 		}
+		opts.GroupBy = viewType
 	}
 
 	stats, err := s.engine.GetTotalStats(r.Context(), opts)
@@ -2445,7 +2576,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := parseMessageFilter(r)
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	q := search.Parse(queryStr)
 
 	// Reject filter fields that the search engines cannot honor.
@@ -2518,7 +2653,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := parseMessageFilter(r)
+	filter, err := parseMessageFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	q := search.Parse(queryStr)
 
 	// Reject filter fields that this deep-search engine path cannot
@@ -2582,7 +2721,11 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	filter := parseTextFilter(r)
+	filter, err := parseTextFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if filter.Pagination.Limit <= 0 {
 		filter.Pagination.Limit = 100
 	}
@@ -2635,7 +2778,11 @@ func (s *Server) handleTextAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := parseTextAggregateOptions(r)
+	opts, err := parseTextAggregateOptions(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	rows, err := textEngine.TextAggregate(r.Context(), viewType, opts)
 	if err != nil {
 		s.logger.Error("text aggregate query failed", "view_type", viewTypeStr, "error", err)
@@ -2667,7 +2814,11 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	filter := parseTextFilter(r)
+	filter, err := parseTextFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if filter.Pagination.Limit <= 0 {
 		filter.Pagination.Limit = maxPageSize
 	}
@@ -2713,11 +2864,19 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset, _, err := queryInt(r, "offset")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if offset < 0 {
 		offset = 0
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit, _, err := queryInt(r, "limit")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2756,10 +2915,11 @@ func (s *Server) handleTextStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var opts query.TextStatsOptions
-	if v := r.URL.Query().Get("source_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			opts.SourceID = &id
-		}
+	if id, ok, err := queryInt64(r, "source_id"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if ok {
+		opts.SourceID = &id
 	}
 	opts.SearchQuery = r.URL.Query().Get("search_query")
 

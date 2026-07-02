@@ -100,6 +100,12 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	setupHumaErrors()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	// DefaultConfig's only CreateHook installs huma's SchemaLinkTransformer,
+	// which injects a `$schema` field (and Link header) into typed
+	// huma.Register response bodies. Clearing the hook keeps those routes'
+	// success and error bodies on the single bare {error,message} envelope the
+	// raw handlers already use, instead of the $schema-wrapped variant.
+	config.CreateHooks = nil
 	config.Components.Schemas.RegisterTypeAlias(
 		reflect.TypeFor[query.MessageSummary](),
 		reflect.TypeFor[CLIQueryMessageSummary](),
@@ -441,8 +447,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
 			queryStringParam("mode", "Search mode: fts, vector, or hybrid", false),
-			queryIntegerParam("page", "One-based page number"),
-			queryIntegerParam("page_size", "Page size"),
+			queryIntegerParam("page", "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
+			queryIntegerParam("page_size", "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
 			queryBooleanParam("explain", "Include score explanation when mode is vector or hybrid"),
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 		}, scopeParams()...)
@@ -540,8 +546,8 @@ func scopeParams() []*huma.Param {
 
 func paginationParams(pageName, pageSizeName string) []*huma.Param {
 	return []*huma.Param{
-		queryIntegerParam(pageName, "One-based page number"),
-		queryIntegerParam(pageSizeName, "Page size"),
+		queryIntegerParam(pageName, "One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400."),
+		queryIntegerParam(pageSizeName, "Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400."),
 	}
 }
 
@@ -549,7 +555,7 @@ func aggregateOptionParams() []*huma.Param {
 	return []*huma.Param{
 		queryStringParam("sort", "Sort field", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
-		queryIntegerParam("limit", "Maximum number of rows to return"),
+		queryIntegerParam("limit", "Maximum number of rows to return (default 100; values below 1 fall back to the default)"),
 		queryStringParam("time_granularity", "Time bucket granularity", false),
 		queryIntegerParam("source_id", "Source ID"),
 		queryBooleanParam("attachments_only", "Only include messages with attachments"),
@@ -579,8 +585,8 @@ func messageFilterParams() []*huma.Param {
 		queryStringParam("before", "Upper date/time bound (RFC3339 or YYYY-MM-DD)", false),
 		queryStringParam("empty_targets", "Comma-separated aggregate view names to match empty values", false),
 		queryIntegerParam("offset", "Zero-based row offset"),
-		queryIntegerParam("limit", "Maximum number of rows to return"),
-		queryStringParam("sort", "Sort field", false),
+		queryIntegerParam("limit", "Maximum number of rows to return (default and max 500; larger values are clamped)"),
+		queryStringParam("sort", "Sort field: date, size, or subject", false),
 		queryStringParam("direction", "Sort direction: asc or desc", false),
 	}
 }

@@ -24,12 +24,6 @@ components:
       type: object
     AccountListResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AccountListResponse.json
-          format: uri
-          readOnly: true
-          type: string
         accounts:
           items:
             $ref: "#/components/schemas/AccountInfo"
@@ -63,12 +57,6 @@ components:
     AddAccountRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AddAccountRequest.json
-          format: uri
-          readOnly: true
-          type: string
         email:
           type: string
         enabled:
@@ -83,12 +71,6 @@ components:
     AddRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AddRequest.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         identifier:
@@ -102,12 +84,6 @@ components:
       type: object
     AddResult:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AddResult.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         identifier:
@@ -134,12 +110,6 @@ components:
       type: object
     AggregateResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AggregateResponse.json
-          format: uri
-          readOnly: true
-          type: string
         rows:
           items:
             $ref: "#/components/schemas/AggregateRowJSON"
@@ -180,12 +150,6 @@ components:
       type: object
     ApiHTTPError:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/ApiHTTPError.json
-          format: uri
-          readOnly: true
-          type: string
         error:
           type: string
         message:
@@ -195,12 +159,6 @@ components:
       type: object
     AttachmentInfo:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/AttachmentInfo.json
-          format: uri
-          readOnly: true
-          type: string
         content_hash:
           type: string
         filename:
@@ -244,12 +202,6 @@ components:
     CLIAddCalendarPlanRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIAddCalendarPlanRequest.json
-          format: uri
-          readOnly: true
-          type: string
         email:
           type: string
         headless:
@@ -263,12 +215,6 @@ components:
       type: object
     CLIAddCalendarPlanResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIAddCalendarPlanResponse.json
-          format: uri
-          readOnly: true
-          type: string
         body_lines:
           items:
             type: string
@@ -285,12 +231,6 @@ components:
       type: object
     CLICacheBuildEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLICacheBuildEvent.json
-          format: uri
-          readOnly: true
-          type: string
         data:
           type: string
         error:
@@ -327,12 +267,6 @@ components:
     CLIDeduplicatePlanRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIDeduplicatePlanRequest.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         collection:
@@ -346,12 +280,6 @@ components:
       type: object
     CLIDeduplicatePlanResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIDeduplicatePlanResponse.json
-          format: uri
-          readOnly: true
-          type: string
         footer_stdout:
           type: string
         items:
@@ -367,12 +295,6 @@ components:
     CLIDeleteStagedPlanRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIDeleteStagedPlanRequest.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         batch_id:
@@ -390,12 +312,6 @@ components:
       type: object
     CLIDeleteStagedPlanResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIDeleteStagedPlanResponse.json
-          format: uri
-          readOnly: true
-          type: string
         blocked_error:
           type: string
         confirmation_mode:
@@ -432,12 +348,6 @@ components:
       type: object
     CLIDeletionManifestResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIDeletionManifestResponse.json
-          format: uri
-          readOnly: true
-          type: string
         id:
           type: string
         message_count:
@@ -450,12 +360,6 @@ components:
     CLIEmbeddingsPlanRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIEmbeddingsPlanRequest.json
-          format: uri
-          readOnly: true
-          type: string
         force:
           type: boolean
         generation_id:
@@ -469,12 +373,6 @@ components:
       type: object
     CLIEmbeddingsPlanResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIEmbeddingsPlanResponse.json
-          format: uri
-          readOnly: true
-          type: string
         needs_confirmation:
           type: boolean
         prompt:
@@ -561,12 +459,6 @@ components:
       type: object
     CLIRepairEncodingEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIRepairEncodingEvent.json
-          format: uri
-          readOnly: true
-          type: string
         data:
           type: string
         error:
@@ -578,12 +470,6 @@ components:
       type: object
     CLIRunEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIRunEvent.json
-          format: uri
-          readOnly: true
-          type: string
         data:
           type: string
         error:
@@ -596,12 +482,6 @@ components:
     CLIRunRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIRunRequest.json
-          format: uri
-          readOnly: true
-          type: string
         args:
           items:
             type: string
@@ -618,12 +498,6 @@ components:
       type: object
     CLISyncEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLISyncEvent.json
-          format: uri
-          readOnly: true
-          type: string
         data:
           type: string
         error:
@@ -635,12 +509,6 @@ components:
       type: object
     CLIVerifyEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CLIVerifyEvent.json
-          format: uri
-          readOnly: true
-          type: string
         data:
           type: string
         error:
@@ -652,12 +520,6 @@ components:
       type: object
     CacheStats:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CacheStats.json
-          format: uri
-          readOnly: true
-          type: string
         attachment_size_bytes:
           format: int64
           type: integer
@@ -730,12 +592,6 @@ components:
       type: object
     CliAccountsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliAccountsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         accounts:
           items:
             $ref: "#/components/schemas/CliAccountResponse"
@@ -746,12 +602,6 @@ components:
       type: object
     CliCollectionEnvelope:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliCollectionEnvelope.json
-          format: uri
-          readOnly: true
-          type: string
         collection:
           $ref: "#/components/schemas/CliCollectionResponse"
       required:
@@ -809,12 +659,6 @@ components:
       type: object
     CliCollectionsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliCollectionsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         collections:
           items:
             $ref: "#/components/schemas/CliCollectionResponse"
@@ -838,12 +682,6 @@ components:
     CliDeleteDedupedExecuteRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliDeleteDedupedExecuteRequest.json
-          format: uri
-          readOnly: true
-          type: string
         all_hidden:
           type: boolean
         batch_ids:
@@ -870,12 +708,6 @@ components:
       type: object
     CliDeleteDedupedExecuteResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliDeleteDedupedExecuteResponse.json
-          format: uri
-          readOnly: true
-          type: string
         backup_path:
           type: string
         batch_count:
@@ -891,12 +723,6 @@ components:
     CliDeleteDedupedPlanRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliDeleteDedupedPlanRequest.json
-          format: uri
-          readOnly: true
-          type: string
         all_hidden:
           type: boolean
         batch_ids:
@@ -907,12 +733,6 @@ components:
       type: object
     CliDeleteDedupedPlanResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliDeleteDedupedPlanResponse.json
-          format: uri
-          readOnly: true
-          type: string
         batch_count:
           format: int64
           type: integer
@@ -930,12 +750,6 @@ components:
       type: object
     CliIdentitiesResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliIdentitiesResponse.json
-          format: uri
-          readOnly: true
-          type: string
         rows:
           items:
             $ref: "#/components/schemas/CliIdentityRowResponse"
@@ -973,12 +787,6 @@ components:
       type: object
     CliInitDBResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliInitDBResponse.json
-          format: uri
-          readOnly: true
-          type: string
         notice:
           type: string
         stats:
@@ -1021,12 +829,6 @@ components:
       type: object
     CliMessageResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliMessageResponse.json
-          format: uri
-          readOnly: true
-          type: string
         attachments:
           items:
             $ref: "#/components/schemas/CliMessageAttachment"
@@ -1116,12 +918,6 @@ components:
       type: object
     CliRebuildFTSEvent:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliRebuildFTSEvent.json
-          format: uri
-          readOnly: true
-          type: string
         done:
           format: int64
           type: integer
@@ -1140,12 +936,6 @@ components:
       type: object
     CliSearchResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliSearchResponse.json
-          format: uri
-          readOnly: true
-          type: string
         index_built:
           type: boolean
         indexed_messages:
@@ -1166,12 +956,6 @@ components:
       type: object
     CliStatsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CliStatsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         scope_label:
           type: string
         scope_source_count:
@@ -1185,12 +969,6 @@ components:
     CreateRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/CreateRequest.json
-          format: uri
-          readOnly: true
-          type: string
         accounts:
           items:
             type: string
@@ -1204,12 +982,6 @@ components:
       type: object
     DeepSearchResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/DeepSearchResponse.json
-          format: uri
-          readOnly: true
-          type: string
         count:
           format: int64
           type: integer
@@ -1238,12 +1010,6 @@ components:
       type: object
     ErrorResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/ErrorResponse.json
-          format: uri
-          readOnly: true
-          type: string
         error:
           type: string
         message:
@@ -1285,12 +1051,6 @@ components:
       type: object
     FilteredMessagesResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/FilteredMessagesResponse.json
-          format: uri
-          readOnly: true
-          type: string
         count:
           format: int64
           type: integer
@@ -1373,12 +1133,6 @@ components:
       type: object
     GmailIDsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/GmailIDsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         gmail_ids:
           items:
             type: string
@@ -1389,12 +1143,6 @@ components:
       type: object
     HealthResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/HealthResponse.json
-          format: uri
-          readOnly: true
-          type: string
         status:
           type: string
         vector:
@@ -1527,12 +1275,6 @@ components:
     Manifest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/Manifest.json
-          format: uri
-          readOnly: true
-          type: string
         created_at:
           format: date-time
           type: string
@@ -1570,12 +1312,6 @@ components:
       type: object
     MessageDetail:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/MessageDetail.json
-          format: uri
-          readOnly: true
-          type: string
         attachments:
           items:
             $ref: "#/components/schemas/AttachmentInfo"
@@ -1651,12 +1387,6 @@ components:
       type: object
     MessageListResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/MessageListResponse.json
-          format: uri
-          readOnly: true
-          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -1743,12 +1473,6 @@ components:
       type: object
     MutationResult:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/MutationResult.json
-          format: uri
-          readOnly: true
-          type: string
         name:
           type: string
         source_count:
@@ -1759,12 +1483,6 @@ components:
       type: object
     PingInfo:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/PingInfo.json
-          format: uri
-          readOnly: true
-          type: string
         ok:
           type: boolean
         pid:
@@ -1792,12 +1510,6 @@ components:
     QueryRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/QueryRequest.json
-          format: uri
-          readOnly: true
-          type: string
         sql:
           type: string
       required:
@@ -1805,12 +1517,6 @@ components:
       type: object
     QueryResult:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/QueryResult.json
-          format: uri
-          readOnly: true
-          type: string
         columns:
           items:
             type: string
@@ -1835,12 +1541,6 @@ components:
     RemoveRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/RemoveRequest.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         identifier:
@@ -1851,12 +1551,6 @@ components:
       type: object
     RemoveResult:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/RemoveResult.json
-          format: uri
-          readOnly: true
-          type: string
         account:
           type: string
         identifier:
@@ -1873,12 +1567,6 @@ components:
       type: object
     SchedulerStatusResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/SchedulerStatusResponse.json
-          format: uri
-          readOnly: true
-          type: string
         accounts:
           items:
             $ref: "#/components/schemas/AccountStatus"
@@ -1906,12 +1594,6 @@ components:
       type: object
     SearchFastResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/SearchFastResponse.json
-          format: uri
-          readOnly: true
-          type: string
         messages:
           items:
             $ref: "#/components/schemas/MessageSummary"
@@ -1968,12 +1650,6 @@ components:
       type: object
     SimilarSearchResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/SimilarSearchResponse.json
-          format: uri
-          readOnly: true
-          type: string
         generation:
           $ref: "#/components/schemas/HybridGenerationSummary"
         messages:
@@ -2029,12 +1705,6 @@ components:
       type: object
     SourceStatusResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/SourceStatusResponse.json
-          format: uri
-          readOnly: true
-          type: string
         sources:
           items:
             $ref: "#/components/schemas/SourceStatus"
@@ -2046,12 +1716,6 @@ components:
     SourcesRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/SourcesRequest.json
-          format: uri
-          readOnly: true
-          type: string
         accounts:
           items:
             type: string
@@ -2062,12 +1726,6 @@ components:
       type: object
     StatsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/StatsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         active_messages:
           format: int64
           type: integer
@@ -2124,12 +1782,6 @@ components:
       type: object
     StatusMessageResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/StatusMessageResponse.json
-          format: uri
-          readOnly: true
-          type: string
         message:
           type: string
         status:
@@ -2277,12 +1929,6 @@ components:
       type: object
     TextConversationsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/TextConversationsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         conversations:
           items:
             $ref: "#/components/schemas/TextConversationRow"
@@ -2308,12 +1954,6 @@ components:
       type: object
     TextMessagesResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/TextMessagesResponse.json
-          format: uri
-          readOnly: true
-          type: string
         count:
           format: int64
           type: integer
@@ -2340,12 +1980,6 @@ components:
     TokenUploadRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/TokenUploadRequest.json
-          format: uri
-          readOnly: true
-          type: string
         access_token:
           type: string
         client_id:
@@ -2369,12 +2003,6 @@ components:
       type: object
     TotalStatsResponse:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/TotalStatsResponse.json
-          format: uri
-          readOnly: true
-          type: string
         account_count:
           format: int64
           type: integer
@@ -2412,12 +2040,6 @@ components:
     UpdateRequest:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/UpdateRequest.json
-          format: uri
-          readOnly: true
-          type: string
         display_name:
           type: string
         email:
@@ -2428,12 +2050,6 @@ components:
       type: object
     UpdateResult:
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          example: https://example.com/schemas/UpdateResult.json
-          format: uri
-          readOnly: true
-          type: string
         display_name:
           type: string
         email:
@@ -2552,7 +2168,7 @@ paths:
           name: direction
           schema:
             type: string
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default 100; values below 1 fall back to the default)
           in: query
           name: limit
           schema:
@@ -2710,13 +2326,13 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
           in: query
           name: limit
           schema:
             format: int64
             type: integer
-        - description: Sort field
+        - description: "Sort field: date, size, or subject"
           in: query
           name: sort
           schema:
@@ -4052,13 +3668,13 @@ paths:
     get:
       operationId: listMessages
       parameters:
-        - description: One-based page number
+        - description: One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
           in: query
           name: page
           schema:
             format: int64
             type: integer
-        - description: Page size
+        - description: Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
           in: query
           name: page_size
           schema:
@@ -4174,13 +3790,13 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
           in: query
           name: limit
           schema:
             format: int64
             type: integer
-        - description: Sort field
+        - description: "Sort field: date, size, or subject"
           in: query
           name: sort
           schema:
@@ -4300,13 +3916,13 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
           in: query
           name: limit
           schema:
             format: int64
             type: integer
-        - description: Sort field
+        - description: "Sort field: date, size, or subject"
           in: query
           name: sort
           schema:
@@ -4505,13 +4121,13 @@ paths:
           name: mode
           schema:
             type: string
-        - description: One-based page number
+        - description: One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
           in: query
           name: page
           schema:
             format: int64
             type: integer
-        - description: Page size
+        - description: Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
           in: query
           name: page_size
           schema:
@@ -4655,13 +4271,13 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
           in: query
           name: limit
           schema:
             format: int64
             type: integer
-        - description: Sort field
+        - description: "Sort field: date, size, or subject"
           in: query
           name: sort
           schema:
@@ -4842,13 +4458,13 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Maximum number of rows to return
+        - description: Maximum number of rows to return (default and max 500; larger values are clamped)
           in: query
           name: limit
           schema:
             format: int64
             type: integer
-        - description: Sort field
+        - description: "Sort field: date, size, or subject"
           in: query
           name: sort
           schema:

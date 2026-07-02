@@ -16,7 +16,7 @@ type GetAggregatesQuery struct {
 	// Direction Sort direction: asc or desc
 	Direction *string `json:"direction,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default 100; values below 1 fall back to the default)
 	Limit *int64 `json:"limit,omitempty"`
 
 	// TimeGranularity Time bucket granularity
@@ -96,10 +96,10 @@ type GetSubAggregatesQuery struct {
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: date, size, or subject
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc
@@ -241,10 +241,10 @@ func (v VerifyCLIQuery) Validate() error {
 }
 
 type ListMessagesQuery struct {
-	// Page One-based page number
+	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
 
-	// PageSize Page size
+	// PageSize Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
 	PageSize *int64 `json:"page_size,omitempty"`
 }
 
@@ -300,10 +300,10 @@ type FilterMessagesQuery struct {
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: date, size, or subject
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc
@@ -362,10 +362,10 @@ type GetGmailIDsByFilterQuery struct {
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: date, size, or subject
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc
@@ -388,10 +388,10 @@ type SearchMessagesQuery struct {
 	// Mode Search mode: fts, vector, or hybrid
 	Mode *string `json:"mode,omitempty"`
 
-	// Page One-based page number
+	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
 
-	// PageSize Page size
+	// PageSize Page size (default 20, max 100; out-of-range values are clamped). Non-numeric values are rejected with 400.
 	PageSize *int64 `json:"page_size,omitempty"`
 
 	// Explain Include score explanation when mode is vector or hybrid
@@ -466,10 +466,10 @@ type DeepSearchQuery struct {
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: date, size, or subject
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc
@@ -559,10 +559,10 @@ type FastSearchQuery struct {
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Limit Maximum number of rows to return
+	// Limit Maximum number of rows to return (default and max 500; larger values are clamped)
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Sort field
+	// Sort Sort field: date, size, or subject
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc

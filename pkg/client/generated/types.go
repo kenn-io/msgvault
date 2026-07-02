@@ -24,8 +24,6 @@ func (a AccountInfo) Validate() error {
 }
 
 type AccountListResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string       `json:"$schema,omitempty"`
 	Accounts []AccountInfo `json:"accounts,omitempty" validate:"required"`
 }
 
@@ -58,11 +56,9 @@ func (a AccountStatus) Validate() error {
 }
 
 type AddAccountRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string `json:"$schema,omitempty"`
-	Email    string  `json:"email" validate:"required"`
-	Enabled  bool    `json:"enabled"`
-	Schedule string  `json:"schedule" validate:"required"`
+	Email    string `json:"email" validate:"required"`
+	Enabled  bool   `json:"enabled"`
+	Schedule string `json:"schedule" validate:"required"`
 }
 
 func (a AddAccountRequest) Validate() error {
@@ -70,11 +66,9 @@ func (a AddAccountRequest) Validate() error {
 }
 
 type AddRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string `json:"$schema,omitempty"`
-	Account    string  `json:"account" validate:"required"`
-	Identifier string  `json:"identifier" validate:"required"`
-	Signal     string  `json:"signal" validate:"required"`
+	Account    string `json:"account" validate:"required"`
+	Identifier string `json:"identifier" validate:"required"`
+	Signal     string `json:"signal" validate:"required"`
 }
 
 func (a AddRequest) Validate() error {
@@ -82,12 +76,10 @@ func (a AddRequest) Validate() error {
 }
 
 type AddResult struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string `json:"$schema,omitempty"`
-	Account    string  `json:"account" validate:"required"`
-	Identifier string  `json:"identifier" validate:"required"`
-	Outcome    string  `json:"outcome" validate:"required"`
-	Signal     string  `json:"signal" validate:"required"`
+	Account    string `json:"account" validate:"required"`
+	Identifier string `json:"identifier" validate:"required"`
+	Outcome    string `json:"outcome" validate:"required"`
+	Signal     string `json:"signal" validate:"required"`
 }
 
 func (a AddResult) Validate() error {
@@ -104,8 +96,6 @@ func (a Address) Validate() error {
 }
 
 type AggregateResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string            `json:"$schema,omitempty"`
 	Rows     []AggregateRowJSON `json:"rows,omitempty" validate:"required"`
 	ViewType string             `json:"view_type" validate:"required"`
 }
@@ -142,8 +132,6 @@ func (a AggregateRowJSON) Validate() error {
 }
 
 type APIHTTPError struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	ErrorData string  `json:"error" validate:"required"`
 	Message   *string `json:"message,omitempty"`
 }
@@ -157,8 +145,6 @@ func (s APIHTTPError) Error() string {
 }
 
 type AttachmentInfo struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string `json:"$schema,omitempty"`
 	ContentHash *string `json:"content_hash,omitempty"`
 	Filename    string  `json:"filename" validate:"required"`
 	ID          int64   `json:"id"`
@@ -196,8 +182,6 @@ func (b BuildingSummary) Validate() error {
 }
 
 type CLIAddCalendarPlanRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema           *string `json:"$schema,omitempty"`
 	Email            string  `json:"email" validate:"required"`
 	Headless         *bool   `json:"headless,omitempty"`
 	OauthApp         *string `json:"oauth_app,omitempty"`
@@ -209,8 +193,6 @@ func (c CLIAddCalendarPlanRequest) Validate() error {
 }
 
 type CLIAddCalendarPlanResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema               *string  `json:"$schema,omitempty"`
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           *string  `json:"cancel_hint,omitempty"`
 	Headline             *string  `json:"headline,omitempty"`
@@ -218,8 +200,6 @@ type CLIAddCalendarPlanResponse struct {
 }
 
 type CLICacheBuildEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Type      string  `json:"type" validate:"required"`
@@ -241,8 +221,6 @@ type CLIDeduplicatePlanItem struct {
 }
 
 type CLIDeduplicatePlanRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                     *string `json:"$schema,omitempty"`
 	Account                    *string `json:"account,omitempty"`
 	Collection                 *string `json:"collection,omitempty"`
 	ContentHash                *bool   `json:"content_hash,omitempty"`
@@ -251,8 +229,6 @@ type CLIDeduplicatePlanRequest struct {
 }
 
 type CLIDeduplicatePlanResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema       *string                  `json:"$schema,omitempty"`
 	FooterStdout *string                  `json:"footer_stdout,omitempty"`
 	Items        []CLIDeduplicatePlanItem `json:"items,omitempty" validate:"required"`
 	PrefixStdout *string                  `json:"prefix_stdout,omitempty"`
@@ -274,8 +250,6 @@ func (c CLIDeduplicatePlanResponse) Validate() error {
 }
 
 type CLIDeleteStagedPlanRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema              *string `json:"$schema,omitempty"`
 	Account             *string `json:"account,omitempty"`
 	BatchID             *string `json:"batch_id,omitempty"`
 	DryRun              *bool   `json:"dry_run,omitempty"`
@@ -286,8 +260,6 @@ type CLIDeleteStagedPlanRequest struct {
 }
 
 type CLIDeleteStagedPlanResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                    *string  `json:"$schema,omitempty"`
 	BlockedError              *string  `json:"blocked_error,omitempty"`
 	ConfirmationMode          *string  `json:"confirmation_mode,omitempty"`
 	NeedsConfirmation         bool     `json:"needs_confirmation"`
@@ -303,10 +275,8 @@ type CLIDeleteStagedPlanResponse struct {
 }
 
 type CLIDeletionManifestResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema       *string `json:"$schema,omitempty"`
-	ID           string  `json:"id" validate:"required"`
-	MessageCount int64   `json:"message_count"`
+	ID           string `json:"id" validate:"required"`
+	MessageCount int64  `json:"message_count"`
 }
 
 func (c CLIDeletionManifestResponse) Validate() error {
@@ -314,11 +284,9 @@ func (c CLIDeletionManifestResponse) Validate() error {
 }
 
 type CLIEmbeddingsPlanRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema       *string `json:"$schema,omitempty"`
-	Force        *bool   `json:"force,omitempty"`
-	GenerationID int64   `json:"generation_id"`
-	Operation    string  `json:"operation" validate:"required"`
+	Force        *bool  `json:"force,omitempty"`
+	GenerationID int64  `json:"generation_id"`
+	Operation    string `json:"operation" validate:"required"`
 }
 
 func (c CLIEmbeddingsPlanRequest) Validate() error {
@@ -326,8 +294,6 @@ func (c CLIEmbeddingsPlanRequest) Validate() error {
 }
 
 type CLIEmbeddingsPlanResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema            *string `json:"$schema,omitempty"`
 	NeedsConfirmation bool    `json:"needs_confirmation"`
 	Prompt            *string `json:"prompt,omitempty"`
 }
@@ -410,8 +376,6 @@ func (c CLIQueryMessageSummary) Validate() error {
 }
 
 type CLIRepairEncodingEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Type      string  `json:"type" validate:"required"`
@@ -422,8 +386,6 @@ func (c CLIRepairEncodingEvent) Validate() error {
 }
 
 type CLIRunEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Type      string  `json:"type" validate:"required"`
@@ -434,11 +396,9 @@ func (c CLIRunEvent) Validate() error {
 }
 
 type CLIRunRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string           `json:"$schema,omitempty"`
-	Args   []string          `json:"args,omitempty" validate:"required"`
-	Cwd    *string           `json:"cwd,omitempty"`
-	Env    map[string]string `json:"env,omitempty"`
+	Args []string          `json:"args,omitempty" validate:"required"`
+	Cwd  *string           `json:"cwd,omitempty"`
+	Env  map[string]string `json:"env,omitempty"`
 }
 
 func (c CLIRunRequest) Validate() error {
@@ -446,8 +406,6 @@ func (c CLIRunRequest) Validate() error {
 }
 
 type CLISyncEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Type      string  `json:"type" validate:"required"`
@@ -458,8 +416,6 @@ func (c CLISyncEvent) Validate() error {
 }
 
 type CLIVerifyEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Data      *string `json:"data,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Type      string  `json:"type" validate:"required"`
@@ -470,8 +426,6 @@ func (c CLIVerifyEvent) Validate() error {
 }
 
 type CacheStats struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema              *string    `json:"$schema,omitempty"`
 	AttachmentSizeBytes *int64     `json:"attachment_size_bytes,omitempty"`
 	LastMessageID       *int64     `json:"last_message_id,omitempty"`
 	LastSyncAt          *time.Time `json:"last_sync_at,omitempty"`
@@ -505,8 +459,6 @@ func (c CliAccountResponse) Validate() error {
 }
 
 type CliAccountsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string              `json:"$schema,omitempty"`
 	Accounts []CliAccountResponse `json:"accounts,omitempty" validate:"required"`
 }
 
@@ -526,8 +478,6 @@ func (c CliAccountsResponse) Validate() error {
 }
 
 type CliCollectionEnvelope struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string               `json:"$schema,omitempty"`
 	Collection CliCollectionResponse `json:"collection"`
 }
 
@@ -590,8 +540,6 @@ func (c CliCollectionSourceResponse) Validate() error {
 }
 
 type CliCollectionsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string                 `json:"$schema,omitempty"`
 	Collections []CliCollectionResponse `json:"collections,omitempty" validate:"required"`
 }
 
@@ -620,8 +568,6 @@ func (c CliDeleteDedupedBatchResponse) Validate() error {
 }
 
 type CliDeleteDedupedExecuteRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema             *string                         `json:"$schema,omitempty"`
 	AllHidden          *bool                           `json:"all_hidden,omitempty"`
 	BatchIds           []string                        `json:"batch_ids,omitempty"`
 	ExpectedBatchCount int64                           `json:"expected_batch_count"`
@@ -646,23 +592,17 @@ func (c CliDeleteDedupedExecuteRequest) Validate() error {
 }
 
 type CliDeleteDedupedExecuteResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string `json:"$schema,omitempty"`
 	BackupPath *string `json:"backup_path,omitempty"`
 	BatchCount int64   `json:"batch_count"`
 	Deleted    int64   `json:"deleted"`
 }
 
 type CliDeleteDedupedPlanRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string  `json:"$schema,omitempty"`
 	AllHidden *bool    `json:"all_hidden,omitempty"`
 	BatchIds  []string `json:"batch_ids,omitempty"`
 }
 
 type CliDeleteDedupedPlanResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string                         `json:"$schema,omitempty"`
 	BatchCount int64                           `json:"batch_count"`
 	Batches    []CliDeleteDedupedBatchResponse `json:"batches,omitempty"`
 	Total      int64                           `json:"total"`
@@ -684,9 +624,7 @@ func (c CliDeleteDedupedPlanResponse) Validate() error {
 }
 
 type CliIdentitiesResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string                  `json:"$schema,omitempty"`
-	Rows   []CliIdentityRowResponse `json:"rows,omitempty" validate:"required"`
+	Rows []CliIdentityRowResponse `json:"rows,omitempty" validate:"required"`
 }
 
 func (c CliIdentitiesResponse) Validate() error {
@@ -719,8 +657,6 @@ func (c CliIdentityRowResponse) Validate() error {
 }
 
 type CliInitDBResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string       `json:"$schema,omitempty"`
 	Notice *string       `json:"notice,omitempty"`
 	Stats  StatsResponse `json:"stats"`
 }
@@ -761,8 +697,6 @@ func (c CliMessageAttachment) Validate() error {
 }
 
 type CliMessageResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema               *string                `json:"$schema,omitempty"`
 	Attachments          []CliMessageAttachment `json:"attachments,omitempty" validate:"required"`
 	Bcc                  []CliMessageAddress    `json:"bcc,omitempty" validate:"required"`
 	BodyHTML             string                 `json:"body_html" validate:"required"`
@@ -863,8 +797,6 @@ func (c CliMessageResponse) Validate() error {
 }
 
 type CliRebuildFTSEvent struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	Done      *int64  `json:"done,omitempty"`
 	ErrorData *string `json:"error,omitempty"`
 	Indexed   *int64  `json:"indexed,omitempty"`
@@ -877,8 +809,6 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema           *string                  `json:"$schema,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexedMessages  *int64                   `json:"indexed_messages,omitempty"`
 	Results          []CLIQueryMessageSummary `json:"results,omitempty" validate:"required"`
@@ -902,8 +832,6 @@ func (c CliSearchResponse) Validate() error {
 }
 
 type CliStatsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema           *string       `json:"$schema,omitempty"`
 	ScopeLabel       *string       `json:"scope_label,omitempty"`
 	ScopeSourceCount *int64        `json:"scope_source_count,omitempty"`
 	Stats            StatsResponse `json:"stats"`
@@ -923,8 +851,6 @@ func (c CliStatsResponse) Validate() error {
 }
 
 type CreateRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string  `json:"$schema,omitempty"`
 	Accounts []string `json:"accounts,omitempty" validate:"required"`
 	Name     string   `json:"name" validate:"required"`
 }
@@ -934,8 +860,6 @@ func (c CreateRequest) Validate() error {
 }
 
 type DeepSearchResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string          `json:"$schema,omitempty"`
 	Count    int64            `json:"count"`
 	HasMore  bool             `json:"has_more"`
 	Limit    int64            `json:"limit"`
@@ -963,8 +887,6 @@ func (d DeepSearchResponse) Validate() error {
 }
 
 type ErrorResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
 	ErrorData string  `json:"error" validate:"required"`
 	Message   *string `json:"message,omitempty"`
 }
@@ -992,8 +914,6 @@ func (e Execution) Validate() error {
 }
 
 type FilteredMessagesResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string          `json:"$schema,omitempty"`
 	Count    int64            `json:"count"`
 	HasMore  bool             `json:"has_more"`
 	Limit    int64            `json:"limit"`
@@ -1041,8 +961,6 @@ func (g GenerationSummary) Validate() error {
 }
 
 type GmailIDsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string  `json:"$schema,omitempty"`
 	GmailIds []string `json:"gmail_ids,omitempty" validate:"required"`
 }
 
@@ -1051,8 +969,6 @@ func (g GmailIDsResponse) Validate() error {
 }
 
 type HealthResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string       `json:"$schema,omitempty"`
 	Status string        `json:"status" validate:"required"`
 	Vector *VectorHealth `json:"vector,omitempty"`
 }
@@ -1181,8 +1097,6 @@ func (h HybridSearchResponse) Validate() error {
 }
 
 type Manifest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string    `json:"$schema,omitempty"`
 	CreatedAt   time.Time  `json:"created_at" validate:"required"`
 	CreatedBy   string     `json:"created_by" validate:"required"`
 	Description string     `json:"description" validate:"required"`
@@ -1241,8 +1155,6 @@ func (m Manifest) Validate() error {
 }
 
 type MessageDetail struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema          *string          `json:"$schema,omitempty"`
 	Attachments     []AttachmentInfo `json:"attachments,omitempty" validate:"required"`
 	Bcc             []string         `json:"bcc,omitempty"`
 	Body            string           `json:"body" validate:"required"`
@@ -1303,8 +1215,6 @@ func (m MessageDetail) Validate() error {
 }
 
 type MessageListResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string          `json:"$schema,omitempty"`
 	Messages []MessageSummary `json:"messages,omitempty" validate:"required"`
 	Page     int64            `json:"page"`
 	PageSize int64            `json:"page_size"`
@@ -1352,10 +1262,8 @@ func (m MessageSummary) Validate() error {
 }
 
 type MutationResult struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string `json:"$schema,omitempty"`
-	Name        string  `json:"name" validate:"required"`
-	SourceCount *int64  `json:"source_count,omitempty"`
+	Name        string `json:"name" validate:"required"`
+	SourceCount *int64 `json:"source_count,omitempty"`
 }
 
 func (m MutationResult) Validate() error {
@@ -1363,8 +1271,6 @@ func (m MutationResult) Validate() error {
 }
 
 type PingInfo struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
 	Ok      bool    `json:"ok"`
 	Pid     *int64  `json:"pid,omitempty"`
 	Service *string `json:"service,omitempty"`
@@ -1377,9 +1283,7 @@ type Progress struct {
 }
 
 type QueryRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	SQL    string  `json:"sql" validate:"required"`
+	SQL string `json:"sql" validate:"required"`
 }
 
 func (q QueryRequest) Validate() error {
@@ -1387,8 +1291,6 @@ func (q QueryRequest) Validate() error {
 }
 
 type QueryResult struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string  `json:"$schema,omitempty"`
 	Columns  []string `json:"columns,omitempty" validate:"required"`
 	RowCount int64    `json:"row_count"`
 	Rows     [][]any  `json:"rows,omitempty" validate:"required"`
@@ -1399,10 +1301,8 @@ func (q QueryResult) Validate() error {
 }
 
 type RemoveRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string `json:"$schema,omitempty"`
-	Account    string  `json:"account" validate:"required"`
-	Identifier string  `json:"identifier" validate:"required"`
+	Account    string `json:"account" validate:"required"`
+	Identifier string `json:"identifier" validate:"required"`
 }
 
 func (r RemoveRequest) Validate() error {
@@ -1410,12 +1310,10 @@ func (r RemoveRequest) Validate() error {
 }
 
 type RemoveResult struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string `json:"$schema,omitempty"`
-	Account    string  `json:"account" validate:"required"`
-	Identifier string  `json:"identifier" validate:"required"`
-	NoIdentity *bool   `json:"no_identity,omitempty"`
-	Removed    int64   `json:"removed"`
+	Account    string `json:"account" validate:"required"`
+	Identifier string `json:"identifier" validate:"required"`
+	NoIdentity *bool  `json:"no_identity,omitempty"`
+	Removed    int64  `json:"removed"`
 }
 
 func (r RemoveResult) Validate() error {
@@ -1423,8 +1321,6 @@ func (r RemoveResult) Validate() error {
 }
 
 type SchedulerStatusResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string         `json:"$schema,omitempty"`
 	Accounts []AccountStatus `json:"accounts,omitempty" validate:"required"`
 	Running  bool            `json:"running"`
 }
@@ -1452,8 +1348,6 @@ type ScoreBreakdown struct {
 }
 
 type SearchFastResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema     *string             `json:"$schema,omitempty"`
 	Messages   []MessageSummary    `json:"messages,omitempty" validate:"required"`
 	Query      string              `json:"query" validate:"required"`
 	Stats      *TotalStatsResponse `json:"stats,omitempty"`
@@ -1521,8 +1415,6 @@ func (s SenderCount) Validate() error {
 }
 
 type SimilarSearchResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema        *string                 `json:"$schema,omitempty"`
 	Generation    HybridGenerationSummary `json:"generation"`
 	Messages      []MessageSummary        `json:"messages,omitempty" validate:"required"`
 	Returned      int64                   `json:"returned"`
@@ -1604,8 +1496,6 @@ func (s SourceStatus) Validate() error {
 }
 
 type SourceStatusResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema  *string        `json:"$schema,omitempty"`
 	Sources []SourceStatus `json:"sources,omitempty" validate:"required"`
 }
 
@@ -1625,8 +1515,6 @@ func (s SourceStatusResponse) Validate() error {
 }
 
 type SourcesRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string  `json:"$schema,omitempty"`
 	Accounts []string `json:"accounts,omitempty" validate:"required"`
 }
 
@@ -1635,8 +1523,6 @@ func (s SourcesRequest) Validate() error {
 }
 
 type StatsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                *string    `json:"$schema,omitempty"`
 	ActiveMessages        int64      `json:"active_messages"`
 	DatabaseSizeBytes     int64      `json:"database_size_bytes"`
 	SourceDeletedMessages int64      `json:"source_deleted_messages"`
@@ -1692,10 +1578,8 @@ func (s StatsView) Validate() error {
 }
 
 type StatusMessageResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Message string  `json:"message" validate:"required"`
-	Status  string  `json:"status" validate:"required"`
+	Message string `json:"message" validate:"required"`
+	Status  string `json:"status" validate:"required"`
 }
 
 func (s StatusMessageResponse) Validate() error {
@@ -1816,8 +1700,6 @@ func (t TextConversationRow) Validate() error {
 }
 
 type TextConversationsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema        *string               `json:"$schema,omitempty"`
 	Conversations []TextConversationRow `json:"conversations,omitempty" validate:"required"`
 	Count         int64                 `json:"count"`
 	HasMore       bool                  `json:"has_more"`
@@ -1841,8 +1723,6 @@ func (t TextConversationsResponse) Validate() error {
 }
 
 type TextMessagesResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string                  `json:"$schema,omitempty"`
 	Count    int64                    `json:"count"`
 	HasMore  bool                     `json:"has_more"`
 	Limit    int64                    `json:"limit"`
@@ -1866,8 +1746,6 @@ func (t TextMessagesResponse) Validate() error {
 }
 
 type TokenUploadRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema       *string    `json:"$schema,omitempty"`
 	AccessToken  *string    `json:"access_token,omitempty"`
 	ClientID     *string    `json:"client_id,omitempty"`
 	Expiry       *time.Time `json:"expiry,omitempty"`
@@ -1882,23 +1760,19 @@ func (t TokenUploadRequest) Validate() error {
 }
 
 type TotalStatsResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                *string `json:"$schema,omitempty"`
-	AccountCount          int64   `json:"account_count"`
-	ActiveMessages        int64   `json:"active_messages"`
-	AttachmentCount       int64   `json:"attachment_count"`
-	AttachmentSize        int64   `json:"attachment_size"`
-	LabelCount            int64   `json:"label_count"`
-	MessageCount          int64   `json:"message_count"`
-	SourceDeletedMessages int64   `json:"source_deleted_messages"`
-	TotalSize             int64   `json:"total_size"`
+	AccountCount          int64 `json:"account_count"`
+	ActiveMessages        int64 `json:"active_messages"`
+	AttachmentCount       int64 `json:"attachment_count"`
+	AttachmentSize        int64 `json:"attachment_size"`
+	LabelCount            int64 `json:"label_count"`
+	MessageCount          int64 `json:"message_count"`
+	SourceDeletedMessages int64 `json:"source_deleted_messages"`
+	TotalSize             int64 `json:"total_size"`
 }
 
 type UpdateRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string `json:"$schema,omitempty"`
-	DisplayName string  `json:"display_name" validate:"required"`
-	Email       string  `json:"email" validate:"required"`
+	DisplayName string `json:"display_name" validate:"required"`
+	Email       string `json:"email" validate:"required"`
 }
 
 func (u UpdateRequest) Validate() error {
@@ -1906,10 +1780,8 @@ func (u UpdateRequest) Validate() error {
 }
 
 type UpdateResult struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema      *string `json:"$schema,omitempty"`
-	DisplayName string  `json:"display_name" validate:"required"`
-	Email       string  `json:"email" validate:"required"`
+	DisplayName string `json:"display_name" validate:"required"`
+	Email       string `json:"email" validate:"required"`
 }
 
 func (u UpdateResult) Validate() error {
