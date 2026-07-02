@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,11 +10,18 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 // setupVectorFeaturesForRun is a test seam for the build-tag-selected
 // setupVectorFeatures implementation.
 var setupVectorFeaturesForRun = setupVectorFeatures
+
+// resolveActiveGeneration is a test seam for the staleness check
+// startVectorInit runs at init completion. It defaults to the same
+// vector.ResolveActiveForFingerprint the hybrid engine calls at query time,
+// so init-time detection and query-time 503s share one comparison.
+var resolveActiveGeneration = vector.ResolveActiveForFingerprint
 
 // vectorInitHandle tracks the background vector init goroutine so shutdown
 // can wait for it and close the opened backend.
@@ -113,6 +121,7 @@ func startVectorInit(
 		h.vf = vf
 		h.mu.Unlock()
 		apiServer.SetVectorFeatures(vf.HybridEngine, vf.Backend, vf.Cfg)
+		checkVectorIndexFreshness(ctx, apiServer, vf)
 		if err := registerEmbedJob(sched, vf, s); err != nil {
 			// Cron was validated in precheckVectorFeatures, so this is an
 			// invariant violation, not user error; vector search still works.
@@ -121,6 +130,26 @@ func startVectorInit(
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
 	return h
+}
+
+// checkVectorIndexFreshness runs the same generation-vs-configured
+// fingerprint check the query path uses (vector.ResolveActiveForFingerprint)
+// once init completes, so the daemon's reported status reflects a stale
+// index instead of claiming "ready" while every vector search 503s with
+// index_stale. Only ErrIndexStale flips the status: a still-building or
+// not-yet-configured index (ErrIndexBuilding/ErrNotEnabled) and transient
+// backend errors leave the freshly-installed "ready" status untouched, since
+// those are not the "index does not match the configured model" failure this
+// status exists to expose.
+func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *vectorFeatures) {
+	_, err := resolveActiveGeneration(ctx, vf.Backend, vf.Cfg.GenerationFingerprint())
+	if !errors.Is(err, vector.ErrIndexStale) {
+		return
+	}
+	detail := err.Error() + "; run `msgvault embeddings build --full-rebuild` to rebuild"
+	logger.Warn("vector index does not match the configured model; vector search unavailable until rebuilt",
+		"detail", detail)
+	apiServer.SetVectorStale(detail)
 }
 
 // registerEmbedJob wires the embed worker into the scheduler (cron-driven

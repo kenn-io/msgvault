@@ -69,6 +69,8 @@ func TestServeStatusPrintsVectorLine(t *testing.T) {
 			"vector:  initializing", false},
 		{"error with detail", `{"status":"ok","vector":{"status":"error","error":"migration exploded"}}`,
 			"vector:  error (migration exploded)", false},
+		{"stale with detail", `{"status":"ok","vector":{"status":"stale","error":"active=\"old:1\" configured=\"new:2\""}}`,
+			`vector:  stale (active="old:1" configured="new:2")`, false},
 		{"disabled omits line", `{"status":"ok"}`, "", true},
 	}
 	for _, tt := range tests {

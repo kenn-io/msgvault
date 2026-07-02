@@ -16,11 +16,34 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-// fakeCmdVectorBackend satisfies vector.Backend without implementing any
-// methods; the tests in this file never invoke backend methods, they only
-// check that startVectorInit installs/propagates it.
+// fakeCmdVectorBackend satisfies vector.Backend for the init tests. It only
+// implements the generation lookups the init-time freshness check performs
+// (vector.ResolveActiveForFingerprint); every other method is left to the
+// embedded nil interface because these tests never call them. The zero value
+// reports "no active generation, none building" so the freshness check
+// resolves to ErrNotEnabled and leaves the freshly-installed ready status
+// untouched.
 type fakeCmdVectorBackend struct {
 	vector.Backend
+
+	active    *vector.Generation
+	activeErr error
+}
+
+func (b *fakeCmdVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+	if b.active != nil {
+		return *b.active, nil
+	}
+	if b.activeErr != nil {
+		return vector.Generation{}, b.activeErr
+	}
+	return vector.Generation{}, vector.ErrNoActiveGeneration
+}
+
+func (b *fakeCmdVectorBackend) BuildingGeneration(context.Context) (*vector.Generation, error) {
+	// (nil, nil) is the interface's "nothing building" signal, which
+	// ResolveActiveForFingerprint checks for explicitly.
+	return nil, nil //nolint:nilnil // "no building generation" is a valid nil-value/nil-error result here
 }
 
 func newVectorInitTestServer(t *testing.T) *api.Server {
@@ -99,6 +122,35 @@ func TestStartVectorInitInstallsFeaturesOnSuccess(t *testing.T) {
 	waitForVectorStatus(t, srv, api.VectorStatusReady)
 	h.CloseFeatures()
 	assert.True(t, closed, "CloseFeatures must close the opened backend")
+}
+
+func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
+	c := config.NewDefaultConfig()
+	c.Vector.Enabled = true
+	withTestConfig(t, c)
+
+	// Active generation's fingerprint differs from the configured one, so
+	// the same check the query path runs (ResolveActiveForFingerprint)
+	// reports ErrIndexStale at init completion.
+	overrideSetupVectorFeatures(t, func(context.Context, *store.Store, string, bool) (*vectorFeatures, error) {
+		return &vectorFeatures{
+			Backend: &fakeCmdVectorBackend{
+				active: &vector.Generation{ID: 1, Fingerprint: "old-model:384:c6000:e1"},
+			},
+			Cfg:   c.Vector,
+			Close: func() error { return nil },
+		}, nil
+	})
+
+	srv := newVectorInitTestServer(t)
+	h := startVectorInit(context.Background(), nil, "/tmp/msgvault.db", nil, srv, scheduler.New(nil))
+
+	require.True(t, h.WaitTimeout(5*time.Second))
+	detail := waitForVectorStatus(t, srv, api.VectorStatusStale)
+	assert := assert.New(t)
+	assert.Contains(detail, "old-model:384:c6000:e1", "detail names the stored fingerprint")
+	assert.Contains(detail, c.Vector.GenerationFingerprint(), "detail names the configured fingerprint")
+	assert.Contains(detail, "msgvault embeddings build --full-rebuild", "detail names the rebuild command")
 }
 
 func TestStartVectorInitReportsError(t *testing.T) {

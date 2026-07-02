@@ -18,6 +18,12 @@ const (
 	VectorStatusInitializing VectorStatus = "initializing"
 	VectorStatusReady        VectorStatus = "ready"
 	VectorStatusError        VectorStatus = "error"
+	// VectorStatusStale means the backend initialized fine, but the active
+	// index's fingerprint does not match the configured embedding
+	// model/dimension/preprocess policy, so vector search returns
+	// index_stale 503s until the index is rebuilt. It is evaluated once at
+	// init completion using the same staleness check the query path runs.
+	VectorStatusStale VectorStatus = "stale"
 )
 
 // SetVectorFeatures installs the vector components into a running server.
@@ -47,8 +53,24 @@ func (s *Server) SetVectorInitError(err error) {
 	s.vectorErr = err.Error()
 }
 
+// SetVectorStale marks the vector subsystem as stale: the backend
+// initialized and its components are installed, but the active index does
+// not match the configured embedding model/dimension, so vector searches
+// return index_stale until the index is rebuilt. detail should name the
+// stored vs configured fingerprint and the rebuild command. Calling with an
+// empty detail is a no-op — there is nothing actionable to report.
+func (s *Server) SetVectorStale(detail string) {
+	if detail == "" {
+		return
+	}
+	s.vectorMu.Lock()
+	defer s.vectorMu.Unlock()
+	s.vectorStatus = VectorStatusStale
+	s.vectorErr = detail
+}
+
 // VectorStatus returns the vector subsystem status and, when the status is
-// VectorStatusError, the failure message.
+// VectorStatusError or VectorStatusStale, the associated detail message.
 func (s *Server) VectorStatus() (VectorStatus, string) {
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()
@@ -83,6 +105,8 @@ func (s *Server) writeVectorUnavailable(w http.ResponseWriter) {
 	case VectorStatusError:
 		writeError(w, http.StatusServiceUnavailable, "vector_init_failed",
 			"vector search failed to initialize: "+errMsg)
+	case VectorStatusStale:
+		writeError(w, http.StatusServiceUnavailable, "index_stale", errMsg)
 	default:
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
 			"vector search is not configured on this server")

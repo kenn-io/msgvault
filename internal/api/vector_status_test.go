@@ -97,6 +97,70 @@ func TestSetVectorInitErrorNilIsNoOp(t *testing.T) {
 	assert.Empty(t, errMsg)
 }
 
+func TestSetVectorStaleTransitionsToStale(t *testing.T) {
+	opts := testServerOptions(t, &minimalVectorBackend{})
+	srv := NewServerWithOptions(opts)
+
+	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"; run rebuild")
+
+	status, errMsg := srv.VectorStatus()
+	assert.Equal(t, VectorStatusStale, status)
+	assert.Contains(t, errMsg, "old:1")
+}
+
+func TestSetVectorStaleEmptyIsNoOp(t *testing.T) {
+	opts := testServerOptions(t, &minimalVectorBackend{})
+	srv := NewServerWithOptions(opts)
+
+	srv.SetVectorStale("")
+
+	status, errMsg := srv.VectorStatus()
+	assert.Equal(t, VectorStatusReady, status)
+	assert.Empty(t, errMsg)
+}
+
+func TestSimilarSearchStale503(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.VectorStatus = VectorStatusInitializing
+	srv := NewServerWithOptions(opts)
+	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"; run `msgvault embeddings build --full-rebuild`")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(http.StatusServiceUnavailable, rec.Code)
+	var body struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal("index_stale", body.Error)
+	assert.Contains(body.Message, "old:1")
+}
+
+func TestHealthReportsStaleVectorStatus(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.VectorStatus = VectorStatusInitializing
+	srv := NewServerWithOptions(opts)
+	srv.SetVectorStale("active=\"old:1\" configured=\"new:2\"")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(http.StatusOK, rec.Code)
+	var body HealthResponse
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotNil(body.Vector)
+	assert.Equal("stale", body.Vector.Status)
+	assert.Contains(body.Vector.Error, "old:1")
+}
+
 func TestSetVectorFeaturesConcurrentReads(t *testing.T) {
 	opts := testServerOptions(t, nil)
 	opts.VectorStatus = VectorStatusInitializing
@@ -218,6 +282,7 @@ func TestStatsReportsVectorStatus(t *testing.T) {
 	}{
 		{"initializing", VectorStatusInitializing},
 		{"ready", VectorStatusReady},
+		{"stale", VectorStatusStale},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
