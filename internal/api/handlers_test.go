@@ -5295,3 +5295,35 @@ func TestHandleGetMessage_EngineUnsupportedFallsBackToStore(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.Equal(t, "Test Subject", resp["subject"], "subject (store path response)")
 }
+
+// deadlineRecordingResponseWriter records SetWriteDeadline calls so tests can
+// verify streaming writers roll the connection deadline forward per event.
+type deadlineRecordingResponseWriter struct {
+	*httptest.ResponseRecorder
+
+	deadlines []time.Time
+}
+
+func (w *deadlineRecordingResponseWriter) SetWriteDeadline(t time.Time) error {
+	w.deadlines = append(w.deadlines, t)
+	return nil
+}
+
+func TestCLINDJSONEventWriterRollsWriteDeadlineForward(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	w := &deadlineRecordingResponseWriter{ResponseRecorder: httptest.NewRecorder()}
+	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
+
+	before := time.Now()
+	require.NoError(writeEvent(CLIRunEvent{Type: "stdout", Data: "one\n"}), "first event")
+	require.NoError(writeEvent(CLIRunEvent{Type: "stdout", Data: "two\n"}), "second event")
+
+	require.Len(w.deadlines, 2, "one deadline extension per event")
+	for i, deadline := range w.deadlines {
+		assert.True(deadline.After(before.Add(cliStreamWriteDeadlineExtension-time.Minute)),
+			"deadline %d extends well beyond the event time", i)
+	}
+	assert.False(w.deadlines[1].Before(w.deadlines[0]), "deadline advances monotonically")
+}

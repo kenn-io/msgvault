@@ -1021,12 +1021,26 @@ func cliRunCommandAllowed(command string) bool {
 	}
 }
 
+// cliStreamWriteDeadlineExtension is how far each streamed event pushes the
+// connection's write deadline. The server's WriteTimeout is absolute from
+// the start of the request, so without a rolling deadline every stream —
+// however actively it is producing events — is severed with a write i/o
+// timeout at the 30-minute mark, killing multi-hour operations (embeddings
+// builds, full syncs, imports) mid-flight. Rolling the deadline forward per
+// event keeps active streams alive while a stalled or dead connection is
+// still cut after one quiet interval.
+const cliStreamWriteDeadlineExtension = DaemonLongRequestTimeout + 5*time.Second
+
 func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
 	flusher, _ := w.(http.Flusher)
+	rc := http.NewResponseController(w)
 	return func(event T) error {
+		// Best-effort: some ResponseWriters (httptest recorders) do not
+		// support deadlines; streaming still works there.
+		_ = rc.SetWriteDeadline(time.Now().Add(cliStreamWriteDeadlineExtension))
 		if err := enc.Encode(event); err != nil {
 			return err
 		}
