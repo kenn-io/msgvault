@@ -922,3 +922,38 @@ func TestCORSDisabledByDefault(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
 		"expected no CORS header when no origins configured")
 }
+
+// deadlineClearingRecorder records SetWriteDeadline calls so tests can verify
+// the timeout middleware clears the absolute write deadline for long requests.
+type deadlineClearingRecorder struct {
+	*httptest.ResponseRecorder
+
+	deadlines []time.Time
+}
+
+func (w *deadlineClearingRecorder) SetWriteDeadline(t time.Time) error {
+	w.deadlines = append(w.deadlines, t)
+	return nil
+}
+
+func TestTimeoutMiddlewareClearsWriteDeadlineForLongRequests(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Logger: testLogger(),
+	})
+
+	handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	long := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(long, httptest.NewRequest(http.MethodPost, "/api/v1/cli/sync-full", nil))
+	require.Len(long.deadlines, 1, "long request clears the write deadline")
+	assert.True(long.deadlines[0].IsZero(), "deadline cleared, not extended")
+
+	bounded := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(bounded, httptest.NewRequest(http.MethodGet, "/api/v1/cli/stats", nil))
+	assert.Empty(bounded.deadlines, "bounded request keeps the server write deadline")
+}

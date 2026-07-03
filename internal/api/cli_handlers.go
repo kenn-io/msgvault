@@ -854,7 +854,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for name := range req.Env {
-		if !clirun.EnvAllowed(name) {
+		if !s.cliRunEnvAllowed(name) {
 			writeError(w, http.StatusBadRequest, "env_not_allowed", fmt.Sprintf("env %q is not allowed through the daemon CLI runner", name))
 			return
 		}
@@ -1049,6 +1049,20 @@ func newCLINDJSONEventWriter[T any](w http.ResponseWriter) func(T) error {
 		}
 		return nil
 	}
+}
+
+// cliRunEnvAllowed permits the static forwarding allowlist plus the
+// config-named embedding API key variable, which the frontend CLI forwards
+// so a key exported in the caller's shell reaches the embed subprocess.
+func (s *Server) cliRunEnvAllowed(name string) bool {
+	if clirun.EnvAllowed(name) {
+		return true
+	}
+	if s.cfg == nil {
+		return false
+	}
+	keyEnv := s.cfg.Vector.Embeddings.APIKeyEnv
+	return keyEnv != "" && name == keyEnv
 }
 
 func (s *Server) cliDedupDeleteStore() (CLIDedupDeleteStore, *apiHTTPError) {

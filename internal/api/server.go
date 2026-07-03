@@ -402,6 +402,13 @@ func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		timeout, bounded := s.requestTimeoutForPath(r.URL.Path)
 		if !bounded {
+			// Long-running request (multi-hour sync, import, embeddings
+			// build): the server's absolute WriteTimeout would sever the
+			// response at the 30-minute mark regardless of activity, so
+			// clear the connection's write deadline for this request. A
+			// disconnected client still ends the work via r.Context()
+			// cancellation. Best-effort: test recorders lack deadlines.
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 			next.ServeHTTP(w, r)
 			return
 		}
