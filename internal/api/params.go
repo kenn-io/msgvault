@@ -75,6 +75,21 @@ func queryInt64(r *http.Request, name string) (value int64, ok bool, err error) 
 	return value, true, nil
 }
 
+// queryBool parses a boolean query parameter. ok is false when absent; a
+// present but unparseable value returns a paramError.
+func queryBool(r *http.Request, name string) (value bool, ok bool, err error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return false, false, nil
+	}
+	value, convErr := strconv.ParseBool(raw)
+	if convErr != nil {
+		return false, false, newParamError(name,
+			fmt.Sprintf("query parameter %q must be a boolean, got %q", name, raw))
+	}
+	return value, true, nil
+}
+
 // queryDate parses an RFC3339 or YYYY-MM-DD date parameter, normalized to UTC.
 // ok is false when the parameter is absent; a present but unparseable value
 // returns a paramError.

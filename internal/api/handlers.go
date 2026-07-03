@@ -1044,8 +1044,9 @@ func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPEr
 	} else if ok {
 		filter.Before = &before
 	}
-	if v := r.URL.Query().Get("has_attachment"); v != "" {
-		hasAttachment := v == "true"
+	if hasAttachment, ok, err := queryBool(r, "has_attachment"); err != nil {
+		return filter, apiHTTPErrorFromParam(err)
+	} else if ok && hasAttachment {
 		filter.HasAttachment = &hasAttachment
 	}
 	return filter, nil

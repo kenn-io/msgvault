@@ -4651,6 +4651,67 @@ func TestHandleSimilarSearchUsesVectorBackend(t *testing.T) {
 	assert.Equal(int64(3), resp.Messages[1].ID, "second result")
 }
 
+func TestHandleSimilarSearchHasAttachmentFalseDoesNotFilter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	store := &mockStore{
+		messages: []APIMessage{
+			{ID: 1, Subject: "seed", From: "seed@example.com", Snippet: "..."},
+			{ID: 2, Subject: "second", From: "a@example.com", Snippet: "..."},
+		},
+	}
+	cfg := vector.Config{
+		Embeddings: vector.EmbeddingsConfig{Model: "fake", Dimension: 4},
+	}
+	backend := &fakeVectorBackend{
+		active: &vector.Generation{
+			ID: 7, Model: "fake", Dimension: 4,
+			Fingerprint: cfg.GenerationFingerprint(), State: vector.GenerationActive,
+		},
+		loadVec: []float32{1, 0, 0, 0},
+		searchHits: []vector.Hit{
+			{MessageID: 1, Score: 1, Rank: 1},
+			{MessageID: 2, Score: 0.9, Rank: 2},
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:     store,
+		VectorCfg: cfg,
+		Backend:   backend,
+		Logger:    testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1&has_attachment=false", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Nil(backend.searchFilter.HasAttachment, "false leaves the attachment-only filter unset")
+}
+
+func TestHandleSimilarSearchRejectsInvalidHasAttachment(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:     &mockStore{},
+		VectorCfg: vector.Config{Embeddings: vector.EmbeddingsConfig{Model: "fake", Dimension: 4}},
+		Backend:   &fakeVectorBackend{},
+		Logger:    testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/similar?message_id=1&has_attachment=maybe", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusBadRequest, w.Code, "status (body: %s)", w.Body.String())
+	var errResp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&errResp), "decode error response")
+	assert.Equal("invalid_has_attachment", errResp.Error, "error")
+	assert.Contains(errResp.Message, "has_attachment", "message names parameter")
+}
+
 // TestHandleStats_ContextErrorReturns503 verifies a stats read that overran
 // its context budget surfaces as a structured 503, not a generic 500.
 func TestHandleStats_ContextErrorReturns503(t *testing.T) {
