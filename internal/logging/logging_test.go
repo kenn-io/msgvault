@@ -85,6 +85,7 @@ func TestBuildHandler_LevelOverrideBeatsLevelString(t *testing.T) {
 }
 
 func TestBuildHandler_HumanConsoleRendersForPeople(t *testing.T) {
+	assert := assert.New(t)
 	var stderr bytes.Buffer
 	warn := slog.LevelWarn
 	res, err := BuildHandler(Options{
@@ -102,12 +103,12 @@ func TestBuildHandler_HumanConsoleRendersForPeople(t *testing.T) {
 	logger.Error("sync failed", "error", "boom")
 
 	out := stderr.String()
-	assert.Equal(t,
+	assert.Equal(
 		"Warning: history expired (email=user@example.com)\n"+
 			"Error: sync failed (error=boom)\n",
 		out)
-	assert.NotContains(t, out, "run_id", "run_id belongs in the file log only")
-	assert.NotContains(t, out, "time=", "timestamps belong in the file log only")
+	assert.NotContains(out, "run_id", "run_id belongs in the file log only")
+	assert.NotContains(out, "time=", "timestamps belong in the file log only")
 }
 
 func TestHumanConsoleHandlerWithAttrsAndGroups(t *testing.T) {

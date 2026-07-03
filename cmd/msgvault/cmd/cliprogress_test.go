@@ -38,6 +38,7 @@ func TestCLIProgress_OnStartResetsForReuse(t *testing.T) {
 }
 
 func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
+	assert := assert.New(t)
 	var buf bytes.Buffer
 	p := &CLIProgress{mode: progressModePlain, out: &buf}
 	p.OnStart(0)
@@ -46,15 +47,15 @@ func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
 
 	out := buf.String()
 	require.NotEmpty(t, out, "expected a progress update")
-	assert.True(t, strings.HasSuffix(out, "\n"),
+	assert.True(strings.HasSuffix(out, "\n"),
 		"a plain update is a permanent line and must end it: %q", out)
-	assert.NotContains(t, out, "\r",
+	assert.NotContains(out, "\r",
 		"plain mode goes through pipes where \\r cannot overwrite")
-	assert.Contains(t, out, "Scanned: 1000")
-	assert.Contains(t, out, "Added: 500")
+	assert.Contains(out, "Scanned: 1000")
+	assert.Contains(out, "Added: 500")
 
 	p.OnComplete(nil)
-	assert.Equal(t, out, buf.String(),
+	assert.Equal(out, buf.String(),
 		"plain mode has no open line for OnComplete to terminate")
 }
 
