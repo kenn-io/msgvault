@@ -1410,3 +1410,63 @@ func TestValidateCronExpr(t *testing.T) {
 		})
 	}
 }
+
+type yieldingWorkTracker struct {
+	fakeWorkTracker
+
+	yield atomic.Bool
+}
+
+func (t *yieldingWorkTracker) ShouldYield() bool {
+	return t.yield.Load()
+}
+
+func TestScheduledSyncYieldsToWaiter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldPoll := yieldPollInterval
+	yieldPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { yieldPollInterval = oldPoll })
+
+	tracker := &yieldingWorkTracker{}
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	syncCtxErr := make(chan error, 1)
+	s := New(func(ctx context.Context, email string) error {
+		startedOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		syncCtxErr <- context.Cause(ctx)
+		return ctx.Err()
+	}).WithWorkTracker(tracker)
+
+	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
+	s.Start()
+	defer func() {
+		ctx := s.Stop()
+		<-ctx.Done()
+	}()
+
+	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("sync did not start")
+	}
+
+	tracker.yield.Store(true)
+	select {
+	case cause := <-syncCtxErr:
+		require.ErrorIs(cause, ErrYieldedToWaiter, "cancellation cause")
+	case <-time.After(time.Second):
+		require.FailNow("sync was not cancelled after yield request")
+	}
+
+	require.Eventually(func() bool {
+		return tracker.active() == 0
+	}, time.Second, time.Millisecond, "gate released after yield")
+
+	for _, status := range s.Status() {
+		assert.Empty(status.LastError, "yield must not be recorded as a sync error")
+	}
+}

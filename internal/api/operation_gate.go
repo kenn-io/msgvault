@@ -31,11 +31,14 @@ type OperationGate interface {
 }
 
 // LabeledOperationGate is implemented by gates that can report what is
-// currently holding them, so waiters can be told what they are waiting for.
+// currently holding them, so waiters can be told what they are waiting for
+// and background holders can be told a request is waiting.
 type LabeledOperationGate interface {
 	OperationGate
 	BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool)
+	BeginRequestWorkContext(ctx context.Context, label string) (func(), bool)
 	Holder() (label string, since time.Time, held bool)
+	HasRequestWaiters() bool
 	Draining() bool
 }
 
@@ -47,8 +50,9 @@ type SerialOperationGate struct {
 	draining bool
 	active   int
 
-	holderLabel string
-	holderSince time.Time
+	holderLabel    string
+	holderSince    time.Time
+	requestWaiters int
 }
 
 func NewSerialOperationGate() *SerialOperationGate {
@@ -61,6 +65,33 @@ func (g *SerialOperationGate) BeginWork() (func(), bool) {
 
 func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), bool) {
 	return g.BeginLabeledWorkContext(ctx, "")
+}
+
+// BeginRequestWorkContext is BeginLabeledWorkContext for API-request work.
+// While queued, the request counts toward HasRequestWaiters so background
+// holders (scheduled syncs, embed passes) know to yield.
+func (g *SerialOperationGate) BeginRequestWorkContext(ctx context.Context, label string) (func(), bool) {
+	if g != nil {
+		g.mu.Lock()
+		g.requestWaiters++
+		g.mu.Unlock()
+		defer func() {
+			g.mu.Lock()
+			g.requestWaiters--
+			g.mu.Unlock()
+		}()
+	}
+	return g.BeginLabeledWorkContext(ctx, label)
+}
+
+// HasRequestWaiters reports whether an API request is queued on the gate.
+func (g *SerialOperationGate) HasRequestWaiters() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.requestWaiters > 0
 }
 
 func (g *SerialOperationGate) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
@@ -229,7 +260,7 @@ func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string)
 	waitCtx, cancel := context.WithTimeout(ctx, operationGateWaitLimit)
 	defer cancel()
 	if lg, ok := gate.(LabeledOperationGate); ok {
-		return lg.BeginLabeledWorkContext(waitCtx, label)
+		return lg.BeginRequestWorkContext(waitCtx, label)
 	}
 	return gate.BeginWorkContext(waitCtx)
 }

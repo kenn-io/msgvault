@@ -31,6 +31,12 @@ func (t labeledWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool)
 	return t.gate.BeginLabeledWorkContext(ctx, t.label)
 }
 
+// ShouldYield reports whether an API request is queued behind this holder,
+// so resumable scheduled work steps aside instead of blocking it.
+func (t labeledWorkTracker) ShouldYield() bool {
+	return t.gate.HasRequestWaiters()
+}
+
 func combineWorkTrackers(trackers ...scheduler.WorkTracker) scheduler.WorkTracker {
 	filtered := make([]scheduler.WorkTracker, 0, len(trackers))
 	for _, tracker := range trackers {
@@ -63,6 +69,17 @@ type combinedWorkTracker struct {
 
 func (t combinedWorkTracker) BeginWork() (func(), bool) {
 	return t.BeginWorkContext(context.Background())
+}
+
+// ShouldYield reports whether any combined tracker wants the holder to
+// yield to a waiter.
+func (t combinedWorkTracker) ShouldYield() bool {
+	for _, tracker := range t.trackers {
+		if yc, ok := tracker.(scheduler.YieldChecker); ok && yc.ShouldYield() {
+			return true
+		}
+	}
+	return false
 }
 
 func (t combinedWorkTracker) BeginWorkContext(ctx context.Context) (func(), bool) {

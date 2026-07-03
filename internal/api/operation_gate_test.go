@@ -457,3 +457,34 @@ func TestSerialOperationGateHolderTracksLabel(t *testing.T) {
 	_, _, held = gate.Holder()
 	assert.False(held, "released gate has no holder")
 }
+
+func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
+	require.True(ok, "occupy gate")
+	assert.False(gate.HasRequestWaiters(), "no waiters yet")
+
+	acquired := make(chan bool, 1)
+	go func() {
+		waiterRelease, waiterOK := gate.BeginRequestWorkContext(context.Background(), "msgvault sync")
+		if waiterOK {
+			waiterRelease()
+		}
+		acquired <- waiterOK
+	}()
+
+	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
+		"queued request counts as waiter")
+
+	release()
+	select {
+	case waiterOK := <-acquired:
+		assert.True(waiterOK, "waiter acquires after release")
+	case <-time.After(time.Second):
+		require.FailNow("waiter did not acquire gate")
+	}
+	assert.False(gate.HasRequestWaiters(), "waiter count returns to zero")
+}
