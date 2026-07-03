@@ -508,8 +508,12 @@ func (p *CLIProgress) OnLatestDate(date time.Time) {
 		p.startTime = now
 		p.lastPrint = now
 	}
+	// Record only; the next OnProgress renders it. Printing here would
+	// consume the throttle window with whatever counters happen to be
+	// cached — in plain mode that emits a permanent line with stale (or
+	// zero) Scanned/Added values and suppresses the accurate one that
+	// follows.
 	p.latestDate = date
-	p.printProgress()
 }
 
 func (p *CLIProgress) outputMode() progressOutputMode {

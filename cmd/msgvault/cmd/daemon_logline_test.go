@@ -28,6 +28,26 @@ func TestHumanizeDaemonLogLine(t *testing.T) {
 			want: "init archive schema (done)",
 		},
 		{
+			name: "open_archive_database step drops its database attr",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" run_id=abc123 step=open_archive_database database=/home/user/.msgvault/msgvault.db`,
+			want: "open archive database",
+		},
+		{
+			name: "skip_vector_backend step drops its enabled attr",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=skip_vector_backend enabled=false`,
+			want: "skip vector backend",
+		},
+		{
+			name: "start_api_server step drops its bind attr",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=start_api_server bind=127.0.0.1:8765`,
+			want: "start api server",
+		},
+		{
+			name: "init_vector_backend step drops its background detail",
+			line: `time=2026-07-01T12:00:00Z level=INFO msg="daemon startup step" step=init_vector_backend detail="running in background; may run vector schema migrations and embed_gen backfill on large archives"`,
+			want: "init vector backend",
+		},
+		{
 			name: "error with escaped quotes is appended",
 			line: `time=2026-07-01T12:00:00Z level=ERROR msg="daemon startup failed" step=open_store error="open db: file \"x\" locked"`,
 			want: `daemon startup failed: open store : open db: file "x" locked`,

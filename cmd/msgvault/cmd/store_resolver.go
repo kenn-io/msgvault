@@ -381,11 +381,6 @@ func humanizeDaemonLogLine(line string) string {
 	if !ok {
 		return line
 	}
-	for key := range fields {
-		if !humanizeDaemonLogLineKnownKeys[key] {
-			return line
-		}
-	}
 	msg, hasMsg := fields["msg"]
 	if !hasMsg || msg == "" {
 		return line
@@ -395,13 +390,21 @@ func humanizeDaemonLogLine(line string) string {
 	switch {
 	// The startup-step records repeat their own context in msg
 	// ("daemon startup step: init archive schema" under a "Daemon
-	// startup (2s):" prefix); collapse them to just the step.
+	// startup (2s):" prefix); collapse them to just the step. These
+	// records carry arbitrary progress attrs (database, bind,
+	// enabled), which are detail — never a reason to fall back to
+	// the raw line, so they skip the unknown-key guard below.
 	case msg == "daemon startup step" && step != "":
 		sb.WriteString(step)
 	case msg == "daemon startup step complete" && step != "":
 		sb.WriteString(step)
 		sb.WriteString(" (done)")
 	default:
+		for key := range fields {
+			if !humanizeDaemonLogLineKnownKeys[key] {
+				return line
+			}
+		}
 		sb.WriteString(msg)
 		if step != "" {
 			sb.WriteString(": ")

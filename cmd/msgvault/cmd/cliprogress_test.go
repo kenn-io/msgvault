@@ -58,6 +58,24 @@ func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
 		"plain mode has no open line for OnComplete to terminate")
 }
 
+func TestCLIProgress_PlainModeLatestDateDoesNotConsumeThrottle(t *testing.T) {
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+	p.OnStart(0)
+	p.lastPrint = time.Now().Add(-time.Minute)
+
+	// Full sync reports the latest date immediately before the counters;
+	// the date alone must not print, or it would burn the 30s throttle on
+	// a line with stale/zero counters and suppress the accurate one.
+	p.OnLatestDate(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
+	require.Empty(t, buf.String(), "a date update alone must not print")
+
+	p.OnProgress(1000, 500, 100)
+	out := buf.String()
+	assert.Contains(t, out, "Scanned: 1000", "rendered line must carry current counters")
+	assert.Contains(t, out, "Apr 2026", "recorded date renders with the progress line")
+}
+
 func TestCLIProgress_PlainModeThrottlesToItsInterval(t *testing.T) {
 	var buf bytes.Buffer
 	p := &CLIProgress{mode: progressModePlain, out: &buf}
