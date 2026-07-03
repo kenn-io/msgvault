@@ -206,6 +206,17 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// errRetireActiveGeneration explains the consequence of retiring the
+// serving generation and the intended replace-then-retire workflow, instead
+// of only naming the override flag.
+func errRetireActiveGeneration(gen vector.GenerationID) error {
+	return fmt.Errorf(
+		"generation %d is active and serving vector search; build and activate a replacement first "+
+			"(msgvault embeddings build), or pass --force-active to retire it anyway and disable vector search",
+		gen,
+	)
+}
+
 func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
@@ -237,7 +248,7 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	case vector.GenerationBuilding:
 	case vector.GenerationActive:
 		if !embeddingsRetireForceActive {
-			return fmt.Errorf("generation %d is active; pass --force-active to retire the serving generation", gen)
+			return errRetireActiveGeneration(gen)
 		}
 	}
 
@@ -466,7 +477,7 @@ func planCLIEmbeddingsRetire(
 	case vector.GenerationBuilding:
 	case vector.GenerationActive:
 		if !forceActive {
-			return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d is active; pass --force-active to retire the serving generation", gen)
+			return api.CLIEmbeddingsPlanResponse{}, errRetireActiveGeneration(gen)
 		}
 	}
 	return api.CLIEmbeddingsPlanResponse{

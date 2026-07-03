@@ -286,13 +286,11 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 	if proc == nil {
 		return func() {}
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "Starting local msgvault daemon (pid %d).\n", proc.PID)
 	if proc.LogPath != "" {
-		_, _ = fmt.Fprintf(os.Stderr, "Logs: %s\n", proc.LogPath)
+		_, _ = fmt.Fprintf(os.Stderr, "Starting local msgvault daemon (pid %d). Logs: %s\n", proc.PID, proc.LogPath)
+	} else {
+		_, _ = fmt.Fprintf(os.Stderr, "Starting local msgvault daemon (pid %d).\n", proc.PID)
 	}
-	_, _ = fmt.Fprintf(os.Stderr,
-		"Waiting for the daemon to become ready (large archives may run migrations; timeout %s).\n",
-		compactDuration(localDaemonAutoStartReadyTimeout))
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -305,6 +303,7 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 		defer timer.Stop()
 		started := time.Now()
 		lastLine := ""
+		announced := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -312,6 +311,15 @@ func reportLocalDaemonStartup(ctx context.Context, proc *backgroundServeProcess)
 			case <-done:
 				return
 			case <-timer.C:
+			}
+
+			// Only startups that are actually slow get the readiness
+			// preamble; fast starts stay to a single announce line.
+			if !announced {
+				announced = true
+				_, _ = fmt.Fprintf(os.Stderr,
+					"Waiting for the daemon to become ready (large archives may run migrations; timeout %s).\n",
+					compactDuration(localDaemonAutoStartReadyTimeout))
 			}
 
 			elapsed := time.Since(started).Round(time.Second)

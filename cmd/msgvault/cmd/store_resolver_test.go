@@ -136,7 +136,8 @@ func TestOpenHTTPStoreReportsLocalDaemonStartupToStderr(t *testing.T) {
 	assert.Contains(stderr, "Starting local msgvault daemon")
 	assert.Contains(stderr, "pid 4242")
 	assert.Contains(stderr, "Logs: /tmp/msgvault-serve.log")
-	assert.Contains(stderr, "Waiting for the daemon to become ready")
+	assert.NotContains(stderr, "Waiting for the daemon to become ready",
+		"fast startups must not print the slow-start preamble")
 }
 
 func TestOpenHTTPStoreIncludesLastDaemonLogWhenStartupExits(t *testing.T) {
