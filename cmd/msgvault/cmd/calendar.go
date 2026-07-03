@@ -257,10 +257,31 @@ func runAddCalendarHTTP(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("set --%s after confirmation: %w", calScopeEscalationConfirmedFlag, err)
 		}
 	}
-	if err := preflightAddCalendarAuthorize(cmd.Context(), email, plan, escalationConfirmed); err != nil {
+	if err := preflightAddCalendarAuthorize(cmd.Context(), email, plan, escalationConfirmed,
+		calAddOAuthApp, cmd.Flags().Changed("oauth-app")); err != nil {
 		return err
 	}
 	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+// preflightCalendarOAuthApp picks the OAuth app for the client-side
+// authorization preflight. The daemon-resolved binding wins; against an
+// older daemon that does not report one, only an explicitly requested app
+// is safe to authorize here (ok=false keeps daemon-side authorization, the
+// pre-preflight behavior, instead of guessing the default app and minting
+// a token for the wrong client).
+func preflightCalendarOAuthApp(
+	plan *daemonclient.CLIAddCalendarPlan,
+	requestedApp string,
+	requestedExplicit bool,
+) (app string, needsClientCheck bool, ok bool) {
+	if plan.OAuthAppResolved {
+		return plan.OAuthApp, plan.NeedsClientCheck, true
+	}
+	if requestedExplicit {
+		return requestedApp, true, true
+	}
+	return "", false, false
 }
 
 // preflightAddCalendarAuthorize completes any Calendar browser authorization
@@ -275,14 +296,20 @@ func preflightAddCalendarAuthorize(
 	email string,
 	plan *daemonclient.CLIAddCalendarPlan,
 	escalationConfirmed bool,
+	requestedApp string,
+	requestedExplicit bool,
 ) error {
 	if IsRemoteMode() || calAddHeadless || plan == nil {
 		return nil
 	}
-	if cfg.OAuth.ServiceAccountKeyFor(plan.OAuthApp) != "" {
+	oauthApp, needsClientCheck, ok := preflightCalendarOAuthApp(plan, requestedApp, requestedExplicit)
+	if !ok {
 		return nil
 	}
-	secretsPath, err := cfg.OAuth.ClientSecretsFor(plan.OAuthApp)
+	if cfg.OAuth.ServiceAccountKeyFor(oauthApp) != "" {
+		return nil
+	}
+	secretsPath, err := cfg.OAuth.ClientSecretsFor(oauthApp)
 	if err != nil {
 		return err
 	}
@@ -292,7 +319,7 @@ func preflightAddCalendarAuthorize(
 	}
 	hasToken := mgr.HasToken(email)
 	hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
-	tokenReusable := hasToken && (!plan.NeedsClientCheck || mgr.TokenMatchesClient(email))
+	tokenReusable := hasToken && (!needsClientCheck || mgr.TokenMatchesClient(email))
 	tokenExpiredOrRevoked := hasToken && hasCalendarScope && tokenReusable &&
 		calendarTokenExpiredOrRevoked(ctx, mgr, email)
 
@@ -573,6 +600,7 @@ func planCLIAddCalendar(
 	// authorization client-side before proxying.
 	plan := api.CLIAddCalendarPlanResponse{
 		OAuthApp:         oauthApp,
+		OAuthAppResolved: true,
 		NeedsClientCheck: appDecision.NeedsClientCheck,
 	}
 	hasToken := mgr.HasToken(email)

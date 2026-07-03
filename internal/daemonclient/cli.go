@@ -68,6 +68,7 @@ type CLIAddCalendarPlan struct {
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           string   `json:"cancel_hint,omitempty"`
 	OAuthApp             string   `json:"oauth_app,omitempty"`
+	OAuthAppResolved     bool     `json:"oauth_app_resolved,omitempty"`
 	NeedsClientCheck     bool     `json:"needs_client_check,omitempty"`
 }
 

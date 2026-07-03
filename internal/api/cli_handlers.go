@@ -215,7 +215,11 @@ type CLIAddCalendarPlanResponse struct {
 	// OAuthApp and NeedsClientCheck let the frontend CLI run browser
 	// authorization client-side before proxying: the resolved OAuth app
 	// binding and whether the stored token must match that app's client.
+	// OAuthAppResolved is always true from daemons that resolve the
+	// binding; false marks an older daemon whose stored named app is
+	// unknown, so the frontend must not authorize with the default app.
 	OAuthApp         string `json:"oauth_app,omitempty"`
+	OAuthAppResolved bool   `json:"oauth_app_resolved,omitempty"`
 	NeedsClientCheck bool   `json:"needs_client_check,omitempty"`
 }
 

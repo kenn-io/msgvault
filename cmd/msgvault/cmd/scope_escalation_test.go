@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"google.golang.org/api/drive/v3"
@@ -369,6 +370,7 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForGmailOnlyToken(t *testing.T
 	assert.Contains(plan.BodyLines, "Calendar sync needs read-only Calendar access.")
 	assert.Equal("Cancelled. Calendar was not added.", plan.CancelHint)
 	assert.Empty(plan.OAuthApp, "no stored binding resolves to the default app")
+	assert.True(plan.OAuthAppResolved, "plan marks the binding as resolved")
 	assert.False(plan.NeedsClientCheck, "default app needs no client check")
 }
 
@@ -397,5 +399,53 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t
 	assert.True(plan.NeedsScopeEscalation, "non-reusable gmail-only token should still require foreground scope confirmation")
 	assert.Equal("CALENDAR ACCESS REQUIRED", plan.Headline)
 	assert.Equal("acme", plan.OAuthApp, "explicit app is returned for client-side preflight")
+	assert.True(plan.OAuthAppResolved, "plan marks the binding as resolved")
 	assert.True(plan.NeedsClientCheck, "explicit app requires a token client check")
+}
+
+func TestPreflightCalendarOAuthApp(t *testing.T) {
+	cases := []struct {
+		name                 string
+		plan                 *daemonclient.CLIAddCalendarPlan
+		requestedApp         string
+		requestedExplicit    bool
+		wantApp              string
+		wantNeedsClientCheck bool
+		wantOK               bool
+	}{
+		{
+			name:                 "daemon-resolved named app wins",
+			plan:                 &daemonclient.CLIAddCalendarPlan{OAuthAppResolved: true, OAuthApp: "acme", NeedsClientCheck: true},
+			wantApp:              "acme",
+			wantNeedsClientCheck: true,
+			wantOK:               true,
+		},
+		{
+			name:   "daemon-resolved default app",
+			plan:   &daemonclient.CLIAddCalendarPlan{OAuthAppResolved: true},
+			wantOK: true,
+		},
+		{
+			name:                 "old daemon with explicit flag uses requested app",
+			plan:                 &daemonclient.CLIAddCalendarPlan{},
+			requestedApp:         "acme",
+			requestedExplicit:    true,
+			wantApp:              "acme",
+			wantNeedsClientCheck: true,
+			wantOK:               true,
+		},
+		{
+			name:   "old daemon without explicit flag skips preflight",
+			plan:   &daemonclient.CLIAddCalendarPlan{},
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app, needsClientCheck, ok := preflightCalendarOAuthApp(tc.plan, tc.requestedApp, tc.requestedExplicit)
+			assert.Equal(t, tc.wantApp, app, "app")
+			assert.Equal(t, tc.wantNeedsClientCheck, needsClientCheck, "needs client check")
+			assert.Equal(t, tc.wantOK, ok, "ok")
+		})
+	}
 }

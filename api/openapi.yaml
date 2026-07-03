@@ -244,6 +244,8 @@ components:
           type: boolean
         oauth_app:
           type: string
+        oauth_app_resolved:
+          type: boolean
       required:
         - needs_scope_escalation
       type: object

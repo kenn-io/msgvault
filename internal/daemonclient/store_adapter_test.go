@@ -211,6 +211,7 @@ func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 			"body_lines":             []string{"Calendar sync needs read-only Calendar access."},
 			"cancel_hint":            "Cancelled. Calendar was not added.",
 			"oauth_app":              "acme",
+			"oauth_app_resolved":     true,
 			"needs_client_check":     true,
 		}), "encode response") {
 			return
@@ -234,6 +235,7 @@ func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal([]string{"Calendar sync needs read-only Calendar access."}, got.BodyLines, "body lines")
 	assert.Equal("Cancelled. Calendar was not added.", got.CancelHint, "cancel hint")
 	assert.Equal("acme", got.OAuthApp, "oauth app")
+	assert.True(got.OAuthAppResolved, "oauth app resolved")
 	assert.True(got.NeedsClientCheck, "needs client check")
 }
 

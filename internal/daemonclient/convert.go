@@ -75,6 +75,7 @@ func cliAddCalendarPlanFromGenerated(resp *generated.PlanCLIAddCalendarResponse)
 		BodyLines:            append([]string(nil), resp.BodyLines...),
 		CancelHint:           stringValue(resp.CancelHint),
 		OAuthApp:             stringValue(resp.OauthApp),
+		OAuthAppResolved:     boolValue(resp.OauthAppResolved),
 		NeedsClientCheck:     boolValue(resp.NeedsClientCheck),
 	}
 }

@@ -199,6 +199,7 @@ type CLIAddCalendarPlanResponse struct {
 	NeedsClientCheck     *bool    `json:"needs_client_check,omitempty"`
 	NeedsScopeEscalation bool     `json:"needs_scope_escalation"`
 	OauthApp             *string  `json:"oauth_app,omitempty"`
+	OauthAppResolved     *bool    `json:"oauth_app_resolved,omitempty"`
 }
 
 type CLICacheBuildEvent struct {
