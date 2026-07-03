@@ -127,7 +127,7 @@ func TestFullSyncResume(t *testing.T) {
 
 	// Create mock with pagination
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 4, 2, "msg")
+	seedPagedMessages(env, 4)
 
 	summary1 := runFullSync(t, env)
 	assertSummary(t, summary1, WantSummary{Added: new(int64(4))})
@@ -146,6 +146,49 @@ func TestFullSyncResume(t *testing.T) {
 
 	summary2 := runFullSync(t, env)
 	assertSummary(t, summary2, WantSummary{Added: new(int64(0))})
+}
+
+// cancelOnSecondListAPI surfaces a context cancellation on the second
+// ListMessages call, after the first page's checkpoint has been saved.
+type cancelOnSecondListAPI struct {
+	*gmail.MockAPI
+
+	calls int
+}
+
+func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
+	c.calls++
+	if c.calls == 2 {
+		return nil, fmt.Errorf("list messages: %w", context.Canceled)
+	}
+	return c.MockAPI.ListMessages(ctx, query, pageToken)
+}
+
+func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	env.Syncer = New(&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, nil)
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.ErrorIs(err, context.Canceled, "sync should surface cancellation")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusRunning, run.Status, "cancelled run keeps status running")
+	assert.Equal(int64(2), run.MessagesProcessed, "checkpoint keeps first page progress")
+
+	env.Syncer = New(env.Mock, env.Store, nil)
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "resumed sync")
+	assert.True(summary.WasResumed, "second sync resumes the cancelled run")
+	assert.Equal("page_1", summary.ResumedFromToken, "resume picks up at the saved page token")
+	assert.Equal(int64(4), summary.MessagesAdded, "resumed summary carries pre-cancellation progress")
+	assertMessageCount(t, env.Store, 4)
 }
 
 func TestFullSyncWithErrors(t *testing.T) {
@@ -377,7 +420,7 @@ func TestFullSyncWithQuery(t *testing.T) {
 func TestFullSyncPagination(t *testing.T) {
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 6, 2, "msg")
+	seedPagedMessages(env, 6)
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(6))})
@@ -909,7 +952,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 4, 2, "msg")
+	seedPagedMessages(env, 4)
 
 	source := env.CreateSource(t)
 

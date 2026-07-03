@@ -285,9 +285,9 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 
 // operationGateExemptPaths are non-GET endpoints that only read: they must
 // not queue behind long mutating operations, and they never mutate the
-// archive themselves.
+// archive themselves. Verify is NOT exempt: its subprocess opens the store
+// read-write and runs schema init/migrations.
 var operationGateExemptPaths = map[string]bool{
-	"/api/v1/cli/verify":             true,
 	queryEndpointPath:                true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,
@@ -392,7 +392,10 @@ func (s *Server) beginLabeledOperationGateWork(ctx context.Context, label string
 		return func() {}, true
 	}
 	if lg, ok := s.operationGate.(LabeledOperationGate); ok {
-		return lg.BeginLabeledWorkContext(ctx, label)
+		// Request work, not plain labeled work: this runs on behalf of an
+		// API request, so a scheduled job holding the gate must see it as a
+		// waiter and yield.
+		return lg.BeginRequestWorkContext(ctx, label)
 	}
 	return s.operationGate.BeginWorkContext(ctx)
 }

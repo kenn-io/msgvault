@@ -1225,39 +1225,3 @@ func TestResolveAddAccountBinding(t *testing.T) {
 		})
 	}
 }
-
-func TestAddAccountSubprocessRefusesBrowserAuth(t *testing.T) {
-	require := require.New(t)
-	tmpDir := t.TempDir()
-	markDaemonCLISubprocessForTest(t)
-
-	secretsPath := filepath.Join(tmpDir, "secret.json")
-	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write secrets")
-
-	savedCfg := cfg
-	savedLogger := logger
-	t.Cleanup(func() {
-		cfg = savedCfg
-		logger = savedLogger
-	})
-	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
-		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
-	}
-	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	testCmd := &cobra.Command{
-		Use:  "add-account <email>",
-		Args: cobra.ExactArgs(1),
-		RunE: runAddAccountLocal,
-	}
-	registerAddAccountFlags(testCmd)
-	root := newTestRootCmd()
-	root.AddCommand(testCmd)
-	root.SetArgs([]string{"add-account", "user@example.com"})
-
-	err := root.ExecuteContext(context.Background())
-	require.Error(err, "subprocess must refuse browser authorization")
-	require.Contains(err.Error(), "cannot run behind the daemon", "error explains the refusal")
-}

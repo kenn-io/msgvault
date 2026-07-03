@@ -99,6 +99,18 @@ type syncState struct {
 	wasResumed bool
 }
 
+// failSyncUnlessCanceled marks the run failed for real errors. A cancelled
+// sync (Ctrl-C, daemon shutdown, a scheduled sync yielding to a waiting
+// operation) keeps status='running' with its saved checkpoint, matching the
+// killed-process semantics GetActiveSync resumes from; marking it failed
+// would discard the checkpoint and restart the sync from scratch.
+func (s *Syncer) failSyncUnlessCanceled(syncID int64, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	_ = s.store.FailSync(syncID, err.Error())
+}
+
 // initSyncState initializes sync state, resuming from checkpoint if possible.
 func (s *Syncer) initSyncState(sourceID int64) (*syncState, error) {
 	state := &syncState{
@@ -289,7 +301,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	// Get profile to verify connection and get historyId
 	profile, err := s.client.GetProfile(ctx)
 	if err != nil {
-		_ = s.store.FailSync(state.syncID, err.Error())
+		s.failSyncUnlessCanceled(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 
@@ -298,7 +310,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 	// Sync labels
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		_ = s.store.FailSync(state.syncID, err.Error())
+		s.failSyncUnlessCanceled(state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -311,7 +323,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
 		if err != nil {
-			_ = s.store.FailSync(state.syncID, err.Error())
+			s.failSyncUnlessCanceled(state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
 		}
 
@@ -342,7 +354,7 @@ func (s *Syncer) Full(ctx context.Context, email string) (summary *gmail.SyncSum
 			if checkpointErr := s.store.UpdateSyncCheckpoint(state.syncID, state.checkpoint); checkpointErr != nil {
 				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
 			}
-			_ = s.store.FailSync(state.syncID, err.Error())
+			s.failSyncUnlessCanceled(state.syncID, err)
 			return nil, err
 		}
 

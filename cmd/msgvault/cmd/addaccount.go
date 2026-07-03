@@ -407,18 +407,10 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Perform authorization. Under the daemon this cannot work: the
-	// frontend CLI preflights browser authorization before proxying, and
-	// a browser opened here would appear on the daemon's host while the
-	// operation gate blocks every other command on the human consent.
-	if isDaemonCLISubprocess() {
-		return fmt.Errorf(
-			"account %s needs browser authorization, which cannot run behind the daemon; "+
-				"run `msgvault add-account %s` from a terminal on this machine, "+
-				"or use --headless for token-copy instructions",
-			email, email,
-		)
-	}
+	// Perform authorization. Local frontends preflight the browser flow
+	// before proxying, so a subprocess normally finds a fresh token above;
+	// this path still runs for remote daemons, where the browser opens on
+	// the daemon's host exactly as it did before daemon routing.
 	if bindingChanged {
 		fmt.Printf("Switching OAuth app for %s to %q. Authorizing...\n", email, oauthAppName)
 	} else {

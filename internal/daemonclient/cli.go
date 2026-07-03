@@ -514,6 +514,31 @@ func (c *Client) PlanCLIDeduplicate(
 	return cliDeduplicatePlanFromGenerated(resp.JSON200), nil
 }
 
+// openCLIStream POSTs to a streaming CLI endpoint, retrying while the daemon
+// reports another operation in progress, and returns the open response body.
+func (c *Client) openCLIStream(
+	ctx context.Context,
+	path string,
+	options runtime.RequestOptions,
+) (*http.Response, error) {
+	waiter := &operationBusyWaiter{c: c}
+	for {
+		resp, err := c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, path, options)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+		err = HandleCLIErrorResponse(resp)
+		_ = resp.Body.Close()
+		if waiter.wait(ctx, err) {
+			continue
+		}
+		return nil, err
+	}
+}
+
 func (c *Client) runCLIStream(
 	ctx context.Context,
 	path string,
@@ -521,22 +546,8 @@ func (c *Client) runCLIStream(
 	options runtime.RequestOptions,
 	output func(stream, data string) error,
 ) error {
-	waiter := &operationBusyWaiter{c: c}
-	var resp *http.Response
-	for {
-		var err error
-		resp, err = c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, path, options)
-		if err != nil {
-			return err
-		}
-		if resp.StatusCode == http.StatusOK {
-			break
-		}
-		err = HandleCLIErrorResponse(resp)
-		_ = resp.Body.Close()
-		if waiter.wait(ctx, err) {
-			continue
-		}
+	resp, err := c.openCLIStream(ctx, path, options)
+	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -886,15 +897,11 @@ func (c *Client) RebuildCLIFTS(
 	ctx context.Context,
 	progress func(done, total int64),
 ) (int64, error) {
-	resp, err := c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
+	resp, err := c.openCLIStream(ctx, "/api/v1/cli/rebuild-fts", nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, HandleCLIErrorResponse(resp)
-	}
 
 	var indexed int64
 	err = decodeCLIStream(resp.Body, "rebuild FTS", func(event cliRebuildFTSEvent) (bool, error) {

@@ -254,6 +254,42 @@ func TestRunCLICommandRetriesWhileOperationInProgress(t *testing.T) {
 	assert.Contains(notified[0], "embeddings build", "notifier names the holder")
 }
 
+func TestRebuildCLIFTSRetriesWhileOperationInProgress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldDelay := operationBusyRetryDelay
+	operationBusyRetryDelay = time.Millisecond
+	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
+
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/cli/rebuild-fts", r.URL.Path, "path")
+		if hits.Add(1) <= 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, err := w.Write([]byte(`{"error":"operation_in_progress","message":"msgvault embeddings build has been running for 42m"}`))
+			assert.NoError(err, "write busy response")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, err := w.Write([]byte(`{"type":"progress","done":5,"total":10}` + "\n" + `{"type":"complete","indexed":10}` + "\n"))
+		assert.NoError(err, "write stream")
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
+	require.NoError(err, "New")
+
+	var progressCalls int
+	indexed, err := c.RebuildCLIFTS(context.Background(), func(_, _ int64) { progressCalls++ })
+	require.NoError(err, "RebuildCLIFTS")
+
+	assert.Equal(int64(10), indexed, "indexed count after retries")
+	assert.Equal(1, progressCalls, "progress streamed")
+	assert.Equal(int64(3), hits.Load(), "two busy responses then success")
+}
+
 func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
 	require := require.New(t)
 

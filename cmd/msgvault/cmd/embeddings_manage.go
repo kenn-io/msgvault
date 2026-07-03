@@ -212,7 +212,7 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 func errRetireActiveGeneration(gen vector.GenerationID) error {
 	return fmt.Errorf(
 		"generation %d is active and serving vector search; build and activate a replacement first "+
-			"(msgvault embeddings build), or pass --force-active to retire it anyway and disable vector search",
+			"(msgvault embeddings build --full-rebuild), or pass --force-active to retire it anyway and disable vector search",
 		gen,
 	)
 }

@@ -47,14 +47,3 @@ func microsoftTenantID(flagTenant string) string {
 	}
 	return cfg.Microsoft.EffectiveTenantID()
 }
-
-// errBrowserAuthBehindDaemon explains why the daemon subprocess refuses to
-// start a browser flow: the consent screen would open on the daemon's host
-// while the operation gate blocks every other command on the human.
-func errBrowserAuthBehindDaemon(command, email string) error {
-	return fmt.Errorf(
-		"account %s needs browser authorization, which cannot run behind the daemon; "+
-			"run `msgvault %s %s` from a terminal on this machine",
-		email, command, email,
-	)
-}

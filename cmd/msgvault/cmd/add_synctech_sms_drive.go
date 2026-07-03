@@ -357,9 +357,6 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 	if mgr.HasToken(googleAccount) {
 		return nil
 	}
-	if isDaemonCLISubprocess() {
-		return errBrowserAuthBehindDaemon("add-synctech-sms-drive", googleAccount)
-	}
 	return mgr.Authorize(ctx, googleAccount)
 }
 

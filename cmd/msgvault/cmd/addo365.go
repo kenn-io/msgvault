@@ -100,9 +100,6 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !preflighted {
-		if isDaemonCLISubprocess() {
-			return errBrowserAuthBehindDaemon("add-o365", email)
-		}
 		fmt.Printf("Authorizing %s with Microsoft...\n", email)
 		if err := msMgr.Authorize(cmd.Context(), email); err != nil {
 			return fmt.Errorf("authorization failed: %w", err)

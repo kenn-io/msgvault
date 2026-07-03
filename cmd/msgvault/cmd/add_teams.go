@@ -90,9 +90,6 @@ func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !preflighted {
-		if isDaemonCLISubprocess() {
-			return errBrowserAuthBehindDaemon("add-teams", email)
-		}
 		mgr := microsoft.NewGraphManager(
 			cfg.Microsoft.ClientID,
 			microsoftTenantID(teamsTenantID),

@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -248,8 +249,14 @@ func (s *Syncer) syncCalendarFull(ctx context.Context, cal gcal.Calendar, result
 	ingested := 0
 	limitHit := false
 
+	// A cancelled sync (Ctrl-C, daemon shutdown, a scheduled sync yielding to
+	// a waiting operation) keeps status='running' with its saved checkpoint so
+	// the next full sync resumes; marking it failed would discard the
+	// checkpoint and restart from scratch.
 	fail := func(e error) error {
-		_ = s.store.FailSync(syncID, e.Error())
+		if !errors.Is(e, context.Canceled) && !errors.Is(e, context.DeadlineExceeded) {
+			_ = s.store.FailSync(syncID, e.Error())
+		}
 		return e
 	}
 

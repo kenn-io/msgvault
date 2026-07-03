@@ -363,7 +363,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 
 func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 	paths := []string{
-		"/api/v1/cli/verify",
 		"/api/v1/query",
 		"/api/v1/cli/add-calendar/plan",
 		"/api/v1/cli/delete-staged/plan",
@@ -487,6 +486,37 @@ func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
 		require.FailNow("waiter did not acquire gate")
 	}
 	assert.False(gate.HasRequestWaiters(), "waiter count returns to zero")
+}
+
+func TestBeginLabeledOperationGateWorkCountsAsRequestWaiter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	gate := NewSerialOperationGate()
+	srv := &Server{operationGate: gate}
+
+	holderRelease, ok := gate.BeginLabeledWorkContext(context.Background(), "a scheduled sync")
+	require.True(ok, "occupy gate")
+
+	acquired := make(chan bool, 1)
+	go func() {
+		release, workOK := srv.beginLabeledOperationGateWork(context.Background(), "a search index build")
+		if workOK {
+			release()
+		}
+		acquired <- workOK
+	}()
+
+	require.Eventually(gate.HasRequestWaiters, time.Second, time.Millisecond,
+		"in-handler gate work must count as a request waiter so scheduled jobs yield")
+
+	holderRelease()
+	select {
+	case workOK := <-acquired:
+		assert.True(workOK, "handler work acquires after release")
+	case <-time.After(time.Second):
+		require.FailNow("handler work did not acquire gate")
+	}
 }
 
 func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
