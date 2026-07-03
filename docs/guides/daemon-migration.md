@@ -3,7 +3,7 @@ title: Daemon Migration Guide
 description: What changes when CLI commands route through the msgvault daemon, and how to adapt scripts, environment variables, and workflows.
 ---
 
-Starting with this release, msgvault CLI commands that touch the archive no
+Starting with the 0.17.0 release, msgvault CLI commands that touch the archive no
 longer open the SQLite database directly. Instead, every archive-access
 command talks to a msgvault daemon over HTTP — either a remote server you
 configured under `[remote]`, or a local background daemon that the CLI starts
@@ -21,7 +21,7 @@ see on your terminal, and the gotchas to know about when upgrading.
 | Long-running daemon + CLI | CLI could bypass a running `msgvault serve` | The running daemon owns the archive; the CLI always goes through it |
 
 Nothing about your data changes: the archive is still plain SQLite plus
-Parquet under `~/.msgvault/`, and this release introduces no new schema
+Parquet under `~/.msgvault/`, and 0.17.0 introduces no new schema
 migrations relative to 0.16.x.
 
 ## What you will see
@@ -142,10 +142,11 @@ By default the daemon binds `127.0.0.1` on an auto-selected port. Set
 `[server].api_port` for a stable port (required for remote/NAS deployments),
 and note that binding a non-loopback address still requires an `api_key`.
 
-## Deprecated flags (removal in 0.17.0)
+## Deprecated flags (as of 0.17.0)
 
 Engine and cache selection are now daemon-level configuration, so these
-per-invocation flags are deprecated and hidden:
+per-invocation flags are deprecated in 0.17.0 and hidden, with removal
+planned for a later release:
 
 | Deprecated flag | Replacement |
 |---|---|
@@ -153,7 +154,7 @@ per-invocation flags are deprecated and hidden:
 | `tui --no-cache-build` | `[analytics].auto_build_cache = false` |
 | `tui --no-sqlite-scanner`, `mcp --no-sqlite-scanner` | daemon-managed; use `[analytics].engine = "sql"` if needed |
 
-The old flags still work in this release and print a deprecation notice.
+The old flags still work in 0.17.0 and print a deprecation notice.
 
 ## FAQ
 

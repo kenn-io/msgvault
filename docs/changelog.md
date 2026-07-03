@@ -35,9 +35,9 @@ All notable changes to msgvault, grouped by release.
 **Deprecations**
 
 - `tui --force-sql`, `tui --no-cache-build`, `tui --no-sqlite-scanner`,
-  `mcp --force-sql`, and `mcp --no-sqlite-scanner` are deprecated for removal
-  in 0.17.0; engine and cache selection moved to the `[analytics]` config
-  section.
+  `mcp --force-sql`, and `mcp --no-sqlite-scanner` are deprecated (removal
+  planned for a later release); engine and cache selection moved to the
+  `[analytics]` config section.
 
 ---
 
