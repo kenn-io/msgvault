@@ -43,6 +43,14 @@ func newAddSynctechSMSDriveCmd() *cobra.Command {
 				return errors.New("--google-account is required")
 			}
 			if !isDaemonCLISubprocess() {
+				// Complete OAuth in this process — which owns the user's
+				// browser — before proxying; the daemon subprocess's
+				// idempotent token check then skips the browser flow.
+				if !opts.SkipAuthForTest && !IsRemoteMode() {
+					if err := ensureSynctechSMSDriveToken(cmd.Context(), opts.GoogleAccount, opts.OAuthApp); err != nil {
+						return err
+					}
+				}
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 			name := args[0]
@@ -348,6 +356,9 @@ func ensureSynctechSMSDriveToken(ctx context.Context, googleAccount, oauthApp st
 	}
 	if mgr.HasToken(googleAccount) {
 		return nil
+	}
+	if isDaemonCLISubprocess() {
+		return errBrowserAuthBehindDaemon("add-synctech-sms-drive", googleAccount)
 	}
 	return mgr.Authorize(ctx, googleAccount)
 }

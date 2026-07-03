@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -20,11 +19,41 @@ func newAddO365Cmd() *cobra.Command {
 	cmd := newAddO365LocalCmd()
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
+			if err := preflightAddO365Authorize(cmd, args[0]); err != nil {
+				return err
+			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		return runAddO365Local(cmd, args)
 	}
 	return cmd
+}
+
+// preflightAddO365Authorize runs the Microsoft browser flow in this process
+// before proxying, so the daemon subprocess never opens a browser or waits
+// on human consent while holding the operation gate.
+func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
+	if IsRemoteMode() {
+		// Tokens live on the remote host; authorization must happen there.
+		return nil
+	}
+	if err := requireMicrosoftOAuthConfig(); err != nil {
+		return err
+	}
+	msMgr := microsoft.NewManager(
+		cfg.Microsoft.ClientID,
+		microsoftTenantID(o365TenantID),
+		cfg.TokensDir(),
+		logger,
+	)
+	fmt.Printf("Authorizing %s with Microsoft...\n", email)
+	if err := msMgr.Authorize(cmd.Context(), email); err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
+		return fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
+	}
+	return nil
 }
 
 func newAddO365LocalCmd() *cobra.Command {
@@ -48,35 +77,36 @@ Examples:
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, noDefaultIdentityHelp)
+	registerOAuthPreflightedFlag(cmd)
 	return cmd
 }
 
 func runAddO365Local(cmd *cobra.Command, args []string) error {
 	email := args[0]
 
-	if cfg.Microsoft.ClientID == "" {
-		return errors.New("microsoft OAuth not configured\n\n" +
-			"Add to your config.toml:\n\n" +
-			"  [microsoft]\n" +
-			"  client_id = \"your-azure-app-client-id\"\n\n" +
-			"See docs for Azure AD app registration setup")
-	}
-
-	tenantID := cfg.Microsoft.EffectiveTenantID()
-	if o365TenantID != "" {
-		tenantID = o365TenantID
+	if err := requireMicrosoftOAuthConfig(); err != nil {
+		return err
 	}
 
 	msMgr := microsoft.NewManager(
 		cfg.Microsoft.ClientID,
-		tenantID,
+		microsoftTenantID(o365TenantID),
 		cfg.TokensDir(),
 		logger,
 	)
 
-	fmt.Printf("Authorizing %s with Microsoft...\n", email)
-	if err := msMgr.Authorize(cmd.Context(), email); err != nil {
-		return fmt.Errorf("authorization failed: %w", err)
+	preflighted, err := oauthPreflighted(cmd)
+	if err != nil {
+		return err
+	}
+	if !preflighted {
+		if isDaemonCLISubprocess() {
+			return errBrowserAuthBehindDaemon("add-o365", email)
+		}
+		fmt.Printf("Authorizing %s with Microsoft...\n", email)
+		if err := msMgr.Authorize(cmd.Context(), email); err != nil {
+			return fmt.Errorf("authorization failed: %w", err)
+		}
 	}
 
 	// Determine the correct IMAP host from the token that was just saved.

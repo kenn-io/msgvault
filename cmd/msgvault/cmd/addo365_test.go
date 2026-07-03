@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
+	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -100,4 +105,26 @@ func TestIsMicrosoftIMAPSource(t *testing.T) {
 			assert.Equal(t, tt.want, got, "isMicrosoftIMAPSource()")
 		})
 	}
+}
+
+func TestAddO365SubprocessRefusesBrowserAuth(t *testing.T) {
+	require := require.New(t)
+	markDaemonCLISubprocessForTest(t)
+
+	savedCfg := cfg
+	savedLogger := logger
+	t.Cleanup(func() {
+		cfg = savedCfg
+		logger = savedLogger
+	})
+	cfg = &config.Config{
+		Microsoft: config.MicrosoftConfig{ClientID: "client-id"},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	cmd := newAddO365LocalCmd()
+	cmd.SetArgs([]string{"user@example.com"})
+	err := cmd.ExecuteContext(context.Background())
+	require.Error(err, "subprocess must refuse browser authorization")
+	require.Contains(err.Error(), "cannot run behind the daemon", "error explains the refusal")
 }

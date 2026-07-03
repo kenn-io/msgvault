@@ -1164,3 +1164,100 @@ func TestAddAccount_ForceServiceAccountReturnsActionableError(t *testing.T) {
 	require.Error(t, err, "expected --force service account error")
 	require.ErrorContains(t, err, "service accounts do not use --force")
 }
+
+func TestResolveAddAccountBinding(t *testing.T) {
+	app := func(name string) sql.NullString {
+		return sql.NullString{String: name, Valid: true}
+	}
+	cases := []struct {
+		name         string
+		flagApp      string
+		flagExplicit bool
+		storedApp    sql.NullString
+		sourceExists bool
+		want         addAccountBinding
+	}{
+		{
+			name: "new account with defaults",
+			want: addAccountBinding{},
+		},
+		{
+			name:         "inherits stored binding without flag",
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "acme"},
+		},
+		{
+			name:         "explicit flag overrides stored binding",
+			flagApp:      "other",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "other", explicit: true, bindingChanged: true},
+		},
+		{
+			name:         "explicit clear of stored binding",
+			flagApp:      "",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{explicit: true, bindingChanged: true},
+		},
+		{
+			name:         "explicit flag matching stored binding",
+			flagApp:      "acme",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "acme", explicit: true},
+		},
+		{
+			name:         "explicit flag on new account",
+			flagApp:      "acme",
+			flagExplicit: true,
+			want:         addAccountBinding{resolvedApp: "acme", explicit: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveAddAccountBinding(tc.flagApp, tc.flagExplicit, tc.storedApp, tc.sourceExists)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestAddAccountSubprocessRefusesBrowserAuth(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	markDaemonCLISubprocessForTest(t)
+
+	secretsPath := filepath.Join(tmpDir, "secret.json")
+	require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write secrets")
+
+	savedCfg := cfg
+	savedLogger := logger
+	t.Cleanup(func() {
+		cfg = savedCfg
+		logger = savedLogger
+	})
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+		OAuth:   config.OAuthConfig{ClientSecrets: secretsPath},
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	testCmd := &cobra.Command{
+		Use:  "add-account <email>",
+		Args: cobra.ExactArgs(1),
+		RunE: runAddAccountLocal,
+	}
+	registerAddAccountFlags(testCmd)
+	root := newTestRootCmd()
+	root.AddCommand(testCmd)
+	root.SetArgs([]string{"add-account", "user@example.com"})
+
+	err := root.ExecuteContext(context.Background())
+	require.Error(err, "subprocess must refuse browser authorization")
+	require.Contains(err.Error(), "cannot run behind the daemon", "error explains the refusal")
+}

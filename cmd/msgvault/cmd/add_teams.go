@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -17,11 +16,41 @@ func newAddTeamsCmd() *cobra.Command {
 	cmd := newAddTeamsLocalCmd()
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
+			if err := preflightAddTeamsAuthorize(cmd, args[0]); err != nil {
+				return err
+			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		return runAddTeamsLocal(cmd, args)
 	}
 	return cmd
+}
+
+// preflightAddTeamsAuthorize runs the Microsoft browser flow in this
+// process before proxying, so the daemon subprocess never opens a browser
+// or waits on human consent while holding the operation gate.
+func preflightAddTeamsAuthorize(cmd *cobra.Command, email string) error {
+	if IsRemoteMode() {
+		// Tokens live on the remote host; authorization must happen there.
+		return nil
+	}
+	if err := requireMicrosoftOAuthConfig(); err != nil {
+		return err
+	}
+	mgr := microsoft.NewGraphManager(
+		cfg.Microsoft.ClientID,
+		microsoftTenantID(teamsTenantID),
+		cfg.TokensDir(),
+		logger,
+	)
+	fmt.Printf("Authorizing %s with Microsoft Teams...\n", email)
+	if err := mgr.Authorize(cmd.Context(), email); err != nil {
+		return fmt.Errorf("authorize Teams: %w", err)
+	}
+	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
+		return fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
+	}
+	return nil
 }
 
 func newAddTeamsLocalCmd() *cobra.Command {
@@ -45,35 +74,35 @@ Examples:
 	cmd.Flags().StringVar(&teamsTenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddTeams, "no-default-identity", false, noDefaultIdentityHelp)
+	registerOAuthPreflightedFlag(cmd)
 	return cmd
 }
 
 func runAddTeamsLocal(cmd *cobra.Command, args []string) error {
 	email := args[0]
 
-	if cfg.Microsoft.ClientID == "" {
-		return errors.New("microsoft OAuth not configured\n\n" +
-			"Add to your config.toml:\n\n" +
-			"  [microsoft]\n" +
-			"  client_id = \"your-azure-app-client-id\"\n\n" +
-			"See docs for Azure AD app registration setup")
+	if err := requireMicrosoftOAuthConfig(); err != nil {
+		return err
 	}
 
-	tenantID := cfg.Microsoft.EffectiveTenantID()
-	if teamsTenantID != "" {
-		tenantID = teamsTenantID
+	preflighted, err := oauthPreflighted(cmd)
+	if err != nil {
+		return err
 	}
-
-	mgr := microsoft.NewGraphManager(
-		cfg.Microsoft.ClientID,
-		tenantID,
-		cfg.TokensDir(),
-		logger,
-	)
-
-	fmt.Printf("Authorizing %s with Microsoft Teams...\n", email)
-	if err := mgr.Authorize(cmd.Context(), email); err != nil {
-		return fmt.Errorf("authorize Teams: %w", err)
+	if !preflighted {
+		if isDaemonCLISubprocess() {
+			return errBrowserAuthBehindDaemon("add-teams", email)
+		}
+		mgr := microsoft.NewGraphManager(
+			cfg.Microsoft.ClientID,
+			microsoftTenantID(teamsTenantID),
+			cfg.TokensDir(),
+			logger,
+		)
+		fmt.Printf("Authorizing %s with Microsoft Teams...\n", email)
+		if err := mgr.Authorize(cmd.Context(), email); err != nil {
+			return fmt.Errorf("authorize Teams: %w", err)
+		}
 	}
 
 	s, cleanup, err := openWritableStoreAndInitForIngest()
