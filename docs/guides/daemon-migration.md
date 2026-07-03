@@ -20,9 +20,12 @@ see on your terminal, and the gotchas to know about when upgrading.
 | Local vs remote | Different code paths and capabilities | Identical behavior; `[remote].url` just changes which daemon answers |
 | Long-running daemon + CLI | CLI could bypass a running `msgvault serve` | The running daemon owns the archive; the CLI always goes through it |
 
-Nothing about your data changes: the archive is still plain SQLite plus
-Parquet under `~/.msgvault/`, and 0.17.0 introduces no new schema
-migrations relative to 0.16.x.
+Your archive format is unchanged: still plain SQLite plus Parquet under
+`~/.msgvault/`. Like most releases, 0.17.0 does add schema migrations
+relative to 0.16.x (new `messages` columns); they run automatically the
+first time the daemon starts on the upgraded binary, which is part of why
+the first startup on a large archive can take longer than usual. If you
+want a safety net, back up `msgvault.db` before upgrading.
 
 ## What you will see
 
