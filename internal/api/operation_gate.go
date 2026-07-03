@@ -5,13 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
 
 const cliRunGateInspectionMaxBytes = 1 << 20
+
+// operationGateWaitLimit bounds how long a gated request queues server-side
+// before it is turned away with an operation_in_progress error naming the
+// current holder. Clients retry, so short gate holds stay invisible while
+// long ones surface who is blocking instead of hanging silently. Variable
+// only so tests can shorten it.
+var operationGateWaitLimit = 10 * time.Second
 
 var errCLIRunGateInspectionBodyTooLarge = errors.New("cli run request body is too large to inspect before routing")
 
@@ -21,6 +30,15 @@ type OperationGate interface {
 	BeginWorkContext(ctx context.Context) (func(), bool)
 }
 
+// LabeledOperationGate is implemented by gates that can report what is
+// currently holding them, so waiters can be told what they are waiting for.
+type LabeledOperationGate interface {
+	OperationGate
+	BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool)
+	Holder() (label string, since time.Time, held bool)
+	Draining() bool
+}
+
 type SerialOperationGate struct {
 	initOnce sync.Once
 	sem      chan struct{}
@@ -28,6 +46,9 @@ type SerialOperationGate struct {
 	drainCh  chan struct{}
 	draining bool
 	active   int
+
+	holderLabel string
+	holderSince time.Time
 }
 
 func NewSerialOperationGate() *SerialOperationGate {
@@ -39,6 +60,10 @@ func (g *SerialOperationGate) BeginWork() (func(), bool) {
 }
 
 func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), bool) {
+	return g.BeginLabeledWorkContext(ctx, "")
+}
+
+func (g *SerialOperationGate) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
 	if g == nil {
 		return func() {}, true
 	}
@@ -62,6 +87,8 @@ func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), boo
 			return func() {}, false
 		}
 		g.active++
+		g.holderLabel = label
+		g.holderSince = time.Now()
 		g.mu.Unlock()
 	case <-ctx.Done():
 		return func() {}, false
@@ -75,10 +102,35 @@ func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), boo
 			if g.active > 0 {
 				g.active--
 			}
+			g.holderLabel = ""
+			g.holderSince = time.Time{}
 			g.mu.Unlock()
 			<-sem
 		})
 	}, true
+}
+
+// Holder reports what currently holds the gate, if anything.
+func (g *SerialOperationGate) Holder() (string, time.Time, bool) {
+	if g == nil {
+		return "", time.Time{}, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.active == 0 {
+		return "", time.Time{}, false
+	}
+	return g.holderLabel, g.holderSince, true
+}
+
+// Draining reports whether the gate is rejecting new work for shutdown.
+func (g *SerialOperationGate) Draining() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.draining
 }
 
 // Drain rejects queued and future work, then waits for active work to finish.
@@ -145,7 +197,7 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			shouldGate, err := operationGateRequest(r)
+			shouldGate, label, err := operationGateRequest(r)
 			if err != nil {
 				if errors.Is(err, errCLIRunGateInspectionBodyTooLarge) {
 					writeError(w, http.StatusRequestEntityTooLarge, "request_too_large",
@@ -159,9 +211,9 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
-			done, ok := gate.BeginWorkContext(r.Context())
+			done, ok := beginGateWorkBounded(r.Context(), gate, label)
 			if !ok {
-				writeError(w, http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
+				writeOperationGateBusy(w, gate)
 				return
 			}
 			defer done()
@@ -170,54 +222,146 @@ func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler
 	}
 }
 
-func operationGateRequest(r *http.Request) (bool, error) {
+// beginGateWorkBounded queues on the gate for at most operationGateWaitLimit,
+// so short holds are absorbed invisibly and long ones fail fast to the busy
+// response instead of hanging the client with no feedback.
+func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string) (func(), bool) {
+	waitCtx, cancel := context.WithTimeout(ctx, operationGateWaitLimit)
+	defer cancel()
+	if lg, ok := gate.(LabeledOperationGate); ok {
+		return lg.BeginLabeledWorkContext(waitCtx, label)
+	}
+	return gate.BeginWorkContext(waitCtx)
+}
+
+func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
+	lg, ok := gate.(LabeledOperationGate)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
+		return
+	}
+	if lg.Draining() {
+		writeError(w, http.StatusServiceUnavailable, "server_busy", "server is shutting down")
+		return
+	}
+	message := "another operation is running"
+	if label, since, held := lg.Holder(); held && label != "" {
+		message = fmt.Sprintf("%s has been running for %s",
+			label, time.Since(since).Round(time.Second))
+	}
+	writeError(w, http.StatusServiceUnavailable, "operation_in_progress", message)
+}
+
+// operationGateExemptPaths are non-GET endpoints that only read: they must
+// not queue behind long mutating operations, and they never mutate the
+// archive themselves.
+var operationGateExemptPaths = map[string]bool{
+	"/api/v1/cli/verify":             true,
+	queryEndpointPath:                true,
+	"/api/v1/cli/add-calendar/plan":  true,
+	"/api/v1/cli/delete-staged/plan": true,
+	"/api/v1/cli/embeddings/plan":    true,
+	"/api/v1/cli/deduplicate/plan":   true,
+}
+
+func operationGateRequest(r *http.Request) (bool, string, error) {
 	if r.URL.Path == DaemonShutdownPath {
-		return false, nil
+		return false, "", nil
 	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return false, nil
+		return false, "", nil
+	}
+	if operationGateExemptPaths[r.URL.Path] {
+		return false, "", nil
 	}
 	if r.URL.Path == "/api/v1/cli/run" {
-		skip, err := cliRunRequestSkipsOperationGate(r)
+		label, skip, err := cliRunGateDecision(r)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		if skip {
-			return false, nil
+			return false, "", nil
 		}
+		return true, label, nil
 	}
-	return true, nil
+	return true, operationGateLabelFromPath(r.URL.Path), nil
 }
 
-func cliRunRequestSkipsOperationGate(r *http.Request) (bool, error) {
+// cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
+// the leading command-path words of CLIRunRequest args (flags follow them).
+var cliRunReadOnlyCommands = map[string]bool{
+	"logs":            true,
+	"list-deletions":  true,
+	"show-deletion":   true,
+	"embeddings list": true,
+}
+
+func cliRunGateDecision(r *http.Request) (label string, skip bool, err error) {
 	if r == nil || r.Body == nil {
-		return false, nil
+		return "", false, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, cliRunGateInspectionMaxBytes+1))
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) > cliRunGateInspectionMaxBytes {
-		return false, errCLIRunGateInspectionBodyTooLarge
+		return "", false, errCLIRunGateInspectionBodyTooLarge
 	}
 
+	// An unparseable body stays gated with a generic label; the handler
+	// produces the real decode error for the client.
 	var req struct {
 		Args []string `json:"args"`
 	}
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
-		switch req.Args[0] {
-		case "logs":
-			return true, nil
+		command := cliRunCommandWords(req.Args)
+		if cliRunReadOnlyCommands[command] {
+			return "", true, nil
+		}
+		if command != "" {
+			return "msgvault " + command, false, nil
 		}
 	}
-	return false, nil
+	return "msgvault CLI command", false, nil
 }
 
-func (s *Server) beginOperationGateWork(ctx context.Context) (func(), bool) {
+// cliRunCommandGroups are proxied parent commands whose second arg is a
+// subcommand name rather than a positional value.
+var cliRunCommandGroups = map[string]bool{
+	"embeddings": true,
+}
+
+// cliRunCommandWords extracts the command path from proxied args. Positional
+// values and flags follow the command path, so only a known group consumes a
+// second word.
+func cliRunCommandWords(args []string) string {
+	first := args[0]
+	if strings.HasPrefix(first, "-") {
+		return ""
+	}
+	if cliRunCommandGroups[first] && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		return first + " " + args[1]
+	}
+	return first
+}
+
+func operationGateLabelFromPath(urlPath string) string {
+	name := strings.TrimPrefix(urlPath, "/api/v1/")
+	name = strings.TrimPrefix(name, "cli/")
+	if name == "" {
+		return "an API request"
+	}
+	return "msgvault " + name
+}
+
+func (s *Server) beginLabeledOperationGateWork(ctx context.Context, label string) (func(), bool) {
 	if s.operationGate == nil {
 		return func() {}, true
+	}
+	if lg, ok := s.operationGate.(LabeledOperationGate); ok {
+		return lg.BeginLabeledWorkContext(ctx, label)
 	}
 	return s.operationGate.BeginWorkContext(ctx)
 }

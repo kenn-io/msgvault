@@ -521,15 +521,25 @@ func (c *Client) runCLIStream(
 	options runtime.RequestOptions,
 	output func(stream, data string) error,
 ) error {
-	resp, err := c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, path, options)
-	if err != nil {
+	waiter := &operationBusyWaiter{c: c}
+	var resp *http.Response
+	for {
+		var err error
+		resp, err = c.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, path, options)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		err = HandleCLIErrorResponse(resp)
+		_ = resp.Body.Close()
+		if waiter.wait(ctx, err) {
+			continue
+		}
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return HandleCLIErrorResponse(resp)
-	}
 
 	return decodeCLIStream(resp.Body, operation, func(event cliStreamEvent) (bool, error) {
 		switch event.Type {

@@ -2,6 +2,7 @@ package daemonclient
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,29 @@ import (
 type apiError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
+}
+
+// operationInProgressCode is the daemon's error code for "the operation gate
+// is held by other work"; clients wait and retry instead of failing.
+const operationInProgressCode = "operation_in_progress"
+
+// OperationInProgressError reports that the daemon turned a request away
+// because another operation holds the gate. Message names the holder.
+type OperationInProgressError struct {
+	Message string
+}
+
+func (e *OperationInProgressError) Error() string {
+	return e.Message
+}
+
+func operationInProgressFromBody(body []byte) error {
+	var apiErr apiError
+	if json.Unmarshal(body, &apiErr) == nil &&
+		apiErr.Error == operationInProgressCode && apiErr.Message != "" {
+		return &OperationInProgressError{Message: apiErr.Message}
+	}
+	return nil
 }
 
 // HandleErrorResponse reads a non-CLI error response body and returns an
@@ -42,11 +66,17 @@ func handleRawErrorResponse(
 }
 
 func handleErrorBody(status int, body []byte) error {
+	if err := operationInProgressFromBody(body); err != nil {
+		return err
+	}
 	message, _ := apiErrorMessage(body)
 	return fmt.Errorf("API error (%d): %s", status, message)
 }
 
 func handleCLIErrorBody(status int, body []byte) error {
+	if err := operationInProgressFromBody(body); err != nil {
+		return err
+	}
 	message, decoded := apiErrorMessage(body)
 	if decoded {
 		return errors.New(message)
@@ -123,11 +153,21 @@ func generatedResponse[R any](
 	if err != nil {
 		return zero, err
 	}
-	resp, err := request(client)
-	if err := checkResponse(resp, err); err != nil {
-		return zero, err
+	waiter := &operationBusyWaiter{c: c}
+	for {
+		resp, err := request(client)
+		checkErr := checkResponse(resp, err)
+		if checkErr == nil {
+			return resp, nil
+		}
+		// context.Background keeps waiting uncancellable here; the request
+		// itself carries the caller's context, so cancellation surfaces as a
+		// non-busy error on the next attempt.
+		if waiter.wait(context.Background(), checkErr) {
+			continue
+		}
+		return zero, checkErr
 	}
-	return resp, nil
 }
 
 func responseError(

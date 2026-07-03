@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -104,7 +105,22 @@ func runEmbeddingsBuildHTTP(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("set --yes after confirmation: %w", err)
 		}
 	}
-	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+	return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, args, embeddingsForwardEnv())
+}
+
+// embeddingsForwardEnv carries the caller's embedding API key into the
+// daemon-spawned subprocess, which otherwise sees only the daemon's
+// environment: a key exported in the user's shell would silently not apply.
+func embeddingsForwardEnv() map[string]string {
+	name := cfg.Vector.Embeddings.APIKeyEnv
+	if name == "" {
+		return nil
+	}
+	value := os.Getenv(name)
+	if value == "" {
+		return nil
+	}
+	return map[string]string{name: value}
 }
 
 func runEmbeddingsResume(cmd *cobra.Command, args []string) error {

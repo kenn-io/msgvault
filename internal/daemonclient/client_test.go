@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -206,4 +208,74 @@ func TestGeneratedResponseDecodeErrorDetection(t *testing.T) {
 	err := &runtime.ResponseDecodeError{Err: errors.New("malformed")}
 	assert.True(t, responseDecodeError(err), "decode error")
 	assert.False(t, responseDecodeError(errors.New("other")), "other error")
+}
+
+func TestRunCLICommandRetriesWhileOperationInProgress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldDelay := operationBusyRetryDelay
+	operationBusyRetryDelay = time.Millisecond
+	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
+
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/cli/run", r.URL.Path, "path")
+		if hits.Add(1) <= 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, err := w.Write([]byte(`{"error":"operation_in_progress","message":"msgvault embeddings build has been running for 42m"}`))
+			assert.NoError(err, "write busy response")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, err := w.Write([]byte(`{"type":"stdout","data":"done\n"}` + "\n" + `{"type":"complete"}` + "\n"))
+		assert.NoError(err, "write stream")
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
+	require.NoError(err, "New")
+	var notified []string
+	c.SetBusyNotifier(func(message string) { notified = append(notified, message) })
+
+	var stdout strings.Builder
+	err = c.RunCLICommand(context.Background(), CLIRunRequest{Args: []string{"embeddings", "list"}}, func(stream, data string) error {
+		if stream == "stdout" {
+			stdout.WriteString(data)
+		}
+		return nil
+	})
+	require.NoError(err, "RunCLICommand")
+
+	assert.Equal("done\n", stdout.String(), "stdout streamed after retries")
+	assert.Equal(int64(3), hits.Load(), "two busy responses then success")
+	require.NotEmpty(notified, "busy notifier called")
+	assert.Contains(notified[0], "embeddings build", "notifier names the holder")
+}
+
+func TestRunCLICommandStopsRetryingWhenContextCancelled(t *testing.T) {
+	require := require.New(t)
+
+	oldDelay := operationBusyRetryDelay
+	operationBusyRetryDelay = 50 * time.Millisecond
+	t.Cleanup(func() { operationBusyRetryDelay = oldDelay })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"operation_in_progress","message":"a scheduled sync has been running for 5m"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{URL: srv.URL, APIKey: "key", AllowInsecure: true})
+	require.NoError(err, "New")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	err = c.RunCLICommand(ctx, CLIRunRequest{Args: []string{"sync"}}, nil)
+	require.Error(err, "cancelled retry loop returns an error")
 }

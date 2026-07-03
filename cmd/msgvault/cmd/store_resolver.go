@@ -154,19 +154,31 @@ func OpenHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo, er
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
+	st.SetBusyNotifier(reportDaemonBusyWait)
 	return st, HTTPStoreInfo{
 		Kind: HTTPStoreLocalDaemon,
 		URL:  url,
 	}, nil
 }
 
+// reportDaemonBusyWait surfaces gate contention while the client retries:
+// without it a command queued behind a long operation looks hung.
+func reportDaemonBusyWait(message string) {
+	_, _ = fmt.Fprintf(os.Stderr, "Waiting: %s (Ctrl+C to cancel).\n", message)
+}
+
 func openRemoteStoreWithTimeout(timeout time.Duration) (*daemonclient.Client, error) {
-	return daemonclient.New(daemonclient.Config{
+	st, err := daemonclient.New(daemonclient.Config{
 		URL:           cfg.Remote.URL,
 		APIKey:        cfg.Remote.APIKey,
 		AllowInsecure: cfg.Remote.AllowInsecure,
 		Timeout:       timeout,
 	})
+	if err != nil {
+		return nil, err
+	}
+	st.SetBusyNotifier(reportDaemonBusyWait)
+	return st, nil
 }
 
 func ensureLocalDaemonRuntime(ctx context.Context, c *config.Config) (*DaemonRuntime, error) {

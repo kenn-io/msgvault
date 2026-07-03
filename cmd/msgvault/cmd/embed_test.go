@@ -517,3 +517,45 @@ func mustGetEmbeddingGeneration(ctx context.Context, t *testing.T, db *sql.DB, g
 	require.NoError(t, err)
 	return row
 }
+
+func TestEmbeddingsBuildForwardsAPIKeyEnvToDaemonRunner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldFull, oldYes := embedFullRebuild, embedYes
+	t.Cleanup(func() { embedFullRebuild, embedYes = oldFull, oldYes })
+
+	const keyEnv = "MSGVAULT_TEST_EMBED_KEY"
+	t.Setenv(keyEnv, "secret-token")
+
+	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assert.Equal([]string{embeddingsCommandName, "build"}, req.Args, "args")
+		assert.Equal("secret-token", req.Env[keyEnv], "caller API key forwarded to subprocess env")
+	}, `{"type":"complete"}`)
+	configureRemoteDaemonForTest(t, server.URL)
+	cfg.Vector.Embeddings.APIKeyEnv = keyEnv
+
+	root := &cobra.Command{Use: daemonService}
+	embeddings := &cobra.Command{Use: embeddingsCommandName}
+	build := &cobra.Command{
+		Use:  "build",
+		RunE: runEmbeddingsBuild,
+	}
+	embeddings.AddCommand(build)
+	root.AddCommand(embeddings)
+	root.SetArgs([]string{embeddingsCommandName, "build"})
+
+	require.NoError(root.Execute(), "embeddings build")
+	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
+}
+
+func TestEmbeddingsForwardEnvSkipsUnsetKey(t *testing.T) {
+	assert := assert.New(t)
+	savedCfg := cfg
+	t.Cleanup(func() { cfg = savedCfg })
+	cfg = &config.Config{}
+
+	assert.Nil(embeddingsForwardEnv(), "no api_key_env configured")
+
+	cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_TEST_EMBED_KEY_UNSET"
+	assert.Nil(embeddingsForwardEnv(), "configured env var not set in caller environment")
+}

@@ -1331,7 +1331,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if !s.ftsIndexComplete.Load() {
 		if cliStore.NeedsFTSBackfill() {
 			n, err := func() (int64, error) {
-				done, ok := s.beginOperationGateWork(r.Context())
+				done, ok := s.beginLabeledOperationGateWork(r.Context(), "a search index build")
 				if !ok {
 					return 0, newAPIHTTPError(http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
 				}

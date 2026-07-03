@@ -199,7 +199,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and configure scheduler
 	sched := scheduler.New(syncFunc).WithLogger(logger).
-		WithWorkTracker(combineWorkTrackers(idleTracker, operationGate))
+		WithWorkTracker(combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "a scheduled sync")))
 
 	// Add all scheduled accounts
 	count, errs := sched.AddAccountsFromConfig(cfg)
@@ -304,7 +304,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	vectorInit := startVectorInit(
 		ctx, s, dbPath,
-		combineWorkTrackers(idleTracker, operationGate),
+		combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 		apiServer, sched,
 	)
 
