@@ -2794,6 +2794,9 @@ func (s *Server) handleTextConversations(w http.ResponseWriter, r *http.Request)
 	filter.Pagination.Limit = requestLimit + 1
 	rows, err := textEngine.ListConversations(r.Context(), filter)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("text conversations query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Text conversations query failed")
 		return
@@ -2842,6 +2845,9 @@ func (s *Server) handleTextAggregates(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := textEngine.TextAggregate(r.Context(), viewType, opts)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("text aggregate query failed", "view_type", viewTypeStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Text aggregate query failed")
 		return
@@ -2887,6 +2893,9 @@ func (s *Server) handleTextConversationMessages(w http.ResponseWriter, r *http.R
 	filter.Pagination.Limit = requestLimit + 1
 	messages, err := textEngine.ListConversationMessages(r.Context(), conversationID, filter)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("text conversation messages query failed", "conversation_id", conversationID, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Text conversation messages query failed")
 		return
@@ -2943,6 +2952,9 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 
 	messages, err := textEngine.TextSearch(r.Context(), queryStr, limit+1, offset)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("text search failed", "query", queryStr, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Text search failed")
 		return
@@ -2982,6 +2994,9 @@ func (s *Server) handleTextStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := textEngine.GetTextStats(r.Context(), opts)
 	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
 		s.logger.Error("text stats query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Text stats query failed")
 		return

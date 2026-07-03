@@ -3265,7 +3265,7 @@ func TestSanitizeTokenPath(t *testing.T) {
 }
 
 // newTestServerWithEngine creates a test server with both mock store and mock engine.
-func newTestServerWithEngine(t *testing.T, engine *querytest.MockEngine) *Server {
+func newTestServerWithEngine(t *testing.T, engine query.Engine) *Server {
 	t.Helper()
 
 	store := &mockStore{
@@ -3891,6 +3891,79 @@ func TestFastDeepSearchContextErrorReturns503(t *testing.T) {
 			require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
 			assert.Equal(tc.wantErr, resp.Error, "error code")
 		})
+	}
+}
+
+// contextErrorTextEngine implements query.TextEngine with every method
+// failing the same way a saturated DuckDB query slot does: a wrapped
+// context error from acquireQuerySlot.
+type contextErrorTextEngine struct {
+	*querytest.MockEngine
+
+	err error
+}
+
+func (e *contextErrorTextEngine) ListConversations(context.Context, query.TextFilter) ([]query.ConversationRow, error) {
+	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) TextAggregate(context.Context, query.TextViewType, query.TextAggregateOptions) ([]query.AggregateRow, error) {
+	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) ListConversationMessages(context.Context, int64, query.TextFilter) ([]query.MessageSummary, error) {
+	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) TextSearch(context.Context, string, int, int) ([]query.MessageSummary, error) {
+	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+func (e *contextErrorTextEngine) GetTextStats(context.Context, query.TextStatsOptions) (*query.TotalStats, error) {
+	return nil, fmt.Errorf("acquire query slot: %w", e.err)
+}
+
+// TestTextEndpointsContextErrorReturns503 verifies that a context
+// deadline/cancellation from the text engine (e.g. a request timing out
+// while waiting for a DuckDB query slot) surfaces as a structured 503
+// instead of a generic 500 on every text endpoint.
+func TestTextEndpointsContextErrorReturns503(t *testing.T) {
+	paths := []struct {
+		name string
+		path string
+	}{
+		{name: "conversations", path: "/api/v1/text/conversations"},
+		{name: "aggregates", path: "/api/v1/text/aggregates?view_type=contacts"},
+		{name: "conversation messages", path: "/api/v1/text/conversations/1/messages"},
+		{name: "search", path: "/api/v1/text/search?q=hello"},
+		{name: "stats", path: "/api/v1/text/stats"},
+	}
+	cases := []struct {
+		name    string
+		err     error
+		wantErr string
+	}{
+		{name: "deadline", err: context.DeadlineExceeded, wantErr: "query_timeout"},
+		{name: "canceled", err: context.Canceled, wantErr: "query_canceled"},
+	}
+	for _, tc := range cases {
+		for _, p := range paths {
+			t.Run(tc.name+"/"+p.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				engine := &contextErrorTextEngine{MockEngine: &querytest.MockEngine{}, err: tc.err}
+				srv := newTestServerWithEngine(t, engine)
+
+				req := httptest.NewRequest(http.MethodGet, p.path, nil)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+
+				require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+				var resp ErrorResponse
+				require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
+				assert.Equal(tc.wantErr, resp.Error, "error code")
+			})
+		}
 	}
 }
 
