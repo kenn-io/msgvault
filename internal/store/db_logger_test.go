@@ -90,7 +90,7 @@ func TestLoggedDB_ExecLogsStatement(t *testing.T) {
 	assert.InDelta(float64(1), rec["nargs"], 1e-9, "nargs")
 }
 
-func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
+func TestLogStmt_SlowQueryLogsAtInfo(t *testing.T) {
 	assert := assert.New(t)
 	// Drive the emitter directly with a synthetic elapsed time
 	// to avoid flakiness from "actually make a query slow".
@@ -105,10 +105,28 @@ func TestLogStmt_SlowQueryPromotedToWarn(t *testing.T) {
 
 	rec := findLogLineByMsg(t, buf, "sql slow")
 	require.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
-	assert.Equal("WARN", rec["level"], "level")
+	assert.Equal("INFO", rec["level"],
+		"a statement just over the threshold is a diagnostic, not a warning")
 	assert.InDelta(float64(100), rec["duration_ms"], 1e-9, "duration_ms")
 	assert.Equal("msgvault-42", rec["request_id"],
 		"slow line must carry the issuing request id")
+}
+
+func TestLogStmt_VerySlowQueryPromotedToWarn(t *testing.T) {
+	assert := assert.New(t)
+	ConfigureSQLLogging(SQLLogOptions{SlowMs: 50})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+
+	buf := captureSlog(t)
+	logStmtWith(
+		"exec", "msgvault-42", "INSERT INTO t VALUES (?)", []any{"v"},
+		nil, 500*time.Millisecond, // 10x the 50ms threshold
+	)
+
+	rec := findLogLineByMsg(t, buf, "sql slow")
+	require.NotNil(t, rec, "no sql slow line found; buf=%s", buf.String())
+	assert.Equal("WARN", rec["level"], "10x the threshold escalates to Warn")
+	assert.InDelta(float64(500), rec["duration_ms"], 1e-9, "duration_ms")
 }
 
 func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {

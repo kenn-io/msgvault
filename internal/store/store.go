@@ -475,10 +475,17 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 			"duration_ms", time.Since(start).Milliseconds())
 		return err
 	}
+	// A tx crossing the slow threshold is a diagnostic, not a problem —
+	// bulk syncs routinely commit 100ms+ batches — so it logs at Info and
+	// only escalates to Warn at 10x the threshold, where something is
+	// genuinely wrong (lock contention, an unindexed cascade).
 	ms := time.Since(start).Milliseconds()
-	if slowMs := sqlLogSlowMs.Load(); slowMs > 0 && ms >= slowMs {
+	switch slowMs := sqlLogSlowMs.Load(); {
+	case slowMs > 0 && ms >= 10*slowMs:
 		slog.Warn("sql tx slow", "duration_ms", ms)
-	} else {
+	case slowMs > 0 && ms >= slowMs:
+		slog.Info("sql tx slow", "duration_ms", ms)
+	default:
 		slog.Debug("sql tx commit", "duration_ms", ms)
 	}
 	return nil

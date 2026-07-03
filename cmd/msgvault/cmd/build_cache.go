@@ -226,7 +226,6 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 					lastMessageID = 0
 				} else {
 					lastMessageID = state.LastMessageID
-					fmt.Println("Updating analytics cache...")
 				}
 			}
 		}
@@ -340,7 +339,11 @@ func buildCache(dbPath, analyticsDir string, fullRebuild bool) (*buildResult, er
 		}
 	}
 
-	fmt.Println("Building cache...")
+	if fullRebuild {
+		fmt.Println("Building analytics cache...")
+	} else {
+		fmt.Println("Updating analytics cache...")
+	}
 	buildStart := time.Now()
 
 	// Capture deletion watermark before export starts. Any deletion

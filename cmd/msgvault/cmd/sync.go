@@ -273,7 +273,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 		// back to a full sync instead of telling the user to run one:
 		// it is resumable and skips already-archived messages.
 		if errors.Is(err, sync.ErrHistoryExpired) {
-			fmt.Println("\nHistory ID has expired (Gmail keeps only ~7 days of history).")
+			fmt.Println("History ID has expired (Gmail keeps only ~7 days of history).")
 			fmt.Println("Falling back to a full sync; already-archived messages are skipped.")
 			fmt.Println()
 			return runFullSync(ctx, s, getOAuthMgr, source)

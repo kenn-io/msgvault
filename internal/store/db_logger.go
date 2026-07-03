@@ -410,9 +410,15 @@ func logStmtWith(
 			attrs = append(attrs, "args_shape", formatArgsShape(args))
 			slog.Warn("sql error", attrs...)
 		}
-	case slowMs > 0 && ms >= slowMs:
+	// Slow statements are diagnostics: Info at the threshold (routine
+	// during bulk writes), Warn only at 10x where something is genuinely
+	// wrong. Both carry the redacted args shape for debuggability.
+	case slowMs > 0 && ms >= 10*slowMs:
 		attrs = append(attrs, "args_shape", formatArgsShape(args))
 		slog.Warn("sql slow", attrs...)
+	case slowMs > 0 && ms >= slowMs:
+		attrs = append(attrs, "args_shape", formatArgsShape(args))
+		slog.Info("sql slow", attrs...)
 	case fullTrace:
 		slog.Info("sql", attrs...)
 	default:

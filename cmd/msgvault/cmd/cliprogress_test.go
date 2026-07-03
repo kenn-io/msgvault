@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,4 +35,54 @@ func TestCLIProgress_OnStartResetsForReuse(t *testing.T) {
 	p.OnStart(200)
 
 	require.True(t, p.startTime.After(first), "OnStart should reset startTime on subsequent calls")
+}
+
+func TestCLIProgress_PlainModeEmitsNewlineTerminatedUpdates(t *testing.T) {
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+	p.OnStart(0)
+	p.lastPrint = time.Now().Add(-time.Minute) // bypass the throttle
+	p.OnProgress(1000, 500, 100)
+
+	out := buf.String()
+	require.NotEmpty(t, out, "expected a progress update")
+	assert.True(t, strings.HasSuffix(out, "\n"),
+		"a plain update is a permanent line and must end it: %q", out)
+	assert.NotContains(t, out, "\r",
+		"plain mode goes through pipes where \\r cannot overwrite")
+	assert.Contains(t, out, "Scanned: 1000")
+	assert.Contains(t, out, "Added: 500")
+
+	p.OnComplete(nil)
+	assert.Equal(t, out, buf.String(),
+		"plain mode has no open line for OnComplete to terminate")
+}
+
+func TestCLIProgress_PlainModeThrottlesToItsInterval(t *testing.T) {
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+	p.OnStart(0)
+	p.lastPrint = time.Now().Add(-cliProgressPlainInterval + time.Second)
+	p.OnProgress(1000, 500, 100)
+
+	assert.Empty(t, buf.String(),
+		"an update inside the plain interval must not print")
+}
+
+func TestCLIProgress_TTYModeRedrawsInPlace(t *testing.T) {
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModeTTY, out: &buf}
+	p.OnStart(0)
+	p.lastPrint = time.Now().Add(-time.Minute)
+	p.OnProgress(1000, 500, 100)
+
+	out := buf.String()
+	assert.True(t, strings.HasPrefix(out, "\r"),
+		"a tty update redraws the status line in place: %q", out)
+	assert.False(t, strings.HasSuffix(out, "\n"),
+		"a tty update keeps the line open for the next redraw")
+
+	p.OnComplete(nil)
+	assert.True(t, strings.HasSuffix(buf.String(), "\n"),
+		"OnComplete must terminate the open progress line")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -450,6 +451,26 @@ func buildSyncQuery() string {
 }
 
 // CLIProgress implements gmail.SyncProgressWithDate for terminal output.
+// progressOutputMode selects how CLIProgress renders updates.
+type progressOutputMode int
+
+const (
+	// progressModeAuto detects the mode from stdout on first use.
+	progressModeAuto progressOutputMode = iota
+	// progressModeTTY redraws a single status line in place with \r.
+	progressModeTTY
+	// progressModePlain emits one newline-terminated update at a lower
+	// cadence. Used when stdout is a pipe — the daemon CLI subprocess,
+	// redirected output, CI — where \r overwriting cannot work and would
+	// interleave with stderr into one unreadable blob.
+	progressModePlain
+)
+
+const (
+	cliProgressTTYInterval   = 2 * time.Second
+	cliProgressPlainInterval = 30 * time.Second
+)
+
 type CLIProgress struct {
 	startTime  time.Time
 	lastPrint  time.Time
@@ -458,6 +479,8 @@ type CLIProgress struct {
 	processed int64
 	added     int64
 	skipped   int64
+	mode      progressOutputMode
+	out       io.Writer // defaults to os.Stdout; tests inject a buffer
 }
 
 func (p *CLIProgress) OnStart(total int64) {
@@ -489,9 +512,32 @@ func (p *CLIProgress) OnLatestDate(date time.Time) {
 	p.printProgress()
 }
 
+func (p *CLIProgress) outputMode() progressOutputMode {
+	if p.mode == progressModeAuto {
+		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+			p.mode = progressModeTTY
+		} else {
+			p.mode = progressModePlain
+		}
+	}
+	return p.mode
+}
+
+func (p *CLIProgress) writer() io.Writer {
+	if p.out == nil {
+		return os.Stdout
+	}
+	return p.out
+}
+
 func (p *CLIProgress) printProgress() {
-	// Throttle output to every 2 seconds
-	if time.Since(p.lastPrint) < 2*time.Second {
+	// Throttle: an in-place line can refresh every 2 seconds, but each
+	// plain-mode update is a permanent line, so those come every 30.
+	interval := cliProgressTTYInterval
+	if p.outputMode() == progressModePlain {
+		interval = cliProgressPlainInterval
+	}
+	if time.Since(p.lastPrint) < interval {
 		return
 	}
 	p.lastPrint = time.Now()
@@ -511,16 +557,26 @@ func (p *CLIProgress) printProgress() {
 		dateStr = " | Latest: " + p.latestDate.Format("Jan 2006")
 	}
 
-	fmt.Printf("\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
+	if p.outputMode() == progressModePlain {
+		_, _ = fmt.Fprintf(p.writer(),
+			"  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s\n",
+			p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
+		return
+	}
+	_, _ = fmt.Fprintf(p.writer(),
+		"\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
 		p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
 }
 
 func (p *CLIProgress) OnComplete(summary *gmail.SyncSummary) {
-	fmt.Println() // Clear the progress line
+	if p.outputMode() == progressModePlain {
+		return // every plain-mode update already ended its line
+	}
+	_, _ = fmt.Fprintln(p.writer()) // terminate the in-place progress line
 }
 
 func (p *CLIProgress) OnError(err error) {
-	fmt.Printf("\nError: %v\n", err)
+	_, _ = fmt.Fprintf(p.writer(), "\nError: %v\n", err)
 }
 
 // imapSkipReason checks whether an IMAP source has the credentials needed to
