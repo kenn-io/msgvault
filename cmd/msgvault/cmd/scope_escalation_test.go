@@ -368,6 +368,8 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForGmailOnlyToken(t *testing.T
 	assert.Equal("CALENDAR ACCESS REQUIRED", plan.Headline)
 	assert.Contains(plan.BodyLines, "Calendar sync needs read-only Calendar access.")
 	assert.Equal("Cancelled. Calendar was not added.", plan.CancelHint)
+	assert.Empty(plan.OAuthApp, "no stored binding resolves to the default app")
+	assert.False(plan.NeedsClientCheck, "default app needs no client check")
 }
 
 func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t *testing.T) {
@@ -394,4 +396,6 @@ func TestPlanCLIAddCalendarRequiresScopeEscalationForNonReusableGmailOnlyToken(t
 	require.NoError(err, "plan add-calendar")
 	assert.True(plan.NeedsScopeEscalation, "non-reusable gmail-only token should still require foreground scope confirmation")
 	assert.Equal("CALENDAR ACCESS REQUIRED", plan.Headline)
+	assert.Equal("acme", plan.OAuthApp, "explicit app is returned for client-side preflight")
+	assert.True(plan.NeedsClientCheck, "explicit app requires a token client check")
 }

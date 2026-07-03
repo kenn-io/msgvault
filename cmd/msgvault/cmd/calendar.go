@@ -243,6 +243,7 @@ func runAddCalendarHTTP(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	escalationConfirmed := false
 	if plan != nil && plan.NeedsScopeEscalation {
 		ok, err := promptAddCalendarScopeEscalation(cmd.InOrStdin(), cmd.OutOrStdout(), *plan)
 		if err != nil {
@@ -251,11 +252,80 @@ func runAddCalendarHTTP(cmd *cobra.Command, args []string) error {
 		if !ok {
 			return nil
 		}
+		escalationConfirmed = true
 		if err := cmd.Flags().Set(calScopeEscalationConfirmedFlag, "true"); err != nil {
 			return fmt.Errorf("set --%s after confirmation: %w", calScopeEscalationConfirmedFlag, err)
 		}
 	}
+	if err := preflightAddCalendarAuthorize(cmd.Context(), email, plan, escalationConfirmed); err != nil {
+		return err
+	}
 	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+// preflightAddCalendarAuthorize completes any Calendar browser authorization
+// in this process before proxying, so the daemon subprocess never opens a
+// browser or waits on human consent while holding the operation gate. After a
+// successful preflight the subprocess re-evaluates the token, finds it valid,
+// and skips its own authorization branches. Remote daemons keep daemon-side
+// authorization because tokens live on that host; headless mode never opens a
+// browser; service-account apps need no browser flow.
+func preflightAddCalendarAuthorize(
+	ctx context.Context,
+	email string,
+	plan *daemonclient.CLIAddCalendarPlan,
+	escalationConfirmed bool,
+) error {
+	if IsRemoteMode() || calAddHeadless || plan == nil {
+		return nil
+	}
+	if cfg.OAuth.ServiceAccountKeyFor(plan.OAuthApp) != "" {
+		return nil
+	}
+	secretsPath, err := cfg.OAuth.ClientSecretsFor(plan.OAuthApp)
+	if err != nil {
+		return err
+	}
+	mgr, err := newCalendarOAuthManager(secretsPath, email)
+	if err != nil {
+		return wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
+	}
+	hasToken := mgr.HasToken(email)
+	hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
+	tokenReusable := hasToken && (!plan.NeedsClientCheck || mgr.TokenMatchesClient(email))
+	tokenExpiredOrRevoked := hasToken && hasCalendarScope && tokenReusable &&
+		calendarTokenExpiredOrRevoked(ctx, mgr, email)
+
+	switch {
+	case !hasToken:
+		fmt.Printf("Authorizing %s for Calendar...\n", email)
+		if err := mgr.Authorize(ctx, email); err != nil {
+			return wrapOAuthError(err)
+		}
+	case tokenExpiredOrRevoked:
+		fmt.Printf("Calendar token for %s is expired or revoked. Re-authorizing...\n", email)
+		if err := mgr.AuthorizePreservingGrantedScopes(ctx, email); err != nil {
+			return wrapOAuthError(err)
+		}
+	case !hasCalendarScope:
+		// Scope escalation replaces the granted scope set, so it only runs
+		// after the user accepted the plan's warning prompt.
+		if !escalationConfirmed {
+			return nil
+		}
+		existingScopes := mgr.GrantedScopes(email)
+		requiredScopes := calendarEscalationScopes(existingScopes,
+			calendarShouldPreserveGmail(hasToken, mgr.HasScopeMetadata(email), existingScopes))
+		if err := authorizeScopeEscalation(ctx, email, requiredScopes, secretsPath); err != nil {
+			return err
+		}
+	case !tokenReusable:
+		fmt.Printf("OAuth app for %s requires reauthorization. Authorizing...\n", email)
+		if err := mgr.Authorize(ctx, email); err != nil {
+			return wrapOAuthError(err)
+		}
+	}
+	return nil
 }
 
 func promptAddCalendarScopeEscalation(
@@ -498,19 +568,25 @@ func planCLIAddCalendar(
 	if err != nil {
 		return api.CLIAddCalendarPlanResponse{}, wrapOAuthError(fmt.Errorf("create oauth manager: %w", err))
 	}
+	// The resolved app binding is returned even when no escalation is
+	// needed: the frontend uses it to run any required browser
+	// authorization client-side before proxying.
+	plan := api.CLIAddCalendarPlanResponse{
+		OAuthApp:         oauthApp,
+		NeedsClientCheck: appDecision.NeedsClientCheck,
+	}
 	hasToken := mgr.HasToken(email)
 	hasCalendarScope := mgr.HasScope(email, oauth.ScopeCalendarReadonly)
 	if req.Headless || !hasToken || hasCalendarScope {
-		return api.CLIAddCalendarPlanResponse{}, nil
+		return plan, nil
 	}
 
 	headline, body, cancelHint := calendarScopeEscalationPrompt()
-	return api.CLIAddCalendarPlanResponse{
-		NeedsScopeEscalation: true,
-		Headline:             headline,
-		BodyLines:            body,
-		CancelHint:           cancelHint,
-	}, nil
+	plan.NeedsScopeEscalation = true
+	plan.Headline = headline
+	plan.BodyLines = body
+	plan.CancelHint = cancelHint
+	return plan, nil
 }
 
 func calendarOAuthScopesForAccount(hasToken bool, hasScopeMetadata bool, existingScopes []string) []string {

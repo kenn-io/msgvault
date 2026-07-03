@@ -67,6 +67,8 @@ type CLIAddCalendarPlan struct {
 	Headline             string   `json:"headline,omitempty"`
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           string   `json:"cancel_hint,omitempty"`
+	OAuthApp             string   `json:"oauth_app,omitempty"`
+	NeedsClientCheck     bool     `json:"needs_client_check,omitempty"`
 }
 
 type CLIEmbeddingsPlanRequest struct {
@@ -101,6 +103,8 @@ type CLIDeleteStagedPlan struct {
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
+	ScopeEscalationAccount    string   `json:"scope_escalation_account,omitempty"`
+	ScopeEscalationOAuthApp   string   `json:"scope_escalation_oauth_app,omitempty"`
 	BlockedError              string   `json:"blocked_error,omitempty"`
 	RemoteDeleteEnvVar        string   `json:"remote_delete_env_var,omitempty"`
 }

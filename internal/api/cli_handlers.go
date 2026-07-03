@@ -212,6 +212,11 @@ type CLIAddCalendarPlanResponse struct {
 	Headline             string   `json:"headline,omitempty"`
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           string   `json:"cancel_hint,omitempty"`
+	// OAuthApp and NeedsClientCheck let the frontend CLI run browser
+	// authorization client-side before proxying: the resolved OAuth app
+	// binding and whether the stored token must match that app's client.
+	OAuthApp         string `json:"oauth_app,omitempty"`
+	NeedsClientCheck bool   `json:"needs_client_check,omitempty"`
 }
 
 type CLIEmbeddingsPlanRequest struct {
@@ -246,8 +251,13 @@ type CLIDeleteStagedPlanResponse struct {
 	ScopeEscalationHeadline   string   `json:"scope_escalation_headline,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint string   `json:"scope_escalation_cancel_hint,omitempty"`
-	BlockedError              string   `json:"blocked_error,omitempty"`
-	RemoteDeleteEnvVar        string   `json:"remote_delete_env_var,omitempty"`
+	// ScopeEscalationAccount and ScopeEscalationOAuthApp let the frontend
+	// CLI run the confirmed scope-upgrade authorization client-side before
+	// proxying, instead of opening a browser in the daemon subprocess.
+	ScopeEscalationAccount  string `json:"scope_escalation_account,omitempty"`
+	ScopeEscalationOAuthApp string `json:"scope_escalation_oauth_app,omitempty"`
+	BlockedError            string `json:"blocked_error,omitempty"`
+	RemoteDeleteEnvVar      string `json:"remote_delete_env_var,omitempty"`
 }
 
 type CLIDeletionManifestResponse struct {

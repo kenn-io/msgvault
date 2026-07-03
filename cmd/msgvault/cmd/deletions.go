@@ -333,6 +333,8 @@ type deleteStagedPlan struct {
 	ScopeEscalationHeadline   string
 	ScopeEscalationBodyLines  []string
 	ScopeEscalationCancelHint string
+	ScopeEscalationAccount    string
+	ScopeEscalationOAuthApp   string
 	BlockedError              string
 	RemoteDeleteEnvVar        string
 }
@@ -992,6 +994,9 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		if err != nil || !ok {
 			return err
 		}
+		if err := preflightDeleteStagedScopeEscalation(cmd.Context(), plan); err != nil {
+			return err
+		}
 		if err := cmd.Flags().Set(deleteStagedScopeEscalationConfirmedFlag, "true"); err != nil {
 			return fmt.Errorf("set --%s after scope confirmation: %w", deleteStagedScopeEscalationConfirmedFlag, err)
 		}
@@ -1020,6 +1025,24 @@ func runDeleteStagedHTTP(cmd *cobra.Command, args []string) error {
 		env = map[string]string{remoteDeleteEnvVar: "1"}
 	}
 	return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, nil, env)
+}
+
+// preflightDeleteStagedScopeEscalation performs the confirmed Gmail scope
+// upgrade in this process for local daemons, so the browser consent never
+// runs in the daemon subprocess while it holds the operation gate. After a
+// successful preflight the subprocess re-checks the token, finds the scopes
+// present, and skips its own authorization. Remote daemons keep the
+// subprocess-side flow because tokens live on that host, as do older daemons
+// whose plan response does not name the escalation account.
+func preflightDeleteStagedScopeEscalation(ctx context.Context, plan *daemonclient.CLIDeleteStagedPlan) error {
+	if IsRemoteMode() || plan.ScopeEscalationAccount == "" {
+		return nil
+	}
+	clientSecretsPath, err := cfg.OAuth.ClientSecretsFor(plan.ScopeEscalationOAuthApp)
+	if err != nil {
+		return err
+	}
+	return authorizeDeletionScopeEscalation(ctx, plan.ScopeEscalationAccount, deletePermanent, clientSecretsPath)
 }
 
 func confirmDeleteStaged(in io.Reader, out io.Writer, mode string) (bool, error) {
@@ -1117,6 +1140,8 @@ func planCLIDeleteStaged(
 					plan.ScopeEscalationHeadline = escalation.Headline
 					plan.ScopeEscalationBodyLines = escalation.BodyLines
 					plan.ScopeEscalationCancelHint = escalation.CancelHint
+					plan.ScopeEscalationAccount = escalation.Account
+					plan.ScopeEscalationOAuthApp = appName
 				}
 			}
 		}
@@ -1132,6 +1157,8 @@ func planCLIDeleteStaged(
 		ScopeEscalationHeadline:   plan.ScopeEscalationHeadline,
 		ScopeEscalationBodyLines:  plan.ScopeEscalationBodyLines,
 		ScopeEscalationCancelHint: plan.ScopeEscalationCancelHint,
+		ScopeEscalationAccount:    plan.ScopeEscalationAccount,
+		ScopeEscalationOAuthApp:   plan.ScopeEscalationOAuthApp,
 		BlockedError:              plan.BlockedError,
 		RemoteDeleteEnvVar:        plan.RemoteDeleteEnvVar,
 	}, nil

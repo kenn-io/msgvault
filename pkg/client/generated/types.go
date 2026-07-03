@@ -196,7 +196,9 @@ type CLIAddCalendarPlanResponse struct {
 	BodyLines            []string `json:"body_lines,omitempty"`
 	CancelHint           *string  `json:"cancel_hint,omitempty"`
 	Headline             *string  `json:"headline,omitempty"`
+	NeedsClientCheck     *bool    `json:"needs_client_check,omitempty"`
 	NeedsScopeEscalation bool     `json:"needs_scope_escalation"`
+	OauthApp             *string  `json:"oauth_app,omitempty"`
 }
 
 type CLICacheBuildEvent struct {
@@ -268,9 +270,11 @@ type CLIDeleteStagedPlanResponse struct {
 	PlanFingerprint           *string  `json:"plan_fingerprint,omitempty"`
 	PlannedBatchIds           []string `json:"planned_batch_ids,omitempty"`
 	RemoteDeleteEnvVar        *string  `json:"remote_delete_env_var,omitempty"`
+	ScopeEscalationAccount    *string  `json:"scope_escalation_account,omitempty"`
 	ScopeEscalationBodyLines  []string `json:"scope_escalation_body_lines,omitempty"`
 	ScopeEscalationCancelHint *string  `json:"scope_escalation_cancel_hint,omitempty"`
 	ScopeEscalationHeadline   *string  `json:"scope_escalation_headline,omitempty"`
+	ScopeEscalationOauthApp   *string  `json:"scope_escalation_oauth_app,omitempty"`
 	Stdout                    *string  `json:"stdout,omitempty"`
 }
 

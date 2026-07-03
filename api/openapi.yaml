@@ -238,8 +238,12 @@ components:
           type: string
         headline:
           type: string
+        needs_client_check:
+          type: boolean
         needs_scope_escalation:
           type: boolean
+        oauth_app:
+          type: string
       required:
         - needs_scope_escalation
       type: object
@@ -351,6 +355,8 @@ components:
             - "null"
         remote_delete_env_var:
           type: string
+        scope_escalation_account:
+          type: string
         scope_escalation_body_lines:
           items:
             type: string
@@ -360,6 +366,8 @@ components:
         scope_escalation_cancel_hint:
           type: string
         scope_escalation_headline:
+          type: string
+        scope_escalation_oauth_app:
           type: string
         stdout:
           type: string

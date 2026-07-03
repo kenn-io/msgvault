@@ -210,6 +210,8 @@ func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 			"headline":               "CALENDAR ACCESS REQUIRED",
 			"body_lines":             []string{"Calendar sync needs read-only Calendar access."},
 			"cancel_hint":            "Cancelled. Calendar was not added.",
+			"oauth_app":              "acme",
+			"needs_client_check":     true,
 		}), "encode response") {
 			return
 		}
@@ -231,6 +233,8 @@ func TestPlanCLIAddCalendarUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("CALENDAR ACCESS REQUIRED", got.Headline, "headline")
 	assert.Equal([]string{"Calendar sync needs read-only Calendar access."}, got.BodyLines, "body lines")
 	assert.Equal("Cancelled. Calendar was not added.", got.CancelHint, "cancel hint")
+	assert.Equal("acme", got.OAuthApp, "oauth app")
+	assert.True(got.NeedsClientCheck, "needs client check")
 }
 
 func TestPlanCLIEmbeddingsUsesGeneratedClientAdapter(t *testing.T) {
@@ -314,6 +318,8 @@ func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
 			"scope_escalation_headline":    "PERMISSION UPGRADE REQUIRED",
 			"scope_escalation_body_lines":  []string{"Batch deletion requires elevated Gmail permissions."},
 			"scope_escalation_cancel_hint": "Cancelled.",
+			"scope_escalation_account":     "alice@example.com",
+			"scope_escalation_oauth_app":   "acme",
 			"remote_delete_env_var":        "MSGVAULT_ENABLE_REMOTE_DELETE",
 		}), "encode response") {
 			return
@@ -343,6 +349,8 @@ func TestPlanCLIDeleteStagedUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
 	assert.Equal([]string{"Batch deletion requires elevated Gmail permissions."}, got.ScopeEscalationBodyLines, "scope body")
 	assert.Equal("Cancelled.", got.ScopeEscalationCancelHint, "scope cancel hint")
+	assert.Equal("alice@example.com", got.ScopeEscalationAccount, "scope account")
+	assert.Equal("acme", got.ScopeEscalationOAuthApp, "scope oauth app")
 	assert.Equal("MSGVAULT_ENABLE_REMOTE_DELETE", got.RemoteDeleteEnvVar, "remote delete env")
 }
 

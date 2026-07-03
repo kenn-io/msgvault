@@ -206,6 +206,9 @@ func TestPlanCLIDeleteStagedReportsDeletionScopeEscalation(t *testing.T) {
 	assert.True(got.NeedsScopeEscalation, "gmail-only token should require deletion scope escalation")
 	assert.Equal("PERMISSION UPGRADE REQUIRED", got.ScopeEscalationHeadline, "scope headline")
 	assert.Contains(got.ScopeEscalationBodyLines, "Batch deletion requires elevated Gmail permissions.", "scope body")
+	assert.Equal(scopeEscalationAccount, got.ScopeEscalationAccount,
+		"plan names the account so the frontend can authorize client-side")
+	assert.Empty(got.ScopeEscalationOAuthApp, "default app binding")
 }
 
 func TestPlanCLIDeleteStagedEscalatesLegacyGmailTokenForPermanentDelete(t *testing.T) {

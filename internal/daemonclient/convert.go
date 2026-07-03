@@ -74,6 +74,8 @@ func cliAddCalendarPlanFromGenerated(resp *generated.PlanCLIAddCalendarResponse)
 		Headline:             stringValue(resp.Headline),
 		BodyLines:            append([]string(nil), resp.BodyLines...),
 		CancelHint:           stringValue(resp.CancelHint),
+		OAuthApp:             stringValue(resp.OauthApp),
+		NeedsClientCheck:     boolValue(resp.NeedsClientCheck),
 	}
 }
 
@@ -102,6 +104,8 @@ func cliDeleteStagedPlanFromGenerated(resp *generated.PlanCLIDeleteStagedRespons
 		ScopeEscalationHeadline:   stringValue(resp.ScopeEscalationHeadline),
 		ScopeEscalationBodyLines:  append([]string(nil), resp.ScopeEscalationBodyLines...),
 		ScopeEscalationCancelHint: stringValue(resp.ScopeEscalationCancelHint),
+		ScopeEscalationAccount:    stringValue(resp.ScopeEscalationAccount),
+		ScopeEscalationOAuthApp:   stringValue(resp.ScopeEscalationOauthApp),
 		BlockedError:              stringValue(resp.BlockedError),
 		RemoteDeleteEnvVar:        stringValue(resp.RemoteDeleteEnvVar),
 	}
