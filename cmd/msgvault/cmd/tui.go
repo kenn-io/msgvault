@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
@@ -80,15 +79,6 @@ HTTP Mode:
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
 		})
-		// Warm lipgloss's background-color cache before the Program takes
-		// over the terminal. Upstream bubbletea did this from a package
-		// init(), which probed the terminal on EVERY msgvault command; our
-		// patched copy (third_party/bubbletea) removes that init, so the
-		// probe happens here — only when the TUI actually starts. Without
-		// it, the first adaptive-color render inside the running Program
-		// would query the terminal while Bubble Tea owns stdin and hang for
-		// the OSC timeout.
-		_ = lipgloss.HasDarkBackground()
 		p := tea.NewProgram(model, tea.WithAltScreen())
 
 		// Swap the slog default to a file-only logger for the

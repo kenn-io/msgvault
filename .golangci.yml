@@ -135,15 +135,6 @@ linters:
       # SQL table names) recur many more times than the threshold.
       min-occurrences: 10
 
-    gomoddirectives:
-      # bubbletea is replaced with third_party/bubbletea, a verbatim copy of
-      # v1.3.10 minus tea_init.go, whose package init() probed the terminal
-      # (OSC-11) on every msgvault command. See third_party/bubbletea/README.md;
-      # cmd/msgvault/cmd/tui_probe_test.go guards the regression.
-      replace-local: true
-      replace-allow-list:
-        - github.com/charmbracelet/bubbletea
-
     importas:
       alias:
         - pkg: github.com/stretchr/testify/assert
