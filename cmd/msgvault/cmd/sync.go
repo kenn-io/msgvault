@@ -260,7 +260,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(st
 	// Run incremental sync
 	startTime := time.Now()
 	fmt.Printf("Starting incremental sync for %s\n", email)
-	fmt.Printf("Last history ID: %s\n\n", source.SyncCursor.String)
+	fmt.Printf("Last history ID: %s\n", source.SyncCursor.String)
 
 	summary, err := syncer.Incremental(ctx, source)
 	if err != nil {

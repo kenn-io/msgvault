@@ -351,6 +351,26 @@ func compactDuration(d time.Duration) string {
 	return s
 }
 
+// daemonStartupStepLabels maps internal startup step names to what a user
+// should read while waiting. The label must stay truthful for the fast
+// no-op case: init_archive_schema runs idempotent CREATEs and only
+// sometimes migrates, so it reads "checking", not "migrating".
+var daemonStartupStepLabels = map[string]string{
+	"open_archive_database": "opening the archive database",
+	"init_archive_schema":   "checking the database schema",
+	"init_analytics_engine": "starting the analytics engine",
+	"init_vector_backend":   "initializing vector search",
+	"skip_vector_backend":   "vector search disabled",
+	"start_api_server":      "starting the API server",
+}
+
+func daemonStartupStepLabel(step string) string {
+	if label, ok := daemonStartupStepLabels[step]; ok {
+		return label
+	}
+	return strings.ReplaceAll(step, "_", " ")
+}
+
 // humanizeDaemonLogLineKnownKeys are the logfmt keys the humanizer knows how
 // to summarize or safely drop. A line carrying any other key (e.g. a panic
 // record's panic/stack attrs) is returned raw instead, so summarizing never
@@ -386,18 +406,18 @@ func humanizeDaemonLogLine(line string) string {
 		return line
 	}
 	var sb strings.Builder
-	step := strings.ReplaceAll(fields["step"], "_", " ")
+	step := fields["step"]
 	switch {
 	// The startup-step records repeat their own context in msg
 	// ("daemon startup step: init archive schema" under a "Daemon
-	// startup (2s):" prefix); collapse them to just the step. These
-	// records carry arbitrary progress attrs (database, bind,
-	// enabled), which are detail — never a reason to fall back to
-	// the raw line, so they skip the unknown-key guard below.
+	// startup (2s):" prefix); collapse them to their user-facing
+	// label. These records carry arbitrary progress attrs (database,
+	// bind, enabled), which are detail — never a reason to fall back
+	// to the raw line, so they skip the unknown-key guard below.
 	case msg == "daemon startup step" && step != "":
-		sb.WriteString(step)
+		sb.WriteString(daemonStartupStepLabel(step))
 	case msg == "daemon startup step complete" && step != "":
-		sb.WriteString(step)
+		sb.WriteString(daemonStartupStepLabel(step))
 		sb.WriteString(" (done)")
 	default:
 		for key := range fields {
@@ -408,7 +428,7 @@ func humanizeDaemonLogLine(line string) string {
 		sb.WriteString(msg)
 		if step != "" {
 			sb.WriteString(": ")
-			sb.WriteString(step)
+			sb.WriteString(daemonStartupStepLabel(step))
 		}
 	}
 	if errVal := fields["error"]; errVal != "" {
