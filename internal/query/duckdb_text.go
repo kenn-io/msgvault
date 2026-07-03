@@ -117,6 +117,12 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 func (e *DuckDBEngine) ListConversations(
 	ctx context.Context, filter TextFilter,
 ) ([]ConversationRow, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	where, args := e.buildTextFilterConditions(filter)
 
 	// Sort clause.
@@ -258,6 +264,14 @@ func (e *DuckDBEngine) TextAggregate(
 	viewType TextViewType,
 	opts TextAggregateOptions,
 ) ([]AggregateRow, error) {
+	// Gate here, not in the shared runAggregation helper: Aggregate and
+	// SubAggregate already hold a slot when they reach it.
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	def, err := textAggViewDef(viewType, opts.EffectiveTimeGranularity())
 	if err != nil {
 		return nil, err
@@ -320,6 +334,12 @@ func (e *DuckDBEngine) ListConversationMessages(
 	// Fallback to Parquet (snippet only, no body text).
 	// NOTE: search results will only show snippets, not full body
 	// text, since Parquet files do not contain message bodies.
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	where, args := e.buildTextFilterConditions(filter)
 	where += " AND msg.conversation_id = ?"
 	args = append(args, convID)
@@ -465,6 +485,12 @@ func (e *DuckDBEngine) TextSearch(
 func (e *DuckDBEngine) GetTextStats(
 	ctx context.Context, opts TextStatsOptions,
 ) (*TotalStats, error) {
+	release, err := e.acquireQuerySlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	stats := &TotalStats{}
 
 	conditions := []string{textTypeFilter(), store.LiveMessagesWhere("msg", false)}
@@ -499,7 +525,7 @@ func (e *DuckDBEngine) GetTextStats(
 	`, e.parquetCTEs(), whereClause)
 
 	var attachmentSize sql.NullFloat64
-	err := e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
+	err = e.db.QueryRowContext(ctx, msgQuery, args...).Scan(
 		&stats.MessageCount,
 		&stats.ActiveMessageCount,
 		&stats.SourceDeletedMessageCount,

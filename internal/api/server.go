@@ -292,10 +292,13 @@ func (s *Server) setupRouter() http.Handler {
 	// Rate limiting (10 req/sec with burst of 20)
 	s.rateLimiter = NewRateLimiter(10, 20)
 
+	// The operation gate sits inside rate limiting and checks API auth
+	// itself, so unauthenticated or rate-limited requests are rejected
+	// before they can register as gate waiters or observe operation state.
 	var h http.Handler = mux
+	h = operationGateMiddleware(s.operationGate, s.apiRequestAuthorized)(h)
 	h = RateLimitMiddleware(s.rateLimiter, s.loopbackRateLimitExempt)(h)
 	h = CORSMiddleware(corsConfig)(h)
-	h = operationGateMiddleware(s.operationGate)(h)
 	h = s.timeoutMiddleware(h)
 	if s.idleTracker != nil {
 		h = s.idleTracker.Wrap(h)

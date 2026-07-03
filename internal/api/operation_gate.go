@@ -222,12 +222,22 @@ func (g *SerialOperationGate) state() (chan struct{}, chan struct{}) {
 	return g.sem, g.drainCh
 }
 
-func operationGateMiddleware(gate OperationGate) func(http.Handler) http.Handler {
+// operationGateMiddleware serializes mutating requests behind the operation
+// gate. authorized guards gate state from unauthenticated callers: requests
+// that fail it pass straight through — without registering as request
+// waiters, triggering scheduler yields, or observing operation state — and
+// are rejected by the API auth layer below. A nil authorized gates every
+// request.
+func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if gate == nil {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if authorized != nil && !authorized(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			shouldGate, label, err := operationGateRequest(r)
 			if err != nil {
 				if errors.Is(err, errCLIRunGateInspectionBodyTooLarge) {
