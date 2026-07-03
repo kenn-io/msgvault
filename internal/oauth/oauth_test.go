@@ -977,6 +977,8 @@ func TestValidateBrowserURL(t *testing.T) {
 }
 
 func TestForceRefreshDetectsRevokedRefreshTokenBehindValidAccessToken(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	var tokenEndpointHits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		tokenEndpointHits.Add(1)
@@ -998,22 +1000,24 @@ func TestForceRefreshDetectsRevokedRefreshTokenBehindValidAccessToken(t *testing
 	// TokenSource is satisfied by the unexpired cached access token and never
 	// contacts the provider, so it cannot see that the refresh token is revoked.
 	_, err := mgr.TokenSource(context.Background(), "test@gmail.com")
-	require.NoError(t, err, "TokenSource should reuse the cached access token")
-	require.Equal(t, int32(0), tokenEndpointHits.Load(), "TokenSource should not hit the token endpoint")
+	require.NoError(err, "TokenSource should reuse the cached access token")
+	require.Equal(int32(0), tokenEndpointHits.Load(), "TokenSource should not hit the token endpoint")
 
 	err = mgr.ForceRefresh(context.Background(), "test@gmail.com")
-	require.Error(t, err, "ForceRefresh should surface the revoked refresh token")
+	require.Error(err, "ForceRefresh should surface the revoked refresh token")
 	var retrieveErr *oauth2.RetrieveError
-	require.ErrorAs(t, err, &retrieveErr)
-	assert.Equal(t, "invalid_grant", retrieveErr.ErrorCode)
-	assert.Positive(t, tokenEndpointHits.Load(), "ForceRefresh must redeem the refresh token")
+	require.ErrorAs(err, &retrieveErr)
+	assert.Equal("invalid_grant", retrieveErr.ErrorCode)
+	assert.Positive(tokenEndpointHits.Load(), "ForceRefresh must redeem the refresh token")
 }
 
 func TestForceRefreshSavesRefreshedToken(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.NoError(t, r.ParseForm())
-		assert.Equal(t, "refresh_token", r.FormValue("grant_type"))
-		assert.Equal(t, "refresh-1", r.FormValue("refresh_token"))
+		assert.NoError(r.ParseForm())
+		assert.Equal("refresh_token", r.FormValue("grant_type"))
+		assert.Equal("refresh-1", r.FormValue("refresh_token"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"new-access","token_type":"Bearer","expires_in":3600}`))
 	}))
@@ -1028,13 +1032,13 @@ func TestForceRefreshSavesRefreshedToken(t *testing.T) {
 		Expiry:       time.Now().Add(time.Hour),
 	}, []string{"scope-a"})
 
-	require.NoError(t, mgr.ForceRefresh(context.Background(), "test@gmail.com"))
+	require.NoError(mgr.ForceRefresh(context.Background(), "test@gmail.com"))
 
 	tf, err := mgr.loadTokenFile("test@gmail.com")
-	require.NoError(t, err)
-	assert.Equal(t, "new-access", tf.AccessToken, "refreshed access token should be saved")
-	assert.Equal(t, "refresh-1", tf.RefreshToken, "refresh token should be preserved")
-	assert.Equal(t, []string{"scope-a"}, tf.Scopes, "stored scopes should be preserved")
+	require.NoError(err)
+	assert.Equal("new-access", tf.AccessToken, "refreshed access token should be saved")
+	assert.Equal("refresh-1", tf.RefreshToken, "refresh token should be preserved")
+	assert.Equal([]string{"scope-a"}, tf.Scopes, "stored scopes should be preserved")
 }
 
 func TestForceRefreshWithoutStoredToken(t *testing.T) {
