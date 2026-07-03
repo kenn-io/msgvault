@@ -2,6 +2,8 @@
 package search
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -31,6 +33,28 @@ type Query struct {
 	// term for backwards-compatible callers; front doors that need strict
 	// validation can reject the query before searching.
 	UnsupportedOperators []UnsupportedOperator
+
+	// parseErrs accumulates validation errors for known operators that
+	// were given unparseable values (e.g. before:2025-13-45, larger:5X).
+	// Bare text and unknown operators never populate this; they are kept
+	// as text terms. Callers that need strict validation should check
+	// Err before searching.
+	parseErrs []error
+}
+
+// Err returns a combined error describing every known operator that was
+// given an invalid value, or nil if the query parsed cleanly. Front doors
+// (the CLI search command and the HTTP search endpoints) call this to reject
+// a query rather than silently dropping the offending filter and returning
+// wider-than-requested results.
+func (q *Query) Err() error {
+	return errors.Join(q.parseErrs...)
+}
+
+// operatorValueError builds the uniform message used when a known operator
+// receives a value it cannot parse.
+func operatorValueError(op, value, expected string) error {
+	return fmt.Errorf("invalid value %q for %s: — %s", value, op, expected)
 }
 
 // UnsupportedOperator describes a parsed operator that is known to be Gmail
@@ -59,7 +83,9 @@ func (q *Query) IsEmpty() bool {
 }
 
 // operatorFn handles a parsed operator:value pair by applying it to the query.
-type operatorFn func(q *Query, value string, now time.Time)
+// It returns a non-nil error when the value is invalid for a known operator
+// (e.g. an unparseable date or size); Parse records the error on the Query.
+type operatorFn func(q *Query, value string, now time.Time) error
 
 // normalizeAddr normalizes an address filter value. If it looks like a bare
 // domain (e.g. "example.com"), it is prefixed with "@" so downstream engines
@@ -125,79 +151,119 @@ func isKnownTLD(s string) bool {
 }
 
 // operators maps operator names to their handler functions.
+// dateFormatHint and friends describe the accepted value syntax in the
+// uniform "invalid value ..." error emitted for a bad operator value.
+const (
+	dateFormatHint = "expected a date like YYYY-MM-DD"
+	ageFormatHint  = "expected a relative age like 7d, 2w, 1m, or 1y"
+	sizeFormatHint = "expected a size like 5M, 100K, or 1G"
+	hasFormatHint  = "expected attachment"
+)
+
 var operators = map[string]operatorFn{
-	"from": func(q *Query, v string, _ time.Time) {
+	"from": func(q *Query, v string, _ time.Time) error {
 		q.FromAddrs = append(q.FromAddrs, normalizeAddr(v))
+		return nil
 	},
-	"to": func(q *Query, v string, _ time.Time) {
+	"to": func(q *Query, v string, _ time.Time) error {
 		q.ToAddrs = append(q.ToAddrs, normalizeAddr(v))
+		return nil
 	},
-	"cc": func(q *Query, v string, _ time.Time) {
+	"cc": func(q *Query, v string, _ time.Time) error {
 		q.CcAddrs = append(q.CcAddrs, normalizeAddr(v))
+		return nil
 	},
-	"bcc": func(q *Query, v string, _ time.Time) {
+	"bcc": func(q *Query, v string, _ time.Time) error {
 		q.BccAddrs = append(q.BccAddrs, normalizeAddr(v))
+		return nil
 	},
-	"subject": func(q *Query, v string, _ time.Time) {
+	"subject": func(q *Query, v string, _ time.Time) error {
 		// Drop empty/whitespace-only values (e.g. `subject:` or `subject:""`).
 		// Otherwise the store builds `LOWER(subject) LIKE '%%'`, which matches
 		// every message instead of being a no-op. Mirrors the label handlers.
 		// Non-empty punctuation (e.g. `subject:"!!!"`) is a valid literal
-		// substring search and is preserved.
+		// substring search and is preserved. An empty value is a no-op rather
+		// than an error: the operator takes free text, not a typed value.
 		if v = strings.TrimSpace(v); v != "" {
 			q.SubjectTerms = append(q.SubjectTerms, v)
 		}
+		return nil
 	},
-	"label": func(q *Query, v string, _ time.Time) {
+	"label": func(q *Query, v string, _ time.Time) error {
 		if v = strings.TrimSpace(v); v != "" {
 			q.Labels = append(q.Labels, v)
 		}
+		return nil
 	},
-	"l": func(q *Query, v string, _ time.Time) {
+	"l": func(q *Query, v string, _ time.Time) error {
 		if v = strings.TrimSpace(v); v != "" {
 			q.Labels = append(q.Labels, v)
 		}
+		return nil
 	},
-	"has": func(q *Query, v string, _ time.Time) {
-		if low := strings.ToLower(v); low == "attachment" || low == "attachments" {
+	"has": func(q *Query, v string, _ time.Time) error {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "attachment", "attachments":
 			b := true
 			q.HasAttachment = &b
+			return nil
+		default:
+			return operatorValueError("has", v, hasFormatHint)
 		}
 	},
-	"before": func(q *Query, v string, _ time.Time) {
-		if t := parseDate(v); t != nil {
-			q.BeforeDate = t
+	"before": func(q *Query, v string, _ time.Time) error {
+		t := parseDate(v)
+		if t == nil {
+			return operatorValueError("before", v, dateFormatHint)
 		}
+		q.BeforeDate = t
+		return nil
 	},
-	"after": func(q *Query, v string, _ time.Time) {
-		if t := parseDate(v); t != nil {
-			q.AfterDate = t
+	"after": func(q *Query, v string, _ time.Time) error {
+		t := parseDate(v)
+		if t == nil {
+			return operatorValueError("after", v, dateFormatHint)
 		}
+		q.AfterDate = t
+		return nil
 	},
-	"older_than": func(q *Query, v string, now time.Time) {
-		if t := parseRelativeDate(v, now); t != nil {
-			q.BeforeDate = t
+	"older_than": func(q *Query, v string, now time.Time) error {
+		t := parseRelativeDate(v, now)
+		if t == nil {
+			return operatorValueError("older_than", v, ageFormatHint)
 		}
+		q.BeforeDate = t
+		return nil
 	},
-	"newer_than": func(q *Query, v string, now time.Time) {
-		if t := parseRelativeDate(v, now); t != nil {
-			q.AfterDate = t
+	"newer_than": func(q *Query, v string, now time.Time) error {
+		t := parseRelativeDate(v, now)
+		if t == nil {
+			return operatorValueError("newer_than", v, ageFormatHint)
 		}
+		q.AfterDate = t
+		return nil
 	},
-	"larger": func(q *Query, v string, _ time.Time) {
-		if size := parseSize(v); size != nil {
-			q.LargerThan = size
+	"larger": func(q *Query, v string, _ time.Time) error {
+		size := parseSize(v)
+		if size == nil {
+			return operatorValueError("larger", v, sizeFormatHint)
 		}
+		q.LargerThan = size
+		return nil
 	},
-	"smaller": func(q *Query, v string, _ time.Time) {
-		if size := parseSize(v); size != nil {
-			q.SmallerThan = size
+	"smaller": func(q *Query, v string, _ time.Time) error {
+		size := parseSize(v)
+		if size == nil {
+			return operatorValueError("smaller", v, sizeFormatHint)
 		}
+		q.SmallerThan = size
+		return nil
 	},
-	"message_type": func(q *Query, v string, _ time.Time) {
+	"message_type": func(q *Query, v string, _ time.Time) error {
 		if v = strings.TrimSpace(strings.ToLower(v)); v != "" {
 			q.MessageTypes = append(q.MessageTypes, v)
 		}
+		return nil
 	},
 }
 
@@ -246,7 +312,9 @@ func (p *Parser) Parse(queryStr string) *Query {
 			value = unquote(value)
 
 			if handler, ok := operators[op]; ok {
-				handler(q, value, now)
+				if err := handler(q, value, now); err != nil {
+					q.parseErrs = append(q.parseErrs, err)
+				}
 			} else {
 				if unsupportedOperators[op] {
 					q.UnsupportedOperators = append(q.UnsupportedOperators, UnsupportedOperator{

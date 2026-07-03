@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"golang.org/x/oauth2"
 )
 
 func TestCalendarDateBounds(t *testing.T) {
@@ -212,7 +215,7 @@ func TestAddCalendarHeadlessNormalizesAccountEmail(t *testing.T) {
 	}
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	addCmd := newAddCalendarCmd()
+	addCmd := newAddCalendarLocalCmd()
 	addCmd.SetArgs([]string{"--headless", "Alice.Example@Example.COM"})
 
 	getOutput := captureStdout(t)
@@ -330,6 +333,69 @@ func TestCalendarAddTokenReusableRejectsMismatchedInheritedClient(t *testing.T) 
 
 	assert.False(calendarAddTokenReusable(mgr, "user@acme.com", decision),
 		"a calendar token minted by another OAuth client must force reauthorization")
+}
+
+type fakeCalendarTokenProber struct {
+	hasToken   bool
+	refreshErr error
+}
+
+func (f fakeCalendarTokenProber) HasToken(string) bool { return f.hasToken }
+
+func (f fakeCalendarTokenProber) ForceRefresh(context.Context, string) error {
+	return f.refreshErr
+}
+
+func TestCalendarTokenExpiredOrRevoked(t *testing.T) {
+	invalidGrant := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
+	tests := []struct {
+		name  string
+		prber fakeCalendarTokenProber
+		want  bool
+	}{
+		{
+			name:  "no token is not treated as expired",
+			prber: fakeCalendarTokenProber{hasToken: false},
+			want:  false,
+		},
+		{
+			name: "forced refresh returning invalid_grant is expired or revoked",
+			prber: fakeCalendarTokenProber{
+				hasToken:   true,
+				refreshErr: invalidGrant,
+			},
+			want: true,
+		},
+		{
+			name: "wrapped invalid_grant is expired or revoked",
+			prber: fakeCalendarTokenProber{
+				hasToken:   true,
+				refreshErr: fmt.Errorf("refresh token: %w", invalidGrant),
+			},
+			want: true,
+		},
+		{
+			name: "a token that refreshes is not expired",
+			prber: fakeCalendarTokenProber{
+				hasToken: true,
+			},
+			want: false,
+		},
+		{
+			name: "a transient refresh error is not treated as expiry",
+			prber: fakeCalendarTokenProber{
+				hasToken:   true,
+				refreshErr: errors.New("network unreachable"),
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calendarTokenExpiredOrRevoked(context.Background(), tt.prber, "user@example.com")
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestCalendarSyncNextCommandIncludesOAuthApp(t *testing.T) {

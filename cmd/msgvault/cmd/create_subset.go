@@ -44,9 +44,9 @@ func init() {
 	rootCmd.AddCommand(createSubsetCmd)
 }
 
-func runCreateSubset(cmd *cobra.Command, _ []string) error {
-	if err := MustBeLocal("create-subset"); err != nil {
-		return err
+func runCreateSubset(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobra(cmd, args)
 	}
 
 	if subsetRows <= 0 {
@@ -67,6 +67,12 @@ func runCreateSubset(cmd *cobra.Command, _ []string) error {
 			srcDBPath,
 		)
 	}
+
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	dstDir, err := filepath.Abs(subsetOutput)
 	if err != nil {

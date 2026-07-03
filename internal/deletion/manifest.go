@@ -3,6 +3,7 @@ package deletion
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -112,6 +113,30 @@ func generateID(description string) string {
 	return fmt.Sprintf("%s-%s", ts, sanitized)
 }
 
+// ValidateManifestID rejects IDs that are unsafe to turn into a filename.
+// Generated IDs (see generateID/sanitizeForFilename) only ever contain
+// ASCII letters, digits, '-' and '_'. Restricting to that alphabet
+// inherently blocks path traversal: '.', '/', '\\' and any absolute or
+// "../" component fall outside it, so a client-supplied ID cannot escape
+// the deletions directory when joined into a path.
+func ValidateManifestID(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("manifest ID is required")
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9', r == '-', r == '_':
+			// allowed
+		default:
+			return fmt.Errorf(
+				"manifest ID %q contains an invalid character %q; "+
+					"only letters, digits, '-' and '_' are allowed", id, r)
+		}
+	}
+	return nil
+}
+
 // sanitizeForFilename removes characters unsafe for filenames.
 func sanitizeForFilename(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -129,6 +154,8 @@ func sanitizeForFilename(s string) string {
 
 // LoadManifest reads a manifest from a JSON file.
 func LoadManifest(path string) (*Manifest, error) {
+	// codeql[go/path-injection] -- manifest paths are explicit local CLI
+	// inputs from the privileged user, not a security boundary.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -145,6 +172,9 @@ func LoadManifest(path string) (*Manifest, error) {
 // Save writes the manifest to a JSON file.
 func (m *Manifest) Save(path string) error {
 	// Ensure parent directory exists
+	//
+	// codeql[go/path-injection] -- manifest paths are explicit local CLI
+	// inputs from the privileged user, not a security boundary.
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -314,6 +344,12 @@ func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
 
 // GetManifest loads a manifest by ID from any status directory.
 func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, "", errors.New("batch ID is required")
+	}
+	if err := ValidateManifestID(id); err != nil {
+		return nil, "", err
+	}
 	filename := id + ".json"
 	for _, status := range persistedStatuses {
 		dir := m.dirForStatus(status)
@@ -328,6 +364,9 @@ func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
 
 // SaveManifest saves a manifest to the appropriate directory based on status.
 func (m *Manager) SaveManifest(manifest *Manifest) error {
+	if err := ValidateManifestID(manifest.ID); err != nil {
+		return err
+	}
 	status := manifest.Status
 	if !isPersistedStatus(status) {
 		status = StatusPending
@@ -344,6 +383,9 @@ func isPersistedStatus(s Status) bool {
 
 // MoveManifest moves a manifest from one status directory to another.
 func (m *Manager) MoveManifest(id string, fromStatus, toStatus Status) error {
+	if err := ValidateManifestID(id); err != nil {
+		return err
+	}
 	switch fromStatus {
 	case StatusPending, StatusInProgress:
 		// allowed
@@ -380,6 +422,9 @@ func (m *Manager) MoveManifest(id string, fromStatus, toStatus Status) error {
 // rewrite would see the pre-cancel status. Acceptable because callers
 // re-read after a successful CancelManifest return.
 func (m *Manager) CancelManifest(id string) error {
+	if err := ValidateManifestID(id); err != nil {
+		return err
+	}
 	for _, fromStatus := range []Status{StatusPending, StatusInProgress} {
 		fromPath := filepath.Join(m.dirForStatus(fromStatus), id+".json")
 		if _, err := os.Stat(fromPath); os.IsNotExist(err) {

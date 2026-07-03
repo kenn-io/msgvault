@@ -1,14 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/fileutil"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -35,35 +34,12 @@ Examples:
   msgvault export-eml 18f0abc123def -o important.eml`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runExportEML(cmd, args[0], exportEMLOutput)
-	},
-}
-
-type resolvedMessage struct {
-	ID              int64
-	SourceMessageID string
-}
-
-func resolveMessage(engine query.Engine, cmd *cobra.Command, messageRef string) (resolvedMessage, error) {
-	if id, err := strconv.ParseInt(messageRef, 10, 64); err == nil {
-		msg, err := engine.GetMessage(cmd.Context(), id)
+		id, err := resolveMessageIDArg(args[0])
 		if err != nil {
-			return resolvedMessage{}, fmt.Errorf("get message: %w", err)
+			return err
 		}
-		if msg == nil {
-			return resolvedMessage{}, fmt.Errorf("message not found: %s", messageRef)
-		}
-		return resolvedMessage{ID: id, SourceMessageID: msg.SourceMessageID}, nil
-	}
-
-	msg, err := engine.GetMessageBySourceID(cmd.Context(), messageRef)
-	if err != nil {
-		return resolvedMessage{}, fmt.Errorf("get message: %w", err)
-	}
-	if msg == nil {
-		return resolvedMessage{}, fmt.Errorf("message not found: %s", messageRef)
-	}
-	return resolvedMessage{ID: msg.ID, SourceMessageID: msg.SourceMessageID}, nil
+		return runExportEML(cmd, id, exportEMLOutput)
+	},
 }
 
 func sanitizeEMLFilename(sourceMessageID string) string {
@@ -84,38 +60,37 @@ func sanitizeEMLFilename(sourceMessageID string) string {
 }
 
 func runExportEML(cmd *cobra.Command, messageRef, outputPath string) error {
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
+	return runExportEMLHTTP(cmd, messageRef, outputPath)
+}
+
+func runExportEMLHTTP(cmd *cobra.Command, messageRef, outputPath string) error {
+	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
+	rawData, sourceMessageID, err := s.GetCLIMessageRaw(cmd.Context(), messageRef)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return fmt.Errorf("message not found: %s", messageRef)
 	}
-	if err := runStartupMigrations(s); err != nil {
-		return fmt.Errorf("startup migrations: %w", err)
-	}
-
-	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
-
-	resolved, err := resolveMessage(engine, cmd, messageRef)
-	if err != nil {
-		return err
-	}
-
-	rawData, err := s.GetMessageRaw(resolved.ID)
 	if err != nil {
 		return fmt.Errorf("get raw message data: %w (message may not have raw data stored)", err)
 	}
+	if sourceMessageID == "" {
+		sourceMessageID = messageRef
+	}
 
+	return writeExportedEML(cmd, sourceMessageID, outputPath, rawData)
+}
+
+func writeExportedEML(cmd *cobra.Command, sourceMessageID, outputPath string, rawData []byte) error {
 	if outputPath == "" {
-		outputPath = sanitizeEMLFilename(resolved.SourceMessageID)
+		outputPath = sanitizeEMLFilename(sourceMessageID)
 	}
 
 	if outputPath == stdoutSentinel {
-		_, err = cmd.OutOrStdout().Write(rawData)
+		_, err := cmd.OutOrStdout().Write(rawData)
 		return err
 	}
 

@@ -5,15 +5,15 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRecomputeConversationStats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("whatsapp", "+15550000001")
@@ -111,8 +111,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 //   - a subsequent UpsertMessage (ON CONFLICT DO UPDATE) clears embed_gen
 //     when the embeddable subject text changes.
 func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("gmail", "me@example.com")
@@ -164,8 +164,8 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 }
 
 func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("teams", "user@example.com")
@@ -206,7 +206,7 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("teams", "user@example.com")
@@ -225,7 +225,7 @@ func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T
 }
 
 func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	source, err := st.GetOrCreateSource("teams", "user@example.com")
@@ -254,7 +254,7 @@ func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int6
 		Snippet:         sql.NullString{String: sourceMessageID, Valid: true},
 	}
 	id, err := st.UpsertMessage(msg)
-	requirepkg.NoError(t, err, "UpsertMessage "+sourceMessageID)
+	require.NoError(t, err, "UpsertMessage "+sourceMessageID)
 	return id
 }
 
@@ -265,13 +265,13 @@ func assertSourceMessageIDNotDeleted(t *testing.T, st *store.Store, sourceID int
 		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, sourceMessageID,
 	).Scan(&deletedAt)
-	requirepkg.NoError(t, err, "scan deleted_from_source_at")
-	assertpkg.False(t, deletedAt.Valid, "deleted_from_source_at should be cleared")
+	require.NoError(t, err, "scan deleted_from_source_at")
+	assert.False(t, deletedAt.Valid, "deleted_from_source_at should be cleared")
 }
 
 func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create participant via WhatsApp
@@ -307,8 +307,8 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 }
 
 func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Create an unnamed email participant (e.g. inserted by iMessage import
@@ -348,8 +348,8 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 }
 
 func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	// Case 1: legacy iMessage participant with display_name = phone_number.
@@ -393,8 +393,8 @@ func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
 }
 
 func TestRetitleImessageChats(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	src, err := st.GetOrCreateSource("apple_messages", "local")
@@ -494,7 +494,7 @@ func TestRetitleImessageChats(t *testing.T) {
 func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	var title sql.NullString
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind(`SELECT title FROM conversations WHERE id = ?`), id,
 	).Scan(&title), "scan title")
 	return title.String
@@ -503,7 +503,7 @@ func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 	t.Helper()
 	var name sql.NullString
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), pid,
 	).Scan(&name), "scan display_name")
 	return name.String

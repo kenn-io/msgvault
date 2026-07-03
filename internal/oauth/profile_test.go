@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 )
 
@@ -57,8 +57,8 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("Bearer test-token", r.Header.Get("Authorization"), "Authorization")
 				w.WriteHeader(tt.statusCode)
@@ -91,7 +91,7 @@ func TestFetchTokenProfileEmail(t *testing.T) {
 }
 
 func TestTokenProfileEndpointForScopes(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	calendar := tokenProfileEndpointForScopes(ScopesCalendar)
 	assert.Equal(defaultCalendarProfileURL, calendar.url, "Calendar-only grants validate through Calendar")

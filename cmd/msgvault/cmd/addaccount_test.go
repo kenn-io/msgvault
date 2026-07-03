@@ -11,16 +11,16 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestFindGmailSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(tmpDir + "/msgvault.db")
 	require.NoError(err, "open store")
@@ -63,7 +63,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 		{"mismatched token rejected", "wrong.apps.googleusercontent.com", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
+			require := require.New(t)
 			tmpDir := t.TempDir()
 			dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -131,7 +131,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 }
 
 func TestAddAccount_CalendarOnlyTokenRequiresGmailReauth(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -189,7 +189,7 @@ func TestAddAccount_CalendarOnlyTokenRequiresGmailReauth(t *testing.T) {
 }
 
 func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -257,7 +257,7 @@ func TestAddAccount_FullGmailScopeTokenCanBeReused(t *testing.T) {
 }
 
 func TestAddAccountOAuthScopesForTokenPreservesExistingCalendarGrant(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	assert.ElementsMatch(oauth.Scopes, addAccountOAuthScopesForToken(false, nil),
 		"new and legacy-token Gmail auth should request only Gmail scopes")
@@ -270,8 +270,8 @@ func TestAddAccountOAuthScopesForTokenPreservesExistingCalendarGrant(t *testing.
 // OAuth app binding with an existing token updates the binding
 // without re-authorizing (headless rebind scenario).
 func TestAddAccount_RebindWithExistingToken(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -371,7 +371,7 @@ func TestAddAccount_RebindWithExistingToken(t *testing.T) {
 // add-account --oauth-app with no existing source row rejects a token
 // minted by a different OAuth client (forces re-auth, not silent accept).
 func TestAddAccount_NewRegistrationRejectsMismatchedToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	// Write a token with a DIFFERENT client_id than the fake secrets
@@ -443,7 +443,7 @@ func TestAddAccount_NewRegistrationRejectsMismatchedToken(t *testing.T) {
 // TestAddAccount_ExplicitDefaultRejectsMismatchedToken verifies that
 // --oauth-app "" rejects a token minted by a different client.
 func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -509,7 +509,7 @@ func TestAddAccount_ExplicitDefaultRejectsMismatchedToken(t *testing.T) {
 // TestAddAccount_ExplicitDefaultAcceptsMatchingToken verifies that
 // --oauth-app "" accepts a token minted by the default client.
 func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 
 	tokensDir := filepath.Join(tmpDir, "tokens")
@@ -576,7 +576,7 @@ func TestAddAccount_ExplicitDefaultAcceptsMatchingToken(t *testing.T) {
 }
 
 func TestAddAccount_ForceRebindPreservesBindingOnFailure(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -651,14 +651,14 @@ func TestAddAccount_ForceRebindPreservesBindingOnFailure(t *testing.T) {
 	src, err := findGmailSource(s2, "user@acme.com")
 	require.NoError(err, "find source")
 	require.NotNil(src, "source not found")
-	assertpkg.True(t, src.OAuthApp.Valid && src.OAuthApp.String == "old-app",
+	assert.True(t, src.OAuthApp.Valid && src.OAuthApp.String == "old-app",
 		"oauth_app = %v, want old-app (binding should not change on auth failure)", src.OAuthApp)
 }
 
 // TestAddAccount_HeadlessExplicitEmptyOAuthApp verifies that
 // --headless --oauth-app "" does not re-inherit the stored binding.
 func TestAddAccount_HeadlessExplicitEmptyOAuthApp(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -723,15 +723,15 @@ func TestAddAccount_HeadlessExplicitEmptyOAuthApp(t *testing.T) {
 
 	// The output should NOT contain --oauth-app acme since we
 	// explicitly passed an empty --oauth-app to clear to default.
-	assertpkg.NotContains(t, output, "--oauth-app",
+	assert.NotContains(t, output, "--oauth-app",
 		"explicit empty --oauth-app should not inherit stored binding; output:\n%s", output)
 }
 
 // TestAddAccount_AutoDefaultIdentityFires verifies that running add-account
 // with a reusable token writes an account-identifier identity row.
 func TestAddAccount_AutoDefaultIdentityFires(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -802,7 +802,7 @@ func TestAddAccount_AutoDefaultIdentityFires(t *testing.T) {
 // TestAddAccount_NoDefaultIdentitySuppresses verifies that --no-default-identity
 // prevents the auto-identity write.
 func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -865,7 +865,7 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 
 	ids, err := s.ListAccountIdentities(src.ID)
 	require.NoError(err, "ListAccountIdentities")
-	assertpkg.Empty(t, ids, "expected 0 identity rows with --no-default-identity")
+	assert.Empty(t, ids, "expected 0 identity rows with --no-default-identity")
 }
 
 // TestAddAccount_DeferredLegacyIdentityMigrationFires verifies that legacy
@@ -876,8 +876,8 @@ func TestAddAccount_NoDefaultIdentitySuppresses(t *testing.T) {
 // applied on the *next* command — leaving the new source without its
 // configured identities until then.
 func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -980,7 +980,7 @@ func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
 // account-identifier write entirely — leaving the source without its
 // own identifier and breaking dedup sent-copy detection.
 func TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
 
@@ -1058,7 +1058,7 @@ func TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity(t *testing.T) 
 		got[ai.Address] = true
 	}
 	for _, want := range []string{"alias@example.com", "alt@work.com", "user@example.com"} {
-		assertpkg.True(t, got[want], "missing identity row for %q (have %v)", want, got)
+		assert.True(t, got[want], "missing identity row for %q (have %v)", want, got)
 	}
 }
 
@@ -1110,9 +1110,9 @@ func TestAddAccount_HeadlessServiceAccountReturnsActionableError(t *testing.T) {
 	err := root.Execute()
 	output := getOutput()
 
-	requirepkg.Error(t, err, "expected --headless service account error")
-	requirepkg.ErrorContains(t, err, "service accounts do not use --headless")
-	assertpkg.NotContains(t, output, "Headless Server Setup",
+	require.Error(t, err, "expected --headless service account error")
+	require.ErrorContains(t, err, "service accounts do not use --headless")
+	assert.NotContains(t, output, "Headless Server Setup",
 		"service account path should not print browser OAuth headless instructions:\n%s", output)
 }
 
@@ -1161,6 +1161,67 @@ func TestAddAccount_ForceServiceAccountReturnsActionableError(t *testing.T) {
 	})
 
 	err := root.Execute()
-	requirepkg.Error(t, err, "expected --force service account error")
-	requirepkg.ErrorContains(t, err, "service accounts do not use --force")
+	require.Error(t, err, "expected --force service account error")
+	require.ErrorContains(t, err, "service accounts do not use --force")
+}
+
+func TestResolveAddAccountBinding(t *testing.T) {
+	app := func(name string) sql.NullString {
+		return sql.NullString{String: name, Valid: true}
+	}
+	cases := []struct {
+		name         string
+		flagApp      string
+		flagExplicit bool
+		storedApp    sql.NullString
+		sourceExists bool
+		want         addAccountBinding
+	}{
+		{
+			name: "new account with defaults",
+			want: addAccountBinding{},
+		},
+		{
+			name:         "inherits stored binding without flag",
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "acme"},
+		},
+		{
+			name:         "explicit flag overrides stored binding",
+			flagApp:      "other",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "other", explicit: true, bindingChanged: true},
+		},
+		{
+			name:         "explicit clear of stored binding",
+			flagApp:      "",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{explicit: true, bindingChanged: true},
+		},
+		{
+			name:         "explicit flag matching stored binding",
+			flagApp:      "acme",
+			flagExplicit: true,
+			storedApp:    app("acme"),
+			sourceExists: true,
+			want:         addAccountBinding{resolvedApp: "acme", explicit: true},
+		},
+		{
+			name:         "explicit flag on new account",
+			flagApp:      "acme",
+			flagExplicit: true,
+			want:         addAccountBinding{resolvedApp: "acme", explicit: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveAddAccountBinding(tc.flagApp, tc.flagExplicit, tc.storedApp, tc.sourceExists)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

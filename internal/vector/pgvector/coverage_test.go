@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -23,8 +23,8 @@ import (
 // store.CoverageCounts uses (the real CoverageCounts is exercised against
 // the full schema in the backend-agnostic store coverage test).
 func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
@@ -92,8 +92,8 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 }
 
 func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset

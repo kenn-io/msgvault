@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPreprocess(t *testing.T) {
@@ -503,7 +503,7 @@ func TestPreprocess(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			out, tr := Preprocess(tt.subject, tt.body, tt.maxChars, tt.cfg)
 			if tt.checkWant {
 				assert.Equal(tt.want, out)

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -22,8 +22,8 @@ func TestQuitConfirmationModal(t *testing.T) {
 
 	assertModal(t, model, modalQuitConfirm)
 
-	assertpkg.False(t, model.quitting, "should not be quitting yet")
-	assertpkg.Nil(t, cmd, "should not have quit command yet")
+	assert.False(t, model.quitting, "should not be quitting yet")
+	assert.Nil(t, cmd, "should not have quit command yet")
 
 	// Press 'n' to cancel
 	model, _ = sendKey(t, model, key('n'))
@@ -37,8 +37,8 @@ func TestQuitConfirmationConfirm(t *testing.T) {
 	// Press 'y' to confirm quit
 	m, cmd := applyModalKey(t, model, key('y'))
 
-	assertpkg.True(t, m.quitting)
-	assertpkg.NotNil(t, cmd, "expected quit command")
+	assert.True(t, m.quitting)
+	assert.NotNil(t, cmd, "expected quit command")
 }
 
 // =============================================================================
@@ -46,7 +46,7 @@ func TestQuitConfirmationConfirm(t *testing.T) {
 // =============================================================================
 
 func TestAccountSelectorModal(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithAccounts(
 			query.AccountInfo{ID: 1, Identifier: "alice@example.com"},
@@ -70,7 +70,7 @@ func TestAccountSelectorModal(t *testing.T) {
 	m, cmd = applyModalKey(t, m, keyEnter())
 
 	assert.Equal(modalNone, m.modal, "after selection")
-	requirepkg.NotNil(t, m.accountFilter)
+	require.NotNil(t, m.accountFilter)
 	assert.Equal(int64(1), *m.accountFilter)
 	assert.NotNil(cmd, "expected command to reload data")
 }
@@ -80,7 +80,7 @@ func TestOpenAccountSelector(t *testing.T) {
 		m := NewBuilder().Build()
 		m.openAccountSelector()
 		assertModal(t, m, modalAccountSelector)
-		assertpkg.Equal(t, 0, m.modalCursor)
+		assert.Equal(t, 0, m.modalCursor)
 	})
 
 	t.Run("with matching filter", func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestOpenAccountSelector(t *testing.T) {
 		m.accountFilter = &acctID
 		m.openAccountSelector()
 		assertModal(t, m, modalAccountSelector)
-		assertpkg.Equal(t, 2, m.modalCursor, "index 1 + 1 for All Accounts")
+		assert.Equal(t, 2, m.modalCursor, "index 1 + 1 for All Accounts")
 	})
 }
 
@@ -101,7 +101,7 @@ func TestOpenAccountSelector(t *testing.T) {
 // =============================================================================
 
 func TestFilterToggleModal(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().WithPageSize(10).WithSize(100, 20).Build()
 
 	// Press 'f' to open filter modal
@@ -143,7 +143,7 @@ func TestFilterToggleModal(t *testing.T) {
 }
 
 func TestFilterToggleInMessageList(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().WithLevel(levelMessageList).WithPageSize(10).WithSize(100, 20).Build()
 
 	// Press 'f' to open filter modal in message list
@@ -167,11 +167,11 @@ func TestOpenFilterModal(t *testing.T) {
 
 	m.openFilterModal()
 	assertModal(t, m, modalFilterToggle)
-	assertpkg.Equal(t, 0, m.modalCursor)
+	assert.Equal(t, 0, m.modalCursor)
 }
 
 func TestFilterToggleInDrillDown(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	// Simulate being in a sub-aggregate drill-down with filters initially on.
 	model := NewBuilder().WithLevel(levelDrillDown).WithPageSize(10).WithSize(100, 20).Build()
 	model.filters.attachmentsOnly = true
@@ -184,7 +184,7 @@ func TestFilterToggleInDrillDown(t *testing.T) {
 
 	// Open filter modal
 	m := applyAggregateKey(t, model, key('f'))
-	requirepkg.Equal(t, modalFilterToggle, m.modal)
+	require.Equal(t, modalFilterToggle, m.modal)
 
 	// Toggle both filters off using space/x
 	m, _ = applyModalKey(t, m, key(' ')) // cursor 0: toggle attachmentsOnly off

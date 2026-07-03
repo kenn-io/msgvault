@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDuckDBEngine_QuerySQL(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	srcID := builder.AddSource("test@example.com")
 	bob := builder.AddParticipant(
@@ -44,12 +44,12 @@ func TestDuckDBEngine_QuerySQL_Error(t *testing.T) {
 		context.Background(),
 		"SELECT * FROM nonexistent_table",
 	)
-	requirepkg.Error(t, err, "expected error for bad SQL")
+	require.Error(t, err, "expected error for bad SQL")
 }
 
 func TestRegisterViews_BaseViews(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)
 	srcID := builder.AddSource("alice@example.com")
 	partID := builder.AddParticipant(
@@ -132,17 +132,17 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 	engine := builder.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
-	requirepkg.NoError(t, RegisterViews(engine.db, dir), "RegisterViews")
+	require.NoError(t, RegisterViews(engine.db, dir), "RegisterViews")
 	ctx := context.Background()
 
 	t.Run("v_messages", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		var fromEmail, fromDomain, labels string
 		err := engine.db.QueryRowContext(ctx,
 			"SELECT from_email, from_domain, labels "+
 				"FROM v_messages WHERE subject = 'First'",
 		).Scan(&fromEmail, &fromDomain, &labels)
-		requirepkg.NoError(t, err, "scan v_messages")
+		require.NoError(t, err, "scan v_messages")
 		assert.Equal("bob@corp.com", fromEmail)
 		assert.Equal("corp.com", fromDomain)
 		assert.Equal(`["INBOX"]`, labels)
@@ -154,12 +154,12 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 			"SELECT labels FROM v_messages "+
 				"WHERE subject = 'Second'",
 		).Scan(&labels)
-		requirepkg.NoError(t, err, "scan v_messages")
-		assertpkg.Equal(t, `["INBOX","SENT"]`, labels)
+		require.NoError(t, err, "scan v_messages")
+		assert.Equal(t, `["INBOX","SENT"]`, labels)
 	})
 
 	t.Run("v_senders", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		var fromName string
 		var msgCount int64
 		var totalSize int64
@@ -168,7 +168,7 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 				"FROM v_senders "+
 				"WHERE from_email = 'bob@corp.com'",
 		).Scan(&fromName, &msgCount, &totalSize)
-		requirepkg.NoError(t, err, "scan v_senders")
+		require.NoError(t, err, "scan v_senders")
 		assert.Equal("Bob Smith", fromName)
 		assert.Equal(int64(2), msgCount)
 		assert.Equal(int64(3000), totalSize)
@@ -181,9 +181,9 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 				"FROM v_domains "+
 				"WHERE domain = 'corp.com'",
 		).Scan(&msgCount, &senderCount)
-		requirepkg.NoError(t, err, "scan v_domains")
-		assertpkg.Equal(t, int64(2), msgCount)
-		assertpkg.Equal(t, int64(1), senderCount)
+		require.NoError(t, err, "scan v_domains")
+		assert.Equal(t, int64(2), msgCount)
+		assert.Equal(t, int64(1), senderCount)
 	})
 
 	t.Run("v_labels", func(t *testing.T) {
@@ -192,13 +192,13 @@ func TestRegisterViews_ConvenienceViews(t *testing.T) {
 			"SELECT message_count FROM v_labels "+
 				"WHERE name = 'INBOX'",
 		).Scan(&msgCount)
-		requirepkg.NoError(t, err, "scan v_labels")
-		assertpkg.Equal(t, int64(2), msgCount)
+		require.NoError(t, err, "scan v_labels")
+		assert.Equal(t, int64(2), msgCount)
 	})
 
 	t.Run("v_threads", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		// Both messages share the same conversation (auto-assigned),
 		// so we expect exactly 2 threads (one per conversation).
 		var threadCount int

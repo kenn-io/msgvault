@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -89,10 +89,10 @@ func TestFooterPositionDisplay(t *testing.T) {
 
 			footer := model.footerView()
 			for _, s := range tt.wantContains {
-				assertpkg.Contains(t, footer, s, "footer")
+				assert.Contains(t, footer, s, "footer")
 			}
 			for _, s := range tt.wantMissing {
-				assertpkg.NotContains(t, footer, s, "footer should not contain")
+				assert.NotContains(t, footer, s, "footer should not contain")
 			}
 		})
 	}
@@ -141,10 +141,10 @@ func TestHeaderContextStats(t *testing.T) {
 
 			header := model.headerView()
 			for _, s := range tt.wantContains {
-				assertpkg.Contains(t, header, s, "header")
+				assert.Contains(t, header, s, "header")
 			}
 			for _, s := range tt.wantMissing {
-				assertpkg.NotContains(t, header, s, "header should not contain")
+				assert.NotContains(t, header, s, "header should not contain")
 			}
 		})
 	}
@@ -158,7 +158,7 @@ func TestHelpModalOpensWithQuestionMark(t *testing.T) {
 	newModel, _ := model.Update(key('?'))
 	m := asModel(t, newModel)
 
-	assertpkg.Equal(t, modalHelp, m.modal, "after '?'")
+	assert.Equal(t, modalHelp, m.modal, "after '?'")
 }
 
 // TestHelpModalClosesOnAnyKey verifies help modal closes on any key.
@@ -169,7 +169,7 @@ func TestHelpModalClosesOnAnyKey(t *testing.T) {
 	newModel, _ := model.Update(keyEnter())
 	m := asModel(t, newModel)
 
-	assertpkg.Equal(t, modalNone, m.modal, "after pressing key in help")
+	assert.Equal(t, modalNone, m.modal, "after pressing key in help")
 }
 
 // TestVKeyReversesSortOrder verifies 'v' reverses sort direction.
@@ -181,13 +181,13 @@ func TestVKeyReversesSortOrder(t *testing.T) {
 	newModel, _ := model.Update(key('v'))
 	m := asModel(t, newModel)
 
-	assertpkg.Equal(t, query.SortAsc, m.sortDirection, "after 'v'")
+	assert.Equal(t, query.SortAsc, m.sortDirection, "after 'v'")
 
 	// Press 'v' again
 	newModel2, _ := m.Update(key('v'))
 	m2 := asModel(t, newModel2)
 
-	assertpkg.Equal(t, query.SortDesc, m2.sortDirection, "after second 'v'")
+	assert.Equal(t, query.SortDesc, m2.sortDirection, "after second 'v'")
 }
 
 // TestSearchSetsContextStats verifies search results set contextStats for header metrics.
@@ -215,7 +215,7 @@ func TestHighlightedColumnsAligned(t *testing.T) {
 	for i := 0; i < len(noSearchLines) && i < len(highlightLines); i++ {
 		noSearchWidth := lipgloss.Width(noSearchLines[i])
 		highlightWidth := lipgloss.Width(highlightLines[i])
-		assertpkg.Equal(t, noSearchWidth, highlightWidth,
+		assert.Equal(t, noSearchWidth, highlightWidth,
 			"line %d: no search: %q | highlight: %q", i, noSearchLines[i], highlightLines[i])
 	}
 }
@@ -242,14 +242,14 @@ func TestHeaderShowsTitleBar(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			model := NewBuilder().WithSize(100, 20).WithViewType(query.ViewSenders).Build()
 			model.version = tt.version
 
 			header := model.headerView()
 			lines := strings.Split(header, "\n")
 
-			requirepkg.GreaterOrEqual(t, len(lines), 2, "expected at least 2 header lines")
+			require.GreaterOrEqual(t, len(lines), 2, "expected at least 2 header lines")
 
 			assert.Contains(lines[0], "msgvault", "title bar")
 			if tt.wantVersion {
@@ -339,14 +339,14 @@ func TestHeaderDisplay(t *testing.T) {
 			header := model.headerView()
 			lines := strings.Split(header, "\n")
 
-			requirepkg.Greater(t, len(lines), tt.line, "header has only %d lines, need line %d", len(lines), tt.line)
+			require.Greater(t, len(lines), tt.line, "header has only %d lines, need line %d", len(lines), tt.line)
 
 			line := lines[tt.line]
 			for _, s := range tt.wantContains {
-				assertpkg.Contains(t, line, s, "header line %d", tt.line)
+				assert.Contains(t, line, s, "header line %d", tt.line)
 			}
 			for _, s := range tt.wantMissing {
-				assertpkg.NotContains(t, line, s, "header line %d should not contain", tt.line)
+				assert.NotContains(t, line, s, "header line %d should not contain", tt.line)
 			}
 		})
 	}
@@ -378,7 +378,7 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 	assertViewFitsHeight(t, view, terminalHeight)
 
 	// First line must be title bar
-	assertpkg.Contains(t, lines[0], "msgvault", "First line should be title bar")
+	assert.Contains(t, lines[0], "msgvault", "First line should be title bar")
 }
 
 // TestViewFitsTerminalHeightDuringLoading verifies View() output fits during loading state.
@@ -400,7 +400,7 @@ func TestViewFitsTerminalHeightDuringLoading(t *testing.T) {
 	t.Logf("Terminal height: %d, View lines: %d, pageSize: %d (loading=%v)", terminalHeight, actualLines, model.pageSize, model.loading)
 
 	assertViewFitsHeight(t, view, terminalHeight)
-	assertpkg.Contains(t, lines[0], "msgvault", "First line should be title bar")
+	assert.Contains(t, lines[0], "msgvault", "First line should be title bar")
 }
 
 // TestViewFitsTerminalHeightWithInlineSearch verifies View() output fits with inline search active.
@@ -422,7 +422,7 @@ func TestViewFitsTerminalHeightWithInlineSearch(t *testing.T) {
 	t.Logf("Terminal height: %d, View lines: %d, pageSize: %d (inlineSearch=%v)", terminalHeight, actualLines, model.pageSize, model.inlineSearchActive)
 
 	assertViewFitsHeight(t, view, terminalHeight)
-	assertpkg.Contains(t, lines[0], "msgvault", "First line should be title bar")
+	assert.Contains(t, lines[0], "msgvault", "First line should be title bar")
 }
 
 // TestViewFitsTerminalHeightAtMessageList verifies View() output fits at message list level.
@@ -450,13 +450,13 @@ func TestViewFitsTerminalHeightAtMessageList(t *testing.T) {
 	t.Logf("Terminal height: %d, View lines: %d, pageSize: %d (level=MessageList)", terminalHeight, actualLines, model.pageSize)
 
 	assertViewFitsHeight(t, view, terminalHeight)
-	assertpkg.Contains(t, lines[0], "msgvault", "First line should be title bar")
+	assert.Contains(t, lines[0], "msgvault", "First line should be title bar")
 }
 
 // TestViewFitsTerminalHeightStartupSequence simulates the real startup sequence
 // to verify line counts at each stage of initialization.
 func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	terminalHeight := 40
 	terminalWidth := 100
 
@@ -547,7 +547,7 @@ func TestViewFitsTerminalHeightWithBadData(t *testing.T) {
 
 	t.Logf("Terminal height: %d, View lines: %d (with bad data)", terminalHeight, actualLines)
 
-	if !assertpkg.LessOrEqual(t, actualLines, terminalHeight, "bad data caused extra lines!") {
+	if !assert.LessOrEqual(t, actualLines, terminalHeight, "bad data caused extra lines!") {
 		// Log the problematic lines for debugging
 		for i, line := range lines {
 			if i >= terminalHeight {
@@ -585,11 +585,11 @@ func TestViewFitsVariousTerminalSizes(t *testing.T) {
 			lines := strings.Split(view, "\n")
 			actualLines := countViewLines(view)
 
-			assertpkg.Equal(t, size.height, actualLines, "pageSize=%d", model.pageSize)
+			assert.Equal(t, size.height, actualLines, "pageSize=%d", model.pageSize)
 
 			// Check no line exceeds width
 			for i, line := range lines {
-				assertpkg.LessOrEqual(t, lipgloss.Width(line), size.width, "Line %d exceeds width", i)
+				assert.LessOrEqual(t, lipgloss.Width(line), size.width, "Line %d exceeds width", i)
 			}
 		})
 	}
@@ -620,11 +620,11 @@ func TestViewDuringSpinnerAnimation(t *testing.T) {
 		lines := strings.Split(view, "\n")
 		actualLines := countViewLines(view)
 
-		assertpkg.Equal(t, terminalHeight, actualLines, "Frame %d", frame)
+		assert.Equal(t, terminalHeight, actualLines, "Frame %d", frame)
 
 		// Check line widths
 		for i, line := range lines {
-			assertpkg.LessOrEqual(t, lipgloss.Width(line), terminalWidth, "Frame %d, Line %d exceeds width", frame, i)
+			assert.LessOrEqual(t, lipgloss.Width(line), terminalWidth, "Frame %d, Line %d exceeds width", frame, i)
 		}
 	}
 }
@@ -658,7 +658,7 @@ func TestHeaderLineFitsWidth(t *testing.T) {
 	// Check that no line exceeds terminal width
 	for i, line := range lines[:min(5, len(lines))] {
 		lineWidth := lipgloss.Width(line)
-		assertpkg.LessOrEqual(t, lineWidth, terminalWidth, "Line %d: %q", i, truncateTestString(line))
+		assert.LessOrEqual(t, lineWidth, terminalWidth, "Line %d: %q", i, truncateTestString(line))
 	}
 }
 
@@ -681,7 +681,7 @@ func TestFooterShowsTotalUniqueWhenAvailable(t *testing.T) {
 	footer := model.footerView()
 
 	// When TotalUnique is set and greater than loaded rows, should show "N of M"
-	assertpkg.Contains(t, footer, "1 of 1000", "Footer when TotalUnique > loaded rows")
+	assert.Contains(t, footer, "1 of 1000", "Footer when TotalUnique > loaded rows")
 }
 
 // TestFooterShowsLoadedCountWhenNoTotalUnique verifies that the footer falls back
@@ -698,7 +698,7 @@ func TestFooterShowsLoadedCountWhenNoTotalUnique(t *testing.T) {
 	footer := model.footerView()
 
 	// When TotalUnique is not set, should show loaded count format
-	assertpkg.Contains(t, footer, "1/2", "Footer when TotalUnique is not set")
+	assert.Contains(t, footer, "1/2", "Footer when TotalUnique is not set")
 }
 
 // TestViewTypePrefixFallback verifies viewTypePrefix handles all ViewType values.
@@ -718,7 +718,7 @@ func TestViewTypePrefixFallback(t *testing.T) {
 
 	for _, tc := range tests {
 		got := viewTypePrefix(tc.vt)
-		assertpkg.Equal(t, tc.expected, got, "viewTypePrefix(%v)", tc.vt)
+		assert.Equal(t, tc.expected, got, "viewTypePrefix(%v)", tc.vt)
 	}
 
 	// Test unknown view type - should return first char of String()
@@ -728,7 +728,7 @@ func TestViewTypePrefixFallback(t *testing.T) {
 	unknown := query.ViewType(999)
 	got := viewTypePrefix(unknown)
 	expectedFirstChar := string(unknown.String()[0]) // "V" from "ViewType(999)"
-	assertpkg.Equal(t, expectedFirstChar, got, "viewTypePrefix(%v) first char of String()", unknown)
+	assert.Equal(t, expectedFirstChar, got, "viewTypePrefix(%v) first char of String()", unknown)
 }
 
 // TestDetailNavigationPrevNext verifies left/right arrow navigation in message detail view.
@@ -757,7 +757,7 @@ func TestLayoutFitsTerminalHeight(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			model := NewBuilder().WithRows(rows...).
 				WithSize(100, tc.height).WithPageSize(tc.height - 5).
 				WithLevel(tc.level).Build()
@@ -803,7 +803,7 @@ func TestLayoutFitsTerminalHeight(t *testing.T) {
 // TestModalCompositingPreservesANSI verifies that modal overlay doesn't corrupt ANSI sequences.
 // Note: This test mutates the global lipgloss color profile. Do not add t.Parallel().
 func TestModalCompositingPreservesANSI(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	forceColorProfile(t)
 
 	model := NewBuilder().
@@ -819,7 +819,7 @@ func TestModalCompositingPreservesANSI(t *testing.T) {
 	view := model.View()
 
 	// Basic sanity checks
-	requirepkg.NotEmpty(t, view, "View rendered empty output")
+	require.NotEmpty(t, view, "View rendered empty output")
 
 	// The view should contain modal content
 	assert.True(strings.Contains(view, "Quit") || strings.Contains(view, "quit"),
@@ -849,7 +849,7 @@ func TestModalCompositingPreservesANSI(t *testing.T) {
 // jumps to message list with the drill filter applied.
 
 func TestExportAttachmentsModal(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	model := NewBuilder().
 		WithDetail(&query.MessageDetail{
 			ID:      1,
@@ -906,8 +906,8 @@ func TestExportAttachmentsNoAttachments(t *testing.T) {
 	// Press 'e' should show flash message, not modal
 	m := applyDetailKey(t, model, key('e'))
 
-	assertpkg.NotEqual(t, modalExportAttachments, m.modal, "expected modal NOT to open when no attachments")
-	assertpkg.Equal(t, "No attachments to export", m.flashMessage)
+	assert.NotEqual(t, modalExportAttachments, m.modal, "expected modal NOT to open when no attachments")
+	assert.Equal(t, "No attachments to export", m.flashMessage)
 }
 
 // TestRenderExportAttachmentsModalEdgeCases tests the export modal renderer
@@ -922,9 +922,9 @@ func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
 
 		content := model.renderExportAttachmentsModal()
 
-		assertpkg.NotEmpty(t, content, "expected non-empty modal content when messageDetail is nil")
-		assertpkg.Contains(t, content, "Export Attachments", "expected modal title in content")
-		assertpkg.Contains(t, content, "No attachments")
+		assert.NotEmpty(t, content, "expected non-empty modal content when messageDetail is nil")
+		assert.Contains(t, content, "Export Attachments", "expected modal title in content")
+		assert.Contains(t, content, "No attachments")
 	})
 
 	t.Run("empty attachments shows no-attachments message", func(t *testing.T) {
@@ -940,9 +940,9 @@ func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
 
 		content := model.renderExportAttachmentsModal()
 
-		assertpkg.NotEmpty(t, content, "expected non-empty modal content when attachments is empty")
-		assertpkg.Contains(t, content, "Export Attachments", "expected modal title in content")
-		assertpkg.Contains(t, content, "No attachments")
+		assert.NotEmpty(t, content, "expected non-empty modal content when attachments is empty")
+		assert.Contains(t, content, "Export Attachments", "expected modal title in content")
+		assert.Contains(t, content, "No attachments")
 	})
 
 	t.Run("with attachments shows normal list", func(t *testing.T) {
@@ -962,9 +962,9 @@ func TestRenderExportAttachmentsModalEdgeCases(t *testing.T) {
 
 		content := model.renderExportAttachmentsModal()
 
-		assertpkg.Contains(t, content, "doc.pdf")
-		assertpkg.Contains(t, content, "image.png")
-		assertpkg.NotContains(t, content, "No attachments", "should not show 'No attachments' message when attachments exist")
+		assert.Contains(t, content, "doc.pdf")
+		assert.Contains(t, content, "image.png")
+		assert.NotContains(t, content, "No attachments", "should not show 'No attachments' message when attachments exist")
 	})
 }
 
@@ -982,10 +982,10 @@ func TestHeaderUpdateNoticeUnicode(t *testing.T) {
 	header := model.headerView()
 	lines := strings.Split(header, "\n")
 
-	assertpkg.Contains(t, lines[0], "v1.2.3", "expected update notice in header")
+	assert.Contains(t, lines[0], "v1.2.3", "expected update notice in header")
 	// Verify the line doesn't exceed terminal width (lipgloss.Width accounts for wide chars)
 	lineWidth := lipgloss.Width(lines[0])
-	assertpkg.LessOrEqual(t, lineWidth, 100, "header line 1 width exceeds terminal width")
+	assert.LessOrEqual(t, lineWidth, 100, "header line 1 width exceeds terminal width")
 }
 
 // TestHeaderUpdateNoticeNarrowTerminal verifies update notice is omitted when terminal is too narrow.
@@ -1000,5 +1000,5 @@ func TestHeaderUpdateNoticeNarrowTerminal(t *testing.T) {
 	// At 40 chars wide, the update notice shouldn't fit and should be omitted
 	// (title + account already uses ~30 chars, notice needs ~25 more)
 	lineWidth := lipgloss.Width(lines[0])
-	assertpkg.LessOrEqual(t, lineWidth, 40, "header line 1 width exceeds narrow terminal width")
+	assert.LessOrEqual(t, lineWidth, 40, "header line 1 width exceeds narrow terminal width")
 }

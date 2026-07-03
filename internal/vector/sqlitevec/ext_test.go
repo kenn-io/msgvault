@@ -6,11 +6,11 @@ import (
 	"database/sql"
 	"testing"
 
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSQLiteVecExtensionLoads(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	require.NoError(RegisterExtension(), "RegisterExtension")
 	db, err := sql.Open(DriverName(), ":memory:")
 	require.NoError(err, "open")

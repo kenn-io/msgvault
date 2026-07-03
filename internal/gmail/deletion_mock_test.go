@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupDeletionMockTest(t *testing.T) (*DeletionMockAPI, context.Context) {
@@ -16,9 +16,9 @@ func setupDeletionMockTest(t *testing.T) (*DeletionMockAPI, context.Context) {
 
 func assertCallSequence(t *testing.T, mock *DeletionMockAPI, expectedOps ...string) {
 	t.Helper()
-	requirepkg.Len(t, mock.CallSequence, len(expectedOps), "CallSequence length")
+	require.Len(t, mock.CallSequence, len(expectedOps), "CallSequence length")
 	for i, want := range expectedOps {
-		assertpkg.Equal(t, want, mock.CallSequence[i].Operation, "CallSequence[%d].Operation", i)
+		assert.Equal(t, want, mock.CallSequence[i].Operation, "CallSequence[%d].Operation", i)
 	}
 }
 
@@ -33,8 +33,8 @@ func TestDeletionMockAPI_CallSequence(t *testing.T) {
 }
 
 func TestDeletionMockAPI_Reset(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	mockAPI, ctx := setupDeletionMockTest(t)
 
 	// Dirty all trackable fields with successful calls
@@ -107,13 +107,13 @@ func TestDeletionMockAPI_GetCallCount(t *testing.T) {
 
 	for _, tt := range tests {
 		got := mockAPI.GetTrashCallCount(tt.msgID)
-		assertpkg.Equal(t, tt.want, got, "GetTrashCallCount(%q)", tt.msgID)
+		assert.Equal(t, tt.want, got, "GetTrashCallCount(%q)", tt.msgID)
 	}
 }
 
 func TestDeletionMockAPI_Close(t *testing.T) {
 	mockAPI, _ := setupDeletionMockTest(t)
-	assertpkg.NoError(t, mockAPI.Close(), "Close()")
+	assert.NoError(t, mockAPI.Close(), "Close()")
 }
 
 func TestDeletionMockAPI_Hooks(t *testing.T) {
@@ -182,11 +182,11 @@ func TestDeletionMockAPI_Hooks(t *testing.T) {
 			hookCalled := false
 			tt.setupHook(mockAPI, &hookCalled)
 			err := tt.act(ctx, mockAPI)
-			assertpkg.True(t, hookCalled, "hook was not called")
+			assert.True(t, hookCalled, "hook was not called")
 			if tt.wantErr {
-				assertpkg.Error(t, err)
+				assert.Error(t, err)
 			} else {
-				assertpkg.NoError(t, err)
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -198,7 +198,7 @@ func TestDeletionMockAPI_GetDeleteCallCount(t *testing.T) {
 	_ = mockAPI.DeleteMessage(ctx, "msg1")
 	_ = mockAPI.DeleteMessage(ctx, "msg1")
 
-	assertpkg.Equal(t, 2, mockAPI.GetDeleteCallCount("msg1"), "GetDeleteCallCount(msg1)")
+	assert.Equal(t, 2, mockAPI.GetDeleteCallCount("msg1"), "GetDeleteCallCount(msg1)")
 }
 
 func TestDeletionMockAPI_TransientFailures(t *testing.T) {
@@ -228,10 +228,10 @@ func TestDeletionMockAPI_TransientFailures(t *testing.T) {
 			mockAPI.SetTransientFailure("msg1", tt.failCount, tt.isTrash)
 
 			for i := range tt.failCount {
-				requirepkg.Error(t, tt.callMethod(ctx, mockAPI), "call %d should fail", i+1)
+				require.Error(t, tt.callMethod(ctx, mockAPI), "call %d should fail", i+1)
 			}
 
-			assertpkg.NoError(t, tt.callMethod(ctx, mockAPI), "call after failures should succeed")
+			assert.NoError(t, tt.callMethod(ctx, mockAPI), "call after failures should succeed")
 		})
 	}
 }

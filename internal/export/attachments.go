@@ -48,9 +48,24 @@ type ExportStats struct {
 	WriteError bool // true if a write error occurred and the zip was removed
 }
 
+// AttachmentOpener opens attachment content by content hash.
+type AttachmentOpener func(contentHash string) (io.ReadCloser, error)
+
 // Attachments exports the given attachments into a zip file.
 // It reads attachment content from attachmentsDir using content-hash based paths.
 func Attachments(zipFilename, attachmentsDir string, attachments []query.AttachmentInfo) ExportStats {
+	return AttachmentsWithOpener(zipFilename, attachments, func(contentHash string) (io.ReadCloser, error) {
+		storagePath, err := StoragePath(attachmentsDir, contentHash)
+		if err != nil {
+			return nil, err
+		}
+		return os.Open(storagePath)
+	})
+}
+
+// AttachmentsWithOpener exports the given attachments into a zip file using
+// the supplied opener for attachment bytes.
+func AttachmentsWithOpener(zipFilename string, attachments []query.AttachmentInfo, open AttachmentOpener) ExportStats {
 	zipFile, err := os.Create(zipFilename)
 	if err != nil {
 		return ExportStats{Errors: []string{fmt.Sprintf("failed to create zip file: %v", err)}}
@@ -72,7 +87,7 @@ func Attachments(zipFilename, attachmentsDir string, attachments []query.Attachm
 			continue
 		}
 
-		n, err := addAttachmentToZip(zipWriter, attachmentsDir, att, usedNames)
+		n, err := addAttachmentToZip(zipWriter, open, att, usedNames)
 		if err != nil {
 			stats.Errors = append(stats.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			if isWriteError(err) {
@@ -144,12 +159,8 @@ func isWriteError(err error) bool {
 	return errors.As(err, &zwe)
 }
 
-func addAttachmentToZip(zw *zip.Writer, root string, att query.AttachmentInfo, usedNames map[string]int) (int64, error) {
-	storagePath, err := StoragePath(root, att.ContentHash)
-	if err != nil {
-		return 0, err
-	}
-	srcFile, err := os.Open(storagePath)
+func addAttachmentToZip(zw *zip.Writer, open AttachmentOpener, att query.AttachmentInfo, usedNames map[string]int) (int64, error) {
+	srcFile, err := open(att.ContentHash)
 	if err != nil {
 		return 0, err
 	}
@@ -201,32 +212,6 @@ func SanitizeFilename(s string) string {
 		}
 	}
 	return string(result)
-}
-
-// ValidateOutputPath checks that an output file path does not escape the
-// current working directory. This guards against email-supplied filenames
-// being passed to --output (e.g., an attachment named
-// "../../.ssh/authorized_keys" or "/etc/cron.d/evil").
-// Both absolute paths and ".." traversal are rejected.
-func ValidateOutputPath(outputPath string) error {
-	cleaned := filepath.Clean(outputPath)
-	if filepath.IsAbs(cleaned) {
-		return fmt.Errorf("output path %q is absolute; use a relative path", outputPath)
-	}
-	// Reject Windows drive-relative (C:foo) and UNC (\\server\share) paths,
-	// which filepath.IsAbs does not catch.
-	if filepath.VolumeName(cleaned) != "" {
-		return fmt.Errorf("output path %q contains a drive or UNC prefix; use a relative path", outputPath)
-	}
-	// Reject rooted paths (leading / or \) which are drive-relative on Windows
-	// and absolute on Unix. filepath.IsAbs misses these on Windows.
-	if len(cleaned) > 0 && (cleaned[0] == '/' || cleaned[0] == '\\') {
-		return fmt.Errorf("output path %q is rooted; use a relative path", outputPath)
-	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("output path %q escapes the working directory", outputPath)
-	}
-	return nil
 }
 
 // StoragePath returns the content-addressed file path for an attachment:

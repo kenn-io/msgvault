@@ -23,94 +23,58 @@ var showMessageCmd = &cobra.Command{
 	Short: "Show full message details",
 	Long: `Show the complete details of a message by its internal ID or Gmail ID.
 
-Uses remote server if [remote].url is configured, otherwise uses local database.
-Use --local to force local database.
+Uses configured remote server or the local daemon by default.
+Use --local to use the local daemon even when a remote is configured.
 
 This command displays the full message including headers, body, labels,
 and attachment information. Use --json for programmatic output.
 
 Examples:
   msgvault show-message 12345
-  msgvault show-message 18f0abc123def --json`,
+	msgvault show-message 18f0abc123def --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		idStr := args[0]
-
-		// Use remote if configured
-		if IsRemoteMode() {
-			return showRemoteMessage(cmd, idStr)
+		id, err := resolveMessageIDArg(args[0])
+		if err != nil {
+			return err
 		}
-
-		return showLocalMessage(cmd, idStr)
+		return showHTTPMessage(cmd, id)
 	},
 }
 
-// showRemoteMessage fetches and displays a message from the remote server.
-func showRemoteMessage(cmd *cobra.Command, idStr string) error {
-	// Parse as numeric ID (remote API only supports numeric IDs)
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return usageErr(cmd, fmt.Errorf("remote mode requires numeric message ID (got: %s)", idStr))
+// resolveMessageIDArg validates a positional message-reference argument for
+// commands that accept either an internal numeric ID or a source/Gmail message
+// ID. Empty or whitespace-only input, and malformed numeric input such as
+// "42.5" or "1e3", are rejected up front with a clear error so the user is not
+// misled by a downstream "message not found". Any other non-empty value is
+// forwarded unchanged (it may be a Gmail/source ID like "18f0abc123def").
+func resolveMessageIDArg(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid message ID: %q (expected a number or Gmail ID)", raw)
 	}
+	if _, intErr := strconv.ParseInt(trimmed, 10, 64); intErr != nil {
+		if _, floatErr := strconv.ParseFloat(trimmed, 64); floatErr == nil {
+			return "", fmt.Errorf("invalid message ID: %q (expected a whole number)", trimmed)
+		}
+	}
+	return trimmed, nil
+}
 
-	s, err := OpenRemoteStore()
+func showHTTPMessage(cmd *cobra.Command, idStr string) error {
+	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return fmt.Errorf("connect to remote: %w", err)
+		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
 
-	msg, err := s.GetMessage(id)
+	msg, err := s.GetCLIMessage(cmd.Context(), idStr)
 	if errors.Is(err, store.ErrMessageNotFound) {
 		return fmt.Errorf("message not found: %s", idStr)
 	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
 	}
-
-	if showMessageJSON {
-		return outputRemoteMessageJSON(msg)
-	}
-	return outputRemoteMessageText(msg)
-}
-
-// showLocalMessage fetches and displays a message from the local database.
-func showLocalMessage(cmd *cobra.Command, idStr string) error {
-	// Open database
-	dbPath := cfg.DatabaseDSN()
-	s, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer func() { _ = s.Close() }()
-
-	if err := s.InitSchema(); err != nil {
-		return fmt.Errorf("init schema: %w", err)
-	}
-	if err := runStartupMigrations(s); err != nil {
-		return fmt.Errorf("startup migrations: %w", err)
-	}
-
-	// Create query engine
-	engine := query.NewEngine(s.DB(), s.IsPostgreSQL())
-
-	// Try to parse as numeric ID first
-	var msg *query.MessageDetail
-	if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-		msg, err = engine.GetMessage(cmd.Context(), id)
-		if err != nil {
-			return fmt.Errorf("get message: %w", err)
-		}
-	}
-
-	// If not found or not numeric, try as source message ID (Gmail ID)
-	if msg == nil {
-		var err error
-		msg, err = engine.GetMessageBySourceID(cmd.Context(), idStr)
-		if err != nil {
-			return fmt.Errorf("get message: %w", err)
-		}
-	}
-
 	if msg == nil {
 		return fmt.Errorf("message not found: %s", idStr)
 	}
@@ -264,102 +228,6 @@ func formatAddresses(addrs []query.Address) string {
 		}
 	}
 	return strings.Join(parts, ", ")
-}
-
-// outputRemoteMessageText displays a message from the remote API.
-// nil error return mirrors outputRemoteMessageJSON so callers can return
-// either uniformly; text printing never fails.
-//
-//nolint:unparam // symmetry with error-returning outputRemoteMessageJSON sibling
-func outputRemoteMessageText(msg *store.APIMessage) error {
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
-	fmt.Printf("Message ID: %d\n", msg.ID)
-	fmt.Println("───────────────────────────────────────────────────────────────────────────────")
-
-	// From
-	if msg.From != "" {
-		fmt.Printf("From:    %s\n", msg.From)
-	}
-
-	// To
-	if len(msg.To) > 0 {
-		fmt.Printf("To:      %s\n", strings.Join(msg.To, ", "))
-	}
-
-	// Subject
-	fmt.Printf("Subject: %s\n", msg.Subject)
-
-	// Date
-	if !msg.SentAt.IsZero() {
-		fmt.Printf("Date:    %s\n", msg.SentAt.Format(time.RFC1123))
-	}
-
-	// Size
-	fmt.Printf("Size:    %s\n", formatSize(msg.SizeEstimate))
-
-	// Labels
-	if len(msg.Labels) > 0 {
-		fmt.Printf("Labels:  %s\n", strings.Join(msg.Labels, ", "))
-	}
-
-	// Attachments
-	if len(msg.Attachments) > 0 {
-		fmt.Println("\nAttachments:")
-		for _, att := range msg.Attachments {
-			if att.URL != "" {
-				fmt.Printf("  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
-			} else {
-				fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
-			}
-		}
-	}
-
-	// Body
-	fmt.Println("\n═══════════════════════════════════════════════════════════════════════════════")
-	if msg.Body != "" {
-		fmt.Println(msg.Body)
-	} else if msg.Snippet != "" {
-		fmt.Printf("[No body text available. Snippet: %s]\n", msg.Snippet)
-	} else {
-		fmt.Println("[No body content available]")
-	}
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
-
-	return nil
-}
-
-// outputRemoteMessageJSON outputs a remote message as JSON.
-func outputRemoteMessageJSON(msg *store.APIMessage) error {
-	// Build attachment array
-	attachments := make([]map[string]any, len(msg.Attachments))
-	for i, att := range msg.Attachments {
-		attachments[i] = map[string]any{
-			"filename":  att.Filename,
-			"mime_type": att.MimeType,
-			"size":      att.Size,
-		}
-		if att.URL != "" {
-			attachments[i]["url"] = att.URL
-		}
-	}
-
-	output := map[string]any{
-		"id":              msg.ID,
-		"subject":         msg.Subject,
-		"snippet":         msg.Snippet,
-		"from":            msg.From,
-		"to":              msg.To,
-		"sent_at":         msg.SentAt.Format(time.RFC3339),
-		"size_estimate":   msg.SizeEstimate,
-		"has_attachments": msg.HasAttachments,
-		"labels":          msg.Labels,
-		"attachments":     attachments,
-		"body":            msg.Body,
-	}
-
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(output)
 }
 
 func init() {

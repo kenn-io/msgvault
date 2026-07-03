@@ -84,7 +84,25 @@ type TextAggregateOptions struct {
 	SortDirection   SortDirection
 	Limit           int
 	TimeGranularity TimeGranularity
-	SearchQuery     string
+	// TimeGranularitySet distinguishes an explicit TimeYear from an omitted
+	// granularity, since TimeYear is the enum zero value.
+	TimeGranularitySet bool
+	SearchQuery        string
+}
+
+// HasTimeGranularity reports whether a text aggregate request explicitly
+// selected a time granularity.
+func (opts TextAggregateOptions) HasTimeGranularity() bool {
+	return opts.TimeGranularitySet || opts.TimeGranularity != TimeYear
+}
+
+// EffectiveTimeGranularity returns the text aggregate granularity after
+// applying the API-compatible default.
+func (opts TextAggregateOptions) EffectiveTimeGranularity() TimeGranularity {
+	if !opts.HasTimeGranularity() {
+		return TimeMonth
+	}
+	return opts.TimeGranularity
 }
 
 // TextStatsOptions configures a text stats query.
@@ -117,4 +135,29 @@ func textSortFieldToSortField(f TextSortField) SortField {
 // IsTextMessageType returns true if the given type is a text message type.
 func IsTextMessageType(mt string) bool {
 	return slices.Contains(TextMessageTypes, mt)
+}
+
+// KnownMessageTypes enumerates every message_type value that msgvault's sync
+// and import paths write to the messages table. The search --message-type
+// flag validates against this set so a typo fails fast with the allowed
+// values instead of silently returning no results.
+var KnownMessageTypes = []string{
+	messageTypeEmail,
+	"calendar_event",
+	messageTypeSMS,
+	"mms",
+	"whatsapp",
+	"imessage",
+	"teams",
+	"fbmessenger",
+	"synctech_sms_call",
+	"google_voice_text",
+	"google_voice_call",
+	"google_voice_voicemail",
+}
+
+// IsKnownMessageType reports whether mt is a message_type value that msgvault
+// can produce.
+func IsKnownMessageType(mt string) bool {
+	return slices.Contains(KnownMessageTypes, mt)
 }

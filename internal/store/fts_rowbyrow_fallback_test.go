@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -55,8 +55,8 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 // PG-only: the fallback exists for the PostgreSQL tsvector-overflow case
 // (SQLite's FTS5 has no such limit, so a real backfill never errors there).
 func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	skipUnlessPostgres(t)
 
 	f := storetest.New(t)
@@ -173,13 +173,13 @@ func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
 	skipUnlessPostgres(t)
 
 	f := storetest.New(t)
-	requirepkg.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
+	require.True(t, f.Store.FTS5Available(), "FTS must be available on PG")
 
 	const total = 6
 	ids := f.CreateMessages(total)
-	requirepkg.Len(t, ids, total)
+	require.Len(t, ids, total)
 	for i, id := range ids {
-		requirepkg.NoError(t, f.Store.UpsertMessageBody(id,
+		require.NoError(t, f.Store.UpsertMessageBody(id,
 			sql.NullString{String: fmt.Sprintf("body%d shared", i), Valid: true}, sql.NullString{}),
 			"attach body %d", i)
 	}
@@ -193,8 +193,8 @@ func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
 		defer restore()
 
 		_, err := f.Store.BackfillFTS(nil)
-		requirepkg.Error(t, err, "BackfillFTS must ABORT (not silently succeed) on a non-size error")
-		assertpkg.ErrorIs(t, err, sentinel, "the original error must propagate")
+		require.Error(t, err, "BackfillFTS must ABORT (not silently succeed) on a non-size error")
+		assert.ErrorIs(t, err, sentinel, "the original error must propagate")
 	})
 
 	// Case 2: a different (non-54000) SQLSTATE must also abort.
@@ -205,9 +205,9 @@ func TestPG_BackfillFTS_NonSizeErrorAborts(t *testing.T) {
 		defer restore()
 
 		_, err := f.Store.BackfillFTS(nil)
-		requirepkg.Error(t, err, "BackfillFTS must ABORT on a non-size SQLSTATE")
+		require.Error(t, err, "BackfillFTS must ABORT on a non-size SQLSTATE")
 		var pgErr *pgconn.PgError
-		requirepkg.ErrorAs(t, err, &pgErr, "a PgError must propagate")
-		assertpkg.Equal(t, "08006", pgErr.Code, "the original SQLSTATE must propagate")
+		require.ErrorAs(t, err, &pgErr, "a PgError must propagate")
+		assert.Equal(t, "08006", pgErr.Code, "the original SQLSTATE must propagate")
 	})
 }

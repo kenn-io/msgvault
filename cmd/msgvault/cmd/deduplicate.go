@@ -2,23 +2,34 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/dedup"
+	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const deduplicateCommandName = "deduplicate"
+
 var deduplicateCmd = &cobra.Command{
-	Use:     "deduplicate",
+	Use:     deduplicateCommandName,
 	Aliases: []string{"dedup", "dedupe"},
 	Short:   "Find and merge duplicate messages within an account",
 	Long: `Find and merge duplicate messages within a single account
@@ -76,14 +87,25 @@ var (
 	dedupCollection           string
 	dedupDeleteFromSourceSrvr bool
 	dedupYes                  bool
+	dedupPlanConfirmed        bool
+	dedupPlanFingerprint      string
+	dedupSourcePlans          []string
+	dedupSourceID             int64
 )
 
 func runDeduplicate(cmd *cobra.Command, _ []string) error {
-	st, err := openStoreAndInit()
+	if !isDaemonCLISubprocess() {
+		if deduplicateCanUseDaemonRunner() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, nil)
+		}
+		return runDeduplicateInteractiveHTTP(cmd)
+	}
+
+	st, cleanup, err := openWritableStoreAndInit()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = st.Close() }()
+	defer cleanup()
 
 	// dbPath is the on-disk filesystem path used by VACUUM INTO
 	// backup; resolving it now also rejects non-file DSNs (e.g.
@@ -127,66 +149,33 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		return errors.Join(undoErrs...)
 	}
 
-	preference := dedup.DefaultSourcePreference
-	if dedupPrefer != "" {
-		preference = strings.Split(dedupPrefer, ",")
-		known := make(map[string]bool, len(dedup.DefaultSourcePreference))
-		for _, t := range dedup.DefaultSourcePreference {
-			known[t] = true
-		}
-		for i := range preference {
-			preference[i] = strings.TrimSpace(preference[i])
-			if !known[preference[i]] {
-				fmt.Fprintf(os.Stderr, "Warning: unknown source type in --prefer: %q\n", preference[i])
-			}
-		}
+	var preferenceWarnings io.Writer = os.Stderr
+	if dedupPlanConfirmed {
+		preferenceWarnings = nil
 	}
-
-	var (
-		accountSourceIDs  []int64
-		canonicalAccount  string
-		scopeIsCollection bool
-	)
-	switch {
-	case dedupAccount != "":
-		scope, err := ResolveEmailAccountFlag(st, dedupAccount)
-		if err != nil {
-			return err
-		}
-		accountSourceIDs = scope.SourceIDs()
-		if len(accountSourceIDs) == 0 {
-			return fmt.Errorf("--account %q resolved to zero sources", dedupAccount)
-		}
-		canonicalAccount = scope.DisplayName()
-	case dedupCollection != "":
-		scope, err := ResolveCollectionFlag(st, dedupCollection)
-		if err != nil {
-			return err
-		}
-		accountSourceIDs, err = dedupEligibleSourceIDs(st, scope.SourceIDs())
-		if err != nil {
-			return err
-		}
-		if len(accountSourceIDs) == 0 {
-			return fmt.Errorf("--collection %q has no member accounts", dedupCollection)
-		}
-		canonicalAccount = scope.DisplayName()
-		scopeIsCollection = true
+	preference := deduplicateSourcePreference(dedupPrefer, preferenceWarnings)
+	scope, err := resolveDeduplicateScope(st, deduplicateScopeRequest{
+		Account:    dedupAccount,
+		Collection: dedupCollection,
+		SourceID:   dedupSourceID,
+	})
+	if err != nil {
+		return err
 	}
 
 	config := dedup.Config{
 		SourcePreference:           preference,
 		ContentHashFallback:        dedupContentHash,
 		DryRun:                     dedupDryRun,
-		AccountSourceIDs:           accountSourceIDs,
-		Account:                    canonicalAccount,
-		ScopeIsCollection:          scopeIsCollection,
+		AccountSourceIDs:           scope.SourceIDs,
+		Account:                    scope.DisplayName,
+		ScopeIsCollection:          scope.IsCollection,
 		DeleteDupsFromSourceServer: dedupDeleteFromSourceSrvr,
 		DeletionsDir:               deletionsDir,
 	}
 
-	if len(accountSourceIDs) > 0 {
-		bySource, err := loadPerSourceIdentities(st, accountSourceIDs)
+	if len(scope.SourceIDs) > 0 {
+		bySource, err := loadPerSourceIdentities(st, scope.SourceIDs)
 		if err != nil {
 			return fmt.Errorf("load per-source identities: %w", err)
 		}
@@ -197,39 +186,11 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if scopeIsCollection {
-		allSources, err := st.ListSources("")
-		if err != nil {
-			return fmt.Errorf("list sources: %w", err)
-		}
-		idSet := make(map[int64]struct{}, len(accountSourceIDs))
-		for _, id := range accountSourceIDs {
-			idSet[id] = struct{}{}
-		}
-		var memberNames []string
-		for _, src := range allSources {
-			if _, ok := idSet[src.ID]; ok {
-				memberNames = append(memberNames, src.Identifier)
-			}
-		}
-		fmt.Printf("Deduping across collection %q (%d accounts: %s)\n",
-			canonicalAccount, len(memberNames), strings.Join(memberNames, ", "))
-		// When the collection spans more than one account, dedup is
-		// crossing source boundaries — a duplicate Message-ID or matching
-		// content hash between two accounts will hide the loser locally.
-		// Print a one-line hint so the user can confirm they meant to
-		// cross those boundaries (and remind them that --dry-run would
-		// preview without writing).
-		if len(memberNames) > 1 {
-			fmt.Println(
-				"  Note: cross-source dedup is reversible (--undo); " +
-					"remote deletion stays same-source-only. " +
-					"Re-run with --dry-run to preview.",
-			)
-		}
+	if scope.IntroStdout != "" && !dedupPlanConfirmed {
+		fmt.Print(scope.IntroStdout)
 	}
 
-	if len(accountSourceIDs) == 0 {
+	if len(scope.SourceIDs) == 0 {
 		// Per-source path constructs its own scoped engines per
 		// source, so no top-level engine is needed here.
 		return runDeduplicatePerSource(cmd, st, dbPath, config)
@@ -239,6 +200,470 @@ func runDeduplicate(cmd *cobra.Command, _ []string) error {
 	// across the whole scope.
 	engine := dedup.NewEngine(st, config, logger)
 	return runDeduplicateOnce(cmd, st, dbPath, config, engine)
+}
+
+func deduplicateCanUseDaemonRunner() bool {
+	return dedupDryRun || dedupYes || len(dedupUndo) > 0
+}
+
+func runDeduplicateInteractiveHTTP(cmd *cobra.Command) error {
+	_ = deduplicateSourcePreference(dedupPrefer, cmd.ErrOrStderr())
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	plan, err := st.PlanCLIDeduplicate(cmd.Context(), daemonclient.CLIDeduplicatePlanRequest{
+		Account:                    dedupAccount,
+		Collection:                 dedupCollection,
+		Prefer:                     dedupPrefer,
+		ContentHash:                dedupContentHash,
+		DeleteDupsFromSourceServer: dedupDeleteFromSourceSrvr,
+	})
+	if err != nil {
+		return fmt.Errorf("plan deduplicate: %w", err)
+	}
+	if plan == nil {
+		return errors.New("deduplicate plan response was empty")
+	}
+	out := cmd.OutOrStdout()
+	if plan.PrefixStdout != "" {
+		_, _ = fmt.Fprint(out, plan.PrefixStdout)
+	}
+
+	promptReader := newDedupPromptReader(cmd)
+	approved := make([]daemonclient.CLIDeduplicatePlanItem, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		if item.Stdout != "" {
+			_, _ = fmt.Fprint(out, item.Stdout)
+		}
+		if !item.NeedsConfirmation {
+			continue
+		}
+		if item.PlanFingerprint == "" {
+			return errors.New("deduplicate plan response did not include a fingerprint; upgrade the daemon and retry")
+		}
+		printDeduplicateBackfillPromptNote(cmd, item)
+		printDeduplicatePrompt(cmd, item)
+		ok, err := readDedupYesNo(promptReader)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if item.SourceID > 0 {
+				_, _ = fmt.Fprintln(out, "Skipped.")
+				continue
+			}
+			_, _ = fmt.Fprintln(out, "Aborted.")
+			return nil
+		}
+		approved = append(approved, item)
+	}
+	if plan.FooterStdout != "" {
+		_, _ = fmt.Fprint(out, plan.FooterStdout)
+	}
+	if len(approved) == 0 {
+		return nil
+	}
+
+	if err := cmd.Flags().Set("yes", "true"); err != nil {
+		return fmt.Errorf("set --yes after dedup confirmation: %w", err)
+	}
+	if err := cmd.Flags().Set("dedup-plan-confirmed", "true"); err != nil {
+		return fmt.Errorf("set --dedup-plan-confirmed after dedup confirmation: %w", err)
+	}
+	if len(approved) == 1 && approved[0].SourceID == 0 {
+		if err := cmd.Flags().Set("dedup-plan-fingerprint", approved[0].PlanFingerprint); err != nil {
+			return fmt.Errorf("set --dedup-plan-fingerprint after dedup planning: %w", err)
+		}
+		return runDaemonCLICommandHTTPFromCobra(cmd, nil)
+	}
+	for _, item := range approved {
+		if item.SourceID <= 0 {
+			return errors.New("deduplicate per-source plan response did not include source IDs; upgrade the daemon and retry")
+		}
+		value := fmt.Sprintf("%d:%s", item.SourceID, item.PlanFingerprint)
+		if err := cmd.Flags().Set("dedup-source-plan", value); err != nil {
+			return fmt.Errorf("set --dedup-source-plan after dedup planning: %w", err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, nil)
+}
+
+func printDeduplicateBackfillPromptNote(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
+	if item.BackfilledCount <= 0 {
+		return
+	}
+	out := cmd.OutOrStdout()
+	if item.SourceID > 0 {
+		_, _ = fmt.Fprintf(
+			out,
+			"\nNote: scan already backfilled %d rfc822_message_id value(s) for %s from "+
+				"stored MIME. This is metadata derivation and is kept regardless of your answer.\n",
+			item.BackfilledCount,
+			item.ScopeLabel,
+		)
+		return
+	}
+	_, _ = fmt.Fprintf(
+		out,
+		"\nNote: scan already backfilled %d rfc822_message_id value(s) from stored MIME. "+
+			"This is metadata derivation and is kept regardless of your answer.\n",
+		item.BackfilledCount,
+	)
+}
+
+func printDeduplicatePrompt(cmd *cobra.Command, item daemonclient.CLIDeduplicatePlanItem) {
+	out := cmd.OutOrStdout()
+	if item.SourceID > 0 {
+		_, _ = fmt.Fprintf(
+			out,
+			"\nProceed with deduplication for %s? This will hide %d duplicates "+
+				"(reversible with --undo). [y/N]: ",
+			item.ScopeLabel,
+			item.DuplicateMessages,
+		)
+		return
+	}
+	_, _ = fmt.Fprintf(
+		out,
+		"\nProceed with deduplication? This will hide %d duplicates "+
+			"(reversible with --undo). [y/N]: ",
+		item.DuplicateMessages,
+	)
+}
+
+type deduplicateScopeRequest struct {
+	Account    string
+	Collection string
+	SourceID   int64
+}
+
+type deduplicateScope struct {
+	SourceIDs    []int64
+	DisplayName  string
+	IsCollection bool
+	IntroStdout  string
+}
+
+func deduplicateSourcePreference(prefer string, warnings io.Writer) []string {
+	if prefer == "" {
+		return dedup.DefaultSourcePreference
+	}
+	preference := strings.Split(prefer, ",")
+	known := make(map[string]bool, len(dedup.DefaultSourcePreference))
+	for _, t := range dedup.DefaultSourcePreference {
+		known[t] = true
+	}
+	for i := range preference {
+		preference[i] = strings.TrimSpace(preference[i])
+		if !known[preference[i]] && warnings != nil {
+			_, _ = fmt.Fprintf(warnings, "Warning: unknown source type in --prefer: %q\n", preference[i])
+		}
+	}
+	return preference
+}
+
+func resolveDeduplicateScope(st *store.Store, req deduplicateScopeRequest) (deduplicateScope, error) {
+	switch {
+	case req.SourceID > 0:
+		src, err := st.GetSourceByID(req.SourceID)
+		if err != nil {
+			return deduplicateScope{}, fmt.Errorf("load source %d: %w", req.SourceID, err)
+		}
+		if !emailAccountSource(src) {
+			return deduplicateScope{}, opserr.Invalid(fmt.Errorf("source %d is not an email account", req.SourceID))
+		}
+		return deduplicateScope{
+			SourceIDs:   []int64{src.ID},
+			DisplayName: src.Identifier,
+		}, nil
+	case req.Account != "":
+		scope, err := ResolveEmailAccountFlag(st, req.Account)
+		if err != nil {
+			return deduplicateScope{}, err
+		}
+		sourceIDs := scope.SourceIDs()
+		if len(sourceIDs) == 0 {
+			return deduplicateScope{}, opserr.Invalid(fmt.Errorf("--account %q resolved to zero sources", req.Account))
+		}
+		return deduplicateScope{
+			SourceIDs:   sourceIDs,
+			DisplayName: scope.DisplayName(),
+		}, nil
+	case req.Collection != "":
+		scope, err := ResolveCollectionFlag(st, req.Collection)
+		if err != nil {
+			return deduplicateScope{}, err
+		}
+		sourceIDs, err := dedupEligibleSourceIDs(st, scope.SourceIDs())
+		if err != nil {
+			return deduplicateScope{}, err
+		}
+		if len(sourceIDs) == 0 {
+			return deduplicateScope{}, opserr.Invalid(fmt.Errorf("--collection %q has no member accounts", req.Collection))
+		}
+		intro, err := deduplicateCollectionIntro(st, scope.DisplayName(), sourceIDs)
+		if err != nil {
+			return deduplicateScope{}, err
+		}
+		return deduplicateScope{
+			SourceIDs:    sourceIDs,
+			DisplayName:  scope.DisplayName(),
+			IsCollection: true,
+			IntroStdout:  intro,
+		}, nil
+	default:
+		return deduplicateScope{}, nil
+	}
+}
+
+func deduplicateCollectionIntro(st *store.Store, displayName string, sourceIDs []int64) (string, error) {
+	allSources, err := st.ListSources("")
+	if err != nil {
+		return "", fmt.Errorf("list sources: %w", err)
+	}
+	idSet := make(map[int64]struct{}, len(sourceIDs))
+	for _, id := range sourceIDs {
+		idSet[id] = struct{}{}
+	}
+	var memberNames []string
+	for _, src := range allSources {
+		if _, ok := idSet[src.ID]; ok {
+			memberNames = append(memberNames, src.Identifier)
+		}
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "Deduping across collection %q (%d accounts: %s)\n",
+		displayName, len(memberNames), strings.Join(memberNames, ", "))
+	if len(memberNames) > 1 {
+		out.WriteString(
+			"  Note: cross-source dedup is reversible (--undo); " +
+				"remote deletion stays same-source-only. " +
+				"Re-run with --dry-run to preview.\n",
+		)
+	}
+	return out.String(), nil
+}
+
+func planCLIDeduplicate(
+	ctx context.Context,
+	st *store.Store,
+	req api.CLIDeduplicatePlanRequest,
+) (api.CLIDeduplicatePlanResponse, error) {
+	preference := deduplicateSourcePreference(req.Prefer, nil)
+	deletionsDir := filepath.Join(cfg.Data.DataDir, "deletions")
+	scope, err := resolveDeduplicateScope(st, deduplicateScopeRequest{
+		Account:    req.Account,
+		Collection: req.Collection,
+	})
+	if err != nil {
+		return api.CLIDeduplicatePlanResponse{}, err
+	}
+	base := dedup.Config{
+		SourcePreference:           preference,
+		ContentHashFallback:        req.ContentHash,
+		DeleteDupsFromSourceServer: req.DeleteDupsFromSourceServer,
+		DeletionsDir:               deletionsDir,
+	}
+	if len(scope.SourceIDs) == 0 {
+		return planCLIDeduplicatePerSource(ctx, st, base)
+	}
+	base.AccountSourceIDs = scope.SourceIDs
+	base.Account = scope.DisplayName
+	base.ScopeIsCollection = scope.IsCollection
+	bySource, err := loadPerSourceIdentities(st, scope.SourceIDs)
+	if err != nil {
+		return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("load per-source identities: %w", err)
+	}
+	base.IdentityAddressesBySource = bySource
+	engine := dedup.NewEngine(st, base, logger)
+	item, err := planCLIDeduplicateItem(ctx, engine, base, 0, scope.DisplayName, scope.IsCollection)
+	if err != nil {
+		return api.CLIDeduplicatePlanResponse{}, err
+	}
+	return api.CLIDeduplicatePlanResponse{
+		PrefixStdout: scope.IntroStdout,
+		Items:        []api.CLIDeduplicatePlanItem{item},
+	}, nil
+}
+
+func planCLIDeduplicatePerSource(
+	ctx context.Context,
+	st *store.Store,
+	base dedup.Config,
+) (api.CLIDeduplicatePlanResponse, error) {
+	sources, err := st.ListSources("")
+	if err != nil {
+		return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("list sources: %w", err)
+	}
+	if len(sources) == 0 {
+		return api.CLIDeduplicatePlanResponse{PrefixStdout: "No sources found.\n"}, nil
+	}
+
+	resp := api.CLIDeduplicatePlanResponse{
+		PrefixStdout: "No --account specified; deduping each source independently.\n\n",
+	}
+	anyRan := false
+	for _, src := range sources {
+		if !emailAccountSource(src) {
+			continue
+		}
+		cfgScoped := base
+		cfgScoped.AccountSourceIDs = []int64{src.ID}
+		cfgScoped.Account = src.Identifier
+		bySource, err := loadPerSourceIdentities(st, []int64{src.ID})
+		if err != nil {
+			return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("load identities for %s: %w", src.Identifier, err)
+		}
+		cfgScoped.IdentityAddressesBySource = bySource
+		engineScoped := dedup.NewEngine(st, cfgScoped, logger)
+		item, err := planCLIDeduplicateItem(ctx, engineScoped, cfgScoped, src.ID, src.Identifier, false)
+		if err != nil {
+			return api.CLIDeduplicatePlanResponse{}, fmt.Errorf("scan %s: %w", src.Identifier, err)
+		}
+		item.Stdout = fmt.Sprintf("--- %s (%s) ---\n", src.Identifier, src.SourceType) + item.Stdout
+		if !item.NeedsConfirmation {
+			item.Stdout += "  No duplicates.\n\n"
+		} else {
+			anyRan = true
+		}
+		resp.Items = append(resp.Items, item)
+	}
+	if !anyRan {
+		resp.FooterStdout = "No duplicates found in any source.\n"
+	}
+	return resp, nil
+}
+
+func planCLIDeduplicateItem(
+	ctx context.Context,
+	engine *dedup.Engine,
+	cfgScoped dedup.Config,
+	sourceID int64,
+	scopeLabel string,
+	scopeIsCollection bool,
+) (api.CLIDeduplicatePlanItem, error) {
+	report, err := engine.Scan(ctx)
+	if err != nil {
+		return api.CLIDeduplicatePlanItem{}, err
+	}
+	var out strings.Builder
+	if sourceID == 0 {
+		out.WriteString("Scanning for duplicate messages...\n")
+		out.WriteString(engine.FormatMethodology())
+	}
+	if sourceID == 0 || report.DuplicateGroups > 0 || report.BackfilledCount != 0 {
+		out.WriteString(engine.FormatReport(report))
+	}
+	if sourceID == 0 && report.DuplicateGroups == 0 {
+		out.WriteString("\nNo duplicates found.\n")
+	}
+	fingerprint, err := deduplicatePlanFingerprint(cfgScoped, report)
+	if err != nil {
+		return api.CLIDeduplicatePlanItem{}, err
+	}
+	return api.CLIDeduplicatePlanItem{
+		SourceID:          sourceID,
+		ScopeLabel:        scopeLabel,
+		ScopeIsCollection: scopeIsCollection,
+		Stdout:            out.String(),
+		DuplicateMessages: report.DuplicateMessages,
+		BackfilledCount:   report.BackfilledCount,
+		PlanFingerprint:   fingerprint,
+		NeedsConfirmation: report.DuplicateGroups > 0,
+	}, nil
+}
+
+func deduplicatePlanFingerprint(cfgScoped dedup.Config, report *dedup.Report) (string, error) {
+	type fingerprintGroup struct {
+		Key          string  `json:"key"`
+		KeyType      string  `json:"key_type"`
+		SurvivorID   int64   `json:"survivor_id"`
+		DuplicateIDs []int64 `json:"duplicate_ids"`
+	}
+	type fingerprintPayload struct {
+		SourceIDs           []int64            `json:"source_ids"`
+		Account             string             `json:"account"`
+		ScopeIsCollection   bool               `json:"scope_is_collection"`
+		ContentHashFallback bool               `json:"content_hash_fallback"`
+		DeleteFromSource    bool               `json:"delete_from_source"`
+		SourcePreference    []string           `json:"source_preference"`
+		Groups              []fingerprintGroup `json:"groups"`
+	}
+	payload := fingerprintPayload{
+		SourceIDs:           append([]int64(nil), cfgScoped.AccountSourceIDs...),
+		Account:             cfgScoped.Account,
+		ScopeIsCollection:   cfgScoped.ScopeIsCollection,
+		ContentHashFallback: cfgScoped.ContentHashFallback,
+		DeleteFromSource:    cfgScoped.DeleteDupsFromSourceServer,
+		SourcePreference:    append([]string(nil), cfgScoped.SourcePreference...),
+	}
+	slices.Sort(payload.SourceIDs)
+	for _, group := range report.Groups {
+		if len(group.Messages) == 0 || group.Survivor < 0 || group.Survivor >= len(group.Messages) {
+			continue
+		}
+		fpGroup := fingerprintGroup{
+			Key:        group.Key,
+			KeyType:    group.KeyType,
+			SurvivorID: group.Messages[group.Survivor].ID,
+		}
+		for i, msg := range group.Messages {
+			if i == group.Survivor {
+				continue
+			}
+			fpGroup.DuplicateIDs = append(fpGroup.DuplicateIDs, msg.ID)
+		}
+		slices.Sort(fpGroup.DuplicateIDs)
+		payload.Groups = append(payload.Groups, fpGroup)
+	}
+	sort.Slice(payload.Groups, func(i, j int) bool {
+		if payload.Groups[i].Key != payload.Groups[j].Key {
+			return payload.Groups[i].Key < payload.Groups[j].Key
+		}
+		if payload.Groups[i].KeyType != payload.Groups[j].KeyType {
+			return payload.Groups[i].KeyType < payload.Groups[j].KeyType
+		}
+		return payload.Groups[i].SurvivorID < payload.Groups[j].SurvivorID
+	})
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal dedup plan fingerprint: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func parseDedupSourcePlans(values []string) (map[int64]string, error) {
+	out := make(map[int64]string, len(values))
+	for _, value := range values {
+		idText, fp, ok := strings.Cut(value, ":")
+		if !ok || strings.TrimSpace(idText) == "" || strings.TrimSpace(fp) == "" {
+			return nil, fmt.Errorf("invalid dedup source plan %q", value)
+		}
+		id, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid dedup source plan source id %q", idText)
+		}
+		out[id] = fp
+	}
+	return out, nil
+}
+
+func validateDeduplicatePlanFingerprint(cfgScoped dedup.Config, report *dedup.Report, expected string) error {
+	if expected == "" {
+		return errors.New("dedup confirmed plan did not include a fingerprint")
+	}
+	got, err := deduplicatePlanFingerprint(cfgScoped, report)
+	if err != nil {
+		return err
+	}
+	if got != expected {
+		return errors.New("deduplication plan changed; rerun deduplicate")
+	}
+	return nil
 }
 
 func runDeduplicatePerSource(
@@ -256,17 +681,38 @@ func runDeduplicatePerSource(
 		return nil
 	}
 
-	fmt.Println(
-		"No --account specified; deduping each source independently.",
-	)
-	fmt.Println()
+	if !dedupPlanConfirmed {
+		fmt.Println(
+			"No --account specified; deduping each source independently.",
+		)
+		fmt.Println()
+	}
 
 	backedUp := false
 	anyRan := false
 	var executedBatches []string
+	promptReader := newDedupPromptReader(cmd)
+	expectedSourcePlans := map[int64]string(nil)
+	if dedupPlanConfirmed {
+		expectedSourcePlans, err = parseDedupSourcePlans(dedupSourcePlans)
+		if err != nil {
+			return err
+		}
+		if len(expectedSourcePlans) == 0 {
+			return errors.New("dedup confirmed plan did not include approved source plans")
+		}
+	}
 	for _, src := range sources {
 		if !emailAccountSource(src) {
 			continue
+		}
+		expectedFingerprint := ""
+		if dedupPlanConfirmed {
+			var ok bool
+			expectedFingerprint, ok = expectedSourcePlans[src.ID]
+			if !ok {
+				continue
+			}
 		}
 		cfgScoped := cfgBase
 		cfgScoped.AccountSourceIDs = []int64{src.ID}
@@ -278,12 +724,22 @@ func runDeduplicatePerSource(
 		cfgScoped.IdentityAddressesBySource = bySource
 		engineScoped := dedup.NewEngine(st, cfgScoped, logger)
 
-		fmt.Printf("--- %s (%s) ---\n", src.Identifier, src.SourceType)
+		if !dedupPlanConfirmed {
+			fmt.Printf("--- %s (%s) ---\n", src.Identifier, src.SourceType)
+		}
 		report, err := engineScoped.Scan(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("scan %s: %w", src.Identifier, err)
 		}
+		if dedupPlanConfirmed {
+			if err := validateDeduplicatePlanFingerprint(cfgScoped, report, expectedFingerprint); err != nil {
+				return err
+			}
+		}
 		if report.DuplicateGroups == 0 {
+			if dedupPlanConfirmed {
+				return errors.New("deduplication plan changed; rerun deduplicate")
+			}
 			// Scan can backfill rfc822_message_id even when no duplicate
 			// groups are produced (idempotent metadata derivation). Report
 			// that side effect so the user knows the scan did something
@@ -297,13 +753,15 @@ func runDeduplicatePerSource(
 		}
 
 		anyRan = true
-		fmt.Print(engineScoped.FormatReport(report))
+		if !dedupPlanConfirmed {
+			fmt.Print(engineScoped.FormatReport(report))
+		}
 		if cfgScoped.DryRun {
 			fmt.Println()
 			continue
 		}
 
-		if !dedupYes {
+		if !dedupYes && !dedupPlanConfirmed {
 			// See runDeduplicateOnce for the rationale on the
 			// rfc822-backfill note: scan already performed it
 			// (idempotent metadata derivation) regardless of the
@@ -324,7 +782,7 @@ func runDeduplicatePerSource(
 					"(reversible with --undo). [y/N]: ",
 				src.Identifier, report.DuplicateMessages,
 			)
-			ok, err := readDedupYesNo(cmd)
+			ok, err := readDedupYesNo(promptReader)
 			if err != nil {
 				return err
 			}
@@ -375,7 +833,11 @@ func runDeduplicatePerSource(
 		fmt.Println()
 	}
 
-	if cfgBase.DryRun {
+	if dedupPlanConfirmed {
+		if len(executedBatches) > 1 {
+			printAccumulatedUndoHint(executedBatches)
+		}
+	} else if cfgBase.DryRun {
 		fmt.Println("\nDry run complete. No changes made.")
 	} else if !anyRan {
 		fmt.Println("No duplicates found in any source.")
@@ -425,25 +887,37 @@ func runDeduplicateOnce(
 	cfgScoped dedup.Config,
 	engine *dedup.Engine,
 ) error {
-	fmt.Println("Scanning for duplicate messages...")
+	if !dedupPlanConfirmed {
+		fmt.Println("Scanning for duplicate messages...")
+	}
 	report, err := engine.Scan(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
+	if dedupPlanConfirmed {
+		if err := validateDeduplicatePlanFingerprint(cfgScoped, report, dedupPlanFingerprint); err != nil {
+			return err
+		}
+	}
 
-	fmt.Print(engine.FormatMethodology())
-	fmt.Print(engine.FormatReport(report))
+	if !dedupPlanConfirmed {
+		fmt.Print(engine.FormatMethodology())
+		fmt.Print(engine.FormatReport(report))
+	}
 
 	if cfgScoped.DryRun {
 		fmt.Println("\nDry run complete. No changes made.")
 		return nil
 	}
 	if report.DuplicateGroups == 0 {
+		if dedupPlanConfirmed {
+			return errors.New("deduplication plan changed; rerun deduplicate")
+		}
 		fmt.Println("\nNo duplicates found.")
 		return nil
 	}
 
-	if !dedupYes {
+	if !dedupYes && !dedupPlanConfirmed {
 		// Surface the rfc822 backfill that scan already performed so
 		// the user knows what state the database is in before they
 		// answer. The backfill is idempotent metadata derivation
@@ -464,7 +938,7 @@ func runDeduplicateOnce(
 				"duplicates (reversible with --undo). [y/N]: ",
 			report.DuplicateMessages,
 		)
-		ok, err := readDedupYesNo(cmd)
+		ok, err := readDedupYesNo(newDedupPromptReader(cmd))
 		if err != nil {
 			return err
 		}
@@ -532,14 +1006,17 @@ func printDedupSummary(summary *dedup.ExecutionSummary) {
 		summary.BatchID)
 }
 
-func readDedupYesNo(cmd *cobra.Command) (bool, error) {
-	reader := bufio.NewReader(cmd.InOrStdin())
+func newDedupPromptReader(cmd *cobra.Command) *bufio.Reader {
+	return bufio.NewReader(cmd.InOrStdin())
+}
+
+func readDedupYesNo(reader *bufio.Reader) (bool, error) {
 	response, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, fmt.Errorf("read confirmation: %w", err)
 	}
 	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes", nil
+	return isYesAnswer(response), nil
 }
 
 // randomBatchToken returns a short random hex token used to disambiguate
@@ -564,19 +1041,7 @@ func randomBatchToken() string {
 // with a pointer to --no-backup so the user can make an informed
 // choice (run pg_dump out-of-band, or skip the safety net).
 func backupDatabase(st *store.Store, dst string) error {
-	if st.IsPostgreSQL() {
-		return errors.New("backup-before-dedup is SQLite-only (uses VACUUM INTO); " +
-			"snapshot the PostgreSQL database with pg_dump out-of-band, " +
-			"then rerun with --no-backup",
-		)
-	}
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("backup target already exists: %s", dst)
-	}
-	if _, err := st.DB().Exec("VACUUM INTO ?", dst); err != nil {
-		return fmt.Errorf("vacuum into %s: %w", dst, err)
-	}
-	return nil
+	return st.BackupDatabase(dst)
 }
 
 // loadPerSourceIdentities builds a per-source identity map for the given
@@ -662,6 +1127,18 @@ func init() {
 			"(execution requires MSGVAULT_ENABLE_REMOTE_DELETE=1)")
 	deduplicateCmd.Flags().BoolVarP(&dedupYes, "yes", "y", false,
 		"Skip confirmation prompt")
+	deduplicateCmd.Flags().BoolVar(&dedupPlanConfirmed, "dedup-plan-confirmed", false,
+		"Internal daemon confirmation marker")
+	deduplicateCmd.Flags().StringVar(&dedupPlanFingerprint, "dedup-plan-fingerprint", "",
+		"Internal daemon dedup plan fingerprint")
+	deduplicateCmd.Flags().StringArrayVar(&dedupSourcePlans, "dedup-source-plan", nil,
+		"Internal daemon per-source dedup plan")
+	deduplicateCmd.Flags().Int64Var(&dedupSourceID, "dedup-source-id", 0,
+		"Internal daemon source scope")
+	_ = deduplicateCmd.Flags().MarkHidden("dedup-plan-confirmed")
+	_ = deduplicateCmd.Flags().MarkHidden("dedup-plan-fingerprint")
+	_ = deduplicateCmd.Flags().MarkHidden("dedup-source-plan")
+	_ = deduplicateCmd.Flags().MarkHidden("dedup-source-id")
 	// --undo restores rows from a recorded batch; none of the
 	// scan/merge/stage flags below apply. Reject the combinations
 	// explicitly so a user invoking

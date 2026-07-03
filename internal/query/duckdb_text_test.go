@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	_ "github.com/duckdb/duckdb-go/v2"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // buildTextContactsEngine builds a DuckDB engine over a small Parquet dataset
@@ -79,8 +79,8 @@ func TestDuckDBTextAggregate_Contacts(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 
 			rows, err := engine.TextAggregate(ctx, tc.view, TextAggregateOptions{})
 			require.NoError(err)

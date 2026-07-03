@@ -9,6 +9,19 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
+- Archive-access CLI commands now route through a msgvault daemon (the
+  configured remote server, or a local background daemon that starts on
+  demand and idles out after `[server].daemon_idle_timeout`). The daemon is
+  the single archive writer: concurrent operations queue with a visible
+  `Waiting:` message, read-only commands run immediately, and scheduled
+  syncs yield to interactive commands. See the
+  [Daemon Migration Guide](/guides/daemon-migration/).
+- Daemon lifecycle management via `msgvault serve start|status|stop|restart`,
+  with automatic restart of older local daemons on binary upgrade
+  (`[server].daemon_auto_restart`).
+- The HTTP API is now generated through Huma with a checked-in OpenAPI
+  contract (`msgvault openapi`, `/openapi.json`) and a generated Go client
+  under `pkg/client`.
 - Google Calendar archive support via `msgvault add-calendar` and
   `msgvault sync-calendar`, including read-only event sync, recurring series,
   cancellations, scheduled `[[gcal]]` sync, and search with
@@ -18,6 +31,13 @@ All notable changes to msgvault, grouped by release.
 
 - Scoped embedding generations can target selected message types, and local
   full-text search now honors `--message-type` filters consistently.
+
+**Deprecations**
+
+- `tui --force-sql`, `tui --no-cache-build`, `tui --no-sqlite-scanner`,
+  `mcp --force-sql`, and `mcp --no-sqlite-scanner` are deprecated (removal
+  planned for a later release); engine and cache selection moved to the
+  `[analytics]` config section.
 
 ---
 

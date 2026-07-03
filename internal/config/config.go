@@ -11,10 +11,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/vector"
+)
+
+const (
+	AnalyticsEngineAuto   = "auto"
+	AnalyticsEngineSQL    = "sql"
+	AnalyticsEngineDuckDB = "duckdb"
+
+	DaemonAutoRestartNewer  = "newer"
+	DaemonAutoRestartNever  = "never"
+	DaemonAutoRestartAlways = "always"
 )
 
 // ChatConfig holds chat/LLM configuration.
@@ -24,20 +35,68 @@ type ChatConfig struct {
 	MaxResults int    `toml:"max_results"` // Top-K messages to retrieve
 }
 
+// AnalyticsConfig controls daemon-side analytics engine selection.
+type AnalyticsConfig struct {
+	Engine         string `toml:"engine"`           // auto, sql, or duckdb
+	AutoBuildCache bool   `toml:"auto_build_cache"` // Build stale/missing Parquet cache before using DuckDB
+}
+
+func (a *AnalyticsConfig) ApplyDefaults() {
+	a.Engine = strings.ToLower(strings.TrimSpace(a.Engine))
+	if a.Engine == "" {
+		a.Engine = AnalyticsEngineAuto
+	}
+}
+
+func (a *AnalyticsConfig) Validate() error {
+	switch a.Engine {
+	case AnalyticsEngineAuto, AnalyticsEngineSQL, AnalyticsEngineDuckDB:
+		return nil
+	default:
+		return fmt.Errorf("invalid [analytics] engine %q (want %q, %q, or %q)",
+			a.Engine,
+			AnalyticsEngineAuto,
+			AnalyticsEngineSQL,
+			AnalyticsEngineDuckDB)
+	}
+}
+
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort         int      `toml:"api_port"`         // HTTP server port (default: 8080)
-	BindAddr        string   `toml:"bind_addr"`        // Bind address (default: 127.0.0.1)
-	APIKey          string   `toml:"api_key"`          // API authentication key
-	AllowInsecure   bool     `toml:"allow_insecure"`   // Allow unauthenticated non-loopback access
-	CORSOrigins     []string `toml:"cors_origins"`     // Allowed CORS origins (empty = disabled)
-	CORSCredentials bool     `toml:"cors_credentials"` // Allow credentials in CORS
-	CORSMaxAge      int      `toml:"cors_max_age"`     // Preflight cache duration in seconds
+	APIPort           int           `toml:"api_port"`            // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr          string        `toml:"bind_addr"`           // Bind address (default: 127.0.0.1)
+	APIKey            string        `toml:"api_key"`             // API authentication key
+	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
+	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
+	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
+	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
+	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
+}
+
+func (s *ServerConfig) ApplyDefaults() {
+	s.DaemonAutoRestart = strings.ToLower(strings.TrimSpace(s.DaemonAutoRestart))
+	if s.DaemonAutoRestart == "" {
+		s.DaemonAutoRestart = DaemonAutoRestartNewer
+	}
+}
+
+func (s *ServerConfig) Validate() error {
+	switch s.DaemonAutoRestart {
+	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
+		return nil
+	default:
+		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
+			s.DaemonAutoRestart,
+			DaemonAutoRestartNewer,
+			DaemonAutoRestartNever,
+			DaemonAutoRestartAlways)
+	}
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
 // Handles the full 127.0.0.0/8 range, IPv6 ::1, and "localhost".
-func (s ServerConfig) IsLoopback() bool {
+func (s *ServerConfig) IsLoopback() bool {
 	addr := s.BindAddr
 	if addr == "" || addr == "localhost" {
 		return true
@@ -48,7 +107,7 @@ func (s ServerConfig) IsLoopback() bool {
 
 // ValidateSecure returns an error if the server is configured insecurely
 // without an explicit opt-in via allow_insecure.
-func (s ServerConfig) ValidateSecure() error {
+func (s *ServerConfig) ValidateSecure() error {
 	if !s.IsLoopback() && s.APIKey == "" && !s.AllowInsecure {
 		return fmt.Errorf("refusing to start: bind address %q is not loopback and no api_key is set\n\n"+
 			"Set [server] api_key in config.toml, or set allow_insecure = true to override", s.BindAddr)
@@ -105,6 +164,7 @@ type Config struct {
 	Sync        SyncConfig        `toml:"sync"`
 	Chat        ChatConfig        `toml:"chat"`
 	Server      ServerConfig      `toml:"server"`
+	Analytics   AnalyticsConfig   `toml:"analytics"`
 	Remote      RemoteConfig      `toml:"remote"`
 	Vector      vector.Config     `toml:"vector"`
 	Identity    IdentityConfig    `toml:"identity"`
@@ -269,14 +329,21 @@ func NewDefaultConfig() *Config {
 			MaxResults: 20,
 		},
 		Server: ServerConfig{
-			APIPort:  8080,
-			BindAddr: "127.0.0.1",
+			APIPort:           0,
+			BindAddr:          "127.0.0.1",
+			DaemonIdleTimeout: 20 * time.Minute,
+			DaemonAutoRestart: DaemonAutoRestartNewer,
+		},
+		Analytics: AnalyticsConfig{
+			Engine:         AnalyticsEngineAuto,
+			AutoBuildCache: true,
 		},
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
 	}
 	cfg.Vector.ApplyDefaults()
+	cfg.Server.ApplyDefaults()
 	return cfg
 }
 
@@ -367,6 +434,14 @@ func Load(path, homeDir string) (*Config, error) {
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
 	cfg.Vector.ApplyDefaults()
+	cfg.Server.ApplyDefaults()
+	if err := cfg.Server.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.Analytics.ApplyDefaults()
+	if err := cfg.Analytics.Validate(); err != nil {
+		return nil, err
+	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 

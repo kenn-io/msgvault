@@ -93,11 +93,19 @@ type SearchFastResult struct {
 }
 
 // TotalStats provides overall database statistics.
+//
+// MessageCount is the total count over the filtered population and, unless
+// HideDeletedFromSource is set, includes messages deleted from their source
+// account (the archive retains them). ActiveMessageCount and
+// SourceDeletedMessageCount break MessageCount into its two populations so
+// callers can label a total instead of silently picking one semantic.
 type TotalStats struct {
-	MessageCount    int64
-	TotalSize       int64
-	AttachmentCount int64
-	AttachmentSize  int64
-	LabelCount      int64
-	AccountCount    int64
+	MessageCount              int64
+	ActiveMessageCount        int64
+	SourceDeletedMessageCount int64
+	TotalSize                 int64
+	AttachmentCount           int64
+	AttachmentSize            int64
+	LabelCount                int64
+	AccountCount              int64
 }

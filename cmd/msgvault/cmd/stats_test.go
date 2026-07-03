@@ -1,16 +1,23 @@
 package cmd
 
 import (
+	"bytes"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // TestStatsCommand_AccountAndCollectionMutuallyExclusive confirms that passing
@@ -26,10 +33,10 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 	cmd.SetArgs([]string{"stats", "--account", "foo@example.com", "--collection", "bar"})
 
 	err := cmd.Execute()
-	requirepkg.Error(t, err, "expected error when both --account and --collection are set")
+	require.Error(t, err, "expected error when both --account and --collection are set")
 	msg := err.Error()
-	assertpkg.Contains(t, msg, "account", "error should mention account flag name")
-	assertpkg.Contains(t, msg, "collection", "error should mention collection flag name")
+	assert.Contains(t, msg, "account", "error should mention account flag name")
+	assert.Contains(t, msg, "collection", "error should mention collection flag name")
 	_ = a
 	_ = b
 }
@@ -42,37 +49,36 @@ func TestStatsCommand_AccountAndCollectionMutuallyExclusive(t *testing.T) {
 // SourceIDs() returned an empty slice, and GetStatsForScope treats
 // an empty slice as unscoped/global.
 func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
-	require := requirepkg.New(t)
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "msgvault.db")
-
-	// Pre-create the store and an empty collection. CreateCollection
-	// requires at least one source, so create a source, attach, and
-	// then remove the source from the collection to leave it empty.
-	st, err := store.Open(dbPath)
-	require.NoError(err, "open store")
-	require.NoError(st.InitSchema(), "init schema")
+	require := require.New(t)
+	dataDir := t.TempDir()
+	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 	_, err = st.CreateCollection("empty", "test", []int64{src.ID})
 	require.NoError(err, "create collection")
 	require.NoError(st.RemoveSourcesFromCollection("empty", []int64{src.ID}), "remove source from collection")
-	_ = st.Close()
+	startStoreAPIDaemon(t, dataDir, st, nil)
 
 	savedCfg := cfg
 	savedLogger := logger
+	savedUseLocal := useLocal
+	savedStatsAccount := statsAccount
 	savedStatsCollection := statsCollection
 	defer func() {
 		cfg = savedCfg
 		logger = savedLogger
+		useLocal = savedUseLocal
+		statsAccount = savedStatsAccount
 		statsCollection = savedStatsCollection
 	}()
 
 	cfg = &config.Config{
-		HomeDir: tmpDir,
-		Data:    config.DataConfig{DataDir: tmpDir},
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+		Remote:  config.RemoteConfig{URL: "http://configured-daemonclient.invalid"},
 	}
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	useLocal = true
 	statsCollection = "empty"
 
 	testCmd := &cobra.Command{Use: "stats", RunE: statsCmd.RunE}
@@ -85,5 +91,222 @@ func TestStatsCommand_EmptyCollectionRejected(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error for empty collection")
-	assertpkg.Contains(t, err.Error(), "no member accounts")
+	assert.Contains(t, err.Error(), "no member accounts")
+}
+
+func TestStatsCommand_ScopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	testCfg := &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+	}
+	server, statsRequests := statsHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedUseLocal := useLocal
+	savedStatsAccount := statsAccount
+	savedStatsCollection := statsCollection
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		useLocal = savedUseLocal
+		statsAccount = savedStatsAccount
+		statsCollection = savedStatsCollection
+	}()
+
+	cfg = testCfg
+	logger = slog.New(slog.DiscardHandler)
+	useLocal = true
+	statsAccount = ""
+	statsCollection = "Important"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{Use: "stats", RunE: runStats}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	require.NoError(err, "stats command")
+
+	assert.Equal(1, int(statsRequests.Load()), "stats endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Equal(`Stats for collection "Important" (2 accounts):
+  Messages:    8
+  Threads:     6
+  Attachments: 3
+  Labels:      9
+  Accounts:    2
+  Size:        2.00 MB
+
+Note: Size is global (not scoped).
+`, stdout.String())
+}
+
+func TestStatsCommand_UnscopedUsesLocalDaemonHTTPAndPreservesLocalOutput(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+	testCfg := &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+	}
+	server, statsRequests := statsHTTPDaemon(t)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedLogger := logger
+	savedUseLocal := useLocal
+	savedStatsAccount := statsAccount
+	savedStatsCollection := statsCollection
+	defer func() {
+		cfg = savedCfg
+		logger = savedLogger
+		useLocal = savedUseLocal
+		statsAccount = savedStatsAccount
+		statsCollection = savedStatsCollection
+	}()
+
+	cfg = testCfg
+	logger = slog.New(slog.DiscardHandler)
+	useLocal = true
+	statsAccount = ""
+	statsCollection = ""
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{Use: "stats", RunE: runStats}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	require.NoError(err, "stats command")
+
+	assert.Equal(1, int(statsRequests.Load()), "stats endpoint calls")
+	assert.Empty(stderr.String(), "stderr")
+	assert.Equal("Database: "+testCfg.DatabaseDSN()+`
+  Messages:    3
+  Threads:     2
+  Attachments: 5
+  Labels:      4
+  Accounts:    1
+  Size:        1.00 MB
+`, stdout.String())
+}
+
+func statsHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	statsRequests := &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !isLocalDaemonAuthProbe(r) {
+			statsRequests.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"total_messages": 3,
+			"total_threads": 2,
+			"total_accounts": 1,
+			"total_labels": 4,
+			"total_attachments": 5,
+			"database_size_bytes": 1048576
+		}`))
+	})
+	mux.HandleFunc("/api/v1/cli/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Query().Get("collection") != "Important" {
+			http.Error(w, "missing collection", http.StatusBadRequest)
+			return
+		}
+		statsRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"stats": {
+				"total_messages": 8,
+				"total_threads": 6,
+				"total_accounts": 2,
+				"total_labels": 9,
+				"total_attachments": 3,
+				"database_size_bytes": 2097152
+			},
+			"scope_label": "Important",
+			"scope_source_count": 2
+		}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, statsRequests
+}
+
+func registerStatsProbeHandler(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_messages":0}`))
+	})
+}
+
+func isLocalDaemonAuthProbe(r *http.Request) bool {
+	return r.Header.Get(localDaemonAuthProbeHeader) == localDaemonAuthProbeValue
+}
+
+func writeStatsHTTPDaemonRuntime(t *testing.T, dataDir string, server *httptest.Server) {
+	t.Helper()
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(t, err, "split listener address")
+	_, err = strconv.Atoi(portText)
+	require.NoError(t, err, "parse listener port")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: Version,
+		Metadata: map[string]string{
+			runtimeHost:            host,
+			runtimePort:            portText,
+			runtimeAPIVersion:      strconv.Itoa(daemonAPIVersion),
+			runtimeAuthFingerprint: daemonAPIKeyFingerprint(""),
+		},
+	})
+	require.NoError(t, err, "write daemon runtime")
+}
+
+// TestPrintStats_ThousandsGroupingUniform verifies every count in the stats
+// output uses the same thousands-grouping so Messages/Threads/Attachments/
+// Labels/Accounts are formatted consistently.
+func TestPrintStats_ThousandsGroupingUniform(t *testing.T) {
+	assert := assert.New(t)
+	var out bytes.Buffer
+	printStats(&out, &store.Stats{
+		MessageCount:    2470176,
+		ThreadCount:     561070,
+		AttachmentCount: 202662,
+		LabelCount:      1183,
+		SourceCount:     12345,
+		DatabaseSize:    1024 * 1024,
+	})
+	got := out.String()
+	assert.Contains(got, "Messages:    2,470,176", "messages grouped")
+	assert.Contains(got, "Threads:     561,070", "threads grouped")
+	assert.Contains(got, "Attachments: 202,662", "attachments grouped")
+	assert.Contains(got, "Labels:      1,183", "labels grouped")
+	assert.Contains(got, "Accounts:    12,345", "accounts grouped")
+	assert.NotContains(got, "561070", "no bare thread count")
+	assert.NotContains(got, "202662", "no bare attachment count")
 }

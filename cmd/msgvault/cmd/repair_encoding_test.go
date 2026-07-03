@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -14,7 +14,7 @@ import (
 // swallowed. We trigger scan errors by recreating the labels table with a
 // TEXT id column and inserting a non-numeric id that can't be scanned into int64.
 func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates labels with TEXT id to trigger a SQLite scan error; PG enforces FK + types differently")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
@@ -43,14 +43,14 @@ func TestRepairOtherStrings_LogsScanErrors(t *testing.T) {
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
-	assertpkg.Equal(t, 1, stats.skippedRows, "skippedRows")
+	assert.Equal(t, 1, stats.skippedRows, "skippedRows")
 }
 
 // TestRepairDisplayNames_LogsScanErrors verifies that scan errors during
 // repairDisplayNames are counted in stats.skippedRows. We trigger scan errors
 // by recreating the participants table with a TEXT id column.
 func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	testutil.SkipIfPostgres(t, "uses PRAGMA foreign_keys=OFF and recreates a table with mismatched id type to trigger a SQLite scan error; PG enforces types differently")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
@@ -78,13 +78,13 @@ func TestRepairDisplayNames_LogsScanErrors(t *testing.T) {
 
 	// Before fix: skippedRows == 0 (scan error silently swallowed)
 	// After fix: skippedRows == 1 (scan error counted)
-	assertpkg.Equal(t, 1, stats.skippedRows, "skippedRows")
+	assert.Equal(t, 1, stats.skippedRows, "skippedRows")
 }
 
 // TestRepairEncoding_NoScanErrors verifies that normal data produces
 // zero skipped rows.
 func TestRepairEncoding_NoScanErrors(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	stats := &repairStats{}
@@ -94,7 +94,7 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 	require.NoError(repairDisplayNames(st, stats), "repairDisplayNames")
 	require.NoError(repairOtherStrings(st, stats), "repairOtherStrings")
 
-	assertpkg.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
+	assert.Zero(t, stats.skippedRows, "skippedRows should be 0 for valid data")
 }
 
 // TestRepairMessageFields_ReturnsReembedNeededIDs guards the re-embedding
@@ -105,8 +105,8 @@ func TestRepairEncoding_NoScanErrors(t *testing.T) {
 // re-picks up. Snippet-only repairs must NOT appear because the embedder
 // doesn't read snippet.
 func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
 	st := testutil.NewTestStore(t)
 	db := st.DB()
@@ -172,8 +172,8 @@ func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 // TestRepairOtherStrings_FixesNewColumns verifies that repairOtherStrings
 // repairs invalid UTF-8 in source_conversation_id, email_address, and domain.
 func TestRepairOtherStrings_FixesNewColumns(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")
 	st := testutil.NewTestStore(t)
 	db := st.DB()

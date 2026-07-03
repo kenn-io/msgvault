@@ -53,10 +53,11 @@ jobs:
           docker run --rm msgvault:test version
           docker run --rm msgvault:test --help
 
-          mkdir -p /tmp/msgvault-test && chmod 777 /tmp/msgvault-test
-          docker run --rm -v /tmp/msgvault-test:/data msgvault:test init-db
-          test -f /tmp/msgvault-test/msgvault.db || { echo "FATAL: database not created"; exit 1; }
-          rm -rf /tmp/msgvault-test
+          tmpdir="$(mktemp -d)"
+          trap 'sudo rm -rf "$tmpdir"' EXIT
+          sudo chown 1000:1000 "$tmpdir"
+          docker run --rm -v "$tmpdir:/data" msgvault:test init-db
+          sudo test -f "$tmpdir/msgvault.db" || { sudo ls -la "$tmpdir"; echo "FATAL: database not created"; exit 1; }
 
   # Publish: build multi-arch and push to GHCR (main/tags only)
   publish:

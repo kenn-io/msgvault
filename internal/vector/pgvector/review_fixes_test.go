@@ -189,16 +189,18 @@ func indexNames(t *testing.T, db *sql.DB) map[string]bool {
 // leading-prefix of the PK), while the embeddings primary key and the
 // still-needed idx_embeddings_msg index are PRESENT.
 func TestMigrate_DropsRedundantGenMsgIndex(t *testing.T) {
+	assert := assert.New(t)
+
 	db := openPGTestDB(t)
 	ctx := context.Background()
 	require.NoError(t, Migrate(ctx, db, 768, false), "Migrate")
 
 	idx := indexNames(t, db)
-	assert.False(t, idx["idx_embeddings_gen_msg"],
+	assert.False(idx["idx_embeddings_gen_msg"],
 		"idx_embeddings_gen_msg must be absent (redundant PK prefix); got %v", idx)
-	assert.True(t, idx["idx_embeddings_msg"],
+	assert.True(idx["idx_embeddings_msg"],
 		"idx_embeddings_msg must be present; got %v", idx)
-	assert.True(t, idx["embeddings_pkey"],
+	assert.True(idx["embeddings_pkey"],
 		"embeddings primary key index must be present; got %v", idx)
 }
 
@@ -206,18 +208,24 @@ func TestMigrate_DropsRedundantGenMsgIndex(t *testing.T) {
 // hand (as an old DB would have it) and asserts Migrate sheds it via the
 // DROP INDEX IF EXISTS step.
 func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
+	require := require.New(t)
+
 	db := openPGTestDB(t)
 	ctx := context.Background()
-	// First migrate to create the embeddings table, then recreate the
-	// legacy index to simulate a DB provisioned before V3.
-	require.NoError(t, Migrate(ctx, db, 0, false), "first Migrate")
+	require.NoError(
+
+		Migrate(ctx, db, 0, false), "first Migrate")
+
 	_, err := db.ExecContext(ctx,
 		`CREATE INDEX idx_embeddings_gen_msg ON embeddings(generation_id, message_id)`)
-	require.NoError(t, err, "recreate legacy index")
-	require.True(t, indexNames(t, db)["idx_embeddings_gen_msg"], "legacy index should exist before re-migrate")
+	require.NoError(
+		err, "recreate legacy index")
 
-	// Re-running Migrate must drop it.
-	require.NoError(t, Migrate(ctx, db, 0, false), "second Migrate")
+	require.True(indexNames(t, db)["idx_embeddings_gen_msg"], "legacy index should exist before re-migrate")
+	require.NoError(
+
+		Migrate(ctx, db, 0, false), "second Migrate")
+
 	assert.False(t, indexNames(t, db)["idx_embeddings_gen_msg"],
 		"re-migrate must drop the legacy idx_embeddings_gen_msg")
 }
@@ -231,23 +239,29 @@ func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
 // read-only opens too, where dropping (before the signal is honored on a later
 // writable open) would be wrong.
 func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
+	require := require.New(t)
+
 	db := openPGTestDB(t)
 	ctx := context.Background()
-	require.NoError(t, Migrate(ctx, db, 0, false), "first Migrate")
+	require.NoError(
+		Migrate(ctx, db, 0, false), "first Migrate")
 
 	// Stand up a legacy pending_embeddings table, then re-migrate.
 	_, err := db.ExecContext(ctx, `CREATE TABLE pending_embeddings (
 		generation_id BIGINT NOT NULL,
 		message_id    BIGINT NOT NULL
 	)`)
-	require.NoError(t, err, "create legacy pending_embeddings")
-	var reg *string
-	require.NoError(t, db.QueryRowContext(ctx,
-		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
-	require.NotNil(t, reg, "legacy table should exist before re-migrate")
+	require.NoError(
+		err, "create legacy pending_embeddings")
 
-	require.NoError(t, Migrate(ctx, db, 0, false), "second Migrate")
-	require.NoError(t, db.QueryRowContext(ctx,
+	var reg *string
+	require.NoError(db.QueryRowContext(ctx,
+		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
+	require.NotNil(reg, "legacy table should exist before re-migrate")
+	require.NoError(
+		Migrate(ctx, db, 0, false), "second Migrate")
+
+	require.NoError(db.QueryRowContext(ctx,
 		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg))
 	assert.NotNil(t, reg, "Migrate alone must NOT drop pending_embeddings (Open does, after the backfill consults it)")
 }
@@ -265,6 +279,9 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 // maintenance hatch), so the DDL cannot be cancelled by the pool-wide 30s
 // timeout. The CREATE EXTENSION stays OUTSIDE the tx (run on the pool).
 func TestMigrate_SkipExtension(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	db := openPGTestDB(t)
 	ctx := context.Background()
 	schema := currentSchema(t, db)
@@ -272,44 +289,45 @@ func TestMigrate_SkipExtension(t *testing.T) {
 	// ---- skipExtension = true: CREATE EXTENSION must NOT appear ----
 	tracedDB, tracer := openTracedPGTestDB(t, schema)
 	rec := newRecordingExecer(tracedDB, tracer)
-	require.NoError(t, Migrate(ctx, rec, 768, true), "Migrate(skipExtension=true)")
+	require.NoError(
+		Migrate(ctx, rec, 768, true), "Migrate(skipExtension=true)")
 
-	assert.False(t, rec.execerContains("CREATE EXTENSION"),
+	assert.False(rec.execerContains("CREATE EXTENSION"),
 		"skipExtension=true must NOT issue CREATE EXTENSION on the pool; got %v", rec.got)
-	assert.False(t, tracer.contains("CREATE EXTENSION"),
+	assert.False(tracer.contains("CREATE EXTENSION"),
 		"skipExtension=true must NOT issue CREATE EXTENSION at all; got %v", tracer.snapshot())
-
-	// B2: DDL is wrapped in a tx and the statement_timeout hatch fired.
-	assert.True(t, rec.beginTxInvoked(),
-		"Migrate must open a maintenance tx for the schema apply + DROP INDEX")
-	assert.True(t, tracer.contains("SET LOCAL statement_timeout = 0"),
+	assert. // B2: DDL is wrapped in a tx and the statement_timeout hatch fired.
+		True(rec.beginTxInvoked(),
+			"Migrate must open a maintenance tx for the schema apply + DROP INDEX")
+	assert.True(tracer.contains("SET LOCAL statement_timeout = 0"),
 		"Migrate tx must disable the pool-wide statement_timeout (S1 hatch); got %v", tracer.snapshot())
 	assertHatchedDDL(t, tracer)
 
 	// Schema tables exist.
 	for _, table := range []string{"index_generations", "embeddings", "embed_watermark", "embed_runs"} {
 		var reg sql.NullString
-		require.NoError(t, db.QueryRowContext(ctx,
+		require.NoError(db.QueryRowContext(ctx,
 			`SELECT to_regclass($1)::text`, table).Scan(&reg),
 			"to_regclass %s", table)
-		assert.Truef(t, reg.Valid, "table %s must exist after skip-extension migrate", table)
+		assert.Truef(reg.Valid, "table %s must exist after skip-extension migrate", table)
 	}
 	// Indexes exist (and the redundant one is still dropped).
 	idx := indexNames(t, db)
-	assert.True(t, idx["idx_embeddings_msg"], "idx_embeddings_msg must exist; got %v", idx)
-	assert.True(t, idx["embeddings_pkey"], "PK must exist; got %v", idx)
-	assert.False(t, idx["idx_embeddings_gen_msg"], "redundant index must be absent; got %v", idx)
-	// HNSW index for the eager dimension exists.
-	assert.Truef(t, idx[VectorIndexName(768)], "eager HNSW index %s must exist; got %v", VectorIndexName(768), idx)
+	assert.True(idx["idx_embeddings_msg"], "idx_embeddings_msg must exist; got %v", idx)
+	assert.True(idx["embeddings_pkey"], "PK must exist; got %v", idx)
+	assert.False(idx["idx_embeddings_gen_msg"], "redundant index must be absent; got %v", idx)
+	assert. // HNSW index for the eager dimension exists.
+		Truef(idx[VectorIndexName(768)], "eager HNSW index %s must exist; got %v", VectorIndexName(768), idx)
 
 	// ---- skipExtension = false: CREATE EXTENSION MUST appear ----
 	db2 := openPGTestDB(t)
 	schema2 := currentSchema(t, db2)
 	tracedDB2, tracer2 := openTracedPGTestDB(t, schema2)
 	rec2 := newRecordingExecer(tracedDB2, tracer2)
-	require.NoError(t, Migrate(ctx, rec2, 0, false), "Migrate(skipExtension=false)")
+	require.NoError(
+		Migrate(ctx, rec2, 0, false), "Migrate(skipExtension=false)")
 
-	assert.True(t, rec2.execerContains("CREATE EXTENSION"),
+	assert.True(rec2.execerContains("CREATE EXTENSION"),
 		"skipExtension=false must issue CREATE EXTENSION on the pool; got %v", rec2.got)
 	// CREATE EXTENSION runs on the pool (execer), BEFORE the tx — it must NOT
 	// be inside the tx stream that carries the SET LOCAL hatch.
@@ -371,19 +389,27 @@ func assertCreateExtensionOutsideTx(t *testing.T, tracer *sqlTracer) {
 // SkipMigrate (suppresses CREATE EXTENSION + the heavy full migrate) and
 // ReadOnly (suppresses ALL writes).
 func TestOpen_SkipExtensionWiring(t *testing.T) {
+	require := require.New(t)
+
 	db := openPGTestDB(t)
 	ctx := context.Background()
 	b, err := Open(ctx, Options{DB: db, Dimension: 4, SkipExtension: true})
-	require.NoError(t, err, "Open(SkipExtension)")
+	require.NoError(
+		err, "Open(SkipExtension)")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	// Backend is usable end-to-end: create a generation, upsert, search.
 	seedOneMessage(t, db)
 	gen := seedAndEmbed(t, b, db, map[int64][]float32{1: unitVec(4, 0)})
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "Activate")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "Activate")
+
 	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{})
-	require.NoError(t, err, "Search")
-	require.Len(t, hits, 1, "expected the one embedded message")
+	require.NoError(
+		err, "Search")
+
+	require.Len(hits, 1, "expected the one embedded message")
 	assert.Equal(t, int64(1), hits[0].MessageID)
 }
 
@@ -509,20 +535,22 @@ func TestSearch_FilteredInlineExists(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			hits, err := b.Search(ctx, gen, tc.query, 10, tc.filter)
 			require.NoError(t, err, "Search")
 			got := hitMessageIDs(hits)
 			if len(tc.want) == 0 {
-				assert.Empty(t, got)
+				assert.Empty(got)
 				return
 			}
 			// For the broad case assert the full ordered set (ANN order:
 			// msg 1 closest to the axis-0 query); for selective filters the
 			// single expected id.
 			if tc.name == "broad source filter admits all, ranked by ANN" {
-				assert.Equal(t, tc.want, got, "broad filter must return all messages in ANN order")
+				assert.Equal(tc.want, got, "broad filter must return all messages in ANN order")
 			} else {
-				assert.Equal(t, tc.want, got)
+				assert.Equal(tc.want, got)
 			}
 		})
 	}
@@ -533,26 +561,34 @@ func TestSearch_FilteredInlineExists(t *testing.T) {
 // universe — the ceiling recompute uses the same EXISTS predicate, so the
 // inner LIMIT loop reaches k distinct messages rather than short-returning.
 func TestSearch_FilteredInlineExists_MultiChunk(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 	for _, id := range []int64{1, 2} {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO messages (id, source_id) VALUES ($1, 10) ON CONFLICT (id) DO UPDATE SET source_id = 10`, id)
-		require.NoErrorf(t, err, "seed msg %d", id)
+		require.NoErrorf(err, "seed msg %d", id)
 	}
 	// msg 1 contributes two chunks (one close, one far); msg 2 single chunk.
 	gen, err := b.CreateGeneration(ctx, "m", 4, "")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{
-		{MessageID: 1, ChunkIndex: 0, Vector: unitVec(4, 0)},
-		{MessageID: 1, ChunkIndex: 1, Vector: unitVec(4, 2)},
-		{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
-	}), "Upsert")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.Upsert(ctx, gen, []vector.Chunk{
+			{MessageID: 1, ChunkIndex: 0, Vector: unitVec(4, 0)},
+			{MessageID: 1, ChunkIndex: 1, Vector: unitVec(4, 2)},
+			{MessageID: 2, ChunkIndex: 0, Vector: unitVec(4, 1)},
+		}), "Upsert")
 
 	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{SourceIDs: []int64{10}})
-	require.NoError(t, err, "Search")
+	require.NoError(
+		err, "Search")
+
 	got := hitMessageIDs(hits)
-	// Both messages surface exactly once; msg 1 wins on its close chunk.
-	require.Len(t, got, 2, "want both messages once each; got %v", got)
-	assert.Equal(t, int64(1), got[0], "msg 1 ranks first on its close chunk")
-	assert.ElementsMatch(t, []int64{1, 2}, got, "both filtered messages must appear")
+	require. // Both messages surface exactly once; msg 1 wins on its close chunk.
+			Len(got, 2, "want both messages once each; got %v", got)
+	assert.Equal(int64(1), got[0], "msg 1 ranks first on its close chunk")
+	assert.ElementsMatch([]int64{1, 2}, got, "both filtered messages must appear")
 }

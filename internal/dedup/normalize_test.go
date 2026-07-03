@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNormalizeRawMIME(t *testing.T) {
@@ -62,7 +62,7 @@ func TestNormalizeRawMIME(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			inputCopy := make([]byte, len(tt.input))
 			copy(inputCopy, tt.input)
 
@@ -90,5 +90,5 @@ func TestNormalizeRawMIME_DeterministicOutput(t *testing.T) {
 
 	hash1 := sha256Hex(normalizeRawMIME(raw1))
 	hash2 := sha256Hex(normalizeRawMIME(raw2))
-	assertpkg.Equal(t, hash1, hash2, "same message with different transport headers produced different hashes")
+	assert.Equal(t, hash1, hash2, "same message with different transport headers produced different hashes")
 }

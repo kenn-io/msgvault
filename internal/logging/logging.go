@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,6 +80,14 @@ type Options struct {
 	// Stderr is the writer used for interactive output. Nil
 	// defaults to os.Stderr. Tests override this to capture.
 	Stderr io.Writer
+
+	// HumanConsole renders stderr records for people instead of
+	// logfmt: a level prefix and the message, with attributes in
+	// parentheses and no timestamp or run_id (those live in the
+	// structured file log). Callers enable it when stderr reaches
+	// an interactive user — directly or via the daemon CLI
+	// subprocess pipe.
+	HumanConsole bool
 
 	// Now is injected for deterministic filenames in tests.
 	// Nil defaults to time.Now.
@@ -130,6 +139,75 @@ func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
 func (d discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return d }
 func (d discardHandler) WithGroup(string) slog.Handler           { return d }
 
+// humanConsoleHandler renders records for people, not parsers: a level
+// prefix ("Warning:", "Error:"), the message, and any attributes in
+// parentheses. Timestamps and run_id are omitted — they only matter in
+// the structured file log, and on an interactive console they read as
+// noise.
+type humanConsoleHandler struct {
+	mu    *sync.Mutex
+	w     io.Writer
+	level slog.Level
+	attrs []slog.Attr
+}
+
+func newHumanConsoleHandler(w io.Writer, level slog.Level) *humanConsoleHandler {
+	return &humanConsoleHandler{mu: &sync.Mutex{}, w: w, level: level}
+}
+
+func (h *humanConsoleHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.level
+}
+
+func (h *humanConsoleHandler) Handle(_ context.Context, r slog.Record) error {
+	var sb strings.Builder
+	switch {
+	case r.Level >= slog.LevelError:
+		sb.WriteString("Error: ")
+	case r.Level >= slog.LevelWarn:
+		sb.WriteString("Warning: ")
+	case r.Level < slog.LevelInfo:
+		sb.WriteString("Debug: ")
+	}
+	sb.WriteString(r.Message)
+
+	var parts []string
+	appendAttr := func(a slog.Attr) {
+		if a.Key == "" || a.Key == "run_id" {
+			return
+		}
+		parts = append(parts, a.Key+"="+a.Value.String())
+	}
+	for _, a := range h.attrs {
+		appendAttr(a)
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		appendAttr(a)
+		return true
+	})
+	if len(parts) > 0 {
+		sb.WriteString(" (")
+		sb.WriteString(strings.Join(parts, ", "))
+		sb.WriteString(")")
+	}
+	sb.WriteString("\n")
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, err := io.WriteString(h.w, sb.String())
+	return err
+}
+
+func (h *humanConsoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	next := *h
+	next.attrs = append(slices.Clip(h.attrs), attrs...)
+	return &next
+}
+
+// WithGroup flattens groups: a human line has no nesting, and dropping
+// the group prefix keeps the common keys (email, error) readable.
+func (h *humanConsoleHandler) WithGroup(string) slog.Handler { return h }
+
 // Close releases file handles held by the handler. Safe to call
 // multiple times.
 func (r *Result) Close() {
@@ -175,10 +253,16 @@ func BuildHandler(opts Options) (*Result, error) {
 
 	res := &Result{Level: level, RunID: newRunID()}
 
-	// Always build the stderr text handler.
-	stderrH := slog.NewTextHandler(stderr, &slog.HandlerOptions{
-		Level: level,
-	})
+	// Always build the stderr handler: human-readable when the output
+	// reaches an interactive user, logfmt otherwise.
+	var stderrH slog.Handler
+	if opts.HumanConsole {
+		stderrH = newHumanConsoleHandler(stderr, level)
+	} else {
+		stderrH = slog.NewTextHandler(stderr, &slog.HandlerOptions{
+			Level: level,
+		})
+	}
 	handlers := []slog.Handler{stderrH}
 
 	// Best-effort file handler.
@@ -240,6 +324,41 @@ func BuildHandler(opts Options) (*Result, error) {
 	h = h.WithAttrs([]slog.Attr{slog.String("run_id", res.RunID)})
 	res.Handler = h
 	return res, nil
+}
+
+// ResolveConsoleLevel decides whether the stderr fallback handler
+// should be quieter than the default INFO. When file logging is
+// disabled the handler writes structured text straight to stderr,
+// which is noise for an interactive user. In that case — and only
+// when the user has not asked for a specific level (no --verbose,
+// no --log-level, no [log].level) and stderr is a real terminal —
+// the console defaults to WARN so routine INFO startup/exit lines
+// stay out of the way.
+//
+// It returns nil when the level should be left unchanged. Keeping
+// this a pure function (the caller passes the terminal check as a
+// bool) makes every branch unit-testable without a real TTY. The
+// terminal condition is what preserves INFO for the background
+// daemon child, whose stderr is redirected to serve.log (not a
+// terminal) and whose startup lines are parsed by the autostart
+// progress reporter.
+//
+// daemonCLISubprocess quiets the same routine INFO noise for the
+// non-TTY CLI subprocess the daemon spawns to serve proxied CLI
+// commands: its stderr is a pipe streamed verbatim to the user's
+// console, so its structured startup/exit lines are noise even though
+// stderrIsTerminal is false.
+func ResolveConsoleLevel(
+	explicitLevel string, verbose, fileDisabled, stderrIsTerminal, daemonCLISubprocess bool,
+) *slog.Level {
+	if verbose || explicitLevel != "" || !fileDisabled {
+		return nil
+	}
+	if !stderrIsTerminal && !daemonCLISubprocess {
+		return nil
+	}
+	lv := slog.LevelWarn
+	return &lv
 }
 
 // newRunID returns a 6-byte hex string for attaching to every log
@@ -319,6 +438,19 @@ func rotate(path string, keep int) error {
 		}
 	}
 	return nil
+}
+
+// ValidateLevel reports whether s is an accepted log level. The empty string
+// is valid and selects the default (info). Matching is case-insensitive and
+// ignores surrounding whitespace, mirroring parseLevel. Unknown values return
+// an error listing the accepted levels.
+func ValidateLevel(s string) error {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "debug", "info", "warn", "warning", "error":
+		return nil
+	default:
+		return fmt.Errorf("invalid log level %q (valid: debug, info, warn, error)", s)
+	}
 }
 
 // parseLevel maps a user-friendly level string to slog.Level.

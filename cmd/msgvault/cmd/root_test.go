@@ -12,16 +12,16 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/oauth"
 	extOAuth2 "golang.org/x/oauth2"
 )
 
 func TestErrOAuthNotConfigured(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	err := errOAuthNotConfigured()
-	requirepkg.Error(t, err, "errOAuthNotConfigured()")
+	require.Error(t, err, "errOAuthNotConfigured()")
 
 	msg := err.Error()
 
@@ -49,9 +49,9 @@ func TestWrapOAuthError_NotExist(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should contain accessible message (not "not found" anymore)
-	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
+	assert.Contains(t, msg, "not accessible", "missing 'not accessible'")
 	// Should contain setup hint
-	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
+	assert.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
 }
 
 func TestWrapOAuthError_Permission(t *testing.T) {
@@ -62,9 +62,9 @@ func TestWrapOAuthError_Permission(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should contain accessible message
-	assertpkg.Contains(t, msg, "not accessible", "missing 'not accessible'")
+	assert.Contains(t, msg, "not accessible", "missing 'not accessible'")
 	// Should contain setup hint
-	assertpkg.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
+	assert.Contains(t, msg, "https://msgvault.io/guides/oauth-setup/", "missing setup URL")
 }
 
 func TestWrapOAuthError_OtherError(t *testing.T) {
@@ -73,7 +73,7 @@ func TestWrapOAuthError_OtherError(t *testing.T) {
 	wrapped := wrapOAuthError(originalErr)
 
 	// Should return the original error unchanged
-	assertpkg.Equal(t, originalErr, wrapped, "wrapOAuthError() changed unrelated error")
+	assert.Equal(t, originalErr, wrapped, "wrapOAuthError() changed unrelated error")
 }
 
 func TestWrapOAuthError_NestedNotExist(t *testing.T) {
@@ -86,7 +86,7 @@ func TestWrapOAuthError_NestedNotExist(t *testing.T) {
 	msg := wrapped.Error()
 
 	// Should detect the nested os.ErrNotExist and wrap appropriately
-	assertpkg.Contains(t, msg, "not accessible", "failed to detect nested os.ErrNotExist")
+	assert.Contains(t, msg, "not accessible", "failed to detect nested os.ErrNotExist")
 }
 
 // newTestRootCmd creates a fresh root command for testing, avoiding mutation
@@ -101,8 +101,8 @@ func newTestRootCmd() *cobra.Command {
 // TestExecuteContext_CancellationPropagates verifies that context cancellation
 // from ExecuteContext propagates to command handlers.
 func TestExecuteContext_CancellationPropagates(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Track whether context was cancelled
 	var contextWasCancelled atomic.Bool
 
@@ -186,13 +186,13 @@ func TestExecute_UsesBackgroundContext(t *testing.T) {
 
 	testRoot.SetArgs([]string{"test-execute"})
 	err := testRoot.Execute()
-	requirepkg.NoError(t, err, "Execute()")
+	require.NoError(t, err, "Execute()")
 
 	select {
 	case <-completed:
 		// Success
 	case <-time.After(time.Second):
-		requirepkg.Fail(t, "command did not complete")
+		require.Fail(t, "command did not complete")
 	}
 }
 
@@ -232,11 +232,11 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 
 	testRoot.SetArgs([]string{"test-ctx"})
 	err := ExecuteContext(ctx)
-	requirepkg.NoError(t, err, "ExecuteContext")
+	require.NoError(t, err, "ExecuteContext")
 
 	// Verify the context was propagated
-	requirepkg.NotNil(t, receivedCtx, "command did not receive context")
-	assertpkg.Equal(t, testValue, receivedCtx.Value(testKey), "context value")
+	require.NotNil(t, receivedCtx, "command did not receive context")
+	assert.Equal(t, testValue, receivedCtx.Value(testKey), "context value")
 }
 
 // TestExecute_UsesBackgroundContextInHandler verifies Execute provides background context to handlers.
@@ -244,8 +244,8 @@ func TestExecuteContext_PropagatesContext(t *testing.T) {
 // NOTE: This test modifies the package-level rootCmd variable and must NOT use t.Parallel().
 // Running this test in parallel with other tests that access rootCmd would cause data races.
 func TestExecute_UsesBackgroundContextInHandler(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	// Save and restore global rootCmd to avoid state leakage between tests.
 	// This pattern requires sequential test execution - do not add t.Parallel().
 	savedRootCmd := rootCmd
@@ -347,7 +347,7 @@ func TestIsAuthInvalidError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isAuthInvalidError(tt.err)
-			assertpkg.Equal(t, tt.want, got, "isAuthInvalidError()")
+			assert.Equal(t, tt.want, got, "isAuthInvalidError()")
 		})
 	}
 }
@@ -385,6 +385,17 @@ func (m *mockReauthorizer) Authorize(ctx context.Context, email string) error {
 
 func (m *mockReauthorizer) AuthorizeManual(ctx context.Context, email string) error {
 	m.authorizeManualCount++
+	if m.authorizeFn != nil {
+		return m.authorizeFn(ctx, email)
+	}
+	return nil
+}
+
+// AuthorizePreservingGrantedScopes is the browser scope-preserving reauth the
+// sync preflight uses. It shares authorizeCount/authorizeFn with Authorize so
+// preflight tests can assert the reauth happened without a separate seam.
+func (m *mockReauthorizer) AuthorizePreservingGrantedScopes(ctx context.Context, email string) error {
+	m.authorizeCount++
 	if m.authorizeFn != nil {
 		return m.authorizeFn(ctx, email)
 	}
@@ -487,7 +498,7 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 			},
 			interactive: false,
 			wantErr:     true,
-			errContains: "non-interactive session",
+			errContains: "add-account test@gmail.com --force",
 		},
 		{
 			name: "invalid_grant, reauth fails",
@@ -526,10 +537,10 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require := requirepkg.New(t)
-			assert := assertpkg.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			ctx := context.Background()
-			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive)
+			ts, err := getTokenSourceWithReauth(ctx, tt.mock, "test@gmail.com", tt.interactive, gmailReauthHint)
 
 			if tt.wantErr {
 				require.Error(err)
@@ -563,36 +574,53 @@ func TestGetTokenSourceWithReauth(t *testing.T) {
 				return mismatch
 			},
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true)
-		requirepkg.Error(t, err)
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "user@example.com", true, gmailReauthHint)
+		require.Error(t, err)
 		msg := err.Error()
 		for _, want := range []string{"remove-account", "add-account", "primary address"} {
-			assertpkg.Contains(t, msg, want, "error message missing %q", want)
+			assert.Contains(t, msg, want, "error message missing %q", want)
 		}
 		// Confirm the underlying TokenMismatchError is preserved.
 		var mismatchErr *oauth.TokenMismatchError
-		assertpkg.ErrorAs(t, err, &mismatchErr,
+		assert.ErrorAs(t, err, &mismatchErr,
 			"expected error to wrap *oauth.TokenMismatchError, got %T: %v", err, err)
 	})
 
-	// Additional assertion for non-interactive case: verify the error
-	// mentions running from an interactive terminal
-	t.Run("non-interactive error mentions interactive terminal", func(t *testing.T) {
+	// Additional assertion for the non-interactive case: verify the error
+	// points at both actionable remedies — add-account --force (browser, works
+	// even from the daemon's non-TTY CLI subprocess) and --headless (device
+	// code, for a headless server with no browser).
+	t.Run("non-interactive error points at add-account remedies", func(t *testing.T) {
 		mock := &mockReauthorizer{
 			tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
 				return nil, invalidGrant
 			},
 			hasTokenVal: true,
 		}
-		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false)
-		requirepkg.Error(t, err)
-		assertpkg.ErrorContains(t, err, "interactive terminal")
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
+		require.ErrorContains(t, err, "add-account x@gmail.com --force")
+		require.ErrorContains(t, err, "add-account x@gmail.com --headless")
+	})
+
+	// A Calendar caller must be pointed at add-calendar, not the Gmail
+	// add-account flow (wrong scopes for a Calendar token failure).
+	t.Run("non-interactive calendar error points at add-calendar", func(t *testing.T) {
+		mock := &mockReauthorizer{
+			tokenSourceFn: func(_ context.Context, _ string) (extOAuth2.TokenSource, error) {
+				return nil, invalidGrant
+			},
+			hasTokenVal: true,
+		}
+		_, err := getTokenSourceWithReauth(context.Background(), mock, "x@gmail.com", false, calendarReauthHint)
+		require.ErrorContains(t, err, "add-calendar x@gmail.com")
+		require.ErrorContains(t, err, "add-calendar x@gmail.com --headless")
+		require.NotContains(t, err.Error(), "add-account")
 	})
 }
 
 func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	invalidGrant := &extOAuth2.RetrieveError{ErrorCode: "invalid_grant"}
 	base := &mockReauthorizer{hasTokenVal: true}
@@ -604,7 +632,7 @@ func TestGetTokenSourceWithReauthUsesScopePreservingReauth(t *testing.T) {
 		return fakeTokenSource{}, nil
 	}
 
-	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true)
+	ts, err := getTokenSourceWithReauth(context.Background(), m, "test@gmail.com", true, gmailReauthHint)
 
 	require.NoError(err)
 	assert.NotNil(ts)

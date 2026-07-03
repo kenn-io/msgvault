@@ -15,10 +15,17 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for PostgreSQL metadata commands.
 	_ "github.com/mattn/go-sqlite3"    // SQLite driver for vectors.db metadata commands.
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
+)
+
+const (
+	cliEmbeddingsOperationActivate = "activate"
+	cliEmbeddingsOperationRetire   = "retire"
 )
 
 type embeddingGenerationRow struct {
@@ -123,6 +130,12 @@ func ensureMainSchema() error {
 }
 
 func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
@@ -193,11 +206,27 @@ func runEmbeddingsList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// errRetireActiveGeneration explains the consequence of retiring the
+// serving generation and the intended replace-then-retire workflow, instead
+// of only naming the override flag.
+func errRetireActiveGeneration(gen vector.GenerationID) error {
+	return fmt.Errorf(
+		"generation %d is active and serving vector search; build and activate a replacement first "+
+			"(msgvault embeddings build --full-rebuild), or pass --force-active to retire it anyway and disable vector search",
+		gen,
+	)
+}
+
 func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
 		return err
 	}
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
@@ -219,7 +248,7 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	case vector.GenerationBuilding:
 	case vector.GenerationActive:
 		if !embeddingsRetireForceActive {
-			return fmt.Errorf("generation %d is active; pass --force-active to retire the serving generation", gen)
+			return errRetireActiveGeneration(gen)
 		}
 	}
 
@@ -252,11 +281,39 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runEmbeddingsRetireCommand(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runEmbeddingsRetireHTTP(cmd, args)
+	}
+	return runEmbeddingsRetire(cmd, args)
+}
+
+func runEmbeddingsRetireHTTP(cmd *cobra.Command, args []string) error {
+	gen, err := parseGenerationID(args[0])
+	if err != nil {
+		return err
+	}
+	if !embeddingsRetireYes {
+		if err := confirmEmbeddingsPlanHTTP(cmd, cliEmbeddingsOperationRetire, gen, embeddingsRetireForceActive); err != nil {
+			return err
+		}
+		if err := cmd.Flags().Set("yes", "true"); err != nil {
+			return fmt.Errorf("set --yes after confirmation: %w", err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
 func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	gen, err := parseGenerationID(args[0])
 	if err != nil {
 		return err
 	}
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := ensureMainSchema(); err != nil {
 		return err
 	}
@@ -327,6 +384,157 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d activated.\n", gen)
 	return nil
+}
+
+func runEmbeddingsActivateCommand(cmd *cobra.Command, args []string) error {
+	if !isDaemonCLISubprocess() {
+		return runEmbeddingsActivateHTTP(cmd, args)
+	}
+	return runEmbeddingsActivate(cmd, args)
+}
+
+func runEmbeddingsActivateHTTP(cmd *cobra.Command, args []string) error {
+	gen, err := parseGenerationID(args[0])
+	if err != nil {
+		return err
+	}
+	if !embeddingsActivateYes {
+		if err := confirmEmbeddingsPlanHTTP(cmd, cliEmbeddingsOperationActivate, gen, embeddingsActivateForce); err != nil {
+			return err
+		}
+		if err := cmd.Flags().Set("yes", "true"); err != nil {
+			return fmt.Errorf("set --yes after confirmation: %w", err)
+		}
+	}
+	return runDaemonCLICommandHTTPFromCobra(cmd, args)
+}
+
+func confirmEmbeddingsPlanHTTP(
+	cmd *cobra.Command,
+	operation string,
+	gen vector.GenerationID,
+	force bool,
+) error {
+	st, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	plan, err := st.PlanCLIEmbeddings(cmd.Context(), daemonclient.CLIEmbeddingsPlanRequest{
+		Operation:    operation,
+		GenerationID: int64(gen),
+		Force:        force,
+	})
+	if err != nil {
+		return err
+	}
+	if plan == nil || !plan.NeedsConfirmation {
+		return nil
+	}
+	if !confirmEmbed(cmd, plan.Prompt) {
+		return errors.New("aborted")
+	}
+	return nil
+}
+
+func planCLIEmbeddings(ctx context.Context, req api.CLIEmbeddingsPlanRequest) (api.CLIEmbeddingsPlanResponse, error) {
+	gen := vector.GenerationID(req.GenerationID)
+	if gen <= 0 {
+		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("invalid generation id %d", req.GenerationID)
+	}
+	switch req.Operation {
+	case cliEmbeddingsOperationRetire:
+		return planCLIEmbeddingsRetire(ctx, gen, req.Force)
+	case cliEmbeddingsOperationActivate:
+		return planCLIEmbeddingsActivate(ctx, gen, req.Force)
+	default:
+		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("unknown embeddings operation %q", req.Operation)
+	}
+}
+
+func planCLIEmbeddingsRetire(
+	ctx context.Context,
+	gen vector.GenerationID,
+	forceActive bool,
+) (api.CLIEmbeddingsPlanResponse, error) {
+	if err := ensureMainSchema(); err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	defer closeDB()
+
+	row, err := getEmbeddingGeneration(ctx, db, rebind, gen)
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	switch row.State {
+	case vector.GenerationRetired:
+		return api.CLIEmbeddingsPlanResponse{}, nil
+	case vector.GenerationBuilding:
+	case vector.GenerationActive:
+		if !forceActive {
+			return api.CLIEmbeddingsPlanResponse{}, errRetireActiveGeneration(gen)
+		}
+	}
+	return api.CLIEmbeddingsPlanResponse{
+		NeedsConfirmation: true,
+		Prompt:            fmt.Sprintf("Retire generation %d (%s)? ", gen, row.Fingerprint),
+	}, nil
+}
+
+func planCLIEmbeddingsActivate(
+	ctx context.Context,
+	gen vector.GenerationID,
+	force bool,
+) (api.CLIEmbeddingsPlanResponse, error) {
+	if err := ensureMainSchema(); err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	defer closeDB()
+
+	row, err := getEmbeddingGeneration(ctx, db, rebind, gen)
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	if row.State != vector.GenerationBuilding {
+		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d is %q, not %q", gen, row.State, vector.GenerationBuilding)
+	}
+	expected := cfg.Vector.GenerationFingerprint()
+	if row.Fingerprint != expected && !force {
+		return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d fingerprint=%q does not match config=%q; pass --force to activate anyway",
+			gen, row.Fingerprint, expected)
+	}
+	if !force {
+		if err := fillCoverage(ctx, &row); err != nil {
+			return api.CLIEmbeddingsPlanResponse{}, err
+		}
+		if row.MissingCount > 0 {
+			return api.CLIEmbeddingsPlanResponse{}, fmt.Errorf("generation %d still has %d message(s) needing embedding; run `msgvault embeddings resume --backstop` to recover any below-watermark stragglers, or pass --force",
+				gen, row.MissingCount)
+		}
+	}
+
+	active, hasActive, err := activeEmbeddingGeneration(ctx, db, rebind)
+	if err != nil {
+		return api.CLIEmbeddingsPlanResponse{}, err
+	}
+	prompt := fmt.Sprintf("Activate generation %d (%s)", gen, row.Fingerprint)
+	if hasActive {
+		prompt += fmt.Sprintf(" and retire active generation %d (%s)", active.ID, active.Fingerprint)
+	}
+	prompt += "? "
+	return api.CLIEmbeddingsPlanResponse{
+		NeedsConfirmation: true,
+		Prompt:            prompt,
+	}, nil
 }
 
 func remainingCoverageHint(gen vector.GenerationID, remaining int64) string {

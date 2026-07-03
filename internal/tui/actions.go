@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 
@@ -34,23 +35,56 @@ type DeletionContext struct {
 // ActionController handles business logic for actions like deletion and export,
 // keeping domain operations out of the TUI Model.
 type ActionController struct {
-	queries   query.Engine
-	deletions *deletion.Manager
-	dataDir   string
+	queries          query.Engine
+	deletions        *deletion.Manager
+	dataDir          string
+	manifestSaver    DeletionManifestSaver
+	attachmentReader AttachmentReader
+}
+
+// DeletionManifestSaver saves a staged deletion manifest.
+type DeletionManifestSaver interface {
+	SaveManifest(manifest *deletion.Manifest) error
+}
+
+// AttachmentReader opens attachment content by content hash.
+type AttachmentReader interface {
+	OpenAttachment(ctx context.Context, contentHash string) (io.ReadCloser, error)
+}
+
+// ActionControllerOptions configures external action dependencies.
+type ActionControllerOptions struct {
+	DataDir          string
+	Deletions        *deletion.Manager
+	ManifestSaver    DeletionManifestSaver
+	AttachmentReader AttachmentReader
 }
 
 // NewActionController creates a new action controller.
 // If deletions is nil, the manager will be lazily initialized on first use.
 func NewActionController(queries query.Engine, dataDir string, deletions *deletion.Manager) *ActionController {
+	return NewActionControllerWithOptions(queries, ActionControllerOptions{
+		DataDir:   dataDir,
+		Deletions: deletions,
+	})
+}
+
+// NewActionControllerWithOptions creates an action controller with explicit dependencies.
+func NewActionControllerWithOptions(queries query.Engine, opts ActionControllerOptions) *ActionController {
 	return &ActionController{
-		queries:   queries,
-		deletions: deletions,
-		dataDir:   dataDir,
+		queries:          queries,
+		deletions:        opts.Deletions,
+		dataDir:          opts.DataDir,
+		manifestSaver:    opts.ManifestSaver,
+		attachmentReader: opts.AttachmentReader,
 	}
 }
 
 // SaveManifest initializes the deletion manager if needed and saves the manifest.
 func (c *ActionController) SaveManifest(manifest *deletion.Manifest) error {
+	if c.manifestSaver != nil {
+		return c.manifestSaver.SaveManifest(manifest)
+	}
 	if c.deletions == nil {
 		deletionsDir := filepath.Join(c.dataDir, "deletions")
 		mgr, err := deletion.NewManager(deletionsDir)
@@ -164,9 +198,8 @@ func (c *ActionController) buildManifestDescription(ctx DeletionContext) string 
 		description = "selection"
 	}
 
-	if len(description) > 30 {
-		description = description[:30]
-	}
+	// Store the full description; truncation is a display-only concern applied
+	// by the table views, so JSON and detail output carry the complete value.
 	return description
 }
 
@@ -235,7 +268,7 @@ func (c *ActionController) ExportAttachments(detail *query.MessageDetail, select
 	zipFilename := fmt.Sprintf("%s_%d.zip", subject, detail.ID)
 
 	return func() tea.Msg {
-		stats := export.Attachments(zipFilename, attachmentsDir, selectedAttachments)
+		stats := c.exportSelectedAttachments(zipFilename, attachmentsDir, selectedAttachments)
 		msg := ExportResultMsg{Result: export.FormatExportResult(stats)}
 		// Only set Err for true failures: write errors or zero exported files.
 		// Partial success (some files exported, some errors) should show the
@@ -245,4 +278,17 @@ func (c *ActionController) ExportAttachments(detail *query.MessageDetail, select
 		}
 		return msg
 	}
+}
+
+func (c *ActionController) exportSelectedAttachments(
+	zipFilename string,
+	attachmentsDir string,
+	attachments []query.AttachmentInfo,
+) export.ExportStats {
+	if c.attachmentReader == nil {
+		return export.Attachments(zipFilename, attachmentsDir, attachments)
+	}
+	return export.AttachmentsWithOpener(zipFilename, attachments, func(contentHash string) (io.ReadCloser, error) {
+		return c.attachmentReader.OpenAttachment(context.Background(), contentHash)
+	})
 }

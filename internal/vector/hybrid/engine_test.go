@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -48,7 +48,7 @@ func newEngineFixture(t *testing.T) *engineFixture {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	mainDB, err := sql.Open("sqlite3", mainPath)
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = mainDB.Close() })
 
 	// sent_at is DATETIME (text) to match the production schema.
@@ -82,7 +82,7 @@ CREATE TABLE message_recipients (
     participant_id INTEGER NOT NULL
 );`
 	_, err = mainDB.Exec(schema)
-	requirepkg.NoError(t, err, "schema")
+	require.NoError(t, err, "schema")
 	rows := []struct {
 		id      int64
 		subject string
@@ -95,13 +95,13 @@ CREATE TABLE message_recipients (
 	for _, r := range rows {
 		_, err := mainDB.Exec(
 			`INSERT INTO messages (id, subject) VALUES (?, ?)`, r.id, r.subject)
-		requirepkg.NoError(t, err, "insert msg")
+		require.NoError(t, err, "insert msg")
 		_, err = mainDB.Exec(
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, r.id, r.body)
-		requirepkg.NoError(t, err, "insert body")
+		require.NoError(t, err, "insert body")
 		_, err = mainDB.Exec(
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, r.id, r.subject, r.body)
-		requirepkg.NoError(t, err, "insert fts")
+		require.NoError(t, err, "insert fts")
 	}
 
 	vecPath := filepath.Join(dir, "vectors.db")
@@ -111,18 +111,18 @@ CREATE TABLE message_recipients (
 		Dimension: 4,
 		MainDB:    mainDB,
 	})
-	requirepkg.NoError(t, err, "sqlitevec.Open")
+	require.NoError(t, err, "sqlitevec.Open")
 	t.Cleanup(func() { _ = b.Close() })
 
 	gid, err := b.CreateGeneration(ctx, "fake-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	chunks := []vector.Chunk{
 		{MessageID: 1, Vector: unitVec(0), SourceCharLen: 50},
 		{MessageID: 2, Vector: unitVec(1), SourceCharLen: 30},
 		{MessageID: 3, Vector: unitVec(2), SourceCharLen: 40},
 	}
-	requirepkg.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
+	require.NoError(t, b.Upsert(ctx, gid, chunks), "Upsert")
+	require.NoError(t, b.ActivateGeneration(ctx, gid, true), "Activate")
 
 	fp := "fake-model:4"
 	eng := NewEngine(b, mainDB, &fakeEmbedder{dim: 4}, Config{
@@ -148,8 +148,8 @@ func unitVec(axis int) []float32 {
 }
 
 func TestEngine_Hybrid_HappyPath(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -175,7 +175,7 @@ func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
 		FreeText: "lunch",
 		Limit:    5,
 	})
-	requirepkg.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
+	require.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
 
 	_, _, err = f.Engine.Search(ctx, SearchRequest{
 		Mode:     ModeVector,
@@ -183,7 +183,7 @@ func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
 		Limit:    5,
 		Filter:   vector.Filter{MessageTypes: []string{"email"}},
 	})
-	requirepkg.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
+	require.ErrorIs(t, err, vector.ErrIndexScopeMismatch)
 
 	_, _, err = f.Engine.Search(ctx, SearchRequest{
 		Mode:     ModeVector,
@@ -191,7 +191,7 @@ func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
 		Limit:    5,
 		Filter:   vector.Filter{MessageTypes: []string{"sms"}},
 	})
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // TestFTSTerms covers the FreeText → dialect-neutral term-slice
@@ -216,7 +216,7 @@ func TestFTSTerms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assertpkg.Equal(t, tc.want, ftsTerms(tc.in))
+			assert.Equal(t, tc.want, ftsTerms(tc.in))
 		})
 	}
 }
@@ -229,8 +229,8 @@ func TestFTSTerms(t *testing.T) {
 // so these queries succeed — and a metacharacter-laden query still
 // matches on its real terms via the BM25 branch.
 func TestEngine_Hybrid_PunctuationQuery(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -261,8 +261,8 @@ func TestEngine_Hybrid_PunctuationQuery(t *testing.T) {
 }
 
 func TestEngine_Vector_HappyPath(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -298,7 +298,7 @@ func TestEngine_StaleIndexRejected(t *testing.T) {
 	_, _, err := badEng.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrIndexStale)
+	assert.ErrorIs(t, err, vector.ErrIndexStale)
 }
 
 func TestEngine_FTSMode_Rejected(t *testing.T) {
@@ -307,7 +307,7 @@ func TestEngine_FTSMode_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeFTS, FreeText: "meeting", Limit: 5,
 	})
-	assertpkg.Error(t, err, "expected error for mode=fts")
+	assert.Error(t, err, "expected error for mode=fts")
 }
 
 func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
@@ -316,7 +316,7 @@ func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "", Limit: 5,
 	})
-	assertpkg.Error(t, err, "expected error for empty FreeText")
+	assert.Error(t, err, "expected error for empty FreeText")
 }
 
 func TestEngine_UnknownMode_Rejected(t *testing.T) {
@@ -325,7 +325,7 @@ func TestEngine_UnknownMode_Rejected(t *testing.T) {
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: "bogus", FreeText: "x", Limit: 5,
 	})
-	assertpkg.Error(t, err, "expected error for unknown mode")
+	assert.Error(t, err, "expected error for unknown mode")
 }
 
 // TestEngine_PoolSaturated_WhenLimitBelowK verifies the fix for a
@@ -334,7 +334,7 @@ func TestEngine_UnknownMode_Rejected(t *testing.T) {
 // that threshold, so the engine incorrectly reported an unsaturated
 // pool even when the BM25 branch had more than K candidates.
 func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 	f := newEngineFixture(t)
 
@@ -365,7 +365,7 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 	})
 	require.NoError(err, "Search")
 	require.Len(results, 1, "Limit=1")
-	assertpkg.True(t, meta.PoolSaturated, "PoolSaturated should be true despite Limit(1) < KPerSignal(2)")
+	assert.True(t, meta.PoolSaturated, "PoolSaturated should be true despite Limit(1) < KPerSignal(2)")
 }
 
 // TestEngine_NoGenerations_ReturnsNotEnabled verifies the Search
@@ -376,11 +376,11 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 func TestEngine_NoGenerations_ReturnsNotEnabled(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
+	require.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrNotEnabled)
+	assert.ErrorIs(t, err, vector.ErrNotEnabled)
 }
 
 // TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout covers the
@@ -401,8 +401,8 @@ func TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout(t *testing.T) {
 	_, _, err := timingOutEng.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	requirepkg.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
-	requirepkg.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 // timeoutEmbedder always reports the request context's deadline-exceeded
@@ -421,13 +421,13 @@ func (timeoutEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error)
 func TestEngine_BuildingOnly_ReturnsBuilding(t *testing.T) {
 	ctx := context.Background()
 	f := newEngineFixture(t)
-	requirepkg.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
+	require.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	// A new building generation must be present; CreateGeneration
 	// writes one directly.
 	_, err := f.Backend.CreateGeneration(ctx, "fake-model", 4, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	_, _, err = f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "meeting", Limit: 5,
 	})
-	assertpkg.ErrorIs(t, err, vector.ErrIndexBuilding)
+	assert.ErrorIs(t, err, vector.ErrIndexBuilding)
 }

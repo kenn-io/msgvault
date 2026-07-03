@@ -116,6 +116,7 @@ func countMissingE2E(t *testing.T, db *sql.DB, gen int64) int {
 		`SELECT COUNT(*) FROM messages
 		  WHERE (embed_gen IS NULL OR embed_gen <> ?)
 		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, gen).Scan(&n))
+
 	return n
 }
 
@@ -126,12 +127,21 @@ func countMissingE2E(t *testing.T, db *sql.DB, gen int64) int {
 // and when the interval has NOT elapsed it only runs RunOnce (which misses
 // the sub-watermark straggler).
 func TestEmbedJob_Backstop_RecoversSubWatermarkStraggler(t *testing.T) {
+	assert := assert.New(
+		t,
+	)
+	require := require.New(t)
+
 	ctx := context.Background()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
-	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
+	require.NoError(
+		sqlitevec.RegisterExtension(), "RegisterExtension")
+
 	mainDB, err := sql.Open(sqlitevec.DriverName(), mainPath)
-	require.NoError(t, err, "open main")
+	require.NoError(
+		err, "open main")
+
 	t.Cleanup(func() { _ = mainDB.Close() })
 
 	_, err = mainDB.Exec(`
@@ -158,27 +168,37 @@ AFTER INSERT ON message_bodies FOR EACH ROW
 BEGIN
     UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.message_id;
 END;`)
-	require.NoError(t, err, "schema")
+	require.NoError(
+		err, "schema")
+
 	const n = 4
 	for i := 1; i <= n; i++ {
 		_, err = mainDB.Exec(`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
-		require.NoError(t, err, "insert message")
+		require.NoError(
+			err, "insert message")
+
 		_, err = mainDB.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
-		require.NoError(t, err, "insert body")
+		require.NoError(
+			err, "insert body")
 	}
 
 	vecPath := filepath.Join(dir, "vectors.db")
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: mainDB,
 	})
-	require.NoError(t, err, "sqlitevec.Open")
+	require.NoError(
+		err, "sqlitevec.Open")
+
 	t.Cleanup(func() { _ = backend.Close() })
 
 	gen, err := backend.CreateGeneration(ctx, "fake", 4, "")
-	require.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
 	vecDB, err := sql.Open(sqlitevec.DriverName(), vecPath)
-	require.NoError(t, err, "open vectors handle")
+	require.NoError(
+		err, "open vectors handle")
+
 	t.Cleanup(func() { _ = vecDB.Close() })
 
 	ws := &e2eWorkStore{db: mainDB}
@@ -191,16 +211,22 @@ END;`)
 	// Drain the corpus fully via the worker so every message is embedded +
 	// stamped and the per-gen watermark advances to the max id.
 	_, err = worker.RunOnce(ctx, gen)
-	require.NoError(t, err, "initial drain")
-	require.NoError(t, backend.ActivateGeneration(ctx, gen, false), "activate (coverage complete)")
-	require.Equal(t, 0, countMissingE2E(t, mainDB, int64(gen)), "all embedded after drain")
+	require.NoError(
+		err, "initial drain")
+
+	require.NoError(
+		backend.ActivateGeneration(ctx, gen, false), "activate (coverage complete)")
+
+	require.Equal(0, countMissingE2E(t, mainDB, int64(gen)), "all embedded after drain")
 
 	// Create a sub-watermark straggler: un-stamp message 2 (its id is below
 	// the watermark, so a plain RunOnce will skip it). This models a
 	// repair-encoding NULL reset.
 	_, err = mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL WHERE id = 2`)
-	require.NoError(t, err, "un-stamp straggler")
-	require.Equal(t, 1, countMissingE2E(t, mainDB, int64(gen)), "straggler now missing")
+	require.NoError(
+		err, "un-stamp straggler")
+
+	require.Equal(1, countMissingE2E(t, mainDB, int64(gen)), "straggler now missing")
 
 	now := time.Now()
 	clock := &now
@@ -220,13 +246,13 @@ END;`)
 	// Tick A (within interval): RunOnce only. The sub-watermark straggler is
 	// NOT recovered because RunOnce resumes from the watermark.
 	job.Run(ctx)
-	assert.Equal(t, 1, countMissingE2E(t, mainDB, int64(gen)),
+	assert.Equal(1, countMissingE2E(t, mainDB, int64(gen)),
 		"within interval: RunOnce alone misses the sub-watermark straggler")
 
 	// Tick B (interval elapsed): the backstop runs and recovers the
 	// straggler without re-embedding the already-stamped messages.
 	*clock = now.Add(25 * time.Hour)
 	job.Run(ctx)
-	assert.Equal(t, 0, countMissingE2E(t, mainDB, int64(gen)),
+	assert.Equal(0, countMissingE2E(t, mainDB, int64(gen)),
 		"after interval: backstop recovers the sub-watermark straggler")
 }

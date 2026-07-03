@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -19,7 +19,7 @@ import (
 // query returns zero rows from any backend without ever building a
 // malformed FTS argument. Runs under both SQLite and PostgreSQL.
 func TestSearchMessagesQuery_TokenlessTextTerms(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	// Seed two messages with real searchable content so the test would
@@ -71,9 +71,9 @@ func TestSearchMessagesQuery_TokenlessTextTerms(t *testing.T) {
 			msgs, total, err := f.Store.SearchMessagesQuery(
 				&search.Query{TextTerms: tc.terms}, 0, 50,
 			)
-			requirepkg.NoError(t, err, "SearchMessagesQuery(%v)", tc.terms)
-			assertpkg.Equal(t, int64(0), total, "total (FALSE predicate should match nothing)")
-			assertpkg.Empty(t, msgs)
+			require.NoError(err, "SearchMessagesQuery(%v)", tc.terms)
+			assert.Equal(t, int64(0), total, "total (FALSE predicate should match nothing)")
+			assert.Empty(t, msgs)
 		})
 	}
 }
@@ -94,7 +94,7 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 		WithSubject("urgent invoice").
 		WithSnippet("please review").
 		Create(t, f.Store)
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg1,
+	require.NoError(t, f.Store.UpsertMessageBody(msg1,
 		sql.NullString{String: "invoice body for review", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 1")
 
@@ -103,29 +103,29 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 		WithSubject("project plan").
 		WithSnippet("status update").
 		Create(t, f.Store)
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg2,
+	require.NoError(t, f.Store.UpsertMessageBody(msg2,
 		sql.NullString{String: "project plan body", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 2")
 
 	_, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS")
+	require.NoError(t, err, "BackfillFTS")
 
 	// Multi-word query was the canonical PG failure: "invoice review"
 	// fed straight into to_tsquery would error. Now it tokenizes into
 	// two terms AND'd by the dialect helper.
 	t.Run("multi_word_match", func(t *testing.T) {
 		msgs, total, err := f.Store.SearchMessages("invoice review", 0, 50)
-		requirepkg.NoError(t, err, "SearchMessages('invoice review')")
-		requirepkg.GreaterOrEqual(t, total, int64(1), "expected >= 1 hit for 'invoice review'")
-		requirepkg.GreaterOrEqual(t, len(msgs), 1)
+		require.NoError(t, err, "SearchMessages('invoice review')")
+		require.GreaterOrEqual(t, total, int64(1), "expected >= 1 hit for 'invoice review'")
+		require.GreaterOrEqual(t, len(msgs), 1)
 	})
 
 	// Single-word query still works.
 	t.Run("single_word_match", func(t *testing.T) {
 		msgs, total, err := f.Store.SearchMessages("project", 0, 50)
-		requirepkg.NoError(t, err, "SearchMessages('project')")
-		requirepkg.GreaterOrEqual(t, total, int64(1), "expected >= 1 hit for 'project'")
-		requirepkg.GreaterOrEqual(t, len(msgs), 1)
+		require.NoError(t, err, "SearchMessages('project')")
+		require.GreaterOrEqual(t, total, int64(1), "expected >= 1 hit for 'project'")
+		require.GreaterOrEqual(t, len(msgs), 1)
 	})
 
 	// Each of these reduces to no usable tokens after splitting on
@@ -142,15 +142,15 @@ func TestSearchMessages_LegacyRawString(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			msgs, total, err := f.Store.SearchMessages(tc.query, 0, 50)
-			requirepkg.NoError(t, err, "SearchMessages(%q)", tc.query)
-			assertpkg.Equal(t, int64(0), total)
-			assertpkg.Empty(t, msgs)
+			require.NoError(t, err, "SearchMessages(%q)", tc.query)
+			assert.Equal(t, int64(0), total)
+			assert.Empty(t, msgs)
 		})
 	}
 }
 func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	emailMsg := f.NewMessage().
@@ -158,7 +158,7 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 		WithSubject("lunch plans").
 		WithSnippet("grab tacos").
 		Create(t, f.Store)
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(emailMsg,
+	require.NoError(f.Store.UpsertMessageBody(emailMsg,
 		sql.NullString{String: "lunch tacos", Valid: true},
 		sql.NullString{}), "UpsertMessageBody email")
 

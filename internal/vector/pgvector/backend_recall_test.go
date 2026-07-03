@@ -101,6 +101,9 @@ func seedRecallCorpus(t *testing.T, b *Backend, db *sql.DB, multiChunks, singles
 // the first fixed over-fetch (k*annOverFetchFactor) collapses to a single
 // distinct message after GROUP BY and Search short-returns.
 func TestBackend_Search_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 
 	// message 1 contributes many chunks (>> annOverFetchFactor); plus k-1
@@ -111,18 +114,20 @@ func TestBackend_Search_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 	gen, query := seedRecallCorpus(t, b, db, multiChunks, singles)
 
 	hits, err := b.Search(ctx, gen, query, k, vector.Filter{})
-	require.NoError(t, err, "Search")
-	require.Len(t, hits, k, "Search must return k distinct messages despite the multi-chunk message")
+	require.NoError(
+		err, "Search")
+
+	require.Len(hits, k, "Search must return k distinct messages despite the multi-chunk message")
 
 	seen := map[int64]int{}
 	for _, h := range hits {
 		seen[h.MessageID]++
 	}
-	require.Len(t, seen, k, "hits must be k distinct messages")
+	require.Len(seen, k, "hits must be k distinct messages")
 	for id, n := range seen {
-		assert.Equalf(t, 1, n, "message %d returned %d times, want exactly 1", id, n)
+		assert.Equalf(1, n, "message %d returned %d times, want exactly 1", id, n)
 	}
-	assert.Equal(t, int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
+	assert.Equal(int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
 }
 
 // TestBackend_Search_Filtered_MultiChunkCorpus_ReturnsKDistinct asserts
@@ -135,6 +140,9 @@ func TestBackend_Search_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 // count (5), saturating before the multi-chunk message's 40 chunks are
 // deduplicated, and Search short-returns a single distinct message.
 func TestBackend_Search_Filtered_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 
 	const k = 5
@@ -146,18 +154,20 @@ func TestBackend_Search_Filtered_MultiChunkCorpus_ReturnsKDistinct(t *testing.T)
 	// non-empty, so Search takes the filtered branch.
 	no := false
 	hits, err := b.Search(ctx, gen, query, k, vector.Filter{HasAttachment: &no})
-	require.NoError(t, err, "Search")
-	require.Len(t, hits, k, "filtered Search must return k distinct messages despite the multi-chunk message")
+	require.NoError(
+		err, "Search")
+
+	require.Len(hits, k, "filtered Search must return k distinct messages despite the multi-chunk message")
 
 	seen := map[int64]int{}
 	for _, h := range hits {
 		seen[h.MessageID]++
 	}
-	require.Len(t, seen, k, "filtered hits must be k distinct messages")
+	require.Len(seen, k, "filtered hits must be k distinct messages")
 	for id, n := range seen {
-		assert.Equalf(t, 1, n, "message %d returned %d times, want exactly 1", id, n)
+		assert.Equalf(1, n, "message %d returned %d times, want exactly 1", id, n)
 	}
-	assert.Equal(t, int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
+	assert.Equal(int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
 }
 
 // TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct mirrors the
@@ -165,6 +175,9 @@ func TestBackend_Search_Filtered_MultiChunkCorpus_ReturnsKDistinct(t *testing.T)
 // must reach KPerSignal+1 distinct messages even when a single message's
 // chunks dominate the inner ANN scan.
 func TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 
 	const k = 5
@@ -181,7 +194,8 @@ func TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 	const multiChunks = 200
 	const singles = k - 1 // total chunks = 1*multiChunks + singles = 204 > 48
 	gen, query := seedRecallCorpus(t, b, db, multiChunks, singles)
-	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "ActivateGeneration")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "ActivateGeneration")
 
 	hits, _, err := b.FusedSearch(ctx, vector.FusedRequest{
 		QueryVec:   query,
@@ -190,14 +204,16 @@ func TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 		Limit:      k,
 		RRFK:       60,
 	})
-	require.NoError(t, err, "FusedSearch")
-	require.Len(t, hits, k, "FusedSearch must return k distinct messages despite the multi-chunk message")
+	require.NoError(
+		err, "FusedSearch")
+
+	require.Len(hits, k, "FusedSearch must return k distinct messages despite the multi-chunk message")
 
 	seen := map[int64]struct{}{}
 	for _, h := range hits {
 		seen[h.MessageID] = struct{}{}
 	}
-	assert.Len(t, seen, k, "fused hits must be k distinct messages")
+	assert.Len(seen, k, "fused hits must be k distinct messages")
 
 	// The moderate-distance single-chunk messages (ids 2..k) rank BEHIND
 	// message 1's 200 near-query chunks in ANN order, so they can only enter
@@ -207,10 +223,10 @@ func TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 	// message 1 and none of ids 2..k.
 	for id := int64(2); id <= int64(1+singles); id++ {
 		_, ok := seen[id]
-		assert.Truef(t, ok, "moderate-distance single-chunk message %d must surface; "+
+		assert.Truef(ok, "moderate-distance single-chunk message %d must surface; "+
 			"its presence proves the fused widening loop iterated past message 1's chunk block", id)
 	}
-	assert.Equal(t, int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
+	assert.Equal(int64(1), hits[0].MessageID, "top hit is the multi-chunk message (its chunks are closest)")
 }
 
 // seedDistinctNearQueryCorpus builds a generation of `count` single-chunk
@@ -348,6 +364,9 @@ func innerANNDistinctCount(t *testing.T, conn *sql.Conn, gen vector.GenerationID
 //     store.HNSWEfSearch, proving the GUC survives the full Open path (not
 //     just the RuntimeParams map that postgres_internal_test.go checks).
 func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	b, ctx, db := newBackendForTest(t)
 
 	// The corpus must be large enough that (a) the planner prefers the HNSW
@@ -363,7 +382,7 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// raised value, not the LIMIT, is the binding ceiling on the raised side.
 	const corpus = 2000
 	const innerLimit = 500
-	require.Greater(t, store.HNSWEfSearch, innerLimit,
+	require.Greater(store.HNSWEfSearch, innerLimit,
 		"raised ef_search must be > innerLimit so the index returns the full LIMIT on the raised side")
 
 	gen, query := seedDistinctNearQueryCorpus(t, b, db, corpus)
@@ -371,11 +390,14 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// Pin one connection so SET enable_seqscan / SET hnsw.ef_search stick for
 	// every query below (a pooled *sql.DB would scatter them across conns).
 	conn, err := db.Conn(ctx)
-	require.NoError(t, err, "pin connection")
+	require.NoError(
+		err, "pin connection")
+
 	defer func() { _ = conn.Close() }()
 
 	_, err = conn.ExecContext(ctx, "SET enable_seqscan = off")
-	require.NoError(t, err, "disable seqscan")
+	require.NoError(
+		err, "disable seqscan")
 
 	// Also penalize explicit sorts. enable_seqscan=off alone still leaves the
 	// planner a btree/PK index-scan + Sort alternative for the inner
@@ -387,16 +409,19 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// contrast below: both contrast queries still traverse the HNSW graph, so
 	// the default-vs-raised ef_search cap remains exactly what is measured.
 	_, err = conn.ExecContext(ctx, "SET enable_sort = off")
-	require.NoError(t, err, "penalize explicit sort")
+	require.NoError(
+		err, "penalize explicit sort")
 
 	// (1) Prove the inner ANN subquery uses the HNSW index, not a Seq Scan.
 	_, err = conn.ExecContext(ctx, "SET hnsw.ef_search = 40")
-	require.NoError(t, err, "set default ef_search")
+	require.NoError(
+		err, "set default ef_search")
+
 	explain := explainInnerANN(t, conn, gen, query, innerLimit)
 	indexName := VectorIndexName(recallDim)
-	require.Containsf(t, explain, "Index Scan using "+indexName,
+	require.Containsf(explain, "Index Scan using "+indexName,
 		"inner ANN subquery must use the HNSW index, got plan:\n%s", explain)
-	require.NotContainsf(t, explain, "Seq Scan on embeddings",
+	require.NotContainsf(explain, "Seq Scan on embeddings",
 		"inner ANN subquery must not fall back to a Seq Scan, got plan:\n%s", explain)
 
 	// (2a) Default ef_search=40 caps the HNSW graph traversal, so the inner
@@ -404,7 +429,7 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// for — recall is lost. (The exact cap depends on the randomized graph;
 	// it is consistently well under innerLimit, around ~150 for this shape.)
 	gotDefault := innerANNDistinctCount(t, conn, gen, query, innerLimit)
-	assert.Lessf(t, gotDefault, innerLimit,
+	assert.Lessf(gotDefault, innerLimit,
 		"at default ef_search=40 the HNSW index path must short-return below the inner LIMIT (got %d, limit %d)",
 		gotDefault, innerLimit)
 
@@ -412,12 +437,14 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// the inner scan returns the full innerLimit distinct messages: recall is
 	// restored. This is the exact failure mode store.go's GUC defends against.
 	_, err = conn.ExecContext(ctx, "SET hnsw.ef_search = "+strconv.Itoa(store.HNSWEfSearch))
-	require.NoError(t, err, "raise ef_search")
+	require.NoError(
+		err, "raise ef_search")
+
 	gotRaised := innerANNDistinctCount(t, conn, gen, query, innerLimit)
-	assert.Equalf(t, innerLimit, gotRaised,
+	assert.Equalf(innerLimit, gotRaised,
 		"at ef_search=%d the HNSW index path must surface the full inner LIMIT distinct messages (got %d)",
 		store.HNSWEfSearch, gotRaised)
-	assert.Greaterf(t, gotRaised, gotDefault,
+	assert.Greaterf(gotRaised, gotDefault,
 		"raising ef_search must surface strictly more distinct messages than the default (default=%d raised=%d)",
 		gotDefault, gotRaised)
 
@@ -426,15 +453,19 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 	// RuntimeParam survives to a live session (not just the map asserted by
 	// store's TestPostgresConnConfigRuntimeParams).
 	dsn := os.Getenv("MSGVAULT_TEST_DB")
-	require.NotEmpty(t, dsn, "MSGVAULT_TEST_DB must be set for the wiring guard")
+	require.NotEmpty(dsn, "MSGVAULT_TEST_DB must be set for the wiring guard")
 	storeDB, cleanup, err := store.OpenPostgresDB(dsn)
-	require.NoError(t, err, "open via store path")
+	require.NoError(
+		err, "open via store path")
+
 	defer cleanup()
 	defer func() { _ = storeDB.Close() }()
 	var efSearch string
-	require.NoError(t, storeDB.QueryRowContext(ctx, "SHOW hnsw.ef_search").Scan(&efSearch),
+	require.NoError(
+		storeDB.QueryRowContext(ctx, "SHOW hnsw.ef_search").Scan(&efSearch),
 		"SHOW hnsw.ef_search on store-opened connection")
-	assert.Equal(t, strconv.Itoa(store.HNSWEfSearch), efSearch,
+
+	assert.Equal(strconv.Itoa(store.HNSWEfSearch), efSearch,
 		"store-opened connection must report the raised hnsw.ef_search")
 }
 

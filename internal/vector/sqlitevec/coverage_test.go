@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -37,8 +37,8 @@ import (
 //
 // and verifies the load-bearing invariant live == embedded + blank + missing.
 func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// A sqlitevec test must use a SQLite main store regardless of
@@ -137,8 +137,8 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 // With the live-intersected count the dead message drops out of embedded,
 // so embedded <= stamped <= live, blank >= 0, and the invariant holds.
 func TestCoverageSplit_NonLiveEmbeddedHoldsInvariant(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// See TestCoverageSplit_EmbeddedBlankMissing: a sqlitevec test must use a
@@ -220,8 +220,8 @@ func TestCoverageSplit_NonLiveEmbeddedHoldsInvariant(t *testing.T) {
 }
 
 func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	st := testutil.NewSQLiteTestStore(t)

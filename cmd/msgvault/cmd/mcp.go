@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 var mcpForceSQL bool
@@ -36,65 +35,14 @@ Add to Claude Desktop config:
         "command": "msgvault",
         "args": ["mcp"]
       }
-    }
-  }`,
+	    }
+	  }`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dbPath := cfg.DatabaseDSN()
-
-		// Open read-only: MCP is a query-only workload. This avoids
-		// SQLite write-lock contention when multiple MCP processes
-		// (one per Claude Code session) access the same database.
-		// Schema migrations and FTS backfill are write operations
-		// handled by init-db / sync / tui — not by MCP.
-		s, err := store.OpenReadOnly(dbPath)
+		st, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return fmt.Errorf("open daemon: %w", err)
 		}
-		defer func() { _ = s.Close() }()
-
-		if stale, col, err := s.SchemaStale(); err != nil {
-			return fmt.Errorf("check schema: %w", err)
-		} else if stale {
-			return fmt.Errorf(
-				"database schema is outdated (missing %s); "+
-					"run 'msgvault init-db' to update", col)
-		}
-
-		if s.FTS5Available() && s.NeedsFTSBackfill() {
-			fmt.Fprintf(os.Stderr,
-				"Warning: full-text search index needs populating; "+
-					"body-text search will return incomplete results "+
-					"until 'msgvault tui' or 'msgvault search' is run\n")
-		}
-
-		var engine query.Engine
-		analyticsDir := cfg.AnalyticsDir()
-
-		// The Parquet analytics cache is a SQLite → DuckDB ETL and has no
-		// meaning when the system of record is PostgreSQL: the cache may be
-		// stale relative to PG, and NewDuckDBEngine would receive the
-		// PostgreSQL DSN/handle in its SQLite slots, routing SQLite-specific
-		// queries through a PG connection. On PG, skip the cache entirely and
-		// use the dialect-aware engine directly (mirrors serve.go / tui.go).
-		if s.IsPostgreSQL() {
-			engine = query.NewEngine(s.DB(), true)
-		} else if mcpShouldUseParquet(mcpForceSQL, analyticsDir) {
-			var duckOpts query.DuckDBOptions
-			if mcpNoSQLiteScanner {
-				duckOpts.DisableSQLiteScanner = true
-			}
-			duckEngine, err := query.NewDuckDBEngine(analyticsDir, dbPath, s.DB(), duckOpts)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to open Parquet engine: %v\n", err)
-				fmt.Fprintf(os.Stderr, "Falling back to SQLite\n")
-				engine = query.NewEngine(s.DB(), false)
-			} else {
-				engine = duckEngine
-				defer func() { _ = duckEngine.Close() }()
-			}
-		} else {
-			engine = query.NewEngine(s.DB(), false)
-		}
+		defer func() { _ = st.Close() }()
 
 		// Derive from cmd.Context() so signal handling installed by
 		// the cobra root command (SIGINT/SIGTERM → ctx.Done()) reaches
@@ -103,30 +51,9 @@ Add to Claude Desktop config:
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		// Build optional vector-search components. MCP runs as a
-		// query-only server, so the Worker field goes unused — only
-		// Backend, HybridEngine, and Cfg reach the MCP layer.
-		vf, err := setupVectorFeatures(ctx, s, dbPath, true)
+		opts, err := daemonMCPServeOptions(ctx, st)
 		if err != nil {
-			return fmt.Errorf("vector features: %w", err)
-		}
-		defer func() {
-			if vf != nil && vf.Close != nil {
-				if closeErr := vf.Close(); closeErr != nil {
-					logger.Warn("closing vectors.db failed", "error", closeErr)
-				}
-			}
-		}()
-
-		opts := mcpserver.ServeOptions{
-			Engine:         engine,
-			AttachmentsDir: cfg.AttachmentsDir(),
-			DataDir:        cfg.Data.DataDir,
-		}
-		if vf != nil {
-			opts.HybridEngine = vf.HybridEngine
-			opts.Backend = vf.Backend
-			opts.VectorCfg = vf.Cfg
+			return err
 		}
 
 		if mcpHTTPAddr != "" {
@@ -140,20 +67,119 @@ Add to Claude Desktop config:
 	},
 }
 
-// mcpShouldUseParquet reports whether the MCP server should use the
-// DuckDB/Parquet engine. This is the SQLite-only branch of the engine
-// selection: PostgreSQL stores must be handled by the caller before this
-// is consulted (the Parquet cache is a SQLite → DuckDB ETL with no
-// PostgreSQL meaning). It returns true only when the user has not forced
-// SQLite and a complete Parquet cache exists.
-func mcpShouldUseParquet(forceSQL bool, analyticsDir string) bool {
-	return !forceSQL && query.HasCompleteParquetData(analyticsDir)
+func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
+	opts := mcpserver.ServeOptions{
+		Engine:           daemonclient.NewEngineAdapter(st),
+		AttachmentsDir:   cfg.AttachmentsDir(),
+		AttachmentReader: st,
+		ManifestSaver:    daemonMCPManifestSaver{client: st},
+		DataDir:          cfg.Data.DataDir,
+	}
+
+	vectorAvailable, err := st.VectorSearchAvailable(ctx)
+	if err != nil {
+		return mcpserver.ServeOptions{}, fmt.Errorf("check daemon vector search: %w", err)
+	}
+	if vectorAvailable {
+		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
+		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
+	}
+	return opts, nil
+}
+
+type daemonMCPHybridSearcher struct {
+	client *daemonclient.Client
+}
+
+type daemonMCPManifestSaver struct {
+	client *daemonclient.Client
+}
+
+func (s daemonMCPManifestSaver) SaveManifest(ctx context.Context, manifest *deletion.Manifest) error {
+	_, err := s.client.CreateCLIDeletionManifest(ctx, manifest)
+	return err
+}
+
+func (s daemonMCPHybridSearcher) SearchHybrid(
+	ctx context.Context,
+	req mcpserver.HybridSearchRequest,
+) (*mcpserver.HybridSearchResult, error) {
+	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
+		Query:   req.Query,
+		Account: req.Account,
+		Mode:    req.Mode,
+		Limit:   req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &mcpserver.HybridSearchResult{}, nil
+	}
+
+	hits := make([]mcpserver.HybridSearchHit, len(resp.Results))
+	for i, hit := range resp.Results {
+		hits[i] = mcpserver.HybridSearchHit{
+			ID:             hit.ID,
+			RRFScore:       hit.RRFScore,
+			BM25Score:      hit.BM25Score,
+			VectorScore:    hit.VectorScore,
+			SubjectBoosted: hit.SubjectBoosted,
+		}
+	}
+	return &mcpserver.HybridSearchResult{
+		Hits:          hits,
+		PoolSaturated: resp.PoolSaturated,
+		Generation: mcpserver.HybridGeneration{
+			ID:          resp.Generation.ID,
+			Model:       resp.Generation.Model,
+			Dimension:   resp.Generation.Dimension,
+			Fingerprint: resp.Generation.Fingerprint,
+			State:       resp.Generation.State,
+		},
+	}, nil
+}
+
+type daemonMCPSimilarSearcher struct {
+	client *daemonclient.Client
+}
+
+func (s daemonMCPSimilarSearcher) FindSimilar(
+	ctx context.Context,
+	req mcpserver.SimilarSearchRequest,
+) (*mcpserver.SimilarSearchResult, error) {
+	resp, err := s.client.FindSimilarMessages(ctx, daemonclient.SimilarSearchRequest{
+		MessageID:     req.MessageID,
+		Limit:         req.Limit,
+		Account:       req.Account,
+		MessageType:   req.MessageType,
+		After:         req.After,
+		Before:        req.Before,
+		HasAttachment: req.HasAttachment,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &mcpserver.SimilarSearchResult{SeedMessageID: req.MessageID}, nil
+	}
+	return &mcpserver.SimilarSearchResult{
+		SeedMessageID: resp.SeedMessageID,
+		Generation: mcpserver.HybridGeneration{
+			ID:          resp.Generation.ID,
+			Model:       resp.Generation.Model,
+			Dimension:   resp.Generation.Dimension,
+			Fingerprint: resp.Generation.Fingerprint,
+			State:       resp.Generation.State,
+		},
+		Messages: resp.Messages,
+	}, nil
 }
 
 func init() {
 	rootCmd.AddCommand(mcpCmd)
-	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Force SQLite queries instead of Parquet")
-	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Disable DuckDB sqlite_scanner extension (use direct SQLite fallback)")
+	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
+	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",
 		"Serve over StreamableHTTP on this address (e.g. 127.0.0.1:8080) "+
 			"instead of stdio. Bare port forms (':8080', '8080') bind to "+
@@ -163,6 +189,9 @@ func init() {
 			"built-in authentication, so any reachable client can read your "+
 			"archive. Only set this on trusted networks (Tailscale, "+
 			"VPN-only) or behind an authenticating reverse proxy.")
+	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
+	_ = mcpCmd.Flags().MarkDeprecated("no-sqlite-scanner", "deprecated in 0.17.0; cache engine selection is daemon-managed; use [analytics].engine = \"sql\" for live SQL")
+	_ = mcpCmd.Flags().MarkHidden("force-sql")
 	_ = mcpCmd.Flags().MarkHidden("no-sqlite-scanner")
 }
 

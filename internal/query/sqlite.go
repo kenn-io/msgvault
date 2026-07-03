@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -141,12 +140,12 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 			whereExpr: "p.email_address IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
-		nameExpr := participantNameExpr("p")
+		nameExpr := recipientNameExpr("mr", "p")
 		return aggDimension{
 			keyExpr: nameExpr,
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: nameExpr + " IS NOT NULL",
+			whereExpr: nameExpr + " != ''",
 		}, nil
 	case ViewRecipients:
 		return aggDimension{
@@ -156,12 +155,12 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 			whereExpr: "p.email_address IS NOT NULL",
 		}, nil
 	case ViewRecipientNames:
-		nameExpr := participantNameExpr("p")
+		nameExpr := recipientNameExpr("mr", "p")
 		return aggDimension{
 			keyExpr: nameExpr,
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type IN ('to', 'cc', 'bcc')
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: nameExpr + " IS NOT NULL",
+			whereExpr: nameExpr + " != ''",
 		}, nil
 	case ViewDomains:
 		return aggDimension{
@@ -379,7 +378,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			WHERE p_direct_sender.id = m.sender_id
 			  AND (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)
 			  AND %s = ?
-		))`, participantNameExpr("p_filter_from"), participantNameExpr("p_direct_sender")))
+		))`, recipientNameExpr("mr_filter_from", "p_filter_from"), participantNameExpr("p_direct_sender")))
 		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
 	} else {
 		if filter.Sender != "" {
@@ -425,7 +424,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			SELECT 1 FROM participants p_direct_sender
 			WHERE p_direct_sender.id = m.sender_id
 			  AND %s = ?
-		))`, participantNameExpr("p_filter_from"), participantNameExpr("p_direct_sender")))
+		))`, recipientNameExpr("mr_filter_from", "p_filter_from"), participantNameExpr("p_direct_sender")))
 			args = append(args, filter.SenderName, filter.SenderName)
 		}
 	}
@@ -437,12 +436,12 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			JOIN participants p_sn ON p_sn.id = mr_sn.participant_id
 			WHERE mr_sn.message_id = m.id
 			  AND mr_sn.recipient_type = 'from'
-			  AND %s IS NOT NULL
+			  AND %s != ''
 		) AND NOT EXISTS (
 			SELECT 1 FROM participants p_ds
 			WHERE p_ds.id = m.sender_id
 			  AND %s IS NOT NULL
-		))`, participantNameExpr("p_sn"), participantNameExpr("p_ds")))
+		))`, recipientNameExpr("mr_sn", "p_sn"), participantNameExpr("p_ds")))
 	}
 
 	// Recipient + recipient-name filters — use EXISTS to avoid 1:N join
@@ -461,7 +460,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			  AND mr_filter_to.recipient_type IN ('to', 'cc', 'bcc')
 			  AND p_filter_to.email_address = ?
 			  AND %s = ?
-		)`, participantNameExpr("p_filter_to")))
+		)`, recipientNameExpr("mr_filter_to", "p_filter_to")))
 		args = append(args, filter.Recipient, filter.RecipientName)
 	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
@@ -490,7 +489,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			WHERE mr_filter_to.message_id = m.id
 			  AND mr_filter_to.recipient_type IN ('to', 'cc', 'bcc')
 			  AND %s = ?
-		)`, participantNameExpr("p_filter_to")))
+		)`, recipientNameExpr("mr_filter_to", "p_filter_to")))
 		args = append(args, filter.RecipientName)
 	} else if filter.RecipientName == "" && filter.MatchesEmpty(ViewRecipientNames) {
 		conditions = append(conditions, fmt.Sprintf(`NOT EXISTS (
@@ -498,8 +497,8 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter, table
 			JOIN participants p_rn ON p_rn.id = mr_rn.participant_id
 			WHERE mr_rn.message_id = m.id
 			  AND mr_rn.recipient_type IN ('to', 'cc', 'bcc')
-			  AND %s IS NOT NULL
-		)`, participantNameExpr("p_rn")))
+			  AND %s != ''
+		)`, recipientNameExpr("mr_rn", "p_rn")))
 	}
 
 	// Domain filter — use EXISTS so a message with multiple 'from' rows sharing
@@ -822,7 +821,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -832,18 +831,13 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		%s
 		WHERE %s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, filterJoins, whereClause, orderBy)
+	`, sqliteSenderNameExpr, sqliteSenderJoin, filterJoins, whereClause, orderBy)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -929,7 +923,7 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -939,15 +933,10 @@ func (e *SQLiteEngine) GetMessageSummariesByIDs(ctx context.Context, ids []int64
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true))
+	`, sqliteSenderNameExpr, sqliteSenderJoin, strings.Join(placeholders, ","), store.LiveMessagesWhere("m", true))
 
 	rows, err := e.queryContext(ctx, q, args...)
 	if err != nil {
@@ -1144,6 +1133,8 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages
 			WHERE id IN (
@@ -1156,13 +1147,20 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		msgQuery = fmt.Sprintf(`
 			SELECT
 				COUNT(*),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN m.deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(size_estimate), 0)
 			FROM messages m
 			WHERE %s
 		`, whereClause)
 	}
 
-	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(&stats.MessageCount, &stats.TotalSize); err != nil {
+	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(
+		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
+		&stats.TotalSize,
+	); err != nil {
 		return nil, fmt.Errorf("message stats: %w", err)
 	}
 
@@ -1267,7 +1265,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
 				  AND %s = ?
 			)
-		)`, participantNameExpr("p_from"), participantNameExpr("p_ds")))
+		)`, recipientNameExpr("mr_from", "p_from"), participantNameExpr("p_ds")))
 		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
 	} else if filter.Sender != "" {
 		conditions = append(conditions, `(
@@ -1296,7 +1294,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 				SELECT 1 FROM participants p_ds
 				WHERE p_ds.id = m.sender_id AND %s = ?
 			)
-		)`, participantNameExpr("p_from"), participantNameExpr("p_ds")))
+		)`, recipientNameExpr("mr_from", "p_from"), participantNameExpr("p_ds")))
 		args = append(args, filter.SenderName, filter.SenderName)
 	}
 
@@ -1311,7 +1309,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			  AND mr_to.recipient_type IN ('to', 'cc', 'bcc')
 			  AND p_to.email_address = ?
 			  AND %s = ?
-		)`, participantNameExpr("p_to")))
+		)`, recipientNameExpr("mr_to", "p_to")))
 		args = append(args, filter.Recipient, filter.RecipientName)
 	} else if filter.Recipient != "" {
 		conditions = append(conditions, `EXISTS (
@@ -1329,7 +1327,7 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 			WHERE mr_to.message_id = m.id
 			  AND mr_to.recipient_type IN ('to', 'cc', 'bcc')
 			  AND %s = ?
-		)`, participantNameExpr("p_to")))
+		)`, recipientNameExpr("mr_to", "p_to")))
 		args = append(args, filter.RecipientName)
 	}
 
@@ -1674,7 +1672,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -1684,18 +1682,13 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
 		FROM messages m
-		LEFT JOIN participants p_sender ON p_sender.id = COALESCE(
-			(SELECT mr.participant_id FROM message_recipients mr
-			 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-			 ORDER BY mr.id LIMIT 1),
-			m.sender_id
-		)
+		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
 		%s
 		WHERE %s
 		ORDER BY m.sent_at DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, ftsJoin, whereClause)
+	`, sqliteSenderNameExpr, sqliteSenderJoin, ftsJoin, whereClause)
 
 	args = append(args, limit, offset)
 
@@ -1813,7 +1806,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// type (e.g. Texts mode → sms/mms). Without this, SearchFast within a
 	// type-scoped view would silently widen back to all message types.
 	if filter.MessageType != "" {
-		messageTypes, noMatches := scopedMessageTypes(merged.MessageTypes, filter.MessageType)
+		messageTypes, noMatches := ScopedMessageTypes(merged.MessageTypes, filter.MessageType)
 		merged.MessageTypes = messageTypes
 		if noMatches {
 			merged.AccountIDs = []int64{}
@@ -1874,23 +1867,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	// contexts will not be scoped to the current view.
 
 	return &merged
-}
-
-func containsMessageType(types []string, want string) bool {
-	return slices.Contains(types, want)
-}
-
-func scopedMessageTypes(queryTypes []string, filterType string) ([]string, bool) {
-	if filterType == "" {
-		return append([]string(nil), queryTypes...), false
-	}
-	if len(queryTypes) == 0 {
-		return []string{filterType}, false
-	}
-	if containsMessageType(queryTypes, filterType) {
-		return []string{filterType}, false
-	}
-	return []string{filterType}, true
 }
 
 // timePeriodToBounds converts a time period string to half-open date

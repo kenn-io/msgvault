@@ -24,6 +24,7 @@ func backfillLedgerMarked(t *testing.T, db *sql.DB) bool {
 	require.NoError(t, db.QueryRow(
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`,
 		embedGenBackfillMigration).Scan(&n))
+
 	return n > 0
 }
 
@@ -41,7 +42,13 @@ func backfillLedgerMarked(t *testing.T, db *sql.DB) bool {
 // generation must NOT attempt the write, must NOT error, and must leave the
 // ledger unmarked. Migrate still runs (vectors.db is read-write).
 func TestBackfillEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
-	require.NoError(t, RegisterExtension(), "RegisterExtension")
+	assert := assert.New(
+		t,
+	)
+	require := require.New(t)
+	require.NoError(
+		RegisterExtension(), "RegisterExtension")
+
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -52,38 +59,59 @@ func TestBackfillEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	// whose embedding exists, then reset embed_gen + clear the ledger so the
 	// backfill would have real work (the embed_gen-stamping write) to do.
 	s, err := store.Open(mainPath)
-	require.NoError(t, err, "store.Open (rw)")
-	require.NoError(t, s.InitSchema(), "InitSchema")
+	require.NoError(
+		err, "store.Open (rw)")
+
+	require.NoError(
+		s.InitSchema(), "InitSchema")
+
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
 VALUES (1, 1, 1, 'm1', 'email');
 `)
-	require.NoError(t, err, "seed message")
+	require.NoError(
+		err, "seed message")
 
 	rw, err := Open(ctx, Options{
 		Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB(),
 	})
-	require.NoError(t, err, "rw backend Open")
+	require.NoError(
+		err, "rw backend Open")
+
 	gen, err := rw.CreateGeneration(ctx, "model", 4, "model:4")
-	require.NoError(t, err, "CreateGeneration")
-	require.NoError(t, rw.Upsert(ctx, gen, vectorChunkOne()), "Upsert")
-	require.NoError(t, rw.ActivateGeneration(ctx, gen, true), "Activate")
-	require.NoError(t, rw.Close(), "close rw backend")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		rw.Upsert(ctx, gen, vectorChunkOne()), "Upsert")
+
+	require.NoError(
+		rw.ActivateGeneration(ctx, gen, true), "Activate")
+
+	require.NoError(
+		rw.Close(), "close rw backend")
 
 	// Simulate the pre-upgrade state: embed_gen NULL everywhere, ledger
 	// cleared. A WRITE-path Open here would stamp embed_gen and mark the
 	// ledger; a READ-only Open must do neither.
 	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
-	require.NoError(t, err, "reset embed_gen")
+	require.NoError(
+		err, "reset embed_gen")
+
 	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
-	require.NoError(t, err, "clear ledger")
-	require.NoError(t, s.Close(), "close rw store")
+	require.NoError(
+		err, "clear ledger")
+
+	require.NoError(
+		s.Close(), "close rw store")
 
 	// Reopen the main DB read-only, exactly as the MCP server does.
 	ro, err := store.OpenReadOnly(mainPath)
-	require.NoError(t, err, "store.OpenReadOnly")
+	require.NoError(
+		err, "store.OpenReadOnly")
+
 	defer func() { _ = ro.Close() }()
 
 	// MCP path: sqlitevec.Open with ReadOnly=true. The backfill must be
@@ -95,15 +123,16 @@ VALUES (1, 1, 1, 'm1', 'email');
 		MainDB:    ro.DB(),
 		ReadOnly:  true,
 	})
-	require.NoError(t, err, "read-only Open must not error (backfill skipped)")
-	defer func() { _ = b.Close() }()
+	require.NoError(
+		err, "read-only Open must not error (backfill skipped)")
 
-	// Verify nothing was written: ledger stays unmarked, embed_gen stays NULL.
-	assert.False(t, backfillLedgerMarked(t, ro.DB()),
-		"read-only Open must NOT mark the backfill ledger")
+	defer func() { _ = b.Close() }()
+	assert. // Verify nothing was written: ledger stays unmarked, embed_gen stays NULL.
+		False(backfillLedgerMarked(t, ro.DB()),
+			"read-only Open must NOT mark the backfill ledger")
 	var v sql.NullInt64
-	require.NoError(t, ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
-	assert.False(t, v.Valid, "read-only Open must NOT stamp embed_gen")
+	require.NoError(ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
+	assert.False(v.Valid, "read-only Open must NOT stamp embed_gen")
 }
 
 // vectorChunkOne returns a single-chunk slice for message 1 with a unit
@@ -122,7 +151,13 @@ func vectorChunkOne() []vector.Chunk {
 // index_generations) so a writable Open WOULD reset it; the read-only Open
 // must not.
 func TestResetOrphanedEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
-	require.NoError(t, RegisterExtension(), "RegisterExtension")
+	assert := assert.New(
+		t,
+	)
+	require := require.New(t)
+	require.NoError(
+		RegisterExtension(), "RegisterExtension")
+
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -133,22 +168,31 @@ func TestResetOrphanedEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
 	// generation id that does NOT exist in the (empty) vectors.db
 	// index_generations — i.e. an orphaned stamp.
 	s, err := store.Open(mainPath)
-	require.NoError(t, err, "store.Open (rw)")
-	require.NoError(t, s.InitSchema(), "InitSchema")
+	require.NoError(
+		err, "store.Open (rw)")
+
+	require.NoError(
+		s.InitSchema(), "InitSchema")
+
 	_, err = s.DB().Exec(`
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, embed_gen)
 VALUES (1, 1, 1, 'm1', 'email', 99);
 `)
-	require.NoError(t, err, "seed message with orphaned embed_gen")
-	require.NoError(t, s.Close(), "close rw store")
+	require.NoError(
+		err, "seed message with orphaned embed_gen")
+
+	require.NoError(
+		s.Close(), "close rw store")
 
 	// Reopen the main DB read-only, exactly as the MCP server does. Migrate
 	// will create an empty index_generations in vectors.db (read-write), so id
 	// 99 is orphaned; the reset would clear it on a WRITABLE open.
 	ro, err := store.OpenReadOnly(mainPath)
-	require.NoError(t, err, "store.OpenReadOnly")
+	require.NoError(
+		err, "store.OpenReadOnly")
+
 	defer func() { _ = ro.Close() }()
 
 	b, err := Open(ctx, Options{
@@ -158,12 +202,14 @@ VALUES (1, 1, 1, 'm1', 'email', 99);
 		MainDB:    ro.DB(),
 		ReadOnly:  true,
 	})
-	require.NoError(t, err, "read-only Open must not error (reset skipped)")
+	require.NoError(
+		err, "read-only Open must not error (reset skipped)")
+
 	defer func() { _ = b.Close() }()
 
 	// The orphaned stamp must be PRESERVED: a read-only Open writes nothing.
 	var v sql.NullInt64
-	require.NoError(t, ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
-	assert.True(t, v.Valid, "read-only Open must NOT reset the orphaned embed_gen")
-	assert.Equal(t, int64(99), v.Int64, "orphaned stamp unchanged under read-only Open")
+	require.NoError(ro.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = 1`).Scan(&v))
+	assert.True(v.Valid, "read-only Open must NOT reset the orphaned embed_gen")
+	assert.Equal(int64(99), v.Int64, "orphaned stamp unchanged under read-only Open")
 }

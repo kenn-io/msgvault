@@ -92,7 +92,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 	// email source. Same defer contract as the no-sources branch above.
 	eligibleSources := 0
 	for _, src := range sources {
-		if sourceTypeUsesEmailIdentity(src.SourceType) {
+		if SourceTypeUsesEmailIdentity(src.SourceType) {
 			eligibleSources++
 		}
 	}
@@ -119,7 +119,7 @@ func (s *Store) MigrateLegacyIdentityConfig(addresses []string) (applied, deferr
 			// google_voice*) so phone-keyed sources don't get email
 			// identities written to them, which would distort dedup
 			// sent-copy detection.
-			if !sourceTypeUsesEmailIdentity(src.SourceType) {
+			if !SourceTypeUsesEmailIdentity(src.SourceType) {
 				continue
 			}
 			for _, addr := range normalized {
@@ -236,11 +236,11 @@ func (s *Store) RunStartupMigrations(legacyIdentityAddresses []string) (StartupM
 	return res, nil
 }
 
-// sourceTypeUsesEmailIdentity reports whether a source type's identity
+// SourceTypeUsesEmailIdentity reports whether a source type's identity
 // column holds email-shaped addresses. Used by the legacy [identity]
 // migration to skip phone/handle-keyed sources (whatsapp, imessage,
 // google_voice*, sms) so email addresses don't get written to them.
-func sourceTypeUsesEmailIdentity(sourceType string) bool {
+func SourceTypeUsesEmailIdentity(sourceType string) bool {
 	switch sourceType {
 	case "gmail", "imap", "o365", "mbox", "hey", "apple-mail":
 		return true

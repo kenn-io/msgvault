@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 var (
@@ -42,46 +40,25 @@ case-insensitivity is handled at compare time by consumers, not at the store.`,
 var identityListCmd = &cobra.Command{
 	Use:   cmdUseList,
 	Short: "List confirmed identifiers across one or more accounts",
+	Args:  cobra.NoArgs,
 	RunE:  runIdentityList,
 }
 
 func runIdentityList(cmd *cobra.Command, _ []string) error {
-	st, err := openStoreAndInit()
+	rows, err := fetchHTTPIdentityRows(
+		cmd,
+		daemonclient.CLIIdentitiesRequest{
+			Account:    identityListAccount,
+			Collection: identityListCollection,
+		},
+	)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = st.Close() }()
+	return renderIdentityList(cmd.OutOrStdout(), rows)
+}
 
-	var sourceIDs []int64
-	switch {
-	case identityListAccount != "":
-		scope, err := ResolveAccountFlag(st, identityListAccount)
-		if err != nil {
-			return err
-		}
-		sourceIDs = scope.SourceIDs()
-	case identityListCollection != "":
-		scope, err := ResolveCollectionFlag(st, identityListCollection)
-		if err != nil {
-			return err
-		}
-		sourceIDs = scope.SourceIDs()
-	default:
-		sources, err := st.ListSources("")
-		if err != nil {
-			return fmt.Errorf("list sources: %w", err)
-		}
-		sourceIDs = make([]int64, len(sources))
-		for i, src := range sources {
-			sourceIDs[i] = src.ID
-		}
-	}
-
-	rows, err := collectIdentityRows(st, sourceIDs)
-	if err != nil {
-		return err
-	}
-	w := cmd.OutOrStdout()
+func renderIdentityList(w io.Writer, rows []identityRow) error {
 	if identityListJSON {
 		return writeIdentityJSON(w, rows)
 	}
@@ -100,73 +77,8 @@ type identityRow struct {
 	None        bool
 }
 
-// collectIdentityRows assembles per-source rows for the given source IDs.
-// For each source, it emits one row per confirmed identifier; if a source
-// has zero confirmed identifiers, it emits a single (none) row so the
-// account is still visible.
-func collectIdentityRows(st *store.Store, sourceIDs []int64) ([]identityRow, error) {
-	var out []identityRow
-	for _, sid := range sourceIDs {
-		src, err := st.GetSourceByID(sid)
-		if err != nil {
-			return nil, fmt.Errorf("get source %d: %w", sid, err)
-		}
-		identifiers, err := st.ListAccountIdentities(sid)
-		if err != nil {
-			return nil, fmt.Errorf("list identities for source %d: %w", sid, err)
-		}
-		if len(identifiers) == 0 {
-			out = append(out, identityRow{
-				Account:    src.Identifier,
-				SourceID:   src.ID,
-				SourceType: src.SourceType,
-				None:       true,
-			})
-			continue
-		}
-		for _, ai := range identifiers {
-			out = append(out, identityRow{
-				Account:     src.Identifier,
-				SourceID:    src.ID,
-				SourceType:  src.SourceType,
-				Identifier:  ai.Address,
-				Signals:     splitSignalSet(ai.SourceSignal),
-				ConfirmedAt: ai.ConfirmedAt,
-			})
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Account != out[j].Account {
-			return out[i].Account < out[j].Account
-		}
-		return out[i].Identifier < out[j].Identifier
-	})
-	return out, nil
-}
-
-// splitSignalSet parses a stored source_signal field into a sorted slice.
-// Empty input returns an empty slice (so JSON encoding emits [], not null).
-// Empty parts (from stray commas in legacy data) are filtered to mirror
-// mergeSignalSet's producer-side normalization.
-func splitSignalSet(s string) []string {
-	if s == "" {
-		return []string{}
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // nil error return mirrors writeIdentityJSON so callers can return either
 // uniformly; tabwriter output never fails.
-//
-//nolint:unparam // symmetry with error-returning writeIdentityJSON sibling
 func writeIdentityTable(w io.Writer, rows []identityRow) error {
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintln(w, "No accounts in scope.")
@@ -237,33 +149,66 @@ var identityShowCmd = &cobra.Command{
 }
 
 func runIdentityShow(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
+	rows, err := fetchHTTPIdentityRows(cmd, daemonclient.CLIIdentitiesRequest{
+		Account:     args[0],
+		PrimaryOnly: true,
+	})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = st.Close() }()
+	return renderIdentityShow(cmd.OutOrStdout(), rows, args[0])
+}
 
-	scope, err := ResolveAccountFlag(st, args[0])
+func fetchHTTPIdentityRows(
+	cmd *cobra.Command,
+	req daemonclient.CLIIdentitiesRequest,
+) ([]identityRow, error) {
+	s, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("open store: %w", err)
 	}
-	if scope.Source == nil {
-		return fmt.Errorf("no account found for %q", args[0])
-	}
+	defer func() { _ = s.Close() }()
 
-	rows, err := collectIdentityRows(st, []int64{scope.Source.ID})
+	rows, err := s.GetCLIIdentities(cmd.Context(), req)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("list identities: %w", err)
 	}
+	return identityRowsFromDaemon(rows), nil
+}
+
+func identityRowsFromDaemon(rows []daemonclient.CLIIdentityRow) []identityRow {
+	out := make([]identityRow, 0, len(rows))
+	for _, r := range rows {
+		confirmedAt := time.Time{}
+		if r.ConfirmedAt != nil {
+			confirmedAt = *r.ConfirmedAt
+		}
+		out = append(out, identityRow{
+			Account:     r.Account,
+			SourceID:    r.SourceID,
+			SourceType:  r.SourceType,
+			Identifier:  r.Identifier,
+			Signals:     append([]string{}, r.Signals...),
+			ConfirmedAt: confirmedAt,
+			None:        r.None,
+		})
+	}
+	return out
+}
+
+func renderIdentityShow(w io.Writer, rows []identityRow, hintAccount string) error {
 	if identityShowJSON {
-		return writeIdentityJSON(cmd.OutOrStdout(), rows)
+		return writeIdentityJSON(w, rows)
 	}
-	if err := writeIdentityTable(cmd.OutOrStdout(), rows); err != nil {
+	if err := writeIdentityTable(w, rows); err != nil {
 		return err
 	}
 	if len(rows) == 1 && rows[0].None {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nThis account has no confirmed identity. Add one with:\n")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  msgvault identity add %s <identifier>\n", scope.Source.Identifier)
+		if rows[0].Account != "" {
+			hintAccount = rows[0].Account
+		}
+		_, _ = fmt.Fprintf(w, "\nThis account has no confirmed identity. Add one with:\n")
+		_, _ = fmt.Fprintf(w, "  msgvault identity add %s <identifier>\n", hintAccount)
 	}
 	return nil
 }
@@ -276,12 +221,6 @@ var identityAddCmd = &cobra.Command{
 }
 
 func runIdentityAdd(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = st.Close() }()
-
 	accountArg, identifierArg := args[0], args[1]
 	identifier := strings.TrimSpace(identifierArg)
 	if identifier == "" {
@@ -290,47 +229,40 @@ func runIdentityAdd(cmd *cobra.Command, args []string) error {
 	if strings.Contains(identityAddSignal, ",") {
 		return usageErr(cmd, fmt.Errorf("signal names cannot contain commas: %q", identityAddSignal))
 	}
+	return runHTTPIdentityAdd(cmd, accountArg, identifier)
+}
 
-	scope, err := ResolveAccountFlag(st, accountArg)
+func runHTTPIdentityAdd(cmd *cobra.Command, account string, identifier string) error {
+	s, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	result, err := s.AddCLIIdentity(cmd.Context(), daemonclient.CLIIdentityAddRequest{
+		Account:    account,
+		Identifier: identifier,
+		Signal:     identityAddSignal,
+	})
 	if err != nil {
 		return err
 	}
-	if scope.Source == nil {
-		return fmt.Errorf("no account found for %q", accountArg)
-	}
-
-	existing, err := st.ListAccountIdentities(scope.Source.ID)
-	if err != nil {
-		return fmt.Errorf("list existing: %w", err)
-	}
-	// Match the SQL-side LOWER() rule used by AddAccountIdentity so a
-	// re-add of "Foo@x.com" against a stored "foo@x.com" hits the
-	// "already confirmed" / "additional signal" branches instead of
-	// silently looking new at the CLI layer.
-	var prevSignals []string
-	for _, ai := range existing {
-		if store.EqualIdentifier(ai.Address, identifier) {
-			prevSignals = splitSignalSet(ai.SourceSignal)
-			break
-		}
-	}
-
-	if err := st.AddAccountIdentity(scope.Source.ID, identifier, identityAddSignal); err != nil {
-		return fmt.Errorf("add identity: %w", err)
-	}
-
-	switch {
-	case len(prevSignals) == 0:
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s to %s (signal: %s).\n",
-			identifier, scope.Source.Identifier, identityAddSignal)
-	case slices.Contains(prevSignals, identityAddSignal):
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s already confirmed for %s with signal %s.\n",
-			identifier, scope.Source.Identifier, identityAddSignal)
-	default:
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Recorded additional signal %s for %s on %s.\n",
-			identityAddSignal, identifier, scope.Source.Identifier)
-	}
+	renderIdentityAddResult(cmd.OutOrStdout(), *result)
 	return nil
+}
+
+func renderIdentityAddResult(w io.Writer, result daemonclient.CLIIdentityAddResult) {
+	switch result.Outcome {
+	case "already_confirmed":
+		_, _ = fmt.Fprintf(w, "%s already confirmed for %s with signal %s.\n",
+			result.Identifier, result.Account, result.Signal)
+	case "additional_signal":
+		_, _ = fmt.Fprintf(w, "Recorded additional signal %s for %s on %s.\n",
+			result.Signal, result.Identifier, result.Account)
+	default:
+		_, _ = fmt.Fprintf(w, "Added %s to %s (signal: %s).\n",
+			result.Identifier, result.Account, result.Signal)
+	}
 }
 
 var identityRemoveCmd = &cobra.Command{
@@ -341,67 +273,48 @@ var identityRemoveCmd = &cobra.Command{
 }
 
 func runIdentityRemove(cmd *cobra.Command, args []string) error {
-	st, err := openStoreAndInit()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = st.Close() }()
-
 	identifier := strings.TrimSpace(args[1])
 	if identifier == "" {
 		return usageErr(cmd, errors.New("identifier must not be empty"))
 	}
+	return runHTTPIdentityRemove(cmd, args[0], identifier)
+}
 
-	scope, err := ResolveAccountFlag(st, args[0])
+func runHTTPIdentityRemove(cmd *cobra.Command, account string, identifier string) error {
+	s, _, err := OpenHTTPStore(cmd.Context())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	result, err := s.RemoveCLIIdentity(cmd.Context(), daemonclient.CLIIdentityRemoveRequest{
+		Account:    account,
+		Identifier: identifier,
+	})
 	if err != nil {
 		return err
 	}
-	if scope.Source == nil {
-		return fmt.Errorf("no account found for %q", args[0])
-	}
-
-	removed, err := st.RemoveAccountIdentity(scope.Source.ID, identifier)
-	if err != nil {
-		return fmt.Errorf("remove identity: %w", err)
-	}
-	if removed == 0 {
-		existing, listErr := st.ListAccountIdentities(scope.Source.ID)
-		if listErr != nil {
-			return fmt.Errorf("%s is not in %s's identity (and looking up the current set failed: %w)",
-				identifier, scope.Source.Identifier, listErr)
-		}
-		var have []string
-		for _, ai := range existing {
-			have = append(have, ai.Address)
-		}
-		if len(have) == 0 {
-			return fmt.Errorf("%s is not in %s's identity (no confirmed identifiers on this account)",
-				identifier, scope.Source.Identifier)
-		}
-		return fmt.Errorf("%s is not in %s's identity. Currently confirmed: %s",
-			identifier, scope.Source.Identifier, strings.Join(have, ", "))
-	}
-	switch removed {
-	case 1:
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s.\n", identifier, scope.Source.Identifier)
-	default:
-		// >1 means a legacy database held case-variant duplicates of an
-		// email-shaped identifier; the case-fold remove cleaned them up
-		// in one call. Report the count so the user knows.
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %d entries matching %s from %s.\n",
-			removed, identifier, scope.Source.Identifier)
-	}
-
-	// Best-effort post-remove warning. If the lookup errors we suppress
-	// the warning rather than risk a misleading "no identity left"
-	// message — the remove itself already succeeded and was reported.
-	rest, listErr := st.ListAccountIdentities(scope.Source.ID)
-	if listErr == nil && len(rest) == 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: %s now has no confirmed identity. "+
-			"Dedup sent-copy detection for this account will rely on is_from_me "+
-			"and SENT label signals only.\n", scope.Source.Identifier)
+	renderIdentityRemoveResult(cmd.OutOrStdout(), *result)
+	if result.NoIdentity {
+		renderIdentityNoIdentityWarning(cmd.OutOrStdout(), result.Account)
 	}
 	return nil
+}
+
+func renderIdentityRemoveResult(w io.Writer, result daemonclient.CLIIdentityRemoveResult) {
+	switch result.Removed {
+	case 1:
+		_, _ = fmt.Fprintf(w, "Removed %s from %s.\n", result.Identifier, result.Account)
+	default:
+		_, _ = fmt.Fprintf(w, "Removed %d entries matching %s from %s.\n",
+			result.Removed, result.Identifier, result.Account)
+	}
+}
+
+func renderIdentityNoIdentityWarning(w io.Writer, account string) {
+	_, _ = fmt.Fprintf(w, "Warning: %s now has no confirmed identity. "+
+		"Dedup sent-copy detection for this account will rely on is_from_me "+
+		"and SENT label signals only.\n", account)
 }
 
 func init() {

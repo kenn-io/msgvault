@@ -19,6 +19,27 @@ import (
 // It receives the account email and should perform incremental sync + cache build.
 type SyncFunc func(ctx context.Context, email string) error
 
+type WorkTracker interface {
+	BeginWork() (func(), bool)
+	BeginWorkContext(ctx context.Context) (func(), bool)
+}
+
+// YieldChecker is optionally implemented by work trackers that can report a
+// waiter the running job should yield to. Scheduled jobs are resumable, so
+// they step aside rather than block an interactive command for their whole
+// runtime.
+type YieldChecker interface {
+	ShouldYield() bool
+}
+
+// ErrYieldedToWaiter is the cancellation cause set when a scheduled job is
+// interrupted to let a waiting operation acquire the work gate.
+var ErrYieldedToWaiter = errors.New("yielded to a waiting operation")
+
+// yieldPollInterval is how often a running scheduled job checks for waiters.
+// Variable only so tests can shorten it.
+var yieldPollInterval = 5 * time.Second
+
 // AccountStatus represents the sync status of a scheduled account.
 type AccountStatus struct {
 	Email     string    `json:"email"`
@@ -49,6 +70,7 @@ type Scheduler struct {
 	cron     *cron.Cron
 	syncFunc SyncFunc
 	logger   *slog.Logger
+	work     WorkTracker
 
 	mu        sync.RWMutex
 	jobs      map[string]cron.EntryID // email -> cron entry ID
@@ -106,6 +128,11 @@ func New(syncFunc SyncFunc) *Scheduler {
 // WithLogger sets the logger for the scheduler.
 func (s *Scheduler) WithLogger(logger *slog.Logger) *Scheduler {
 	s.logger = logger
+	return s
+}
+
+func (s *Scheduler) WithWorkTracker(tracker WorkTracker) *Scheduler {
+	s.work = tracker
 	return s
 }
 
@@ -237,7 +264,14 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		if s.isStopped() {
 			return
 		}
-		job.Run(s.ctx)
+		done, ok := s.beginWork()
+		if !ok {
+			return
+		}
+		defer done()
+		runCtx, endRun := s.jobContext()
+		defer endRun()
+		job.Run(runCtx)
 	})
 	if err != nil {
 		// ValidateCronExpr above should have caught any parse error;
@@ -320,13 +354,28 @@ func (s *Scheduler) runSync(email string) {
 		s.mu.Unlock()
 	}()
 
+	done, ok := s.beginWork()
+	if !ok {
+		s.logger.Info("scheduled sync skipped: daemon is draining", "email", email)
+		return
+	}
+	defer done()
+
 	s.logger.Info("starting scheduled sync", "email", email)
 	start := time.Now()
 
-	err := s.syncFunc(s.ctx, email)
+	runCtx, endRun := s.jobContext()
+	err := s.syncFunc(runCtx, email)
+	endRun()
 
 	s.mu.Lock()
-	if err != nil {
+	if err != nil && yieldedToWaiter(runCtx) {
+		// Not a failure: the sync stepped aside for a waiting operation
+		// and resumes from its checkpoint at the next scheduled run.
+		s.logger.Info("scheduled sync yielded to a waiting operation; will resume at next run",
+			"email", email,
+			"duration", time.Since(start))
+	} else if err != nil {
 		s.lastErr[email] = err
 		// Transient network failures (e.g., DNS lookup timeout after
 		// laptop sleep/wake) aren't actionable — the next scheduled tick
@@ -364,7 +413,9 @@ func (s *Scheduler) runSync(email string) {
 	}
 	s.mu.RUnlock()
 	if postSync != nil {
-		postSync.Run(s.ctx)
+		embedCtx, endEmbed := s.jobContext()
+		postSync.Run(embedCtx)
+		endEmbed()
 	}
 }
 
@@ -427,10 +478,26 @@ func (s *Scheduler) TriggerJob(name string) error {
 	s.mu.Unlock()
 	defer s.wg.Done()
 
-	err := run(s.ctx)
+	done, ok := s.beginWork()
+	if !ok {
+		s.mu.Lock()
+		s.genericRunning[name] = false
+		s.mu.Unlock()
+		return nil
+	}
+	defer done()
+
+	runCtx, endRun := s.jobContext()
+	err := run(runCtx)
+	endRun()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.genericRunning[name] = false
+	if err != nil && yieldedToWaiter(runCtx) {
+		s.logger.Info("scheduled job yielded to a waiting operation; will retry at next run",
+			"job", name)
+		return nil
+	}
 	if err != nil {
 		s.genericLastErr[name] = err
 		return err
@@ -438,6 +505,46 @@ func (s *Scheduler) TriggerJob(name string) error {
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
 	return nil
+}
+
+func (s *Scheduler) beginWork() (func(), bool) {
+	if s.work == nil {
+		return func() {}, true
+	}
+	return s.work.BeginWorkContext(s.ctx)
+}
+
+// jobContext derives the context a scheduled job runs with. When the work
+// tracker can report waiters, the context is cancelled with cause
+// ErrYieldedToWaiter so the resumable job steps aside for the waiter and
+// picks up again at its next scheduled run. The returned stop function must
+// be called when the job finishes.
+func (s *Scheduler) jobContext() (context.Context, func()) {
+	yc, ok := s.work.(YieldChecker)
+	if !ok {
+		return s.ctx, func() {}
+	}
+	ctx, cancel := context.WithCancelCause(s.ctx)
+	go func() {
+		ticker := time.NewTicker(yieldPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if yc.ShouldYield() {
+					cancel(ErrYieldedToWaiter)
+					return
+				}
+			}
+		}
+	}()
+	return ctx, func() { cancel(nil) }
+}
+
+func yieldedToWaiter(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), ErrYieldedToWaiter)
 }
 
 // Status returns the current status of all scheduled accounts.

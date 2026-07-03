@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -51,170 +52,175 @@ Examples:
   msgvault sync-full you@gmail.com --noresume    # Force fresh sync`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if syncLimit < 0 {
-			return usageErr(cmd, errors.New("--limit must be a non-negative number"))
+		if err := validateSyncFullFlags(cmd); err != nil {
+			return err
 		}
-		if syncAfter != "" {
-			if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
-			}
+		if isDaemonCLISubprocess() {
+			return runSyncFullLocal(cmd, args)
 		}
-		if syncBefore != "" {
-			if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
-			}
-		}
+		return runSyncFullHTTP(cmd, args)
+	},
+}
 
-		// Open database
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
+func validateSyncFullFlags(cmd *cobra.Command) error {
+	if syncLimit < 0 {
+		return usageErr(cmd, errors.New("--limit must be a non-negative number"))
+	}
+	if syncAfter != "" {
+		if _, err := time.Parse("2006-01-02", syncAfter); err != nil {
+			return usageErr(cmd, fmt.Errorf("invalid --after date %q (expected YYYY-MM-DD): %w", syncAfter, err))
+		}
+	}
+	if syncBefore != "" {
+		if _, err := time.Parse("2006-01-02", syncBefore); err != nil {
+			return usageErr(cmd, fmt.Errorf("invalid --before date %q (expected YYYY-MM-DD): %w", syncBefore, err))
+		}
+	}
+	return nil
+}
+
+func runSyncFullLocal(cmd *cobra.Command, args []string) error {
+	s, cleanup, err := openWritableStoreAndInit()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	dbPath := cfg.DatabaseDSN()
+
+	getOAuthMgr := oauthManagerCache()
+
+	// Determine which sources to sync
+	var sources []*store.Source
+	var syncErrors []string
+	if len(args) == 1 {
+		// Look up all sources matching the identifier and
+		// keep only syncable types (gmail, imap). Non-syncable
+		// sources like mbox/apple-mail imports share the same
+		// identifier namespace but cannot be synced.
+		allMatches, err := s.GetSourcesByIdentifierOrDisplayName(args[0])
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return fmt.Errorf("look up source: %w", err)
 		}
-		defer func() { _ = s.Close() }()
-
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-
-		getOAuthMgr := oauthManagerCache()
-
-		// Determine which sources to sync
-		var sources []*store.Source
-		var syncErrors []string
-		if len(args) == 1 {
-			// Look up all sources matching the identifier and
-			// keep only syncable types (gmail, imap). Non-syncable
-			// sources like mbox/apple-mail imports share the same
-			// identifier namespace but cannot be synced.
-			allMatches, err := s.GetSourcesByIdentifierOrDisplayName(args[0])
-			if err != nil {
-				return fmt.Errorf("look up source: %w", err)
-			}
-			for _, src := range allMatches {
-				if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
-					sources = append(sources, src)
-				}
-			}
-			if len(sources) == 0 {
-				if len(allMatches) > 0 {
-					// Identifier exists but has no syncable source types.
-					return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
-				}
-				// Not in DB yet - assume Gmail (legacy behaviour)
-				sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
-			}
-		} else {
-			// Sync all configured sources
-			allSources, err := s.ListSources("")
-			if err != nil {
-				return fmt.Errorf("list sources: %w", err)
-			}
-			if len(allSources) == 0 {
-				return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
-			}
-			for _, src := range allSources {
-				switch src.SourceType {
-				case sourceTypeGmail:
-					if !cfg.OAuth.HasAnyConfig() {
-						fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
-						continue
-					}
-					appName := sourceOAuthApp(src)
-					// Service accounts are always ready — no per-user token needed
-					if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-						mgr, err := getOAuthMgr(appName)
-						if err != nil {
-							syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
-							continue
-						}
-						if !mgr.HasToken(src.Identifier) {
-							fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
-							continue
-						}
-					}
-				case sourceTypeIMAP:
-					skipMsg, parseErr := imapSkipReason(src)
-					if parseErr != nil {
-						syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
-						continue
-					}
-					if skipMsg != "" {
-						fmt.Println(skipMsg)
-						continue
-					}
-				default:
-					fmt.Printf("Skipping %s (unsupported source type %q)\n", src.Identifier, src.SourceType)
-					continue
-				}
+		for _, src := range allMatches {
+			if src.SourceType == sourceTypeGmail || src.SourceType == sourceTypeIMAP {
 				sources = append(sources, src)
 			}
-			if len(sources) == 0 {
-				if len(syncErrors) > 0 {
-					return fmt.Errorf("%s", syncErrors[0])
-				}
-				return errors.New("no accounts are ready to sync")
-			}
 		}
-
-		// Set up context with cancellation
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
-
-		// Handle Ctrl+C gracefully
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigChan
-			fmt.Println("\nInterrupted. Saving checkpoint...")
-			cancel()
-		}()
-
-		// Embedding is no longer driven by sync: newly-ingested messages
-		// get embed_gen = NULL by column default and the scan-and-fill
-		// embed worker (msgvault embeddings build / the serve daemon)
-		// picks them up.
-
-		for _, src := range sources {
-			if ctx.Err() != nil {
-				break
+		if len(sources) == 0 {
+			if len(allMatches) > 0 {
+				// Identifier exists but has no syncable source types.
+				return fmt.Errorf("account %q exists but its source type cannot be synced (only gmail and imap are supported)", args[0])
 			}
-
-			// Ensure credentials are available before syncing Gmail sources.
-			if src.SourceType == sourceTypeGmail || src.SourceType == "" {
+			// Not in DB yet - assume Gmail (legacy behaviour)
+			sources = []*store.Source{{SourceType: sourceTypeGmail, Identifier: args[0]}}
+		}
+	} else {
+		// Sync all configured sources
+		allSources, err := s.ListSources("")
+		if err != nil {
+			return fmt.Errorf("list sources: %w", err)
+		}
+		if len(allSources) == 0 {
+			return errors.New("no accounts configured - run 'add-account' or 'add-imap' first")
+		}
+		for _, src := range allSources {
+			switch src.SourceType {
+			case sourceTypeGmail:
+				if !cfg.OAuth.HasAnyConfig() {
+					fmt.Printf("Skipping %s (OAuth not configured)\n", src.Identifier)
+					continue
+				}
 				appName := sourceOAuthApp(src)
+				// Service accounts are always ready — no per-user token needed
 				if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
-					if _, err := getOAuthMgr(appName); err != nil {
+					mgr, err := getOAuthMgr(appName)
+					if err != nil {
 						syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 						continue
 					}
+					if !mgr.HasToken(src.Identifier) {
+						fmt.Printf("Skipping %s (no OAuth token - run 'add-account' first)\n", src.Identifier)
+						continue
+					}
 				}
-			}
-
-			if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+			case sourceTypeIMAP:
+				skipMsg, parseErr := imapSkipReason(src)
+				if parseErr != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: malformed sync_config: %v", src.Identifier, parseErr))
+					continue
+				}
+				if skipMsg != "" {
+					fmt.Println(skipMsg)
+					continue
+				}
+			default:
+				fmt.Printf("Skipping %s (unsupported source type %q)\n", src.Identifier, src.SourceType)
 				continue
 			}
+			sources = append(sources, src)
 		}
-
-		// Rebuild analytics cache.
-		rebuildCacheAfterWrite(dbPath)
-
-		if len(syncErrors) > 0 {
-			fmt.Println()
-			fmt.Println("Errors:")
-			for _, e := range syncErrors {
-				fmt.Printf("  %s\n", e)
+		if len(sources) == 0 {
+			if len(syncErrors) > 0 {
+				return fmt.Errorf("%s", syncErrors[0])
 			}
-			return fmt.Errorf("%d account(s) failed to sync: %s",
-				len(syncErrors), strings.Join(syncErrors, "; "))
+			return errors.New("no accounts are ready to sync")
+		}
+	}
+
+	// Set up context with cancellation
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	// Handle Ctrl+C gracefully
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nInterrupted. Saving checkpoint...")
+		cancel()
+	}()
+
+	// Embedding is no longer driven by sync: newly-ingested messages
+	// get embed_gen = NULL by column default and the scan-and-fill
+	// embed worker (msgvault embeddings build / the serve daemon)
+	// picks them up.
+
+	for _, src := range sources {
+		if ctx.Err() != nil {
+			break
 		}
 
-		return nil
-	},
+		// Ensure credentials are available before syncing Gmail sources.
+		if src.SourceType == sourceTypeGmail || src.SourceType == "" {
+			appName := sourceOAuthApp(src)
+			if cfg.OAuth.ServiceAccountKeyFor(appName) == "" {
+				if _, err := getOAuthMgr(appName); err != nil {
+					syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+					continue
+				}
+			}
+		}
+
+		if err := runFullSync(ctx, s, getOAuthMgr, src); err != nil {
+			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
+			continue
+		}
+	}
+
+	// Rebuild analytics cache.
+	rebuildCacheAfterWrite(dbPath)
+
+	if len(syncErrors) > 0 {
+		fmt.Println()
+		fmt.Println("Errors:")
+		for _, e := range syncErrors {
+			fmt.Printf("  %s\n", e)
+		}
+		return fmt.Errorf("%d account(s) failed to sync: %s",
+			len(syncErrors), strings.Join(syncErrors, "; "))
+	}
+
+	return nil
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given
@@ -250,7 +256,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 			}
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
-			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive)
+			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive, gmailReauthHint)
 			if err != nil {
 				return nil, err
 			}
@@ -445,6 +451,26 @@ func buildSyncQuery() string {
 }
 
 // CLIProgress implements gmail.SyncProgressWithDate for terminal output.
+// progressOutputMode selects how CLIProgress renders updates.
+type progressOutputMode int
+
+const (
+	// progressModeAuto detects the mode from stdout on first use.
+	progressModeAuto progressOutputMode = iota
+	// progressModeTTY redraws a single status line in place with \r.
+	progressModeTTY
+	// progressModePlain emits one newline-terminated update at a lower
+	// cadence. Used when stdout is a pipe — the daemon CLI subprocess,
+	// redirected output, CI — where \r overwriting cannot work and would
+	// interleave with stderr into one unreadable blob.
+	progressModePlain
+)
+
+const (
+	cliProgressTTYInterval   = 2 * time.Second
+	cliProgressPlainInterval = 30 * time.Second
+)
+
 type CLIProgress struct {
 	startTime  time.Time
 	lastPrint  time.Time
@@ -453,6 +479,8 @@ type CLIProgress struct {
 	processed int64
 	added     int64
 	skipped   int64
+	mode      progressOutputMode
+	out       io.Writer // defaults to os.Stdout; tests inject a buffer
 }
 
 func (p *CLIProgress) OnStart(total int64) {
@@ -480,13 +508,40 @@ func (p *CLIProgress) OnLatestDate(date time.Time) {
 		p.startTime = now
 		p.lastPrint = now
 	}
+	// Record only; the next OnProgress renders it. Printing here would
+	// consume the throttle window with whatever counters happen to be
+	// cached — in plain mode that emits a permanent line with stale (or
+	// zero) Scanned/Added values and suppresses the accurate one that
+	// follows.
 	p.latestDate = date
-	p.printProgress()
+}
+
+func (p *CLIProgress) outputMode() progressOutputMode {
+	if p.mode == progressModeAuto {
+		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+			p.mode = progressModeTTY
+		} else {
+			p.mode = progressModePlain
+		}
+	}
+	return p.mode
+}
+
+func (p *CLIProgress) writer() io.Writer {
+	if p.out == nil {
+		return os.Stdout
+	}
+	return p.out
 }
 
 func (p *CLIProgress) printProgress() {
-	// Throttle output to every 2 seconds
-	if time.Since(p.lastPrint) < 2*time.Second {
+	// Throttle: an in-place line can refresh every 2 seconds, but each
+	// plain-mode update is a permanent line, so those come every 30.
+	interval := cliProgressTTYInterval
+	if p.outputMode() == progressModePlain {
+		interval = cliProgressPlainInterval
+	}
+	if time.Since(p.lastPrint) < interval {
 		return
 	}
 	p.lastPrint = time.Now()
@@ -498,7 +553,7 @@ func (p *CLIProgress) printProgress() {
 	}
 
 	// Format elapsed time nicely
-	elapsedStr := formatDuration(elapsed)
+	elapsedStr := formatCLIProgressDuration(elapsed, cliProgressDurationSpaced)
 
 	// Format latest message date if available
 	dateStr := ""
@@ -506,32 +561,26 @@ func (p *CLIProgress) printProgress() {
 		dateStr = " | Latest: " + p.latestDate.Format("Jan 2006")
 	}
 
-	fmt.Printf("\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
+	if p.outputMode() == progressModePlain {
+		_, _ = fmt.Fprintf(p.writer(),
+			"  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s\n",
+			p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
+		return
+	}
+	_, _ = fmt.Fprintf(p.writer(),
+		"\r  Scanned: %d | Added: %d | Skipped: %d | Rate: %.1f/s | Elapsed: %s%s    ",
 		p.processed, p.added, p.skipped, rate, elapsedStr, dateStr)
 }
 
 func (p *CLIProgress) OnComplete(summary *gmail.SyncSummary) {
-	fmt.Println() // Clear the progress line
+	if p.outputMode() == progressModePlain {
+		return // every plain-mode update already ended its line
+	}
+	_, _ = fmt.Fprintln(p.writer()) // terminate the in-place progress line
 }
 
 func (p *CLIProgress) OnError(err error) {
-	fmt.Printf("\nError: %v\n", err)
-}
-
-// formatDuration formats a duration as "Xm Ys" or "Xh Ym" for readability.
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := d / time.Hour
-	m := (d % time.Hour) / time.Minute
-	s := (d % time.Minute) / time.Second
-
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm %ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
+	_, _ = fmt.Fprintf(p.writer(), "\nError: %v\n", err)
 }
 
 // imapSkipReason checks whether an IMAP source has the credentials needed to

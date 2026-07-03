@@ -96,301 +96,314 @@ Examples:
   msgvault verify you@gmail.com --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		email := args[0]
-
-		// In --json mode, suppress all human-readable progress so stdout
-		// carries only the final JSON object. Failures still surface as
-		// returned errors, which Cobra prints to stderr.
-		emitf := func(format string, a ...any) {
-			if !verifyJSON {
-				fmt.Printf(format, a...)
-			}
+		if isDaemonCLISubprocess() {
+			return runVerifyLocal(cmd, args)
 		}
-		emitln := func(a ...any) {
-			if !verifyJSON {
-				fmt.Println(a...)
-			}
-		}
+		return runVerifyHTTP(cmd, args[0])
+	},
+}
 
-		// Open database
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-		defer func() { _ = s.Close() }()
+func runVerifyLocal(cmd *cobra.Command, args []string) error {
+	email := args[0]
 
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
+	release, err := acquireDirectSQLiteWriteLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer release()
 
-		// Run SQLite integrity check before any Gmail work. Users with a
-		// corrupt database should see the repair hint even if their OAuth
-		// token is expired or the network is down. PostgreSQL has no
-		// in-engine integrity_check; print a notice so users know the
-		// check was skipped intentionally and point them at the right
-		// out-of-band tool.
-		var dbCorrupt bool
-		var dbIntegrityOK *bool
-		if !verifySkipDBCheck {
-			if s.IsPostgreSQL() {
-				emitln("Skipping database integrity check (PostgreSQL — use pg_amcheck out-of-band).")
-				emitln()
-			} else {
-				emitln("Running database integrity check...")
-				integrityErrors, err := runIntegrityCheck(s)
-				if err != nil {
-					return fmt.Errorf("integrity check failed: %w", err)
-				}
-				if len(integrityErrors) == 0 {
-					ok := true
-					dbIntegrityOK = &ok
-					emitln("  Database integrity: OK")
-				} else {
-					dbCorrupt = true
-					ok := false
-					dbIntegrityOK = &ok
-					emitf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
-					for i, ie := range integrityErrors {
-						if i >= 10 {
-							emitf("  ... and %d more errors\n", len(integrityErrors)-10)
-							break
-						}
-						emitf("  - %s\n", ie)
-					}
-					if !verifyJSON {
-						printIntegrityRecoveryHint(integrityErrors)
-					}
-				}
-				emitln()
-			}
+	// In --json mode, suppress all human-readable progress so stdout
+	// carries only the final JSON object. Failures still surface as
+	// returned errors, which Cobra prints to stderr.
+	emitf := func(format string, a ...any) {
+		if !verifyJSON {
+			fmt.Printf(format, a...)
 		}
-
-		// Look up source to get OAuth app binding
-		appName := ""
-		src, srcErr := findGmailSource(s, email)
-		if srcErr != nil && !errors.Is(srcErr, errGmailSourceNotFound) {
-			return fmt.Errorf("look up source for %s: %w", email, srcErr)
+	}
+	emitln := func(a ...any) {
+		if !verifyJSON {
+			fmt.Println(a...)
 		}
-		if src != nil {
-			appName = sourceOAuthApp(src)
-		}
+	}
 
-		if !cfg.OAuth.HasAnyConfig() {
-			return errOAuthNotConfigured()
-		}
+	// Open database
+	dbPath := cfg.DatabaseDSN()
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = s.Close() }()
 
-		// Set up context with cancellation
-		ctx, cancel := context.WithCancel(cmd.Context())
-		defer cancel()
+	if err := s.InitSchema(); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
+	if err := runStartupMigrations(s); err != nil {
+		return fmt.Errorf("startup migrations: %w", err)
+	}
 
-		// Handle Ctrl+C gracefully
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigChan
-			emitln("\nInterrupted.")
-			cancel()
-		}()
-
-		// Resolve a Gmail token source. Service-account-bound sources mint
-		// a fresh JWT-based token on demand; browser-OAuth sources reuse
-		// the stored refresh token (and may prompt for re-auth in TTY).
-		var tokenSource oauth2.TokenSource
-		if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
-			saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
-			if saErr != nil {
-				return fmt.Errorf("service account: %w", saErr)
-			}
-			tokenSource, err = saMgr.TokenSource(ctx, email)
-			if err != nil {
-				return fmt.Errorf("service account token for %s: %w", email, err)
-			}
+	// Run SQLite integrity check before any Gmail work. Users with a
+	// corrupt database should see the repair hint even if their OAuth
+	// token is expired or the network is down. PostgreSQL has no
+	// in-engine integrity_check; print a notice so users know the
+	// check was skipped intentionally and point them at the right
+	// out-of-band tool.
+	var dbCorrupt bool
+	var dbIntegrityOK *bool
+	if !verifySkipDBCheck {
+		if s.IsPostgreSQL() {
+			emitln("Skipping database integrity check (PostgreSQL — use pg_amcheck out-of-band).")
+			emitln()
 		} else {
-			clientSecretsPath, secretsErr := cfg.OAuth.ClientSecretsFor(appName)
-			if secretsErr != nil {
-				return secretsErr
-			}
-			oauthMgr, mgrErr := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
-			if mgrErr != nil {
-				return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr))
-			}
-			// Machine-readable mode must not enter an interactive OAuth
-			// flow that writes prompts to stdout before the JSON object.
-			interactive := false
-			if !verifyJSON {
-				interactive = isatty.IsTerminal(os.Stdin.Fd()) ||
-					isatty.IsCygwinTerminal(os.Stdin.Fd())
-			}
-			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive)
+			emitln("Running database integrity check...")
+			integrityErrors, err := runIntegrityCheck(s)
 			if err != nil {
+				return fmt.Errorf("integrity check failed: %w", err)
+			}
+			if len(integrityErrors) == 0 {
+				ok := true
+				dbIntegrityOK = &ok
+				emitln("  Database integrity: OK")
+			} else {
+				dbCorrupt = true
+				ok := false
+				dbIntegrityOK = &ok
+				emitf("  Database integrity: FAILED (%d errors)\n", len(integrityErrors))
+				for i, ie := range integrityErrors {
+					if i >= 10 {
+						emitf("  ... and %d more errors\n", len(integrityErrors)-10)
+						break
+					}
+					emitf("  - %s\n", ie)
+				}
+				if !verifyJSON {
+					printIntegrityRecoveryHint(integrityErrors)
+				}
+			}
+			emitln()
+		}
+	}
+
+	// Look up source to get OAuth app binding
+	appName := ""
+	src, srcErr := findGmailSource(s, email)
+	if srcErr != nil && !errors.Is(srcErr, errGmailSourceNotFound) {
+		return fmt.Errorf("look up source for %s: %w", email, srcErr)
+	}
+	if src != nil {
+		appName = sourceOAuthApp(src)
+	}
+
+	if !cfg.OAuth.HasAnyConfig() {
+		return errOAuthNotConfigured()
+	}
+
+	// Set up context with cancellation
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	// Handle Ctrl+C gracefully
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		emitln("\nInterrupted.")
+		cancel()
+	}()
+
+	// Resolve a Gmail token source. Service-account-bound sources mint
+	// a fresh JWT-based token on demand; browser-OAuth sources reuse
+	// the stored refresh token (and may prompt for re-auth in TTY).
+	var tokenSource oauth2.TokenSource
+	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
+		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
+		if saErr != nil {
+			return fmt.Errorf("service account: %w", saErr)
+		}
+		tokenSource, err = saMgr.TokenSource(ctx, email)
+		if err != nil {
+			return fmt.Errorf("service account token for %s: %w", email, err)
+		}
+	} else {
+		clientSecretsPath, secretsErr := cfg.OAuth.ClientSecretsFor(appName)
+		if secretsErr != nil {
+			return secretsErr
+		}
+		oauthMgr, mgrErr := oauth.NewManager(clientSecretsPath, cfg.TokensDir(), logger)
+		if mgrErr != nil {
+			return wrapOAuthError(fmt.Errorf("create oauth manager: %w", mgrErr))
+		}
+		// Machine-readable mode must not enter an interactive OAuth
+		// flow that writes prompts to stdout before the JSON object.
+		interactive := false
+		if !verifyJSON {
+			interactive = isatty.IsTerminal(os.Stdin.Fd()) ||
+				isatty.IsCygwinTerminal(os.Stdin.Fd())
+		}
+		tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive, gmailReauthHint)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Create Gmail client (no rate limiter needed for single call)
+	client := gmail.NewClient(tokenSource, gmail.WithLogger(logger))
+	defer func() { _ = client.Close() }()
+
+	// Get Gmail profile
+	profile, err := client.GetProfile(ctx)
+	if err != nil {
+		return fmt.Errorf("get Gmail profile: %w", err)
+	}
+
+	emitf("Verifying archive for %s...\n\n", profile.EmailAddress)
+
+	// Look up the Gmail source by the user-supplied identifier,
+	// not the canonical profile address — the source is keyed
+	// under the identifier from add-account. Filter to Gmail
+	// specifically since the same identifier may exist for
+	// other source types (mbox, imap).
+	source, err := findGmailSource(s, email)
+	if err != nil && !errors.Is(err, errGmailSourceNotFound) {
+		return fmt.Errorf("get source: %w", err)
+	}
+	if source == nil {
+		if verifyJSON {
+			if err := printJSON(newVerifyResult(
+				profile.EmailAddress, false, dbIntegrityOK, profile.MessagesTotal, 0, 0,
+				0, 0, 0, false,
+			)); err != nil {
 				return err
 			}
-		}
-
-		// Create Gmail client (no rate limiter needed for single call)
-		client := gmail.NewClient(tokenSource, gmail.WithLogger(logger))
-		defer func() { _ = client.Close() }()
-
-		// Get Gmail profile
-		profile, err := client.GetProfile(ctx)
-		if err != nil {
-			return fmt.Errorf("get Gmail profile: %w", err)
-		}
-
-		emitf("Verifying archive for %s...\n\n", profile.EmailAddress)
-
-		// Look up the Gmail source by the user-supplied identifier,
-		// not the canonical profile address — the source is keyed
-		// under the identifier from add-account. Filter to Gmail
-		// specifically since the same identifier may exist for
-		// other source types (mbox, imap).
-		source, err := findGmailSource(s, email)
-		if err != nil && !errors.Is(err, errGmailSourceNotFound) {
-			return fmt.Errorf("get source: %w", err)
-		}
-		if source == nil {
-			if verifyJSON {
-				if err := printJSON(newVerifyResult(
-					profile.EmailAddress, false, dbIntegrityOK, profile.MessagesTotal, 0, 0,
-					0, 0, 0, false,
-				)); err != nil {
-					return err
-				}
-				if dbCorrupt {
-					return errors.New("database integrity check failed")
-				}
-				return nil
-			}
-			fmt.Printf("Gmail account %s not found in database.\n", email)
-			fmt.Println("Run 'sync-full' first to populate the archive.")
 			if dbCorrupt {
 				return errors.New("database integrity check failed")
 			}
 			return nil
 		}
-
-		// Count local messages
-		archiveCount, err := s.CountMessagesForSource(source.ID)
-		if err != nil {
-			return fmt.Errorf("count messages: %w", err)
-		}
-
-		withRaw, err := s.CountMessagesWithRaw(source.ID)
-		if err != nil {
-			return fmt.Errorf("count messages with raw: %w", err)
-		}
-
-		// Print summary
-		gmailTotal := profile.MessagesTotal
-		emitf("Gmail messages:      %10d\n", gmailTotal)
-		emitf("Archived messages:   %10d\n", archiveCount)
-		diff := gmailTotal - archiveCount
-		if diff > 0 {
-			emitf("Missing:             %10d\n", diff)
-		} else if diff < 0 {
-			emitf("Extra in archive:    %10d\n", -diff)
-		} else {
-			emitf("Difference:          %10d\n", diff)
-		}
-		emitln()
-
-		rawPct := float64(0)
-		if archiveCount > 0 {
-			rawPct = float64(withRaw) / float64(archiveCount) * 100
-		}
-		emitf("With raw MIME:       %10d (%.1f%%)\n", withRaw, rawPct)
-		emitln()
-
-		// Sample verification.
-		sampleSize := 0
-		sampleVerified := 0
-		sampleErrorCount := 0
-		sampleInterrupted := false
-		if archiveCount > 0 && verifySampleSize > 0 {
-			actualSampleSize := verifySampleSize
-			if int64(actualSampleSize) > archiveCount {
-				actualSampleSize = int(archiveCount)
-			}
-
-			sampleIDs, err := s.GetRandomMessageIDs(source.ID, actualSampleSize)
-			if err != nil {
-				return fmt.Errorf("get sample IDs: %w", err)
-			}
-			sampleSize = len(sampleIDs)
-
-			emitf("Sampling %d messages...\n", len(sampleIDs))
-
-			verified := 0
-			var sampleErrs []string
-
-			for _, msgID := range sampleIDs {
-				// Check context cancellation
-				if ctx.Err() != nil {
-					sampleInterrupted = true
-					emitln("\nVerification interrupted.")
-					break
-				}
-
-				// Get raw MIME
-				rawData, err := s.GetMessageRaw(msgID)
-				if err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: missing raw MIME", msgID))
-					} else {
-						sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: db error (%v)", msgID, err))
-					}
-					continue
-				}
-
-				// Verify it can be parsed as MIME
-				_, err = mime.Parse(rawData)
-				if err != nil {
-					sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: corrupt MIME (%v)", msgID, err))
-					continue
-				}
-
-				verified++
-			}
-			sampleVerified = verified
-			sampleErrorCount = len(sampleErrs)
-
-			if len(sampleErrs) > 0 {
-				emitf("Sample verified:     %10d of %d\n", verified, len(sampleIDs))
-				emitf("Sample errors:       %10d\n", len(sampleErrs))
-				for i, err := range sampleErrs {
-					if i >= 5 {
-						emitf("  ... and %d more\n", len(sampleErrs)-5)
-						break
-					}
-					emitf("  - %s\n", err)
-				}
-			} else {
-				emitf("Sample verified:     %10d (all OK)\n", verified)
-			}
-		}
-
-		emitln()
-		emitln("Verification complete.")
-
-		if verifyJSON {
-			if err := printJSON(newVerifyResult(
-				profile.EmailAddress, true, dbIntegrityOK, gmailTotal, archiveCount, withRaw,
-				sampleSize, sampleVerified, sampleErrorCount, sampleInterrupted,
-			)); err != nil {
-				return err
-			}
-		}
-
+		fmt.Printf("Gmail account %s not found in database.\n", email)
+		fmt.Println("Run 'sync-full' first to populate the archive.")
 		if dbCorrupt {
 			return errors.New("database integrity check failed")
 		}
-
 		return nil
-	},
+	}
+
+	// Count local messages
+	archiveCount, err := s.CountMessagesForSource(source.ID)
+	if err != nil {
+		return fmt.Errorf("count messages: %w", err)
+	}
+
+	withRaw, err := s.CountMessagesWithRaw(source.ID)
+	if err != nil {
+		return fmt.Errorf("count messages with raw: %w", err)
+	}
+
+	// Print summary
+	gmailTotal := profile.MessagesTotal
+	emitf("Gmail messages:      %10d\n", gmailTotal)
+	emitf("Archived messages:   %10d\n", archiveCount)
+	diff := gmailTotal - archiveCount
+	if diff > 0 {
+		emitf("Missing:             %10d\n", diff)
+	} else if diff < 0 {
+		emitf("Extra in archive:    %10d\n", -diff)
+	} else {
+		emitf("Difference:          %10d\n", diff)
+	}
+	emitln()
+
+	rawPct := float64(0)
+	if archiveCount > 0 {
+		rawPct = float64(withRaw) / float64(archiveCount) * 100
+	}
+	emitf("With raw MIME:       %10d (%.1f%%)\n", withRaw, rawPct)
+	emitln()
+
+	// Sample verification.
+	sampleSize := 0
+	sampleVerified := 0
+	sampleErrorCount := 0
+	sampleInterrupted := false
+	if archiveCount > 0 && verifySampleSize > 0 {
+		actualSampleSize := verifySampleSize
+		if int64(actualSampleSize) > archiveCount {
+			actualSampleSize = int(archiveCount)
+		}
+
+		sampleIDs, err := s.GetRandomMessageIDs(source.ID, actualSampleSize)
+		if err != nil {
+			return fmt.Errorf("get sample IDs: %w", err)
+		}
+		sampleSize = len(sampleIDs)
+
+		emitf("Sampling %d messages...\n", len(sampleIDs))
+
+		verified := 0
+		var sampleErrs []string
+
+		for _, msgID := range sampleIDs {
+			// Check context cancellation
+			if ctx.Err() != nil {
+				sampleInterrupted = true
+				emitln("\nVerification interrupted.")
+				break
+			}
+
+			// Get raw MIME
+			rawData, err := s.GetMessageRaw(msgID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: missing raw MIME", msgID))
+				} else {
+					sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: db error (%v)", msgID, err))
+				}
+				continue
+			}
+
+			// Verify it can be parsed as MIME
+			_, err = mime.Parse(rawData)
+			if err != nil {
+				sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: corrupt MIME (%v)", msgID, err))
+				continue
+			}
+
+			verified++
+		}
+		sampleVerified = verified
+		sampleErrorCount = len(sampleErrs)
+
+		if len(sampleErrs) > 0 {
+			emitf("Sample verified:     %10d of %d\n", verified, len(sampleIDs))
+			emitf("Sample errors:       %10d\n", len(sampleErrs))
+			for i, err := range sampleErrs {
+				if i >= 5 {
+					emitf("  ... and %d more\n", len(sampleErrs)-5)
+					break
+				}
+				emitf("  - %s\n", err)
+			}
+		} else {
+			emitf("Sample verified:     %10d (all OK)\n", verified)
+		}
+	}
+
+	emitln()
+	emitln("Verification complete.")
+
+	if verifyJSON {
+		if err := printJSON(newVerifyResult(
+			profile.EmailAddress, true, dbIntegrityOK, gmailTotal, archiveCount, withRaw,
+			sampleSize, sampleVerified, sampleErrorCount, sampleInterrupted,
+		)); err != nil {
+			return err
+		}
+	}
+
+	if dbCorrupt {
+		return errors.New("database integrity check failed")
+	}
+
+	return nil
 }
 
 // runIntegrityCheck runs PRAGMA integrity_check on the database and returns

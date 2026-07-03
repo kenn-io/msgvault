@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -25,14 +25,14 @@ func newBackendForTest(t *testing.T) (*Backend, context.Context) {
 		Dimension: 768,
 		MainDB:    main,
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = b.Close() })
 	return b, ctx
 }
 
 func TestBackend_CreateActivateRetire(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gid, err := b.CreateGeneration(ctx, "nomic-embed-text-v1.5", 768, "")
@@ -62,7 +62,7 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
 	missing, err := b.hasMissingForGen(context.Background(), gen)
-	requirepkg.NoError(t, err, "hasMissingForGen")
+	require.NoError(t, err, "hasMissingForGen")
 	if missing {
 		return 1
 	}
@@ -73,7 +73,7 @@ func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.GenerationState {
 	t.Helper()
 	var s vector.GenerationState
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(context.Background(),
 		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&s),
 		"read state for generation %d", gen)
 	return s
@@ -86,35 +86,48 @@ func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.Genera
 //   - force=true retires the active generation.
 //   - force=false against a NON-active (building) generation retires fine.
 func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	// Build + force-activate genA (force bypasses the coverage gate so the
 	// one unembedded test message does not block activation).
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
-	requirepkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
+	require.Equal(vector.GenerationActive, genStateSV(t, b, genA), "precondition: A active")
 
 	// (1) Non-forced retire of the ACTIVE gen is refused atomically.
 	err = b.RetireGeneration(ctx, genA, false)
-	requirepkg.ErrorIs(t, err, vector.ErrRefuseRetireActive,
+	require.ErrorIs(err, vector.ErrRefuseRetireActive,
 		"non-forced retire of active gen must return ErrRefuseRetireActive")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, genA),
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, genA),
 		"refused retire must leave the active gen's state unchanged")
+	require.NoError(
 
-	// (2) Forced retire succeeds.
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genA, true),
+		b.RetireGeneration(ctx, genA, true),
 		"forced retire of active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA),
 		"forced retire flips state to retired")
 
 	// (3) A NON-active (building) generation retires fine without force.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.Equal(t, vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
-	requirepkg.NoError(t, b.RetireGeneration(ctx, genB, false),
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.Equal(vector.GenerationBuilding, genStateSV(t, b, genB), "precondition: B building")
+	require.NoError(
+		b.RetireGeneration(ctx, genB, false),
 		"non-forced retire of a non-active gen must succeed")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genB),
+
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genB),
 		"non-active gen retires to retired without force")
 }
 
@@ -122,19 +135,29 @@ func TestBackend_RetireGeneration_ActiveGuard(t *testing.T) {
 // activating a new generation demotes the previously-active one to
 // retired in the same tx as the state flip (RETURNING-id provable).
 func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
 
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
+	require.NoError(
+		err, "CreateGeneration B")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, true), "activate B (auto-retires A)")
 
 	retired := singleRetiredGenSV(t, b)
-	assertpkg.Equal(t, genA, retired, "the previously-active gen must be the sole retired row")
-	assertpkg.NotEqual(t, genB, retired, "the newly-activated gen must not be retired")
+	assert.Equal(genA, retired, "the previously-active gen must be the sole retired row")
+	assert.NotEqual(genB, retired, "the newly-activated gen must not be retired")
 }
 
 // TestBackend_ActivateGeneration_CoverageGate pins the scan-and-fill
@@ -142,22 +165,32 @@ func TestBackend_ActivateGeneration_AutoRetires(t *testing.T) {
 // embedding (embed_gen <> gen) is refused without force, and succeeds once
 // coverage is complete (or with force).
 func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.Equal(t, 1, missingCountSV(t, b, gen), "precondition: one missing message")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.Equal(1, missingCountSV(t, b, gen), "precondition: one missing message")
 
 	// Non-forced activate is refused while the message is unembedded.
 	err = b.ActivateGeneration(ctx, gen, false)
-	requirepkg.Error(t, err, "activate must be refused with missing coverage")
-	assertpkg.Contains(t, err.Error(), "needing embedding")
+	require.Error(err, "activate must be refused with missing coverage")
+	assert.Contains(err.Error(), "needing embedding")
 
 	// Stamp the message as covered, then activation succeeds.
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
-	requirepkg.NoError(t, err, "stamp embed_gen")
-	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "covered now")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
+	require.NoError(
+		err, "stamp embed_gen")
+
+	require.Equal(0, missingCountSV(t, b, gen), "covered now")
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, false), "activate after coverage complete")
+
+	assert.Equal(vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
 // TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage pins that
@@ -168,30 +201,40 @@ func TestBackend_ActivateGeneration_CoverageGate(t *testing.T) {
 // gen id, so the lifecycle check must run first. The seeded test message
 // (id=1) stays unembedded so the coverage gate WOULD trip if checked first.
 func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
-	requirepkg.Equal(t, 1, missingCountSV(t, b, vector.GenerationID(999)),
+	require.Equal(1, missingCountSV(t, b, vector.GenerationID(999)),
 		"precondition: coverage gate would trip for any gen (message unembedded)")
 
 	// (a) Unknown gen id: lifecycle error (ErrUnknownGeneration), not coverage.
 	err := b.ActivateGeneration(ctx, vector.GenerationID(999), false)
-	requirepkg.Error(t, err, "activating unknown gen must fail")
-	requirepkg.ErrorIs(t, err, vector.ErrUnknownGeneration,
+	require.Error(err, "activating unknown gen must fail")
+	require.ErrorIs(err, vector.ErrUnknownGeneration,
 		"unknown gen must return ErrUnknownGeneration, not coverage error")
-	assertpkg.NotContains(t, err.Error(), "needing embedding",
+	assert.NotContains(err.Error(), "needing embedding",
 		"unknown gen must NOT surface the coverage error")
 
 	// (b) Non-building (retired) gen id: lifecycle error, not coverage.
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
-	requirepkg.NoError(t, b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
-	requirepkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
+	require.NoError(
+		err, "CreateGeneration")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, gen, true), "force-activate to bypass coverage")
+
+	require.NoError(
+		b.RetireGeneration(ctx, gen, true), "force-retire to reach non-building state")
+
+	require.Equal(vector.GenerationRetired, genStateSV(t, b, gen), "precondition: gen retired")
 
 	err = b.ActivateGeneration(ctx, gen, false)
-	requirepkg.Error(t, err, "activating retired gen must fail")
-	assertpkg.Contains(t, err.Error(), "not in 'building' state",
+	require.Error(err, "activating retired gen must fail")
+	assert.Contains(err.Error(), "not in 'building' state",
 		"retired gen must return the not-building lifecycle error")
-	assertpkg.NotContains(t, err.Error(), "needing embedding",
+	assert.NotContains(err.Error(), "needing embedding",
 		"retired gen must NOT surface the coverage error")
 }
 
@@ -201,40 +244,58 @@ func TestBackend_ActivateGeneration_LifecycleErrorBeforeCoverage(t *testing.T) {
 // complete — at which point A is retired in the same swap. There is no
 // dual-write fan-out; the per-message embed_gen names exactly one target.
 func TestBackend_SingleTargetRebuild(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 
 	// A: build, cover (force-activate to skip the gate for the one test
 	// message), and start serving.
 	genA, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration A")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+	require.NoError(
+		err, "CreateGeneration A")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genA, true), "activate A (force)")
+
 	active, err := b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration")
-	requirepkg.Equal(t, genA, active.ID, "A is serving")
+	require.NoError(
+		err, "ActiveGeneration")
+
+	require.Equal(genA, active.ID, "A is serving")
 
 	// B: a new building generation for the same corpus. The message reads
 	// as missing for B (embed_gen still names A), but A keeps serving
 	// unchanged — stale-but-correct mid-rebuild.
 	genB, err := b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration B")
-	requirepkg.Equal(t, 1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
-	active, err = b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration mid-rebuild")
-	assertpkg.Equal(t, genA, active.ID, "A still serving while B builds")
+	require.NoError(
+		err, "CreateGeneration B")
 
-	// B's activation is refused until its coverage is complete.
-	requirepkg.Error(t, b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
+	require.Equal(1, missingCountSV(t, b, genB), "message missing for B mid-rebuild")
+	active, err = b.ActiveGeneration(ctx)
+	require.NoError(
+		err, "ActiveGeneration mid-rebuild")
+
+	assert.Equal(genA, active.ID, "A still serving while B builds")
+	require. // B's activation is refused until its coverage is complete.
+			Error(b.ActivateGeneration(ctx, genB, false), "B refused while incomplete")
 
 	// Cover the message for B (worker would do this after upsert), then
 	// activate B — the swap retires A and makes B the single serving gen.
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(genB))
-	requirepkg.NoError(t, err, "stamp embed_gen for B")
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
+	require.NoError(
+		err, "stamp embed_gen for B")
+
+	require.NoError(
+		b.ActivateGeneration(ctx, genB, false), "activate B after coverage complete")
 
 	active, err = b.ActiveGeneration(ctx)
-	requirepkg.NoError(t, err, "ActiveGeneration after swap")
-	assertpkg.Equal(t, genB, active.ID, "B is the single serving gen after swap")
-	assertpkg.Equal(t, vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
+	require.NoError(
+		err, "ActiveGeneration after swap")
+
+	assert.Equal(genB, active.ID, "B is the single serving gen after swap")
+	assert.Equal(vector.GenerationRetired, genStateSV(t, b, genA), "A retired by the swap")
 }
 
 // singleRetiredGenSV returns the id of the one generation in state='retired',
@@ -243,7 +304,7 @@ func TestBackend_SingleTargetRebuild(t *testing.T) {
 func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
 	t.Helper()
 	var id int64
-	requirepkg.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(context.Background(),
 		`SELECT id FROM index_generations WHERE state = 'retired'`).Scan(&id),
 		"expected exactly one retired generation")
 	return vector.GenerationID(id)
@@ -254,11 +315,11 @@ func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
 func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
+	require.NoError(t, err, "Create")
 	var seededAt sql.NullInt64
-	requirepkg.NoError(t, b.db.QueryRowContext(ctx,
+	require.NoError(t, b.db.QueryRowContext(ctx,
 		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gid)).Scan(&seededAt))
-	assertpkg.True(t, seededAt.Valid, "seeded_at stamped at creation")
+	assert.True(t, seededAt.Valid, "seeded_at stamped at creation")
 }
 
 // TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage pins
@@ -268,34 +329,49 @@ func TestBackend_CreateGeneration_StampsSeededAt(t *testing.T) {
 // users at `embeddings resume`, which cannot stamp seeded_at — making the
 // row unactivatable except via --force. Coverage is the real gate now.
 func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing.T) {
+	require := require.
+		New(t)
+
 	b, ctx := newBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(
+		err, "CreateGeneration")
 
 	// Simulate a legacy/crashed generation: clear seeded_at.
 	_, err = b.db.ExecContext(ctx,
 		`UPDATE index_generations SET seeded_at = NULL WHERE id = ?`, int64(gen))
-	requirepkg.NoError(t, err, "clear seeded_at")
+	require.NoError(
+		err, "clear seeded_at")
+
 	var seededAt sql.NullInt64
-	requirepkg.NoError(t, b.db.QueryRowContext(ctx,
+	require.NoError(b.db.QueryRowContext(ctx,
 		`SELECT seeded_at FROM index_generations WHERE id = ?`, int64(gen)).Scan(&seededAt))
-	requirepkg.False(t, seededAt.Valid, "precondition: seeded_at is NULL")
+	require.False(seededAt.Valid, "precondition: seeded_at is NULL")
 
 	// Make coverage complete (worker would stamp this after upsert).
 	_, err = b.mainDB.ExecContext(ctx, `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
-	requirepkg.NoError(t, err, "stamp embed_gen")
-	requirepkg.Equal(t, 0, missingCountSV(t, b, gen), "precondition: coverage complete")
+	require.NoError(
+		err, "stamp embed_gen")
 
-	// Activation succeeds WITHOUT force despite seeded_at=NULL.
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gen, false),
+	require.Equal(0, missingCountSV(t, b, gen), "precondition: coverage complete")
+	require.NoError(
+
+		b.ActivateGeneration(ctx, gen, false),
 		"NULL seeded_at + full coverage must activate without --force")
-	assertpkg.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
+
+	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen), "now active")
 }
 
 func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.
+		New(t)
+
 	ctx := context.Background()
 	main, err := sql.Open("sqlite3", ":memory:")
-	requirepkg.NoError(t, err, "open main")
+	require.NoError(
+		err, "open main")
+
 	t.Cleanup(func() { _ = main.Close() })
 	_, err = main.Exec(`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
@@ -304,14 +380,17 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`)
-	requirepkg.NoError(t, err, "create messages")
+	require.NoError(
+		err, "create messages")
+
 	_, err = main.Exec(`
 		INSERT INTO messages (id, message_type, deleted_from_source_at) VALUES
 		(1, 'email', NULL),
 		(2, 'sms', NULL),
 		(3, 'mms', NULL),
 		(4, 'sms', CURRENT_TIMESTAMP)`)
-	requirepkg.NoError(t, err, "insert messages")
+	require.NoError(
+		err, "insert messages")
 
 	b, err := Open(ctx, Options{
 		Path:       filepath.Join(t.TempDir(), "vectors.db"),
@@ -319,28 +398,41 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 		MainDB:     main,
 		BuildScope: vector.NewBuildScope([]string{"sms", "mms"}),
 	})
-	requirepkg.NoError(t, err, "Open")
+	require.NoError(
+		err, "Open")
+
 	t.Cleanup(func() { _ = b.Close() })
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
+	require.NoError(
+		err, "Create")
+
 	stats, err := b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats")
-	assertpkg.Equal(t, int64(2), stats.PendingCount, "only scoped live messages should count as missing")
+	require.NoError(
+		err, "Stats")
+
+	assert.Equal(int64(2), stats.PendingCount, "only scoped live messages should count as missing")
 
 	missing, err := b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen")
-	assertpkg.True(t, missing, "scoped messages still need embeddings")
+	require.NoError(
+		err, "hasMissingForGen")
+
+	assert.True(missing, "scoped messages still need embeddings")
 
 	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
-	requirepkg.NoError(t, err, "stamp scoped messages")
+	require.NoError(
+		err, "stamp scoped messages")
 
 	stats, err = b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats after stamp")
-	assertpkg.Equal(t, int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
+	require.NoError(
+		err, "Stats after stamp")
+
+	assert.Equal(int64(0), stats.PendingCount, "unscoped email must not block scoped coverage")
 	missing, err = b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen after stamp")
-	assertpkg.False(t, missing, "unscoped email must not block scoped activation")
+	require.NoError(
+		err, "hasMissingForGen after stamp")
+
+	assert.False(missing, "unscoped email must not block scoped activation")
 }
 
 // TestBackend_CreateGeneration_ResumesBuilding confirms that calling
@@ -351,11 +443,11 @@ func TestBackend_CreateGeneration_ResumesBuilding(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	first, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "first Create")
+	require.NoError(t, err, "first Create")
 
 	second, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "second Create with matching fingerprint")
-	assertpkg.Equal(t, first, second, "should reuse existing id")
+	require.NoError(t, err, "second Create with matching fingerprint")
+	assert.Equal(t, first, second, "should reuse existing id")
 }
 
 // TestBackend_CreateGeneration_MismatchedFingerprint checks that a
@@ -367,11 +459,11 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	_, err := b.CreateGeneration(ctx, "model-a", 768, "")
-	requirepkg.NoError(t, err, "first Create")
+	require.NoError(t, err, "first Create")
 
 	_, err = b.CreateGeneration(ctx, "model-b", 768, "")
-	requirepkg.Error(t, err, "second Create with different fingerprint")
-	assertpkg.ErrorIs(t, err, vector.ErrBuildingInProgress)
+	require.Error(t, err, "second Create with different fingerprint")
+	assert.ErrorIs(t, err, vector.ErrBuildingInProgress)
 }
 
 // TestBackend_ClaimOrInsertBuilding_RaceRecoversFromUniqueConstraint
@@ -391,8 +483,8 @@ func TestBackend_CreateGeneration_MismatchedFingerprint(t *testing.T) {
 // dedicated race path is covered indirectly because both code paths
 // converge on lookupBuilding.
 func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gen1, isNew1, err := b.claimOrInsertBuilding(ctx, "m", 768, "m:768", time.Now().Unix())
@@ -414,23 +506,30 @@ func TestBackend_ClaimOrInsertBuilding_RecoversFromExistingRow(t *testing.T) {
 // whose only message is deleted-from-source reports zero missing, so a
 // building generation can activate without force.
 func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
+	require := require.
+		New(t)
+
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := context.Background()
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "Create")
+	require.NoError(
+		err, "Create")
+
 	missing, err := b.hasMissingForGen(ctx, gid)
-	requirepkg.NoError(t, err, "hasMissingForGen")
-	assertpkg.False(t, missing, "deleted-from-source message must not count as missing")
-	// With no live missing message, activation passes the coverage gate.
-	requirepkg.NoError(t, b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
+	require.NoError(
+		err, "hasMissingForGen")
+
+	assert.False(t, missing, "deleted-from-source message must not count as missing")
+	require.NoError(
+		b.ActivateGeneration(ctx, gid, false), "activate (no missing)")
 }
 
 // TestBackend_CoverageGate_SkipsDedupHidden verifies the coverage gate
 // excludes dedup-hidden messages (deleted_at IS NOT NULL): only the live
 // message counts toward "missing".
 func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	ctx := context.Background()
 
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -462,7 +561,7 @@ func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
 	// must still not count (it is dedup-hidden), and the live one must.
 	s, err := b.Stats(ctx, gid)
 	require.NoError(err, "Stats")
-	assertpkg.Equal(t, int64(1), s.PendingCount, "only the live message counts as missing")
+	assert.Equal(t, int64(1), s.PendingCount, "only the live message counts as missing")
 }
 
 // TestBackend_Upsert_WritesEmbeddingAndVector verifies Upsert's
@@ -470,8 +569,8 @@ func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
 // vec0 row, and explicitly does NOT touch messages.embed_gen (the worker
 // stamps that after a successful upsert, in the main DB).
 func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -507,15 +606,15 @@ func TestBackend_Upsert_WritesEmbeddingAndVector(t *testing.T) {
 func TestBackend_Upsert_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 
 	short := make([]float32, 64) // wrong dim
 	err = b.Upsert(ctx, gid, []vector.Chunk{{MessageID: 1, Vector: short}})
-	assertpkg.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
 
 func TestBackend_Upsert_EmptyChunks(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -527,7 +626,7 @@ func TestBackend_Upsert_EmptyChunks(t *testing.T) {
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ?`, gid).Scan(&n)
 	require.NoError(err, "count embeddings")
-	assertpkg.Equal(t, 0, n, "embeddings count")
+	assert.Equal(t, 0, n, "embeddings count")
 }
 
 func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
@@ -535,12 +634,12 @@ func TestBackend_Upsert_UnknownGeneration(t *testing.T) {
 
 	vec := make([]float32, 768)
 	err := b.Upsert(ctx, vector.GenerationID(9999), []vector.Chunk{{MessageID: 1, Vector: vec}})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -584,8 +683,8 @@ func TestBackend_Upsert_MultiChunkAndTruncated(t *testing.T) {
 // message id must produce two embeddings rows (with chunk_index 0
 // and 1) and two vec0 rows, joined back through embedding_id.
 func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -601,6 +700,7 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 		{MessageID: 7, ChunkIndex: 1, Vector: v1, SourceCharLen: 90,
 			ChunkCharStart: 80, ChunkCharEnd: 170},
 	}), "Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 7`, gid).Scan(&n)
@@ -631,8 +731,8 @@ func TestBackend_Upsert_MultiChunkMessage(t *testing.T) {
 // only chunk 0 must remove the chunk 1 left from a previous call.
 // Half-replace would leave an orphan row pointing at stale text.
 func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -647,11 +747,13 @@ func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 100},
 		{MessageID: 5, ChunkIndex: 1, Vector: v1, SourceCharLen: 90},
 	}), "first Upsert")
+
 	// Second upsert: only chunk 0. Idempotent replace should also
 	// vacate the stale chunk 1 row.
 	require.NoError(b.Upsert(ctx, gid, []vector.Chunk{
 		{MessageID: 5, ChunkIndex: 0, Vector: v0, SourceCharLen: 999},
 	}), "second Upsert")
+
 	var n int
 	err = b.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 5`, gid).Scan(&n)
@@ -666,8 +768,8 @@ func TestBackend_Upsert_ReplaceFewerChunks(t *testing.T) {
 }
 
 func TestBackend_Upsert_ReplacesExisting(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -705,8 +807,8 @@ func TestBackend_Upsert_ReplacesExisting(t *testing.T) {
 }
 
 func TestBackend_Search_ReturnsRankedHits(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{
 		10: unitVec(768, 0),
@@ -724,26 +826,26 @@ func TestBackend_Search_ReturnsRankedHits(t *testing.T) {
 func TestBackend_Search_EmptyQueryVector(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	_, err = b.Search(ctx, gid, nil, 5, vector.Filter{})
-	requirepkg.Error(t, err, "Search with nil queryVec should error")
+	require.Error(t, err, "Search with nil queryVec should error")
 	_, err = b.Search(ctx, gid, []float32{}, 5, vector.Filter{})
-	requirepkg.Error(t, err, "Search with empty queryVec should error")
+	require.Error(t, err, "Search with empty queryVec should error")
 }
 
 func TestBackend_Search_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	vec := unitVec(768, 0)
 	_, err := b.Search(ctx, vector.GenerationID(9999), vec, 5, vector.Filter{})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Search_DimensionMismatch(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
+	require.NoError(t, err, "CreateGeneration")
 	_, err = b.Search(ctx, gid, unitVec(64, 0), 5, vector.Filter{})
-	assertpkg.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	assert.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
 
 // TestBackend_Search_FilterIDsExceedSQLiteParamCap exercises the
@@ -752,7 +854,7 @@ func TestBackend_Search_DimensionMismatch(t *testing.T) {
 // implementation expanded the id set into one `IN (?,?,...)` list per
 // id and failed with `too many SQL variables` once it crossed the cap.
 func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	const total = 1200 // well past SQLite's 999-variable ceiling
@@ -791,14 +893,14 @@ func TestBackend_Search_FilterIDsExceedSQLiteParamCap(t *testing.T) {
 
 	hits, err := b.Search(ctx, gid, unitVec(768, 0), 3, vector.Filter{SenderGroups: [][]int64{{42}}})
 	require.NoErrorf(err, "Search with broad filter (%d ids)", total)
-	assertpkg.NotEmpty(t, hits, "expected at least one hit after filter")
+	assert.NotEmpty(t, hits, "expected at least one hit after filter")
 }
 
 // TestBackend_Search_NewFilterFields exercises the filter fields added
 // to match the existing SQLite search surface: to/cc/bcc recipients,
 // larger/smaller size bounds, and subject substring match.
 func TestBackend_Search_NewFilterFields(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	// Reset and seed 4 messages with distinct recipient / size / subject
@@ -859,33 +961,33 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 
 	t.Run("ToGroups_singleGroup", func(t *testing.T) {
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{20}}})
-		assertpkg.Truef(t, got[2] && got[3] && !got[1] && !got[4], "ToGroups=[[20]]: got %v, want {2,3}", got)
+		assert.Truef(t, got[2] && got[3] && !got[1] && !got[4], "ToGroups=[[20]]: got %v, want {2,3}", got)
 	})
 	t.Run("CcGroups_singleGroup", func(t *testing.T) {
 		got := matched(t, vector.Filter{CcGroups: [][]int64{{10}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "CcGroups=[[10]]: got %v, want {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "CcGroups=[[10]]: got %v, want {2}", got)
 	})
 	t.Run("LargerThan", func(t *testing.T) {
 		size := int64(1_000_000)
 		got := matched(t, vector.Filter{LargerThan: &size})
-		assertpkg.Truef(t, got[2] && got[4] && !got[1] && !got[3], "LargerThan=1MB: got %v, want {2,4}", got)
+		assert.Truef(t, got[2] && got[4] && !got[1] && !got[3], "LargerThan=1MB: got %v, want {2,4}", got)
 	})
 	t.Run("SmallerThan", func(t *testing.T) {
 		size := int64(1_000_000)
 		got := matched(t, vector.Filter{SmallerThan: &size})
-		assertpkg.Truef(t, got[1] && got[3] && !got[2] && !got[4], "SmallerThan=1MB: got %v, want {1,3}", got)
+		assert.Truef(t, got[1] && got[3] && !got[2] && !got[4], "SmallerThan=1MB: got %v, want {1,3}", got)
 	})
 	t.Run("SubjectSubstring", func(t *testing.T) {
 		got := matched(t, vector.Filter{SubjectSubstrings: []string{"quarterly"}})
-		assertpkg.Truef(t, got[1] && got[2] && got[4] && !got[3], "subject=quarterly: got %v, want {1,2,4}", got)
+		assert.Truef(t, got[1] && got[2] && got[4] && !got[3], "subject=quarterly: got %v, want {1,2,4}", got)
 	})
 	t.Run("MultipleSubjectsANDed", func(t *testing.T) {
 		got := matched(t, vector.Filter{SubjectSubstrings: []string{"quarterly", "deep"}})
-		assertpkg.Truef(t, got[4] && !got[1] && !got[2] && !got[3], "subject=[quarterly, deep]: got %v, want {4}", got)
+		assert.Truef(t, got[4] && !got[1] && !got[2] && !got[3], "subject=[quarterly, deep]: got %v, want {4}", got)
 	})
 	t.Run("MessageTypes", func(t *testing.T) {
 		got := matched(t, vector.Filter{MessageTypes: []string{"sms"}})
-		assertpkg.Truef(t, got[2] && got[3] && !got[1] && !got[4], "MessageTypes=[sms]: got %v, want {2,3}", got)
+		assert.Truef(t, got[2] && got[3] && !got[1] && !got[4], "MessageTypes=[sms]: got %v, want {2,3}", got)
 	})
 	t.Run("CombinedFilter", func(t *testing.T) {
 		size := int64(1_000_000)
@@ -895,7 +997,7 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 			SubjectSubstrings: []string{"quarterly"},
 			MessageTypes:      []string{"sms"},
 		})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "combined to=20 + >1MB + quarterly: got %v, want {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3] && !got[4], "combined to=20 + >1MB + quarterly: got %v, want {2}", got)
 	})
 }
 
@@ -905,7 +1007,7 @@ func TestBackend_Search_NewFilterFields(t *testing.T) {
 // `to:(alice OR bob)`. Each group becomes its own EXISTS clause and
 // they are AND'd together. Same shape as label group AND'ing.
 func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -975,19 +1077,19 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 	t.Run("two_to_groups_require_both", func(t *testing.T) {
 		// `to:100 to:200` ⇒ ToGroups=[[100],[200]]; only msg 2 has both.
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{100}, {200}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3], "ToGroups=[[100],[200]]: got %v, want only {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3], "ToGroups=[[100],[200]]: got %v, want only {2}", got)
 	})
 
 	t.Run("two_label_groups_require_both", func(t *testing.T) {
 		// `label:1 label:2` ⇒ LabelGroups=[[1],[2]]; only msg 2 has both.
 		got := matched(t, vector.Filter{LabelGroups: [][]int64{{1}, {2}}})
-		assertpkg.Truef(t, got[2] && !got[1] && !got[3], "LabelGroups=[[1],[2]]: got %v, want only {2}", got)
+		assert.Truef(t, got[2] && !got[1] && !got[3], "LabelGroups=[[1],[2]]: got %v, want only {2}", got)
 	})
 
 	t.Run("OR_within_a_group_still_works", func(t *testing.T) {
 		// One group containing both ids ⇒ matches messages with either.
 		got := matched(t, vector.Filter{ToGroups: [][]int64{{100, 200}}})
-		assertpkg.Truef(t, got[1] && got[2] && got[3], "ToGroups=[[100,200]]: got %v, want {1,2,3}", got)
+		assert.Truef(t, got[1] && got[2] && got[3], "ToGroups=[[100,200]]: got %v, want {1,2,3}", got)
 	})
 }
 
@@ -999,8 +1101,8 @@ func TestBackend_Search_RecipientGroupsAreANDed(t *testing.T) {
 // path and allow repeated `from:` tokens to be satisfied by a mix of
 // sender_id and recipient rows.
 func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	// Reset the fused helper's seed data so we control the rows.
@@ -1057,7 +1159,7 @@ func TestBackend_Search_SenderMatchesFromRecipientOnly(t *testing.T) {
 // regression-guards the bug where SenderGroups were collapsed to a
 // participant-level intersection (which would drop such messages).
 func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1110,12 +1212,12 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 
 	t.Run("two_groups_AND_at_message_level", func(t *testing.T) {
 		got := matched(t, vector.Filter{SenderGroups: [][]int64{{100}, {200}}})
-		assertpkg.Truef(t, !got[1] && got[2] && got[3], "SenderGroups=[[100],[200]]: got %v, want {2,3}", got)
+		assert.Truef(t, !got[1] && got[2] && got[3], "SenderGroups=[[100],[200]]: got %v, want {2,3}", got)
 	})
 
 	t.Run("single_group_OR_within", func(t *testing.T) {
 		got := matched(t, vector.Filter{SenderGroups: [][]int64{{100, 200}}})
-		assertpkg.Truef(t, got[1] && got[2] && got[3], "SenderGroups=[[100,200]]: got %v, want {1,2,3}", got)
+		assert.Truef(t, got[1] && got[2] && got[3], "SenderGroups=[[100,200]]: got %v, want {1,2,3}", got)
 	})
 }
 
@@ -1128,8 +1230,8 @@ func TestBackend_Search_SenderGroupsAreANDed_AtMessageLevel(t *testing.T) {
 // hardcodes the same check, but the parity gap meant pure-vector
 // answers could include archive-deleted messages.
 func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1167,8 +1269,8 @@ func TestBackend_Search_ExcludesDeletedFromSource(t *testing.T) {
 // neighbors existed just below the cutoff. The fast path must
 // over-fetch enough to still return k live hits in this situation.
 func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1235,8 +1337,8 @@ func TestBackend_Search_OverFetchesToHonorKWhenTopHitsDeleted(t *testing.T) {
 // over-fetch isn't enough. Search must keep doubling fetch until it
 // collects k live hits or exhausts the generation.
 func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1294,7 +1396,7 @@ func TestBackend_Search_IterativelyExpandsWhenDeletionsExceedOverfetch(t *testin
 // after expanding to the whole generation, Search returns the
 // remainder without looping forever.
 func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newFusedBackendForTest(t)
 
 	_, err := b.mainDB.ExecContext(ctx,
@@ -1327,8 +1429,8 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 }
 
 func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
@@ -1347,15 +1449,15 @@ func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
 func TestBackend_Delete_EmptyIDsIsNoop(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
-	requirepkg.NoError(t, err, "CreateGeneration")
-	assertpkg.NoError(t, b.Delete(ctx, gid, nil), "Delete(nil)")
-	assertpkg.NoError(t, b.Delete(ctx, gid, []int64{}), "Delete(empty)")
+	require.NoError(t, err, "CreateGeneration")
+	assert.NoError(t, b.Delete(ctx, gid, nil), "Delete(nil)")
+	assert.NoError(t, b.Delete(ctx, gid, []int64{}), "Delete(empty)")
 }
 
 func TestBackend_Delete_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	err := b.Delete(ctx, vector.GenerationID(9999), []int64{1})
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_Stats_CountsCorrectly(t *testing.T) {
@@ -1363,14 +1465,14 @@ func TestBackend_Stats_CountsCorrectly(t *testing.T) {
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
 	s, err := b.Stats(ctx, gid)
-	requirepkg.NoError(t, err, "Stats")
-	assertpkg.Equal(t, int64(1), s.EmbeddingCount)
-	assertpkg.Equal(t, int64(0), s.PendingCount)
+	require.NoError(t, err, "Stats")
+	assert.Equal(t, int64(1), s.EmbeddingCount)
+	assert.Equal(t, int64(0), s.PendingCount)
 }
 
 func TestBackend_Stats_PendingCountAfterCreate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1388,8 +1490,8 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 	_ = seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
 
 	s, err := b.Stats(ctx, vector.GenerationID(0))
-	requirepkg.NoError(t, err, "Stats(0)")
-	assertpkg.Equal(t, int64(1), s.EmbeddingCount, "aggregate EmbeddingCount")
+	require.NoError(t, err, "Stats(0)")
+	assert.Equal(t, int64(1), s.EmbeddingCount, "aggregate EmbeddingCount")
 }
 
 // TestBackend_Stats_AggregateCountsPerGenerationDuplicates pins the
@@ -1398,8 +1500,8 @@ func TestBackend_Stats_AggregateAcrossGenerations(t *testing.T) {
 // aggregate path should report two units of embedded work (one per
 // generation) rather than collapsing to one via DISTINCT message_id.
 func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	// First generation: embed message 1, then activate so the next
@@ -1437,8 +1539,8 @@ func TestBackend_Stats_AggregateCountsPerGenerationDuplicates(t *testing.T) {
 // delete. Without this, ActiveGeneration().MessageCount stays at zero
 // regardless of how many chunks have been written.
 func TestBackend_Upsert_UpdatesMessageCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
@@ -1481,12 +1583,12 @@ func TestBackend_Stats_UnknownGeneration(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 
 	_, err := b.Stats(ctx, vector.GenerationID(9999))
-	requirepkg.Error(t, err, "Stats on unknown generation: want error")
-	assertpkg.ErrorIs(t, err, vector.ErrUnknownGeneration)
+	require.Error(t, err, "Stats on unknown generation: want error")
+	assert.ErrorIs(t, err, vector.ErrUnknownGeneration)
 }
 
 func TestBackend_LoadVector(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1511,7 +1613,7 @@ func TestBackend_LoadVector(t *testing.T) {
 }
 
 func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	b, ctx := newBackendForTest(t)
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(err, "CreateGeneration")
@@ -1531,16 +1633,16 @@ func TestBackend_LoadVector_NotEmbedded(t *testing.T) {
 func TestBackend_LoadVector_NoActive(t *testing.T) {
 	b, ctx := newBackendForTest(t)
 	_, err := b.LoadVector(ctx, 1)
-	requirepkg.Error(t, err)
-	assertpkg.ErrorIs(t, err, vector.ErrNoActiveGeneration)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, vector.ErrNoActiveGeneration)
 }
 
 // TestBackend_Search_ExcludesDedupHidden confirms that Search excludes
 // messages hidden by dedup (deleted_at IS NOT NULL), not just those
 // deleted from source. Uses a minimal main DB without FTS5.
 func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Minimal main DB: two messages, one dedup-hidden. No FTS5 required.
@@ -1587,8 +1689,8 @@ func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
 // filteredMessageIDs excludes messages with deleted_at set.
 // Uses a minimal main DB without FTS5.
 func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Minimal main DB with source_id for SourceIDs filter.

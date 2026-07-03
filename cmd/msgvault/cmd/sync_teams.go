@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/microsoft"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/teams"
 )
 
@@ -40,21 +39,18 @@ Examples:
   msgvault sync-teams user@company.com --full`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+
 		email := args[0]
 
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
+		s, cleanup, err := openWritableStoreAndInitForIngest()
 		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+			return err
 		}
-		defer func() { _ = s.Close() }()
-
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrationsForIngest(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
+		defer cleanup()
+		dbPath := cfg.DatabaseDSN()
 
 		if cfg.Microsoft.ClientID == "" {
 			return errors.New("microsoft OAuth not configured\n\n" +

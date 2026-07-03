@@ -13,7 +13,7 @@ Archive a lifetime of email. Analytics and search in milliseconds, entirely offl
 
 ## Why msgvault?
 
-Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against local data with no network access required.
+Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
 Currently supports Gmail, Google Calendar, and IMAP sync, plus offline imports from MBOX exports and Apple Mail (.emlx) directories.
 
@@ -90,11 +90,11 @@ msgvault tui
 | `sync EMAIL` | Sync only new/changed messages |
 | `add-calendar EMAIL` | Authorize read-only Google Calendar access and register calendars |
 | `sync-calendar NAME\|EMAIL` | Sync Google Calendar events (full first run, then incremental) |
-| `tui` | Launch the interactive TUI (`--account` to filter, `--local` to force local) |
+| `tui` | Launch the interactive TUI (`--account` to filter, `--local` to bypass HTTP) |
 | `search QUERY` | Search messages (`--account` to filter, `--json` for machine output) |
 | `show-message ID` | View full message details (`--json` for machine output) |
 | `mcp` | Start the MCP server for AI assistant integration |
-| `serve` | Run daemon with scheduled sync and HTTP API for remote TUI |
+| `serve` | Run the API/scheduler or manage the background daemon (`start`, `status`, `stop`, `restart`) |
 | `stats` | Show archive statistics |
 | `list-accounts` | List synced email accounts |
 | `verify EMAIL` | Verify archive integrity against Gmail |
@@ -119,7 +119,7 @@ msgvault can search your archive semantically using vector embeddings in additio
 
 A separate MCP tool, `find_similar_messages`, returns nearest neighbors for a seed message. See the [Vector Search guide](https://msgvault.io/usage/vector-search/) for setup, backfill, and troubleshooting.
 
-> **Run only one embedding process at a time.** Don't run `msgvault embeddings build`/`resume` or `repair-encoding` concurrently with a `msgvault serve` daemon — they write the same embedding state, and concurrent writers are not coordinated across processes.
+> **Archive writes are daemon-owned.** CLI writer commands such as `msgvault sync-full`, `msgvault embeddings build`, `msgvault repair-encoding`, and `msgvault rebuild-fts` send their work to the configured remote server or local background daemon. The daemon serializes archive mutations and streams progress back to your terminal, so normal CLI ergonomics stay the same without opening a second SQLite writer process.
 
 Large archives can scope an embedding generation with `[vector.embed.scope] message_types = ["sms", "mms"]`. Scoped vector and hybrid searches must include a matching `message_type` filter so a partial index is never used as if it covered the whole archive.
 
@@ -262,13 +262,26 @@ msgvault sync-full you@acme.com
 
 msgvault includes an MCP server that lets AI assistants search, analyze, and read your archived messages. Connect it to Claude Desktop or any MCP-capable agent and query your full message history conversationally. See the [MCP documentation](https://msgvault.io/usage/chat/) for setup instructions.
 
-## Daemon Mode (NAS/Server)
+## Daemon Mode (Local/Remote)
 
-Run msgvault as a long-running daemon for scheduled syncs and remote access:
+Run msgvault as a foreground server for scheduled syncs and remote access:
 
 ```bash
 msgvault serve
 ```
+
+For local CLI use, msgvault can also manage a background daemon:
+
+```bash
+msgvault serve start
+msgvault serve status
+msgvault serve stop
+msgvault serve restart
+```
+
+Archive-access CLI commands use the HTTP API by default. If `[remote].url` is configured, the CLI talks to that remote server. Otherwise, it discovers or starts the local background daemon instead of opening the SQLite database itself. This keeps local and remote CLI behavior aligned and avoids repeated startup cost on large archives. Use `--local` to force the local daemon when a remote server is configured.
+
+The server exposes its generated OpenAPI document at `/openapi.json` and interactive API docs at `/docs`.
 
 Configure scheduled syncs in `config.toml`:
 
@@ -287,9 +300,10 @@ enabled = true
 api_port = 8080
 bind_addr = "0.0.0.0"
 api_key = "your-secret-key"
+daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
 ```
 
-The TUI can connect to a remote server by configuring `[remote].url`. Use `--local` to force local database when remote is configured. See the [Web Server reference](https://msgvault.io/api-server/) for the HTTP API.
+`daemon_idle_timeout` applies to lifecycle-managed background daemons started by `msgvault serve start` or auto-started by a CLI command. A foreground `msgvault serve` keeps running until you stop it. See the [Web Server reference](https://msgvault.io/api-server/) or `/openapi.json` on a running server for the HTTP API.
 
 ## Documentation
 

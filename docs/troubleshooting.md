@@ -92,13 +92,13 @@ allow_insecure = true
 
 ### Remote command behaves unexpectedly
 
-Commands that support remote mode (`search`, `show-message`, `stats`, `list-accounts`) can be triggered unintentionally when `[remote].url` is set.
+Remote-aware CLI commands use `[remote].url` automatically when it is set. This includes `sync`, `sync-full`, `verify`, `search`, `query`, `show-message`, `stats`, aggregate list commands, identity commands, collection commands, attachment exports, `update-account`, `repair-encoding`, `rebuild-fts`, `build-cache`, `cache-stats`, and `tui`.
 
-Use `--local` when you want to force local SQLite:
+For archive-access commands, use `--local` when you want the same CLI command to talk to the local background daemon instead of the configured remote:
 
 ```bash
-msgvault search from:alice@example.com --local
 msgvault list-accounts --local
+msgvault rebuild-fts --local
 ```
 
 ## Docker Container Issues
@@ -148,7 +148,9 @@ services:
    curl -H "X-API-Key: KEY" http://localhost:8080/api/v1/scheduler/status
    ```
 
-4. Make sure you've run the initial full sync — the scheduler only runs incremental syncs:
+4. Make sure you've run the initial full sync — the scheduler only runs incremental syncs.
+   Run `sync-full` through the container's CLI; it will connect to the running
+   daemon over HTTP and stream progress back to your terminal:
    ```bash
    docker exec msgvault msgvault sync-full you@gmail.com
    ```
@@ -262,6 +264,8 @@ msgvault logs --run-id <id>
 msgvault logs --level error
 ```
 
+`msgvault logs` reads from the selected daemon. If `[remote].url` is configured, it shows the remote daemon's logs; otherwise it starts or contacts the local daemon.
+
 For one-off debugging without changing config, use the `--log-file` flag:
 
 ```bash
@@ -278,7 +282,7 @@ msgvault tui --log-sql-slow-ms 50
 msgvault tui --log-sql
 ```
 
-Log files are stored in `<data_dir>/logs/` by default. Run `msgvault logs --path` to print the directory. See [Configuration: Log](/configuration/#log) for all options.
+Log files are stored in `<data_dir>/logs/` by default. Run `msgvault logs --path` to print the selected daemon's directory. See [Configuration: Log](/configuration/#log) for all options.
 
 ## Still Stuck?
 

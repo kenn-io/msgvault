@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -21,8 +21,8 @@ import (
 // returns ErrNotBuilt under a no-sqlite_vec build. The untagged pre-check
 // refusal lives in TestRetireEmbeddingGenerationRefusesActiveWithoutForce_PreCheck.
 func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	dbPath := newEmbeddingMetadataTestDBFile(t)
 	withEmbeddingCommandConfig(t, dbPath)
 
@@ -51,8 +51,8 @@ func TestRunEmbeddingsRetire_ForceActive(t *testing.T) {
 }
 
 func TestFillFullCoverageUsesEmbeddingScopeForEmbeddedCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	dbPath := newEmbeddingMetadataTestDBFileAt(t, filepath.Join(dataDir, "vectors.db"))

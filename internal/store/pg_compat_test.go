@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -22,8 +22,8 @@ import (
 // and refuses to convert to *string. Under SQLite the test asserts
 // the formatted string still contains the expected date/time pieces.
 func TestInspectMessage_TimestampScan(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 
 	sent := time.Date(2025, 6, 15, 12, 30, 45, 0, time.UTC)
@@ -52,7 +52,7 @@ func TestInspectMessage_TimestampScan(t *testing.T) {
 // PG's is strict-case. The fix wraps both sides in LOWER so a query
 // for "Invoice" matches "invoice from acme".
 func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	mid := f.NewMessage().
@@ -78,7 +78,7 @@ func TestSearchMessagesQuery_SubjectLikeCaseInsensitive(t *testing.T) {
 // the LOWER(p.email_address) IN (...) predicate matches against
 // case-folded participants.
 func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 
 	to, err := f.Store.EnsureParticipant("alice@example.com", "Alice", "example.com")
@@ -126,7 +126,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 		WithSubject("project foo bar").
 		WithSnippet("foo bar baz").
 		Create(t, f.Store)
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg1,
+	require.NoError(t, f.Store.UpsertMessageBody(msg1,
 		sql.NullString{String: "foo and bar appear together here", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 1")
 
@@ -135,12 +135,12 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 		WithSubject("email from alice").
 		WithSnippet("contact us at user@example.com please").
 		Create(t, f.Store)
-	requirepkg.NoError(t, f.Store.UpsertMessageBody(msg2,
+	require.NoError(t, f.Store.UpsertMessageBody(msg2,
 		sql.NullString{String: "reach us at user@example.com for support", Valid: true},
 		sql.NullString{}), "UpsertMessageBody 2")
 
 	_, err := f.Store.BackfillFTS(nil)
-	requirepkg.NoError(t, err, "BackfillFTS")
+	require.NoError(t, err, "BackfillFTS")
 
 	queries := []string{
 		"---",              // dashes-only — used to crash to_tsquery
@@ -154,7 +154,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 	for _, q := range queries {
 		t.Run(q, func(t *testing.T) {
 			_, _, err := f.Store.SearchMessages(q, 0, 50)
-			assertpkg.NoError(t, err, "SearchMessages(%q): must accept punctuation-heavy input without erroring", q)
+			assert.NoError(t, err, "SearchMessages(%q): must accept punctuation-heavy input without erroring", q)
 		})
 	}
 }
@@ -164,7 +164,7 @@ func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
 // one row and no errors. The fix collapsed the SELECT-then-INSERT
 // race into a single INSERT … ON CONFLICT … RETURNING id statement.
 func TestEnsureParticipant_Concurrent(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	const N = 50
@@ -183,7 +183,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		requirepkg.NoError(t, err, "goroutine %d: EnsureParticipant", i)
+		require.NoError(t, err, "goroutine %d: EnsureParticipant", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
@@ -191,7 +191,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	}
 
 	var count int
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE email_address = ?"),
 		"race@example.com",
 	).Scan(&count), "count participants")
@@ -203,7 +203,7 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 // now in place, concurrent inserts collapse to one row via the
 // ON CONFLICT clause.
 func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
 	const N = 50
@@ -222,7 +222,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		requirepkg.NoError(t, err, "goroutine %d: EnsureParticipantByPhone", i)
+		require.NoError(t, err, "goroutine %d: EnsureParticipantByPhone", i)
 	}
 	first := ids[0]
 	for i, id := range ids {
@@ -230,7 +230,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	}
 
 	var count int
-	requirepkg.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRow(
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE phone_number = ?"),
 		"+15555550100",
 	).Scan(&count), "count participants")
@@ -241,8 +241,8 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 // of the same (source_id, address) collapse to exactly one row, and
 // merging different signals across calls preserves the union.
 func TestAddAccountIdentity_Concurrent(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "race-identity@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -317,15 +317,15 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range errs {
-		requirepkg.NoError(t, err, "goroutine %d: UpsertAttachment", i)
+		require.NoError(t, err, "goroutine %d: UpsertAttachment", i)
 	}
 
 	var count int
-	requirepkg.NoError(t, f.Store.DB().QueryRow(
+	require.NoError(t, f.Store.DB().QueryRow(
 		f.Store.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?"),
 		mid, "abcd1234",
 	).Scan(&count), "count attachments")
-	assertpkg.Equal(t, 1, count, "want exactly 1 attachment row")
+	assert.Equal(t, 1, count, "want exactly 1 attachment row")
 }
 
 // silenceUnused references the imports the test would otherwise drop on

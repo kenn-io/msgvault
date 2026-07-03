@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)
@@ -26,11 +26,11 @@ func TestConfirmDefaultIdentity_HappyPath(t *testing.T) {
 	require.NoError(err)
 	require.Len(rows, 1, "got %+v", rows)
 	require.Equal("alice@example.com", rows[0].Address, "got %+v", rows)
-	assertpkg.Equal(t, "account-identifier", rows[0].SourceSignal, "signal")
+	assert.Equal(t, "account-identifier", rows[0].SourceSignal, "signal")
 }
 
 func TestConfirmDefaultIdentity_EmptyIdentifierIsNoOp(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)
@@ -41,15 +41,15 @@ func TestConfirmDefaultIdentity_EmptyIdentifierIsNoOp(t *testing.T) {
 	require.NoError(err)
 	confirmDefaultIdentity(io.Discard, s, src.ID, "alice@example.com", "", "account-identifier")
 	rows, _ := s.ListAccountIdentities(src.ID)
-	assertpkg.Empty(t, rows, "want empty, got %+v", rows)
+	assert.Empty(t, rows, "want empty, got %+v", rows)
 }
 
 func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	requirepkg.NoError(t, err)
+	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
-	requirepkg.NoError(t, s.InitSchema())
+	require.NoError(t, s.InitSchema())
 
 	savedLogger := logger
 	defer func() { logger = savedLogger }()
@@ -69,7 +69,7 @@ func TestConfirmDefaultIdentity_StoreErrorDoesNotPanic(t *testing.T) {
 // --no-default-identity) does NOT prevent MigrateLegacyIdentityConfig from
 // writing the address.
 func TestConfirmDefaultIdentity_LegacyMigrationOverridesNoDefault(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	tmpDir := t.TempDir()
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)

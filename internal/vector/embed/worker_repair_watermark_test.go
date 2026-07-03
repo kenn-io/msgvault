@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset is the
@@ -29,8 +29,8 @@ import (
 //  2. WITH the watermark reset (the new path), the next incremental RunOnce
 //     re-embeds the repaired message (Succeeded>=1, missing==0).
 func TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx := context.Background()
 
 	// Seed 5 messages and embed all of them. With BatchSize 5 the worker scans

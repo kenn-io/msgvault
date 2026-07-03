@@ -1,6 +1,6 @@
 ---
 title: Verify Integrity
-description: Verify your local archive against Gmail.
+description: Verify your archive against Gmail.
 ---
 
 ## Usage
@@ -10,12 +10,13 @@ description: Verify your local archive against Gmail.
 msgvault verify you@gmail.com
 
 # Larger sample
-msgvault verify you@gmail.com --sample-size 500
+msgvault verify you@gmail.com --sample 500
 ```
 
 ## What It Checks
 
-The verify command compares your local archive against Gmail:
+The verify command compares your archive against Gmail through the configured
+remote server or local daemon:
 
 | Check | Description |
 |---|---|
@@ -27,7 +28,9 @@ The verify command compares your local archive against Gmail:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--sample-size` | `100` | Number of messages to sample for verification |
+| `--sample` | `100` | Number of messages to sample for verification |
+| `--skip-db-check` | `false` | Skip SQLite integrity check |
+| `--json` | `false` | Emit machine-readable JSON summary |
 
 ## When to Verify
 

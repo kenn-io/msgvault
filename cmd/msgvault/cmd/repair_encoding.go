@@ -38,49 +38,50 @@ For each invalid field, it:
 This is useful after a sync that may have produced invalid UTF-8 due to
 charset detection issues in the MIME parser.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		dbPath := cfg.DatabaseDSN()
-		s, err := store.Open(dbPath)
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
+		if isDaemonCLISubprocess() {
+			return runRepairEncodingLocal(cmd)
 		}
-		defer func() { _ = s.Close() }()
-
-		if err := s.InitSchema(); err != nil {
-			return fmt.Errorf("init schema: %w", err)
-		}
-		if err := runStartupMigrations(s); err != nil {
-			return fmt.Errorf("startup migrations: %w", err)
-		}
-
-		reembedNeededIDs, err := repairEncoding(s)
-		if err != nil {
-			return err
-		}
-
-		// Reset embed_gen = NULL on repaired messages so the scan-and-fill
-		// embed worker re-embeds them with the corrected text on its next
-		// run (msgvault embeddings build / the serve daemon). This is the
-		// scan-and-fill replacement for the old re-enqueue step: clearing
-		// embed_gen makes the message read as "needs embedding" again.
-		// No-op when vector search is disabled — the column is harmless.
-		if len(reembedNeededIDs) > 0 {
-			if err := repairResetEmbeddings(ctx, s, reembedNeededIDs); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-			}
-		}
-
-		analyticsDir := cfg.AnalyticsDir()
-		if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: cache rebuild failed: %v\n", err)
-			fmt.Fprintf(os.Stderr,
-				"Run 'msgvault build-cache --full-rebuild' to retry.\n")
-		} else {
-			fmt.Println("\nAnalytics cache rebuilt.")
-		}
-		return nil
+		return runRepairEncodingHTTP(cmd)
 	},
+}
+
+func runRepairEncodingLocal(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+
+	s, cleanup, err := openWritableStoreAndInit()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	reembedNeededIDs, err := repairEncoding(s)
+	if err != nil {
+		return err
+	}
+
+	// Reset embed_gen = NULL on repaired messages so the scan-and-fill
+	// embed worker re-embeds them with the corrected text on its next
+	// run (msgvault embeddings build / the serve daemon). This is the
+	// scan-and-fill replacement for the old re-enqueue step: clearing
+	// embed_gen makes the message read as "needs embedding" again.
+	// No-op when vector search is disabled — the column is harmless.
+	if len(reembedNeededIDs) > 0 {
+		if err := repairResetEmbeddings(ctx, s, reembedNeededIDs); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+	}
+
+	dbPath := cfg.DatabaseDSN()
+	analyticsDir := cfg.AnalyticsDir()
+	if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: cache rebuild failed: %v\n", err)
+		fmt.Fprintf(os.Stderr,
+			"Run 'msgvault build-cache --full-rebuild' to retry.\n")
+	} else {
+		fmt.Println("\nAnalytics cache rebuilt.")
+	}
+	return nil
 }
 
 // repairResetEmbeddings marks the repaired messages for re-embedding and lowers

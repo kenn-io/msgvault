@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -29,7 +29,9 @@ func TestAggregations(t *testing.T) {
 			name:    "BySenderName",
 			aggName: "AggregateBySenderName",
 			view:    ViewSenderNames,
-			want:    []aggExpectation{{"Alice Smith", 3}, {"Bob Jones", 2}},
+			// Per-message From-header names (message_recipients.display_name),
+			// not the sticky participants.display_name ("Alice Smith").
+			want: []aggExpectation{{"Alice", 3}, {"Bob", 2}},
 		},
 		{
 			name:    "ByRecipient",
@@ -53,7 +55,8 @@ func TestAggregations(t *testing.T) {
 			name:    "ByRecipientName",
 			aggName: "AggregateByRecipientName",
 			view:    ViewRecipientNames,
-			want:    []aggExpectation{{"Bob Jones", 3}, {"Alice Smith", 2}, {"Carol White", 1}},
+			// Per-message display names, not sticky participants.display_name.
+			want: []aggExpectation{{"Bob", 3}, {"Alice", 2}, {"Carol", 1}},
 		},
 	}
 
@@ -61,7 +64,7 @@ func TestAggregations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
 			rows, err := env.Engine.Aggregate(env.Ctx, tc.view, DefaultAggregateOptions())
-			requirepkg.NoError(t, err, tc.aggName)
+			require.NoError(t, err, tc.aggName)
 			assertAggRows(t, rows, tc.want)
 		})
 	}
@@ -82,14 +85,14 @@ func TestAggregateDefaultExcludesCalendarEvents(t *testing.T) {
 	})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "Aggregate(ViewSenders)")
-	assertpkg.NotContains(t, aggRowMap(t, rows), "calendar@example.com",
+	require.NoError(t, err, "Aggregate(ViewSenders)")
+	assert.NotContains(t, aggRowMap(t, rows), "calendar@example.com",
 		"default aggregates should exclude calendar events")
 
 	opts := DefaultAggregateOptions()
 	opts.SearchQuery = "message_type:calendar_event"
 	rows, err = env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "Aggregate(ViewSenders, message_type:calendar_event)")
+	require.NoError(t, err, "Aggregate(ViewSenders, message_type:calendar_event)")
 	assertAggRows(t, rows, []aggExpectation{{Key: "calendar@example.com", Count: 1}})
 }
 
@@ -111,14 +114,14 @@ func TestSubAggregateDefaultExcludesCalendarEvents(t *testing.T) {
 
 	rows, err := env.Engine.SubAggregate(env.Ctx,
 		MessageFilter{Sender: "alice@example.com"}, ViewRecipients, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate(default)")
-	assertpkg.NotContains(t, aggRowMap(t, rows), "calendar-recipient@example.com",
+	require.NoError(t, err, "SubAggregate(default)")
+	assert.NotContains(t, aggRowMap(t, rows), "calendar-recipient@example.com",
 		"default subaggregates should exclude calendar events")
 
 	rows, err = env.Engine.SubAggregate(env.Ctx,
 		MessageFilter{Sender: "alice@example.com", MessageType: "calendar_event"},
 		ViewRecipients, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate(message_type:calendar_event)")
+	require.NoError(t, err, "SubAggregate(message_type:calendar_event)")
 	assertAggRows(t, rows, []aggExpectation{{Key: "calendar-recipient@example.com", Count: 1}})
 }
 
@@ -137,18 +140,18 @@ func TestAggregateExplicitEmailMessageTypeIncludesLegacyRows(t *testing.T) {
 		ToIDs:   []int64{bobID},
 	})
 	_, err := env.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
-	requirepkg.NoError(t, err, "clear message_type")
+	require.NoError(t, err, "clear message_type")
 
 	opts := DefaultAggregateOptions()
 	opts.SearchQuery = "message_type:email"
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "Aggregate(ViewSenders, message_type:email)")
+	require.NoError(t, err, "Aggregate(ViewSenders, message_type:email)")
 	assertRowsContain(t, rows, []aggExpectation{{Key: "legacy@example.com", Count: 1}})
 
 	rows, err = env.Engine.SubAggregate(env.Ctx,
 		MessageFilter{Sender: "legacy@example.com", MessageType: "email"},
 		ViewRecipients, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate(MessageType=email)")
+	require.NoError(t, err, "SubAggregate(MessageType=email)")
 	assertAggRows(t, rows, []aggExpectation{{Key: "bob@company.org", Count: 1}})
 }
 
@@ -159,9 +162,9 @@ func TestAggregateBySenderName_FallbackToEmail(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Test", SentAt: "2024-05-01 10:00:00", FromID: noNameID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateBySenderName")
+	require.NoError(t, err, "AggregateBySenderName")
 
-	assertpkg.Len(t, rows, 3, "expected 3 sender names")
+	assert.Len(t, rows, 3, "expected 3 sender names")
 
 	assertRow(t, rows, "noname@test.com")
 }
@@ -180,13 +183,13 @@ func TestAggregateBySenderName_FallbackToPhone(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "SMS", SentAt: "2024-05-01 10:00:00", FromID: phoneOnlyID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateBySenderName")
+	require.NoError(t, err, "AggregateBySenderName")
 
 	assertRow(t, rows, "+15551234567")
 
 	// Same fallback drives the SenderName filter.
 	listed := env.MustListMessages(MessageFilter{SenderName: "+15551234567"})
-	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback name")
+	assert.Len(t, listed, 1, "ListMessages by phone-fallback name")
 }
 
 // TestAggregateByRecipientName_FallbackToPhone is the recipient-side analog.
@@ -204,16 +207,16 @@ func TestAggregateByRecipientName_FallbackToPhone(t *testing.T) {
 	})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateByRecipientName")
+	require.NoError(t, err, "AggregateByRecipientName")
 
 	assertRow(t, rows, "+15557654321")
 
 	listed := env.MustListMessages(MessageFilter{RecipientName: "+15557654321"})
-	assertpkg.Len(t, listed, 1, "ListMessages by phone-fallback recipient name")
+	assert.Len(t, listed, 1, "ListMessages by phone-fallback recipient name")
 }
 
 func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	emptyID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("empty@test.com"), DisplayName: new(""), Domain: "test.com"})
@@ -222,7 +225,7 @@ func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Name", SentAt: "2024-05-02 10:00:00", FromID: spacesID})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateBySenderName")
+	require.NoError(t, err, "AggregateBySenderName")
 
 	if !assert.Len(rows, 4, "expected 4 sender names") {
 		for _, r := range rows {
@@ -240,6 +243,76 @@ func TestAggregateBySenderName_EmptyStringFallback(t *testing.T) {
 	})
 }
 
+// TestAggregateBySenderName_PerMessageNames verifies that the SenderNames
+// aggregate groups by the actual per-message From-header display name
+// (message_recipients.display_name), not the single sticky
+// participants.display_name. A high-volume address (e.g. a mailing list)
+// sends under many author names over time; crediting all of its traffic to
+// one arbitrary stored name misrepresents the data (see break-test F4).
+func TestAggregateBySenderName_PerMessageNames(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	// One address with a single sticky participant name...
+	listID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("git@apache.org"),
+		DisplayName: new("amoeba (via GitHub)"),
+		Domain:      "apache.org",
+	})
+	// ...but messages sent under two distinct per-message names.
+	m1 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 1", SentAt: "2024-06-01 10:00:00", FromID: listID})
+	m2 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 2", SentAt: "2024-06-02 10:00:00", FromID: listID})
+	m3 := env.AddMessage(dbtest.MessageOpts{Subject: "PR 3", SentAt: "2024-06-03 10:00:00", FromID: listID})
+	env.SetFromName(m1, "alice via GitHub")
+	env.SetFromName(m2, "alice via GitHub")
+	env.SetFromName(m3, "bob via GitHub")
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenderNames, DefaultAggregateOptions())
+	require.NoError(t, err, "AggregateBySenderName")
+
+	counts := aggRowMap(t, rows)
+	assert.Equal(int64(2), counts["alice via GitHub"], "per-message name count")
+	assert.Equal(int64(1), counts["bob via GitHub"], "per-message name count")
+	assert.NotContains(counts, "amoeba (via GitHub)",
+		"sticky participant name must not absorb all of the address's traffic")
+
+	// Drill-down by the per-message name must return exactly those messages.
+	listed := env.MustListMessages(MessageFilter{SenderName: "alice via GitHub"})
+	assert.Len(listed, 2, "ListMessages by per-message sender name")
+}
+
+// TestAggregateByRecipientName_PerMessageNames is the recipient-side analog of
+// TestAggregateBySenderName_PerMessageNames.
+func TestAggregateByRecipientName_PerMessageNames(t *testing.T) {
+	assert := assert.New(t)
+	env := newTestEnv(t)
+
+	senderID := env.MustLookupParticipant("alice@example.com")
+	listID := env.AddParticipant(dbtest.ParticipantOpts{
+		Email:       new("list@apache.org"),
+		DisplayName: new("Subscribed"),
+		Domain:      "apache.org",
+	})
+	m1 := env.AddMessage(dbtest.MessageOpts{Subject: "R1", SentAt: "2024-06-01 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	m2 := env.AddMessage(dbtest.MessageOpts{Subject: "R2", SentAt: "2024-06-02 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	m3 := env.AddMessage(dbtest.MessageOpts{Subject: "R3", SentAt: "2024-06-03 10:00:00", FromID: senderID, ToIDs: []int64{listID}})
+	env.SetRecipientName(m1, listID, "dev list")
+	env.SetRecipientName(m2, listID, "dev list")
+	env.SetRecipientName(m3, listID, "users list")
+
+	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
+	require.NoError(t, err, "AggregateByRecipientName")
+
+	counts := aggRowMap(t, rows)
+	assert.Equal(int64(2), counts["dev list"], "per-message name count")
+	assert.Equal(int64(1), counts["users list"], "per-message name count")
+	assert.NotContains(counts, "Subscribed",
+		"sticky participant name must not absorb all of the address's traffic")
+
+	listed := env.MustListMessages(MessageFilter{RecipientName: "dev list"})
+	assert.Len(listed, 2, "ListMessages by per-message recipient name")
+}
+
 func TestAggregateByTime(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -247,7 +320,7 @@ func TestAggregateByTime(t *testing.T) {
 	opts.TimeGranularity = TimeMonth
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewTime, opts)
-	requirepkg.NoError(t, err, "AggregateByTime")
+	require.NoError(t, err, "AggregateByTime")
 
 	assertAggRows(t, rows, []aggExpectation{
 		{"2024-01", 2},
@@ -264,7 +337,7 @@ func TestAggregateWithDateFilter(t *testing.T) {
 	opts.After = &after
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "AggregateBySender with date filter")
+	require.NoError(t, err, "AggregateBySender with date filter")
 
 	assertAggRows(t, rows, []aggExpectation{
 		{"bob@company.org", 2},
@@ -279,7 +352,7 @@ func TestSortingOptions(t *testing.T) {
 		opts := DefaultAggregateOptions()
 		opts.SortField = SortBySize
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-		requirepkg.NoError(t, err, "AggregateBySender")
+		require.NoError(t, err, "AggregateBySender")
 		assertAggRows(t, rows, []aggExpectation{
 			{"alice@example.com", 3},
 			{"bob@company.org", 2},
@@ -291,7 +364,7 @@ func TestSortingOptions(t *testing.T) {
 		opts.SortField = SortBySize
 		opts.SortDirection = SortAsc
 		rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-		requirepkg.NoError(t, err, "AggregateBySender")
+		require.NoError(t, err, "AggregateBySender")
 		assertAggRows(t, rows, []aggExpectation{
 			{"bob@company.org", 2},
 			{"alice@example.com", 3},
@@ -304,7 +377,7 @@ func TestWithAttachmentsOnlyAggregate(t *testing.T) {
 
 	opts := DefaultAggregateOptions()
 	allRows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "AggregateBySender")
+	require.NoError(t, err, "AggregateBySender")
 
 	assertRowsContain(t, allRows, []aggExpectation{
 		{"alice@example.com", 3},
@@ -313,7 +386,7 @@ func TestWithAttachmentsOnlyAggregate(t *testing.T) {
 
 	opts.WithAttachmentsOnly = true
 	attRows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "AggregateBySender with attachment filter")
+	require.NoError(t, err, "AggregateBySender with attachment filter")
 
 	assertRowsContain(t, attRows, []aggExpectation{
 		{"alice@example.com", 1},
@@ -342,7 +415,7 @@ func TestSubAggregates(t *testing.T) {
 			name:   "BySenderName",
 			filter: MessageFilter{Recipient: "alice@example.com"},
 			view:   ViewSenderNames,
-			want:   []aggExpectation{{"Bob Jones", 2}},
+			want:   []aggExpectation{{"Bob", 2}},
 		},
 		{
 			name:   "ByRecipient",
@@ -360,11 +433,11 @@ func TestSubAggregates(t *testing.T) {
 			name:   "ByRecipientName",
 			filter: MessageFilter{Sender: "alice@example.com"},
 			view:   ViewRecipientNames,
-			want:   []aggExpectation{{"Bob Jones", 3}, {"Carol White", 1}},
+			want:   []aggExpectation{{"Bob", 3}, {"Carol", 1}},
 		},
 		{
 			name:   "RecipientNameWithRecipient",
-			filter: MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob Jones"},
+			filter: MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob"},
 			view:   ViewSenders,
 			want:   []aggExpectation{{"alice@example.com", 3}},
 		},
@@ -374,7 +447,7 @@ func TestSubAggregates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
 			results, err := env.Engine.SubAggregate(env.Ctx, tc.filter, tc.view, DefaultAggregateOptions())
-			requirepkg.NoError(t, err, "SubAggregate")
+			require.NoError(t, err, "SubAggregate")
 			assertAggRows(t, results, tc.want)
 		})
 	}
@@ -385,9 +458,9 @@ func TestSubAggregate_MatchEmptySenderName(t *testing.T) {
 
 	filter := MessageFilter{EmptyValueTargets: map[ViewType]bool{ViewSenderNames: true}}
 	results, err := env.Engine.SubAggregate(env.Ctx, filter, ViewLabels, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate with MatchEmptySenderName")
+	require.NoError(t, err, "SubAggregate with MatchEmptySenderName")
 
-	if !assertpkg.Empty(t, results, "expected 0 label sub-aggregates for empty sender name") {
+	if !assert.Empty(t, results, "expected 0 label sub-aggregates for empty sender name") {
 		for _, r := range results {
 			t.Logf("  key=%q count=%d", r.Key, r.Count)
 		}
@@ -399,12 +472,12 @@ func TestSubAggregateIncludesDeletedMessages(t *testing.T) {
 
 	filter := MessageFilter{Sender: "alice@example.com"}
 	resultsBefore, err := env.Engine.SubAggregate(env.Ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate before")
+	require.NoError(t, err, "SubAggregate before")
 
 	env.MarkDeletedByID(1)
 
 	resultsAfter, err := env.Engine.SubAggregate(env.Ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "SubAggregate after")
+	require.NoError(t, err, "SubAggregate after")
 
 	var totalBefore, totalAfter int64
 	for _, r := range resultsBefore {
@@ -414,13 +487,13 @@ func TestSubAggregateIncludesDeletedMessages(t *testing.T) {
 		totalAfter += r.Count
 	}
 
-	assertpkg.Equal(t, totalBefore, totalAfter,
+	assert.Equal(t, totalBefore, totalAfter,
 		"expected same message count (deleted included)")
 }
 
 func TestHideDeletedFromSourceAggregate(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	// Before deletion: all 5 messages visible
@@ -468,7 +541,7 @@ func TestHideDeletedFromSourceAggregate(t *testing.T) {
 }
 
 func TestSubAggregateByTime(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	filter := MessageFilter{Sender: "alice@example.com"}
@@ -476,7 +549,7 @@ func TestSubAggregateByTime(t *testing.T) {
 	opts.TimeGranularity = TimeMonth
 
 	results, err := env.Engine.SubAggregate(env.Ctx, filter, ViewTime, opts)
-	requirepkg.NoError(t, err, "SubAggregate")
+	require.NoError(t, err, "SubAggregate")
 
 	assert.Len(results, 2, "expected 2 time periods for alice@example.com's messages")
 
@@ -502,7 +575,7 @@ func TestAggregateByRecipientName_FallbackToEmail(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "No Name Recipient", SentAt: "2024-05-01 10:00:00", FromID: aliceID, ToIDs: []int64{noNameID}})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateByRecipientName")
+	require.NoError(t, err, "AggregateByRecipientName")
 
 	assertRow(t, rows, "noname@test.com")
 }
@@ -519,7 +592,7 @@ func TestAggregateByRecipientName_EmptyStringFallback(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{Subject: "Spaces Rcpt Name", SentAt: "2024-05-02 10:00:00", FromID: aliceID, CcIDs: []int64{spacesID}})
 
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewRecipientNames, DefaultAggregateOptions())
-	requirepkg.NoError(t, err, "AggregateByRecipientName")
+	require.NoError(t, err, "AggregateByRecipientName")
 
 	assertRowsContain(t, rows, []aggExpectation{
 		{"empty@test.com", 1},
@@ -548,7 +621,7 @@ func TestSQLiteEngine_Aggregate_InvalidViewType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := env.Engine.Aggregate(env.Ctx, tt.viewType, DefaultAggregateOptions())
-			requirepkg.ErrorContains(t, err, "unsupported view type")
+			require.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }
@@ -593,7 +666,7 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	// be ordered by key ASC as secondary sort: Apple before Zebra.
 	opts := DefaultAggregateOptions()
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels, opts)
-	requirepkg.NoError(t, err, "Aggregate")
+	require.NoError(t, err, "Aggregate")
 
 	// Verify exact order: Apple (count=1) then Zebra (count=1)
 	assertAggRows(t, rows, []aggExpectation{
@@ -641,12 +714,12 @@ func TestAggregateByLabel_WithSearchQuery(t *testing.T) {
 			rows, err := env.Engine.Aggregate(
 				env.Ctx, ViewLabels, opts,
 			)
-			requirepkg.NoError(t, err, "Aggregate")
+			require.NoError(t, err, "Aggregate")
 			gotLabels := make([]string, 0, len(rows))
 			for _, r := range rows {
 				gotLabels = append(gotLabels, r.Key)
 			}
-			assertpkg.ElementsMatch(t, tt.wantLabels, gotLabels)
+			assert.ElementsMatch(t, tt.wantLabels, gotLabels)
 		})
 	}
 }
@@ -663,10 +736,10 @@ func TestSubAggregate_WithSearchQuery(t *testing.T) {
 	rows, err := env.Engine.SubAggregate(
 		env.Ctx, filter, ViewLabels, opts,
 	)
-	requirepkg.NoError(t, err, "SubAggregate")
+	require.NoError(t, err, "SubAggregate")
 	// Should return exactly the "Work" label, not all labels for alice
-	requirepkg.Len(t, rows, 1, "expected 1 label row")
-	assertpkg.Equal(t, "Work", rows[0].Key)
+	require.Len(t, rows, 1, "expected 1 label row")
+	assert.Equal(t, "Work", rows[0].Key)
 }
 
 // TestEscapeSQLiteLike verifies that wildcard characters are escaped
@@ -683,7 +756,7 @@ func TestEscapeSQLiteLike(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := escapeSQLiteLike(tt.input)
-		assertpkg.Equal(t, tt.want, got, "escapeSQLiteLike(%q)", tt.input)
+		assert.Equal(t, tt.want, got, "escapeSQLiteLike(%q)", tt.input)
 	}
 }
 
@@ -700,13 +773,13 @@ func TestAggregateBySender_RecipientFilterNoOvercount(t *testing.T) {
 	// filters, message 1 would match both joins and be double-counted.
 	opts.SearchQuery = "to:bob@company.org to:carol@example.com"
 	rows, err := env.Engine.Aggregate(env.Ctx, ViewSenders, opts)
-	requirepkg.NoError(t, err, "Aggregate")
+	require.NoError(t, err, "Aggregate")
 
 	m := aggRowMap(t, rows)
 	// to: terms use OR — messages 1,2,3 match (all have to:bob, msg 1
 	// also has to:carol). With old JOIN filters, message 1 would produce
 	// two joined rows (matching bob and carol), inflating to count 4.
-	assertpkg.Equal(t, int64(3), m["alice@example.com"], "alice count (no overcount)")
+	assert.Equal(t, int64(3), m["alice@example.com"], "alice count (no overcount)")
 }
 
 // TestSQLiteEngine_SubAggregate_InvalidViewType verifies that invalid ViewType values
@@ -727,7 +800,7 @@ func TestSQLiteEngine_SubAggregate_InvalidViewType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filter := MessageFilter{Sender: "alice@example.com"}
 			_, err := env.Engine.SubAggregate(env.Ctx, filter, tt.viewType, DefaultAggregateOptions())
-			requirepkg.ErrorContains(t, err, "unsupported view type")
+			require.ErrorContains(t, err, "unsupported view type")
 		})
 	}
 }

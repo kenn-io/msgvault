@@ -14,8 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -32,6 +33,24 @@ type stubEmbedder struct{}
 
 func (stubEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, errors.New("stubEmbedder.Embed should not be called in this test")
+}
+
+type attachmentReaderFunc func(context.Context, string) ([]byte, error)
+
+func (f attachmentReaderFunc) ReadAttachment(ctx context.Context, contentHash string) ([]byte, error) {
+	return f(ctx, contentHash)
+}
+
+type hybridSearcherFunc func(context.Context, HybridSearchRequest) (*HybridSearchResult, error)
+
+func (f hybridSearcherFunc) SearchHybrid(ctx context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+	return f(ctx, req)
+}
+
+type similarSearcherFunc func(context.Context, SimilarSearchRequest) (*SimilarSearchResult, error)
+
+func (f similarSearcherFunc) FindSimilar(ctx context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
+	return f(ctx, req)
 }
 
 // toolHandler is the function signature for MCP tool handler methods.
@@ -91,15 +110,15 @@ func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]a
 	req.Params.Name = name
 	req.Params.Arguments = args
 	result, err := fn(context.Background(), req)
-	requirepkg.NoError(t, err, "handler returned error")
+	require.NoError(t, err, "handler returned error")
 	return result
 }
 
 func resultText(t *testing.T, r *mcp.CallToolResult) string {
 	t.Helper()
-	requirepkg.NotEmpty(t, r.Content, "empty content")
+	require.NotEmpty(t, r.Content, "empty content")
 	tc, ok := r.Content[0].(mcp.TextContent)
-	requirepkg.True(t, ok, "expected TextContent, got %T", r.Content[0])
+	require.True(t, ok, "expected TextContent, got %T", r.Content[0])
 	return tc.Text
 }
 
@@ -107,9 +126,9 @@ func resultText(t *testing.T, r *mcp.CallToolResult) string {
 func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]any) T {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	requirepkg.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
+	require.False(t, r.IsError, "unexpected error: %s", resultText(t, r))
 	var out T
-	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
+	require.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &out), "unmarshal failed")
 	return out
 }
 
@@ -117,7 +136,7 @@ func runTool[T any](t *testing.T, name string, fn toolHandler, args map[string]a
 func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	r := callToolDirect(t, name, fn, args)
-	requirepkg.True(t, r.IsError, "expected error result")
+	require.True(t, r.IsError, "expected error result")
 	return r
 }
 
@@ -131,9 +150,9 @@ func TestSearchMessages(t *testing.T) {
 
 	t.Run("valid query", func(t *testing.T) {
 		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
-		requirepkg.Len(t, resp.Data, 1, "data")
-		assertpkg.Equal(t, "Hello", resp.Data[0].Subject, "subject")
-		assertpkg.Equal(t, "thread-abc", resp.Data[0].SourceConversationID, "SourceConversationID")
+		require.Len(t, resp.Data, 1, "data")
+		assert.Equal(t, "Hello", resp.Data[0].Subject, "subject")
+		assert.Equal(t, "thread-abc", resp.Data[0].SourceConversationID, "SourceConversationID")
 	})
 
 	t.Run("missing query", func(t *testing.T) {
@@ -143,14 +162,14 @@ func TestSearchMessages(t *testing.T) {
 	t.Run("unsupported Gmail list operator rejected", func(t *testing.T) {
 		r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{"query": "list:(alerts.example.com)"})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
-		assertpkg.Contains(t, txt, "list:", "expected list operator context, got: %s")
+		assert.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
+		assert.Contains(t, txt, "list:", "expected list operator context, got: %s")
 	})
 }
 
 func TestSearchFallbackToFTS(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	eng := &querytest.MockEngine{
 		SearchFastResults: nil, // fast returns nothing
@@ -185,7 +204,7 @@ func TestSearchMessages_NonPositiveLimitUsesDefault(t *testing.T) {
 		{name: "negative", limit: -5},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assertpkg.New(t)
+			assert := assert.New(t)
 			eng := &querytest.MockEngine{
 				SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, gotLimit, offset int) ([]query.MessageSummary, error) {
 					assert.Equal(defaultSearchLimit, gotLimit, "limit")
@@ -220,7 +239,65 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+	assert.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+}
+
+func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var gotReq HybridSearchRequest
+	rrf := 0.42
+	engine := &querytest.MockEngine{
+		GetMessageSummariesByIDsFunc: func(_ context.Context, ids []int64) ([]query.MessageSummary, error) {
+			assert.Equal([]int64{102}, ids, "hydrated ids")
+			return []query.MessageSummary{
+				testutil.NewMessageSummary(102).WithSubject("Second").Build(),
+			}, nil
+		},
+	}
+	h := &handlers{
+		engine: engine,
+		hybridSearcher: hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+			gotReq = req
+			return &HybridSearchResult{
+				Hits: []HybridSearchHit{
+					{ID: 101},
+					{ID: 102, RRFScore: &rrf, SubjectBoosted: true},
+					{ID: 103},
+				},
+				PoolSaturated: true,
+				Generation: hybridGenerationSummary{
+					ID:          7,
+					Model:       "fake",
+					Dimension:   4,
+					Fingerprint: "fake:4",
+					State:       "active",
+				},
+			}, nil
+		}),
+	}
+
+	resp := runTool[searchMessagesHybridResponse](t, "search_messages", h.searchMessages, map[string]any{
+		"query":   "quarterly plan",
+		"mode":    searchModeHybrid,
+		"account": "alice@example.com",
+		"limit":   float64(1),
+		"offset":  float64(1),
+		"explain": true,
+	})
+
+	assert.Equal("quarterly plan", gotReq.Query, "query")
+	assert.Equal(searchModeHybrid, gotReq.Mode, "mode")
+	assert.Equal("alice@example.com", gotReq.Account, "account")
+	assert.Equal(3, gotReq.Limit, "fetch limit")
+	assert.Equal(searchModeHybrid, resp.Mode, "response mode")
+	assert.True(resp.HasMore, "has_more")
+	require.Len(resp.Data, 1, "data")
+	assert.Equal(int64(102), resp.Data[0].ID, "message id")
+	require.NotNil(resp.Data[0].Score, "score")
+	assert.Equal(&rrf, resp.Data[0].Score.RRF, "rrf")
+	assert.True(resp.Data[0].Score.SubjectBoosted, "subject boosted")
+	assert.Equal(int64(7), resp.Generation.ID, "generation")
 }
 
 // newHybridHandlersForErrorTest wires a real hybrid.Engine around the
@@ -261,7 +338,7 @@ func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
 		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "index_building", "expected 'index_building' error, got: %s")
+	assert.Contains(t, txt, "index_building", "expected 'index_building' error, got: %s")
 }
 
 // TestSearchMessages_HybridErrNotEnabled regression-guards the MCP
@@ -280,7 +357,7 @@ func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
 		"mode":  searchModeHybrid,
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+	assert.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
 func TestSearchMessages_HybridErrIndexScopeMismatch(t *testing.T) {
@@ -307,7 +384,7 @@ func TestSearchMessages_HybridErrIndexScopeMismatch(t *testing.T) {
 		"mode":  searchModeVector,
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "index_scope_mismatch", "expected 'index_scope_mismatch' error, got: %s")
+	assert.Contains(t, txt, "index_scope_mismatch", "expected 'index_scope_mismatch' error, got: %s")
 }
 
 // realEmbedder returns a deterministic vector. Used for end-to-end
@@ -357,7 +434,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 		"mode":  searchModeVector,
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "missing_free_text", "expected 'missing_free_text' error, got: %s")
+	assert.Contains(t, txt, "missing_free_text", "expected 'missing_free_text' error, got: %s")
 }
 
 // TestSearchMessages_HybridPoolSaturatedAlwaysEmitted regression-guards
@@ -366,7 +443,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 // would silently drop the field when false; clients that key off
 // "saturated vs not" would break.
 func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	backend := &fakeBackend{
 		active: vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -393,7 +470,7 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal")
 	val, exists := raw["pool_saturated"]
 	require.True(exists, "pool_saturated key missing from successful response (raw=%s)", resultText(t, r))
-	assertpkg.Equal(t, "false", string(val), "pool_saturated")
+	assert.Equal(t, "false", string(val), "pool_saturated")
 }
 
 func TestSearchMessages_HybridModePagination(t *testing.T) {
@@ -441,8 +518,8 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 		"offset": float64(1),
 		"limit":  float64(1),
 	})
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	require.Len(resp.Data, 1, "data")
 	assert.Equal(int64(20), resp.Data[0].ID, "second ranked hit")
 	assert.Equal(1, resp.Offset, "offset")
@@ -493,8 +570,8 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 		"offset": float64(40),
 		"limit":  float64(20),
 	})
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	require.Len(resp.Data, 10, "data")
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
 	assert.False(resp.HasMore, "has_more")
@@ -551,8 +628,8 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 		"offset": float64(30),
 		"limit":  float64(20),
 	})
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	require.Len(resp.Data, 20, "data")
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
 	assert.False(resp.HasMore, "has_more")
@@ -606,8 +683,8 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 		"mode":  searchModeVector,
 		"limit": float64(20),
 	})
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	require.Len(resp.Data, 20, "data")
 	assert.True(resp.HasMore, "has_more")
 
@@ -624,28 +701,28 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 func TestBodyByteSlice(t *testing.T) {
 	t.Run("ascii unchanged", func(t *testing.T) {
 		body := "hello world"
-		assertpkg.Equal(t, "hello", bodyByteSlice(body, 0, 5))
+		assert.Equal(t, "hello", bodyByteSlice(body, 0, 5))
 	})
 
 	t.Run("does not split multibyte rune", func(t *testing.T) {
 		body := "café"
 		s := bodyByteSlice(body, 0, 4)
-		assertpkg.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
-		assertpkg.Equal(t, "caf", s)
+		assert.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
+		assert.Equal(t, "caf", s)
 	})
 
 	t.Run("emoji not bisected", func(t *testing.T) {
 		body := strings.Repeat("a", 10) + "😀" + strings.Repeat("b", 10)
 		emojiStart := 10
 		s := bodyByteSlice(body, emojiStart, emojiStart+2)
-		assertpkg.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
+		assert.True(t, utf8.ValidString(s), "result must be valid UTF-8: %q", s)
 		wide := bodyByteSlice(body, emojiStart, emojiStart+4)
-		assertpkg.True(t, utf8.ValidString(wide))
-		assertpkg.Equal(t, "😀", wide)
+		assert.True(t, utf8.ValidString(wide))
+		assert.Equal(t, "😀", wide)
 	})
 
 	t.Run("returns adjusted offsets for paging", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		body := "aaa😀bbb"
 		text, adjStart, adjEnd := bodyByteSliceRange(body, 0, 5)
 		assert.Equal("aaa", text)
@@ -660,7 +737,7 @@ func TestBodyByteSlice(t *testing.T) {
 	})
 
 	t.Run("tiny window returns one rune", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		body := "aaa😀bbb"
 		text, adjStart, adjEnd := bodyByteSliceRange(body, 3, 4)
 		assert.Equal("😀", text)
@@ -677,7 +754,7 @@ func TestSearchMessages_UnknownMode(t *testing.T) {
 		"mode":  "bogus",
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
+	assert.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
 }
 
 func TestGetMessage(t *testing.T) {
@@ -689,7 +766,7 @@ func TestGetMessage(t *testing.T) {
 	h := newTestHandlers(eng)
 
 	t.Run("found", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		msg := runTool[getMessageResp](t, "get_message", h.getMessage, map[string]any{"id": float64(42)})
 		assert.Equal("Test Message", msg.Subject, "subject")
 		assert.Equal("Hello world", msg.BodyText, "body_text")
@@ -701,7 +778,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("html-only body returns html slice", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		htmlBody := "<p>Hello <strong>world</strong></p>"
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -719,7 +796,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("html format selects html from mixed body", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		htmlBody := "<p>Hello <strong>HTML</strong></p>"
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -743,7 +820,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("truncates long body", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		longBody := strings.Repeat("x", 5000)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -759,7 +836,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("full_body returns complete selected body", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		longBody := strings.Repeat("x", 5000)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -783,7 +860,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("offset pagination", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		body := strings.Repeat("a", 3000)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -815,9 +892,9 @@ func TestGetMessage(t *testing.T) {
 			"center_at": float64(matchOffset),
 			"max_chars": float64(200),
 		})
-		assertpkg.Contains(t, msg.BodyText, "KEYWORD")
-		assertpkg.LessOrEqual(t, msg.Offset, matchOffset, "window starts before match")
-		assertpkg.LessOrEqual(t, len(msg.BodyText), 200, "respects max_chars")
+		assert.Contains(t, msg.BodyText, "KEYWORD")
+		assert.LessOrEqual(t, msg.Offset, matchOffset, "window starts before match")
+		assert.LessOrEqual(t, len(msg.BodyText), 200, "respects max_chars")
 	})
 
 	t.Run("center_at near start", func(t *testing.T) {
@@ -833,12 +910,12 @@ func TestGetMessage(t *testing.T) {
 			"center_at": float64(0),
 			"max_chars": float64(200),
 		})
-		assertpkg.Contains(t, msg.BodyText, "KEYWORD")
-		assertpkg.Equal(t, 0, msg.Offset, "starts at body start")
+		assert.Contains(t, msg.BodyText, "KEYWORD")
+		assert.Equal(t, 0, msg.Offset, "starts at body start")
 	})
 
 	t.Run("max_chars above cap clamps to 4000", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		longBody := strings.Repeat("x", 5000)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -856,7 +933,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("max_chars zero uses default", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		longBody := strings.Repeat("x", 5000)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -884,7 +961,7 @@ func TestGetMessage(t *testing.T) {
 	})
 
 	t.Run("utf8 sequential paging", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		body := strings.Repeat("a", 10) + "😀" + strings.Repeat("b", 10)
 		eng2 := &querytest.MockEngine{
 			Messages: map[int64]*query.MessageDetail{
@@ -929,15 +1006,15 @@ func TestGetMessage(t *testing.T) {
 
 func TestGetMessageToolDescriptionDoesNotReferenceFutureTools(t *testing.T) {
 	tool := getMessageTool()
-	assertpkg.NotContains(t, tool.Description, "search_in_message")
+	assert.NotContains(t, tool.Description, "search_in_message")
 	centerAt := tool.InputSchema.Properties["center_at"]
 	raw, err := json.Marshal(centerAt)
-	requirepkg.NoError(t, err, "marshal center_at schema")
-	assertpkg.NotContains(t, string(raw), "search_in_message")
+	require.NoError(t, err, "marshal center_at schema")
+	assert.NotContains(t, string(raw), "search_in_message")
 }
 
 func TestGetStats_VectorDisabled(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	eng := &querytest.MockEngine{
 		Stats: &query.TotalStats{
 			MessageCount: 1000,
@@ -963,13 +1040,13 @@ func TestGetStats_VectorDisabled(t *testing.T) {
 	// a null value.
 	r := callToolDirect(t, "get_stats", h.getStats, map[string]any{})
 	var raw map[string]json.RawMessage
-	requirepkg.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal raw")
+	require.NoError(t, json.Unmarshal([]byte(resultText(t, r)), &raw), "unmarshal raw")
 	assert.NotContains(raw, "vector_search", "expected 'vector_search' to be absent from JSON when backend is nil")
 }
 
 func TestGetStats_VectorEnabled(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	eng := &querytest.MockEngine{
 		Stats: &query.TotalStats{
 			MessageCount: 100,
@@ -1021,7 +1098,7 @@ func TestAggregate(t *testing.T) {
 	for _, groupBy := range []string{"sender", "recipient", "domain", "label", "time"} {
 		t.Run(groupBy, func(t *testing.T) {
 			rows := runTool[[]query.AggregateRow](t, "aggregate", h.aggregate, map[string]any{"group_by": groupBy})
-			assertpkg.Len(t, rows, 2, "rows")
+			assert.Len(t, rows, 2, "rows")
 		})
 	}
 
@@ -1053,9 +1130,9 @@ func TestListMessages(t *testing.T) {
 			"after": "2024-01-01",
 			"limit": float64(10),
 		})
-		requirepkg.Len(t, resp.Data, 1, "data")
-		assertpkg.Equal(t, "thread-list", resp.Data[0].SourceConversationID, "SourceConversationID")
-		assertpkg.False(t, resp.HasMore, "has_more")
+		require.Len(t, resp.Data, 1, "data")
+		assert.Equal(t, "thread-list", resp.Data[0].SourceConversationID, "SourceConversationID")
+		assert.False(t, resp.HasMore, "has_more")
 	})
 
 	errorCases := []struct {
@@ -1073,7 +1150,7 @@ func TestListMessages(t *testing.T) {
 }
 
 func TestListMessages_TotalUnknownWithoutCount(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 
 	eng := &querytest.MockEngine{
 		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
@@ -1114,8 +1191,8 @@ func TestAggregateInvalidDates(t *testing.T) {
 func createAttachmentFixture(t *testing.T, dir string, hash string, content []byte) {
 	t.Helper()
 	hashDir := filepath.Join(dir, hash[:2])
-	requirepkg.NoError(t, os.MkdirAll(hashDir, 0o755), "MkdirAll")
-	requirepkg.NoError(t, os.WriteFile(filepath.Join(hashDir, hash), content, 0o644), "WriteFile")
+	require.NoError(t, os.MkdirAll(hashDir, 0o755), "MkdirAll")
+	require.NoError(t, os.WriteFile(filepath.Join(hashDir, hash), content, 0o644), "WriteFile")
 }
 
 func TestGetAttachment(t *testing.T) {
@@ -1133,8 +1210,8 @@ func TestGetAttachment(t *testing.T) {
 	h := &handlers{engine: eng, attachmentsDir: tmpDir}
 
 	t.Run("valid", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		r := callToolDirect(t, "get_attachment", h.getAttachment, map[string]any{"attachment_id": float64(10)})
 		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
 
@@ -1162,8 +1239,8 @@ func TestGetAttachment(t *testing.T) {
 	})
 
 	t.Run("empty mime type defaults to octet-stream", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		noMimeHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		noMimeContent := []byte("binary data")
 		createAttachmentFixture(t, tmpDir, noMimeHash, noMimeContent)
@@ -1192,9 +1269,37 @@ func TestGetAttachment(t *testing.T) {
 		assert.Equal("application/octet-stream", blob.MIMEType, "default blob MIME type")
 	})
 
+	t.Run("attachment reader supplies bytes without local directory", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var gotHash string
+		h2 := &handlers{
+			engine: &querytest.MockEngine{
+				Attachments: map[int64]*query.AttachmentInfo{
+					52: {ID: 52, Filename: "remote.pdf", MimeType: "application/pdf", Size: 12, ContentHash: hash},
+				},
+			},
+			attachmentReader: attachmentReaderFunc(func(_ context.Context, contentHash string) ([]byte, error) {
+				gotHash = contentHash
+				return []byte("remote bytes"), nil
+			}),
+		}
+		r := callToolDirect(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(52)})
+		require.False(r.IsError, "unexpected error: %s", resultText(t, r))
+
+		assert.Equal(hash, gotHash, "content hash")
+		er, ok := r.Content[1].(mcp.EmbeddedResource)
+		require.True(ok, "Content[1] is EmbeddedResource, got %T", r.Content[1])
+		blob, ok := er.Resource.(mcp.BlobResourceContents)
+		require.True(ok, "Resource is BlobResourceContents, got %T", er.Resource)
+		decoded, err := base64.StdEncoding.DecodeString(blob.Blob)
+		require.NoError(err, "base64 decode")
+		assert.Equal("remote bytes", string(decoded), "content")
+	})
+
 	t.Run("filename with spaces and unicode", func(t *testing.T) {
-		require := requirepkg.New(t)
-		assert := assertpkg.New(t)
+		require := require.New(t)
+		assert := assert.New(t)
 		unicodeHash := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 		unicodeContent := []byte("unicode file")
 		createAttachmentFixture(t, tmpDir, unicodeHash, unicodeContent)
@@ -1284,7 +1389,7 @@ func TestGetAttachment(t *testing.T) {
 			}
 			r := runToolExpectError(t, "get_attachment", h2.getAttachment, tt.args)
 			if tt.errContains != "" {
-				assertpkg.Contains(t, resultText(t, r), tt.errContains, "error message")
+				assert.Contains(t, resultText(t, r), tt.errContains, "error message")
 			}
 		})
 	}
@@ -1293,7 +1398,7 @@ func TestGetAttachment(t *testing.T) {
 		bigHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		createAttachmentFixture(t, tmpDir, bigHash, nil)
 		bigPath := filepath.Join(tmpDir, bigHash[:2], bigHash)
-		requirepkg.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
+		require.NoError(t, os.Truncate(bigPath, maxAttachmentSize+1), "Truncate")
 
 		h2 := &handlers{
 			engine: &querytest.MockEngine{
@@ -1304,7 +1409,7 @@ func TestGetAttachment(t *testing.T) {
 			attachmentsDir: tmpDir,
 		}
 		r := runToolExpectError(t, "get_attachment", h2.getAttachment, map[string]any{"attachment_id": float64(40)})
-		assertpkg.Contains(t, resultText(t, r), "too large", "error message")
+		assert.Contains(t, resultText(t, r), "too large", "error message")
 	})
 }
 
@@ -1328,7 +1433,7 @@ func TestExportAttachment(t *testing.T) {
 	h := &handlers{engine: eng, attachmentsDir: srcDir}
 
 	t.Run("export to custom destination", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		destDir := t.TempDir()
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
@@ -1339,33 +1444,33 @@ func TestExportAttachment(t *testing.T) {
 		wantPath := filepath.Join(destDir, "report.pdf")
 		assert.Equal(wantPath, resp.Path, "path")
 		got, err := os.ReadFile(wantPath)
-		requirepkg.NoError(t, err, "ReadFile")
+		require.NoError(t, err, "ReadFile")
 		assert.Equal(string(content), string(got), "content")
 	})
 
 	t.Run("filename collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create existing file to force collision.
-		requirepkg.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
+		require.NoError(t, os.WriteFile(filepath.Join(destDir, "report.pdf"), []byte("old"), 0644), "WriteFile")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
-		assertpkg.Equal(t, "report_1.pdf", resp.Filename, "filename")
+		assert.Equal(t, "report_1.pdf", resp.Filename, "filename")
 		// Original file should be untouched.
 		old, _ := os.ReadFile(filepath.Join(destDir, "report.pdf"))
-		assertpkg.Equal(t, "old", string(old), "original file should not be overwritten")
+		assert.Equal(t, "old", string(old), "original file should not be overwritten")
 	})
 
 	t.Run("directory collision appends suffix", func(t *testing.T) {
 		destDir := t.TempDir()
 		// Create a directory with the same name as the attachment.
-		requirepkg.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
+		require.NoError(t, os.Mkdir(filepath.Join(destDir, "report.pdf"), 0755), "Mkdir")
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 			"destination":   destDir,
 		})
-		assertpkg.Equal(t, "report_1.pdf", resp.Filename, "filename")
+		assert.Equal(t, "report_1.pdf", resp.Filename, "filename")
 	})
 
 	t.Run("default destination is ~/Downloads", func(t *testing.T) {
@@ -1373,12 +1478,12 @@ func TestExportAttachment(t *testing.T) {
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
 		downloads := filepath.Join(home, "Downloads")
-		requirepkg.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
+		require.NoError(t, os.Mkdir(downloads, 0755), "Mkdir Downloads")
 
 		resp := runTool[exportResponse](t, "export_attachment", h.exportAttachment, map[string]any{
 			"attachment_id": float64(10),
 		})
-		assertpkg.True(t, strings.HasPrefix(resp.Path, downloads), "expected path under ~/Downloads, got %s", resp.Path)
+		assert.True(t, strings.HasPrefix(resp.Path, downloads), "expected path under ~/Downloads, got %s", resp.Path)
 	})
 
 	t.Run("invalid destination", func(t *testing.T) {
@@ -1417,7 +1522,7 @@ func TestSanitizeFilename(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
 			got := export.SanitizeFilename(tc.input)
-			assertpkg.Equal(t, tc.want, got, "SanitizeFilename(%q)", tc.input)
+			assert.Equal(t, tc.want, got, "SanitizeFilename(%q)", tc.input)
 		})
 	}
 }
@@ -1453,7 +1558,7 @@ func TestExportAttachment_EdgeFilenames(t *testing.T) {
 				"attachment_id": float64(1),
 				"destination":   destDir,
 			})
-			assertpkg.Equal(t, tc.wantFilename, resp.Filename, "filename")
+			assert.Equal(t, tc.wantFilename, resp.Filename, "filename")
 		})
 	}
 }
@@ -1486,7 +1591,7 @@ func TestGetAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		"attachment_id": float64(99),
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
+	assert.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
 }
 
 func TestExportAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
@@ -1510,7 +1615,7 @@ func TestExportAttachment_RejectsOversizedBeforeFileIO(t *testing.T) {
 		"destination":   t.TempDir(),
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
+	assert.Contains(t, txt, "too large", "expected 'too large' rejection from metadata check, got: %s")
 }
 
 func TestLimitArgClamping(t *testing.T) {
@@ -1531,7 +1636,7 @@ func TestLimitArgClamping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := limitArg(map[string]any{"x": tt.val}, "x", 20)
-			assertpkg.Equal(t, tt.want, got, "limitArg(%v)", tt.val)
+			assert.Equal(t, tt.want, got, "limitArg(%v)", tt.val)
 		})
 	}
 }
@@ -1559,7 +1664,7 @@ func TestAccountFilter(t *testing.T) {
 			"query":   "test",
 			"account": "alice@gmail.com",
 		})
-		assertpkg.Len(t, resp.Data, 1, "data")
+		assert.Len(t, resp.Data, 1, "data")
 	})
 
 	t.Run("search with invalid account", func(t *testing.T) {
@@ -1568,14 +1673,14 @@ func TestAccountFilter(t *testing.T) {
 			"account": "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
+		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("list with valid account", func(t *testing.T) {
 		resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
 			"account": "bob@gmail.com",
 		})
-		assertpkg.Len(t, resp.Data, 1, "data")
+		assert.Len(t, resp.Data, 1, "data")
 	})
 
 	t.Run("list with invalid account", func(t *testing.T) {
@@ -1583,7 +1688,7 @@ func TestAccountFilter(t *testing.T) {
 			"account": "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
+		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("aggregate with valid account", func(t *testing.T) {
@@ -1591,7 +1696,7 @@ func TestAccountFilter(t *testing.T) {
 			"group_by": "sender",
 			"account":  "alice@gmail.com",
 		})
-		assertpkg.Len(t, rows, 1, "rows")
+		assert.Len(t, rows, 1, "rows")
 	})
 
 	t.Run("aggregate with invalid account", func(t *testing.T) {
@@ -1600,7 +1705,7 @@ func TestAccountFilter(t *testing.T) {
 			"account":  "unknown@gmail.com",
 		})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
+		assert.Contains(t, txt, "account not found", "expected 'account not found' error, got: %s")
 	})
 
 	t.Run("empty account means no filter", func(t *testing.T) {
@@ -1609,7 +1714,7 @@ func TestAccountFilter(t *testing.T) {
 			"query":   "test",
 			"account": "",
 		})
-		assertpkg.Len(t, resp.Data, 1, "data")
+		assert.Len(t, resp.Data, 1, "data")
 	})
 }
 
@@ -1619,6 +1724,15 @@ type stageDeletionResponse struct {
 	MessageCount int    `json:"message_count"`
 	Status       string `json:"status"`
 	NextStep     string `json:"next_step"`
+}
+
+type captureDeletionManifestSaver struct {
+	manifest *deletion.Manifest
+}
+
+func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest *deletion.Manifest) error {
+	s.manifest = manifest
+	return nil
 }
 
 func TestStageDeletion(t *testing.T) {
@@ -1649,9 +1763,9 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"query": "from:news"},
 		)
-		assertpkg.Equal(t, 2, resp.MessageCount, "MessageCount")
-		assertpkg.Equal(t, "pending", resp.Status, "Status")
-		assertpkg.NotEmpty(t, resp.BatchID, "BatchID")
+		assert.Equal(t, 2, resp.MessageCount, "MessageCount")
+		assert.Equal(t, "pending", resp.Status, "Status")
+		assert.NotEmpty(t, resp.BatchID, "BatchID")
 	})
 
 	t.Run("structured filter staging", func(t *testing.T) {
@@ -1662,7 +1776,25 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"from": "news@example.com"},
 		)
-		assertpkg.Equal(t, 2, resp.MessageCount, "MessageCount")
+		assert.Equal(t, 2, resp.MessageCount, "MessageCount")
+	})
+
+	t.Run("uses injected manifest saver", func(t *testing.T) {
+		assert := assert.
+			New(t)
+
+		dataDir := t.TempDir()
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: eng, dataDir: dataDir, manifestSaver: saver}
+
+		resp := runTool[stageDeletionResponse](
+			t, "stage_deletion", h.stageDeletion,
+			map[string]any{"query": "from:news"},
+		)
+		require.NotNil(t, saver.manifest, "manifest saver should receive manifest")
+		assert.Equal(resp.BatchID, saver.manifest.ID, "manifest ID")
+		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
+		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
 	})
 
 	t.Run("whitespace-only query rejected", func(t *testing.T) {
@@ -1674,7 +1806,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"query": "   "},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "must provide", "expected validation error, got: %s")
+		assert.Contains(t, txt, "must provide", "expected validation error, got: %s")
 	})
 
 	t.Run("query and filters rejected", func(t *testing.T) {
@@ -1689,7 +1821,7 @@ func TestStageDeletion(t *testing.T) {
 			},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "not both", "expected mutual exclusion error, got: %s")
+		assert.Contains(t, txt, "not both", "expected mutual exclusion error, got: %s")
 	})
 
 	t.Run("query with unsupported Gmail list operator rejected", func(t *testing.T) {
@@ -1701,8 +1833,8 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"query": "list:(alerts.example.com)"},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
-		assertpkg.Contains(t, txt, "list:", "expected list operator context, got: %s")
+		assert.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
+		assert.Contains(t, txt, "list:", "expected list operator context, got: %s")
 	})
 
 	t.Run("no filters rejected", func(t *testing.T) {
@@ -1714,7 +1846,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "must provide", "expected validation error, got: %s")
+		assert.Contains(t, txt, "must provide", "expected validation error, got: %s")
 	})
 
 	t.Run("no matches returns error", func(t *testing.T) {
@@ -1730,7 +1862,7 @@ func TestStageDeletion(t *testing.T) {
 			map[string]any{"from": "nobody@example.com"},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "no messages match", "expected no-match error, got: %s")
+		assert.Contains(t, txt, "no messages match", "expected no-match error, got: %s")
 	})
 
 	t.Run("account filter propagated", func(t *testing.T) {
@@ -1754,8 +1886,8 @@ func TestStageDeletion(t *testing.T) {
 				"from":    "news@example.com",
 			},
 		)
-		requirepkg.NotNil(t, capturedFilter.SourceID, "expected SourceID to be set")
-		assertpkg.Equal(t, int64(1), *capturedFilter.SourceID, "SourceID")
+		require.NotNil(t, capturedFilter.SourceID, "expected SourceID to be set")
+		assert.Equal(t, int64(1), *capturedFilter.SourceID, "SourceID")
 	})
 
 	t.Run("invalid account rejected", func(t *testing.T) {
@@ -1770,7 +1902,7 @@ func TestStageDeletion(t *testing.T) {
 			},
 		)
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "account not found", "expected account error, got: %s")
+		assert.Contains(t, txt, "account not found", "expected account error, got: %s")
 	})
 
 	t.Run("structured filter limit enforced", func(t *testing.T) {
@@ -1788,7 +1920,7 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"domain": "example.com"},
 		)
-		assertpkg.Equal(t, maxStageDeletionResults, capturedFilter.Pagination.Limit, "limit")
+		assert.Equal(t, maxStageDeletionResults, capturedFilter.Pagination.Limit, "limit")
 	})
 }
 
@@ -1908,7 +2040,56 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 		"message_id": float64(1),
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+	assert.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
+}
+
+func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var gotReq SimilarSearchRequest
+	hasAttachment := true
+	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	h := &handlers{
+		engine: &querytest.MockEngine{},
+		similarSearcher: similarSearcherFunc(func(_ context.Context, req SimilarSearchRequest) (*SimilarSearchResult, error) {
+			gotReq = req
+			return &SimilarSearchResult{
+				SeedMessageID: req.MessageID,
+				Generation: HybridGeneration{
+					ID:          7,
+					Model:       "fake",
+					Dimension:   4,
+					Fingerprint: "fake:4",
+					State:       "active",
+				},
+				Messages: []query.MessageSummary{
+					testutil.NewMessageSummary(102).WithSubject("Similar").Build(),
+				},
+			}, nil
+		}),
+	}
+
+	resp := runTool[similarResponse](t, "find_similar_messages", h.findSimilarMessages, map[string]any{
+		"message_id":     float64(101),
+		"limit":          float64(3),
+		"account":        "alice@example.com",
+		"message_type":   "sms",
+		"after":          "2024-01-01",
+		"has_attachment": true,
+	})
+
+	assert.Equal(int64(101), gotReq.MessageID, "message_id")
+	assert.Equal(3, gotReq.Limit, "limit")
+	assert.Equal("alice@example.com", gotReq.Account, "account")
+	assert.Equal("sms", gotReq.MessageType, "message_type")
+	require.NotNil(gotReq.After, "after")
+	assert.Equal(after, *gotReq.After, "after")
+	require.NotNil(gotReq.HasAttachment, "has_attachment")
+	assert.Equal(&hasAttachment, gotReq.HasAttachment, "has_attachment")
+	assert.Equal(int64(101), resp.SeedMessageID, "seed_message_id")
+	assert.Equal(int64(7), resp.Generation.ID, "generation")
+	require.Len(resp.Messages, 1, "messages")
+	assert.Equal(int64(102), resp.Messages[0].ID, "message id")
 }
 
 // TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable guards the
@@ -1916,7 +2097,7 @@ func TestFindSimilarMessages_VectorNotEnabled(t *testing.T) {
 // the search_messages tool omits the "mode" and "explain" parameters so
 // clients don't build vector requests that will fail at runtime.
 func TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	disabled := searchMessagesTool(false)
 	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: tool advertises 'mode' but vector modes are unsupported")
 	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: tool advertises 'explain' but vector modes are unsupported")
@@ -1931,7 +2112,7 @@ func TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T)
 
 func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
 	tool := findSimilarMessagesTool()
-	assertpkg.Contains(t, tool.InputSchema.Properties, "message_type")
+	assert.Contains(t, tool.InputSchema.Properties, "message_type")
 }
 
 func TestFindSimilarMessages_MissingID(t *testing.T) {
@@ -1942,11 +2123,11 @@ func TestFindSimilarMessages_MissingID(t *testing.T) {
 
 	r := runToolExpectError(t, "find_similar_messages", h.findSimilarMessages, map[string]any{})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "message_id", "expected error mentioning 'message_id', got: %s")
+	assert.Contains(t, txt, "message_id", "expected error mentioning 'message_id', got: %s")
 }
 
 func TestFindSimilarMessages_HappyPath(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	seed := make([]float32, 4)
 	for i := range seed {
 		seed[i] = float32(i)
@@ -1980,7 +2161,7 @@ func TestFindSimilarMessages_HappyPath(t *testing.T) {
 	assert.Equal(2, resp.Returned, "returned")
 	assert.Equal(int64(7), resp.Generation.ID, "generation.id")
 	assert.Equal(cfg.GenerationFingerprint(), resp.Generation.Fingerprint, "generation.fingerprint")
-	requirepkg.Len(t, resp.Messages, 2, "messages")
+	require.Len(t, resp.Messages, 2, "messages")
 	for _, m := range resp.Messages {
 		assert.NotEqual(int64(100), m.ID, "seed message 100 must not appear in results")
 	}
@@ -2012,9 +2193,9 @@ func TestFindSimilarMessages_RejectsStaleActiveGeneration(t *testing.T) {
 		"message_id": float64(100),
 	})
 	txt := resultText(t, r)
-	assertpkg.Contains(t, txt, "index_stale", "expected stale-index error, got: %s", txt)
-	assertpkg.Equal(t, 0, fb.searchCalls, "backend search calls")
-	assertpkg.Equal(t, 0, fb.loadCalls, "seed vector load calls")
+	assert.Contains(t, txt, "index_stale", "expected stale-index error, got: %s", txt)
+	assert.Equal(t, 0, fb.searchCalls, "backend search calls")
+	assert.Equal(t, 0, fb.loadCalls, "seed vector load calls")
 }
 
 func TestFindSimilarMessages_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
@@ -2034,8 +2215,8 @@ func TestFindSimilarMessages_ScopedIndexRequiresMatchingMessageTypeFilter(t *tes
 			"message_id": float64(100),
 		})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "index_scope_mismatch", "expected scoped-index error, got: %s", txt)
-		assertpkg.Equal(t, 0, fb.searchCalls, "backend search calls")
+		assert.Contains(t, txt, "index_scope_mismatch", "expected scoped-index error, got: %s", txt)
+		assert.Equal(t, 0, fb.searchCalls, "backend search calls")
 	})
 
 	t.Run("passes matching message type filter to backend", func(t *testing.T) {
@@ -2050,8 +2231,8 @@ func TestFindSimilarMessages_ScopedIndexRequiresMatchingMessageTypeFilter(t *tes
 			"message_id":   float64(100),
 			"message_type": " SMS ",
 		})
-		assertpkg.Equal(t, 1, fb.searchCalls, "backend search calls")
-		assertpkg.Equal(t, []string{"sms"}, fb.searchFilter.MessageTypes, "MessageTypes")
+		assert.Equal(t, 1, fb.searchCalls, "backend search calls")
+		assert.Equal(t, []string{"sms"}, fb.searchFilter.MessageTypes, "MessageTypes")
 	})
 
 	t.Run("rejects conflicting message type filter", func(t *testing.T) {
@@ -2067,13 +2248,13 @@ func TestFindSimilarMessages_ScopedIndexRequiresMatchingMessageTypeFilter(t *tes
 			"message_type": "email",
 		})
 		txt := resultText(t, r)
-		assertpkg.Contains(t, txt, "index_scope_mismatch", "expected scoped-index error, got: %s", txt)
-		assertpkg.Equal(t, 0, fb.searchCalls, "backend search calls")
+		assert.Contains(t, txt, "index_scope_mismatch", "expected scoped-index error, got: %s", txt)
+		assert.Equal(t, 0, fb.searchCalls, "backend search calls")
 	})
 }
 
 func TestFindSimilarMessages_ReportsStaleIndexBeforeMissingSeed(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cfg := vector.Config{Enabled: true}
 	cfg.Embeddings.Model = "nomic-embed"
 	cfg.Embeddings.Dimension = 4
@@ -2100,7 +2281,7 @@ func TestFindSimilarMessages_ReportsStaleIndexBeforeMissingSeed(t *testing.T) {
 }
 
 func TestFindSimilarMessages_NoGenerations(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	fb := &fakeBackend{
 		activeErr: vector.ErrNoActiveGeneration,
 	}
@@ -2126,13 +2307,13 @@ func TestSearchByDomains(t *testing.T) {
 	t.Run("valid domains", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com,example.com"})
-		assertpkg.Len(t, msgs, 2, "msgs")
+		assert.Len(t, msgs, 2, "msgs")
 	})
 
 	t.Run("domains with whitespace", func(t *testing.T) {
 		msgs := runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": " acme.com , example.com "})
-		assertpkg.Len(t, msgs, 2, "msgs")
+		assert.Len(t, msgs, 2, "msgs")
 	})
 
 	t.Run("missing domains", func(t *testing.T) {
@@ -2150,7 +2331,7 @@ func TestSearchByDomains(t *testing.T) {
 	})
 
 	t.Run("arguments forwarded correctly", func(t *testing.T) {
-		assert := assertpkg.New(t)
+		assert := assert.New(t)
 		var capturedDomains []string
 		var capturedLimit, capturedOffset int
 		eng := &querytest.MockEngine{
@@ -2194,8 +2375,8 @@ func TestSearchByDomains(t *testing.T) {
 
 		runTool[[]query.MessageSummary](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
-		assertpkg.Equal(t, 100, capturedLimit, "default limit")
-		assertpkg.Equal(t, 0, capturedOffset, "default offset")
+		assert.Equal(t, 100, capturedLimit, "default limit")
+		assert.Equal(t, 0, capturedOffset, "default offset")
 	})
 }
 
@@ -2224,8 +2405,8 @@ func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
 
 	select {
 	case err := <-done:
-		requirepkg.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
+		require.ErrorIs(t, err, context.Canceled, "expected context.Canceled")
 	case <-time.After(15 * time.Second):
-		requirepkg.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
+		require.Fail(t, "ServeHTTPWithOptions did not return after context cancellation")
 	}
 }

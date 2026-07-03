@@ -13,8 +13,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -52,13 +52,13 @@ func TestFullSync_PanicReturnsError(t *testing.T) {
 
 	// Should return an error, NOT panic and crash the program
 	_, err := env.Syncer.Full(env.Context, testEmail)
-	requirepkg.Error(t, err, "expected error from panic recovery")
-	assertpkg.ErrorContains(t, err, "panic")
+	require.Error(t, err, "expected error from panic recovery")
+	assert.ErrorContains(t, err, "panic")
 }
 
 func TestFullSyncBatchFetchErrorUpdatesFailedSyncErrorCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 	env.Syncer = New(&batchErrorAPI{MockAPI: env.Mock}, env.Store, nil)
@@ -104,8 +104,8 @@ func TestIncrementalSync_PanicReturnsError(t *testing.T) {
 
 	// Should return an error, NOT panic and crash the program
 	_, err := env.Syncer.Incremental(env.Context, source)
-	requirepkg.Error(t, err, "expected error from panic recovery")
-	assertpkg.ErrorContains(t, err, "panic")
+	require.Error(t, err, "expected error from panic recovery")
+	assert.ErrorContains(t, err, "panic")
 }
 
 func TestFullSync(t *testing.T) {
@@ -116,7 +116,7 @@ func TestFullSync(t *testing.T) {
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(3)), Errors: new(int64(0))})
-	assertpkg.Equal(t, uint64(12345), summary.FinalHistoryID, "history ID")
+	assert.Equal(t, uint64(12345), summary.FinalHistoryID, "history ID")
 
 	assertMockCalls(t, env, 1, 1, 3)
 	assertMessageCount(t, env.Store, 3)
@@ -127,7 +127,7 @@ func TestFullSyncResume(t *testing.T) {
 
 	// Create mock with pagination
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 4, 2, "msg")
+	seedPagedMessages(env, 4)
 
 	summary1 := runFullSync(t, env)
 	assertSummary(t, summary1, WantSummary{Added: new(int64(4))})
@@ -148,9 +148,52 @@ func TestFullSyncResume(t *testing.T) {
 	assertSummary(t, summary2, WantSummary{Added: new(int64(0))})
 }
 
+// cancelOnSecondListAPI surfaces a context cancellation on the second
+// ListMessages call, after the first page's checkpoint has been saved.
+type cancelOnSecondListAPI struct {
+	*gmail.MockAPI
+
+	calls int
+}
+
+func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
+	c.calls++
+	if c.calls == 2 {
+		return nil, fmt.Errorf("list messages: %w", context.Canceled)
+	}
+	return c.MockAPI.ListMessages(ctx, query, pageToken)
+}
+
+func TestFullSyncCanceledKeepsRunResumable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12345
+	seedPagedMessages(env, 4)
+
+	env.Syncer = New(&cancelOnSecondListAPI{MockAPI: env.Mock}, env.Store, nil)
+	_, err := env.Syncer.Full(env.Context, testEmail)
+	require.ErrorIs(err, context.Canceled, "sync should surface cancellation")
+
+	source, err := env.Store.GetSourceByIdentifier(testEmail)
+	require.NoError(err, "GetSourceByIdentifier")
+	run, err := env.Store.GetLatestSync(source.ID)
+	require.NoError(err, "GetLatestSync")
+	assert.Equal(store.SyncStatusRunning, run.Status, "cancelled run keeps status running")
+	assert.Equal(int64(2), run.MessagesProcessed, "checkpoint keeps first page progress")
+
+	env.Syncer = New(env.Mock, env.Store, nil)
+	summary, err := env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "resumed sync")
+	assert.True(summary.WasResumed, "second sync resumes the cancelled run")
+	assert.Equal("page_1", summary.ResumedFromToken, "resume picks up at the saved page token")
+	assert.Equal(int64(4), summary.MessagesAdded, "resumed summary carries pre-cancellation progress")
+	assertMessageCount(t, env.Store, 4)
+}
+
 func TestFullSyncWithErrors(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
@@ -173,8 +216,8 @@ func TestFullSyncWithErrors(t *testing.T) {
 }
 
 func TestFullSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 3, 12345, "msg1", "msg2", "msg3")
 
@@ -225,7 +268,7 @@ func TestMIMEParsing(t *testing.T) {
 }
 
 func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
@@ -269,7 +312,7 @@ func TestStoreAttachment_ComputesHashWhenMissing(t *testing.T) {
 }
 
 func TestStoreAttachment_InvalidContentHash_ReturnsError(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 
 	attachmentsDir := filepath.Join(env.TmpDir, "attachments")
@@ -320,7 +363,7 @@ func TestFullSyncProfileError(t *testing.T) {
 	env.Mock.ProfileError = errors.New("auth failed")
 
 	_, err := env.Syncer.Full(env.Context, testEmail)
-	assertpkg.Error(t, err, "expected error when profile fails")
+	assert.Error(t, err, "expected error when profile fails")
 }
 
 func TestFullSyncAllDuplicates(t *testing.T) {
@@ -344,7 +387,7 @@ func TestFullSyncNoResume(t *testing.T) {
 	})
 
 	summary := runFullSync(t, env)
-	assertpkg.False(t, summary.WasResumed, "expected WasResumed to be false with NoResume option")
+	assert.False(t, summary.WasResumed, "expected WasResumed to be false with NoResume option")
 	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
 }
 
@@ -370,14 +413,14 @@ func TestFullSyncWithQuery(t *testing.T) {
 
 	summary := runFullSync(t, env)
 
-	assertpkg.Equal(t, "before:2024/06/01", env.Mock.LastQuery, "query")
+	assert.Equal(t, "before:2024/06/01", env.Mock.LastQuery, "query")
 	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
 }
 
 func TestFullSyncPagination(t *testing.T) {
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 6, 2, "msg")
+	seedPagedMessages(env, 6)
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(6))})
@@ -387,13 +430,13 @@ func TestFullSyncPagination(t *testing.T) {
 func TestSyncerWithLogger(t *testing.T) {
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithLogger(nil)
-	assertpkg.NotNil(t, syncer, "WithLogger should return syncer for chaining")
+	assert.NotNil(t, syncer, "WithLogger should return syncer for chaining")
 }
 
 func TestSyncerWithProgress(t *testing.T) {
 	env := newTestEnv(t)
 	syncer := env.Syncer.WithProgress(gmail.NullProgress{})
-	assertpkg.NotNil(t, syncer, "WithProgress should return syncer for chaining")
+	assert.NotNil(t, syncer, "WithProgress should return syncer for chaining")
 }
 
 // Tests for incremental sync
@@ -402,7 +445,7 @@ func TestIncrementalSyncNilSource(t *testing.T) {
 	env := newTestEnv(t)
 
 	_, err := env.Syncer.Incremental(env.Context, nil)
-	assertpkg.Error(t, err, "expected error for nil source")
+	assert.Error(t, err, "expected error for nil source")
 }
 
 func TestIncrementalSyncNoHistoryID(t *testing.T) {
@@ -411,7 +454,7 @@ func TestIncrementalSyncNoHistoryID(t *testing.T) {
 	source := env.CreateSource(t)
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	assertpkg.Error(t, err, "expected error for incremental sync without history ID")
+	assert.Error(t, err, "expected error for incremental sync without history ID")
 }
 
 func TestIncrementalSyncAlreadyUpToDate(t *testing.T) {
@@ -469,7 +512,10 @@ func TestIncrementalSyncHistoryExpired(t *testing.T) {
 	env.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	assertpkg.Error(t, err, "expected error for expired history")
+	require.Error(t, err, "expected error for expired history")
+	// Callers (sync CLI, daemon scheduler) key their full-sync fallback on
+	// this sentinel, so it must survive wrapping.
+	assert.ErrorIs(t, err, ErrHistoryExpired)
 }
 
 func TestIncrementalSyncProfileError(t *testing.T) {
@@ -478,7 +524,7 @@ func TestIncrementalSyncProfileError(t *testing.T) {
 	env.Mock.ProfileError = errors.New("auth failed")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	assertpkg.Error(t, err, "expected error when profile fails")
+	assert.Error(t, err, "expected error when profile fails")
 }
 
 func TestIncrementalSyncWithLabelAdded(t *testing.T) {
@@ -500,7 +546,7 @@ func TestIncrementalSyncWithLabelAdded(t *testing.T) {
 
 	// No additional GetMessageRaw calls should have been made for the existing message
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	assertpkg.Equal(t, callsAfterFull, callsAfterIncr,
+	assert.Equal(t, callsAfterFull, callsAfterIncr,
 		"expected 0 GetMessageRaw calls during incremental")
 
 	// Verify the label was actually added in the database
@@ -529,7 +575,7 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 
 	// No additional GetMessageRaw calls should have been made
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	assertpkg.Equal(t, callsAfterFull, callsAfterIncr,
+	assert.Equal(t, callsAfterFull, callsAfterIncr,
 		"expected 0 GetMessageRaw calls during incremental")
 
 	// Verify the label was actually removed in the database
@@ -542,9 +588,9 @@ func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 	_, err := env.Store.EnsureLabel(source.ID, "INBOX", "Inbox", "system")
-	requirepkg.NoError(t, err, "EnsureLabel INBOX")
+	require.NoError(t, err, "EnsureLabel INBOX")
 	_, err = env.Store.EnsureLabel(source.ID, "STARRED", "Starred", "system")
-	requirepkg.NoError(t, err, "EnsureLabel STARRED")
+	require.NoError(t, err, "EnsureLabel STARRED")
 
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12350
@@ -553,7 +599,7 @@ func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 	env.SetHistory(12350, historyLabelAdded("new-msg", "STARRED"))
 
 	_, err = env.Syncer.Incremental(env.Context, source)
-	requirepkg.NoError(t, err, "incremental sync")
+	require.NoError(t, err, "incremental sync")
 
 	assertMessageCount(t, env.Store, 1)
 }
@@ -583,7 +629,7 @@ func TestFullSyncWithAttachment(t *testing.T) {
 	assertSummary(t, summary, WantSummary{Added: new(int64(1))})
 
 	_, statErr := os.Stat(attachDir)
-	assertpkg.False(t, os.IsNotExist(statErr), "attachments directory should have been created")
+	assert.False(t, os.IsNotExist(statErr), "attachments directory should have been created")
 
 	assertAttachmentCount(t, env.Store, 1)
 }
@@ -619,7 +665,7 @@ func TestFullSyncAttachmentDeduplication(t *testing.T) {
 	runFullSync(t, env)
 	assertAttachmentCount(t, env.Store, 2)
 
-	assertpkg.Equal(t, 1, countFiles(t, attachDir), "files in attachments dir (deduped)")
+	assert.Equal(t, 1, countFiles(t, attachDir), "files in attachments dir (deduped)")
 }
 
 // TestFullSync_MessageVariations consolidates tests for various MIME message formats.
@@ -681,8 +727,8 @@ func TestFullSync_MessageVariations(t *testing.T) {
 }
 
 func TestFullSync_Latin1InFromName(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -720,8 +766,8 @@ func TestFullSync_Latin1InFromName(t *testing.T) {
 }
 
 func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -771,7 +817,7 @@ func TestFullSync_InvalidUTF8InAllAddressFields(t *testing.T) {
 }
 
 func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 
 	// Construct a MIME message with raw Latin-1 byte \xE9 (é) in the attachment
@@ -804,7 +850,7 @@ func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
 	assertAttachmentCount(t, env.Store, 1)
 
 	filename, mimeType, err := env.Store.InspectAttachment("msg-attach")
-	requirepkg.NoError(t, err, "InspectAttachment")
+	require.NoError(t, err, "InspectAttachment")
 
 	// Enmime replaces the invalid \xE9 byte with U+FFFD (replacement character).
 	// Our EnsureUTF8 would convert it to the proper é if enmime didn't sanitize first.
@@ -818,8 +864,8 @@ func TestFullSync_InvalidUTF8InAttachmentFilename(t *testing.T) {
 }
 
 func TestFullSync_MultipleEncodingIssuesSameMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg")
 
@@ -898,15 +944,15 @@ func TestIncrementalSyncLabelsError(t *testing.T) {
 	env.Mock.LabelsError = errors.New("labels API error")
 
 	_, err := env.Syncer.Incremental(env.Context, source)
-	assertpkg.Error(t, err, "expected error when labels sync fails")
+	assert.Error(t, err, "expected error when labels sync fails")
 }
 
 func TestFullSyncResumeWithCursor(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.HistoryID = 12345
-	seedPagedMessages(env, 4, 2, "msg")
+	seedPagedMessages(env, 4)
 
 	source := env.CreateSource(t)
 
@@ -968,8 +1014,8 @@ func TestFullSyncDateFallbackToInternalDate(t *testing.T) {
 }
 
 func TestFullSyncEmptyRawMIME(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12345
@@ -1046,12 +1092,12 @@ func TestFullSyncListEmptyThreadIDRawPresent(t *testing.T) {
 // Tests for initSyncState
 
 func TestInitSyncState_NewSync(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 
 	state, err := env.Syncer.initSyncState(source.ID)
-	requirepkg.NoError(t, err, "initSyncState")
+	require.NoError(t, err, "initSyncState")
 
 	assert.False(state.wasResumed, "expected wasResumed = false for new sync")
 	assert.Empty(state.pageToken, "pageToken")
@@ -1060,8 +1106,8 @@ func TestInitSyncState_NewSync(t *testing.T) {
 }
 
 func TestInitSyncState_Resume(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 
@@ -1088,8 +1134,8 @@ func TestInitSyncState_Resume(t *testing.T) {
 }
 
 func TestInitSyncState_NoResumeOption(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
 		o.NoResume = true
@@ -1116,7 +1162,7 @@ func TestInitSyncState_NoResumeOption(t *testing.T) {
 // Tests for processBatch
 
 func TestProcessBatch_EmptyBatch(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap := make(map[string]int64)
@@ -1129,7 +1175,7 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 
 	syncID := startSyncRun(t, env, source.ID)
 	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	require.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(0), result.processed, "processed")
 	assert.Equal(int64(0), result.added, "added")
@@ -1137,7 +1183,7 @@ func TestProcessBatch_EmptyBatch(t *testing.T) {
 }
 
 func TestProcessBatch_AllNew(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1158,7 +1204,7 @@ func TestProcessBatch_AllNew(t *testing.T) {
 
 	syncID := startSyncRun(t, env, source.ID)
 	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	require.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
 	assert.Equal(int64(2), result.added, "added")
@@ -1166,7 +1212,7 @@ func TestProcessBatch_AllNew(t *testing.T) {
 }
 
 func TestProcessBatch_AllExisting(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 2, 12345, "msg1", "msg2")
 
@@ -1189,7 +1235,7 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 
 	syncID := startSyncRun(t, env, source.ID)
 	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	require.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
 	assert.Equal(int64(0), result.added, "added (all existing)")
@@ -1197,7 +1243,7 @@ func TestProcessBatch_AllExisting(t *testing.T) {
 }
 
 func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	seedMessages(env, 1, 12345, "msg1")
 
@@ -1223,7 +1269,7 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 
 	syncID := startSyncRun(t, env, source.ID)
 	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	require.NoError(t, err, "processBatch")
 
 	assert.Equal(int64(2), result.processed, "processed")
 	assert.Equal(int64(1), result.added, "added")
@@ -1231,7 +1277,7 @@ func TestProcessBatch_MixedNewAndExisting(t *testing.T) {
 }
 
 func TestProcessBatch_OldestDatePropagation(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1266,7 +1312,7 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 
 	syncID := startSyncRun(t, env, source.ID)
 	result, err := env.Syncer.processBatch(env.Context, syncID, source.ID, listResp, labelMap, checkpoint, summary)
-	requirepkg.NoError(t, err, "processBatch")
+	require.NoError(t, err, "processBatch")
 
 	// oldestDate should be Jan 10, 2024
 	assert.False(result.oldestDate.IsZero(), "expected oldestDate to be set")
@@ -1277,8 +1323,8 @@ func TestProcessBatch_OldestDatePropagation(t *testing.T) {
 }
 
 func TestProcessBatch_ErrorsCount(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1313,8 +1359,8 @@ func TestProcessBatch_ErrorsCount(t *testing.T) {
 }
 
 func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	labelMap, _ := env.Store.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
@@ -1351,7 +1397,7 @@ func TestProcessBatch_GmailNotFoundIsSkipped(t *testing.T) {
 // TestAttachmentFilePermissions verifies that attachment files are saved with
 // restrictive permissions (0600) to protect email content.
 func TestAttachmentFilePermissions(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 1
 	env.Mock.Profile.HistoryID = 12345
@@ -1381,7 +1427,7 @@ func TestAttachmentFilePermissions(t *testing.T) {
 	// File should have 0600 permissions (owner read/write only)
 	// Windows does not support Unix permissions.
 	if runtime.GOOS != "windows" {
-		assertpkg.Equal(t, os.FileMode(0600), info.Mode().Perm(), "attachment file permissions")
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "attachment file permissions")
 	}
 }
 
@@ -1413,7 +1459,7 @@ func TestIncrementalSyncLabelAddAndRemoveOnExisting(t *testing.T) {
 
 	// Zero additional API calls
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	assertpkg.Equal(t, callsAfterFull, callsAfterIncr, "expected 0 GetMessageRaw calls during incremental")
+	assert.Equal(t, callsAfterFull, callsAfterIncr, "expected 0 GetMessageRaw calls during incremental")
 
 	// Verify label state: TRASH and STARRED remain, INBOX removed
 	assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
@@ -1473,8 +1519,8 @@ func TestIncrementalSyncBatchNewMessages(t *testing.T) {
 }
 
 func TestIncrementalSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1502,8 +1548,8 @@ func TestIncrementalSyncSkipsGmailNotFoundBeforeFetch(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsFetchErrors(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1531,8 +1577,8 @@ func TestIncrementalSyncRecordsFetchErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddFetchErrors(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1559,8 +1605,8 @@ func TestIncrementalSyncRecordsLabelAddFetchErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddGmailNotFound(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1587,8 +1633,8 @@ func TestIncrementalSyncRecordsLabelAddGmailNotFound(t *testing.T) {
 }
 
 func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1620,8 +1666,8 @@ func TestIncrementalSyncRecordsLabelAddIngestErrors(t *testing.T) {
 }
 
 func TestIncrementalSyncDedupesMessageAddedAndLabelAddedForSameUnknownMessage(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSourceWithHistory(t, "12340")
 
@@ -1684,7 +1730,7 @@ func TestIncrementalSyncMixedOperations(t *testing.T) {
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
 	// GetMessagesRawBatch calls GetMessageRaw internally in MockAPI, so 1 call for new-1
 	newCalls := callsAfterIncr - callsAfterFull
-	assertpkg.Equal(t, 1, newCalls, "GetMessageRaw call count for new message")
+	assert.Equal(t, 1, newCalls, "GetMessageRaw call count for new message")
 
 	assertDeletedFromSource(t, env.Store, "existing-1", true)
 	assertMessageHasLabel(t, env.Store, "existing-2", "STARRED")
@@ -1747,9 +1793,9 @@ func TestDeriveThreadKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := deriveThreadKey(tt.msg)
 			if tt.wantEmpty {
-				assertpkg.Empty(t, got, "expected empty")
+				assert.Empty(t, got, "expected empty")
 			} else {
-				assertpkg.Equal(t, tt.wantKey, got, "thread key")
+				assert.Equal(t, tt.wantKey, got, "thread key")
 			}
 		})
 	}
@@ -1817,16 +1863,16 @@ func TestIMAPThreading(t *testing.T) {
 	// standalone gets its own.
 	var convCount int
 	err := env.Store.DB().QueryRow(`SELECT COUNT(DISTINCT conversation_id) FROM messages`).Scan(&convCount)
-	requirepkg.NoError(t, err, "count conversations")
-	assertpkg.Equal(t, 2, convCount, "expected 2 conversations (1 thread + 1 standalone)")
+	require.NoError(t, err, "count conversations")
+	assert.Equal(t, 2, convCount, "expected 2 conversations (1 thread + 1 standalone)")
 }
 
 // TestIMAPCrossSyncDedup verifies that a message imported from one mailbox
 // is not re-imported when it appears under a different mailbox|uid on a
 // subsequent sync (e.g. moved from All Mail to Trash).
 func TestIMAPCrossSyncDedup(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	env := newTestEnv(t)
 	env.SetOptions(t, func(o *Options) {
 		o.SourceType = "imap"
@@ -1894,7 +1940,7 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 		DELETE FROM message_raw WHERE message_id = (
 			SELECT id FROM messages WHERE source_message_id = 'msg1'
 		)`)
-	requirepkg.NoError(t, err, "delete raw data")
+	require.NoError(t, err, "delete raw data")
 
 	// Record raw fetch count before incremental sync
 	callsBeforeIncr := len(env.Mock.GetMessageCalls)
@@ -1907,7 +1953,7 @@ func TestIncrementalSyncLabelRemovedWithMissingRaw(t *testing.T) {
 
 	// No raw fetches should occur for label-only changes
 	callsAfterIncr := len(env.Mock.GetMessageCalls)
-	assertpkg.Equal(t, callsBeforeIncr, callsAfterIncr, "expected 0 GetMessageRaw calls for label removal")
+	assert.Equal(t, callsBeforeIncr, callsAfterIncr, "expected 0 GetMessageRaw calls for label removal")
 
 	// Label should be removed despite missing raw data
 	assertMessageNotHasLabel(t, env.Store, "msg1", "STARRED")

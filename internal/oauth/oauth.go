@@ -129,6 +129,42 @@ func (m *Manager) HasToken(email string) bool {
 	return err == nil
 }
 
+// ForceRefresh redeems the stored refresh token for a new access token,
+// bypassing any cached access token that has not expired yet. TokenSource
+// returns a still-valid cached access token without contacting the provider,
+// so it cannot detect a revoked refresh token; callers that must know whether
+// the token remains refreshable (e.g. add-calendar deciding between reuse and
+// reauthorization) use this probe instead. The refreshed token is saved on
+// success.
+func (m *Manager) ForceRefresh(ctx context.Context, email string) error {
+	tf, err := m.loadTokenFile(email)
+	if err != nil {
+		return fmt.Errorf("no valid token for %s: %w", email, err)
+	}
+	if tf.RefreshToken == "" {
+		return fmt.Errorf("token for %s has no refresh token", email)
+	}
+
+	// A token without an access token is never Valid, so the token source
+	// must hit the token endpoint with the refresh grant.
+	stale := &oauth2.Token{RefreshToken: tf.RefreshToken}
+	newToken, err := m.config.TokenSource(ctx, stale).Token()
+	if err != nil {
+		return fmt.Errorf("refresh token: %w", err)
+	}
+
+	if newToken.AccessToken != tf.AccessToken {
+		scopes := tf.Scopes
+		if len(scopes) == 0 {
+			scopes = m.config.Scopes // fallback for legacy tokens
+		}
+		if err := m.saveToken(email, newToken, scopes); err != nil {
+			m.logger.Warn("failed to save refreshed token", "email", email, "error", err)
+		}
+	}
+	return nil
+}
+
 // PrintHeadlessInstructions prints setup instructions for headless servers.
 // Google's device flow does not support Gmail scopes, so users must authorize
 // on a machine with a browser and copy the token file.
@@ -262,6 +298,17 @@ func (m *Manager) AuthorizeManual(ctx context.Context, email string) error {
 func (m *Manager) AuthorizeManualPreservingGrantedScopes(ctx context.Context, email string) error {
 	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
 	return scoped.AuthorizeManual(ctx, email)
+}
+
+// AuthorizePreservingGrantedScopes is the browser twin of
+// AuthorizeManualPreservingGrantedScopes: it opens the browser and reauthorizes
+// with the manager's required scopes plus any scopes already recorded on the
+// token file. Google's forced consent REPLACES the granted scope set, so
+// re-authorizing with the bare required scopes would silently drop previously
+// granted grants (Calendar, permanent-delete); the union preserves them.
+func (m *Manager) AuthorizePreservingGrantedScopes(ctx context.Context, email string) error {
+	scoped := m.withScopes(scopesWithPreservedGrants(m.config.Scopes, m.GrantedScopes(email)))
+	return scoped.Authorize(ctx, email)
 }
 
 func (m *Manager) withScopes(scopes []string) *Manager {

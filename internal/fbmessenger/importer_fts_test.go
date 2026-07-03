@@ -5,8 +5,8 @@ package fbmessenger
 import (
 	"testing"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -16,8 +16,8 @@ import (
 // FTS assertion is always active under the project's canonical
 // `go test -tags fts5 ./...` invocation.
 func TestImportDYI_MojibakeFTSIndexed(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly MATCH-queries the SQLite FTS5 vtable; PG uses a tsvector column exercised via FTSSearchClause")
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_simple")
@@ -44,8 +44,8 @@ func TestImportDYI_MojibakeFTSIndexed(t *testing.T) {
 // "[reacted: ...]" suffix in body_text that FTS5 can match. Gated on
 // the fts5 build tag; the FTS MATCH assertion is unconditional.
 func TestImportDYI_ReactionsDualPath(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly MATCH-queries the SQLite FTS5 vtable; PG uses a tsvector column exercised via FTSSearchClause")
 	st := testutil.NewTestStore(t)
 	_ = importFixture(t, st, "testdata/json_simple")

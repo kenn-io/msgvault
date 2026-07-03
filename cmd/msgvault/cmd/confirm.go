@@ -68,7 +68,7 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 			return false, errors.New("no confirmation input (stdin closed); --all-hidden cannot be skipped with --yes")
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		return answer == "y" || answer == "yes", nil
+		return isYesAnswer(answer), nil
 
 	case ConfirmModeYesNo:
 		_, _ = fmt.Fprint(w, "Proceed? This is irreversible. [y/N]: ")
@@ -80,7 +80,7 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 			return false, nil
 		}
 		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		return answer == "y" || answer == "yes", nil
+		return isYesAnswer(answer), nil
 
 	default:
 		return false, fmt.Errorf("unknown ConfirmMode: %d", mode)
@@ -96,5 +96,9 @@ func confirmEmbed(cmd *cobra.Command, prompt string) bool {
 		return false
 	}
 	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y" || line == "yes"
+	return isYesAnswer(line)
+}
+
+func isYesAnswer(answer string) bool {
+	return answer == "y" || answer == "yes"
 }

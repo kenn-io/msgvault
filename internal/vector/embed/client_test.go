@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // writeEmbeddings writes an OpenAI-compatible embeddings response using the
@@ -30,19 +30,19 @@ func writeEmbeddings(t *testing.T, w http.ResponseWriter, vecs [][]float32) {
 		payload.Data = append(payload.Data, item{Embedding: v, Index: i})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	requirepkg.NoError(t, json.NewEncoder(w).Encode(payload), "encode response")
+	require.NoError(t, json.NewEncoder(w).Encode(payload), "encode response")
 }
 
 func decodeRequest(t *testing.T, r *http.Request) embeddingRequest {
 	t.Helper()
 	var req embeddingRequest
-	requirepkg.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request")
+	require.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request")
 	return req
 }
 
 func TestClient_Embed_Success(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/embeddings", r.URL.Path)
 		assert.Equal("application/json", r.Header.Get("Content-Type"))
@@ -79,13 +79,13 @@ func TestClient_Embed_DimensionMismatch(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.Error(t, err, "expected dimension mismatch error")
-	assertpkg.ErrorContains(t, err, "dimension mismatch")
+	require.Error(t, err, "expected dimension mismatch error")
+	assert.ErrorContains(t, err, "dimension mismatch")
 }
 
 func TestClient_Embed_Retries5xx(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := attempts.Add(1)
@@ -106,7 +106,7 @@ func TestClient_Embed_Retries5xx(t *testing.T) {
 }
 
 func TestClient_Embed_Does_Not_Retry_4xx(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -118,9 +118,9 @@ func TestClient_Embed_Does_Not_Retry_4xx(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 5})
 	_, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.Error(t, err, "expected error for 4xx")
+	require.Error(t, err, "expected error for 4xx")
 	assert.Equal(int32(1), attempts.Load(), "no retry on 4xx")
-	requirepkg.ErrorContains(t, err, "400")
+	require.ErrorContains(t, err, "400")
 	assert.ErrorContains(err, "No models loaded")
 }
 
@@ -134,13 +134,13 @@ func TestClient_Embed_AuthHeader(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, APIKey: "secret-token", Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.NoError(t, err, "Embed")
-	assertpkg.Equal(t, "Bearer secret-token", gotAuth)
+	require.NoError(t, err, "Embed")
+	assert.Equal(t, "Bearer secret-token", gotAuth)
 }
 
 func TestClient_Embed_EmptyInput(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -171,9 +171,9 @@ func TestClient_Embed_GivesUpAfterMaxRetries(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 2})
 	_, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.Error(t, err, "expected error after exhausting retries")
-	assertpkg.Equal(t, int32(2), attempts.Load())
-	assertpkg.ErrorContains(t, err, "giving up")
+	require.Error(t, err, "expected error after exhausting retries")
+	assert.Equal(t, int32(2), attempts.Load())
+	assert.ErrorContains(t, err, "giving up")
 }
 
 func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
@@ -194,8 +194,8 @@ func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
 	}()
 
 	_, err := c.Embed(ctx, []string{"a"})
-	requirepkg.Error(t, err, "expected error from canceled context")
-	assertpkg.ErrorIs(t, err, context.Canceled)
+	require.Error(t, err, "expected error from canceled context")
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestClient_Embed_MissingIndex(t *testing.T) {
@@ -207,15 +207,15 @@ func TestClient_Embed_MissingIndex(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a", "b"})
-	requirepkg.Error(t, err, "expected missing embedding error")
-	assertpkg.ErrorContains(t, err, "missing embedding at index 1")
+	require.Error(t, err, "expected missing embedding error")
+	assert.ErrorContains(t, err, "missing embedding at index 1")
 }
 
 // TestClient_Embed_Retries429 verifies 429 Too Many Requests is
 // treated as transient and retried rather than failing immediately.
 func TestClient_Embed_Retries429(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := attempts.Add(1)
@@ -258,14 +258,14 @@ func TestClient_Embed_HonorsRetryAfterOverridesBackoff(t *testing.T) {
 	start := time.Now()
 	_, err := c.Embed(ctx, []string{"a"})
 	elapsed := time.Since(start)
-	requirepkg.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled)
 	// Should be interrupted at ~100ms by the cancel, well before
 	// 30s. A test failure here would mean Retry-After wasn't
 	// honored and the default backoff completed first.
-	assertpkg.Less(t, elapsed, 500*time.Millisecond, "cancel during Retry-After wait")
+	assert.Less(t, elapsed, 500*time.Millisecond, "cancel during Retry-After wait")
 	// One attempt plus possibly a second before cancel; never
 	// enough to finish the Retry-After window.
-	assertpkg.LessOrEqual(t, attempts.Load(), int32(2), "Retry-After should extend the wait")
+	assert.LessOrEqual(t, attempts.Load(), int32(2), "Retry-After should extend the wait")
 }
 
 // TestClient_Embed_RetriesTruncatedBody verifies a truncated JSON
@@ -297,9 +297,9 @@ func TestClient_Embed_RetriesTruncatedBody(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 3})
 	vecs, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.NoError(t, err, "Embed")
-	assertpkg.Equal(t, int32(2), attempts.Load(), "retry after truncated body")
-	assertpkg.Len(t, vecs, 1)
+	require.NoError(t, err, "Embed")
+	assert.Equal(t, int32(2), attempts.Load(), "retry after truncated body")
+	assert.Len(t, vecs, 1)
 }
 
 // TestClient_parseRetryAfter covers the Retry-After formats (seconds,
@@ -308,7 +308,7 @@ func TestClient_Embed_RetriesTruncatedBody(t *testing.T) {
 // "Retry-After: 0" (parsed = true, immediate retry) from "missing or
 // unparseable" (parsed = false, use default backoff).
 func TestClient_parseRetryAfter(t *testing.T) {
-	assert := assertpkg.New(t)
+	assert := assert.New(t)
 	cases := []struct {
 		in      string
 		wantDur time.Duration
@@ -347,8 +347,8 @@ func TestClient_parseRetryAfter(t *testing.T) {
 // the second attempt must start far sooner than the default
 // 200ms backoff for attempt #1.
 func TestClient_Embed_RetryAfterZero_RetriesImmediately(t *testing.T) {
-	require := requirepkg.New(t)
-	assert := assertpkg.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -384,10 +384,10 @@ func TestClient_Embed_4xxIsPermanent(t *testing.T) {
 		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 3,
 	})
 	_, err := c.Embed(context.Background(), []string{"hello"})
-	requirepkg.Error(t, err, "expected error on 400")
-	requirepkg.ErrorIs(t, err, ErrPermanent4xx)
+	require.Error(t, err, "expected error on 400")
+	require.ErrorIs(t, err, ErrPermanent4xx)
 	// Existing contract: body must still be in the message.
-	assertpkg.ErrorContains(t, err, "Invalid input")
+	assert.ErrorContains(t, err, "Invalid input")
 }
 
 func TestClient_Embed_5xxNotPermanent(t *testing.T) {
@@ -400,8 +400,8 @@ func TestClient_Embed_5xxNotPermanent(t *testing.T) {
 		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 2,
 	})
 	_, err := c.Embed(context.Background(), []string{"hello"})
-	requirepkg.Error(t, err, "expected error after retries exhausted")
-	assertpkg.NotErrorIs(t, err, ErrPermanent4xx, "5xx should NOT match ErrPermanent4xx")
+	require.Error(t, err, "expected error after retries exhausted")
+	assert.NotErrorIs(t, err, ErrPermanent4xx, "5xx should NOT match ErrPermanent4xx")
 }
 
 func TestClient_Embed_429NotPermanent(t *testing.T) {
@@ -415,8 +415,8 @@ func TestClient_Embed_429NotPermanent(t *testing.T) {
 		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 2,
 	})
 	_, err := c.Embed(context.Background(), []string{"hello"})
-	requirepkg.Error(t, err, "expected error after retries exhausted")
-	assertpkg.NotErrorIs(t, err, ErrPermanent4xx, "429 should NOT match ErrPermanent4xx")
+	require.Error(t, err, "expected error after retries exhausted")
+	assert.NotErrorIs(t, err, ErrPermanent4xx, "429 should NOT match ErrPermanent4xx")
 }
 
 func TestClient_Embed_InvalidIndex(t *testing.T) {
@@ -434,12 +434,12 @@ func TestClient_Embed_InvalidIndex(t *testing.T) {
 			Model: "m",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		assertpkg.NoError(t, json.NewEncoder(w).Encode(payload), "encode")
+		assert.NoError(t, json.NewEncoder(w).Encode(payload), "encode")
 	}))
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 	_, err := c.Embed(context.Background(), []string{"a"})
-	requirepkg.Error(t, err, "expected invalid index error")
-	assertpkg.ErrorContains(t, err, "invalid index")
+	require.Error(t, err, "expected invalid index error")
+	assert.ErrorContains(t, err, "invalid index")
 }

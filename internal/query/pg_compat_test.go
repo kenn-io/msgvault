@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -34,7 +34,7 @@ import (
 // to. The test never asserts on dialect-specific error text; a bug
 // would surface as a generic Scan/Exec failure on PG.
 func TestQueryEngine_PostgresPortability(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "pgcompat@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -65,8 +65,10 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		require.NoError(err, "UpsertMessage")
 		require.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
 			"ReplaceMessageRecipients from")
+
 		require.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
 			"ReplaceMessageRecipients to")
+
 		require.NoError(st.ReplaceMessageLabels(mid, []int64{labelID}),
 			"ReplaceMessageLabels")
 	}
@@ -81,8 +83,8 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			SortDirection: query.SortDesc,
 			Limit:         50,
 		})
-		requirepkg.NoError(t, err, "Aggregate")
-		requirepkg.NotEmpty(t, rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
+		require.NoError(err, "Aggregate")
+		require.NotEmpty(rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
 	})
 
 	// (2) GetGmailIDsByFilter — must not error from a SELECT DISTINCT +
@@ -97,15 +99,15 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 				Direction: query.SortDesc,
 			},
 		})
-		requirepkg.NoError(t, err, "GetGmailIDsByFilter")
-		assertpkg.Len(t, ids, 4, "label join must not multiply")
+		require.NoError(err, "GetGmailIDsByFilter")
+		assert.Len(t, ids, 4, "label join must not multiply")
 		// Confirm no duplicates after dropping DISTINCT — every message
 		// row should appear exactly once because the label filter is an
 		// EXISTS subquery, not a 1:N JOIN.
 		seen := make(map[string]struct{}, len(ids))
 		for _, id := range ids {
 			_, dup := seen[id]
-			assertpkg.False(t, dup, "duplicate id %q in result; EXISTS conversion broken", id)
+			assert.False(t, dup, "duplicate id %q in result; EXISTS conversion broken", id)
 			seen[id] = struct{}{}
 		}
 	})
@@ -131,8 +133,8 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 				},
 				Pagination: query.Pagination{Limit: 50},
 			})
-			requirepkg.NoError(t, err, "ListMessages %s", sort.name)
-			assertpkg.Len(t, msgs, 4, "ListMessages %s", sort.name)
+			require.NoError(err, "ListMessages %s", sort.name)
+			assert.Len(t, msgs, 4, "ListMessages %s", sort.name)
 		})
 	}
 }
@@ -145,7 +147,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 // rows that the equivalent store API path (which lowercases) returns.
 // Bare-LIKE divergence was H3 in the codex review.
 func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "case-search@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -171,7 +173,7 @@ func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
 		got, err := eng.Search(ctx,
 			&search.Query{SubjectTerms: []string{term}}, 50, 0)
 		require.NoError(err, "Search subject=%q", term)
-		assertpkg.Len(t, got, 1, "subject:%q against stored subject %q", term, "Quarterly Invoice")
+		assert.Len(t, got, 1, "subject:%q against stored subject %q", term, "Quarterly Invoice")
 	}
 }
 
@@ -191,7 +193,7 @@ func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
 // MSGVAULT_TEST_DB to a postgres:// DSN exercises the PG path too, since
 // NewPostgreSQLEngine wraps the same dialect-parameterized builder.
 func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "multifrom@example.com")
 	require.NoError(err, "GetOrCreateSource")
@@ -251,9 +253,9 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 			Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
 			Pagination: query.Pagination{Limit: 50},
 		})
-		requirepkg.NoError(t, err, "ListMessages domain")
-		assertpkg.Len(t, msgs, 1, "multi-from message must appear exactly once under Domain filter")
-		assertpkg.Equal(t, multiID, msgs[0].ID, "the multi-from message")
+		require.NoError(err, "ListMessages domain")
+		assert.Len(t, msgs, 1, "multi-from message must appear exactly once under Domain filter")
+		assert.Equal(t, multiID, msgs[0].ID, "the multi-from message")
 	})
 
 	t.Run("list_messages_sender_name", func(t *testing.T) {
@@ -263,9 +265,9 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 			Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
 			Pagination: query.Pagination{Limit: 50},
 		})
-		requirepkg.NoError(t, err, "ListMessages sender name")
-		assertpkg.Len(t, msgs, 1, "multi-from message must appear exactly once under SenderName filter")
-		assertpkg.Equal(t, multiID, msgs[0].ID, "the multi-from message")
+		require.NoError(err, "ListMessages sender name")
+		assert.Len(t, msgs, 1, "multi-from message must appear exactly once under SenderName filter")
+		assert.Equal(t, multiID, msgs[0].ID, "the multi-from message")
 	})
 
 	// SubAggregate shares buildFilterJoinsAndConditions. Group by ViewTime
@@ -283,12 +285,12 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 				Limit:           50,
 			},
 		)
-		requirepkg.NoError(t, err, "SubAggregate domain")
+		require.NoError(err, "SubAggregate domain")
 		var total int64
 		for _, r := range rows {
 			total += r.Count
 		}
-		assertpkg.Equal(t, int64(1), total,
+		assert.Equal(t, int64(1), total,
 			"Domain sub-filter must count the multi-from message once, not per 'from' row")
 	})
 }
@@ -307,7 +309,11 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 // testutil.NewTestStore selects, so it doubles as a SQLite<->PG parity test:
 // both backends must return the body-only hit.
 func TestQueryEngine_FTSBodySearch(t *testing.T) {
-	require := requirepkg.New(t)
+	assert :=
+		assert.
+			New(t)
+
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.FTS5Available() {
 		t.Skip("full-text search index not available on this backend")
@@ -336,6 +342,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 	require.NoError(st.UpsertMessageBody(mid,
 		sql.NullString{String: body, Valid: true},
 		sql.NullString{}), "UpsertMessageBody")
+
 	// Index the message for full-text search (search_fts on PG, messages_fts on SQLite).
 	require.NoError(st.UpsertFTS(mid, "Quarterly report", body, "", "", ""), "UpsertFTS")
 
@@ -346,16 +353,16 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 	// can, since the term is absent from subject/snippet.
 	got, err := eng.Search(ctx, &search.Query{TextTerms: []string{bodyOnlyTerm}}, 50, 0)
 	require.NoError(err, "Search TextTerms=%q", bodyOnlyTerm)
-	assertpkg.Len(t, got, 1,
+	assert.Len(got, 1,
 		"body-only term %q must be found via FTS (subject/snippet LIKE fallback would return 0)", bodyOnlyTerm)
 	if len(got) == 1 {
-		assertpkg.Equal(t, mid, got[0].ID, "the indexed message")
+		assert.Equal(mid, got[0].ID, "the indexed message")
 	}
 
 	// (2) Control: a subject term is found on both the FTS and LIKE paths.
 	gotSubj, err := eng.Search(ctx, &search.Query{TextTerms: []string{"Quarterly"}}, 50, 0)
 	require.NoError(err, "Search TextTerms=Quarterly")
-	assertpkg.Len(t, gotSubj, 1, "subject term must match")
+	assert.Len(gotSubj, 1, "subject term must match")
 }
 
 // TestQueryDialect_HasFTSTableSQL_SchemaScoped pins cr2-8: the PG query
@@ -370,7 +377,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 // connection's search_path is scoped to the one WITHOUT it; the probe must
 // return 0 (FTS not available here) even though a sibling has the column.
 func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") && !strings.HasPrefix(dbURL, "postgresql://") {
 		t.Skip("cr2-8 schema-scoping test requires MSGVAULT_TEST_DB pointing at PostgreSQL")
@@ -417,7 +424,8 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 	require.NoError(
 		scopedDB.QueryRow(query.PostgreSQLQueryDialect{}.HasFTSTableSQL()).Scan(&count),
 		"run HasFTSTableSQL probe")
-	assertpkg.Equal(t, 0, count,
+
+	assert.Equal(t, 0, count,
 		"schema-scoped FTS probe must not count a sibling schema's messages.search_fts")
 }
 
@@ -434,7 +442,7 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 // read as 07:00 UTC and exclude the message. With time.Time binding it is
 // included regardless of session TimeZone.
 func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
-	require := requirepkg.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("cr2-9 timezone-stability is PostgreSQL-specific (SQLite has no session TimeZone for TIMESTAMPTZ casts)")
@@ -480,7 +488,7 @@ func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
 		require.NoErrorf(err, "Search under TZ=%q", tz)
 		require.Lenf(got, 1,
 			"date-range search must include the 02:00 UTC message under TZ=%q (timezone-stable bind)", tz)
-		assertpkg.Equalf(t, mid, got[0].ID, "the in-range message under TZ=%q", tz)
+		assert.Equalf(t, mid, got[0].ID, "the in-range message under TZ=%q", tz)
 	}
 }
 
