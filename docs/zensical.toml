@@ -35,6 +35,7 @@ nav = [
   {"Guides" = [
     {"OAuth Setup" = "guides/oauth-setup.md"},
     {"Remote Deployment" = "guides/remote-deployment.md"},
+    {"Daemon Migration" = "guides/daemon-migration.md"},
     {"Verify Integrity" = "guides/verification.md"},
   ]},
   {"Architecture" = [
