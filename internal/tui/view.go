@@ -4,27 +4,35 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/textutil"
 )
+
+func adaptiveColor(light, dark string) compat.AdaptiveColor {
+	return compat.AdaptiveColor{
+		Light: lipgloss.Color(light),
+		Dark:  lipgloss.Color(dark),
+	}
+}
 
 // Monochrome theme - inherits terminal background where possible.
 // Only cursor, title bar, and alt rows use explicit backgrounds.
 var (
 	// Explicit backgrounds only for elements that need contrast.
-	bgAlt    = lipgloss.AdaptiveColor{Light: "#f0f0f0", Dark: "#181818"}
-	bgCursor = lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#282828"}
+	bgAlt    = adaptiveColor("#f0f0f0", "#181818")
+	bgCursor = adaptiveColor("#e0e0e0", "#282828")
 
 	// Title bar style - bold with visible background.
 	titleBarStyle = lipgloss.NewStyle().
 			Bold(true).
-			Background(lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#333333"}).
-			Foreground(lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"}).
+			Background(adaptiveColor("#e0e0e0", "#333333")).
+			Foreground(adaptiveColor("#000000", "#ffffff")).
 			Padding(0, 1)
 
 	statsStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#999999"}).
+			Foreground(adaptiveColor("#555555", "#999999")).
 			Padding(0, 1)
 
 	// Spinner style - NOT faint so it's visible.
@@ -54,7 +62,7 @@ var (
 			Background(bgAlt)
 
 	footerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#999999"}).
+			Foreground(adaptiveColor("#555555", "#999999")).
 			Padding(0, 1)
 
 	errorStyle = lipgloss.NewStyle().
@@ -69,18 +77,18 @@ var (
 	modalStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			Padding(1, 2).
-			Background(lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#000000"})
+			Background(adaptiveColor("#ffffff", "#000000"))
 
 	modalTitleStyle = lipgloss.NewStyle().
 			Bold(true)
 
 	flashStyle = lipgloss.NewStyle().
 			Italic(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#996600", Dark: "#ffcc00"}) // Amber for visibility
+			Foreground(adaptiveColor("#996600", "#ffcc00")) // Amber for visibility
 
 	highlightStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#000000", Dark: "#000000"}).
-			Background(lipgloss.AdaptiveColor{Light: "#e8d44d", Dark: "#e8d44d"}).
+			Foreground(adaptiveColor("#000000", "#000000")).
+			Background(adaptiveColor("#e8d44d", "#e8d44d")).
 			Bold(true)
 )
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -228,7 +228,7 @@ func New(engine query.Engine, opts Options) Model {
 	ti := textinput.New()
 	ti.Placeholder = "search (Tab: deep)"
 	ti.CharLimit = 200
-	ti.Width = 50
+	ti.SetWidth(50)
 
 	aggLimit := opts.AggregateLimit
 	if aggLimit == 0 {
@@ -834,7 +834,7 @@ func (m *Model) startSpinner() tea.Cmd {
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
@@ -1315,7 +1315,7 @@ func (m Model) handleSpinnerTick() (tea.Model, tea.Cmd) {
 }
 
 // handleKeyPress processes keyboard input.
-func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Route to Texts mode handler when active
 	if m.mode == modeTexts {
 		return m.handleTextKeyPress(msg)
@@ -1502,22 +1502,23 @@ func (m Model) selectionCount() int {
 // clearAllSelections clears both aggregate and message selections.
 
 // View implements tea.Model.
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var content string
 	if m.quitting {
-		return ""
+		content = ""
+	} else if m.width == 0 {
+		content = "Loading..."
+	} else if m.transitionBuffer != "" {
+		// If view is frozen (during level transitions), return the cached view
+		// to prevent flashing while async data loads complete.
+		content = m.transitionBuffer
+	} else {
+		content = m.renderView()
 	}
 
-	if m.width == 0 {
-		return "Loading..."
-	}
-
-	// If view is frozen (during level transitions), return the cached view
-	// to prevent flashing while async data loads complete.
-	if m.transitionBuffer != "" {
-		return m.transitionBuffer
-	}
-
-	return m.renderView()
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
 }
 
 // renderView renders the current view based on the active level.
