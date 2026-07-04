@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -109,6 +110,16 @@ func TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon(t *testing.T) {
 		"restore into the live archive home must be refused even when the daemon is incompatible")
 	require.NoError(refuseRestoreIntoLiveDaemonHome(t.TempDir()),
 		"a target outside the archive home stays allowed")
+
+	// The guard compares filesystem identity, not path strings, so an
+	// aliased spelling of the same home (a symlink here; a case-variant
+	// path on case-insensitive filesystems) is refused too.
+	alias := filepath.Join(t.TempDir(), "home-alias")
+	if err := os.Symlink(dataDir, alias); err != nil {
+		t.Skip("symlinks not supported on this platform")
+	}
+	require.ErrorContains(refuseRestoreIntoLiveDaemonHome(alias), "running daemon",
+		"an aliased path to the archive home must be refused")
 }
 
 func TestResolveBackupRepoNilConfig(t *testing.T) {

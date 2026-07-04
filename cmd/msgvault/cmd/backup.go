@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"text/tabwriter"
 
@@ -246,7 +247,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 // counts, including one whose API version is incompatible with this client
 // (left running across an upgrade or downgrade) — it owns the database all
 // the same. A stopped daemon's home is still non-empty and so requires
-// --overwrite like any other directory.
+// --overwrite like any other directory. Target and home are compared as
+// filesystem objects, not path strings, so a case-variant or symlinked
+// spelling of the home is refused too.
 func refuseRestoreIntoLiveDaemonHome(target string) error {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return nil
@@ -259,7 +262,7 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 	if err != nil {
 		return fmt.Errorf("backup restore: resolving data dir %q: %w", cfg.Data.DataDir, err)
 	}
-	if targetAbs != homeAbs {
+	if targetAbs != homeAbs && !sameExistingPath(targetAbs, homeAbs) {
 		return nil
 	}
 	if rt := findAnyDaemonRuntime(cfg.Data.DataDir); rt != nil {
@@ -268,6 +271,24 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 			target)
 	}
 	return nil
+}
+
+// sameExistingPath reports whether a and b name the same existing filesystem
+// object even when their spellings differ. filepath.Abs alone compares
+// strings, which a case-variant spelling on a case-insensitive filesystem or
+// a symlinked path to the archive home would bypass; os.Stat resolves both
+// to the object itself. Two paths that do not both exist are not the same
+// object — in particular, a live archive home always exists.
+func sameExistingPath(a, b string) bool {
+	aInfo, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bInfo, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(aInfo, bInfo)
 }
 
 // runBackupCreate is dual-mode like verify.go's RunE: outside the daemon CLI

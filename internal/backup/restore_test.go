@@ -15,7 +15,49 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/pack"
 )
+
+// TestSyncRestoredTreeCoversCreatedAncestors pins the durability pass for a
+// restore target whose ancestors did not exist before the restore: the sync
+// must cover the restored tree deepest-first, then climb through the created
+// ancestors to the pre-existing ceiling that received the topmost new entry.
+// Not parallel: it stubs the package-level pack.SyncDir hook.
+func TestSyncRestoredTreeCoversCreatedAncestors(t *testing.T) {
+	require := require.New(t)
+	base := t.TempDir()
+	target := filepath.Join(base, "a", "b", "out")
+
+	ceiling := restoreSyncCeiling(target)
+	require.Equal(base, ceiling, "the ceiling is the deepest ancestor existing before creation")
+
+	require.NoError(os.MkdirAll(filepath.Join(target, "attachments", "aa"), 0o700))
+	require.Equal(target, restoreSyncCeiling(target),
+		"a target that already exists is its own ceiling; nothing above it gains entries")
+
+	var synced []string
+	origSyncDir := pack.SyncDir
+	pack.SyncDir = func(dir string) error {
+		synced = append(synced, dir)
+		return nil
+	}
+	t.Cleanup(func() { pack.SyncDir = origSyncDir })
+
+	require.NoError(syncRestoredTree(target, ceiling))
+	require.Equal([]string{
+		filepath.Join(target, "attachments", "aa"),
+		filepath.Join(target, "attachments"),
+		target,
+		filepath.Join(base, "a", "b"),
+		filepath.Join(base, "a"),
+		base,
+	}, synced, "deepest first: every directory's entry is durable in its parent before that parent syncs")
+
+	synced = nil
+	require.NoError(syncRestoredTree(target, target))
+	require.Equal(target, synced[len(synced)-1],
+		"with a pre-existing target the sync stops at the target itself")
+}
 
 func fileSHA256(t *testing.T, path string) [32]byte {
 	t.Helper()

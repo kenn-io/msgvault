@@ -87,6 +87,10 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 			return nil, errors.New("backup: repository has no snapshots to restore")
 		}
 	}
+	// The ceiling must be observed BEFORE prepareRestoreTarget creates the
+	// target: it marks the deepest directory that already existed, so the
+	// final durability pass knows which ancestors gained new entries.
+	syncCeiling := restoreSyncCeiling(opts.TargetDir)
 	if err := prepareRestoreTarget(opts.TargetDir, opts.Overwrite); err != nil {
 		return nil, err
 	}
@@ -137,22 +141,43 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 	}
 	st.progress.emit(ProgressEvent{Stage: ProgressStageProof, Done: 2, Total: 2, Final: true})
 
-	if err := syncRestoredTree(opts.TargetDir); err != nil {
+	if err := syncRestoredTree(opts.TargetDir, syncCeiling); err != nil {
 		return nil, err
 	}
 	res.Duration = time.Since(start)
 	return res, nil
 }
 
-// syncRestoredTree fsyncs every directory under target, deepest first, so
-// the directory ENTRIES of everything restore created — nested attachment
-// fan-out directories, extras subtrees — are as durable as the file contents
-// by the time Restore reports success. writeRestoredFile fsyncs each file's
-// bytes but not the directories naming them; without this pass a crash
-// shortly after a successful restore could lose newly created paths. One
-// sync per directory at the end costs far less than fsyncing parents on
-// every file write, and the guarantee only needs to hold at success.
-func syncRestoredTree(target string) error {
+// restoreSyncCeiling returns the deepest ancestor of target that already
+// exists — or target itself when it does. Every directory restore creates
+// below the ceiling (the target and any missing ancestors os.MkdirAll fills
+// in) adds a directory entry that syncRestoredTree must make durable, and
+// the ceiling itself receives the topmost new entry.
+func restoreSyncCeiling(target string) string {
+	p := target
+	for {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		p = parent
+	}
+}
+
+// syncRestoredTree fsyncs every directory under target, deepest first, then
+// upward from target's parent through ceiling, so the directory ENTRIES of
+// everything restore created — nested attachment fan-out directories, extras
+// subtrees, the target itself and any ancestors created for it — are as
+// durable as the file contents by the time Restore reports success.
+// writeRestoredFile fsyncs each file's bytes but not the directories naming
+// them; without this pass a crash shortly after a successful restore could
+// lose newly created paths. One sync per directory at the end costs far less
+// than fsyncing parents on every file write, and the guarantee only needs to
+// hold at success.
+func syncRestoredTree(target, ceiling string) error {
 	var dirs []string
 	err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -166,7 +191,7 @@ func syncRestoredTree(target string) error {
 	if err != nil {
 		return fmt.Errorf("backup: walking restore target for directory sync: %w", err)
 	}
-	// WalkDir visits parents before their children; going backward yields
+	// The walk visits parents before their children; going backward yields
 	// every directory after all its descendants, so each entry is durable
 	// in its parent by the time that parent is synced.
 	for _, dir := range slices.Backward(dirs) {
@@ -174,7 +199,22 @@ func syncRestoredTree(target string) error {
 			return fmt.Errorf("backup: syncing restored directory: %w", err)
 		}
 	}
-	return nil
+	// Ancestors restore created above target, and the pre-existing ceiling
+	// directory that received the topmost new entry, sit outside the walk;
+	// climbing from target's parent continues the deepest-first order. When
+	// the ceiling is the target itself, the target predates this restore
+	// and nothing above it changed.
+	if ceiling == target {
+		return nil
+	}
+	for p := filepath.Dir(target); ; p = filepath.Dir(p) {
+		if err := pack.SyncDir(p); err != nil {
+			return fmt.Errorf("backup: syncing restored directory: %w", err)
+		}
+		if p == ceiling || p == filepath.Dir(p) {
+			return nil
+		}
+	}
 }
 
 // prepareRestoreTarget creates TargetDir, refusing a non-empty existing
