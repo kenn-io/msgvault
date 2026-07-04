@@ -60,7 +60,7 @@ var serveStatusCmd = &cobra.Command{
 	Short: "Show msgvault daemon status",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStatus(cmd, cfg.Data.DataDir)
+		return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
 	},
 }
 
@@ -69,7 +69,7 @@ var serveStopCmd = &cobra.Command{
 	Short: "Stop msgvault daemon",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStop(cmd, cfg.Data.DataDir)
+		return runServeStopWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
 	},
 }
 
@@ -83,10 +83,14 @@ var serveRestartCmd = &cobra.Command{
 }
 
 func runServeStatus(cmd *cobra.Command, dataDir string) error {
+	return runServeStatusWithAPIKey(cmd, dataDir, "")
+}
+
+func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
 	out := cmd.OutOrStdout()
 	if rt := findDaemonRuntime(dataDir); rt != nil {
 		lines := serveStatusLines(rt)
-		if health := fetchDaemonHealth(cmd.Context(), urlFromDaemonRuntime(rt)); health != nil {
+		if health := fetchDaemonHealthWithAPIKey(cmd.Context(), urlFromDaemonRuntime(rt), apiKey); health != nil {
 			lines = append(lines, vectorStatusLines(health.Vector)...)
 			lines = append(lines, operationStatusLines(health.Operation)...)
 		}
@@ -132,11 +136,30 @@ func serveStatusLines(rt *DaemonRuntime) []string {
 // transport/decode failure returns nil and callers simply omit the health
 // details.
 func fetchDaemonHealth(ctx context.Context, baseURL string) *api.HealthResponse {
+	return fetchDaemonHealthWithAPIKey(ctx, baseURL, "")
+}
+
+// fetchDaemonHealthWithAPIKey prefers the authenticated health endpoint so
+// local lifecycle commands can show detailed operation status when they have
+// the daemon's configured API key. It falls back to public /health for older
+// daemons, keyless callers, or auth mismatch.
+func fetchDaemonHealthWithAPIKey(ctx context.Context, baseURL string, apiKey string) *api.HealthResponse {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+
+	if health := fetchDaemonHealthEndpoint(ctx, baseURL+"/api/v1/health", apiKey); health != nil {
+		return health
+	}
+	return fetchDaemonHealthEndpoint(ctx, baseURL+"/health", "")
+}
+
+func fetchDaemonHealthEndpoint(ctx context.Context, url string, apiKey string) *api.HealthResponse {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil
+	}
+	if apiKey != "" {
+		req.Header.Set("X-Api-Key", apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -270,21 +293,25 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	return nil
 }
 
-func runServeStop(cmd *cobra.Command, dataDir string) error {
-	return stopLiveDaemons(cmd, dataDir, false)
+func runServeStopWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
+	return stopLiveDaemonsWithAPIKey(cmd, dataDir, apiKey, false)
 }
 
 func runServeRestart(cmd *cobra.Command, c *config.Config) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
-	if err := stopLiveDaemons(cmd, c.Data.DataDir, true); err != nil {
+	if err := stopLiveDaemonsWithAPIKey(cmd, c.Data.DataDir, c.Server.APIKey, true); err != nil {
 		return err
 	}
 	return runServeStart(cmd, c)
 }
 
 func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) error {
+	return stopLiveDaemonsWithAPIKey(cmd, dataDir, "", quietNoDaemon)
+}
+
+func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string, quietNoDaemon bool) error {
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
 	if err != nil {
 		return err
@@ -305,7 +332,7 @@ func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) err
 			skipped++
 			continue
 		}
-		if err := stopDaemonProcess(cmd.OutOrStdout(), rec, serveStopGraceTimeout); err != nil {
+		if err := stopDaemonProcess(cmd.OutOrStdout(), rec, apiKey, serveStopGraceTimeout); err != nil {
 			return fmt.Errorf("stop pid %d: %w", rec.PID, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stopped msgvault (pid %d).\n", rec.PID)
@@ -318,14 +345,14 @@ func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) err
 	return nil
 }
 
-func stopDaemonRuntimeForUpgradeImpl(_ config.Config, rt *DaemonRuntime) error {
+func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime) error {
 	if rt == nil {
 		return nil
 	}
 	if !stopTargetConfirmed(rt.Record) {
 		return fmt.Errorf("cannot confirm pid %d is the recorded msgvault daemon", rt.Record.PID)
 	}
-	if err := stopDaemonProcess(os.Stdout, rt.Record, serveStopGraceTimeout); err != nil {
+	if err := stopDaemonProcess(os.Stdout, rt.Record, c.Server.APIKey, serveStopGraceTimeout); err != nil {
 		return fmt.Errorf("stop pid %d: %w", rt.Record.PID, err)
 	}
 	return nil
@@ -347,7 +374,7 @@ func processIdentityConfirmed(rec daemon.RuntimeRecord) bool {
 	return processCreateTimeMatches(rec.PID, rec.Metadata[runtimeCreateTime])
 }
 
-func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, grace time.Duration) error {
+func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, grace time.Duration) error {
 	process, err := os.FindProcess(rec.PID)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
@@ -355,7 +382,7 @@ func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, grace time.Durat
 	// Capture what the daemon is working on BEFORE requesting shutdown: the
 	// API listener closes as soon as shutdown starts, so this is the last
 	// chance to learn what a long operation drain is waiting on.
-	op := fetchDaemonOperation(rec)
+	op := fetchDaemonOperation(rec, apiKey)
 	shutdownRequested, shutdownErr := requestDaemonShutdownForRun(rec)
 	if shutdownErr != nil {
 		logger.Warn("daemon shutdown request failed; falling back to process signal",
@@ -382,12 +409,12 @@ func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, grace time.Durat
 
 // fetchDaemonOperation asks a running daemon what archive operation it is
 // working on. Best-effort: nil when the daemon is idle or unreachable.
-func fetchDaemonOperation(rec daemon.RuntimeRecord) *api.OperationHealth {
+func fetchDaemonOperation(rec daemon.RuntimeRecord, apiKey string) *api.OperationHealth {
 	url := urlFromDaemonRuntime(daemonRuntimeFromRecord(rec))
 	if url == "" {
 		return nil
 	}
-	health := fetchDaemonHealth(context.Background(), url)
+	health := fetchDaemonHealthWithAPIKey(context.Background(), url, apiKey)
 	if health == nil {
 		return nil
 	}
