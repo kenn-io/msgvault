@@ -675,7 +675,29 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatusIfStale(r.Context())
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Vector: s.vectorHealth()})
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:    "ok",
+		Vector:    s.vectorHealth(),
+		Operation: s.operationHealth(),
+	})
+}
+
+// operationHealth reports what currently holds the operation gate, if the
+// gate can say. Unlabeled holders still get a generic label so clients can
+// tell "busy" from "idle".
+func (s *Server) operationHealth() *OperationHealth {
+	lg, ok := s.operationGate.(LabeledOperationGate)
+	if !ok {
+		return nil
+	}
+	label, since, held := lg.Holder()
+	if !held {
+		return nil
+	}
+	if label == "" {
+		label = "an archive operation"
+	}
+	return &OperationHealth{Label: label, StartedAt: since}
 }
 
 // handleNotFound is the mux catch-all for unmatched paths. It returns the

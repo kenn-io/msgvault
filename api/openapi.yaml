@@ -1241,6 +1241,8 @@ components:
     HealthResponse:
       additionalProperties: true
       properties:
+        operation:
+          $ref: "#/components/schemas/OperationHealth"
         status:
           type: string
         vector:
@@ -1601,6 +1603,18 @@ components:
           type: integer
       required:
         - name
+      type: object
+    OperationHealth:
+      additionalProperties: true
+      properties:
+        label:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - label
+        - started_at
       type: object
     PingInfo:
       additionalProperties: true

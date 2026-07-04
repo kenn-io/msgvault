@@ -136,9 +136,18 @@ type VectorHealth struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// OperationHealth reports the archive operation currently holding the
+// daemon's operation gate, so clients (serve status, serve stop) can say
+// what a busy daemon is doing instead of waiting silently.
+type OperationHealth struct {
+	Label     string    `json:"label"`
+	StartedAt time.Time `json:"started_at"`
+}
+
 type HealthResponse struct {
-	Status string        `json:"status"`
-	Vector *VectorHealth `json:"vector,omitempty"`
+	Status    string           `json:"status"`
+	Vector    *VectorHealth    `json:"vector,omitempty"`
+	Operation *OperationHealth `json:"operation,omitempty"`
 }
 
 type MessageListResponse struct {

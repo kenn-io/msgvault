@@ -75,21 +75,24 @@ func TestServeStatusPrintsVectorLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/health", r.URL.Path)
+				assert.Equal("/health", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(tt.health))
 			}))
 			defer srv.Close()
 
-			vh := fetchDaemonVectorHealth(context.Background(), srv.URL)
-			lines := vectorStatusLines(vh)
+			health := fetchDaemonHealth(context.Background(), srv.URL)
+			require.NotNil(health, "health response")
+			lines := vectorStatusLines(health.Vector)
 			if tt.wantNone {
-				assert.Empty(t, lines)
+				assert.Empty(lines)
 				return
 			}
-			require.Len(t, lines, 1)
-			assert.Contains(t, lines[0], tt.wantLine)
+			require.Len(lines, 1)
+			assert.Contains(lines[0], tt.wantLine)
 		})
 	}
 }
@@ -104,9 +107,11 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 		Service: daemonService,
 		Version: Version,
 	}))
+	startedAt := time.Now().Add(-14 * time.Minute).UTC().Format(time.RFC3339)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","vector":{"status":"initializing"}}`))
+		_, _ = w.Write([]byte(`{"status":"ok","vector":{"status":"initializing"},` +
+			`"operation":{"label":"background embedding work","started_at":"` + startedAt + `"}}`))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -137,6 +142,8 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 	out := stdout.String()
 	assert.Contains(out, "msgvault running at", "status shows the running daemon")
 	assert.Contains(out, "vector:  initializing", "status includes daemon vector health")
+	assert.Contains(out, "busy:    background embedding work (running for 14m",
+		"status includes the active archive operation")
 	assert.Empty(stderr.String(), "status must not write to stderr")
 }
 
@@ -754,4 +761,80 @@ func lifecycleTestConfig(dataDir string) *config.Config {
 			AutoBuildCache: true,
 		},
 	}
+}
+
+func restoreStopWaitPacing(t *testing.T, quiet, interval time.Duration) {
+	t.Helper()
+	oldQuiet, oldInterval := serveStopQuietWindow, serveStopProgressInterval
+	serveStopQuietWindow, serveStopProgressInterval = quiet, interval
+	t.Cleanup(func() {
+		serveStopQuietWindow, serveStopProgressInterval = oldQuiet, oldInterval
+	})
+}
+
+func TestDescribeDaemonStopWaitWithOperation(t *testing.T) {
+	assert := assert.New(t)
+
+	out := describeDaemonStopWait(4242, &api.OperationHealth{
+		Label:     "background embedding work",
+		StartedAt: time.Now().Add(-14 * time.Minute),
+	}, 31*time.Minute)
+
+	assert.Contains(out, "pid 4242")
+	assert.Contains(out, "background embedding work")
+	assert.Contains(out, "running for 14m")
+	assert.Contains(out, "31m0s")
+	assert.Contains(out, "Ctrl+C")
+}
+
+func TestDescribeDaemonStopWaitWithoutOperation(t *testing.T) {
+	assert := assert.New(t)
+
+	out := describeDaemonStopWait(4242, nil, 31*time.Minute)
+
+	assert.NotContains(out, "finishing")
+	assert.Contains(out, "Waiting up to 31m0s")
+	assert.Contains(out, "pid 4242")
+}
+
+func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
+	restoreStopWaitPacing(t, 10*time.Millisecond, 20*time.Millisecond)
+	out := &bytes.Buffer{}
+	exitAt := time.Now().Add(75 * time.Millisecond)
+	op := &api.OperationHealth{
+		Label:     "background embedding work",
+		StartedAt: time.Now().Add(-time.Minute),
+	}
+
+	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, op,
+		time.Second, time.Millisecond,
+		func(daemon.RuntimeRecord) bool { return time.Now().Before(exitAt) })
+
+	require.True(t, exited, "wait must observe daemon exit")
+	assert.Contains(t, out.String(), "background embedding work")
+	assert.Contains(t, out.String(), "Still waiting")
+}
+
+func TestWaitForDaemonExitWithProgressGivesUpAtGrace(t *testing.T) {
+	restoreStopWaitPacing(t, 5*time.Millisecond, 10*time.Millisecond)
+	out := &bytes.Buffer{}
+
+	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, nil,
+		50*time.Millisecond, time.Millisecond,
+		func(daemon.RuntimeRecord) bool { return true })
+
+	assert.False(t, exited, "wait must give up at the grace deadline")
+	assert.Contains(t, out.String(), "Waiting up to")
+}
+
+func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {
+	restoreStopWaitPacing(t, 50*time.Millisecond, 100*time.Millisecond)
+	out := &bytes.Buffer{}
+
+	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, nil,
+		time.Second, time.Millisecond,
+		func(daemon.RuntimeRecord) bool { return false })
+
+	require.True(t, exited, "wait must observe daemon exit")
+	assert.Empty(t, out.String(), "fast exits must stay quiet")
 }
