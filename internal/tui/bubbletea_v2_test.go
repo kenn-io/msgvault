@@ -53,18 +53,16 @@ func TestBackgroundColorMsgRebuildsAdaptiveStyles(t *testing.T) {
 	assert.Equal(t, rgba("#ffffff"), rgbaColor(darkModel.styles.titleBar.GetForeground()))
 }
 
-func rgba(hex string) rgbaValues {
+func rgba(hex string) color.RGBA {
 	return rgbaColor(lipgloss.Color(hex))
 }
 
-func rgbaColor(c color.Color) rgbaValues {
+func rgbaColor(c color.Color) color.RGBA {
 	r, g, b, a := c.RGBA()
-	return rgbaValues{r: r, g: g, b: b, a: a}
-}
-
-type rgbaValues struct {
-	r uint32
-	g uint32
-	b uint32
-	a uint32
+	return color.RGBA{
+		R: uint8(r >> 8),
+		G: uint8(g >> 8),
+		B: uint8(b >> 8),
+		A: uint8(a >> 8),
+	}
 }
