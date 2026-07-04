@@ -45,16 +45,17 @@ func listedIMAPClient(t *testing.T, addr string, opts ...imaplib.Option) *imapli
 }
 
 func TestSaveIMAPFolderStates_CleanRunPersists(t *testing.T) {
+	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 1})
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	client := listedIMAPClient(t, addr)
 	saveIMAPFolderStates(st, src, client, &gmail.SyncSummary{}, 0)
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, map[string]imaplib.FolderState{
 		"INBOX":   {UIDValidity: loaded["INBOX"].UIDValidity, UIDNext: 3},
 		"Archive": {UIDValidity: loaded["Archive"].UIDValidity, UIDNext: 2},
@@ -62,92 +63,99 @@ func TestSaveIMAPFolderStates_CleanRunPersists(t *testing.T) {
 }
 
 func TestSaveIMAPFolderStates_ErrorsBlockPersistence(t *testing.T) {
+	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	client := listedIMAPClient(t, addr)
 	saveIMAPFolderStates(st, src, client, &gmail.SyncSummary{Errors: 1}, 0)
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, loaded, "a run with fetch errors must not advance folder watermarks")
 }
 
 func TestSaveIMAPFolderStates_LimitTruncationBlocksPersistence(t *testing.T) {
+	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 5})
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	client := listedIMAPClient(t, addr)
 	saveIMAPFolderStates(st, src, client, &gmail.SyncSummary{MessagesFound: 3}, 3)
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, loaded, "a --limit-truncated run must not advance folder watermarks")
 }
 
 func TestSaveIMAPFolderStates_NonIMAPClientIsNoOp(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var notIMAP gmail.API
 	saveIMAPFolderStates(st, src, notIMAP, &gmail.SyncSummary{}, 0)
 
 	loaded, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, loaded)
 }
 
 func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
+	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	first := listedIMAPClient(t, addr)
 	saveIMAPFolderStates(st, src, first, &gmail.SyncSummary{}, 0)
-	require.NoError(t, first.Close())
+	require.NoError(first.Close())
 
 	opts := imapFolderStateOptions(st, src, false)
-	require.NotEmpty(t, opts, "saved states must produce a client option")
+	require.NotEmpty(opts, "saved states must produce a client option")
 
 	second := listedIMAPClient(t, addr, opts...)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp, err := second.ListMessages(ctx, "", "")
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, resp.Messages,
 		"a resync against an unchanged server must list no messages")
 }
 
 func TestIMAPFolderStateOptions_ForceRescanBypassesSavedStates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
-	require.NoError(t, st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
+	require.NoError(st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
 		{Mailbox: "INBOX", UIDValidity: 42, UIDNext: 100},
 	}))
 
-	assert.Empty(t, imapFolderStateOptions(st, src, true),
+	assert.Empty(imapFolderStateOptions(st, src, true),
 		"--noresume must ignore saved folder states so every mailbox is re-enumerated")
-	assert.NotEmpty(t, imapFolderStateOptions(st, src, false))
+	assert.NotEmpty(imapFolderStateOptions(st, src, false))
 }
 
 func TestSaveIMAPFolderStates_StoreRoundTripValues(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 
-	require.NoError(t, st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
+	require.NoError(st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
 		{Mailbox: "INBOX", UIDValidity: 42, UIDNext: 100},
 	}))
 	loaded, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, map[string]imaplib.FolderState{
 		"INBOX": {UIDValidity: 42, UIDNext: 100},
 	}, loaded)

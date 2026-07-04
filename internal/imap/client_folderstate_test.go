@@ -50,62 +50,69 @@ func listAllMessages(t *testing.T, client *Client) []string {
 }
 
 func TestListMessages_RecordsFolderStates(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
 	client := newTestClient(t, addr)
 
 	ids := listAllMessages(t, client)
-	assert.Len(t, ids, 5)
+	assert.Len(ids, 5)
 
 	states := client.ObservedFolderStates()
-	require.Contains(t, states, "INBOX")
-	require.Contains(t, states, "Archive")
-	assert.Equal(t, uint32(3), states["INBOX"].UIDNext)
-	assert.Equal(t, uint32(4), states["Archive"].UIDNext)
-	assert.NotZero(t, states["INBOX"].UIDValidity)
+	require.Contains(states, "INBOX")
+	require.Contains(states, "Archive")
+	assert.Equal(uint32(3), states["INBOX"].UIDNext)
+	assert.Equal(uint32(4), states["Archive"].UIDNext)
+	assert.NotZero(states["INBOX"].UIDValidity)
 }
 
 func TestListMessages_SkipsUnchangedFolders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
 
 	first := newTestClient(t, addr)
-	require.Len(t, listAllMessages(t, first), 5)
+	require.Len(listAllMessages(t, first), 5)
 	saved := first.ObservedFolderStates()
-	require.NoError(t, first.Close())
+	require.NoError(first.Close())
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Empty(t, ids, "unchanged folders must not be re-enumerated")
-	assert.Equal(t, saved, second.ObservedFolderStates(),
+	assert.Empty(ids, "unchanged folders must not be re-enumerated")
+	assert.Equal(saved, second.ObservedFolderStates(),
 		"unchanged folders keep their saved state for the next save")
 }
 
 func TestListMessages_ListsOnlyNewMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
 
 	first := newTestClient(t, addr)
-	require.Len(t, listAllMessages(t, first), 5)
+	require.Len(listAllMessages(t, first), 5)
 	saved := first.ObservedFolderStates()
-	require.NoError(t, first.Close())
+	require.NoError(first.Close())
 
 	testutil.AppendIMAPMessage(t, user, "INBOX")
 
 	second := newTestClient(t, addr, WithFolderStates(saved))
 	ids := listAllMessages(t, second)
-	assert.Equal(t, []string{"INBOX|3"}, ids,
+	assert.Equal([]string{"INBOX|3"}, ids,
 		"only the message appended after the saved state should be listed")
 
 	states := second.ObservedFolderStates()
-	assert.Equal(t, uint32(4), states["INBOX"].UIDNext)
-	assert.Equal(t, saved["Archive"], states["Archive"])
+	assert.Equal(uint32(4), states["INBOX"].UIDNext)
+	assert.Equal(saved["Archive"], states["Archive"])
 }
 
 func TestListMessages_UIDValidityChangeForcesFullRescan(t *testing.T) {
+	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
 
 	first := newTestClient(t, addr)
-	require.Len(t, listAllMessages(t, first), 2)
+	require.Len(listAllMessages(t, first), 2)
 	saved := first.ObservedFolderStates()
-	require.NoError(t, first.Close())
+	require.NoError(first.Close())
 
 	// Simulate the server invalidating its UID space.
 	stale := map[string]FolderState{
@@ -118,19 +125,21 @@ func TestListMessages_UIDValidityChangeForcesFullRescan(t *testing.T) {
 }
 
 func TestListMessages_DateFilterDisablesFolderTracking(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
 
 	first := newTestClient(t, addr)
-	require.Len(t, listAllMessages(t, first), 2)
+	require.Len(listAllMessages(t, first), 2)
 	saved := first.ObservedFolderStates()
-	require.NoError(t, first.Close())
+	require.NoError(first.Close())
 
 	since := time.Now().Add(-24 * time.Hour)
 	second := newTestClient(t, addr,
 		WithFolderStates(saved),
 		WithDateFilter(since, time.Time{}))
 	ids := listAllMessages(t, second)
-	assert.Len(t, ids, 2, "date-filtered runs must ignore saved folder states")
-	assert.Nil(t, second.ObservedFolderStates(),
+	assert.Len(ids, 2, "date-filtered runs must ignore saved folder states")
+	assert.Nil(second.ObservedFolderStates(),
 		"date-filtered runs must not record folder states")
 }
