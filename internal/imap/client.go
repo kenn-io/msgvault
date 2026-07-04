@@ -39,14 +39,24 @@ func WithDateFilter(since, before time.Time) Option {
 	}
 }
 
+// WithListProgress sets a callback reporting mailbox-enumeration
+// progress during the first ListMessages call of a session. See the
+// listProgress field for the callback contract.
+func WithListProgress(fn func(done, total int, mailbox string, found, unchanged int)) Option {
+	return func(c *Client) { c.listProgress = fn }
+}
+
 // fetchChunkSize is the maximum number of UIDs per UID FETCH command.
 // Large FETCH sets cause server-side timeouts on big mailboxes; chunking
 // keeps each round-trip short.
 const fetchChunkSize = 50
 
-// listPageSize is the number of message IDs returned per ListMessages call.
-// Matches typical Gmail page size so the sync loop checkpoints frequently.
-const listPageSize = 500
+// listPageSize is the number of message IDs returned per ListMessages
+// call. Each page ends with a checkpoint write and a progress update,
+// and IMAP fetches are slow enough (single connection, chunked FETCH)
+// that Gmail-sized 500-message pages left half-minute gaps between
+// progress updates.
+const listPageSize = 100
 
 // Client implements gmail.API for IMAP servers.
 type Client struct {
@@ -70,6 +80,14 @@ type Client struct {
 
 	priorFolderStates    map[string]FolderState // saved states from the last completed sync
 	observedFolderStates map[string]FolderState // states captured during this session's listing
+
+	// listProgress, when set, is invoked during message-list
+	// enumeration: once with done=0 after the mailbox list is known,
+	// then after each mailbox is checked (the final call has
+	// done == total). found is the running message-ID count and
+	// unchanged the running count of mailboxes skipped via saved
+	// folder state.
+	listProgress func(done, total int, mailbox string, found, unchanged int)
 }
 
 // NewClient creates a new IMAP client.
@@ -507,11 +525,8 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 
 	var messages []gmailapi.MessageID
 	var unchangedFolders int
-	for _, mailbox := range listMailboxes {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
 
+	listOne := func(mailbox string) {
 		var minUID imap.UID
 		var observed *FolderState
 		if trackFolders {
@@ -529,7 +544,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 						// no new messages possible, skip enumeration.
 						c.observedFolderStates[mailbox] = status
 						unchangedFolders++
-						continue
+						return
 					}
 					// Only new messages need listing.
 					minUID = imap.UID(prior.UIDNext)
@@ -540,7 +555,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		uids, err := c.enumerateMailbox(ctx, mailbox, minUID)
 		if err != nil {
 			c.logger.Warn("skipping mailbox", "mailbox", mailbox, "error", err)
-			continue
+			return
 		}
 		if observed != nil {
 			c.observedFolderStates[mailbox] = *observed
@@ -552,6 +567,19 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			})
 		}
 		c.logger.Debug("listed mailbox", "mailbox", mailbox, "count", len(uids))
+	}
+
+	if c.listProgress != nil {
+		c.listProgress(0, len(listMailboxes), "", 0, 0)
+	}
+	for i, mailbox := range listMailboxes {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		listOne(mailbox)
+		if c.listProgress != nil {
+			c.listProgress(i+1, len(listMailboxes), mailbox, len(messages), unchangedFolders)
+		}
 	}
 	if unchangedFolders > 0 {
 		c.logger.Info("skipped unchanged mailboxes",

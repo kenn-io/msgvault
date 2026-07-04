@@ -401,11 +401,16 @@ func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API
 }
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
+	progress := &CLIProgress{}
+
 	// --noresume promises a fresh sync, so it must also bypass the
 	// saved folder watermarks and re-enumerate every mailbox. A clean
 	// completed run still saves fresh watermarks afterwards.
-	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil,
-		imapFolderStateOptions(s, src, syncNoResume)...)
+	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
+	if src.SourceType == sourceTypeIMAP {
+		imapOpts = append(imapOpts, imaplib.WithListProgress(progress.OnIMAPListProgress))
+	}
+	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
 	if err != nil {
 		return err
 	}
@@ -443,7 +448,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// Create syncer with progress reporter
 	syncer := sync.New(apiClient, s, opts).
 		WithLogger(logger).
-		WithProgress(&CLIProgress{})
+		WithProgress(progress)
 
 	// Run sync
 	startTime := time.Now()
@@ -474,8 +479,11 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		saveIMAPFolderStates(s, src, apiClient, summary, opts.Limit)
 	}
 
-	// Print summary
-	fmt.Println()
+	// Print summary; skip the spacer when no progress lines were
+	// printed so a no-op sync doesn't emit stacked blank lines.
+	if progress.printedAnything() {
+		fmt.Println()
+	}
 	fmt.Println("Sync complete!")
 	fmt.Printf("  Duration:      %s\n", summary.Duration.Round(time.Second))
 	fmt.Printf("  Messages:      %d found, %d added, %d skipped\n",
@@ -549,6 +557,9 @@ const (
 const (
 	cliProgressTTYInterval   = 2 * time.Second
 	cliProgressPlainInterval = 30 * time.Second
+	// Folder listing is much faster per item than message fetching, so
+	// plain-mode listing updates can come more often without flooding.
+	cliListPlainInterval = 15 * time.Second
 )
 
 type CLIProgress struct {
@@ -561,6 +572,16 @@ type CLIProgress struct {
 	skipped   int64
 	mode      progressOutputMode
 	out       io.Writer // defaults to os.Stdout; tests inject a buffer
+
+	printedProgress bool      // a sync progress line has been printed
+	printedList     bool      // a folder-listing line has been printed
+	lastListPrint   time.Time // throttle for intermediate listing updates
+}
+
+// printedAnything reports whether any progress output was emitted,
+// so callers can avoid stacking blank lines around silent syncs.
+func (p *CLIProgress) printedAnything() bool {
+	return p.printedProgress || p.printedList
 }
 
 func (p *CLIProgress) OnStart(total int64) {
@@ -596,6 +617,53 @@ func (p *CLIProgress) OnLatestDate(date time.Time) {
 	p.latestDate = date
 }
 
+// OnIMAPListProgress renders mailbox-enumeration progress for IMAP
+// syncs (the phase before any message is fetched, which is otherwise
+// silent). The first and final updates always print; the final one is
+// a permanent summary line so even an instant all-skipped resync shows
+// what happened.
+func (p *CLIProgress) OnIMAPListProgress(done, total int, mailbox string, found, unchanged int) {
+	tty := p.outputMode() == progressModeTTY
+
+	if done >= total {
+		prefix := ""
+		if tty && p.printedList {
+			prefix = "\r" // overwrite the in-place listing line
+		}
+		skipNote := ""
+		if unchanged > 0 {
+			skipNote = fmt.Sprintf(", %d unchanged (skipped)", unchanged)
+		}
+		// Trailing spaces overwrite leftovers of a longer in-place line.
+		_, _ = fmt.Fprintf(p.writer(),
+			"%s  Checked %d folders: %d messages to examine%s                    \n",
+			prefix, total, found, skipNote)
+		p.printedList = true
+		return
+	}
+
+	interval := cliProgressTTYInterval
+	if !tty {
+		interval = cliListPlainInterval
+	}
+	if p.printedList && time.Since(p.lastListPrint) < interval {
+		return
+	}
+	p.printedList = true
+	p.lastListPrint = time.Now()
+
+	if tty {
+		_, _ = fmt.Fprintf(p.writer(),
+			"\r  Checking folders: %d/%d (%s)    ", done, total, mailbox)
+		return
+	}
+	if done == 0 {
+		_, _ = fmt.Fprintf(p.writer(), "  Checking %d folders...\n", total)
+		return
+	}
+	_, _ = fmt.Fprintf(p.writer(), "  Checking folders: %d/%d\n", done, total)
+}
+
 func (p *CLIProgress) outputMode() progressOutputMode {
 	if p.mode == progressModeAuto {
 		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
@@ -617,13 +685,16 @@ func (p *CLIProgress) writer() io.Writer {
 func (p *CLIProgress) printProgress() {
 	// Throttle: an in-place line can refresh every 2 seconds, but each
 	// plain-mode update is a permanent line, so those come every 30.
+	// The first line always prints so a slow fetch (IMAP especially)
+	// shows signs of life as soon as the first page completes.
 	interval := cliProgressTTYInterval
 	if p.outputMode() == progressModePlain {
 		interval = cliProgressPlainInterval
 	}
-	if time.Since(p.lastPrint) < interval {
+	if p.printedProgress && time.Since(p.lastPrint) < interval {
 		return
 	}
+	p.printedProgress = true
 	p.lastPrint = time.Now()
 
 	elapsed := time.Since(p.startTime)

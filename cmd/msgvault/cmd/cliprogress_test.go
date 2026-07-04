@@ -81,11 +81,55 @@ func TestCLIProgress_PlainModeThrottlesToItsInterval(t *testing.T) {
 	var buf bytes.Buffer
 	p := &CLIProgress{mode: progressModePlain, out: &buf}
 	p.OnStart(0)
-	p.lastPrint = time.Now().Add(-cliProgressPlainInterval + time.Second)
-	p.OnProgress(1000, 500, 100)
+	p.OnProgress(100, 50, 10) // first update always prints
+	first := buf.String()
+	require.NotEmpty(t, first, "the first update must print immediately")
 
-	assert.Empty(t, buf.String(),
+	p.OnProgress(1000, 500, 100)
+	assert.Equal(t, first, buf.String(),
 		"an update inside the plain interval must not print")
+}
+
+func TestCLIProgress_FirstProgressLinePrintsImmediately(t *testing.T) {
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+	p.OnStart(0) // sets lastPrint to now; the throttle alone would go silent for 30s
+	p.OnProgress(100, 100, 0)
+
+	assert.Contains(t, buf.String(), "Scanned: 100",
+		"the first page of a slow sync must produce output immediately")
+}
+
+func TestCLIProgress_ListProgressFinalSummaryAlwaysPrints(t *testing.T) {
+	assert := assert.New(t)
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+
+	// An instant resync: every folder unchanged, no intermediate updates
+	// survive the throttle, yet the summary must still appear.
+	p.OnIMAPListProgress(0, 4, "", 0, 0)
+	p.OnIMAPListProgress(4, 4, "INBOX", 0, 4)
+
+	out := buf.String()
+	assert.Contains(out, "Checking 4 folders...")
+	assert.Contains(out, "Checked 4 folders: 0 messages to examine, 4 unchanged (skipped)")
+	assert.True(p.printedAnything())
+}
+
+func TestCLIProgress_ListProgressIntermediateThrottled(t *testing.T) {
+	assert := assert.New(t)
+	var buf bytes.Buffer
+	p := &CLIProgress{mode: progressModePlain, out: &buf}
+
+	p.OnIMAPListProgress(0, 10, "", 0, 0)
+	first := buf.String()
+	p.OnIMAPListProgress(1, 10, "INBOX", 5, 0)
+	assert.Equal(first, buf.String(),
+		"intermediate updates inside the interval must not print")
+
+	p.lastListPrint = time.Now().Add(-time.Minute)
+	p.OnIMAPListProgress(2, 10, "Archive", 9, 0)
+	assert.Contains(buf.String(), "Checking folders: 2/10")
 }
 
 func TestCLIProgress_TTYModeRedrawsInPlace(t *testing.T) {

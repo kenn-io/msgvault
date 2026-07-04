@@ -105,6 +105,44 @@ func TestListMessages_ListsOnlyNewMessages(t *testing.T) {
 	assert.Equal(saved["Archive"], states["Archive"])
 }
 
+type listProgressCall struct {
+	done, total      int
+	mailbox          string
+	found, unchanged int
+}
+
+func TestListMessages_ReportsListProgress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 3})
+
+	var calls []listProgressCall
+	record := func(done, total int, mailbox string, found, unchanged int) {
+		calls = append(calls, listProgressCall{done, total, mailbox, found, unchanged})
+	}
+
+	first := newTestClient(t, addr, WithListProgress(record))
+	require.Len(listAllMessages(t, first), 5)
+
+	require.Len(calls, 3, "one initial call plus one per mailbox")
+	assert.Equal(listProgressCall{done: 0, total: 2}, calls[0])
+	final := calls[2]
+	assert.Equal(2, final.done)
+	assert.Equal(2, final.total)
+	assert.Equal(5, final.found)
+	assert.Equal(0, final.unchanged)
+
+	// A resync with saved states reports every folder as unchanged.
+	saved := first.ObservedFolderStates()
+	require.NoError(first.Close())
+	calls = nil
+	second := newTestClient(t, addr, WithListProgress(record), WithFolderStates(saved))
+	require.Empty(listAllMessages(t, second))
+	final = calls[len(calls)-1]
+	assert.Equal(0, final.found)
+	assert.Equal(2, final.unchanged)
+}
+
 func TestListMessages_UIDValidityChangeForcesFullRescan(t *testing.T) {
 	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2})
