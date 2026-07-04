@@ -111,7 +111,7 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok","vector":{"status":"initializing"},` +
-			`"operation":{"label":"background embedding work","started_at":"` + startedAt + `"}}`))
+			`"operation":{"busy":true,"label":"background embedding work","started_at":"` + startedAt + `"}}`))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -774,10 +774,12 @@ func restoreStopWaitPacing(t *testing.T, quiet, interval time.Duration) {
 
 func TestDescribeDaemonStopWaitWithOperation(t *testing.T) {
 	assert := assert.New(t)
+	startedAt := time.Now().Add(-14 * time.Minute)
 
 	out := describeDaemonStopWait(4242, &api.OperationHealth{
+		Busy:      true,
 		Label:     "background embedding work",
-		StartedAt: time.Now().Add(-14 * time.Minute),
+		StartedAt: &startedAt,
 	}, 31*time.Minute)
 
 	assert.Contains(out, "pid 4242")
@@ -801,9 +803,11 @@ func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
 	restoreStopWaitPacing(t, 10*time.Millisecond, 20*time.Millisecond)
 	out := &bytes.Buffer{}
 	exitAt := time.Now().Add(75 * time.Millisecond)
+	startedAt := time.Now().Add(-time.Minute)
 	op := &api.OperationHealth{
+		Busy:      true,
 		Label:     "background embedding work",
-		StartedAt: time.Now().Add(-time.Minute),
+		StartedAt: &startedAt,
 	}
 
 	exited := waitForDaemonExitWithProgress(out, daemon.RuntimeRecord{PID: 4242}, op,

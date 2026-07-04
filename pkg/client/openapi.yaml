@@ -1497,14 +1497,15 @@ components:
       type: object
     OperationHealth:
       properties:
+        busy:
+          type: boolean
         label:
           type: string
         started_at:
           format: date-time
           type: string
       required:
-        - label
-        - started_at
+        - busy
       type: object
     PingInfo:
       properties:
@@ -3687,6 +3688,27 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get authenticated health details
       tags:
         - API
   /api/v1/messages:

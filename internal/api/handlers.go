@@ -137,11 +137,12 @@ type VectorHealth struct {
 }
 
 // OperationHealth reports the archive operation currently holding the
-// daemon's operation gate, so clients (serve status, serve stop) can say
-// what a busy daemon is doing instead of waiting silently.
+// daemon's operation gate. Public health only reports Busy; authenticated
+// health may include Label and StartedAt.
 type OperationHealth struct {
-	Label     string    `json:"label"`
-	StartedAt time.Time `json:"started_at"`
+	Busy      bool       `json:"busy"`
+	Label     string     `json:"label,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 type HealthResponse struct {

@@ -678,26 +678,51 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HealthResponse{
 		Status:    "ok",
 		Vector:    s.vectorHealth(),
+		Operation: s.operationBusyHealth(),
+	})
+}
+
+// handleAuthenticatedHealth returns health details that are safe behind the
+// API-key boundary.
+func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
+	s.refreshVectorStatusIfStale(r.Context())
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:    "ok",
+		Vector:    s.vectorHealth(),
 		Operation: s.operationHealth(),
 	})
+}
+
+// operationBusyHealth reports only whether the operation gate is currently
+// held, avoiding protected route labels and start times on public /health.
+func (s *Server) operationBusyHealth() *OperationHealth {
+	_, _, held := s.operationGateHolder()
+	if !held {
+		return nil
+	}
+	return &OperationHealth{Busy: true}
 }
 
 // operationHealth reports what currently holds the operation gate, if the
 // gate can say. Unlabeled holders still get a generic label so clients can
 // tell "busy" from "idle".
 func (s *Server) operationHealth() *OperationHealth {
-	lg, ok := s.operationGate.(LabeledOperationGate)
-	if !ok {
-		return nil
-	}
-	label, since, held := lg.Holder()
+	label, since, held := s.operationGateHolder()
 	if !held {
 		return nil
 	}
 	if label == "" {
 		label = "an archive operation"
 	}
-	return &OperationHealth{Label: label, StartedAt: since}
+	return &OperationHealth{Busy: true, Label: label, StartedAt: &since}
+}
+
+func (s *Server) operationGateHolder() (string, time.Time, bool) {
+	lg, ok := s.operationGate.(LabeledOperationGate)
+	if !ok {
+		return "", time.Time{}, false
+	}
+	return lg.Holder()
 }
 
 // handleNotFound is the mux catch-all for unmatched paths. It returns the

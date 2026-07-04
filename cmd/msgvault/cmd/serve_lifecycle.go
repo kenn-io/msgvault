@@ -165,11 +165,17 @@ func vectorStatusLines(vh *api.VectorHealth) []string {
 }
 
 func operationStatusLines(op *api.OperationHealth) []string {
-	if op == nil || op.Label == "" {
+	if op == nil || (!op.Busy && op.Label == "") {
 		return nil
 	}
+	if op.Label == "" {
+		return []string{"  busy:    archive operation in progress"}
+	}
+	if op.StartedAt == nil {
+		return []string{"  busy:    " + op.Label}
+	}
 	return []string{fmt.Sprintf("  busy:    %s (running for %s)",
-		op.Label, time.Since(op.StartedAt).Round(time.Second))}
+		op.Label, time.Since(*op.StartedAt).Round(time.Second))}
 }
 
 func daemonRunningLine(state string, rt *DaemonRuntime, pid int) string {
@@ -431,8 +437,13 @@ func waitForDaemonExitWithProgress(
 func describeDaemonStopWait(pid int, op *api.OperationHealth, grace time.Duration) string {
 	var b strings.Builder
 	if op != nil && op.Label != "" {
-		fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s (running for %s) before exiting.\n",
-			pid, op.Label, time.Since(op.StartedAt).Round(time.Second))
+		if op.StartedAt != nil {
+			fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s (running for %s) before exiting.\n",
+				pid, op.Label, time.Since(*op.StartedAt).Round(time.Second))
+		} else {
+			fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s before exiting.\n",
+				pid, op.Label)
+		}
 	}
 	fmt.Fprintf(&b, "Waiting up to %s for msgvault (pid %d) to exit; "+
 		"press Ctrl+C to stop waiting (shutdown continues in the daemon).\n",

@@ -568,6 +568,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 	expected := map[string][]string{
 		"/health":                                {"get", "head"},
 		daemon.DefaultPingPath:                   {"get"},
+		"/api/v1/health":                         {"get"},
 		"/api/v1/stats":                          {"get"},
 		"/api/v1/cli/init-db":                    {"post"},
 		"/api/v1/cli/stats":                      {"get"},

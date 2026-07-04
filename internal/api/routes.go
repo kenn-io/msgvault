@@ -175,6 +175,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		Tags:        []string{"System"},
 		Summary:     "Health check",
 	}, s.handleHealth)
+	registerAPIV1RawHumaJSONRoute[HealthResponse](apiV1, "getHealth", http.MethodGet, "/health", "Get authenticated health details", s.handleAuthenticatedHealth)
 	registerRawHumaJSONRoute[daemon.PingInfo](api, huma.Operation{
 		OperationID: "daemonPing",
 		Method:      http.MethodGet,

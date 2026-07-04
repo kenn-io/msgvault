@@ -263,6 +263,10 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type GetHealthResponse = HealthResponse
+
+type GetHealthErrorResponse = ErrorResponse
+
 type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
@@ -722,6 +726,13 @@ type VerifyCLIResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
+}
+
+type GetHealthResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetHealthResponse
 }
 
 type ListMessagesResp struct {

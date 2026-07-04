@@ -1285,12 +1285,9 @@ func (m MutationResult) Validate() error {
 }
 
 type OperationHealth struct {
-	Label     string    `json:"label" validate:"required"`
-	StartedAt time.Time `json:"started_at" validate:"required"`
-}
-
-func (o OperationHealth) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(o))
+	Busy      bool       `json:"busy"`
+	Label     *string    `json:"label,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 type PingInfo struct {

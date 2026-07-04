@@ -589,14 +589,49 @@ func TestHealthReportsActiveOperation(t *testing.T) {
 	gate := NewSerialOperationGate()
 	srv := newOperationHealthTestServer(gate)
 
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "background embedding work")
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "POST /api/v1/auth/token/alice@example.com")
 	require.True(ok, "acquire gate")
 	defer release()
 
-	body := healthResponseForServer(t, srv)
-	require.NotNil(body.Operation, "health must report the gate holder")
-	assert.Equal("background embedding work", body.Operation.Label)
-	assert.WithinDuration(time.Now(), body.Operation.StartedAt, time.Minute, "started_at")
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+	require.Equal(http.StatusOK, resp.Code, "health status")
+	var body map[string]any
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body), "decode health body")
+	operation, ok := body["operation"].(map[string]any)
+	require.True(ok, "health must report the gate holder")
+	assert.Equal(true, operation["busy"], "health must report busy state")
+	assert.NotContains(operation, "label", "public health must not leak operation labels")
+	assert.NotContains(operation, "started_at", "public health must not leak operation start times")
+}
+
+func TestAuthenticatedHealthReportsActiveOperationDetails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	gate := NewSerialOperationGate()
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080, APIKey: "secret-key"}},
+		Logger:        testLogger(),
+		OperationGate: gate,
+	})
+
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "POST /api/v1/auth/token/alice@example.com")
+	require.True(ok, "acquire gate")
+	defer release()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.Header.Set("X-Api-Key", "secret-key")
+	resp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(resp, req)
+	require.Equal(http.StatusOK, resp.Code, "health status")
+	var body map[string]any
+	require.NoError(json.Unmarshal(resp.Body.Bytes(), &body), "decode health body")
+	operation, ok := body["operation"].(map[string]any)
+	require.True(ok, "health must report the gate holder")
+	assert.Equal(true, operation["busy"], "health must report busy state")
+	assert.Equal("POST /api/v1/auth/token/alice@example.com", operation["label"])
+	assert.Contains(operation, "started_at")
 }
 
 func TestHealthLabelsUnlabeledGateHolder(t *testing.T) {
@@ -610,7 +645,9 @@ func TestHealthLabelsUnlabeledGateHolder(t *testing.T) {
 
 	body := healthResponseForServer(t, srv)
 	require.NotNil(body.Operation, "health must report the gate holder")
-	assert.Equal(t, "an archive operation", body.Operation.Label)
+	assert.True(t, body.Operation.Busy, "health must report busy state")
+	assert.Empty(t, body.Operation.Label, "public health must not include operation labels")
+	assert.Nil(t, body.Operation.StartedAt, "public health must not include operation start times")
 }
 
 func TestHealthOmitsOperationWhenGateIdle(t *testing.T) {
