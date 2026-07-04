@@ -6,7 +6,7 @@ import (
 	"io"
 	"log/slog"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
@@ -79,7 +79,7 @@ HTTP Mode:
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
 		})
-		p := tea.NewProgram(model, tea.WithAltScreen())
+		p := tea.NewProgram(model)
 
 		// Swap the slog default to a file-only logger for the
 		// duration of the TUI. Bubble Tea owns the terminal in

@@ -3,19 +3,19 @@ package tui
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
 
-// Key names matched against tea.KeyMsg.String() in the key-handling switches.
+// Key names matched against tea.KeyPressMsg.String() in the key-handling switches.
 const (
 	keyNameEnter = "enter"
 	keyNameEsc   = "esc"
 )
 
 // handleInlineSearchKeys handles keys when inline search bar is active.
-func (m Model) handleInlineSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleInlineSearchKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyNameEnter:
 		return m.commitInlineSearch()
@@ -89,7 +89,7 @@ func (m Model) handleInlineSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleGlobalKeys handles keys common to all views (quit, help, mode toggle).
 // Returns (model, cmd, true) if the key was handled, or (model, nil, false) otherwise.
-func (m Model) handleGlobalKeys(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	switch msg.String() {
 	case "q":
 		m.modal = modalQuitConfirm
@@ -121,7 +121,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 }
 
 // handleAggregateKeys handles keys in the aggregate and sub-aggregate views.
-func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	isSub := m.level == levelDrillDown
 
 	// Handle global keys (quit, help)
@@ -174,7 +174,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.activateInlineSearch("search")
 
 	// Selection
-	case " ": // Space to toggle selection
+	case "space": // Space to toggle selection
 		m.toggleAggregateSelection()
 
 	case "S": // Select all visible
@@ -313,7 +313,7 @@ func (m Model) nextSubGroupView(current query.ViewType) query.ViewType {
 }
 
 // handleMessageListKeys handles keys in the message list view.
-func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle global keys (quit, help)
 	if m2, cmd, handled := m.handleGlobalKeys(msg); handled {
 		return m2, cmd
@@ -368,7 +368,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.goBack()
 
 	// Selection
-	case " ": // Space to toggle selection
+	case "space": // Space to toggle selection
 		if len(m.messages) > 0 && m.cursor < len(m.messages) {
 			id := m.messages[m.cursor].ID
 			if m.selection.messageIDs[id] {
@@ -644,7 +644,7 @@ func (m *Model) maybeLoadMoreMessages() tea.Cmd {
 }
 
 // handleMessageDetailKeys handles keys in the message detail view.
-func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMessageDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// When detail search input is active, route keys there first
 	if m.detailSearchActive {
 		switch msg.String() {
@@ -692,12 +692,12 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detailSearchInput = textinput.New()
 		m.detailSearchInput.Placeholder = "find in message..."
 		m.detailSearchInput.CharLimit = 200
-		m.detailSearchInput.Width = 50
+		m.detailSearchInput.SetWidth(50)
 		if m.detailSearchQuery != "" {
 			m.detailSearchInput.SetValue(m.detailSearchQuery)
 		}
 		m.detailSearchInput.Focus()
-		return m, m.detailSearchInput.Cursor.BlinkCmd()
+		return m, textinput.Blink
 
 	// Next match
 	case "n":
@@ -807,7 +807,7 @@ func (m Model) handleMessageDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleThreadViewKeys handles keys in the thread view.
-func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleThreadViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle global keys (quit, help)
 	if m2, cmd, handled := m.handleGlobalKeys(msg); handled {
 		return m2, cmd
@@ -881,7 +881,7 @@ func (m Model) handleThreadViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleModalKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
 	case modalDeleteConfirm:
 		return m.handleDeleteConfirmKeys(msg)
@@ -907,7 +907,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleDeleteConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleDeleteConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		return m.confirmDeletion()
@@ -925,7 +925,7 @@ func (m Model) handleDeleteResultKeys() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleQuitConfirmKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", keyNameEnter:
 		m.quitting = true
@@ -936,7 +936,7 @@ func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	maxIdx := len(m.accounts) // 0 = All Accounts, then accounts
 	switch msg.String() {
 	case "up", "k":
@@ -972,7 +972,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // filterOptionCount is the number of toggleable options in the filter modal.
 const filterOptionCount = 2
 
-func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if m.modalCursor > 0 {
@@ -982,7 +982,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.modalCursor < filterOptionCount-1 {
 			m.modalCursor++
 		}
-	case " ", "x":
+	case "space", "x":
 		// Toggle the checkbox at current cursor
 		switch m.modalCursor {
 		case 0:
@@ -1012,7 +1012,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleExportAttachmentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleExportAttachmentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.messageDetail == nil || len(m.messageDetail.Attachments) == 0 {
 		m.modal = modalNone
 		return m, nil
@@ -1027,7 +1027,7 @@ func (m Model) handleExportAttachmentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		if m.exportCursor < maxIdx {
 			m.exportCursor++
 		}
-	case " ": // Space toggles selection
+	case "space": // Space toggles selection
 		m.exportSelection[m.exportCursor] = !m.exportSelection[m.exportCursor]
 	case "a": // Select all
 		for i := range m.messageDetail.Attachments {
@@ -1061,7 +1061,7 @@ func (m Model) handleErrorKeys() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "down", "j":
 		m.helpScroll++

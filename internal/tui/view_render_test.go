@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -251,13 +251,14 @@ func TestHeaderShowsTitleBar(t *testing.T) {
 
 			require.GreaterOrEqual(t, len(lines), 2, "expected at least 2 header lines")
 
-			assert.Contains(lines[0], "msgvault", "title bar")
+			titleText := stripANSI(lines[0])
+			assert.Contains(titleText, "msgvault", "title bar")
 			if tt.wantVersion {
-				assert.Contains(lines[0], tt.wantText, "title bar version")
+				assert.Contains(titleText, tt.wantText, "title bar version")
 			} else {
-				assert.NotContains(lines[0], "[", "expected no version in title bar")
+				assert.NotContains(titleText, "[", "expected no version in title bar")
 			}
-			assert.Contains(lines[0], "All Accounts", "title bar")
+			assert.Contains(titleText, "All Accounts", "title bar")
 		})
 	}
 }
@@ -366,7 +367,7 @@ func TestViewFitsTerminalHeight(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, 100, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -393,7 +394,7 @@ func TestViewFitsTerminalHeightDuringLoading(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, 100, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -415,7 +416,7 @@ func TestViewFitsTerminalHeightWithInlineSearch(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, 100, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -443,7 +444,7 @@ func TestViewFitsTerminalHeightAtMessageList(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, 100, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -466,14 +467,14 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 		WithSize(0, 0).
 		Build()
 
-	view1 := model.View()
+	view1 := model.View().Content
 	t.Logf("Stage 1 (before resize): View = %q", view1)
 	assert.Equal("Loading...", view1, "Stage 1")
 
 	// Stage 2: After WindowSizeMsg (width/height set, loading=true, no data)
 	model = resizeModel(t, model, terminalWidth, terminalHeight)
 
-	view2 := model.View()
+	view2 := model.View().Content
 	lines2 := strings.Split(view2, "\n")
 	actualLines2 := countViewLines(view2)
 	t.Logf("Stage 2 (after resize, loading=true, no data): lines=%d, pageSize=%d", actualLines2, model.pageSize)
@@ -485,7 +486,7 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 	// Stage 3: After stats load (still loading=true, no data)
 	model.stats = standardStats()
 
-	view3 := model.View()
+	view3 := model.View().Content
 	actualLines3 := countViewLines(view3)
 	t.Logf("Stage 3 (stats loaded, loading=true): lines=%d", actualLines3)
 
@@ -498,7 +499,7 @@ func TestViewFitsTerminalHeightStartupSequence(t *testing.T) {
 		{Key: "bob@example.com", Count: 50, TotalSize: 250000},
 	}
 
-	view4 := model.View()
+	view4 := model.View().Content
 	lines4 := strings.Split(view4, "\n")
 	actualLines4 := countViewLines(view4)
 	t.Logf("Stage 4 (data loaded): lines=%d", actualLines4)
@@ -541,7 +542,7 @@ func TestViewFitsTerminalHeightWithBadData(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, 100, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -581,7 +582,7 @@ func TestViewFitsVariousTerminalSizes(t *testing.T) {
 
 			model = resizeModel(t, model, size.width, size.height)
 
-			view := model.View()
+			view := model.View().Content
 			lines := strings.Split(view, "\n")
 			actualLines := countViewLines(view)
 
@@ -616,7 +617,7 @@ func TestViewDuringSpinnerAnimation(t *testing.T) {
 	for frame := range 10 {
 		model.spinnerFrame = frame
 
-		view := model.View()
+		view := model.View().Content
 		lines := strings.Split(view, "\n")
 		actualLines := countViewLines(view)
 
@@ -647,7 +648,7 @@ func TestHeaderLineFitsWidth(t *testing.T) {
 	terminalHeight := 40
 	model = resizeModel(t, model, terminalWidth, terminalHeight)
 
-	view := model.View()
+	view := model.View().Content
 	lines := strings.Split(view, "\n")
 	actualLines := countViewLines(view)
 
@@ -777,7 +778,7 @@ func TestLayoutFitsTerminalHeight(t *testing.T) {
 				model.detailLineCount = 10
 			}
 
-			view := model.View()
+			view := model.View().Content
 			lines := strings.Split(view, "\n")
 
 			// View should have exactly height lines (or height-1 if last line has no newline)
@@ -816,7 +817,7 @@ func TestModalCompositingPreservesANSI(t *testing.T) {
 		WithModal(modalQuitConfirm).Build()
 
 	// Render the view with quit modal - this uses overlayModal
-	view := model.View()
+	view := model.View().Content
 
 	// Basic sanity checks
 	require.NotEmpty(t, view, "View rendered empty output")
