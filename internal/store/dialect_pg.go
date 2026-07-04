@@ -501,6 +501,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources — a real race before it was added here.
 //   - sync_checkpoints: cascade-reachable from sources; no writer today, but
 //     included so a future checkpoint writer cannot race the cascade.
+//   - imap_folder_state: written by UpsertIMAPFolderStates after IMAP syncs
+//     and cascade-reachable from sources.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -510,6 +512,7 @@ var exclusiveLockTables = []string{
 	"attachments", "labels", "participants", "participant_identifiers", "reactions",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
+	"imap_folder_state",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the
