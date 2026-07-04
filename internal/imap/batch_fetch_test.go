@@ -137,7 +137,11 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
 	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
 	msgs := []*imapclient.FetchMessageBuffer{
-		fetchMessageBuffer(imapapi.UID(10), "duplicate-message", []byte("raw-10")),
+		fetchMessageBuffer(
+			imapapi.UID(10),
+			"duplicate-message",
+			[]byte("Message-ID: duplicate-message\r\n\r\nbody"),
+		),
 	}
 	c := Client{
 		seenRFC822IDs: map[string]bool{"duplicate-message": true},
@@ -151,10 +155,115 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 	assert.Nil(t, results[0].Err)
 }
 
+func TestRawBatchFetchOptionsDoNotRequestEnvelope(t *testing.T) {
+	opts := rawBatchFetchOptions()
+
+	assert.True(t, opts.UID)
+	assert.False(t, opts.Envelope)
+	assert.True(t, opts.InternalDate)
+	assert.True(t, opts.RFC822Size)
+	require.Len(t, opts.BodySection, 1)
+	assert.True(t, opts.BodySection[0].Peek)
+}
+
+func TestApplyFetchResultsDedupsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
+	results := newRawBatchResults([]string{"Archive|10"})
+	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
+	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
+	msgs := []*imapclient.FetchMessageBuffer{
+		fetchMessageBufferWithoutEnvelope(
+			imapapi.UID(10),
+			[]byte("Message-ID: duplicate-message\r\n\r\nbody"),
+		),
+	}
+	c := Client{
+		seenRFC822IDs: map[string]bool{"duplicate-message": true},
+	}
+
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+	require.NotNil(t, results[0].Message)
+	assert.Equal(t, "Archive|10", results[0].Message.ID)
+	assert.Nil(t, results[0].Message.Raw)
+	assert.Nil(t, results[0].Err)
+}
+
+func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
+	results := newRawBatchResults([]string{"Archive|10"})
+	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
+	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
+	raw := []byte("Message-ID: shared-message\r\n\r\nbody")
+	msgs := []*imapclient.FetchMessageBuffer{
+		fetchMessageBufferWithoutEnvelope(imapapi.UID(10), raw),
+	}
+	c := Client{
+		msgIDToLabels: map[string][]string{
+			"shared-message": {"Archive", "Projects"},
+		},
+	}
+
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+	require.NotNil(t, results[0].Message)
+	assert.Equal(t, []string{"Archive", "Projects"}, results[0].Message.LabelIDs)
+	assert.Equal(t, raw, results[0].Message.Raw)
+	assert.Nil(t, results[0].Err)
+}
+
+func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "missing",
+			raw:  []byte("Subject: no message id\r\n\r\nbody"),
+		},
+		{
+			name: "invalid header",
+			raw:  []byte("broken header\r\n\r\nbody"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := newRawBatchResults([]string{"Archive|10"})
+			uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
+			chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
+			msgs := []*imapclient.FetchMessageBuffer{
+				fetchMessageBufferWithoutEnvelope(imapapi.UID(10), tt.raw),
+			}
+			c := Client{
+				seenRFC822IDs: map[string]bool{"existing": true},
+				msgIDToLabels: map[string][]string{"existing": {"Projects"}},
+			}
+
+			c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+			require.NotNil(t, results[0].Message)
+			assert.Equal(t, "Archive|10", results[0].Message.ID)
+			assert.Equal(t, []string{"Archive"}, results[0].Message.LabelIDs)
+			assert.Equal(t, tt.raw, results[0].Message.Raw)
+			assert.Nil(t, results[0].Err)
+			assert.Equal(t, map[string]bool{"existing": true}, c.seenRFC822IDs)
+		})
+	}
+}
+
 func fetchMessageBuffer(uid imapapi.UID, messageID string, raw []byte) *imapclient.FetchMessageBuffer {
 	return &imapclient.FetchMessageBuffer{
 		UID:        uid,
 		Envelope:   &imapapi.Envelope{MessageID: messageID},
+		RFC822Size: int64(len(raw)),
+		BodySection: []imapclient.FetchBodySectionBuffer{
+			{Bytes: raw},
+		},
+	}
+}
+
+func fetchMessageBufferWithoutEnvelope(uid imapapi.UID, raw []byte) *imapclient.FetchMessageBuffer {
+	return &imapclient.FetchMessageBuffer{
+		UID:        uid,
 		RFC822Size: int64(len(raw)),
 		BodySection: []imapclient.FetchBodySectionBuffer{
 			{Bytes: raw},

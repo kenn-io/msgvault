@@ -1,10 +1,13 @@
 package imap
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"sort"
+	"strings"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -42,6 +45,23 @@ func markRawBatchError(results []gmailapi.RawMessageBatchResult, items []batchFe
 	}
 }
 
+func rawBatchFetchOptions() *imap.FetchOptions {
+	return &imap.FetchOptions{
+		UID:          true,
+		InternalDate: true,
+		RFC822Size:   true,
+		BodySection:  []*imap.FetchItemBodySection{{Peek: true}}, // BODY.PEEK[] to avoid marking \Seen
+	}
+}
+
+func rawMIMEMessageID(rawMIME []byte) string {
+	msg, err := mail.ReadMessage(bytes.NewReader(rawMIME))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(msg.Header.Get("Message-ID"))
+}
+
 func (c *Client) applyFetchResults(
 	results []gmailapi.RawMessageBatchResult,
 	uidToIdx map[imap.UID]int,
@@ -72,15 +92,15 @@ func (c *Client) applyFetchResults(
 		// overlap. Return a non-nil stub with empty Raw so the caller treats
 		// this as a skip, not a fetch error.
 		msgID := compositeID(mailbox, msgBuf.UID)
+		rfc822MessageID := rawMIMEMessageID(rawMIME)
 		if c.seenRFC822IDs != nil &&
-			msgBuf.Envelope != nil &&
-			msgBuf.Envelope.MessageID != "" {
-			if c.seenRFC822IDs[msgBuf.Envelope.MessageID] {
+			rfc822MessageID != "" {
+			if c.seenRFC822IDs[rfc822MessageID] {
 				results[idx].Message = &gmailapi.RawMessage{ID: msgID}
 				results[idx].Err = nil
 				continue
 			}
-			c.seenRFC822IDs[msgBuf.Envelope.MessageID] = true
+			c.seenRFC822IDs[rfc822MessageID] = true
 		}
 
 		labels := []string{mailbox}
@@ -90,9 +110,8 @@ func (c *Client) applyFetchResults(
 		// mailbox names the message appears in. Skip the current mailbox to
 		// avoid duplicates that would violate the message_labels primary key.
 		if c.msgIDToLabels != nil &&
-			msgBuf.Envelope != nil &&
-			msgBuf.Envelope.MessageID != "" {
-			if extra, ok := c.msgIDToLabels[msgBuf.Envelope.MessageID]; ok {
+			rfc822MessageID != "" {
+			if extra, ok := c.msgIDToLabels[rfc822MessageID]; ok {
 				for _, lbl := range extra {
 					if lbl != mailbox {
 						labels = append(labels, lbl)
@@ -143,13 +162,7 @@ func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs [
 		byMailbox[mailbox] = append(byMailbox[mailbox], batchFetchItem{i, uid})
 	}
 
-	fetchOpts := &imap.FetchOptions{
-		UID:          true,
-		Envelope:     true, // needed for Message-ID label merging
-		InternalDate: true,
-		RFC822Size:   true,
-		BodySection:  []*imap.FetchItemBodySection{{Peek: true}}, // BODY.PEEK[] to avoid marking \Seen
-	}
+	fetchOpts := rawBatchFetchOptions()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
