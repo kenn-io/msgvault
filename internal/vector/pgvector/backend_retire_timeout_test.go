@@ -51,6 +51,12 @@ func TestRetireGeneration_DisablesStatementTimeout(t *testing.T) {
 
 	// Clamp the session timeout absurdly low. The retire's SET LOCAL = 0 is
 	// tx-scoped and must override this for the duration of the DELETEs.
+	// One pooled connection makes the session-level SET sticky and lets the
+	// RESET below reliably restore the same session before verification
+	// (same pattern as the backfill timeout tests) — otherwise the
+	// verification COUNT can land on the still-clamped connection and be
+	// cancelled at 1ms on a slow runner.
+	b.db.SetMaxOpenConns(1)
 	_, err := b.db.ExecContext(ctx, "SET statement_timeout = 1")
 	require.NoError(
 		err, "set tiny session statement_timeout")
@@ -59,6 +65,9 @@ func TestRetireGeneration_DisablesStatementTimeout(t *testing.T) {
 	require.NoError(
 		b.RetireGeneration(ctx, gen, true),
 		"RetireGeneration must succeed despite a tiny session statement_timeout (hatch disables it)")
+
+	_, err = b.db.ExecContext(ctx, "RESET statement_timeout")
+	require.NoError(err, "restore statement_timeout before verification")
 
 	assert.True(tracer.contains("SET LOCAL statement_timeout = 0"),
 		"retire tx must disable the pool-wide statement_timeout (C1 hatch); got %v", tracer.snapshot())
@@ -96,7 +105,10 @@ func TestActivateGeneration_DisablesStatementTimeout(t *testing.T) {
 	})
 
 	// Clamp the session timeout low; the activate tx's auto-retire DELETEs must
-	// override it via the tx-scoped SET LOCAL = 0.
+	// override it via the tx-scoped SET LOCAL = 0. One pooled connection
+	// makes the SET sticky and the RESET below deterministic, so the
+	// verification COUNTs never run against the clamped session.
+	b.db.SetMaxOpenConns(1)
 	_, err := b.db.ExecContext(ctx, "SET statement_timeout = 1")
 	require.NoError(
 		err, "set tiny session statement_timeout")
@@ -105,6 +117,9 @@ func TestActivateGeneration_DisablesStatementTimeout(t *testing.T) {
 	require.NoError(
 		b.ActivateGeneration(ctx, gen2, true),
 		"ActivateGeneration must succeed despite a tiny session statement_timeout (hatch disables it)")
+
+	_, err = b.db.ExecContext(ctx, "RESET statement_timeout")
+	require.NoError(err, "restore statement_timeout before verification")
 
 	assert.True(tracer.contains("SET LOCAL statement_timeout = 0"),
 		"activate tx must disable the pool-wide statement_timeout (C1 hatch); got %v", tracer.snapshot())
