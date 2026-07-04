@@ -139,12 +139,12 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBuffer(
 			imapapi.UID(10),
-			"duplicate-message",
-			[]byte("Message-ID: <duplicate-message>\r\n\r\nbody"),
+			"duplicate@example.com",
+			[]byte("Message-ID: <duplicate@example.com>\r\n\r\nbody"),
 		),
 	}
 	c := Client{
-		seenRFC822IDs: map[string]bool{"duplicate-message": true},
+		seenRFC822IDs: map[string]bool{"duplicate@example.com": true},
 	}
 
 	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
@@ -173,11 +173,11 @@ func TestApplyFetchResultsDedupsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBufferWithoutEnvelope(
 			imapapi.UID(10),
-			[]byte("Message-ID: <duplicate-message>\r\n\r\nbody"),
+			[]byte("Message-ID: <duplicate@example.com>\r\n\r\nbody"),
 		),
 	}
 	c := Client{
-		seenRFC822IDs: map[string]bool{"duplicate-message": true},
+		seenRFC822IDs: map[string]bool{"duplicate@example.com": true},
 	}
 
 	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
@@ -192,13 +192,13 @@ func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testin
 	results := newRawBatchResults([]string{"Archive|10"})
 	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
 	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
-	raw := []byte("Message-ID: <shared-message>\r\n\r\nbody")
+	raw := []byte("Message-ID: <shared@example.com>\r\n\r\nbody")
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBufferWithoutEnvelope(imapapi.UID(10), raw),
 	}
 	c := Client{
 		msgIDToLabels: map[string][]string{
-			"shared-message": {"Archive", "Projects"},
+			"shared@example.com": {"Archive", "Projects"},
 		},
 	}
 
@@ -222,6 +222,10 @@ func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) 
 		{
 			name: "invalid header",
 			raw:  []byte("broken header\r\n\r\nbody"),
+		},
+		{
+			name: "invalid message id value",
+			raw:  []byte("Message-ID: not a message id\r\n\r\nbody"),
 		},
 	}
 

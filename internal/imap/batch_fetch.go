@@ -63,6 +63,12 @@ func rawMIMEMessageID(rawMIME []byte) string {
 	if strings.HasPrefix(msgID, "<") && strings.HasSuffix(msgID, ">") {
 		msgID = strings.TrimSpace(msgID[1 : len(msgID)-1])
 	}
+	if msgID == "" || !strings.Contains(msgID, "@") || strings.ContainsAny(msgID, " \t\r\n") {
+		return ""
+	}
+	if addr, err := mail.ParseAddress(msgID); err != nil || addr.Address != msgID {
+		return ""
+	}
 	return msgID
 }
 
