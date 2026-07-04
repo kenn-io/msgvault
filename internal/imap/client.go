@@ -257,6 +257,22 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 	return names, nil
 }
 
+func enumerateMailboxSearchCriteria(since, before time.Time) *imap.SearchCriteria {
+	var allUIDs imap.UIDSet
+	allUIDs.AddRange(1, 0)
+
+	criteria := &imap.SearchCriteria{
+		UID: []imap.UIDSet{allUIDs},
+	}
+	if !since.IsZero() {
+		criteria.Since = since
+	}
+	if !before.IsZero() {
+		criteria.Before = before
+	}
+	return criteria
+}
+
 // enumerateMailbox lists all UIDs in a single mailbox. It handles
 // network errors with one reconnect attempt.
 func (c *Client) enumerateMailbox(
@@ -279,14 +295,7 @@ func (c *Client) enumerateMailbox(
 		}
 	}
 
-	criteria := &imap.SearchCriteria{}
-	if !c.since.IsZero() {
-		criteria.Since = c.since
-	}
-	if !c.before.IsZero() {
-		criteria.Before = c.before
-	}
-
+	criteria := enumerateMailboxSearchCriteria(c.since, c.before)
 	searchData, err := c.conn.UIDSearch(
 		criteria,
 		nil,
