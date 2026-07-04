@@ -242,8 +242,11 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 // refuseRestoreIntoLiveDaemonHome rejects a restore target that is the
 // configured archive home while a daemon is running there — the daemon owns
 // that SQLite database, and writing under it would corrupt a live archive
-// (docs/architecture/backup-format.md, Restore). A stopped daemon's home is
-// still non-empty and so requires --overwrite like any other directory.
+// (docs/architecture/backup-format.md, Restore). Any responding daemon
+// counts, including one whose API version is incompatible with this client
+// (left running across an upgrade or downgrade) — it owns the database all
+// the same. A stopped daemon's home is still non-empty and so requires
+// --overwrite like any other directory.
 func refuseRestoreIntoLiveDaemonHome(target string) error {
 	if cfg == nil || target == "" || cfg.Data.DataDir == "" {
 		return nil
@@ -259,7 +262,7 @@ func refuseRestoreIntoLiveDaemonHome(target string) error {
 	if targetAbs != homeAbs {
 		return nil
 	}
-	if rt := findDaemonRuntime(cfg.Data.DataDir); rt != nil {
+	if rt := findAnyDaemonRuntime(cfg.Data.DataDir); rt != nil {
 		return fmt.Errorf(
 			"backup restore: target %s is the live archive home of a running daemon; stop the daemon first (msgvault daemon stop) or restore elsewhere",
 			target)

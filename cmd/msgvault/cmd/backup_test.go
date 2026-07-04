@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"net"
+	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 )
 
@@ -58,6 +63,52 @@ func TestResolveBackupRepoPrecedence(t *testing.T) {
 			assert.Equal(tt.wantRepo, repo)
 		})
 	}
+}
+
+// TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon pins the guard
+// against a daemon whose API version does not match this client's: such a
+// daemon (left running across a CLI upgrade or downgrade) is invisible to
+// the compatible-runtime lookup, yet it still owns the archive's SQLite
+// database, so restoring into its home must be refused all the same.
+func TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	server := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: "v-test",
+	}))
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err, "split listener address")
+
+	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: "v-test",
+		Metadata: map[string]string{
+			runtimeHost:       host,
+			runtimePort:       portText,
+			runtimeAPIVersion: strconv.Itoa(daemonAPIVersion + 1),
+		},
+	})
+	require.NoError(err, "write runtime record")
+
+	require.Nil(findDaemonRuntime(dataDir),
+		"precondition: the daemon must read as incompatible to this client")
+	require.NotNil(findAnyDaemonRuntime(dataDir),
+		"the incompatible daemon still responds and must be discoverable")
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+
+	err = refuseRestoreIntoLiveDaemonHome(dataDir)
+	require.ErrorContains(err, "running daemon",
+		"restore into the live archive home must be refused even when the daemon is incompatible")
+	require.NoError(refuseRestoreIntoLiveDaemonHome(t.TempDir()),
+		"a target outside the archive home stays allowed")
 }
 
 func TestResolveBackupRepoNilConfig(t *testing.T) {

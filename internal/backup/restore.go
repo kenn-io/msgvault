@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -135,11 +137,44 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 	}
 	st.progress.emit(ProgressEvent{Stage: ProgressStageProof, Done: 2, Total: 2, Final: true})
 
-	if err := pack.SyncDir(opts.TargetDir); err != nil {
-		return nil, fmt.Errorf("backup: syncing restore target: %w", err)
+	if err := syncRestoredTree(opts.TargetDir); err != nil {
+		return nil, err
 	}
 	res.Duration = time.Since(start)
 	return res, nil
+}
+
+// syncRestoredTree fsyncs every directory under target, deepest first, so
+// the directory ENTRIES of everything restore created — nested attachment
+// fan-out directories, extras subtrees — are as durable as the file contents
+// by the time Restore reports success. writeRestoredFile fsyncs each file's
+// bytes but not the directories naming them; without this pass a crash
+// shortly after a successful restore could lose newly created paths. One
+// sync per directory at the end costs far less than fsyncing parents on
+// every file write, and the guarantee only needs to hold at success.
+func syncRestoredTree(target string) error {
+	var dirs []string
+	err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("backup: walking restore target for directory sync: %w", err)
+	}
+	// WalkDir visits parents before their children; going backward yields
+	// every directory after all its descendants, so each entry is durable
+	// in its parent by the time that parent is synced.
+	for _, dir := range slices.Backward(dirs) {
+		if err := pack.SyncDir(dir); err != nil {
+			return fmt.Errorf("backup: syncing restored directory: %w", err)
+		}
+	}
+	return nil
 }
 
 // prepareRestoreTarget creates TargetDir, refusing a non-empty existing

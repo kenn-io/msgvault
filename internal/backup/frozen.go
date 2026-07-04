@@ -139,13 +139,20 @@ func openPinnedSession(ctx context.Context, dbPath string) (*FrozenSession, erro
 	return s, nil
 }
 
+// contentBearing and thumbBearing select attachment rows whose bytes live
+// in the local attachments tree. Only genuine URL schemes are excluded — a
+// local namespaced path is free to start with "http" (an importer may use
+// an "http-cache/" namespace), so the patterns must match the "://"
+// separator, not the bare prefix.
 const contentBearing = `content_hash IS NOT NULL AND content_hash != ''
 	AND storage_path IS NOT NULL AND storage_path != ''
-	AND storage_path NOT LIKE 'http%'`
+	AND storage_path NOT LIKE 'http://%'
+	AND storage_path NOT LIKE 'https://%'`
 
 const thumbBearing = `thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
 	AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
-	AND thumbnail_path NOT LIKE 'http%'`
+	AND thumbnail_path NOT LIKE 'http://%'
+	AND thumbnail_path NOT LIKE 'https://%'`
 
 // attachmentBlobsQuery counts the distinct content-bearing hashes reachable
 // from the archive with thumbnails included: exactly the population

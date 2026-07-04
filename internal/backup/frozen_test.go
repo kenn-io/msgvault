@@ -49,6 +49,7 @@ INSERT INTO attachments (content_hash, storage_path, size, thumbnail_hash, thumb
   ('bb22', 'bb/bb22', 50, '', ''),
   ('cc33', 'https://example.com/x', 5, '', ''),
   ('dd44', 'dd/dd44', NULL, '', ''),
+  ('ee55', 'http-cache/ee/ee55', 25, '', ''),
   ('', '', 0, '', '');
 `
 	_, err = db.Exec(seed)
@@ -87,19 +88,22 @@ func TestFrozenSessionPinsAndCounts(t *testing.T) {
 	assert.Equal(int64(1), stats.Sources)
 	assert.Equal(int64(1), stats.Accounts)
 	assert.Equal(int64(2), stats.Labels)
-	assert.Equal(int64(6), stats.AttachmentRows)
-	assert.Equal(int64(4), stats.AttachmentBlobs, "aa11, bb22, NULL-size dd44, and thumbnail tt77; URL-backed and placeholder excluded")
+	assert.Equal(int64(7), stats.AttachmentRows)
+	assert.Equal(int64(5), stats.AttachmentBlobs,
+		"aa11, bb22, NULL-size dd44, http-cache-namespaced ee55, and thumbnail tt77; URL-backed and placeholder excluded")
 	assert.Equal("2026-01-01T00:00:00Z", stats.DateRange[0])
 	assert.Equal("2026-02-01T00:00:00Z", stats.DateRange[1])
 
 	refs, err := s.AttachmentRefs(ctx)
 	require.NoError(err)
-	require.Len(refs, 4)
+	require.Len(refs, 5)
 	assert.Equal(ContentRef{Hash: "aa11", Size: 100, StoragePath: "aa/aa11"}, refs[0])
 	assert.Equal(ContentRef{Hash: "bb22", Size: 50, StoragePath: "bb/bb22"}, refs[1])
 	assert.Equal(ContentRef{Hash: "dd44", Size: -1, StoragePath: "dd/dd44"}, refs[2],
 		"a NULL size column must not fail the scan; capture resolves the real size from the file")
-	assert.Equal(ContentRef{Hash: "tt77", Size: -1, StoragePath: "tt/tt77"}, refs[3])
+	assert.Equal(ContentRef{Hash: "ee55", Size: 25, StoragePath: "http-cache/ee/ee55"}, refs[3],
+		"a local path is free to START with http; only http:// and https:// URLs are excluded")
+	assert.Equal(ContentRef{Hash: "tt77", Size: -1, StoragePath: "tt/tt77"}, refs[4])
 }
 
 func TestFrozenSessionCoordinatorErrors(t *testing.T) {

@@ -73,11 +73,13 @@ func TestRestoreReproducesArchiveByteForByte(t *testing.T) {
 
 	// Mutate the archive and take an incremental child snapshot. One added
 	// attachment lives in the loose layout, one under an importer-style
-	// namespaced storage path — restore must reproduce both placements.
+	// namespaced storage path — restore must reproduce both placements. The
+	// namespace deliberately starts with "http": only http:// and https://
+	// URLs are excluded from capture, never local paths sharing the prefix.
 	_, err = writer.ExecContext(ctx, `INSERT INTO messages (sent_at) VALUES ('2026-03-01T00:00:00Z')`)
 	require.NoError(err)
 	newRef := writeLooseAttachment(t, attachmentsDir, []byte("attachment added after snapshot 1"))
-	nsRef := writeNamespacedAttachment(t, attachmentsDir, "ns-source", []byte("namespaced attachment"))
+	nsRef := writeNamespacedAttachment(t, attachmentsDir, "http-cache", []byte("namespaced attachment"))
 	_, err = writer.ExecContext(ctx,
 		`INSERT INTO attachments (content_hash, storage_path, size, thumbnail_hash, thumbnail_path)
 		 VALUES (?, ?, ?, '', ''), (?, ?, ?, '', '')`,
