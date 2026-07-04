@@ -128,6 +128,9 @@ type Model struct {
 	// Version info for title bar
 	version string
 
+	// Terminal-dependent styles
+	styles tuiStyles
+
 	// Update notification
 	updateAvailable  string // Latest version if update available
 	updateIsDevBuild bool   // True if running a dev build
@@ -270,6 +273,7 @@ func New(engine query.Engine, opts Options) Model {
 		pageSize:      20,
 		loading:       true,
 		spinnerActive: true,
+		styles:        newStyles(false),
 		selection: selectionState{
 			aggregateKeys:     make(map[string]bool),
 			aggregateViewType: query.ViewSenders, // Match initial viewType
@@ -283,6 +287,7 @@ func New(engine query.Engine, opts Options) Model {
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		tea.RequestBackgroundColor,
 		m.loadData(),
 		m.loadStats(),
 		m.loadAccounts(),
@@ -836,6 +841,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
+	case tea.BackgroundColorMsg:
+		m.styles = newStyles(msg.IsDark())
+		return m, nil
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
 	case dataLoadedMsg:

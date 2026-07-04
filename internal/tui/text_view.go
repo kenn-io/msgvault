@@ -36,8 +36,8 @@ func (m Model) textHeaderView() string {
 	breadcrumb := m.textBreadcrumb()
 	statsStr := m.textStatsString()
 
-	breadcrumbStyled := statsStyle.Render(" " + breadcrumb + " ")
-	statsStyled := statsStyle.Render(statsStr + " ")
+	breadcrumbStyled := m.styles.stats.Render(" " + breadcrumb + " ")
+	statsStyled := m.styles.stats.Render(statsStr + " ")
 	gap := max(m.width-
 		lipgloss.Width(breadcrumbStyled)-
 		lipgloss.Width(statsStyled), 0)
@@ -67,7 +67,7 @@ func (m Model) textTitleBar() string {
 	}
 
 	content := fmt.Sprintf("%s - %s", titleText, accountStr)
-	return titleBarStyle.Render(padRight(content, m.width-2))
+	return m.styles.titleBar.Render(padRight(content, m.width-2))
 }
 
 // textBreadcrumb builds the breadcrumb for the current text view.
@@ -158,22 +158,22 @@ func (m Model) textConversationsView() string {
 	if len(m.textState.conversations) == 0 && !m.loading {
 		var sb strings.Builder
 		// Still render header + separator for consistent height
-		sb.WriteString(tableHeaderStyle.Render(
+		sb.WriteString(m.styles.tableHeader.Render(
 			padRight("   Conversations", m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(separatorStyle.Render(
+		sb.WriteString(m.styles.separator.Render(
 			strings.Repeat("\u2500", m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(normalRowStyle.Render(
+		sb.WriteString(m.styles.normalRow.Render(
 			padRight("   No conversations", m.width),
 		))
 		sb.WriteString("\n")
 		// 1 "No data" + (pageSize-2) blanks = pageSize-1 data rows,
 		// then +1 info line = pageSize body rows total.
 		for i := 1; i < m.pageSize-1; i++ {
-			sb.WriteString(normalRowStyle.Render(
+			sb.WriteString(m.styles.normalRow.Render(
 				strings.Repeat(" ", m.width),
 			))
 			sb.WriteString("\n")
@@ -238,11 +238,11 @@ func (m Model) textConversationsView() string {
 		lastMsgWidth, lastLabel,
 	)
 	sb.WriteString(
-		tableHeaderStyle.Render(padRight(headerRow, m.width)),
+		m.styles.tableHeader.Render(padRight(headerRow, m.width)),
 	)
 	sb.WriteString("\n")
 	sb.WriteString(
-		separatorStyle.Render(strings.Repeat("\u2500", m.width)),
+		m.styles.separator.Render(strings.Repeat("\u2500", m.width)),
 	)
 	sb.WriteString("\n")
 
@@ -253,7 +253,7 @@ func (m Model) textConversationsView() string {
 
 		indicator := "   "
 		if isCursor {
-			indicator = cursorRowStyle.Render("\u25b6  ")
+			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
 
 		title := textutil.SanitizeTerminal(conv.Title)
@@ -279,11 +279,11 @@ func (m Model) textConversationsView() string {
 
 		var style lipgloss.Style
 		if isCursor {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if i%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		sb.WriteString(indicator)
@@ -297,7 +297,7 @@ func (m Model) textConversationsView() string {
 	dataRows := endRow - m.textState.scrollOffset
 	for i := dataRows; i < availRows; i++ {
 		sb.WriteString(
-			normalRowStyle.Render(strings.Repeat(" ", m.width)),
+			m.styles.normalRow.Render(strings.Repeat(" ", m.width)),
 		)
 		sb.WriteString("\n")
 	}
@@ -320,22 +320,22 @@ func (m Model) textConversationsView() string {
 func (m Model) textAggregateView() string {
 	if len(m.textState.aggregateRows) == 0 && !m.loading {
 		var sb strings.Builder
-		sb.WriteString(tableHeaderStyle.Render(
+		sb.WriteString(m.styles.tableHeader.Render(
 			padRight("   "+m.textState.viewType.String(), m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(separatorStyle.Render(
+		sb.WriteString(m.styles.separator.Render(
 			strings.Repeat("\u2500", m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(normalRowStyle.Render(
+		sb.WriteString(m.styles.normalRow.Render(
 			padRight("   No data", m.width),
 		))
 		sb.WriteString("\n")
 		// 1 "No data" + (pageSize-2) blanks = pageSize-1 data rows,
 		// then +1 info line = pageSize body rows total.
 		for i := 1; i < m.pageSize-1; i++ {
-			sb.WriteString(normalRowStyle.Render(
+			sb.WriteString(m.styles.normalRow.Render(
 				strings.Repeat(" ", m.width),
 			))
 			sb.WriteString("\n")
@@ -396,11 +396,11 @@ func (m Model) textAggregateView() string {
 		attachWidth, attachLabel,
 	)
 	sb.WriteString(
-		tableHeaderStyle.Render(padRight(headerRow, m.width)),
+		m.styles.tableHeader.Render(padRight(headerRow, m.width)),
 	)
 	sb.WriteString("\n")
 	sb.WriteString(
-		separatorStyle.Render(strings.Repeat("\u2500", m.width)),
+		m.styles.separator.Render(strings.Repeat("\u2500", m.width)),
 	)
 	sb.WriteString("\n")
 
@@ -410,7 +410,7 @@ func (m Model) textAggregateView() string {
 
 		indicator := "   "
 		if isCursor {
-			indicator = cursorRowStyle.Render("\u25b6  ")
+			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
 
 		key := truncateRunes(row.Key, keyWidth)
@@ -426,11 +426,11 @@ func (m Model) textAggregateView() string {
 
 		var style lipgloss.Style
 		if isCursor {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if i%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		sb.WriteString(indicator)
@@ -447,7 +447,7 @@ func (m Model) textAggregateView() string {
 	}
 	for i := dataRows; i < aggAvailRows; i++ {
 		sb.WriteString(
-			normalRowStyle.Render(strings.Repeat(" ", m.width)),
+			m.styles.normalRow.Render(strings.Repeat(" ", m.width)),
 		)
 		sb.WriteString("\n")
 	}
@@ -471,22 +471,22 @@ func (m Model) textAggregateView() string {
 func (m Model) textTimelineView() string {
 	if len(m.textState.messages) == 0 && !m.loading {
 		var sb strings.Builder
-		sb.WriteString(tableHeaderStyle.Render(
+		sb.WriteString(m.styles.tableHeader.Render(
 			padRight("   Messages", m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(separatorStyle.Render(
+		sb.WriteString(m.styles.separator.Render(
 			strings.Repeat("\u2500", m.width),
 		))
 		sb.WriteString("\n")
-		sb.WriteString(normalRowStyle.Render(
+		sb.WriteString(m.styles.normalRow.Render(
 			padRight("   No messages", m.width),
 		))
 		sb.WriteString("\n")
 		// 1 "No messages" + (pageSize-2) blanks = pageSize-1 data rows,
 		// then +1 info line = pageSize body rows total.
 		for i := 1; i < m.pageSize-1; i++ {
-			sb.WriteString(normalRowStyle.Render(
+			sb.WriteString(m.styles.normalRow.Render(
 				strings.Repeat(" ", m.width),
 			))
 			sb.WriteString("\n")
@@ -514,13 +514,13 @@ func (m Model) textTimelineView() string {
 		convTitle = "Messages"
 	}
 	sb.WriteString(
-		tableHeaderStyle.Render(
+		m.styles.tableHeader.Render(
 			padRight("   "+convTitle, m.width),
 		),
 	)
 	sb.WriteString("\n")
 	sb.WriteString(
-		separatorStyle.Render(strings.Repeat("\u2500", m.width)),
+		m.styles.separator.Render(strings.Repeat("\u2500", m.width)),
 	)
 	sb.WriteString("\n")
 
@@ -613,16 +613,16 @@ func (m Model) textTimelineView() string {
 
 		var style lipgloss.Style
 		if isCursorMsg {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if cl.msgIdx%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		indicator := "   "
 		if cl.isFirst && isCursorMsg {
-			indicator = cursorRowStyle.Render("\u25b6  ")
+			indicator = m.styles.cursorRow.Render("\u25b6  ")
 		}
 
 		if cl.isFirst {
@@ -649,7 +649,7 @@ func (m Model) textTimelineView() string {
 	// Fill remaining space
 	for linesWritten < visibleLines {
 		sb.WriteString(
-			normalRowStyle.Render(
+			m.styles.normalRow.Render(
 				strings.Repeat(" ", m.width),
 			),
 		)
@@ -730,7 +730,7 @@ func (m Model) textFooterView() string {
 		lipgloss.Width(keysStr)-
 		lipgloss.Width(posStr)-2, 0)
 
-	return footerStyle.Render(
+	return m.styles.footer.Render(
 		keysStr + strings.Repeat(" ", gap) + posStr,
 	)
 }
