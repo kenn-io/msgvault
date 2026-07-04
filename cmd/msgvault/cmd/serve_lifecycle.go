@@ -444,6 +444,9 @@ func describeDaemonStopWait(pid int, op *api.OperationHealth, grace time.Duratio
 			fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s before exiting.\n",
 				pid, op.Label)
 		}
+	} else if op != nil && op.Busy {
+		fmt.Fprintf(&b, "msgvault (pid %d) is finishing an archive operation before exiting.\n",
+			pid)
 	}
 	fmt.Fprintf(&b, "Waiting up to %s for msgvault (pid %d) to exit; "+
 		"press Ctrl+C to stop waiting (shutdown continues in the daemon).\n",

@@ -799,6 +799,16 @@ func TestDescribeDaemonStopWaitWithoutOperation(t *testing.T) {
 	assert.Contains(out, "pid 4242")
 }
 
+func TestDescribeDaemonStopWaitWithGenericBusyOperation(t *testing.T) {
+	assert := assert.New(t)
+
+	out := describeDaemonStopWait(4242, &api.OperationHealth{Busy: true}, 31*time.Minute)
+
+	assert.Contains(out, "pid 4242")
+	assert.Contains(out, "finishing an archive operation")
+	assert.Contains(out, "Waiting up to 31m0s")
+}
+
 func TestWaitForDaemonExitWithProgressExplainsLongStops(t *testing.T) {
 	restoreStopWaitPacing(t, 10*time.Millisecond, 20*time.Millisecond)
 	out := &bytes.Buffer{}
