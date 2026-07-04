@@ -59,7 +59,11 @@ func rawMIMEMessageID(rawMIME []byte) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(msg.Header.Get("Message-ID"))
+	msgID := strings.TrimSpace(msg.Header.Get("Message-ID"))
+	if strings.HasPrefix(msgID, "<") && strings.HasSuffix(msgID, ">") {
+		msgID = strings.TrimSpace(msgID[1 : len(msgID)-1])
+	}
+	return msgID
 }
 
 func (c *Client) applyFetchResults(

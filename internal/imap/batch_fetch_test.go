@@ -140,7 +140,7 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 		fetchMessageBuffer(
 			imapapi.UID(10),
 			"duplicate-message",
-			[]byte("Message-ID: duplicate-message\r\n\r\nbody"),
+			[]byte("Message-ID: <duplicate-message>\r\n\r\nbody"),
 		),
 	}
 	c := Client{
@@ -173,7 +173,7 @@ func TestApplyFetchResultsDedupsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBufferWithoutEnvelope(
 			imapapi.UID(10),
-			[]byte("Message-ID: duplicate-message\r\n\r\nbody"),
+			[]byte("Message-ID: <duplicate-message>\r\n\r\nbody"),
 		),
 	}
 	c := Client{
@@ -192,7 +192,7 @@ func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testin
 	results := newRawBatchResults([]string{"Archive|10"})
 	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
 	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
-	raw := []byte("Message-ID: shared-message\r\n\r\nbody")
+	raw := []byte("Message-ID: <shared-message>\r\n\r\nbody")
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBufferWithoutEnvelope(imapapi.UID(10), raw),
 	}
