@@ -1211,12 +1211,13 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 }
 
 // runScheduledIMAPSync runs a full IMAP sync for the daemon. IMAP has
-// no incremental/history API, so we always do a full pass and rely on
-// the store to dedupe by message-id. NoResume is forced on because
-// IMAP page tokens are numeric offsets that don't survive across
-// processes (see syncfull.go).
+// no incremental/history API, so we do a full pass, skipping mailboxes
+// unchanged since the last completed sync (saved UIDVALIDITY/UIDNEXT)
+// and relying on the store to dedupe by message-id. NoResume is forced
+// on because IMAP page tokens are numeric offsets that don't survive
+// across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store) (*gmail.SyncSummary, error) {
-	apiClient, err := buildAPIClient(ctx, src, nil, nil)
+	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapFolderStateOptions(s, src)...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
 	}
@@ -1251,6 +1252,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	if err != nil {
 		return nil, fmt.Errorf("IMAP sync failed: %w", err)
 	}
+	saveIMAPFolderStates(s, src, apiClient, summary, 0)
 	return summary, nil
 }
 

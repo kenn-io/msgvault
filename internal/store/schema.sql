@@ -384,6 +384,20 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
     PRIMARY KEY (source_id, checkpoint_type)
 );
 
+-- Per-mailbox IMAP sync state from the last fully completed sync.
+-- UIDVALIDITY/UIDNEXT let subsequent syncs skip mailboxes that have
+-- not changed instead of re-enumerating every folder.
+CREATE TABLE IF NOT EXISTS imap_folder_state (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    uidnext INTEGER NOT NULL,
+
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox)
+);
+
 -- Imported source items (files/objects already processed for resumable adapters)
 CREATE TABLE IF NOT EXISTS source_import_items (
     id INTEGER PRIMARY KEY,

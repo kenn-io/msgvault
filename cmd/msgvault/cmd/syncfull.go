@@ -229,7 +229,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 // caller-provided getOAuthMgr factory. Pass nil to use oauth.Scopes; pass
 // oauth.ScopesDeletion (or another set) for workflows that need elevated
 // access.
-func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string) (gmail.API, error) {
+func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
 	switch src.SourceType {
 	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
@@ -278,6 +278,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 
 		var opts []imaplib.Option
 		opts = append(opts, imaplib.WithLogger(logger))
+		opts = append(opts, imapOpts...)
 
 		var since, before time.Time
 		if syncAfter != "" {
@@ -328,8 +329,78 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 	}
 }
 
+// loadIMAPFolderStates returns the saved per-mailbox states in the map
+// form the IMAP client consumes.
+func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.FolderState, error) {
+	saved, err := s.GetIMAPFolderStates(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	states := make(map[string]imaplib.FolderState, len(saved))
+	for _, st := range saved {
+		states[st.Mailbox] = imaplib.FolderState{
+			UIDValidity: st.UIDValidity,
+			UIDNext:     st.UIDNext,
+		}
+	}
+	return states, nil
+}
+
+// imapFolderStateOptions loads saved per-mailbox states for an IMAP
+// source so its client can skip unchanged mailboxes during listing.
+// Load failures only cost the optimization, so they are logged and
+// swallowed.
+func imapFolderStateOptions(s *store.Store, src *store.Source) []imaplib.Option {
+	if src.SourceType != sourceTypeIMAP {
+		return nil
+	}
+	states, err := loadIMAPFolderStates(s, src.ID)
+	if err != nil {
+		logger.Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
+		return nil
+	}
+	if len(states) == 0 {
+		return nil
+	}
+	return []imaplib.Option{imaplib.WithFolderStates(states)}
+}
+
+// saveIMAPFolderStates persists the per-mailbox states observed during
+// listing, but only after a sync that completed cleanly: an
+// interrupted, truncated (--limit), or partly failed run must not
+// advance the watermarks, or the messages it skipped would never be
+// fetched. Save failures only cost the next run's speedup, so they are
+// logged and swallowed.
+func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) {
+	imapClient, ok := apiClient.(*imaplib.Client)
+	if !ok || summary == nil {
+		return
+	}
+	if summary.Errors > 0 {
+		return
+	}
+	if limit > 0 && summary.MessagesFound >= int64(limit) {
+		return
+	}
+	observed := imapClient.ObservedFolderStates()
+	if len(observed) == 0 {
+		return
+	}
+	states := make([]store.IMAPFolderState, 0, len(observed))
+	for mailbox, st := range observed {
+		states = append(states, store.IMAPFolderState{
+			Mailbox:     mailbox,
+			UIDValidity: st.UIDValidity,
+			UIDNext:     st.UIDNext,
+		})
+	}
+	if err := s.UpsertIMAPFolderStates(src.ID, states); err != nil {
+		logger.Warn("failed to save IMAP folder states", "source", src.Identifier, "error", err)
+	}
+}
+
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
-	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil)
+	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapFolderStateOptions(s, src)...)
 	if err != nil {
 		return err
 	}
@@ -392,6 +463,10 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 			return nil
 		}
 		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	if src.SourceType == sourceTypeIMAP {
+		saveIMAPFolderStates(s, src, apiClient, summary, opts.Limit)
 	}
 
 	// Print summary

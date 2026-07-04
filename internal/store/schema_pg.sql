@@ -295,6 +295,17 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
     PRIMARY KEY (source_id, checkpoint_type)
 );
 
+CREATE TABLE IF NOT EXISTS imap_folder_state (
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    mailbox TEXT NOT NULL,
+    uidvalidity BIGINT NOT NULL,
+    uidnext BIGINT NOT NULL,
+
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (source_id, mailbox)
+);
+
 CREATE TABLE IF NOT EXISTS source_import_items (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
