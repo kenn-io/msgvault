@@ -41,6 +41,14 @@ type UploadTokenResponse = StatusMessageResponse
 
 type UploadTokenErrorResponse = ErrorResponse
 
+type BeginBackupFreezeResponse = BackupFreezeBeginResponse
+
+type BeginBackupFreezeErrorResponse = ErrorResponse
+
+type EndBackupFreezeResponse = BackupFreezeEndResponse
+
+type EndBackupFreezeErrorResponse = ErrorResponse
+
 type UpdateCLIAccountResponse = UpdateResult
 
 type UpdateCLIAccountErrorResponse = APIHTTPError
@@ -451,6 +459,20 @@ type UploadTokenResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON201      *UploadTokenResponse
+}
+
+type BeginBackupFreezeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *BeginBackupFreezeResponse
+}
+
+type EndBackupFreezeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *EndBackupFreezeResponse
 }
 
 type UpdateCLIAccountResp struct {

@@ -63,6 +63,12 @@ type Options struct {
 	// AttachmentReader opens attachment content streams. When nil, exports read
 	// from DataDir/attachments for tests or direct embedding.
 	AttachmentReader AttachmentReader
+
+	// AnalyticsNotice, when non-empty, is shown on the info line while
+	// aggregate views load. It explains slow first queries (for example,
+	// the daemon falling back to live SQL because no analytics cache is
+	// built for the archive).
+	AnalyticsNotice string
 }
 
 // modalType represents the type of modal dialog.
@@ -127,6 +133,10 @@ type Model struct {
 
 	// Version info for title bar
 	version string
+
+	// Notice shown on the info line while aggregate data loads (e.g. the
+	// daemon is running live SQL because no analytics cache is built).
+	analyticsNotice string
 
 	// Terminal-dependent styles
 	styles tuiStyles
@@ -259,6 +269,7 @@ func New(engine query.Engine, opts Options) Model {
 			AttachmentReader: opts.AttachmentReader,
 		}),
 		version:            opts.Version,
+		analyticsNotice:    opts.AnalyticsNotice,
 		aggregateLimit:     aggLimit,
 		threadMessageLimit: threadLimit,
 		viewState: viewState{

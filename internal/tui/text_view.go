@@ -456,6 +456,8 @@ func (m Model) textAggregateView() string {
 	var infoContent string
 	if m.inlineSearchActive {
 		infoContent = "/" + m.searchInput.View()
+	} else if m.loading && m.analyticsNotice != "" {
+		infoContent = " " + m.analyticsNotice
 	}
 	sb.WriteString(m.renderInfoLine(infoContent, m.loading))
 

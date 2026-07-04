@@ -454,6 +454,8 @@ func (m Model) aggregateTableView() string {
 		infoContent = "/" + m.searchInput.View()
 	} else if m.searchQuery != "" {
 		infoContent = fmt.Sprintf(" Search: %q", m.searchQuery)
+	} else if m.loading && m.analyticsNotice != "" {
+		infoContent = " " + m.analyticsNotice
 	}
 	sb.WriteString(m.renderInfoLine(infoContent, isLoading))
 

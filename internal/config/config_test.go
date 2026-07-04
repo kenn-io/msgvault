@@ -1557,3 +1557,116 @@ func TestDatabasePath(t *testing.T) {
 		require.Error(t, err, "DatabasePath: expected error for empty file: URI")
 	})
 }
+
+func TestLoadWithBackupConfig(t *testing.T) {
+	tests := []struct {
+		name            string
+		configContent   string
+		wantErrContains string
+		wantRepo        string
+		wantZstdLevel   int
+	}{
+		{
+			name:          "valid empty",
+			configContent: "",
+			wantRepo:      "",
+			wantZstdLevel: 0,
+		},
+		{
+			// {{REPO}} is substituted with a platform-absolute path at run
+			// time: a Unix-style "/mnt/..." literal is not absolute on
+			// Windows and would be resolved relative to the home directory.
+			name: "valid populated",
+			configContent: `
+[backup]
+repo = "{{REPO}}"
+zstd_level = 9
+`,
+			wantRepo:      "{{REPO}}",
+			wantZstdLevel: 9,
+		},
+		{
+			name: "invalid zstd level",
+			configContent: `
+[backup]
+zstd_level = 20
+`,
+			wantErrContains: "invalid [backup] zstd_level",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.toml")
+			// Forward slashes keep the path TOML-safe on every platform.
+			absRepo := filepath.ToSlash(filepath.Join(tmpDir, "backups", "msgvault"))
+			content := strings.ReplaceAll(tt.configContent, "{{REPO}}", absRepo)
+			require.NoError(os.WriteFile(configPath, []byte(content), 0o644), "WriteFile()")
+
+			cfg, err := Load(configPath, "")
+
+			if tt.wantErrContains != "" {
+				require.Error(err, "Load()")
+				assert.Contains(err.Error(), tt.wantErrContains)
+				return
+			}
+			require.NoError(err, "Load()")
+			assert.Equal(strings.ReplaceAll(tt.wantRepo, "{{REPO}}", absRepo), cfg.Backup.Repo)
+			assert.Equal(tt.wantZstdLevel, cfg.Backup.ZstdLevel)
+		})
+	}
+}
+
+// TestLoadExpandsBackupRepoTilde pins the fix adding [backup] repo to the
+// same tilde-expansion pass every other configured path gets (mirrors
+// TestLoadExpandsVectorDBPath). Before the fix, repo = "~/backups" stayed
+// literal instead of resolving to the user's home directory.
+func TestLoadExpandsBackupRepoTilde(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home, err := os.UserHomeDir()
+	require.NoError(err, "UserHomeDir")
+
+	tmpDir := t.TempDir()
+	t.Setenv("MSGVAULT_HOME", tmpDir)
+
+	configContent := `
+[backup]
+repo = "~/backups"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	require.NoError(os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile")
+
+	cfg, err := Load("", "")
+	require.NoError(err, "Load")
+
+	expected := filepath.Join(home, "backups")
+	assert.Equal(expected, cfg.Backup.Repo)
+}
+
+// TestLoadResolvesRelativeBackupRepo pins the fix adding [backup] repo to
+// the same explicit-config resolveRelative pass every other configured path
+// gets (mirrors TestLoadResolvesRelativeVectorDBPath). Before the fix,
+// repo = "backups" resolved against the process's working directory instead
+// of the config file's directory.
+func TestLoadResolvesRelativeBackupRepo(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+[backup]
+repo = "backups"
+`
+	require.NoError(os.WriteFile(configPath, []byte(configContent), 0o644), "WriteFile")
+
+	cfg, err := Load(configPath, "")
+	require.NoError(err, "Load")
+
+	expected := filepath.Join(tmpDir, "backups")
+	assert.Equal(expected, cfg.Backup.Repo)
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // Config holds configuration for creating a daemon HTTP client.
@@ -250,4 +251,31 @@ func requestEditor(apiKey string) apiclient.RequestEditorFn {
 		req.Header.Set("Accept", "application/json")
 		return nil
 	}
+}
+
+// DaemonHealth is the subset of the daemon's /health payload the CLI
+// consumes.
+type DaemonHealth struct {
+	Status          string
+	AnalyticsEngine string
+}
+
+// GetHealth fetches the daemon's health status, including the analytics
+// engine mode the daemon selected at startup (empty on daemons that
+// predate the field).
+func (c *Client) GetHealth(ctx context.Context) (*DaemonHealth, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.HealthResp, error) {
+		return client.HealthWithResponse(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	health := &DaemonHealth{}
+	if resp.JSON200 != nil {
+		health.Status = resp.JSON200.Status
+		if resp.JSON200.AnalyticsEngine != nil {
+			health.AnalyticsEngine = *resp.JSON200.AnalyticsEngine
+		}
+	}
+	return health, nil
 }

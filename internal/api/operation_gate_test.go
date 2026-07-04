@@ -392,6 +392,25 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}
 }
 
+func TestOperationGateMiddlewareSkipsSelfGatedCLIRunCommands(t *testing.T) {
+	assert := assert.New(t)
+	gate := &recordingOperationGate{allow: false}
+	called := false
+	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["backup","create"]}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.True(called, "self-gated command should bypass the middleware gate even while another holder is active")
+	assert.Equal(http.StatusNoContent, resp.Code, "status")
+	begin, _ := gate.counts()
+	assert.Equal(0, begin, "begin calls")
+}
+
 func TestOperationGateMiddlewareSkipsReadOnlyPaths(t *testing.T) {
 	paths := []string{
 		"/api/v1/query",

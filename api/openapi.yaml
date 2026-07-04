@@ -190,6 +190,25 @@ components:
         - mime_type
         - size_bytes
       type: object
+    BackupFreezeBeginResponse:
+      additionalProperties: true
+      properties:
+        token:
+          type: string
+      required:
+        - token
+      type: object
+    BackupFreezeEndRequest:
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+      required:
+        - token
+      type: object
+    BackupFreezeEndResponse:
+      additionalProperties: true
+      type: object
     BuildingSummary:
       additionalProperties: true
       properties:
@@ -1241,6 +1260,8 @@ components:
     HealthResponse:
       additionalProperties: true
       properties:
+        analytics_engine:
+          type: string
         operation:
           $ref: "#/components/schemas/OperationHealth"
         status:
@@ -2605,6 +2626,54 @@ paths:
       security:
         - apiKey: []
       summary: Upload an OAuth token
+      tags:
+        - API
+  /api/v1/backup/freeze/begin:
+    post:
+      operationId: beginBackupFreeze
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupFreezeBeginResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Begin a backup freeze window
+      tags:
+        - API
+  /api/v1/backup/freeze/end:
+    post:
+      operationId: endBackupFreeze
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupFreezeEndRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupFreezeEndResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End a backup freeze window
       tags:
         - API
   /api/v1/cli/account:

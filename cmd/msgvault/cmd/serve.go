@@ -179,7 +179,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	logger.Info("daemon startup step", "step", "init_analytics_engine")
-	engine, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
+	engine, analyticsMode, err := openDaemonAnalyticsEngine(cmd.Context(), cfg, s)
 	if err != nil {
 		return err
 	}
@@ -278,6 +278,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Scheduler:     schedAdapter,
 		Logger:        logger,
 		DaemonVersion: Version,
+		AnalyticsMode: analyticsMode,
 		IdleTracker:   idleTracker,
 		OperationGate: operationGate,
 	}
@@ -503,16 +504,20 @@ func runDaemonSQLQuery(
 	return duckEngine.QuerySQL(ctx, sqlStr)
 }
 
+// openDaemonAnalyticsEngine picks the daemon's analytics engine once at
+// startup and also returns the api.AnalyticsMode constant describing that
+// choice, which /health reports so clients (the TUI launch notice) can tell
+// cache-backed aggregates from live-SQL fallback.
 func openDaemonAnalyticsEngine(
 	ctx context.Context,
 	c *config.Config,
 	s *store.Store,
-) (query.Engine, error) {
+) (query.Engine, string, error) {
 	if c == nil || s == nil {
-		return nil, errors.New("daemon analytics engine unavailable")
+		return nil, "", errors.New("daemon analytics engine unavailable")
 	}
 	if s.IsPostgreSQL() {
-		return query.NewEngine(s.DB(), true), nil
+		return query.NewEngine(s.DB(), true), api.AnalyticsModePostgres, nil
 	}
 
 	engineMode := c.Analytics.Engine
@@ -522,7 +527,7 @@ func openDaemonAnalyticsEngine(
 	if engineMode == config.AnalyticsEngineSQL {
 		logger.Info("using live SQL analytics engine",
 			"engine", engineMode)
-		return query.NewEngine(s.DB(), false), nil
+		return query.NewEngine(s.DB(), false), api.AnalyticsModeSQL, nil
 	}
 
 	dbPath := c.DatabaseDSN()
@@ -530,7 +535,7 @@ func openDaemonAnalyticsEngine(
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	if staleness.NeedsBuild && c.Analytics.AutoBuildCache && engineMode == config.AnalyticsEngineDuckDB {
 		if err := buildCacheSubprocessForRun(ctx, staleness.FullRebuild); err != nil {
-			return nil, fmt.Errorf("build analytics cache: %w", err)
+			return nil, "", fmt.Errorf("build analytics cache: %w", err)
 		}
 		logger.Info("rebuilt analytics cache",
 			"reason", staleness.Reason,
@@ -542,13 +547,13 @@ func openDaemonAnalyticsEngine(
 		duckEngine, err := openDaemonDuckDBEngine(c, s)
 		if err != nil {
 			if engineMode == config.AnalyticsEngineDuckDB {
-				return nil, err
+				return nil, "", err
 			}
 			logger.Warn("DuckDB engine failed, falling back to live SQL",
 				"error", err)
-			return query.NewEngine(s.DB(), false), nil
+			return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, nil
 		}
-		return duckEngine, nil
+		return duckEngine, api.AnalyticsModeDuckDB, nil
 	}
 
 	if engineMode == config.AnalyticsEngineDuckDB {
@@ -556,7 +561,7 @@ func openDaemonAnalyticsEngine(
 		if reason == "" {
 			reason = "analytics cache is missing or incomplete"
 		}
-		return nil, fmt.Errorf("analytics engine=duckdb requires a usable cache: %s", reason)
+		return nil, "", fmt.Errorf("analytics engine=duckdb requires a usable cache: %s", reason)
 	}
 	if staleness.Reason != "" {
 		logger.Info("analytics cache not usable, using live SQL engine",
@@ -566,7 +571,7 @@ func openDaemonAnalyticsEngine(
 		logger.Info("analytics cache not built - using live SQL engine (run 'msgvault build-cache' for faster aggregates)",
 			"auto_build_cache", c.Analytics.AutoBuildCache)
 	}
-	return query.NewEngine(s.DB(), false), nil
+	return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback, nil
 }
 
 func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {

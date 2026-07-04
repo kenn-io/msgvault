@@ -374,3 +374,31 @@ func TestStatsReportsVectorStatus(t *testing.T) {
 		})
 	}
 }
+
+// TestHealthReportsAnalyticsMode pins that /health carries the analytics
+// engine mode the daemon selected at startup, and omits the field when the
+// server was built without one, so clients can distinguish live-SQL
+// fallback from cache-backed aggregates.
+func TestHealthReportsAnalyticsMode(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	opts := testServerOptions(t, nil)
+	opts.AnalyticsMode = AnalyticsModeSQLFallback
+	srv := NewServerWithOptions(opts)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, req)
+
+	require.Equal(http.StatusOK, rec.Code)
+	var body HealthResponse
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(AnalyticsModeSQLFallback, body.AnalyticsEngine)
+
+	bare := NewServerWithOptions(testServerOptions(t, nil))
+	rec = httptest.NewRecorder()
+	bare.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	require.Equal(http.StatusOK, rec.Code)
+	assert.NotContains(rec.Body.String(), "analytics_engine",
+		"field must be omitted when no mode was configured")
+}

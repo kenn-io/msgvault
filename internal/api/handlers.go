@@ -145,10 +145,27 @@ type OperationHealth struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
+// Analytics engine modes reported by /health. The daemon chooses its engine
+// once at startup, so this reflects what aggregate endpoints actually use
+// for the daemon's lifetime — not what a fresh daemon would choose now.
+// AnalyticsModeSQLFallback distinguishes live SQL forced by a missing or
+// unusable cache from live SQL chosen deliberately (engine = "sql",
+// PostgreSQL backends).
+const (
+	AnalyticsModeDuckDB      = "duckdb"
+	AnalyticsModeSQL         = "sql"
+	AnalyticsModeSQLFallback = "sql-fallback"
+	AnalyticsModePostgres    = "postgres"
+)
+
 type HealthResponse struct {
 	Status    string           `json:"status"`
 	Vector    *VectorHealth    `json:"vector,omitempty"`
 	Operation *OperationHealth `json:"operation,omitempty"`
+	// AnalyticsEngine is the analytics mode the daemon selected at startup
+	// (one of the AnalyticsMode constants). Empty when the server was built
+	// without one (tests, embedded uses).
+	AnalyticsEngine string `json:"analytics_engine,omitempty"`
 }
 
 type MessageListResponse struct {

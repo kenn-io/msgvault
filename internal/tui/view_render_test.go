@@ -1003,3 +1003,19 @@ func TestHeaderUpdateNoticeNarrowTerminal(t *testing.T) {
 	lineWidth := lipgloss.Width(lines[0])
 	assert.LessOrEqual(t, lineWidth, 40, "header line 1 width exceeds narrow terminal width")
 }
+
+// TestAnalyticsNoticeShownWhileLoading verifies the info line explains slow
+// first loads when the daemon reported no analytics cache, and disappears
+// once data arrives.
+func TestAnalyticsNoticeShownWhileLoading(t *testing.T) {
+	model := NewBuilder().WithLoading(true).Build()
+	model.analyticsNotice = "Analytics cache not built: views run live SQL queries and may load slowly."
+	model = resizeModel(t, model, 140, 40)
+
+	assert.Contains(t, model.View().Content, "Analytics cache not built",
+		"loading view should surface the analytics notice")
+
+	model.loading = false
+	assert.NotContains(t, model.View().Content, "Analytics cache not built",
+		"notice should disappear once loading completes")
+}

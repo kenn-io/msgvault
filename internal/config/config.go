@@ -156,6 +156,24 @@ type IdentityConfig struct {
 	Addresses []string `toml:"addresses"`
 }
 
+// BackupConfig holds default settings for `msgvault backup` (spec Section
+// 10). Repo lets `--repo` be omitted on every invocation; ZstdLevel tunes
+// the pack compression level (0 keeps internal/pack's own default).
+type BackupConfig struct {
+	Repo      string `toml:"repo"`       // Default snapshot repository directory
+	ZstdLevel int    `toml:"zstd_level"` // 0 (default) or 1-19
+}
+
+// Validate enforces the zstd compression level range: 0 (meaning "use
+// internal/pack's default") or 1-19, matching the range the zstd encoder
+// actually accepts.
+func (b *BackupConfig) Validate() error {
+	if b.ZstdLevel == 0 || (b.ZstdLevel >= 1 && b.ZstdLevel <= 19) {
+		return nil
+	}
+	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
+}
+
 type Config struct {
 	Data        DataConfig        `toml:"data"`
 	Log         LogConfig         `toml:"log"`
@@ -171,6 +189,7 @@ type Config struct {
 	Accounts    []AccountSchedule `toml:"accounts"`
 	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
 	GCal        []GCalSource      `toml:"gcal"`
+	Backup      BackupConfig      `toml:"backup"`
 
 	// Computed paths (not from config file)
 	HomeDir    string `toml:"-"`
@@ -408,6 +427,7 @@ func Load(path, homeDir string) (*Config, error) {
 	cfg.OAuth.ClientSecrets = expandPath(cfg.OAuth.ClientSecrets)
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
+	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for name, app := range cfg.OAuth.Apps {
 		app.ClientSecrets = expandPath(app.ClientSecrets)
 		app.ServiceAccountKey = expandPath(app.ServiceAccountKey)
@@ -422,6 +442,7 @@ func Load(path, homeDir string) (*Config, error) {
 		cfg.OAuth.ClientSecrets = resolveRelative(cfg.OAuth.ClientSecrets, cfg.HomeDir)
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
+		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for name, app := range cfg.OAuth.Apps {
 			app.ClientSecrets = resolveRelative(app.ClientSecrets, cfg.HomeDir)
 			app.ServiceAccountKey = resolveRelative(app.ServiceAccountKey, cfg.HomeDir)
@@ -440,6 +461,9 @@ func Load(path, homeDir string) (*Config, error) {
 	}
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.applySynctechSMSDefaults()

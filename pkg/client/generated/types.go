@@ -157,6 +157,24 @@ func (a AttachmentInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type BackupFreezeBeginResponse struct {
+	Token string `json:"token" validate:"required"`
+}
+
+func (b BackupFreezeBeginResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BackupFreezeEndRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+
+func (b BackupFreezeEndRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BackupFreezeEndResponse = map[string]any
+
 type BuildingSummary struct {
 	Dimension int64    `json:"dimension"`
 	ID        int64    `json:"id"`
@@ -975,9 +993,10 @@ func (g GmailIDsResponse) Validate() error {
 }
 
 type HealthResponse struct {
-	Operation *OperationHealth `json:"operation,omitempty"`
-	Status    string           `json:"status" validate:"required"`
-	Vector    *VectorHealth    `json:"vector,omitempty"`
+	AnalyticsEngine *string          `json:"analytics_engine,omitempty"`
+	Operation       *OperationHealth `json:"operation,omitempty"`
+	Status          string           `json:"status" validate:"required"`
+	Vector          *VectorHealth    `json:"vector,omitempty"`
 }
 
 func (h HealthResponse) Validate() error {

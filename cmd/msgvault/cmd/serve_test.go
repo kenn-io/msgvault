@@ -360,11 +360,12 @@ func TestOpenDaemonAnalyticsEngineForceSQLSkipsCacheBuild(t *testing.T) {
 		return nil
 	})
 
-	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
+	assert.Equal(api.AnalyticsModeSQL, mode, "engine=sql is a deliberate live-SQL choice")
 }
 
 func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
@@ -378,11 +379,12 @@ func TestOpenDaemonAnalyticsEngineSkipsCacheBuildWhenDisabled(t *testing.T) {
 		return nil
 	})
 
-	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "openDaemonAnalyticsEngine")
 	defer func() { _ = engine.Close() }()
 
 	assert.IsType(&query.SQLiteEngine{}, engine)
+	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
 }
 
 func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testing.T) {
@@ -398,12 +400,13 @@ func TestOpenDaemonAnalyticsEngineAutoDoesNotBlockStartupOnMissingCache(t *testi
 		return nil
 	})
 
-	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, mode, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	require.NoError(err, "auto mode should start with live SQL when cache is missing")
 	defer func() { _ = engine.Close() }()
 
 	assert.False(gotFullRebuild, "startup should not request a synchronous cache rebuild")
 	assert.IsType(&query.SQLiteEngine{}, engine)
+	assert.Equal(api.AnalyticsModeSQLFallback, mode, "auto mode without a cache is a fallback")
 }
 
 func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
@@ -416,7 +419,7 @@ func TestOpenDaemonAnalyticsEngineDuckDBRequiresCacheBuild(t *testing.T) {
 		return sentinel
 	})
 
-	engine, err := openDaemonAnalyticsEngine(context.Background(), c, s)
+	engine, _, err := openDaemonAnalyticsEngine(context.Background(), c, s)
 	if engine != nil {
 		_ = engine.Close()
 	}

@@ -31,6 +31,7 @@ nav = [
     {"Deleting Email" = "usage/deletion.md"},
     {"Accounts & Collections" = "usage/multi-account.md"},
     {"Deduplication" = "usage/deduplication.md"},
+    {"Backup" = "usage/backup.md"},
   ]},
   {"Guides" = [
     {"OAuth Setup" = "guides/oauth-setup.md"},
@@ -43,6 +44,7 @@ nav = [
     {"Data Storage" = "architecture/storage.md"},
     {"PostgreSQL Backend" = "architecture/postgresql.md"},
     {"Search Ranking" = "architecture/search-ranking.md"},
+    {"Backup Repository Format" = "architecture/backup-format.md"},
   ]},
   {"Troubleshooting" = "troubleshooting.md"},
   {"Development" = "development.md"},
