@@ -112,7 +112,7 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	saveIMAPFolderStates(st, src, first, &gmail.SyncSummary{}, 0)
 	require.NoError(t, first.Close())
 
-	opts := imapFolderStateOptions(st, src)
+	opts := imapFolderStateOptions(st, src, false)
 	require.NotEmpty(t, opts, "saved states must produce a client option")
 
 	second := listedIMAPClient(t, addr, opts...)
@@ -122,6 +122,20 @@ func TestIMAPFolderStateOptions_RoundTripSkipsUnchangedFolders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.Messages,
 		"a resync against an unchanged server must list no messages")
+}
+
+func TestIMAPFolderStateOptions_ForceRescanBypassesSavedStates(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://alice@example.com")
+	require.NoError(t, err)
+
+	require.NoError(t, st.UpsertIMAPFolderStates(src.ID, []store.IMAPFolderState{
+		{Mailbox: "INBOX", UIDValidity: 42, UIDNext: 100},
+	}))
+
+	assert.Empty(t, imapFolderStateOptions(st, src, true),
+		"--noresume must ignore saved folder states so every mailbox is re-enumerated")
+	assert.NotEmpty(t, imapFolderStateOptions(st, src, false))
 }
 
 func TestSaveIMAPFolderStates_StoreRoundTripValues(t *testing.T) {

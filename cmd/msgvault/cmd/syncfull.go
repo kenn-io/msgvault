@@ -348,10 +348,11 @@ func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.Fo
 
 // imapFolderStateOptions loads saved per-mailbox states for an IMAP
 // source so its client can skip unchanged mailboxes during listing.
-// Load failures only cost the optimization, so they are logged and
-// swallowed.
-func imapFolderStateOptions(s *store.Store, src *store.Source) []imaplib.Option {
-	if src.SourceType != sourceTypeIMAP {
+// forceRescan (--noresume) bypasses the saved states so every mailbox
+// is freshly enumerated. Load failures only cost the optimization, so
+// they are logged and swallowed.
+func imapFolderStateOptions(s *store.Store, src *store.Source, forceRescan bool) []imaplib.Option {
+	if forceRescan || src.SourceType != sourceTypeIMAP {
 		return nil
 	}
 	states, err := loadIMAPFolderStates(s, src.ID)
@@ -400,7 +401,11 @@ func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API
 }
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
-	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapFolderStateOptions(s, src)...)
+	// --noresume promises a fresh sync, so it must also bypass the
+	// saved folder watermarks and re-enumerate every mailbox. A clean
+	// completed run still saves fresh watermarks afterwards.
+	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil,
+		imapFolderStateOptions(s, src, syncNoResume)...)
 	if err != nil {
 		return err
 	}
@@ -698,7 +703,7 @@ func imapSkipReason(src *store.Source) (string, error) {
 
 func init() {
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
-	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume)")
+	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")
