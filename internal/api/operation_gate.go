@@ -297,12 +297,19 @@ func writeOperationGateBusy(w http.ResponseWriter, gate OperationGate) {
 // not queue behind long mutating operations, and they never mutate the
 // archive themselves. Verify is NOT exempt: its subprocess opens the store
 // read-write and runs schema init/migrations.
+//
+// The backup freeze endpoints are exempt for a different reason: begin
+// acquires the operation gate itself (see beginLabeledOperationGateWork in
+// handleBackupFreezeBegin), so routing them through the generic middleware
+// gate as well would deadlock begin against its own acquisition.
 var operationGateExemptPaths = map[string]bool{
 	queryEndpointPath:                true,
 	"/api/v1/cli/add-calendar/plan":  true,
 	"/api/v1/cli/delete-staged/plan": true,
 	"/api/v1/cli/embeddings/plan":    true,
 	"/api/v1/cli/deduplicate/plan":   true,
+	backupFreezeBeginPath:            true,
+	backupFreezeEndPath:              true,
 }
 
 func operationGateRequest(r *http.Request) (bool, string, error) {
@@ -338,6 +345,15 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"embeddings list": true,
 }
 
+// cliRunSelfGatedCommands are proxied CLI commands that acquire the
+// operation gate themselves instead of relying on the middleware: "backup
+// create" brackets its own work with the backup freeze begin/end endpoints
+// (see handleBackupFreezeBegin), so the middleware must skip it exactly like
+// a read-only command or the two acquisitions would deadlock each other.
+var cliRunSelfGatedCommands = map[string]bool{
+	"backup create": true,
+}
+
 func cliRunGateDecision(r *http.Request) (label string, skip bool, err error) {
 	if r == nil || r.Body == nil {
 		return "", false, nil
@@ -358,7 +374,7 @@ func cliRunGateDecision(r *http.Request) (label string, skip bool, err error) {
 	}
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
 		command := cliRunCommandWords(req.Args)
-		if cliRunReadOnlyCommands[command] {
+		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] {
 			return "", true, nil
 		}
 		if command != "" {
@@ -372,6 +388,7 @@ func cliRunGateDecision(r *http.Request) (label string, skip bool, err error) {
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
 	"embeddings": true,
+	"backup":     true,
 }
 
 // cliRunCommandWords extracts the command path from proxied args. Positional

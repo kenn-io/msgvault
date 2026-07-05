@@ -135,6 +135,7 @@ type Server struct {
 	inProgressThreshold time.Duration
 	inProgressInterval  time.Duration
 	daemonVersion       string
+	analyticsMode       string
 	router              http.Handler
 	server              *http.Server
 	rateLimiter         *RateLimiter
@@ -160,6 +161,9 @@ type Server struct {
 	backend      vector.Backend
 	vectorStatus VectorStatus
 	vectorErr    string
+	// backupFreeze tracks the single active backup freeze window opened via
+	// POST /api/v1/backup/freeze/begin. See backup_freeze.go.
+	backupFreeze backupFreezeState
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
@@ -213,6 +217,11 @@ type ServerOptions struct {
 	// DaemonVersion is returned by the unauthenticated kit-compatible
 	// /api/ping endpoint used for local daemon discovery. Empty is allowed.
 	DaemonVersion string
+	// AnalyticsMode is the analytics engine the daemon selected at startup
+	// (an AnalyticsMode constant), reported by /health so clients can tell
+	// whether aggregate views run on the cache or live SQL. Empty omits the
+	// field.
+	AnalyticsMode string
 }
 
 // NewServer creates a new API server.
@@ -248,6 +257,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		inProgressThreshold: inProgressLogThreshold,
 		inProgressInterval:  inProgressLogInterval,
 		daemonVersion:       opts.DaemonVersion,
+		analyticsMode:       opts.AnalyticsMode,
 		idleTracker:         opts.IdleTracker,
 		operationGate:       opts.OperationGate,
 	}
@@ -675,7 +685,56 @@ func (s *Server) handleDaemonShutdown(w http.ResponseWriter, r *http.Request) {
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.refreshVectorStatusIfStale(r.Context())
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Vector: s.vectorHealth()})
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:          "ok",
+		Vector:          s.vectorHealth(),
+		Operation:       s.operationBusyHealth(),
+		AnalyticsEngine: s.analyticsMode,
+	})
+}
+
+// handleAuthenticatedHealth returns health details that are safe behind the
+// API-key boundary.
+func (s *Server) handleAuthenticatedHealth(w http.ResponseWriter, r *http.Request) {
+	s.refreshVectorStatusIfStale(r.Context())
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:          "ok",
+		Vector:          s.vectorHealth(),
+		Operation:       s.operationHealth(),
+		AnalyticsEngine: s.analyticsMode,
+	})
+}
+
+// operationBusyHealth reports only whether the operation gate is currently
+// held, avoiding protected route labels and start times on public /health.
+func (s *Server) operationBusyHealth() *OperationHealth {
+	_, _, held := s.operationGateHolder()
+	if !held {
+		return nil
+	}
+	return &OperationHealth{Busy: true}
+}
+
+// operationHealth reports what currently holds the operation gate, if the
+// gate can say. Unlabeled holders still get a generic label so clients can
+// tell "busy" from "idle".
+func (s *Server) operationHealth() *OperationHealth {
+	label, since, held := s.operationGateHolder()
+	if !held {
+		return nil
+	}
+	if label == "" {
+		label = "an archive operation"
+	}
+	return &OperationHealth{Busy: true, Label: label, StartedAt: &since}
+}
+
+func (s *Server) operationGateHolder() (string, time.Time, bool) {
+	lg, ok := s.operationGate.(LabeledOperationGate)
+	if !ok {
+		return "", time.Time{}, false
+	}
+	return lg.Holder()
 }
 
 // handleNotFound is the mux catch-all for unmatched paths. It returns the

@@ -110,9 +110,14 @@ msgvault search "standup" --message-type calendar_event
 msgvault search "after:2024-01-01 before:2024-04-01" --message-type calendar_event
 ```
 
-When [vector search](/usage/vector-search/) is enabled, events are embedded
-during sync and can be found semantically with `--mode vector` or
-`--mode hybrid`.
+When [vector search](/usage/vector-search/) is enabled, events become eligible
+for embedding after sync and can be found semantically with `--mode vector` or
+`--mode hybrid` once the embedding worker has processed them. For manual
+`sync-calendar` runs, follow up with `msgvault embeddings build`. In the
+daemon, scheduled `[[gcal]]` syncs do not trigger the
+`[vector.embed.schedule].run_after_sync` hook (it applies to scheduled
+account syncs such as Gmail, IMAP, and Teams); newly synced events are
+picked up by the embed worker's `[vector.embed.schedule].cron` schedule.
 
 ## Scheduled sync (daemon)
 

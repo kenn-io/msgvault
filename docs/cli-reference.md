@@ -122,6 +122,30 @@ After adding the account, sync it with `msgvault sync-full`.
 
 ---
 
+## add-teams
+
+Authorize a Microsoft Teams account through delegated Microsoft Graph OAuth and
+register a `teams` source.
+
+```bash
+msgvault add-teams <email>
+msgvault add-teams <email> --tenant <tenant-id>
+```
+
+This stores a Teams Graph token under `tokens/teams_<email>.json`, separate from
+the Microsoft IMAP token used by `add-o365`. Requires `[microsoft].client_id` in
+`config.toml` and the Graph permissions documented in
+[Microsoft Teams](/usage/teams/).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tenant` | `common` | Azure AD tenant ID to use for authorization |
+| `--no-default-identity` | `false` | Do not auto-confirm the email address as this source's "me" identity |
+
+After adding the account, sync it with `msgvault sync-teams`.
+
+---
+
 ## sync-full
 
 Download all messages from a Gmail or IMAP account. When called without an email argument, syncs all configured syncable accounts.
@@ -160,6 +184,52 @@ daemon serializes this work with other archive mutations.
 
 ---
 
+## sync-teams
+
+Sync Microsoft Teams chats and channels for an authorized account.
+
+```bash
+msgvault sync-teams <email>
+msgvault sync-teams <email> --no-channels
+msgvault sync-teams <email> --limit 100
+msgvault sync-teams <email> --full
+```
+
+Full versus incremental sync is detected from stored cursors and checkpoints.
+`--full` ignores those cursors and re-fetches messages, upserting rows in place
+so importer upgrades can repair existing data without creating duplicates.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--no-channels` | `false` | Sync chats only and skip team channels |
+| `--limit` | `0` | Maximum messages per conversation (`0` = unlimited) |
+| `--full` | `false` | Ignore stored cursor and re-fetch every message |
+
+See [Microsoft Teams](/usage/teams/) for setup, scheduling, search, and inline
+media backfill.
+
+---
+
+## backfill-teams-media
+
+Re-fetch Microsoft Teams inline hosted-content media for already imported
+messages.
+
+```bash
+msgvault backfill-teams-media <email>
+msgvault backfill-teams-media <email> --only-incomplete
+```
+
+The command scans stored Teams HTML bodies for Graph `hostedContents` URLs and
+downloads those images into the attachment store. It is idempotent because
+attachments are content-addressed.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--only-incomplete` | `false` | Retry only messages whose inline media is still missing |
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.
@@ -180,7 +250,7 @@ msgvault add-calendar <email> [flags]
 
 ## sync-calendar
 
-Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and embedded for semantic search when vector search is enabled. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only.
+Sync Google Calendar events for an account. The account is resolved from a `[[gcal]]` config entry (by name or email) or used directly as an email. The first run (or `--full`) does a full sync that registers calendars; later runs are incremental via the Calendar `syncToken`. Events are stored as searchable records (`message_type = calendar_event`) and become eligible for semantic search when the embedding worker runs. Cancelled events are retained and marked cancelled, never deleted. Sync is read-only.
 
 ```bash
 msgvault sync-calendar <name|email> [flags]
@@ -411,6 +481,95 @@ msgvault sync-synctech-sms <name>
 
 ---
 
+## backup
+
+Create, list, verify, and restore incremental archive snapshots in a backup
+repository.
+
+```bash
+msgvault backup init --repo ~/Backups/msgvault
+msgvault backup create --repo ~/Backups/msgvault
+msgvault backup list --repo ~/Backups/msgvault
+msgvault backup verify --repo ~/Backups/msgvault
+msgvault backup restore --target ~/msgvault-restored --repo ~/Backups/msgvault
+```
+
+Every backup subcommand requires a repository: pass `--repo`, or set
+`[backup].repo` in `config.toml` to omit it. `backup init` initializes the
+repository directory but does not modify `config.toml`.
+`backup create` is routed through the selected daemon so the daemon can freeze a
+consistent SQLite snapshot while it scans pages and attachments. `backup verify`
+and `backup restore` run locally against the repository because they do not
+write the live archive.
+
+### backup init
+
+```bash
+msgvault backup init --repo <dir>
+```
+
+| Flag | Description |
+|---|---|
+| `--repo <dir>` | Backup repository directory |
+
+### backup create
+
+```bash
+msgvault backup create [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--repo <dir>` | Backup repository directory |
+| `--include-config` | Include `config.toml` verbatim; may contain API keys |
+| `--include-tokens` | Include OAuth token files |
+| `--allow-plaintext-secrets` | Allow config/tokens in an unencrypted repository |
+| `--tag <text>` | Optional label recorded on the snapshot manifest |
+| `--force-unlock` | Break a stale exclusive repository lock before creating |
+| `--jobs N` | Concurrent attachment capture workers; `0` uses one per CPU |
+
+### backup list
+
+```bash
+msgvault backup list [--repo <dir>]
+```
+
+Prints snapshot ID, creation time, message count, bytes added, and tag.
+
+### backup verify
+
+```bash
+msgvault backup verify [snapshot] [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--repo <dir>` | Backup repository directory |
+| `--all` | Verify every snapshot instead of only the latest |
+| `--quick` | Skip reading and hash-verifying content blobs |
+| `--force-unlock` | Break a stale exclusive repository lock before verifying |
+| `--jobs N` | Concurrent pack readers; `0` uses one per CPU |
+
+### backup restore
+
+```bash
+msgvault backup restore [snapshot] --target <dir> [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--repo <dir>` | Backup repository directory |
+| `--target <dir>` | Directory to restore into (required) |
+| `--overwrite` | Allow restoring into a non-empty target directory |
+| `--force-unlock` | Break a stale exclusive repository lock before restoring |
+| `--jobs N` | Concurrent pack readers; `0` uses one per CPU |
+
+Restoring into the live archive home of a running daemon is refused. See
+[Backup](/usage/backup/) for repository format, scheduling, verification, and
+privacy details.
+
+---
+
 ## search
 
 Search the archive with Gmail-like query syntax. Supports keyword (FTS5), semantic, and hybrid modes.
@@ -426,6 +585,7 @@ msgvault search <query> [flags]
 | `--json` | Output results as JSON |
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
+| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `calendar_event`, `sms` |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |
 

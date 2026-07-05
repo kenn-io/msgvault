@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -568,6 +569,7 @@ func TestOpenAPIExportsServerRouteTable(t *testing.T) {
 	expected := map[string][]string{
 		"/health":                                {"get", "head"},
 		daemon.DefaultPingPath:                   {"get"},
+		"/api/v1/health":                         {"get"},
 		"/api/v1/stats":                          {"get"},
 		"/api/v1/cli/init-db":                    {"post"},
 		"/api/v1/cli/stats":                      {"get"},
@@ -1268,6 +1270,49 @@ func TestHandleCLIRunRejectsDisallowedCommand(t *testing.T) {
 
 	assert.Equal(http.StatusBadRequest, resp.Code, "status")
 	assert.Contains(resp.Body.String(), "command is not allowed", "error")
+}
+
+func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		allowed bool
+	}{
+		{"backup create allowed", []string{"backup", "create"}, true},
+		{"backup init rejected", []string{"backup", "init"}, false},
+		{"backup verify rejected", []string{"backup", "verify"}, false},
+		{"backup with no subcommand rejected", []string{"backup"}, false},
+		{"backup unknown subcommand rejected", []string{"backup", "restore"}, false},
+		{"logs still allowed", []string{"logs"}, true},
+		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			st := &mockStore{
+				runFunc: func(_ context.Context, _ CLIRunRequest, emit func(CLIRunEvent) error) error {
+					return emit(CLIRunEvent{Type: cliStreamEventTypeComplete})
+				},
+			}
+			srv := newCLIHandlerTestServer(st)
+
+			body, err := json.Marshal(CLIRunRequest{Args: tc.args})
+			require.NoError(err, "marshal request")
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			srv.Router().ServeHTTP(resp, req)
+
+			if tc.allowed {
+				assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+			} else {
+				assert.Equal(http.StatusBadRequest, resp.Code, "status: %s", resp.Body.String())
+				assert.Contains(resp.Body.String(), "command_not_allowed", "error body")
+			}
+		})
+	}
 }
 
 func TestCLIDeleteDedupedPlansAndExecutesThroughDaemon(t *testing.T) {

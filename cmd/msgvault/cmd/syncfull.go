@@ -229,7 +229,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 // caller-provided getOAuthMgr factory. Pass nil to use oauth.Scopes; pass
 // oauth.ScopesDeletion (or another set) for workflows that need elevated
 // access.
-func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string) (gmail.API, error) {
+func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(string) (*oauth.Manager, error), saScopes []string, imapOpts ...imaplib.Option) (gmail.API, error) {
 	switch src.SourceType {
 	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
@@ -278,6 +278,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 
 		var opts []imaplib.Option
 		opts = append(opts, imaplib.WithLogger(logger))
+		opts = append(opts, imapOpts...)
 
 		var since, before time.Time
 		if syncAfter != "" {
@@ -328,8 +329,88 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(str
 	}
 }
 
+// loadIMAPFolderStates returns the saved per-mailbox states in the map
+// form the IMAP client consumes.
+func loadIMAPFolderStates(s *store.Store, sourceID int64) (map[string]imaplib.FolderState, error) {
+	saved, err := s.GetIMAPFolderStates(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	states := make(map[string]imaplib.FolderState, len(saved))
+	for _, st := range saved {
+		states[st.Mailbox] = imaplib.FolderState{
+			UIDValidity: st.UIDValidity,
+			UIDNext:     st.UIDNext,
+		}
+	}
+	return states, nil
+}
+
+// imapFolderStateOptions loads saved per-mailbox states for an IMAP
+// source so its client can skip unchanged mailboxes during listing.
+// forceRescan (--noresume) bypasses the saved states so every mailbox
+// is freshly enumerated. Load failures only cost the optimization, so
+// they are logged and swallowed.
+func imapFolderStateOptions(s *store.Store, src *store.Source, forceRescan bool) []imaplib.Option {
+	if forceRescan || src.SourceType != sourceTypeIMAP {
+		return nil
+	}
+	states, err := loadIMAPFolderStates(s, src.ID)
+	if err != nil {
+		logger.Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
+		return nil
+	}
+	if len(states) == 0 {
+		return nil
+	}
+	return []imaplib.Option{imaplib.WithFolderStates(states)}
+}
+
+// saveIMAPFolderStates persists the per-mailbox states observed during
+// listing, but only after a sync that completed cleanly: an
+// interrupted, truncated (--limit), or partly failed run must not
+// advance the watermarks, or the messages it skipped would never be
+// fetched. Save failures only cost the next run's speedup, so they are
+// logged and swallowed.
+func saveIMAPFolderStates(s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) {
+	imapClient, ok := apiClient.(*imaplib.Client)
+	if !ok || summary == nil {
+		return
+	}
+	if summary.Errors > 0 {
+		return
+	}
+	if limit > 0 && summary.MessagesFound >= int64(limit) {
+		return
+	}
+	observed := imapClient.ObservedFolderStates()
+	if len(observed) == 0 {
+		return
+	}
+	states := make([]store.IMAPFolderState, 0, len(observed))
+	for mailbox, st := range observed {
+		states = append(states, store.IMAPFolderState{
+			Mailbox:     mailbox,
+			UIDValidity: st.UIDValidity,
+			UIDNext:     st.UIDNext,
+		})
+	}
+	if err := s.UpsertIMAPFolderStates(src.ID, states); err != nil {
+		logger.Warn("failed to save IMAP folder states", "source", src.Identifier, "error", err)
+	}
+}
+
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (*oauth.Manager, error), src *store.Source) error {
-	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil)
+	progress := &CLIProgress{}
+
+	// --noresume promises a fresh sync, so it must also bypass the
+	// saved folder watermarks and re-enumerate every mailbox. A clean
+	// completed run still saves fresh watermarks afterwards.
+	imapOpts := imapFolderStateOptions(s, src, syncNoResume)
+	if src.SourceType == sourceTypeIMAP {
+		imapOpts = append(imapOpts, imaplib.WithListProgress(progress.OnIMAPListProgress))
+	}
+	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
 	if err != nil {
 		return err
 	}
@@ -367,7 +448,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 	// Create syncer with progress reporter
 	syncer := sync.New(apiClient, s, opts).
 		WithLogger(logger).
-		WithProgress(&CLIProgress{})
+		WithProgress(progress)
 
 	// Run sync
 	startTime := time.Now()
@@ -394,8 +475,15 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(string) (
 		return fmt.Errorf("sync failed: %w", err)
 	}
 
-	// Print summary
-	fmt.Println()
+	if src.SourceType == sourceTypeIMAP {
+		saveIMAPFolderStates(s, src, apiClient, summary, opts.Limit)
+	}
+
+	// Print summary; skip the spacer when no progress lines were
+	// printed so a no-op sync doesn't emit stacked blank lines.
+	if progress.printedAnything() {
+		fmt.Println()
+	}
 	fmt.Println("Sync complete!")
 	fmt.Printf("  Duration:      %s\n", summary.Duration.Round(time.Second))
 	fmt.Printf("  Messages:      %d found, %d added, %d skipped\n",
@@ -469,6 +557,9 @@ const (
 const (
 	cliProgressTTYInterval   = 2 * time.Second
 	cliProgressPlainInterval = 30 * time.Second
+	// Folder listing is much faster per item than message fetching, so
+	// plain-mode listing updates can come more often without flooding.
+	cliListPlainInterval = 15 * time.Second
 )
 
 type CLIProgress struct {
@@ -481,6 +572,16 @@ type CLIProgress struct {
 	skipped   int64
 	mode      progressOutputMode
 	out       io.Writer // defaults to os.Stdout; tests inject a buffer
+
+	printedProgress bool      // a sync progress line has been printed
+	printedList     bool      // a folder-listing line has been printed
+	lastListPrint   time.Time // throttle for intermediate listing updates
+}
+
+// printedAnything reports whether any progress output was emitted,
+// so callers can avoid stacking blank lines around silent syncs.
+func (p *CLIProgress) printedAnything() bool {
+	return p.printedProgress || p.printedList
 }
 
 func (p *CLIProgress) OnStart(total int64) {
@@ -516,6 +617,53 @@ func (p *CLIProgress) OnLatestDate(date time.Time) {
 	p.latestDate = date
 }
 
+// OnIMAPListProgress renders mailbox-enumeration progress for IMAP
+// syncs (the phase before any message is fetched, which is otherwise
+// silent). The first and final updates always print; the final one is
+// a permanent summary line so even an instant all-skipped resync shows
+// what happened.
+func (p *CLIProgress) OnIMAPListProgress(done, total int, mailbox string, found, unchanged int) {
+	tty := p.outputMode() == progressModeTTY
+
+	if done >= total {
+		prefix := ""
+		if tty && p.printedList {
+			prefix = "\r" // overwrite the in-place listing line
+		}
+		skipNote := ""
+		if unchanged > 0 {
+			skipNote = fmt.Sprintf(", %d unchanged (skipped)", unchanged)
+		}
+		// Trailing spaces overwrite leftovers of a longer in-place line.
+		_, _ = fmt.Fprintf(p.writer(),
+			"%s  Checked %d folders: %d messages to examine%s                    \n",
+			prefix, total, found, skipNote)
+		p.printedList = true
+		return
+	}
+
+	interval := cliProgressTTYInterval
+	if !tty {
+		interval = cliListPlainInterval
+	}
+	if p.printedList && time.Since(p.lastListPrint) < interval {
+		return
+	}
+	p.printedList = true
+	p.lastListPrint = time.Now()
+
+	if tty {
+		_, _ = fmt.Fprintf(p.writer(),
+			"\r  Checking folders: %d/%d (%s)    ", done, total, mailbox)
+		return
+	}
+	if done == 0 {
+		_, _ = fmt.Fprintf(p.writer(), "  Checking %d folders...\n", total)
+		return
+	}
+	_, _ = fmt.Fprintf(p.writer(), "  Checking folders: %d/%d\n", done, total)
+}
+
 func (p *CLIProgress) outputMode() progressOutputMode {
 	if p.mode == progressModeAuto {
 		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
@@ -537,13 +685,16 @@ func (p *CLIProgress) writer() io.Writer {
 func (p *CLIProgress) printProgress() {
 	// Throttle: an in-place line can refresh every 2 seconds, but each
 	// plain-mode update is a permanent line, so those come every 30.
+	// The first line always prints so a slow fetch (IMAP especially)
+	// shows signs of life as soon as the first page completes.
 	interval := cliProgressTTYInterval
 	if p.outputMode() == progressModePlain {
 		interval = cliProgressPlainInterval
 	}
-	if time.Since(p.lastPrint) < interval {
+	if p.printedProgress && time.Since(p.lastPrint) < interval {
 		return
 	}
+	p.printedProgress = true
 	p.lastPrint = time.Now()
 
 	elapsed := time.Since(p.startTime)
@@ -623,7 +774,7 @@ func imapSkipReason(src *store.Source) (string, error) {
 
 func init() {
 	syncFullCmd.Flags().StringVar(&syncQuery, "query", "", "Gmail search query")
-	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume)")
+	syncFullCmd.Flags().BoolVar(&syncNoResume, "noresume", false, "Force fresh sync (don't resume; re-enumerates all IMAP folders)")
 	syncFullCmd.Flags().StringVar(&syncBefore, "before", "", "Only messages before this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().StringVar(&syncAfter, "after", "", "Only messages after this date (YYYY-MM-DD)")
 	syncFullCmd.Flags().IntVar(&syncLimit, "limit", 0, "Limit number of messages (for testing)")

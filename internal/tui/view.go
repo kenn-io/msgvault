@@ -2,86 +2,113 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// Monochrome theme - inherits terminal background where possible.
-// Only cursor, title bar, and alt rows use explicit backgrounds.
-var (
+type tuiStyles struct {
+	titleBar          lipgloss.Style
+	stats             lipgloss.Style
+	spinner           lipgloss.Style
+	tableHeader       lipgloss.Style
+	separator         lipgloss.Style
+	cursorRow         lipgloss.Style
+	selectedRow       lipgloss.Style
+	normalRow         lipgloss.Style
+	altRow            lipgloss.Style
+	footer            lipgloss.Style
+	err               lipgloss.Style
+	loading           lipgloss.Style
+	selectedIndicator lipgloss.Style
+	modal             lipgloss.Style
+	modalTitle        lipgloss.Style
+	flash             lipgloss.Style
+}
+
+func newStyles(hasDarkBackground bool) tuiStyles {
+	lightDark := lipgloss.LightDark(hasDarkBackground)
+	adaptiveColor := func(light, dark string) color.Color {
+		return lightDark(lipgloss.Color(light), lipgloss.Color(dark))
+	}
+
 	// Explicit backgrounds only for elements that need contrast.
-	bgAlt    = lipgloss.AdaptiveColor{Light: "#f0f0f0", Dark: "#181818"}
-	bgCursor = lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#282828"}
+	bgAlt := adaptiveColor("#f0f0f0", "#181818")
+	bgCursor := adaptiveColor("#e0e0e0", "#282828")
 
-	// Title bar style - bold with visible background.
-	titleBarStyle = lipgloss.NewStyle().
+	return tuiStyles{
+		// Title bar style - bold with visible background.
+		titleBar: lipgloss.NewStyle().
 			Bold(true).
-			Background(lipgloss.AdaptiveColor{Light: "#e0e0e0", Dark: "#333333"}).
-			Foreground(lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"}).
-			Padding(0, 1)
+			Background(adaptiveColor("#e0e0e0", "#333333")).
+			Foreground(adaptiveColor("#000000", "#ffffff")).
+			Padding(0, 1),
 
-	statsStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#999999"}).
-			Padding(0, 1)
+		stats: lipgloss.NewStyle().
+			Foreground(adaptiveColor("#555555", "#999999")).
+			Padding(0, 1),
 
-	// Spinner style - NOT faint so it's visible.
-	spinnerStyle = lipgloss.NewStyle().
-			Bold(true)
+		// Spinner style - NOT faint so it's visible.
+		spinner: lipgloss.NewStyle().
+			Bold(true),
 
-	tableHeaderStyle = lipgloss.NewStyle().
-				Bold(true)
+		tableHeader: lipgloss.NewStyle().
+			Bold(true),
 
-	// Separator line style for under headers.
-	separatorStyle = lipgloss.NewStyle().
-			Faint(true)
+		// Separator line style for under headers.
+		separator: lipgloss.NewStyle().
+			Faint(true),
 
-	// Cursor row: subtle background for visibility.
-	cursorRowStyle = lipgloss.NewStyle().
-			Background(bgCursor)
+		// Cursor row: subtle background for visibility.
+		cursorRow: lipgloss.NewStyle().
+			Background(bgCursor),
 
-	// Selected (checked) rows: bold, inherits terminal background.
-	selectedRowStyle = lipgloss.NewStyle().
-				Bold(true)
+		// Selected (checked) rows: bold, inherits terminal background.
+		selectedRow: lipgloss.NewStyle().
+			Bold(true),
 
-	// Normal rows inherit terminal background.
-	normalRowStyle = lipgloss.NewStyle()
+		// Normal rows inherit terminal background.
+		normalRow: lipgloss.NewStyle(),
 
-	// Alternating rows: very subtle shift from terminal default.
-	altRowStyle = lipgloss.NewStyle().
-			Background(bgAlt)
+		// Alternating rows: very subtle shift from terminal default.
+		altRow: lipgloss.NewStyle().
+			Background(bgAlt),
 
-	footerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#999999"}).
-			Padding(0, 1)
+		footer: lipgloss.NewStyle().
+			Foreground(adaptiveColor("#555555", "#999999")).
+			Padding(0, 1),
 
-	errorStyle = lipgloss.NewStyle().
-			Bold(true)
+		err: lipgloss.NewStyle().
+			Bold(true),
 
-	loadingStyle = lipgloss.NewStyle().
-			Italic(true)
+		loading: lipgloss.NewStyle().
+			Italic(true),
 
-	selectedIndicatorStyle = lipgloss.NewStyle().
-				Bold(true)
+		selectedIndicator: lipgloss.NewStyle().
+			Bold(true),
 
-	modalStyle = lipgloss.NewStyle().
+		modal: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			Padding(1, 2).
-			Background(lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#000000"})
+			Background(adaptiveColor("#ffffff", "#000000")),
 
-	modalTitleStyle = lipgloss.NewStyle().
-			Bold(true)
+		modalTitle: lipgloss.NewStyle().
+			Bold(true),
 
-	flashStyle = lipgloss.NewStyle().
+		flash: lipgloss.NewStyle().
 			Italic(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#996600", Dark: "#ffcc00"}) // Amber for visibility
+			Foreground(adaptiveColor("#996600", "#ffcc00")), // Amber for visibility
+	}
+}
 
+var (
 	highlightStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#000000", Dark: "#000000"}).
-			Background(lipgloss.AdaptiveColor{Light: "#e8d44d", Dark: "#e8d44d"}).
-			Bold(true)
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#e8d44d")).
+		Bold(true)
 )
 
 // viewTypeAbbrev returns view type name for column headers and top-level breadcrumb.
@@ -186,7 +213,7 @@ func (m Model) buildTitleBar() string {
 			line1Content += strings.Repeat(" ", gap) + updateNotice
 		}
 	}
-	return titleBarStyle.Render(padRight(line1Content, m.width-2)) // -2 for padding
+	return m.styles.titleBar.Render(padRight(line1Content, m.width-2)) // -2 for padding
 }
 
 // buildBreadcrumb builds the breadcrumb text based on the current navigation level.
@@ -272,8 +299,8 @@ func (m Model) headerView() string {
 	breadcrumb := m.buildBreadcrumb()
 	statsStr := m.buildStatsString()
 
-	breadcrumbStyled := statsStyle.Render(" " + breadcrumb + " ")
-	statsStyled := statsStyle.Render(statsStr + " ")
+	breadcrumbStyled := m.styles.stats.Render(" " + breadcrumb + " ")
+	statsStyled := m.styles.stats.Render(statsStr + " ")
 	gap := max(m.width-lipgloss.Width(breadcrumbStyled)-lipgloss.Width(statsStyled), 0)
 	line2 := breadcrumbStyled + strings.Repeat(" ", gap) + statsStyled
 
@@ -284,16 +311,16 @@ func (m Model) headerView() string {
 func (m Model) aggregateTableView() string {
 	if len(m.rows) == 0 && !m.loading && !m.inlineSearchActive && m.searchQuery == "" && m.err == nil {
 		var sb strings.Builder
-		sb.WriteString(tableHeaderStyle.Render(padRight("   "+viewTypeAbbrev(m.viewType), m.width)))
+		sb.WriteString(m.styles.tableHeader.Render(padRight("   "+viewTypeAbbrev(m.viewType), m.width)))
 		sb.WriteString("\n")
-		sb.WriteString(separatorStyle.Render(strings.Repeat("\u2500", m.width)))
+		sb.WriteString(m.styles.separator.Render(strings.Repeat("\u2500", m.width)))
 		sb.WriteString("\n")
-		sb.WriteString(normalRowStyle.Render(padRight("   No data", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(padRight("   No data", m.width)))
 		sb.WriteString("\n")
 		// 1 "No data" + (pageSize-2) blanks = pageSize-1 data rows,
 		// then +1 info line = pageSize body rows total.
 		for i := 1; i < m.pageSize-1; i++ {
-			sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+			sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 			sb.WriteString("\n")
 		}
 		sb.WriteString(m.renderInfoLine("", m.loading))
@@ -347,9 +374,9 @@ func (m Model) aggregateTableView() string {
 		sizeLabel,
 		attachLabel,
 	)
-	sb.WriteString(tableHeaderStyle.Render(padRight(headerRow, m.width)))
+	sb.WriteString(m.styles.tableHeader.Render(padRight(headerRow, m.width)))
 	sb.WriteString("\n")
-	sb.WriteString(separatorStyle.Render(strings.Repeat("─", m.width)))
+	sb.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
 	sb.WriteString("\n")
 
 	// Data rows - show at most pageSize-1 to leave room for info line
@@ -364,12 +391,12 @@ func (m Model) aggregateTableView() string {
 		var selIndicator string
 		if isCursor {
 			if isChecked {
-				selIndicator = selectedIndicatorStyle.Render("▶✓ ")
+				selIndicator = m.styles.selectedIndicator.Render("▶✓ ")
 			} else {
-				selIndicator = cursorRowStyle.Render("▶  ")
+				selIndicator = m.styles.cursorRow.Render("▶  ")
 			}
 		} else if isChecked {
-			selIndicator = selectedIndicatorStyle.Render(" ✓ ")
+			selIndicator = m.styles.selectedIndicator.Render(" ✓ ")
 		} else {
 			selIndicator = "   "
 		}
@@ -389,13 +416,13 @@ func (m Model) aggregateTableView() string {
 
 		var style lipgloss.Style
 		if isCursor {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if isChecked {
-			style = selectedRowStyle
+			style = m.styles.selectedRow
 		} else if i%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		sb.WriteString(selIndicator)
@@ -405,7 +432,7 @@ func (m Model) aggregateTableView() string {
 
 	// Show "No results" indicator when search returned zero matches
 	if len(m.rows) == 0 && !m.loading {
-		sb.WriteString(normalRowStyle.Render(padRight("   No results found", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(padRight("   No results found", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -416,7 +443,7 @@ func (m Model) aggregateTableView() string {
 		dataRows = 1 // the "No results found" row
 	}
 	for i := dataRows; i < m.pageSize-1; i++ {
-		sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -427,6 +454,8 @@ func (m Model) aggregateTableView() string {
 		infoContent = "/" + m.searchInput.View()
 	} else if m.searchQuery != "" {
 		infoContent = fmt.Sprintf(" Search: %q", m.searchQuery)
+	} else if m.loading && m.analyticsNotice != "" {
+		infoContent = " " + m.analyticsNotice
 	}
 	sb.WriteString(m.renderInfoLine(infoContent, isLoading))
 
@@ -444,7 +473,7 @@ func (m Model) messageListView() string {
 	// When a search is active (or search bar is open), fall through to full
 	// rendering so the search bar stays visible and the user can edit their query.
 	if len(m.messages) == 0 && !m.loading && !m.inlineSearchActive && m.searchQuery == "" && m.err == nil {
-		return m.fillScreen(normalRowStyle.Render(padRight("No messages", m.width)), 1)
+		return m.fillScreen(m.styles.normalRow.Render(padRight("No messages", m.width)), 1)
 	}
 
 	var sb strings.Builder
@@ -487,9 +516,9 @@ func (m Model) messageListView() string {
 		subjectWidth, subjectLabel,
 		sizeWidth, sizeLabel,
 	)
-	sb.WriteString(tableHeaderStyle.Render(padRight(headerRow, m.width)))
+	sb.WriteString(m.styles.tableHeader.Render(padRight(headerRow, m.width)))
 	sb.WriteString("\n")
-	sb.WriteString(separatorStyle.Render(strings.Repeat("─", m.width)))
+	sb.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
 	sb.WriteString("\n")
 
 	// Data rows - show at most pageSize-1 to leave room for info line
@@ -497,7 +526,7 @@ func (m Model) messageListView() string {
 
 	// Show "No results" indicator when search returned zero matches
 	if len(m.messages) == 0 && !m.loading {
-		sb.WriteString(normalRowStyle.Render(padRight("   No results found", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(padRight("   No results found", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -510,12 +539,12 @@ func (m Model) messageListView() string {
 		var selIndicator string
 		if isCursor {
 			if isChecked {
-				selIndicator = selectedIndicatorStyle.Render("▶✓ ")
+				selIndicator = m.styles.selectedIndicator.Render("▶✓ ")
 			} else {
-				selIndicator = cursorRowStyle.Render("▶  ")
+				selIndicator = m.styles.cursorRow.Render("▶  ")
 			}
 		} else if isChecked {
-			selIndicator = selectedIndicatorStyle.Render(" ✓ ")
+			selIndicator = m.styles.selectedIndicator.Render(" ✓ ")
 		} else {
 			selIndicator = "   "
 		}
@@ -574,13 +603,13 @@ func (m Model) messageListView() string {
 
 		var style lipgloss.Style
 		if isCursor {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if isChecked {
-			style = selectedRowStyle
+			style = m.styles.selectedRow
 		} else if i%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		sb.WriteString(selIndicator)
@@ -595,7 +624,7 @@ func (m Model) messageListView() string {
 		dataRows = 1 // the "No results found" row
 	}
 	for i := dataRows; i < m.pageSize-1; i++ {
-		sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -722,11 +751,11 @@ func (m Model) fillScreenWithPageSize(content string, usedLines, pageSize int) s
 	sb.WriteString("\n")
 	// Fill remaining space (minus 1 for notification line)
 	for i := usedLines; i < pageSize-1; i++ {
-		sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		sb.WriteString("\n")
 	}
 	// Notification line (blank for now)
-	sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+	sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 	return sb.String()
 }
 
@@ -744,13 +773,13 @@ func (m Model) fillScreenDetail(content string, usedLines int) string {
 func (m Model) messageDetailView() string {
 	if m.messageDetail == nil {
 		if m.loading {
-			return m.fillScreenDetail(loadingStyle.Render(padRight(m.spinnerIndicator()+" Loading message...", m.width)), 1)
+			return m.fillScreenDetail(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading message...", m.width)), 1)
 		}
-		content := m.fillScreenDetail(normalRowStyle.Render(strings.Repeat(" ", m.width)), 1)
+		content := m.fillScreenDetail(m.styles.normalRow.Render(strings.Repeat(" ", m.width)), 1)
 		if m.modal != modalNone {
 			return m.overlayModal(content)
 		}
-		return m.fillScreenDetail(errorStyle.Render(padRight("Message not found (nil detail)", m.width)), 1)
+		return m.fillScreenDetail(m.styles.err.Render(padRight("Message not found (nil detail)", m.width)), 1)
 	}
 
 	lines := m.buildDetailLines()
@@ -789,13 +818,13 @@ func (m Model) messageDetailView() string {
 			// Current match line gets a subtle indicator
 			line = "▶ " + line
 		}
-		sb.WriteString(normalRowStyle.Render(padRight(line, m.width)))
+		sb.WriteString(m.styles.normalRow.Render(padRight(line, m.width)))
 		sb.WriteString("\n")
 	}
 
 	// Fill remaining space (minus 1 for notification line)
 	for i := len(visibleLines); i < detailPageSize-1; i++ {
-		sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -826,11 +855,11 @@ func (m Model) messageDetailView() string {
 // threadView renders the thread/conversation view.
 func (m Model) threadView() string {
 	if m.loading && len(m.threadMessages) == 0 {
-		return m.fillScreen(loadingStyle.Render(padRight(m.spinnerIndicator()+" Loading thread...", m.width)), 1)
+		return m.fillScreen(m.styles.loading.Render(padRight(m.spinnerIndicator()+" Loading thread...", m.width)), 1)
 	}
 
 	if !m.loading && len(m.threadMessages) == 0 {
-		content := m.fillScreen(normalRowStyle.Render(padRight("No messages in thread", m.width)), 1)
+		content := m.fillScreen(m.styles.normalRow.Render(padRight("No messages in thread", m.width)), 1)
 		if m.modal != modalNone {
 			return m.overlayModal(content)
 		}
@@ -850,11 +879,11 @@ func (m Model) threadView() string {
 		fromSubjectWidth, "From / Subject",
 		sizeWidth, "Size",
 	)
-	sb.WriteString(tableHeaderStyle.Render(padRight(headerRow, m.width)))
+	sb.WriteString(m.styles.tableHeader.Render(padRight(headerRow, m.width)))
 	sb.WriteString("\n")
 
 	// Separator
-	sb.WriteString(separatorStyle.Render(strings.Repeat("─", m.width)))
+	sb.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
 	sb.WriteString("\n")
 
 	// Calculate visible rows (account for header + separator + notification line)
@@ -873,11 +902,11 @@ func (m Model) threadView() string {
 		// Selection indicator (styled to match row background)
 		var selIndicator string
 		if isCursor {
-			selIndicator = cursorRowStyle.Render("▶  ")
+			selIndicator = m.styles.cursorRow.Render("▶  ")
 		} else if i%2 == 0 {
-			selIndicator = normalRowStyle.Render("   ")
+			selIndicator = m.styles.normalRow.Render("   ")
 		} else {
-			selIndicator = altRowStyle.Render("   ")
+			selIndicator = m.styles.altRow.Render("   ")
 		}
 
 		// Format date
@@ -918,11 +947,11 @@ func (m Model) threadView() string {
 		// Apply style
 		var style lipgloss.Style
 		if isCursor {
-			style = cursorRowStyle
+			style = m.styles.cursorRow
 		} else if i%2 == 0 {
-			style = normalRowStyle
+			style = m.styles.normalRow
 		} else {
-			style = altRowStyle
+			style = m.styles.altRow
 		}
 
 		sb.WriteString(selIndicator)
@@ -932,7 +961,7 @@ func (m Model) threadView() string {
 
 	// Fill remaining space (minus 1 for notification line)
 	for i := endRow - m.threadScrollOffset; i < visibleRows-1; i++ {
-		sb.WriteString(normalRowStyle.Render(strings.Repeat(" ", m.width)))
+		sb.WriteString(m.styles.normalRow.Render(strings.Repeat(" ", m.width)))
 		sb.WriteString("\n")
 	}
 
@@ -1080,7 +1109,7 @@ func (m Model) footerView() string {
 	// Use lipgloss.Width for ANSI-aware width calculation (handles Unicode arrows ↑↓ correctly)
 	gap := max(m.width-lipgloss.Width(keysStr)-lipgloss.Width(posStr)-lipgloss.Width(selStr)-2, 0)
 
-	return footerStyle.Render(keysStr + strings.Repeat(" ", gap) + selStr + posStr)
+	return m.styles.footer.Render(keysStr + strings.Repeat(" ", gap) + selStr + posStr)
 }
 
 // spinnerIndicator returns the current spinner frame string.
@@ -1094,22 +1123,22 @@ func (m Model) spinnerIndicator() string {
 // renderInfoLine renders the info/notification line with optional right-aligned loading spinner.
 // Used on the second-to-last line of table views (before footer).
 func (m Model) renderInfoLine(content string, loading bool) string {
-	// statsStyle has Padding(0, 1) which adds 2 characters, so content should be m.width-2
+	// m.styles.stats has Padding(0, 1) which adds 2 characters, so content should be m.width-2
 	contentWidth := max(m.width-2, 1)
 
 	if content == "" && !loading {
-		return statsStyle.Render(strings.Repeat(" ", contentWidth))
+		return m.styles.stats.Render(strings.Repeat(" ", contentWidth))
 	}
 	if loading {
 		indicator := m.spinnerIndicator()
 		currentWidth := lipgloss.Width(content)
 		indicatorWidth := lipgloss.Width(indicator)
 		gap := max(contentWidth-currentWidth-indicatorWidth, 1)
-		// Render spinner with bold style so it's visible (statsStyle is faint)
-		styledIndicator := spinnerStyle.Render(indicator)
+		// Render spinner with bold style so it's visible (m.styles.stats is faint)
+		styledIndicator := m.styles.spinner.Render(indicator)
 		content += strings.Repeat(" ", gap) + styledIndicator
 	}
-	return statsStyle.Render(padRight(content, contentWidth))
+	return m.styles.stats.Render(padRight(content, contentWidth))
 }
 
 // renderNotificationLine renders the notification line for detail/thread views.
@@ -1123,22 +1152,22 @@ func (m Model) renderNotificationLine() string {
 			flashWidth := lipgloss.Width(flash)
 			indicatorWidth := lipgloss.Width(indicator)
 			gap := max(m.width-flashWidth-indicatorWidth, 1)
-			return flashStyle.Render(padRight(flash+strings.Repeat(" ", gap)+indicator, m.width))
+			return m.styles.flash.Render(padRight(flash+strings.Repeat(" ", gap)+indicator, m.width))
 		}
-		return flashStyle.Render(padRight(" "+m.flashMessage, m.width))
+		return m.styles.flash.Render(padRight(" "+m.flashMessage, m.width))
 	}
 	if m.loading {
 		return m.renderInfoLine("", true)
 	}
-	return normalRowStyle.Render(strings.Repeat(" ", m.width))
+	return m.styles.normalRow.Render(strings.Repeat(" ", m.width))
 }
 
 // overlayModal renders a modal dialog over the content.
 // rawHelpLines contains the help modal content. The first line is the title
-// (rendered with modalTitleStyle at display time). This is a package-level
+// (rendered with m.styles.modalTitle at display time). This is a package-level
 // variable so len() can be used without rebuilding the slice on every call.
 var rawHelpLines = []string{
-	"Keyboard Shortcuts", // rendered with modalTitleStyle in overlayModal
+	"Keyboard Shortcuts", // rendered with m.styles.modalTitle in overlayModal
 	"",
 	"Navigation",
 	"  ↑/k, ↓/j    Move cursor up/down",
@@ -1184,7 +1213,7 @@ func (m Model) renderDeleteConfirmModal() string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(modalTitleStyle.Render("Confirm Deletion"))
+	sb.WriteString(m.styles.modalTitle.Render("Confirm Deletion"))
 	sb.WriteString("\n\n")
 	_, _ = fmt.Fprintf(&sb, "Stage %d messages for deletion?\n\n", len(m.pendingManifest.GmailIDs))
 	sb.WriteString("This creates a deletion batch. Messages will NOT be\n")
@@ -1199,14 +1228,14 @@ func (m Model) renderDeleteConfirmModal() string {
 
 // renderDeleteResultModal renders the deletion result modal content.
 func (m Model) renderDeleteResultModal() string {
-	return modalTitleStyle.Render("Result") + "\n\n" +
+	return m.styles.modalTitle.Render("Result") + "\n\n" +
 		m.modalResult + "\n\n" +
 		"Press any key to continue"
 }
 
 // renderQuitConfirmModal renders the quit confirmation modal content.
 func (m Model) renderQuitConfirmModal() string {
-	return modalTitleStyle.Render("Quit?") + "\n\n" +
+	return m.styles.modalTitle.Render("Quit?") + "\n\n" +
 		"Are you sure you want to quit?\n\n" +
 		"[Y] Yes    [N] No"
 }
@@ -1214,7 +1243,7 @@ func (m Model) renderQuitConfirmModal() string {
 // renderAccountSelectorModal renders the account selector modal content.
 func (m Model) renderAccountSelectorModal() string {
 	var sb strings.Builder
-	sb.WriteString(modalTitleStyle.Render("Select Account"))
+	sb.WriteString(m.styles.modalTitle.Render("Select Account"))
 	sb.WriteString("\n\n")
 	// All Accounts option
 	indicator := "○"
@@ -1237,7 +1266,7 @@ func (m Model) renderAccountSelectorModal() string {
 // renderFilterModal renders the filter toggle modal content with checkboxes.
 func (m Model) renderFilterModal() string {
 	var sb strings.Builder
-	sb.WriteString(modalTitleStyle.Render("Filter Messages"))
+	sb.WriteString(m.styles.modalTitle.Render("Filter Messages"))
 	sb.WriteString("\n\n")
 
 	type filterOption struct {
@@ -1280,7 +1309,7 @@ func (m Model) renderHelpModal() string {
 	rendered := make([]string, len(visible))
 	for i, line := range visible {
 		if m.helpScroll+i == 0 {
-			rendered[i] = modalTitleStyle.Render(line)
+			rendered[i] = m.styles.modalTitle.Render(line)
 		} else {
 			rendered[i] = line
 		}
@@ -1291,12 +1320,12 @@ func (m Model) renderHelpModal() string {
 // renderExportAttachmentsModal renders the export attachments modal content.
 func (m Model) renderExportAttachmentsModal() string {
 	if m.messageDetail == nil || len(m.messageDetail.Attachments) == 0 {
-		return modalTitleStyle.Render("Export Attachments") + "\n\n" +
+		return m.styles.modalTitle.Render("Export Attachments") + "\n\n" +
 			"No attachments to export.\n\n" +
 			"[Esc] Close"
 	}
 	var sb strings.Builder
-	sb.WriteString(modalTitleStyle.Render("Export Attachments"))
+	sb.WriteString(m.styles.modalTitle.Render("Export Attachments"))
 	sb.WriteString("\n\n")
 	sb.WriteString("Select attachments to export:\n\n")
 	for i, att := range m.messageDetail.Attachments {
@@ -1325,14 +1354,14 @@ func (m Model) renderExportAttachmentsModal() string {
 
 // renderErrorModal renders the error modal content.
 func (m Model) renderErrorModal() string {
-	return modalTitleStyle.Render("Error") + "\n\n" +
+	return m.styles.modalTitle.Render("Error") + "\n\n" +
 		m.modalResult + "\n\n" +
 		"Press any key to dismiss"
 }
 
 // renderExportResultModal renders the export result modal content.
 func (m Model) renderExportResultModal() string {
-	return modalTitleStyle.Render("Export Complete") + "\n\n" +
+	return m.styles.modalTitle.Render("Export Complete") + "\n\n" +
 		m.modalResult + "\n\n" +
 		"Press any key to close"
 }
@@ -1368,7 +1397,7 @@ func (m Model) overlayModal(background string) string {
 	}
 
 	// Render modal box
-	modal := modalStyle.Render(modalContent)
+	modal := m.styles.modal.Render(modalContent)
 
 	// Split background and modal into lines
 	bgLines := strings.Split(background, "\n")

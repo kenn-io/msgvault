@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -26,6 +28,15 @@ const (
 	serveOperationDrainTimeout  = 30 * time.Minute
 	serveStopGraceTimeout       = serveAPIShutdownTimeout + serveSchedulerStopTimeout + serveOperationDrainTimeout + 5*time.Second
 	serveBackgroundChildEnv     = "MSGVAULT_BACKGROUND_DAEMON"
+)
+
+// serveStopQuietWindow is how long `serve stop` waits silently before
+// explaining what the daemon is still doing; serveStopProgressInterval paces
+// the "still waiting" updates after that. Variables only so tests can shorten
+// them.
+var (
+	serveStopQuietWindow      = 2 * time.Second
+	serveStopProgressInterval = 30 * time.Second
 )
 
 var (
@@ -49,7 +60,7 @@ var serveStatusCmd = &cobra.Command{
 	Short: "Show msgvault daemon status",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStatus(cmd, cfg.Data.DataDir)
+		return runServeStatusWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
 	},
 }
 
@@ -58,7 +69,7 @@ var serveStopCmd = &cobra.Command{
 	Short: "Stop msgvault daemon",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runServeStop(cmd, cfg.Data.DataDir)
+		return runServeStopWithAPIKey(cmd, cfg.Data.DataDir, cfg.Server.APIKey)
 	},
 }
 
@@ -72,11 +83,17 @@ var serveRestartCmd = &cobra.Command{
 }
 
 func runServeStatus(cmd *cobra.Command, dataDir string) error {
+	return runServeStatusWithAPIKey(cmd, dataDir, "")
+}
+
+func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
 	out := cmd.OutOrStdout()
 	if rt := findDaemonRuntime(dataDir); rt != nil {
 		lines := serveStatusLines(rt)
-		lines = append(lines, vectorStatusLines(
-			fetchDaemonVectorHealth(cmd.Context(), urlFromDaemonRuntime(rt)))...)
+		if health := fetchDaemonHealthWithAPIKey(cmd.Context(), urlFromDaemonRuntime(rt), apiKey); health != nil {
+			lines = append(lines, vectorStatusLines(health.Vector)...)
+			lines = append(lines, operationStatusLines(health.Operation)...)
+		}
 		for _, line := range lines {
 			_, _ = fmt.Fprintln(out, line)
 		}
@@ -115,15 +132,34 @@ func serveStatusLines(rt *DaemonRuntime) []string {
 	return lines
 }
 
-// fetchDaemonVectorHealth fetches /health from a running daemon and returns
-// its vector block. Best-effort: any transport/decode failure returns nil
-// and the status output simply omits the vector line.
-func fetchDaemonVectorHealth(ctx context.Context, baseURL string) *api.VectorHealth {
+// fetchDaemonHealth fetches /health from a running daemon. Best-effort: any
+// transport/decode failure returns nil and callers simply omit the health
+// details.
+func fetchDaemonHealth(ctx context.Context, baseURL string) *api.HealthResponse {
+	return fetchDaemonHealthWithAPIKey(ctx, baseURL, "")
+}
+
+// fetchDaemonHealthWithAPIKey prefers the authenticated health endpoint so
+// local lifecycle commands can show detailed operation status when they have
+// the daemon's configured API key. It falls back to public /health for older
+// daemons, keyless callers, or auth mismatch.
+func fetchDaemonHealthWithAPIKey(ctx context.Context, baseURL string, apiKey string) *api.HealthResponse {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+
+	if health := fetchDaemonHealthEndpoint(ctx, baseURL+"/api/v1/health", apiKey); health != nil {
+		return health
+	}
+	return fetchDaemonHealthEndpoint(ctx, baseURL+"/health", "")
+}
+
+func fetchDaemonHealthEndpoint(ctx context.Context, url string, apiKey string) *api.HealthResponse {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil
+	}
+	if apiKey != "" {
+		req.Header.Set("X-Api-Key", apiKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -137,7 +173,7 @@ func fetchDaemonVectorHealth(ctx context.Context, baseURL string) *api.VectorHea
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
 		return nil
 	}
-	return health.Vector
+	return &health
 }
 
 func vectorStatusLines(vh *api.VectorHealth) []string {
@@ -149,6 +185,20 @@ func vectorStatusLines(vh *api.VectorHealth) []string {
 		line += " (" + vh.Error + ")"
 	}
 	return []string{line}
+}
+
+func operationStatusLines(op *api.OperationHealth) []string {
+	if op == nil || (!op.Busy && op.Label == "") {
+		return nil
+	}
+	if op.Label == "" {
+		return []string{"  busy:    archive operation in progress"}
+	}
+	if op.StartedAt == nil {
+		return []string{"  busy:    " + op.Label}
+	}
+	return []string{fmt.Sprintf("  busy:    %s (running for %s)",
+		op.Label, time.Since(*op.StartedAt).Round(time.Second))}
 }
 
 func daemonRunningLine(state string, rt *DaemonRuntime, pid int) string {
@@ -243,21 +293,25 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	return nil
 }
 
-func runServeStop(cmd *cobra.Command, dataDir string) error {
-	return stopLiveDaemons(cmd, dataDir, false)
+func runServeStopWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
+	return stopLiveDaemonsWithAPIKey(cmd, dataDir, apiKey, false)
 }
 
 func runServeRestart(cmd *cobra.Command, c *config.Config) error {
 	if c == nil {
 		return errors.New("nil config")
 	}
-	if err := stopLiveDaemons(cmd, c.Data.DataDir, true); err != nil {
+	if err := stopLiveDaemonsWithAPIKey(cmd, c.Data.DataDir, c.Server.APIKey, true); err != nil {
 		return err
 	}
 	return runServeStart(cmd, c)
 }
 
 func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) error {
+	return stopLiveDaemonsWithAPIKey(cmd, dataDir, "", quietNoDaemon)
+}
+
+func stopLiveDaemonsWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string, quietNoDaemon bool) error {
 	records, err := listLiveDaemonRuntimeRecords(dataDir)
 	if err != nil {
 		return err
@@ -278,7 +332,7 @@ func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) err
 			skipped++
 			continue
 		}
-		if err := stopDaemonProcess(rec, serveStopGraceTimeout); err != nil {
+		if err := stopDaemonProcess(cmd.OutOrStdout(), rec, apiKey, serveStopGraceTimeout); err != nil {
 			return fmt.Errorf("stop pid %d: %w", rec.PID, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stopped msgvault (pid %d).\n", rec.PID)
@@ -291,14 +345,14 @@ func stopLiveDaemons(cmd *cobra.Command, dataDir string, quietNoDaemon bool) err
 	return nil
 }
 
-func stopDaemonRuntimeForUpgradeImpl(_ config.Config, rt *DaemonRuntime) error {
+func stopDaemonRuntimeForUpgradeImpl(c config.Config, rt *DaemonRuntime) error {
 	if rt == nil {
 		return nil
 	}
 	if !stopTargetConfirmed(rt.Record) {
 		return fmt.Errorf("cannot confirm pid %d is the recorded msgvault daemon", rt.Record.PID)
 	}
-	if err := stopDaemonProcess(rt.Record, serveStopGraceTimeout); err != nil {
+	if err := stopDaemonProcess(os.Stdout, rt.Record, c.Server.APIKey, serveStopGraceTimeout); err != nil {
 		return fmt.Errorf("stop pid %d: %w", rt.Record.PID, err)
 	}
 	return nil
@@ -320,11 +374,15 @@ func processIdentityConfirmed(rec daemon.RuntimeRecord) bool {
 	return processCreateTimeMatches(rec.PID, rec.Metadata[runtimeCreateTime])
 }
 
-func stopDaemonProcess(rec daemon.RuntimeRecord, grace time.Duration) error {
+func stopDaemonProcess(out io.Writer, rec daemon.RuntimeRecord, apiKey string, grace time.Duration) error {
 	process, err := os.FindProcess(rec.PID)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
 	}
+	// Capture what the daemon is working on BEFORE requesting shutdown: the
+	// API listener closes as soon as shutdown starts, so this is the last
+	// chance to learn what a long operation drain is waiting on.
+	op := fetchDaemonOperation(rec, apiKey)
 	shutdownRequested, shutdownErr := requestDaemonShutdownForRun(rec)
 	if shutdownErr != nil {
 		logger.Warn("daemon shutdown request failed; falling back to process signal",
@@ -335,9 +393,11 @@ func stopDaemonProcess(rec daemon.RuntimeRecord, grace time.Duration) error {
 			return fmt.Errorf("signal process: %w", err)
 		}
 	}
-	if waitForRecordedDaemonExit(rec, grace, daemonProbeTick, recordedDaemonStillPresent) {
+	if waitForDaemonExitWithProgress(out, rec, op, grace, daemonProbeTick, recordedDaemonStillPresent) {
 		return nil
 	}
+	_, _ = fmt.Fprintf(out, "msgvault (pid %d) did not exit within %s; force-killing it.\n",
+		rec.PID, grace.Round(time.Second))
 	if err := killDaemonProcess(process); err != nil {
 		return fmt.Errorf("kill process: %w", err)
 	}
@@ -345,6 +405,80 @@ func stopDaemonProcess(rec daemon.RuntimeRecord, grace time.Duration) error {
 		return nil
 	}
 	return errors.New("process still alive")
+}
+
+// fetchDaemonOperation asks a running daemon what archive operation it is
+// working on. Best-effort: nil when the daemon is idle or unreachable.
+func fetchDaemonOperation(rec daemon.RuntimeRecord, apiKey string) *api.OperationHealth {
+	url := urlFromDaemonRuntime(daemonRuntimeFromRecord(rec))
+	if url == "" {
+		return nil
+	}
+	health := fetchDaemonHealthWithAPIKey(context.Background(), url, apiKey)
+	if health == nil {
+		return nil
+	}
+	return health.Operation
+}
+
+// waitForDaemonExitWithProgress waits like waitForRecordedDaemonExit but
+// explains long waits: fast exits stay quiet, while a daemon that is still
+// draining work after serveStopQuietWindow gets described (what it is
+// finishing and how long the wait is bounded to) with periodic progress
+// updates until it exits or the grace deadline passes.
+func waitForDaemonExitWithProgress(
+	out io.Writer,
+	rec daemon.RuntimeRecord,
+	op *api.OperationHealth,
+	grace time.Duration,
+	tick time.Duration,
+	stillPresent func(daemon.RuntimeRecord) bool,
+) bool {
+	start := time.Now()
+	quiet := min(serveStopQuietWindow, grace)
+	if waitForRecordedDaemonExit(rec, quiet, tick, stillPresent) {
+		return true
+	}
+	deadline := start.Add(grace)
+	if !time.Now().Before(deadline) {
+		return false
+	}
+	_, _ = fmt.Fprint(out, describeDaemonStopWait(rec.PID, op, grace))
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		chunk := min(serveStopProgressInterval, remaining)
+		if waitForRecordedDaemonExit(rec, chunk, tick, stillPresent) {
+			return true
+		}
+		if time.Until(deadline) <= 0 {
+			return false
+		}
+		_, _ = fmt.Fprintf(out, "Still waiting for msgvault (pid %d) to exit (%s elapsed)...\n",
+			rec.PID, time.Since(start).Round(time.Second))
+	}
+}
+
+func describeDaemonStopWait(pid int, op *api.OperationHealth, grace time.Duration) string {
+	var b strings.Builder
+	if op != nil && op.Label != "" {
+		if op.StartedAt != nil {
+			fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s (running for %s) before exiting.\n",
+				pid, op.Label, time.Since(*op.StartedAt).Round(time.Second))
+		} else {
+			fmt.Fprintf(&b, "msgvault (pid %d) is finishing %s before exiting.\n",
+				pid, op.Label)
+		}
+	} else if op != nil && op.Busy {
+		fmt.Fprintf(&b, "msgvault (pid %d) is finishing an archive operation before exiting.\n",
+			pid)
+	}
+	fmt.Fprintf(&b, "Waiting up to %s for msgvault (pid %d) to exit; "+
+		"press Ctrl+C to stop waiting (shutdown continues in the daemon).\n",
+		grace.Round(time.Second), pid)
+	return b.String()
 }
 
 func waitForRecordedDaemonExit(

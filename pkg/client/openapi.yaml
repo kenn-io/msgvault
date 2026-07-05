@@ -179,6 +179,23 @@ components:
         - mime_type
         - size_bytes
       type: object
+    BackupFreezeBeginResponse:
+      properties:
+        token:
+          type: string
+      required:
+        - token
+      type: object
+    BackupFreezeEndRequest:
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+      required:
+        - token
+      type: object
+    BackupFreezeEndResponse:
+      type: object
     BuildingSummary:
       properties:
         dimension:
@@ -1155,6 +1172,10 @@ components:
       type: object
     HealthResponse:
       properties:
+        analytics_engine:
+          type: string
+        operation:
+          $ref: "#/components/schemas/OperationHealth"
         status:
           type: string
         vector:
@@ -1492,6 +1513,18 @@ components:
           type: integer
       required:
         - name
+      type: object
+    OperationHealth:
+      properties:
+        busy:
+          type: boolean
+        label:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - busy
       type: object
     PingInfo:
       properties:
@@ -2438,6 +2471,54 @@ paths:
       security:
         - apiKey: []
       summary: Upload an OAuth token
+      tags:
+        - API
+  /api/v1/backup/freeze/begin:
+    post:
+      operationId: beginBackupFreeze
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupFreezeBeginResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Begin a backup freeze window
+      tags:
+        - API
+  /api/v1/backup/freeze/end:
+    post:
+      operationId: endBackupFreeze
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupFreezeEndRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupFreezeEndResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: End a backup freeze window
       tags:
         - API
   /api/v1/cli/account:
@@ -3674,6 +3755,27 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get authenticated health details
       tags:
         - API
   /api/v1/messages:

@@ -24,7 +24,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | `gmail`, `imap`, `mbox`, `pst`, `apple-mail`, `whatsapp`, `apple_messages`, `google_voice`, `facebook_messenger`, `synctech_sms` |
+| `source_type` | TEXT | `gmail`, `imap`, `gcal`, `teams`, `mbox`, `pst`, `apple-mail`, `whatsapp`, `apple_messages`, `google_voice`, `facebook_messenger`, `synctech_sms` |
 | `identifier` | TEXT | Email address or phone number |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
@@ -49,7 +49,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `whatsapp`, `imessage`, `google_voice_text`, `teams` |
+| `message_type` | TEXT | `email`, `calendar_event`, `teams`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `subject` | TEXT | Message subject |
@@ -151,7 +151,7 @@ There is currently no SQLite to PostgreSQL migration command. Use PostgreSQL for
 
 The TUI needs to aggregate across your entire archive (top senders, domains, labels, time series) and return results instantly as you drill down. SQLite JOINs across normalized tables cannot do this at interactive speeds on large archives. msgvault solves this on the default SQLite backend with denormalized Parquet files queried by an embedded DuckDB engine, delivering aggregate queries hundreds of times faster than SQLite.
 
-The Parquet cache is disposable and can be rebuilt at any time. By default, the daemon builds or updates it when aggregate views need it; configure `[analytics].auto_build_cache = false` if you want cache rebuilds to happen only through explicit `msgvault build-cache` runs. PostgreSQL archives currently use live SQL for aggregate views rather than this Parquet acceleration layer.
+The Parquet cache is disposable and can be rebuilt at any time. Aggregate views never trigger a build: the daemon picks its engine once at startup (DuckDB when a fresh, complete cache exists, live SQL otherwise), refreshes a stale cache after its scheduled syncs, and builds one at startup only under `engine = "duckdb"` with `auto_build_cache = true`. `msgvault build-cache` builds the cache on demand; the daemon switches onto it at its next restart. PostgreSQL archives currently use live SQL for aggregate views rather than this Parquet acceleration layer.
 
 ```bash
 # Manual build

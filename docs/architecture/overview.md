@@ -3,7 +3,7 @@ title: Architecture Overview
 description: Package structure and data flow.
 ---
 
-msgvault syncs your Gmail, IMAP, and Microsoft 365 accounts to a local SQLite database by default and can import local PST/MBOX archives, Apple Mail exports, and chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. PostgreSQL is available as an opt-in backend for new archives. Keyword search, analytics, the TUI, and the MCP server run against the configured archive database, Parquet metadata exports where available, and local attachment files. Optional vector search calls the embedding endpoint configured in `[vector.embeddings]` to build/query semantic vectors, then stores those vectors in `vectors.db` on SQLite or pgvector tables on PostgreSQL.
+msgvault syncs your Gmail, Google Calendar, IMAP, Microsoft 365 mail, and Microsoft Teams accounts to a local SQLite database by default and can import local PST/MBOX archives, Apple Mail exports, and chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. PostgreSQL is available as an opt-in backend for new archives. Keyword search, analytics, the TUI, and the MCP server run against the configured archive database, Parquet metadata exports where available, and local attachment files. Optional vector search calls the embedding endpoint configured in `[vector.embeddings]` to build/query semantic vectors, then stores those vectors in `vectors.db` on SQLite or pgvector tables on PostgreSQL.
 
 <img src="/assets/static/how-it-works.svg" alt="msgvault architecture: Gmail API syncs to SQLite, then offline Parquet analytics, FTS5 search, TUI, and MCP Server" style="width: 100%; max-width: 960px; margin: 1.5rem auto; display: block;" />
 
@@ -17,8 +17,12 @@ msgvault/
 │   ├── tui/                 # Bubble Tea TUI
 │   ├── query/               # DuckDB/SQL query engines
 │   ├── store/               # SQLite/PostgreSQL database access
+│   ├── backup/              # Snapshot repository capture/verify/restore
+│   ├── pack/                # Backup pack-file encoding
 │   ├── deletion/            # Deletion staging and manifest
 │   ├── gmail/               # Gmail API client
+│   ├── gcal/                # Google Calendar API client
+│   ├── calsync/             # Google Calendar sync orchestration
 │   ├── sync/                # Sync orchestration
 │   ├── imap/                # IMAP client (go-imap/v2)
 │   ├── importer/            # Local email import orchestration
@@ -34,6 +38,7 @@ msgvault/
 │   ├── fbmessenger/         # Facebook Messenger DYI import
 │   ├── synctechsms/         # SMS Backup & Restore import
 │   ├── microsoft/           # Microsoft 365 OAuth
+│   ├── teams/               # Microsoft Teams Graph ingestion
 │   ├── oauth/               # OAuth2 flows (browser + device)
 │   └── mime/                # MIME parsing
 ├── go.mod
@@ -46,7 +51,10 @@ msgvault/
 |---|---|
 | `cmd/` | Cobra CLI commands, config loading |
 | `internal/store` | SQLite and PostgreSQL database operations, schema management |
+| `internal/backup` | Backup repository snapshots, manifests, verification, and restore |
+| `internal/pack` | Backup pack-file framing, compression, and object integrity |
 | `internal/sync` | Sync orchestration, MIME parsing, checkpoint management |
+| `internal/gcal` / `internal/calsync` | Google Calendar API client and event sync |
 | `internal/imap` | IMAP client, connection management, credential storage |
 | `internal/importer` | Local email import orchestration and message ingestion |
 | `internal/mbox` | MBOX format reader (mboxo/mboxrd) |
@@ -66,6 +74,7 @@ msgvault/
 | `internal/fbmessenger` | Facebook Messenger Download Your Information parsing and import |
 | `internal/synctechsms` | SMS Backup & Restore XML/ZIP parsing and Drive source sync |
 | `internal/microsoft` | Microsoft 365 OAuth flow |
+| `internal/teams` | Microsoft Teams Graph client mapping, sync cursors, and importer |
 | `internal/mime` | MIME message parsing, charset detection |
 
 ## Design Decisions

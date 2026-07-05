@@ -136,9 +136,36 @@ type VectorHealth struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// OperationHealth reports the archive operation currently holding the
+// daemon's operation gate. Public health only reports Busy; authenticated
+// health may include Label and StartedAt.
+type OperationHealth struct {
+	Busy      bool       `json:"busy"`
+	Label     string     `json:"label,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+}
+
+// Analytics engine modes reported by /health. The daemon chooses its engine
+// once at startup, so this reflects what aggregate endpoints actually use
+// for the daemon's lifetime — not what a fresh daemon would choose now.
+// AnalyticsModeSQLFallback distinguishes live SQL forced by a missing or
+// unusable cache from live SQL chosen deliberately (engine = "sql",
+// PostgreSQL backends).
+const (
+	AnalyticsModeDuckDB      = "duckdb"
+	AnalyticsModeSQL         = "sql"
+	AnalyticsModeSQLFallback = "sql-fallback"
+	AnalyticsModePostgres    = "postgres"
+)
+
 type HealthResponse struct {
-	Status string        `json:"status"`
-	Vector *VectorHealth `json:"vector,omitempty"`
+	Status    string           `json:"status"`
+	Vector    *VectorHealth    `json:"vector,omitempty"`
+	Operation *OperationHealth `json:"operation,omitempty"`
+	// AnalyticsEngine is the analytics mode the daemon selected at startup
+	// (one of the AnalyticsMode constants). Empty when the server was built
+	// without one (tests, embedded uses).
+	AnalyticsEngine string `json:"analytics_engine,omitempty"`
 }
 
 type MessageListResponse struct {

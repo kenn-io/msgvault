@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
@@ -184,7 +184,7 @@ func TestStageForDeletion(t *testing.T) {
 			assertModal(t, model, modalDeleteConfirm)
 
 			if tc.checkViewWarning {
-				view := model.View()
+				view := model.View().Content
 				assert.Contains(t, view, "Account not set", "expected warning in delete confirm modal")
 			}
 		})

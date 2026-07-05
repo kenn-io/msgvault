@@ -14,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 )
 
@@ -147,4 +149,54 @@ func tuiAccountsHandler(requests *atomic.Int32, email string) http.Handler {
 		})
 	})
 	return mux
+}
+
+// TestAnalyticsCacheNotice verifies the pre-launch warning keys off the
+// analytics mode the daemon itself reports on /health: only the live-SQL
+// fallback mode warns, while deliberate live SQL (engine = "sql",
+// PostgreSQL), cache-backed DuckDB, daemons predating the field, and
+// health-endpoint failures all stay silent.
+func TestAnalyticsCacheNotice(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		statusCode int
+		wantNotice bool
+	}{
+		{name: "sql fallback warns", mode: api.AnalyticsModeSQLFallback, statusCode: http.StatusOK, wantNotice: true},
+		{name: "duckdb is silent", mode: api.AnalyticsModeDuckDB, statusCode: http.StatusOK},
+		{name: "deliberate sql is silent", mode: api.AnalyticsModeSQL, statusCode: http.StatusOK},
+		{name: "postgres is silent", mode: api.AnalyticsModePostgres, statusCode: http.StatusOK},
+		{name: "older daemon without field is silent", statusCode: http.StatusOK},
+		{name: "health error is silent", statusCode: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+				if tt.statusCode != http.StatusOK {
+					http.Error(w, "health unavailable", tt.statusCode)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				body := map[string]any{"status": "ok"}
+				if tt.mode != "" {
+					body["analytics_engine"] = tt.mode
+				}
+				_ = json.NewEncoder(w).Encode(body)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+			require.NoError(t, err, "daemonclient.New")
+
+			notice := analyticsCacheNotice(context.Background(), client)
+			if tt.wantNotice {
+				assert.Contains(t, notice, "msgvault build-cache")
+			} else {
+				assert.Empty(t, notice)
+			}
+		})
+	}
 }

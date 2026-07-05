@@ -48,9 +48,9 @@ The MCP server exposes the following tools to connected AI clients:
 | Tool | Description | Parameters |
 |---|---|---|
 | `search_messages` | Search with Gmail-like query syntax. When [vector search](/usage/vector-search/) is configured, supports semantic and hybrid modes. | `query` (string, required), `mode` (string: `fts`/`vector`/`hybrid`, default `fts`), `explain` (bool), `limit` (int), `offset` (int), `account` (string) |
-| `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `after` (string), `before` (string), `has_attachment` (bool) |
+| `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
-| `get_message` | Get full message details by ID | `id` (int) |
+| `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `limit` (int), `offset` (int), `account` (string) |
 | `get_attachment` | Get attachment content by ID | `attachment_id` (int) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
@@ -78,6 +78,16 @@ backend cannot report a full result count, `total` is `-1`; use
 `search_messages` accepts msgvault's local subset of Gmail-like syntax.
 Gmail-only operators such as `list:` are rejected because msgvault does
 not index `List-ID` locally; use Gmail-side validation for those checks.
+To restrict mixed archives to values such as `email`, `calendar_event`,
+`teams`, `sms`, or `mms`, include a `message_type:` operator in the query
+(for example `message_type:teams incident review`). `find_similar_messages`
+accepts a dedicated `message_type` parameter; `list_messages` does not
+support message-type filtering.
+
+`get_message` returns large bodies in windows: each response carries one
+slice of the body plus `body_length`, `body_returned`, `offset`, and
+`has_more`, so unusually large messages are paged across calls instead of
+being returned in a single response.
 
 `find_similar_messages` is only registered when the server starts with vector search configured. `search_messages` is always available, but `mode=vector` and `mode=hybrid` return `vector_not_enabled` when the server is not configured for vector search. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. Use `mode=fts` for deeper pagination or adjust that config cap.
 

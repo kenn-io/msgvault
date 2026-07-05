@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/tui"
@@ -71,6 +73,11 @@ HTTP Mode:
 			textEngine = te
 		}
 
+		notice := analyticsCacheNotice(cmd.Context(), backend.client)
+		if notice != "" {
+			fmt.Println(notice)
+		}
+
 		// Create and run TUI
 		model := tui.New(backend.engine, tui.Options{
 			DataDir:          cfg.Data.DataDir,
@@ -78,8 +85,9 @@ HTTP Mode:
 			TextEngine:       textEngine,
 			ManifestSaver:    backend.client,
 			AttachmentReader: tuiAttachmentOpener{client: backend.client},
+			AnalyticsNotice:  notice,
 		})
-		p := tea.NewProgram(model, tea.WithAltScreen())
+		p := tea.NewProgram(model)
 
 		// Swap the slog default to a file-only logger for the
 		// duration of the TUI. Bubble Tea owns the terminal in
@@ -114,6 +122,24 @@ type tuiBackend struct {
 	client  *daemonclient.Client
 	info    HTTPStoreInfo
 	cleanup func()
+}
+
+// analyticsCacheNotice asks the daemon which analytics engine it actually
+// selected at startup (GET /health, no cache scans or archive access) and
+// warns when aggregate views run live SQL only because no usable cache
+// existed then. Deliberate live SQL (engine = "sql", PostgreSQL) reports a
+// different mode and stays silent, as do daemons predating the field. The
+// mode is fixed for the daemon's lifetime, so the notice stays accurate —
+// and keeps firing — after a cache build until the daemon restarts.
+// Best-effort: errors return an empty notice rather than blocking launch.
+func analyticsCacheNotice(ctx context.Context, client *daemonclient.Client) string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	health, err := client.GetHealth(ctx)
+	if err != nil || health.AnalyticsEngine != api.AnalyticsModeSQLFallback {
+		return ""
+	}
+	return "Aggregate views are using live SQL because the daemon started without a usable analytics cache; they may load slowly. Run 'msgvault build-cache', then restart the daemon."
 }
 
 func openTUIBackend(ctx context.Context) (*tuiBackend, error) {

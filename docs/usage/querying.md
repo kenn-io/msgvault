@@ -100,6 +100,37 @@ msgvault query "
 "
 ```
 
+### Filter by message type
+
+Mixed archives store email, calendar events, Teams messages, and text-message
+imports in the same `messages` table. Use the `message_type` column to keep SQL
+reports scoped:
+
+```bash
+# Teams activity by month
+msgvault query --format table "
+  SELECT month, count(*) AS messages
+  FROM messages
+  WHERE message_type = 'teams'
+  GROUP BY month
+  ORDER BY month DESC
+  LIMIT 12
+"
+
+# Recent calendar records in the archive
+msgvault query --format table "
+  SELECT sent_at, subject, from_email
+  FROM v_messages
+  WHERE message_type = 'calendar_event'
+  ORDER BY sent_at DESC
+  LIMIT 20
+"
+```
+
+Known values include `email`, `calendar_event`, `teams`, `sms`, `mms`,
+`whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`google_voice_text`, `google_voice_call`, and `google_voice_voicemail`.
+
 ### Label statistics
 
 ```bash

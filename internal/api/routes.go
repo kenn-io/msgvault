@@ -175,6 +175,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		Tags:        []string{"System"},
 		Summary:     "Health check",
 	}, s.handleHealth)
+	registerAPIV1RawHumaJSONRoute[HealthResponse](apiV1, "getHealth", http.MethodGet, "/health", "Get authenticated health details", s.handleAuthenticatedHealth)
 	registerRawHumaJSONRoute[daemon.PingInfo](api, huma.Operation{
 		OperationID: "daemonPing",
 		Method:      http.MethodGet,
@@ -291,6 +292,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[StatusMessageResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
+
+	registerAPIV1RawHumaJSONRoute[backupFreezeBeginResponse](apiV1, "beginBackupFreeze", http.MethodPost, "/backup/freeze/begin", "Begin a backup freeze window", s.handleBackupFreezeBegin)
+	registerAPIV1RawHumaJSONRouteWithRequest[backupFreezeEndRequest, backupFreezeEndResponse](apiV1, "endBackupFreeze", http.MethodPost, "/backup/freeze/end", "End a backup freeze window", s.handleBackupFreezeEnd)
 }
 
 func registerAPIV1RawHumaJSONRoute[T any](

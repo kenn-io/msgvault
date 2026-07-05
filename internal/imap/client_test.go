@@ -11,7 +11,7 @@ import (
 )
 
 func TestEnumerateMailboxSearchCriteriaConstrainsUIDRange(t *testing.T) {
-	criteria := enumerateMailboxSearchCriteria(time.Time{}, time.Time{})
+	criteria := enumerateMailboxSearchCriteria(time.Time{}, time.Time{}, 0)
 
 	require.NotNil(t, criteria)
 	require.Len(t, criteria.UID, 1)
@@ -24,13 +24,21 @@ func TestEnumerateMailboxSearchCriteriaPreservesDateFilters(t *testing.T) {
 	since := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, time.February, 3, 0, 0, 0, 0, time.UTC)
 
-	criteria := enumerateMailboxSearchCriteria(since, before)
+	criteria := enumerateMailboxSearchCriteria(since, before, 0)
 
 	require.NotNil(t, criteria)
 	require.Len(t, criteria.UID, 1)
 	assert.Equal(t, "1:*", criteria.UID[0].String())
 	assert.Equal(t, since, criteria.Since)
 	assert.Equal(t, before, criteria.Before)
+}
+
+func TestEnumerateMailboxSearchCriteriaUsesMinimumUID(t *testing.T) {
+	criteria := enumerateMailboxSearchCriteria(time.Time{}, time.Time{}, 501)
+
+	require.NotNil(t, criteria)
+	require.Len(t, criteria.UID, 1)
+	assert.Equal(t, "501:*", criteria.UID[0].String())
 }
 
 func TestMessageIDHeaderFetchOptionsDoNotRequestEnvelope(t *testing.T) {

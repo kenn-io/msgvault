@@ -3,12 +3,12 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
 )
 
 // handleTextKeyPress dispatches key events when in Texts mode.
-func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleTextKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Modal takes priority
 	if m.modal != modalNone {
 		return m.handleModalKeys(msg)
@@ -27,7 +27,7 @@ func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Disable selection/deletion keys in Texts mode (read-only)
 	switch msg.String() {
-	case " ", "S", "d", "D", "x":
+	case "space", "S", "d", "D", "x":
 		return m, nil
 	}
 
@@ -44,7 +44,7 @@ func (m Model) handleTextKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleTextListKeys handles keys in text list views
 // (conversations, aggregates, drill-down conversations).
 func (m Model) handleTextListKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	// Handle list navigation (text-specific: operates on textState)
 	if m.navigateTextList(msg.String(), m.textRowCount()) {
@@ -111,7 +111,7 @@ func (m Model) handleTextListKeys(
 
 // handleTextTimelineKeys handles keys in the text timeline view.
 func (m Model) handleTextTimelineKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r":
@@ -188,7 +188,7 @@ func (m Model) handleTextTimelineKeys(
 // handleTextInlineSearchKeys handles keys when inline search is
 // active in Texts mode. Enter commits the search; Esc cancels.
 func (m Model) handleTextInlineSearchKeys(
-	msg tea.KeyMsg,
+	msg tea.KeyPressMsg,
 ) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyNameEnter:

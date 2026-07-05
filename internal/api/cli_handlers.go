@@ -863,7 +863,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
-	if !cliRunCommandAllowed(req.Args[0]) {
+	if !cliRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
 	}
@@ -998,8 +998,20 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 	return nil
 }
 
-func cliRunCommandAllowed(command string) bool {
-	switch command {
+// cliRunCommandAllowed reports whether a proxied CLI command may run through
+// the daemon CLI runner. Most commands are admitted by their leading word
+// alone; command groups whose subcommand matters (currently only "backup")
+// are checked against args[1] as well, since e.g. "backup init" and "backup
+// verify" run local, unfrozen archive mutations that the daemon's backup
+// freeze window does not protect against.
+func cliRunCommandAllowed(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == "backup" {
+		return len(args) >= 2 && args[1] == "create"
+	}
+	switch args[0] {
 	case "add-account",
 		"add-calendar",
 		"add-imap",

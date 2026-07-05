@@ -6,6 +6,8 @@ type AddAccountBody = AddAccountRequest
 
 type UploadTokenBody = TokenUploadRequest
 
+type EndBackupFreezeBody = BackupFreezeEndRequest
+
 type UpdateCLIAccountBody = UpdateRequest
 
 type PlanCLIAddCalendarBody = CLIAddCalendarPlanRequest

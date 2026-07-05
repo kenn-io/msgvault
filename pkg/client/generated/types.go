@@ -157,6 +157,24 @@ func (a AttachmentInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type BackupFreezeBeginResponse struct {
+	Token string `json:"token" validate:"required"`
+}
+
+func (b BackupFreezeBeginResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BackupFreezeEndRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+
+func (b BackupFreezeEndRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BackupFreezeEndResponse = map[string]any
+
 type BuildingSummary struct {
 	Dimension int64    `json:"dimension"`
 	ID        int64    `json:"id"`
@@ -975,12 +993,21 @@ func (g GmailIDsResponse) Validate() error {
 }
 
 type HealthResponse struct {
-	Status string        `json:"status" validate:"required"`
-	Vector *VectorHealth `json:"vector,omitempty"`
+	AnalyticsEngine *string          `json:"analytics_engine,omitempty"`
+	Operation       *OperationHealth `json:"operation,omitempty"`
+	Status          string           `json:"status" validate:"required"`
+	Vector          *VectorHealth    `json:"vector,omitempty"`
 }
 
 func (h HealthResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if h.Operation != nil {
+		if v, ok := any(h.Operation).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Operation", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(h.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
 	}
@@ -1274,6 +1301,12 @@ type MutationResult struct {
 
 func (m MutationResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type OperationHealth struct {
+	Busy      bool       `json:"busy"`
+	Label     *string    `json:"label,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 type PingInfo struct {

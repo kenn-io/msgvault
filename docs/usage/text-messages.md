@@ -1,9 +1,9 @@
 ---
 title: Text Messages
-description: Import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore into msgvault.
+description: Import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore, and browse Teams conversations, in msgvault.
 ---
 
-msgvault can import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. Imported messages are stored in the same database as email, and you can browse text conversations in the [TUI](/usage/tui/) by pressing `m` to switch to text mode.
+msgvault can import chats and text messages from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore. It can also sync Microsoft Teams chats and channels through [Microsoft Teams](/usage/teams/). These records are stored in the same database as email, and you can browse text/chat conversations in the [TUI](/usage/tui/) by pressing `m` to switch to text mode.
 
 ## import-whatsapp
 
@@ -245,7 +245,7 @@ Imports use checkpoint-based resumption. If interrupted (Ctrl+C, power loss), ru
 
 ## After Importing
 
-Most chat import commands rebuild the analytics cache automatically after import. If a newly imported source does not appear in aggregate views immediately, run `msgvault build-cache`. Your imported texts are then available for TUI browsing.
+Most chat import commands rebuild the analytics cache automatically after import. If a newly imported or synced source does not appear in aggregate views immediately, run `msgvault build-cache`. Your imported texts and Teams conversations are then available for TUI browsing.
 
 ```bash
 # Launch the TUI and press 'm' for text mode

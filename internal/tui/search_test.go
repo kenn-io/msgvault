@@ -143,7 +143,7 @@ func TestSpinnerAppearsInViewWhenLoading(t *testing.T) {
 		WithPageSize(10).WithSize(100, 20).Build()
 
 	// Verify no spinner when not loading
-	view1 := model.View()
+	view1 := model.View().Content
 	hasSpinner := false
 	for _, frame := range spinnerFrames {
 		if strings.Contains(view1, frame) {
@@ -158,7 +158,7 @@ func TestSpinnerAppearsInViewWhenLoading(t *testing.T) {
 	model.inlineSearchActive = true
 	model.searchInput.SetValue("test")
 
-	view2 := model.View()
+	view2 := model.View().Content
 	hasSpinner = false
 	for _, frame := range spinnerFrames {
 		if strings.Contains(view2, frame) {
@@ -1271,7 +1271,7 @@ func TestZeroSearchResultsRendersSearchBar(t *testing.T) {
 		m.searchInput.SetValue("nonexistent_query")
 		m.searchMode = searchModeFast
 
-		view := m.View()
+		view := m.View().Content
 		assertViewFitsHeight(t, view, 30)
 
 		assert.Contains(t, view, "No results found")
@@ -1290,7 +1290,7 @@ func TestZeroSearchResultsRendersSearchBar(t *testing.T) {
 		m.searchQuery = "nonexistent_query"
 		m.searchTotalCount = 0
 
-		view := m.View()
+		view := m.View().Content
 		assertViewFitsHeight(t, view, 30)
 
 		assert.Contains(t, view, "No results found")
@@ -1308,7 +1308,7 @@ func TestZeroSearchResultsRendersSearchBar(t *testing.T) {
 		model = resizeModel(t, model, 100, 30)
 		// No search active, no search query — plain empty state
 
-		view := model.View()
+		view := model.View().Content
 		assertViewFitsHeight(t, view, 30)
 
 		assert.Contains(view, "No messages", "in non-search empty view")

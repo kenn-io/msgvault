@@ -7,8 +7,40 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+No notable changes yet.
+
+---
+
+## 0.17.0
+<small>2026-07-04</small>
+
 **New features**
 
+- `msgvault backup` adds incremental, verifiable archive snapshots with
+  `init`, `create`, `list`, `verify`, and `restore`. Snapshots capture the
+  SQLite database, attachments, deletion audit files, and optional config/token
+  extras into an append-only repository with byte-level verification.
+- Google Calendar archive support via `msgvault add-calendar` and
+  `msgvault sync-calendar`, including read-only event sync, recurring series,
+  cancellations, scheduled `[[gcal]]` sync, and search with
+  `--message-type calendar_event`.
+- Microsoft Teams archive support via delegated Microsoft Graph sync.
+  `msgvault add-teams` authorizes Graph access, `msgvault sync-teams` imports
+  chats and channels, Teams messages are stored with `message_type = teams`,
+  and `backfill-teams-media` can re-fetch hosted inline media for already
+  imported messages.
+- Search and query paths now understand message-type scoping. Local search
+  accepts `message_type:` / `message_type=` query operators and the
+  `--message-type` flag; HTTP, MCP, aggregate, and SQL-backed query surfaces
+  expose the stored `message_type` so email, calendar events, text messages,
+  Teams messages, and other imported records can be separated cleanly.
+- Scoped embedding builds can restrict a vector generation to selected message
+  types through `[vector.embed.scope].message_types`, with vector/hybrid search
+  rejecting incompatible unscoped queries instead of treating a partial index as
+  complete.
+- The HTTP API is now generated through Huma with a checked-in OpenAPI contract
+  (`msgvault openapi`, `/openapi.json`) and a generated Go client under
+  `pkg/client`.
 - Archive-access CLI commands now route through a msgvault daemon (the
   configured remote server, or a local background daemon that starts on
   demand and idles out after `[server].daemon_idle_timeout`). The daemon is
@@ -19,18 +51,26 @@ All notable changes to msgvault, grouped by release.
 - Daemon lifecycle management via `msgvault serve start|status|stop|restart`,
   with automatic restart of older local daemons on binary upgrade
   (`[server].daemon_auto_restart`).
-- The HTTP API is now generated through Huma with a checked-in OpenAPI
-  contract (`msgvault openapi`, `/openapi.json`) and a generated Go client
-  under `pkg/client`.
-- Google Calendar archive support via `msgvault add-calendar` and
-  `msgvault sync-calendar`, including read-only event sync, recurring series,
-  cancellations, scheduled `[[gcal]]` sync, and search with
-  `--message-type calendar_event`.
 
 **Improvements**
 
-- Scoped embedding generations can target selected message types, and local
-  full-text search now honors `--message-type` filters consistently.
+- IMAP resyncs skip unchanged folders using the mailbox `UIDVALIDITY` and
+  `UIDNEXT` values captured after the previous completed sync.
+- `msgvault serve stop` now explains long shutdown waits by reporting the
+  daemon operation it is waiting for and periodically printing elapsed wait
+  updates.
+- MCP `get_message` returns large message bodies in windows instead of
+  returning the whole body in one response.
+- Vector embedding maintenance no longer uses a separate pending queue.
+  Coverage is tracked per message with `embed_gen`, so rebuilds, repairs, and
+  daemon top-ups all share the same scan-and-fill path.
+- Full-sync batch errors are counted and persisted on the sync run, making
+  source status and diagnostics more accurate after partial failures.
+- The documentation site now lives in the repository, including CLI, API,
+  setup, backup, calendar, daemon, PostgreSQL, and vector-search docs plus the
+  docs build/check scripts.
+- macOS users can install through Homebrew with `brew install msgvault`.
+- The TUI migration to Bubble Tea v2 is complete.
 
 **Deprecations**
 
@@ -38,6 +78,45 @@ All notable changes to msgvault, grouped by release.
   `mcp --force-sql`, and `mcp --no-sqlite-scanner` are deprecated (removal
   planned for a later release); engine and cache selection moved to the
   `[analytics]` config section.
+
+**Bug fixes**
+
+- MCP list/search requests now reject Gmail-only `list:` / `List-ID` search
+  operators instead of treating them as local full-text terms.
+- DuckDB query engines re-probe Parquet schema columns when the cache is
+  rebuilt or replaced underneath a running process.
+- Empty `subject:` and empty text search terms no longer match every message.
+- Facebook Messenger imports preserve multiple attachments on one message
+  instead of collapsing them into a single row.
+- Imported message and reaction timestamps are normalized to UTC.
+- TUI startup avoids mixed SQLite access while the daemon owns archive writes.
+- API server documentation no longer overflows its sidebar on narrow layouts.
+- Release publishing and the Nix update flow were corrected for the new module
+  and release packaging.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for the backup repository
+  commands, daemon-only CLI routing, daemon lifecycle/status improvements,
+  IMAP folder-state skipping, the in-repo documentation site, OpenAPI/client
+  generation, API docs polish, TUI startup fix, and release/Nix publishing
+  fixes.
+- Thanks to [danshapiro](https://github.com/danshapiro) for Google Calendar
+  sync, message-type filters, scoped embedding builds, and persisted full-sync
+  batch error counts.
+- Thanks to [Nat Torkington](https://github.com/njt) for Microsoft Teams
+  ingestion and the Facebook Messenger multi-attachment fix.
+- Thanks to [Yuriy Grinberg](https://github.com/webgress) for replacing the
+  pending embedding queue with per-message embedding generations.
+- Thanks to [endolith](https://github.com/endolith) for windowed MCP message
+  body reads.
+- Thanks to [Lazare Rossillon](https://github.com/Lazare-42) for re-probing
+  Parquet schemas when the analytics cache changes underneath a running query
+  engine.
+- Thanks to [Matthew Sweeney](https://github.com/sweenzor) for the Homebrew
+  installation instructions.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for
+  finishing the Bubble Tea v2 TUI migration.
 
 ---
 
