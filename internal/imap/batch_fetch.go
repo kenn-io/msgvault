@@ -55,8 +55,8 @@ func rawBatchFetchOptions() *imap.FetchOptions {
 }
 
 func rawMIMEMessageID(rawMIME []byte) string {
-	entity, err := gomessage.Read(bytes.NewReader(rawMIME))
-	if err != nil {
+	entity, _ := gomessage.Read(bytes.NewReader(rawMIME))
+	if entity == nil {
 		return ""
 	}
 	header := gomail.Header{Header: entity.Header}

@@ -210,6 +210,28 @@ func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testin
 	assert.Nil(t, results[0].Err)
 }
 
+func TestApplyFetchResultsMergesLabelsWhenRawMessageIDHasRecoverableMIMEError(t *testing.T) {
+	results := newRawBatchResults([]string{"Archive|10"})
+	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
+	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
+	raw := []byte("Message-ID: <shared@example.com>\r\nContent-Transfer-Encoding: i-dont-exist\r\n\r\nbody")
+	msgs := []*imapclient.FetchMessageBuffer{
+		fetchMessageBufferWithoutEnvelope(imapapi.UID(10), raw),
+	}
+	c := Client{
+		msgIDToLabels: map[string][]string{
+			"shared@example.com": {"Archive", "Projects"},
+		},
+	}
+
+	c.applyFetchResults(results, uidToIdx, "Archive", chunk, msgs)
+
+	require.NotNil(t, results[0].Message)
+	assert.Equal(t, []string{"Archive", "Projects"}, results[0].Message.LabelIDs)
+	assert.Equal(t, raw, results[0].Message.Raw)
+	assert.Nil(t, results[0].Err)
+}
+
 func TestApplyFetchResultsImportsWhenRawMessageIDMissingOrInvalid(t *testing.T) {
 	tests := []struct {
 		name string
