@@ -680,7 +680,8 @@ func ensureLabelWith(
 ) (int64, error) {
 	// Look up by canonical identifier (Gmail label ID).
 	var id int64
-	var existingName, existingType string
+	var existingName string
+	var existingType sql.NullString
 	err := q.QueryRow(`
 		SELECT id, name, label_type FROM labels
 		WHERE source_id = ? AND source_label_id = ?
@@ -688,7 +689,7 @@ func ensureLabelWith(
 
 	if err == nil {
 		if existingName == name {
-			if existingType != labelType {
+			if !existingType.Valid || existingType.String != labelType {
 				if _, err = q.Exec(`
 					UPDATE labels SET label_type = ?
 					WHERE id = ?

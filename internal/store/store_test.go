@@ -358,6 +358,27 @@ func TestStore_EnsureLabelUpdatesTypeWhenNameUnchanged(t *testing.T) {
 	assert.Equal(t, "system", labelType, "label type")
 }
 
+func TestStore_EnsureLabelUpdatesNullTypeWhenNameUnchanged(t *testing.T) {
+	f := storetest.New(t)
+
+	lid, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "user")
+	require.NoError(t, err, "create stale sent label")
+	_, err = f.Store.DB().Exec(`UPDATE labels SET label_type = NULL WHERE id = ?`, lid)
+	require.NoError(t, err, "clear label type")
+
+	lid2, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "system")
+	require.NoError(t, err, "refresh sent label type")
+
+	assert.Equal(t, lid, lid2, "label ID")
+
+	var labelType string
+	err = f.Store.DB().QueryRow(
+		`SELECT label_type FROM labels WHERE id = ?`, lid,
+	).Scan(&labelType)
+	require.NoError(t, err, "select label type")
+	assert.Equal(t, "system", labelType, "label type")
+}
+
 func TestStore_EnsureLabel_NameConflict(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

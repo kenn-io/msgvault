@@ -272,6 +272,31 @@ func enumerateMailboxSearchCriteria(since, before time.Time) *imap.SearchCriteri
 	return criteria
 }
 
+func messageIDHeaderFetchOptions() *imap.FetchOptions {
+	return &imap.FetchOptions{
+		UID: true,
+		BodySection: []*imap.FetchItemBodySection{{
+			Specifier:    imap.PartSpecifierHeader,
+			HeaderFields: []string{"Message-ID"},
+			Peek:         true,
+		}},
+	}
+}
+
+func messageIDsFromHeaderFetchResults(msgs []*imapclient.FetchMessageBuffer) map[string]bool {
+	result := make(map[string]bool, len(msgs))
+	for _, msg := range msgs {
+		if len(msg.BodySection) == 0 {
+			continue
+		}
+		msgID := rawMIMEMessageID(msg.BodySection[0].Bytes)
+		if msgID != "" {
+			result[msgID] = true
+		}
+	}
+	return result
+}
+
 // enumerateMailbox lists all UIDs in a single mailbox. It handles
 // network errors with one reconnect attempt.
 func (c *Client) enumerateMailbox(
@@ -332,7 +357,7 @@ func (c *Client) enumerateMailbox(
 }
 
 // fetchMailboxMessageIDs fetches RFC822 Message-ID headers for all
-// UIDs in the given mailbox using ENVELOPE. Returns a map of
+// UIDs in the given mailbox. Returns a map of
 // Message-ID → true for all messages found.
 // Caller must hold mu.
 func (c *Client) fetchMailboxMessageIDs(
@@ -347,10 +372,7 @@ func (c *Client) fetchMailboxMessageIDs(
 	}
 
 	result := make(map[string]bool, len(uids))
-	fetchOpts := &imap.FetchOptions{
-		UID:      true,
-		Envelope: true,
-	}
+	fetchOpts := messageIDHeaderFetchOptions()
 
 	for chunkStart := 0; chunkStart < len(uids); chunkStart += fetchChunkSize {
 		if ctx.Err() != nil {
@@ -387,10 +409,8 @@ func (c *Client) fetchMailboxMessageIDs(
 			}
 		}
 
-		for _, msg := range msgs {
-			if msg.Envelope != nil && msg.Envelope.MessageID != "" {
-				result[msg.Envelope.MessageID] = true
-			}
+		for msgID := range messageIDsFromHeaderFetchResults(msgs) {
+			result[msgID] = true
 		}
 	}
 	return result, nil
