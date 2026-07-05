@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -104,6 +105,35 @@ func TestFrozenSessionPinsAndCounts(t *testing.T) {
 	assert.Equal(ContentRef{Hash: "ee55", Size: 25, StoragePath: "http-cache/ee/ee55"}, refs[3],
 		"a local path is free to START with http; only http:// and https:// URLs are excluded")
 	assert.Equal(ContentRef{Hash: "tt77", Size: -1, StoragePath: "tt/tt77"}, refs[4])
+}
+
+// TestFrozenSessionOpensPathWithQueryChars pins the session's DSN
+// construction: a database path containing '?' (legal on POSIX filesystems)
+// must open that file itself. A naive path+"?params" DSN would truncate at
+// the first '?', treat the filename's tail as connection parameters, and
+// silently snapshot a freshly created empty database instead of the archive.
+func TestFrozenSessionOpensPathWithQueryChars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("'?' is not a legal filename character on Windows")
+	}
+	require := require.New(t)
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "odd? archive#1.db")
+	db, err := sql.Open("sqlite3", sqliteURIDSN(path, "_journal_mode=WAL&_busy_timeout=5000"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(frozenTestSchema)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2026-01-01T00:00:00Z')`)
+	require.NoError(err)
+
+	s, err := OpenFrozenSession(ctx, path, NoopFreezeCoordinator{})
+	require.NoError(err)
+	defer func() { require.NoError(s.Close()) }()
+	stats, err := s.Stats(ctx)
+	require.NoError(err)
+	require.Equal(int64(1), stats.Messages,
+		"the session must pin the file at the odd path, not an empty side database")
 }
 
 func TestFrozenSessionCoordinatorErrors(t *testing.T) {

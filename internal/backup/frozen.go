@@ -87,7 +87,7 @@ func OpenFrozenSession(ctx context.Context, dbPath string, fc FreezeCoordinator)
 }
 
 func openPinnedSession(ctx context.Context, dbPath string) (*FrozenSession, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", sqliteURIDSN(dbPath, "_busy_timeout=5000"))
 	if err != nil {
 		return nil, fmt.Errorf("backup: opening DB %s: %w", dbPath, err)
 	}

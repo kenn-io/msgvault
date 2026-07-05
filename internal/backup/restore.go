@@ -536,24 +536,31 @@ func (s *restoreState) restoreAttachments(ctx context.Context, m *Manifest, dbPa
 // loadRestoredAttachmentPaths maps each content and thumbnail hash in the
 // restored database to every relative storage path it is recorded at. Paths
 // come from DB rows, so each is validated as local before restore writes it.
-// restoredDBDSN builds the immutable read-only SQLite URI for the restored
-// database. immutable=1 matters: the file has no writers and no WAL sidecar,
-// and an immutable open never creates -wal/-shm next to it. Built via
-// url.URL so a target path containing '?' or '#' cannot be misparsed as URI
-// syntax. The path is made absolute first — a relative restore target must
-// not become slash-rooted — then converted to the slash-separated,
-// slash-rooted form SQLite's URI parser requires
+// sqliteURIDSN builds a file: SQLite URI for path carrying rawQuery as its
+// connection parameters. Built via url.URL so a path containing '?' or '#'
+// cannot be misparsed as URI syntax — a naive path+"?params" concatenation
+// would open a different (usually freshly created, empty) file when the
+// path itself contains '?'. The path is made absolute first — a relative
+// path must not become slash-rooted — then converted to the
+// slash-separated, slash-rooted form SQLite's URI parser requires
 // ("file:///C:/dir/msgvault.db"): a raw drive-letter path would otherwise
 // be read as a URI authority.
-func restoredDBDSN(dbPath string) string {
-	if abs, err := filepath.Abs(dbPath); err == nil {
-		dbPath = abs
+func sqliteURIDSN(path, rawQuery string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
 	}
-	p := filepath.ToSlash(dbPath)
+	p := filepath.ToSlash(path)
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	return (&url.URL{Scheme: "file", Path: p, RawQuery: "immutable=1&mode=ro"}).String()
+	return (&url.URL{Scheme: "file", Path: p, RawQuery: rawQuery}).String()
+}
+
+// restoredDBDSN builds the immutable read-only SQLite URI for the restored
+// database. immutable=1 matters: the file has no writers and no WAL sidecar,
+// and an immutable open never creates -wal/-shm next to it.
+func restoredDBDSN(dbPath string) string {
+	return sqliteURIDSN(dbPath, "immutable=1&mode=ro")
 }
 
 func loadRestoredAttachmentPaths(ctx context.Context, dbPath string) (map[string][]string, error) {
