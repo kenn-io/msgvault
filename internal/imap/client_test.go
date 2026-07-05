@@ -11,26 +11,30 @@ import (
 )
 
 func TestEnumerateMailboxSearchCriteriaConstrainsUIDRange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	criteria := enumerateMailboxSearchCriteria(time.Time{}, time.Time{}, 0)
 
-	require.NotNil(t, criteria)
-	require.Len(t, criteria.UID, 1)
-	assert.Equal(t, "1:*", criteria.UID[0].String())
-	assert.True(t, criteria.Since.IsZero())
-	assert.True(t, criteria.Before.IsZero())
+	require.NotNil(criteria)
+	require.Len(criteria.UID, 1)
+	assert.Equal("1:*", criteria.UID[0].String())
+	assert.True(criteria.Since.IsZero())
+	assert.True(criteria.Before.IsZero())
 }
 
 func TestEnumerateMailboxSearchCriteriaPreservesDateFilters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	since := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, time.February, 3, 0, 0, 0, 0, time.UTC)
 
 	criteria := enumerateMailboxSearchCriteria(since, before, 0)
 
-	require.NotNil(t, criteria)
-	require.Len(t, criteria.UID, 1)
-	assert.Equal(t, "1:*", criteria.UID[0].String())
-	assert.Equal(t, since, criteria.Since)
-	assert.Equal(t, before, criteria.Before)
+	require.NotNil(criteria)
+	require.Len(criteria.UID, 1)
+	assert.Equal("1:*", criteria.UID[0].String())
+	assert.Equal(since, criteria.Since)
+	assert.Equal(before, criteria.Before)
 }
 
 func TestEnumerateMailboxSearchCriteriaUsesMinimumUID(t *testing.T) {
@@ -42,14 +46,16 @@ func TestEnumerateMailboxSearchCriteriaUsesMinimumUID(t *testing.T) {
 }
 
 func TestMessageIDHeaderFetchOptionsDoNotRequestEnvelope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	opts := messageIDHeaderFetchOptions()
 
-	assert.True(t, opts.UID)
-	assert.False(t, opts.Envelope)
-	require.Len(t, opts.BodySection, 1)
-	assert.True(t, opts.BodySection[0].Peek)
-	assert.Equal(t, imapapi.PartSpecifierHeader, opts.BodySection[0].Specifier)
-	assert.Equal(t, []string{"Message-ID"}, opts.BodySection[0].HeaderFields)
+	assert.True(opts.UID)
+	assert.False(opts.Envelope)
+	require.Len(opts.BodySection, 1)
+	assert.True(opts.BodySection[0].Peek)
+	assert.Equal(imapapi.PartSpecifierHeader, opts.BodySection[0].Specifier)
+	assert.Equal([]string{"Message-ID"}, opts.BodySection[0].HeaderFields)
 }
 
 func TestMessageIDsFromHeaderFetchResultsParsesMessageIDHeaders(t *testing.T) {

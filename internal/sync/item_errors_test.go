@@ -28,7 +28,7 @@ func (c *legacyRawBatchClient) ListMessages(context.Context, string, string) (*g
 }
 
 func (c *legacyRawBatchClient) GetMessageRaw(context.Context, string) (*gmail.RawMessage, error) {
-	return nil, nil
+	return &gmail.RawMessage{}, nil
 }
 
 func (c *legacyRawBatchClient) GetMessagesRawBatch(context.Context, []string) ([]*gmail.RawMessage, error) {
@@ -59,6 +59,7 @@ var _ gmail.API = (*legacyRawBatchClient)(nil)
 
 type diagnosticRawBatchClient struct {
 	legacyRawBatchClient
+
 	results []gmail.RawMessageBatchResult
 	err     error
 }
@@ -68,23 +69,27 @@ func (c *diagnosticRawBatchClient) GetMessagesRawBatchWithErrors(context.Context
 }
 
 func TestGetMessagesRawBatchWithDiagnosticsUsesMissingRawForLegacyNil(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	client := &legacyRawBatchClient{
 		rawMessages: []*gmail.RawMessage{nil},
 	}
 	_, hasDiagnostics := any(client).(rawBatchWithErrors)
-	require.False(t, hasDiagnostics)
+	require.False(hasDiagnostics)
 	syncer := New(client, nil, nil)
 
 	results, err := syncer.getMessagesRawBatchWithDiagnostics(context.Background(), []string{"Archive|10"})
 
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Archive|10", results[0].ID)
-	assert.Nil(t, results[0].Message)
-	assert.ErrorIs(t, results[0].Err, errRawBatchMissing)
+	require.NoError(err)
+	require.Len(results, 1)
+	assert.Equal("Archive|10", results[0].ID)
+	assert.Nil(results[0].Message)
+	require.ErrorIs(results[0].Err, errRawBatchMissing)
 }
 
 func TestGetMessagesRawBatchWithDiagnosticsPreservesClientError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	errFetch := errors.New("fetch failed")
 	client := &diagnosticRawBatchClient{
 		results: []gmail.RawMessageBatchResult{
@@ -95,9 +100,9 @@ func TestGetMessagesRawBatchWithDiagnosticsPreservesClientError(t *testing.T) {
 
 	results, err := syncer.getMessagesRawBatchWithDiagnostics(context.Background(), []string{"Archive|10"})
 
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Archive|10", results[0].ID)
-	assert.Nil(t, results[0].Message)
-	assert.True(t, results[0].Err == errFetch)
+	require.NoError(err)
+	require.Len(results, 1)
+	assert.Equal("Archive|10", results[0].ID)
+	assert.Nil(results[0].Message)
+	require.ErrorIs(results[0].Err, errFetch)
 }
