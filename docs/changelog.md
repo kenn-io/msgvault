@@ -59,8 +59,8 @@ No notable changes yet.
 - `msgvault serve stop` now explains long shutdown waits by reporting the
   daemon operation it is waiting for and periodically printing elapsed wait
   updates.
-- MCP `get_message` reads large message bodies in windows instead of loading
-  the whole body at once.
+- MCP `get_message` returns large message bodies in windows instead of
+  returning the whole body in one response.
 - Vector embedding maintenance no longer uses a separate pending queue.
   Coverage is tracked per message with `embed_gen`, so rebuilds, repairs, and
   daemon top-ups all share the same scan-and-fill path.

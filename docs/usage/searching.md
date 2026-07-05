@@ -116,7 +116,9 @@ also includes legacy rows whose type is empty because older msgvault versions
 created them before the column existed.
 
 The same message-type scoping is available in HTTP search via the
-`message_type` query parameter and in MCP `search_messages` / `list_messages`.
+`message_type` query parameter. In MCP, include a `message_type:` operator in
+the `search_messages` query; `find_similar_messages` accepts a `message_type`
+parameter.
 
 ## JSON Output
 

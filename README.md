@@ -230,10 +230,13 @@ or restore them later:
 
 ```bash
 msgvault backup init --repo ~/Backups/msgvault
-msgvault backup create
-msgvault backup verify --all --quick
-msgvault backup restore --target ~/msgvault-restored
+msgvault backup create --repo ~/Backups/msgvault
+msgvault backup verify --all --quick --repo ~/Backups/msgvault
+msgvault backup restore --target ~/msgvault-restored --repo ~/Backups/msgvault
 ```
+
+Set `repo` under `[backup]` in `config.toml` to omit `--repo` from every
+command after `init`.
 
 See the [Backup guide](https://msgvault.io/usage/backup/) for repository format,
 secret-handling flags, restore proof, and operating recommendations.

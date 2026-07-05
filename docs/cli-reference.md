@@ -488,13 +488,15 @@ repository.
 
 ```bash
 msgvault backup init --repo ~/Backups/msgvault
-msgvault backup create
-msgvault backup list
-msgvault backup verify
-msgvault backup restore --target ~/msgvault-restored
+msgvault backup create --repo ~/Backups/msgvault
+msgvault backup list --repo ~/Backups/msgvault
+msgvault backup verify --repo ~/Backups/msgvault
+msgvault backup restore --target ~/msgvault-restored --repo ~/Backups/msgvault
 ```
 
-Every backup subcommand accepts `--repo` to override `[backup].repo`.
+Every backup subcommand requires a repository: pass `--repo`, or set
+`[backup].repo` in `config.toml` to omit it. `backup init` initializes the
+repository directory but does not modify `config.toml`.
 `backup create` is routed through the selected daemon so the daemon can freeze a
 consistent SQLite snapshot while it scans pages and attachments. `backup verify`
 and `backup restore` run locally against the repository because they do not
