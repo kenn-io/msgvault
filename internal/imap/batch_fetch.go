@@ -5,12 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/mail"
 	"sort"
-	"strings"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	gomessage "github.com/emersion/go-message"
+	gomail "github.com/emersion/go-message/mail"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
 )
 
@@ -55,18 +55,13 @@ func rawBatchFetchOptions() *imap.FetchOptions {
 }
 
 func rawMIMEMessageID(rawMIME []byte) string {
-	msg, err := mail.ReadMessage(bytes.NewReader(rawMIME))
+	entity, err := gomessage.Read(bytes.NewReader(rawMIME))
 	if err != nil {
 		return ""
 	}
-	msgID := strings.TrimSpace(msg.Header.Get("Message-ID"))
-	if strings.HasPrefix(msgID, "<") && strings.HasSuffix(msgID, ">") {
-		msgID = strings.TrimSpace(msgID[1 : len(msgID)-1])
-	}
-	if msgID == "" || !strings.Contains(msgID, "@") || strings.ContainsAny(msgID, " \t\r\n") {
-		return ""
-	}
-	if addr, err := mail.ParseAddress(msgID); err != nil || addr.Address != msgID {
+	header := gomail.Header{Header: entity.Header}
+	msgID, err := header.MessageID()
+	if err != nil {
 		return ""
 	}
 	return msgID

@@ -192,7 +192,7 @@ func TestApplyFetchResultsMergesLabelsUsingRawMessageIDWithoutEnvelope(t *testin
 	results := newRawBatchResults([]string{"Archive|10"})
 	uidToIdx := map[imapapi.UID]int{imapapi.UID(10): 0}
 	chunk := []batchFetchItem{{idx: 0, uid: imapapi.UID(10)}}
-	raw := []byte("Message-ID: <shared@example.com>\r\n\r\nbody")
+	raw := []byte("Message-ID: <shared@example.com> (comment)\r\n\r\nbody")
 	msgs := []*imapclient.FetchMessageBuffer{
 		fetchMessageBufferWithoutEnvelope(imapapi.UID(10), raw),
 	}
