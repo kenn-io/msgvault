@@ -221,8 +221,14 @@ use for message-type filtering when you do not need full-text ranking.
 }
 ```
 
-The companion `GET /api/v1/messages/gmail-ids` endpoint accepts the same filter
-parameters and returns matching Gmail source message IDs for email workflows.
+The companion `GET /api/v1/messages/gmail-ids` endpoint returns matching Gmail
+source message IDs for email workflows such as deletion staging. It honors a
+subset of these parameters: `sender` / `sender_name`, `recipient` /
+`recipient_name`, `domain`, `label`, `source_id`, and `limit`. Results are
+always restricted to Gmail sources, exclude deleted messages, and are ordered
+newest-first; the remaining `/messages/filter` parameters (`message_type`,
+`conversation_id`, `after` / `before`, `attachments_only`, `hide_deleted`,
+`offset`, `sort`, `direction`) are ignored.
 
 ---
 
