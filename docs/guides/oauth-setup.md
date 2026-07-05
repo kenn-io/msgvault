@@ -297,8 +297,36 @@ Personal accounts (hotmail.com, outlook.com, live.com, msn.com) connect to `outl
 To restrict to a specific tenant at authorization time:
 
 ```bash
-msgvault add-o365 you@company.com --tenant your-org-tenant-id
+msgvault add-o365 you@example.com --tenant your-org-tenant-id
 ```
+
+### Microsoft Teams Graph Sync
+
+Teams ingestion uses the same `[microsoft] client_id` and redirect URI, but it
+requests Microsoft Graph delegated scopes and stores a separate token file under
+`tokens/teams_<email>.json`. The `microsoft_<email>.json` token created by
+`add-o365` is for IMAP and is not reused for Teams.
+
+If you will archive Teams chats and channels, add these **Microsoft Graph**
+delegated permissions to the app registration:
+
+- `Chat.Read`
+- `ChannelMessage.Read.All`
+- `Team.ReadBasic.All`
+- `Channel.ReadBasic.All`
+- `User.Read`
+- `User.ReadBasic.All`
+
+Then authorize and sync Teams:
+
+```bash
+msgvault add-teams you@example.com
+msgvault sync-teams you@example.com
+```
+
+Some organizations require administrator consent before delegated channel
+message permissions can be used. See [Microsoft Teams](/usage/teams/) for the
+full Teams workflow.
 
 ### Sync Your Email
 

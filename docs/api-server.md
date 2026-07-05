@@ -155,6 +155,7 @@ Paginated message list.
     {
       "id": 12345,
       "subject": "Q4 Planning",
+      "message_type": "email",
       "from": "alice@example.com",
       "to": ["bob@example.com"],
       "cc": ["carol@example.com"],
@@ -170,6 +171,61 @@ Paginated message list.
 
 ---
 
+### Filter messages {#get-apiv1messagesfilter}
+
+**Endpoint:** `GET /api/v1/messages/filter`
+
+List messages with structured filters backed by the query engine. This is the
+API equivalent of drilling into aggregate/search results and is the endpoint to
+use for message-type filtering when you do not need full-text ranking.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `sender` / `sender_name` | string | — | Sender address/phone or display-name filter |
+| `recipient` / `recipient_name` | string | — | Recipient address/phone or display-name filter |
+| `domain` | string | — | Participant domain filter |
+| `label` | string | — | Label filter |
+| `message_type` | string | — | Stored message type, for example `email`, `teams`, `calendar_event`, or `sms` |
+| `source_id` | int | — | Restrict to one source |
+| `conversation_id` | int | — | Restrict to one conversation/thread |
+| `after` / `before` | date | — | RFC3339 or `YYYY-MM-DD` bounds |
+| `attachments_only` | bool | `false` | Only include messages with attachments |
+| `hide_deleted` | bool | `false` | Exclude messages marked deleted at the source |
+| `offset` | int | `0` | Zero-based row offset |
+| `limit` | int | `500` | Maximum rows to return; capped at 500 outside conversation fetches |
+| `sort` | enum | `date` | `date`, `size`, or `subject` |
+| `direction` | enum | `desc` | `asc` or `desc` |
+
+**Response:**
+
+```json
+{
+  "count": 1,
+  "has_more": false,
+  "offset": 0,
+  "limit": 500,
+  "messages": [
+    {
+      "id": 12345,
+      "subject": "Incident review",
+      "message_type": "teams",
+      "from": "alice@example.com",
+      "to": [],
+      "sent_at": "2026-07-01T15:30:00Z",
+      "snippet": "Follow-up from the channel discussion...",
+      "labels": [],
+      "has_attachments": false,
+      "size_bytes": 0
+    }
+  ]
+}
+```
+
+The companion `GET /api/v1/messages/gmail-ids` endpoint accepts the same filter
+parameters and returns matching Gmail source message IDs for email workflows.
+
+---
+
 ### Message details {#get-apiv1messagesid}
 
 **Endpoint:** `GET /api/v1/messages/{id}`
@@ -182,6 +238,7 @@ Full message details including body and attachment metadata.
 {
   "id": 12345,
   "subject": "Q4 Planning",
+  "message_type": "email",
   "from": "alice@example.com",
   "to": ["bob@example.com"],
   "cc": ["carol@example.com"],
@@ -251,7 +308,16 @@ to `mode=fts` instead.
 | `mode` | enum | `fts` | `fts`, `vector`, or `hybrid` |
 | `page` | int | `1` | Page number (FTS only — vector/hybrid reject `page>1`) |
 | `page_size` | int | `20` | Results per page (max 100 for FTS, max `[vector].search.max_page_size_hybrid` for vector/hybrid) |
+| `message_type` | string | — | Message-type filter; repeat or comma-separate for multiple values |
+| `account` | string | — | Restrict to one account/source |
+| `collection` | string | — | Restrict to one collection |
 | `explain` | 0/1 | `0` | When `1` and `mode=vector|hybrid`, include per-signal scores |
+
+`message_type` uses the same values as local search: `email`,
+`calendar_event`, `teams`, `sms`, `mms`, `whatsapp`, `imessage`,
+`fbmessenger`, `synctech_sms_call`, `google_voice_text`,
+`google_voice_call`, and `google_voice_voicemail`. The query string can also
+carry `message_type:` / `message_type=` operators inside `q`.
 
 **Response (mode=fts, default):**
 
@@ -265,6 +331,7 @@ to `mode=fts` instead.
     {
       "id": 12345,
       "subject": "Q4 Planning",
+      "message_type": "email",
       "from": "alice@example.com",
       "to": ["bob@example.com"],
       "cc": ["carol@example.com"],
@@ -298,6 +365,7 @@ to `mode=fts` instead.
     {
       "id": 12345,
       "subject": "Q2 planning offsite agenda",
+      "message_type": "email",
       "from": "alice@example.com",
       "to": ["team@example.com"],
       "sent_at": "2024-01-15T10:30:00Z",

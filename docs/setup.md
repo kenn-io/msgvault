@@ -284,3 +284,38 @@ msgvault sync-calendar you@gmail.com
 Calendar sync is read-only. Events become searchable with
 `--message-type calendar_event`; see [Google Calendar](/usage/calendar/) for the
 full workflow, scheduled sync, and headless-server setup.
+
+## Optional: Sync Microsoft Teams
+
+To archive Teams chats and channels, add Microsoft Graph permissions to your
+Microsoft app registration, authorize Teams, then sync:
+
+```bash
+msgvault add-teams user@example.com
+msgvault sync-teams user@example.com
+```
+
+Teams messages become searchable with `--message-type teams`. See
+[Microsoft Teams](/usage/teams/) for required Graph permissions, scheduling,
+and inline media backfill.
+
+## Optional: Configure Backups
+
+Create a backup repository before relying on the archive as your source of
+truth:
+
+```bash
+msgvault backup init --repo ~/Backups/msgvault
+msgvault backup create --repo ~/Backups/msgvault
+msgvault backup verify --repo ~/Backups/msgvault
+```
+
+Record the repository in `config.toml` so future commands can omit `--repo`:
+
+```toml
+[backup]
+repo = "~/Backups/msgvault"
+```
+
+See [Backup](/usage/backup/) for restore, verification, scheduling, and
+secret-handling details.

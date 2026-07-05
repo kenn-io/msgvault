@@ -62,6 +62,7 @@ Takes a snapshot. Flags:
 | `--allow-plaintext-secrets` | Permit config/tokens in an unencrypted repository |
 | `--tag STR` | Free-form label shown by `backup list` |
 | `--force-unlock` | Override a fresh repository lock (see Locking) |
+| `--jobs N` | Concurrent attachment capture workers (default: one per CPU; use `1` for serial reads on spinning disks or NAS shares) |
 
 When the msgvault daemon is running, `backup create` coordinates with it automatically: the command is proxied through the daemon, which briefly pauses conflicting maintenance operations while the backup pins a consistent read of the database. The pause lasts only as long as it takes to checkpoint the WAL and open a read transaction — normal syncing and reads continue while pages are scanned. A watchdog on the daemon side guarantees a crashed backup can never leave the daemon wedged.
 

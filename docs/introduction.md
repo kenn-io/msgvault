@@ -24,8 +24,9 @@ This means:
   over the years.
 
 I started with Gmail but I want all my life's messages in this system,
-including WhatsApp, iMessage, Google Voice, Facebook Messenger, SMS
-Backup & Restore archives, and old local email archives.
+including Google Calendar, Microsoft Teams, WhatsApp, iMessage, Google Voice,
+Facebook Messenger, SMS Backup & Restore archives, and old local email
+archives.
 
 I suspect I am not the only one who has felt this way. **I hope you
 will join me in this revolution to liberate our life's messages from

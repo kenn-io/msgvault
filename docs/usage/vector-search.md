@@ -133,6 +133,10 @@ max_page_size_hybrid = 50                # hard cap on vector/hybrid page_size
 [vector.embed.schedule]
 cron = "*/5 * * * *"                     # embed worker cron (5-field); empty disables cron
 run_after_sync = true                    # run a pass after every successful scheduled sync
+
+[vector.embed.scope]
+# Optional: leave empty for the full archive, or restrict new generations.
+message_types = ["teams"]
 ```
 
 The `[vector]` section only takes effect when `enabled = true` **and**
@@ -278,6 +282,7 @@ trigger).
 | Ingest path | Runs the embed worker? |
 |---|---|
 | Manual `sync-full` / `sync` (Gmail, IMAP) | No. Run `msgvault embeddings build` afterward |
+| Manual `sync-calendar` / `sync-teams` | No. Run `msgvault embeddings build` afterward |
 | Scheduled syncs in `msgvault serve` | Yes, when `[vector.embed.schedule].run_after_sync = true` |
 | `import-pst`, `import-emlx`, `import-mbox` | No. Re-run `--full-rebuild` after large imports |
 | Chat/text imports (iMessage, WhatsApp, Google Voice, Messenger, SyncTech SMS) | No. Run a full rebuild after importing if you want chats included |
@@ -314,6 +319,35 @@ self-recovers: the next edit to that message bumps `last_modified` (and
 `repair-encoding` clears its coverage stamp outright), and a full rebuild
 (`embeddings build --full-rebuild`) or the periodic full-scan backstop
 re-embeds it regardless.
+
+## Scoped Generations
+
+Large mixed archives can build a vector index for only selected message types:
+
+```toml
+[vector.embed.scope]
+message_types = ["teams"]
+```
+
+The scope is part of the generation fingerprint. Changing it requires
+`msgvault embeddings build --full-rebuild --yes`, just like changing the model
+or preprocessing policy. Scoped generations are useful when you want semantic
+search for a newer corpus such as Teams or SMS without embedding decades of
+email immediately.
+
+A scoped index is intentionally partial, so vector and hybrid search require an
+explicit compatible message-type filter:
+
+```bash
+msgvault search "release planning" --mode hybrid --message-type teams
+msgvault search "message_type:teams release planning" --mode vector
+```
+
+If the active generation is scoped to `teams`, an unscoped vector/hybrid query
+or a query scoped to `email` returns `index_scope_mismatch`. Use `mode=fts` for
+unscoped keyword searches, add the matching message-type filter, or rebuild an
+unscoped generation by clearing `[vector.embed.scope].message_types` and running
+a full rebuild.
 
 ## Search
 
@@ -391,6 +425,7 @@ conditions as command errors rather than structured codes.
 | `index_stale` | Active generation's fingerprint does not match the current model, dimension, preprocessing policy, `max_input_chars`, or embedding output policy. | Run `msgvault embeddings build --full-rebuild --yes`. |
 | `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build` or wait for the scheduler. Use `mode=fts` for the interim. |
 | `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or switch to `mode=fts`. |
+| `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use `mode=fts`, or rebuild an unscoped generation. |
 | `pagination_unsupported` | HTTP request asked for `page>1` with `mode=vector|hybrid`. | Use `page=1` with a larger `page_size` instead. |
 | `pagination_limit` | MCP `search_messages` asked for an `offset` at or beyond a positive `[vector.search].max_page_size_hybrid` cap in `mode=vector|hybrid`. | Use `mode=fts` for deeper pagination, request an earlier page, or raise/disable the hybrid page-size cap. |
 | `invalid_mode` | `mode=` value other than `fts`, `vector`, `hybrid`. | Pick one of those. |

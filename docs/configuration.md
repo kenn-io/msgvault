@@ -68,6 +68,11 @@ daemon_auto_restart = "newer" # newer, never, or always
 engine = "auto"
 auto_build_cache = true
 
+[backup]
+# Default repository for `msgvault backup`.
+repo = "~/Backups/msgvault"
+zstd_level = 0
+
 [remote]
 # Remote msgvault endpoint for CLI remote mode
 url = "http://nas-ip:8080"
@@ -99,6 +104,10 @@ strip_html = true
 strip_base64 = true
 strip_url_tracking = true
 collapse_whitespace = true
+
+[vector.embed.scope]
+# Empty means embed the full archive. Set this for partial generations.
+message_types = ["sms", "mms"]
 
 [[synctech_sms.sources]]
 name = "phone-backups"
@@ -157,14 +166,15 @@ When `service_account_key` is configured, `msgvault add-account <email>` validat
 
 ### `[microsoft]`
 
-Configuration for Microsoft 365 / Outlook.com OAuth. Required only if you use `add-o365`.
+Configuration for Microsoft 365 / Outlook.com OAuth and Microsoft Teams Graph
+sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
 
 | Key | Default | Description |
 |---|---|---|
 | `client_id` | — | Azure AD Application (client) ID (required) |
 | `tenant_id` | `common` | Azure AD tenant ID; `common` allows both personal and org accounts |
 
-See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps.
+See [OAuth Setup: Microsoft 365](/guides/oauth-setup/#microsoft-365-outlook-hotmail) for app registration steps. Teams uses the same `client_id` but requests Microsoft Graph scopes and stores tokens under `tokens/teams_<email>.json`; Outlook/Hotmail IMAP OAuth uses `tokens/microsoft_<email>.json`.
 
 ### `[log]`
 
@@ -220,6 +230,16 @@ Settings for daemon-side aggregate query behavior. The TUI, MCP server, and aggr
 | `auto_build_cache` | `true` | Build a stale or missing Parquet cache before the daemon opens DuckDB for aggregate views |
 
 Deprecated in 0.17.0: per-command analytics flags such as `msgvault tui --force-sql`, `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and `--no-sqlite-scanner` were replaced by this daemon-level section. Use `engine = "sql"` for live SQL, `auto_build_cache = false` to skip automatic daemon cache builds, or `msgvault build-cache` to prebuild cache files on the daemon host. If `engine = "duckdb"` and the cache cannot be built or opened, `msgvault serve` fails instead of silently falling back.
+
+### `[backup]`
+
+Default settings for `msgvault backup`. See [Backup](/usage/backup/) for the
+capture, verify, and restore workflow.
+
+| Key | Default | Description |
+|---|---|---|
+| `repo` | — | Default backup repository directory used when a backup subcommand omits `--repo` |
+| `zstd_level` | `0` | Compression level for backup pack files. `0` uses msgvault's built-in default; otherwise use `1` through `19` |
 
 ### `[remote]`
 
@@ -339,6 +359,23 @@ Hybrid ranking parameters applied at query time.
 | `k_per_signal` | `100` | Candidate pool size drawn from each signal (BM25 or vector) before fusion. |
 | `subject_boost` | `2.0` | Multiplier applied when a query term matches a message's subject line. |
 | `max_page_size_hybrid` | `50` | Hard cap on `page_size` for vector/hybrid responses. Set to `0` to disable clamping. |
+
+#### `[vector.embed.scope]`
+
+Optional scope for newly built embedding generations. The zero value embeds the
+full archive. A scoped generation embeds only matching `messages.message_type`
+values:
+
+```toml
+[vector.embed.scope]
+message_types = ["teams"]
+```
+
+Scoped generations are intentionally partial. Vector and hybrid queries against
+a scoped index must include a compatible `message_type` filter, such as
+`msgvault search "release planning" --mode hybrid --message-type teams`; an
+unscoped vector/hybrid query returns `index_scope_mismatch` instead of using the
+partial index as if it covered the full archive.
 
 #### `[vector.embed.schedule]`
 

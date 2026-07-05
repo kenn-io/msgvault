@@ -15,14 +15,18 @@ Archive a lifetime of email. Analytics and search in milliseconds, entirely offl
 
 Your messages are yours. Decades of correspondence, attachments, and history shouldn't be locked behind a web interface or an API. By default, msgvault downloads a complete local copy and then everything runs offline. Search, analytics, and the MCP server all work against your msgvault archive with no mailbox network access required. If you configure a remote deployment, the archive lives on your own server rather than a hosted msgvault service.
 
-Currently supports Gmail, Google Calendar, and IMAP sync, plus offline imports from MBOX exports and Apple Mail (.emlx) directories.
+Currently supports Gmail, Google Calendar, Microsoft Teams, and IMAP sync, plus
+offline imports from MBOX exports, Apple Mail (.emlx) directories, PST archives,
+and common chat/text export formats.
 
 ## Features
 
 - **Full Gmail backup**: raw MIME, attachments, labels, and metadata
 - **Google Calendar sync**: archive events, organizers, and attendees; searchable alongside email
+- **Microsoft Teams sync**: archive delegated Graph chats, channels, replies, and inline media with `message_type = teams`
 - **IMAP sync**: archive mail from any standard IMAP server
-- **MBOX / Apple Mail import**: import email from MBOX exports or Apple Mail (.emlx) directories
+- **Incremental backup snapshots**: verifiable `msgvault backup` repositories for the SQLite archive and attachments
+- **MBOX / Apple Mail / PST import**: import email from local export formats
 - **Interactive TUI**: drill-down analytics over your entire message history, powered by DuckDB over Parquet — connects to a remote `msgvault serve` instance or runs locally
 - **Full-text search**: FTS5 with Gmail-like query syntax (`from:`, `has:attachment`, date ranges)
 - **MCP server**: access your full archive at the speed of thought in Claude Desktop and other MCP-capable AI agents
@@ -90,8 +94,11 @@ msgvault tui
 | `sync EMAIL` | Sync only new/changed messages |
 | `add-calendar EMAIL` | Authorize read-only Google Calendar access and register calendars |
 | `sync-calendar NAME\|EMAIL` | Sync Google Calendar events (full first run, then incremental) |
+| `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
+| `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
+| `backup` | Initialize, create, list, verify, and restore backup snapshots |
 | `tui` | Launch the interactive TUI (`--account` to filter, `--local` to bypass HTTP) |
-| `search QUERY` | Search messages (`--account` to filter, `--json` for machine output) |
+| `search QUERY` | Search messages (`--account` and `--message-type` to filter, `--json` for machine output) |
 | `show-message ID` | View full message details (`--json` for machine output) |
 | `mcp` | Start the MCP server for AI assistant integration |
 | `serve` | Run the API/scheduler or manage the background daemon (`start`, `status`, `stop`, `restart`) |
@@ -200,6 +207,36 @@ msgvault search "standup" --message-type calendar_event
 By default only calendars you own or can write to are synced (add `--all-calendars` for subscribed and holiday calendars). Calendar sync is read-only and never modifies your Google Calendar. Cancelled events are kept (marked cancelled), not deleted, so your archive preserves that a meeting once existed. The Calendar API must be enabled on your Google Cloud OAuth project.
 
 Msgvault stores Google OAuth refresh tokens under the Msgvault home directory with file permissions restricted to the current user. Tokens and client secrets are not written into `config.toml`, logs, README examples, or exported fixtures.
+
+### Microsoft Teams
+
+Archive Microsoft Teams chats and channels through delegated Microsoft Graph
+sync. Teams uses the `[microsoft]` OAuth app config but stores a separate
+`teams_<email>.json` token from Outlook/IMAP OAuth.
+
+```bash
+msgvault add-teams user@example.com
+msgvault sync-teams user@example.com
+msgvault search "incident review" --message-type teams
+```
+
+See the [Microsoft Teams guide](https://msgvault.io/usage/teams/) for Graph
+permissions, scheduling, channel sync behavior, and inline media backfill.
+
+### Backup Snapshots
+
+Create an append-only backup repository, take incremental snapshots, and verify
+or restore them later:
+
+```bash
+msgvault backup init --repo ~/Backups/msgvault
+msgvault backup create
+msgvault backup verify --all --quick
+msgvault backup restore --target ~/msgvault-restored
+```
+
+See the [Backup guide](https://msgvault.io/usage/backup/) for repository format,
+secret-handling flags, restore proof, and operating recommendations.
 
 ## Configuration
 

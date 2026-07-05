@@ -25,6 +25,7 @@ nav = [
     {"Importing Local Email" = "usage/importing.md"},
     {"Text Messages" = "usage/text-messages.md"},
     {"Google Calendar" = "usage/calendar.md"},
+    {"Microsoft Teams" = "usage/teams.md"},
     {"Exporting Data" = "usage/exporting.md"},
     {"Analytics & Stats" = "usage/analytics.md"},
     {"SQL Queries" = "usage/querying.md"},

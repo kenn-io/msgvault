@@ -24,7 +24,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
-| `source_type` | TEXT | `gmail`, `imap`, `mbox`, `pst`, `apple-mail`, `whatsapp`, `apple_messages`, `google_voice`, `facebook_messenger`, `synctech_sms` |
+| `source_type` | TEXT | `gmail`, `imap`, `gcal`, `teams`, `mbox`, `pst`, `apple-mail`, `whatsapp`, `apple_messages`, `google_voice`, `facebook_messenger`, `synctech_sms` |
 | `identifier` | TEXT | Email address or phone number |
 | `display_name` | TEXT | Account display name |
 | `sync_cursor` | TEXT | Sync cursor (Gmail history ID for Gmail accounts) |
@@ -49,7 +49,7 @@ All message data (metadata, labels, participants, and raw MIME) lives in the con
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `whatsapp`, `imessage`, `google_voice_text`, `teams` |
+| `message_type` | TEXT | `email`, `calendar_event`, `teams`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `subject` | TEXT | Message subject |

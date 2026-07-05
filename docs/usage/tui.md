@@ -88,7 +88,7 @@ Press `t` from any view to jump directly to the Time view. The Time view aggrega
 
 ## Text Messages
 
-Press `m` to toggle between Email and Texts mode. This mode is only available when text/chat data has been imported. See [Text Messages](/usage/text-messages/) for details on importing WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore conversations.
+Press `m` to toggle between Email and Texts mode. This mode is only available when text/chat data has been imported or synced. See [Text Messages](/usage/text-messages/) for details on importing WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore conversations, and [Microsoft Teams](/usage/teams/) for Teams sync.
 
 Text mode provides the following view types. Press `g` to cycle through them:
 

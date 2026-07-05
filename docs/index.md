@@ -1,6 +1,6 @@
 ---
 title: msgvault
-description: Offline email and message archive with full-text search, interactive TUI, and multi-account support. Import from Gmail, IMAP, PST, MBOX, Apple Mail, WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore.
+description: Offline email and message archive with full-text search, interactive TUI, backup snapshots, and multi-account support. Sync Gmail, IMAP, Google Calendar, and Microsoft Teams; import PST, MBOX, Apple Mail, WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS Backup & Restore.
 ---
 
 # msgvault
@@ -18,8 +18,9 @@ search, and local AI workflows.
   <img src="/assets/generated/tui-senders.svg" alt="msgvault TUI showing the Senders view" loading="eager">
 </figure>
 
-Supports Gmail sync, Google Calendar sync, IMAP, Microsoft 365, PST import, MBOX
-import, Apple Mail import, and chat/text import (WhatsApp, iMessage, Google Voice,
+Supports Gmail sync, Google Calendar sync, Microsoft Teams sync, IMAP,
+Microsoft 365 mail, verifiable backup snapshots, PST import, MBOX import,
+Apple Mail import, and chat/text import (WhatsApp, iMessage, Google Voice,
 Facebook Messenger, and SMS Backup & Restore).
 
 Read the [Introduction](/introduction/) to learn more about why this project
@@ -40,12 +41,12 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 Then [set up OAuth credentials](/guides/oauth-setup/) and [start
 syncing](/setup/). You can also [build from source](/setup/#build-from-source).
 
-!!! note "New in 0.15.0"
-    PST archive import, Facebook Messenger DYI import, SyncTech SMS Backup &
-    Restore import, account collections, per-account identities, reversible
-    deduplication workflows, Google service account delegation, MCP
-    StreamableHTTP, and API access to HTML email bodies and inline images. See
-    the [Changelog](/changelog/) for the full release notes.
+!!! note "New in 0.17.0"
+    Backup repositories, Google Calendar sync, Microsoft Teams delegated Graph
+    sync, message-type filtering, scoped embedding generations, OpenAPI docs
+    and generated client support, daemon-owned CLI archive access, faster IMAP
+    resyncs, and the completed Bubble Tea v2 TUI migration. See the
+    [Changelog](/changelog/) for the full release notes.
 
 ## Why msgvault?
 
@@ -73,6 +74,14 @@ disk that you own and control.
   <section>
     <h3>Calendar Sync</h3>
     <p>Archive Google Calendar alongside email. Events — including organizers, attendees, recurring series, and cancellations — become searchable by keyword and by meaning, and their participants dedupe with your email contacts. Read-only and incremental.</p>
+  </section>
+  <section>
+    <h3>Teams Sync</h3>
+    <p>Archive Microsoft Teams chats, channels, replies, link attachments, and inline media through delegated Microsoft Graph. Teams records use <code>message_type = teams</code> so they can be searched and queried separately from email.</p>
+  </section>
+  <section>
+    <h3>Backup Snapshots</h3>
+    <p>Create incremental, append-only backup repositories for the SQLite archive and attachments. Verify snapshots byte-for-byte, restore into a fresh archive home, and sync the repository off-site with ordinary file tools.</p>
   </section>
   <section>
     <h3>Lightning-Fast TUI</h3>

@@ -34,6 +34,7 @@ Gmail connector query when you need Gmail itself to evaluate those operators.
 | `newer_than:` | Relative date | `newer_than:30d` |
 | `larger:` | Minimum size | `larger:5M`, `100K` |
 | `smaller:` | Maximum size | `smaller:1M` |
+| `message_type:` | Stored message type | `message_type:teams`, `message_type=calendar_event` |
 
 Bare words and `"quoted phrases"` perform full-text search across message subjects and bodies.
 
@@ -91,19 +92,31 @@ SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior
 
 ## Filtering by Message Type
 
-Archives can hold more than email — Google Calendar events, text messages, and
-call logs all live in the same database. Restrict a search to one kind with
-`--message-type`:
+Archives can hold more than email — Google Calendar events, Microsoft Teams
+messages, text messages, calls, voicemails, and Messenger imports all live in
+the same database. Restrict a search to one or more kinds with the
+`message_type:` operator or the repeatable/comma-separated `--message-type`
+flag:
 
 ```bash
 # Only Google Calendar events
 msgvault search "standup" --message-type calendar_event
 
+# Only Microsoft Teams messages
+msgvault search "message_type:teams incident review"
+
 # Only SMS/MMS text messages
-msgvault search "dinner" --message-type sms
+msgvault search "dinner" --message-type sms --message-type mms
 ```
 
-Values include `calendar_event`, `sms`, `mms`, and `synctech_sms_call`.
+Valid values are `email`, `calendar_event`, `sms`, `mms`, `whatsapp`,
+`imessage`, `teams`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`,
+`google_voice_call`, and `google_voice_voicemail`. `message_type:email`
+also includes legacy rows whose type is empty because older msgvault versions
+created them before the column existed.
+
+The same message-type scoping is available in HTTP search via the
+`message_type` query parameter and in MCP `search_messages` / `list_messages`.
 
 ## JSON Output
 
