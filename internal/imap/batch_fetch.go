@@ -97,7 +97,10 @@ func (c *Client) applyFetchResults(
 		// overlap. Return a non-nil stub with empty Raw so the caller treats
 		// this as a skip, not a fetch error.
 		msgID := compositeID(mailbox, msgBuf.UID)
-		rfc822MessageID := rawMIMEMessageID(rawMIME)
+		var rfc822MessageID string
+		if c.seenRFC822IDs != nil || c.msgIDToLabels != nil {
+			rfc822MessageID = rawMIMEMessageID(rawMIME)
+		}
 		if c.seenRFC822IDs != nil &&
 			rfc822MessageID != "" {
 			if c.seenRFC822IDs[rfc822MessageID] {
@@ -146,6 +149,133 @@ func (c *Client) applyFetchResults(
 	}
 }
 
+// batchMailboxOrder returns the mailboxes sorted by name, except that
+// allMailFolder (when present) sorts first so seenRFC822IDs is populated
+// from the canonical source before checking Trash/Junk for duplicates.
+func batchMailboxOrder(byMailbox map[string][]batchFetchItem, allMailFolder string) []string {
+	order := make([]string, 0, len(byMailbox))
+	for mb := range byMailbox {
+		order = append(order, mb)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i] == allMailFolder || order[j] == allMailFolder {
+			return order[i] == allMailFolder
+		}
+		return order[i] < order[j]
+	})
+	return order
+}
+
+// selectBatchMailbox selects the mailbox, reconnecting once on network
+// errors. On non-fatal failure it marks all items with the error and
+// returns ok=false so the caller can skip the mailbox; a non-nil error
+// means reconnect failed and the whole batch should be abandoned.
+func (c *Client) selectBatchMailbox(
+	ctx context.Context,
+	mailbox string,
+	items []batchFetchItem,
+	results []gmailapi.RawMessageBatchResult,
+) (bool, error) {
+	err := c.selectMailbox(mailbox)
+	if err == nil {
+		return true, nil
+	}
+	if isNetworkError(err) {
+		c.logger.Warn("network error selecting mailbox, reconnecting", "mailbox", mailbox, "error", err)
+		if reconErr := c.reconnect(ctx); reconErr != nil {
+			return false, fmt.Errorf("reconnect failed fetching mailbox %q: %w", mailbox, reconErr)
+		}
+		err = c.selectMailbox(mailbox)
+		if err == nil {
+			return true, nil
+		}
+		c.logger.Warn("skipping mailbox batch after reconnect", "mailbox", mailbox, "error", err)
+	} else {
+		c.logger.Warn("skipping mailbox batch", "mailbox", mailbox, "error", err)
+	}
+	markRawBatchError(results, items, err)
+	return false, nil
+}
+
+// fetchChunk runs one UID FETCH, reconnecting and retrying once on network
+// errors. fatal reports that the connection could not be re-established and
+// the whole batch should be abandoned; otherwise a non-nil error is local
+// to this chunk.
+func (c *Client) fetchChunk(
+	ctx context.Context,
+	mailbox string,
+	uidSet imap.UIDSet,
+	fetchOpts *imap.FetchOptions,
+) (msgs []*imapclient.FetchMessageBuffer, fatal bool, err error) {
+	msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
+	if err == nil {
+		return msgs, false, nil
+	}
+	if !isNetworkError(err) {
+		c.logger.Warn("UID FETCH failed", "mailbox", mailbox, "error", err)
+		return nil, false, fmt.Errorf("UID FETCH in mailbox %q: %w", mailbox, err)
+	}
+	c.logger.Warn("network error during UID FETCH, reconnecting", "mailbox", mailbox, "error", err)
+	if reconErr := c.reconnect(ctx); reconErr != nil {
+		return nil, true, fmt.Errorf("reconnect failed fetching chunk in mailbox %q: %w", mailbox, reconErr)
+	}
+	if selErr := c.selectMailbox(mailbox); selErr != nil {
+		c.logger.Warn("mailbox reselect failed after reconnect", "mailbox", mailbox, "error", selErr)
+		return nil, false, selErr
+	}
+	msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
+	if err != nil {
+		c.logger.Warn("UID FETCH failed after reconnect", "mailbox", mailbox, "error", err)
+		return nil, false, fmt.Errorf("UID FETCH after reconnect in mailbox %q: %w", mailbox, err)
+	}
+	return msgs, false, nil
+}
+
+// fetchMailboxBatch fetches all items of one mailbox in chunks of
+// fetchChunkSize (huge UID FETCH commands time out on large mailboxes).
+// When a chunk fails non-fatally, the chunk's items are marked with the
+// error, the mailbox's remaining items are marked as skipped, and the
+// mailbox is abandoned. A non-nil return error aborts the whole batch.
+func (c *Client) fetchMailboxBatch(
+	ctx context.Context,
+	mailbox string,
+	items []batchFetchItem,
+	fetchOpts *imap.FetchOptions,
+	results []gmailapi.RawMessageBatchResult,
+) error {
+	uidToIdx := make(map[imap.UID]int, len(items))
+	for _, item := range items {
+		uidToIdx[item.uid] = item.idx
+	}
+
+	for chunkStart := 0; chunkStart < len(items); chunkStart += fetchChunkSize {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		end := min(chunkStart+fetchChunkSize, len(items))
+		chunk := items[chunkStart:end]
+
+		var uidSet imap.UIDSet
+		for _, item := range chunk {
+			uidSet.AddNum(item.uid)
+		}
+
+		msgs, fatal, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
+		if fatal {
+			return err
+		}
+		if err != nil {
+			markRawBatchError(results, chunk, err)
+			markRawBatchError(results, items[end:], errIMAPSkippedAfterChunkFailed)
+			return nil
+		}
+
+		c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+	}
+	return nil
+}
+
 // GetMessagesRawBatchWithErrors fetches multiple messages, grouping by mailbox for efficiency.
 // Results are returned in the same order as messageIDs with per-message fetch errors preserved.
 //
@@ -176,108 +306,22 @@ func (c *Client) GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs [
 		return nil, err
 	}
 
-	// Process allMailFolder first so seenRFC822IDs is populated from
-	// the canonical source before checking Trash/Junk for duplicates.
-	mailboxOrder := make([]string, 0, len(byMailbox))
-	for mb := range byMailbox {
-		mailboxOrder = append(mailboxOrder, mb)
-	}
-	sort.Strings(mailboxOrder)
-	if c.allMailFolder != "" {
-		for i, mb := range mailboxOrder {
-			if mb == c.allMailFolder {
-				mailboxOrder = append(
-					append([]string{mb}, mailboxOrder[:i]...),
-					mailboxOrder[i+1:]...,
-				)
-				break
-			}
-		}
-	}
-
-	for _, mailbox := range mailboxOrder {
+	for _, mailbox := range batchMailboxOrder(byMailbox, c.allMailFolder) {
 		items := byMailbox[mailbox]
 		if ctx.Err() != nil {
 			return results, ctx.Err()
 		}
 
-		if err := c.selectMailbox(mailbox); err != nil {
-			if isNetworkError(err) {
-				c.logger.Warn("network error selecting mailbox, reconnecting", "mailbox", mailbox, "error", err)
-				if reconErr := c.reconnect(ctx); reconErr != nil {
-					return results, fmt.Errorf("reconnect failed fetching mailbox %q: %w", mailbox, reconErr)
-				}
-				if err := c.selectMailbox(mailbox); err != nil {
-					c.logger.Warn("skipping mailbox batch after reconnect", "mailbox", mailbox, "error", err)
-					markRawBatchError(results, items, err)
-					continue
-				}
-			} else {
-				c.logger.Warn("skipping mailbox batch", "mailbox", mailbox, "error", err)
-				markRawBatchError(results, items, err)
-				continue
-			}
+		ok, err := c.selectBatchMailbox(ctx, mailbox, items, results)
+		if err != nil {
+			return results, err
+		}
+		if !ok {
+			continue
 		}
 
-		// Build UID→result-index map for all items in this mailbox.
-		uidToIdx := make(map[imap.UID]int, len(items))
-		for _, item := range items {
-			uidToIdx[item.uid] = item.idx
-		}
-
-		// Fetch in chunks to avoid huge UID FETCH commands that time out on
-		// large mailboxes.
-	chunkLoop:
-		for chunkStart := 0; chunkStart < len(items); chunkStart += fetchChunkSize {
-			if ctx.Err() != nil {
-				return results, ctx.Err()
-			}
-
-			chunk := items[chunkStart:]
-			if len(chunk) > fetchChunkSize {
-				chunk = chunk[:fetchChunkSize]
-			}
-
-			var uidSet imap.UIDSet
-			for _, item := range chunk {
-				uidSet.AddNum(item.uid)
-			}
-
-			msgs, err := c.conn.Fetch(uidSet, fetchOpts).Collect()
-			if err != nil {
-				if isNetworkError(err) {
-					c.logger.Warn("network error during UID FETCH, reconnecting", "mailbox", mailbox, "error", err)
-					if reconErr := c.reconnect(ctx); reconErr != nil {
-						return results, fmt.Errorf("reconnect failed fetching chunk in mailbox %q: %w", mailbox, reconErr)
-					}
-					if selErr := c.selectMailbox(mailbox); selErr != nil {
-						c.logger.Warn("skipping remaining chunks after reconnect", "mailbox", mailbox, "error", selErr)
-						markRawBatchError(results, chunk, selErr)
-						if chunkStart+len(chunk) < len(items) {
-							markRawBatchError(results, items[chunkStart+len(chunk):], errIMAPSkippedAfterChunkFailed)
-						}
-						break chunkLoop
-					}
-					msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
-					if err != nil {
-						c.logger.Warn("UID FETCH failed after reconnect", "mailbox", mailbox, "error", err)
-						markRawBatchError(results, chunk, err)
-						if chunkStart+len(chunk) < len(items) {
-							markRawBatchError(results, items[chunkStart+len(chunk):], errIMAPSkippedAfterChunkFailed)
-						}
-						break chunkLoop
-					}
-				} else {
-					c.logger.Warn("UID FETCH failed", "mailbox", mailbox, "error", err)
-					markRawBatchError(results, chunk, err)
-					if chunkStart+len(chunk) < len(items) {
-						markRawBatchError(results, items[chunkStart+len(chunk):], errIMAPSkippedAfterChunkFailed)
-					}
-					break chunkLoop
-				}
-			}
-
-			c.applyFetchResults(results, uidToIdx, mailbox, chunk, msgs)
+		if err := c.fetchMailboxBatch(ctx, mailbox, items, fetchOpts, results); err != nil {
+			return results, err
 		}
 	}
 	return results, nil

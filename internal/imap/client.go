@@ -64,18 +64,19 @@ type Client struct {
 	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
 	logger      *slog.Logger
 
-	mu               sync.Mutex
-	conn             *imapclient.Client
-	selectedMailbox  string               // currently selected mailbox
-	mailboxCache     []string             // cached list of selectable mailboxes
-	messageListCache []gmailapi.MessageID // full message ID list, built once per session
-	trashMailbox     string               // cached trash mailbox name
-	junkMailbox      string               // cached junk/spam mailbox name
-	allMailFolder    string               // mailbox with \All attribute (empty if not detected)
-	msgIDToLabels    map[string][]string  // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs    map[string]bool      // dedup across All Mail + Trash/Spam
-	since            time.Time            // IMAP SINCE date filter (zero = no filter)
-	before           time.Time            // IMAP BEFORE date filter (zero = no filter)
+	mu                  sync.Mutex
+	conn                *imapclient.Client
+	selectedMailbox     string               // currently selected mailbox
+	selectedNumMessages uint32               // EXISTS count from the last SELECT
+	mailboxCache        []string             // cached list of selectable mailboxes
+	messageListCache    []gmailapi.MessageID // full message ID list, built once per session
+	trashMailbox        string               // cached trash mailbox name
+	junkMailbox         string               // cached junk/spam mailbox name
+	allMailFolder       string               // mailbox with \All attribute (empty if not detected)
+	msgIDToLabels       map[string][]string  // RFC822 Message-ID → mailbox memberships
+	seenRFC822IDs       map[string]bool      // dedup across All Mail + Trash/Spam
+	since               time.Time            // IMAP SINCE date filter (zero = no filter)
+	before              time.Time            // IMAP BEFORE date filter (zero = no filter)
 
 	priorFolderStates    map[string]FolderState // saved states from the last completed sync
 	observedFolderStates map[string]FolderState // states captured during this session's listing
@@ -203,10 +204,12 @@ func (c *Client) selectMailbox(mailbox string) error {
 	if c.selectedMailbox == mailbox {
 		return nil
 	}
-	if _, err := c.conn.Select(mailbox, nil).Wait(); err != nil {
+	data, err := c.conn.Select(mailbox, nil).Wait()
+	if err != nil {
 		return fmt.Errorf("SELECT %q: %w", mailbox, err)
 	}
 	c.selectedMailbox = mailbox
+	c.selectedNumMessages = data.NumMessages
 	return nil
 }
 
@@ -277,6 +280,11 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 	return names, nil
 }
 
+// enumerateMailboxSearchCriteria always constrains the search with an
+// explicit UID range: some servers (e.g. iCloud) return sequence-number-like
+// values for an unconstrained UID SEARCH, which later fail to fetch.
+// Callers must not run the search against an empty mailbox, where the "*"
+// in the range has no referent and some servers answer BAD.
 func enumerateMailboxSearchCriteria(since, before time.Time, minUID imap.UID) *imap.SearchCriteria {
 	if minUID == 0 {
 		minUID = 1
@@ -307,18 +315,15 @@ func messageIDHeaderFetchOptions() *imap.FetchOptions {
 	}
 }
 
-func messageIDsFromHeaderFetchResults(msgs []*imapclient.FetchMessageBuffer) map[string]bool {
-	result := make(map[string]bool, len(msgs))
+func addMessageIDsFromHeaderFetchResults(dst map[string]bool, msgs []*imapclient.FetchMessageBuffer) {
 	for _, msg := range msgs {
 		if len(msg.BodySection) == 0 {
 			continue
 		}
-		msgID := rawMIMEMessageID(msg.BodySection[0].Bytes)
-		if msgID != "" {
-			result[msgID] = true
+		if msgID := rawMIMEMessageID(msg.BodySection[0].Bytes); msgID != "" {
+			dst[msgID] = true
 		}
 	}
-	return result
 }
 
 // enumerateMailbox lists UIDs in a single mailbox. A non-zero minUID
@@ -343,6 +348,13 @@ func (c *Client) enumerateMailbox(
 		} else {
 			return nil, err
 		}
+	}
+
+	// An empty mailbox has no UIDs to enumerate. Skipping the search also
+	// avoids sending "UID SEARCH UID 1:*", which some servers reject when
+	// the mailbox is empty ("*" has no referent).
+	if c.selectedNumMessages == 0 {
+		return nil, nil
 	}
 
 	criteria := enumerateMailboxSearchCriteria(c.since, c.before, minUID)
@@ -412,32 +424,13 @@ func (c *Client) fetchMailboxMessageIDs(
 			uidSet.AddNum(uid)
 		}
 
-		msgs, err := c.conn.Fetch(uidSet, fetchOpts).Collect()
+		msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
 		if err != nil {
-			if isNetworkError(err) {
-				if reconErr := c.reconnect(ctx); reconErr != nil {
-					return result, fmt.Errorf(
-						"reconnect failed fetching envelopes in %q: %w",
-						mailbox, reconErr)
-				}
-				if selErr := c.selectMailbox(mailbox); selErr != nil {
-					return result, selErr
-				}
-				msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
-				if err != nil {
-					return result, fmt.Errorf(
-						"envelope fetch failed in %q after reconnect: %w",
-						mailbox, err)
-				}
-			} else {
-				return result, fmt.Errorf(
-					"envelope fetch failed in %q: %w", mailbox, err)
-			}
+			return result, fmt.Errorf(
+				"message-ID fetch failed in %q: %w", mailbox, err)
 		}
 
-		for msgID := range messageIDsFromHeaderFetchResults(msgs) {
-			result[msgID] = true
-		}
+		addMessageIDsFromHeaderFetchResults(result, msgs)
 	}
 	return result, nil
 }
@@ -774,15 +767,7 @@ func (c *Client) GetMessageRaw(ctx context.Context, messageID string) (*gmailapi
 // for legacy callers. Results are returned in the same order as messageIDs.
 func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) ([]*gmailapi.RawMessage, error) {
 	results, err := c.GetMessagesRawBatchWithErrors(ctx, messageIDs)
-	return rawBatchMessagesWithError(results, err)
-}
-
-func rawBatchMessagesWithError(results []gmailapi.RawMessageBatchResult, err error) ([]*gmailapi.RawMessage, error) {
-	messages := rawBatchMessages(results)
-	if err != nil {
-		return messages, err
-	}
-	return messages, nil
+	return rawBatchMessages(results), err
 }
 
 // ListHistory is not supported for IMAP servers.

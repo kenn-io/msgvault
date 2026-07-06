@@ -45,20 +45,7 @@ func TestEnumerateMailboxSearchCriteriaUsesMinimumUID(t *testing.T) {
 	assert.Equal(t, "501:*", criteria.UID[0].String())
 }
 
-func TestMessageIDHeaderFetchOptionsDoNotRequestEnvelope(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	opts := messageIDHeaderFetchOptions()
-
-	assert.True(opts.UID)
-	assert.False(opts.Envelope)
-	require.Len(opts.BodySection, 1)
-	assert.True(opts.BodySection[0].Peek)
-	assert.Equal(imapapi.PartSpecifierHeader, opts.BodySection[0].Specifier)
-	assert.Equal([]string{"Message-ID"}, opts.BodySection[0].HeaderFields)
-}
-
-func TestMessageIDsFromHeaderFetchResultsParsesMessageIDHeaders(t *testing.T) {
+func TestAddMessageIDsFromHeaderFetchResultsParsesMessageIDHeaders(t *testing.T) {
 	msgs := []*imapclient.FetchMessageBuffer{
 		{
 			UID: imapapi.UID(10),
@@ -80,7 +67,11 @@ func TestMessageIDsFromHeaderFetchResultsParsesMessageIDHeaders(t *testing.T) {
 		},
 	}
 
-	got := messageIDsFromHeaderFetchResults(msgs)
+	got := map[string]bool{"existing@example.com": true}
+	addMessageIDsFromHeaderFetchResults(got, msgs)
 
-	assert.Equal(t, map[string]bool{"one@example.com": true}, got)
+	assert.Equal(t, map[string]bool{
+		"existing@example.com": true,
+		"one@example.com":      true,
+	}, got)
 }

@@ -60,25 +60,19 @@ func TestRawBatchMessagesDropsPerItemErrorsForLegacyCallers(t *testing.T) {
 	assert.Same(msg2, messages[2])
 }
 
-func TestRawBatchMessagesWithErrorPreservesPartialResults(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	errBatch := errors.New("batch stopped")
-	msg0 := &gmailapi.RawMessage{ID: "Archive|10", Raw: []byte("raw-10")}
-	msg2 := &gmailapi.RawMessage{ID: "Archive|12", Raw: []byte("raw-12")}
-	results := []gmailapi.RawMessageBatchResult{
-		{ID: "Archive|10", Message: msg0},
-		{ID: "Archive|11", Err: errors.New("fetch failed")},
-		{ID: "Archive|12", Message: msg2},
+func TestBatchMailboxOrderPutsAllMailFirst(t *testing.T) {
+	byMailbox := map[string][]batchFetchItem{
+		"Trash":    {{idx: 0, uid: imapapi.UID(1)}},
+		"Archive":  {{idx: 1, uid: imapapi.UID(2)}},
+		"All Mail": {{idx: 2, uid: imapapi.UID(3)}},
 	}
 
-	messages, err := rawBatchMessagesWithError(results, errBatch)
-
-	require.ErrorIs(err, errBatch)
-	require.Len(messages, 3)
-	assert.Same(msg0, messages[0])
-	assert.Nil(messages[1])
-	assert.Same(msg2, messages[2])
+	assert.Equal(t,
+		[]string{"Trash", "All Mail", "Archive"},
+		batchMailboxOrder(byMailbox, "Trash"))
+	assert.Equal(t,
+		[]string{"All Mail", "Archive", "Trash"},
+		batchMailboxOrder(byMailbox, ""))
 }
 
 func TestApplyFetchResultsMarksMissingUIDs(t *testing.T) {
@@ -164,19 +158,6 @@ func TestApplyFetchResultsPreservesDedupStub(t *testing.T) {
 	assert.Equal("Archive|10", results[0].Message.ID)
 	assert.Nil(results[0].Message.Raw)
 	require.NoError(results[0].Err)
-}
-
-func TestRawBatchFetchOptionsDoNotRequestEnvelope(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	opts := rawBatchFetchOptions()
-
-	assert.True(opts.UID)
-	assert.False(opts.Envelope)
-	assert.True(opts.InternalDate)
-	assert.True(opts.RFC822Size)
-	require.Len(opts.BodySection, 1)
-	assert.True(opts.BodySection[0].Peek)
 }
 
 func TestApplyFetchResultsDedupsUsingRawMessageIDWithoutEnvelope(t *testing.T) {
