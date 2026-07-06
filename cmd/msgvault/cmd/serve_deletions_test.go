@@ -12,6 +12,9 @@ import (
 )
 
 func TestStoreAPIAdapterDeletionManifests(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
@@ -25,29 +28,29 @@ func TestStoreAPIAdapterDeletionManifests(t *testing.T) {
 	// Save through the existing saver path.
 	m := deletion.NewManifest("adapter test", []string{"gm-1"})
 	m.CreatedBy = "api"
-	require.NoError(t, adapter.SaveCLIDeletionManifest(ctx, m), "save")
+	require.NoError(adapter.SaveCLIDeletionManifest(ctx, m), "save")
 
 	// List all and by status.
 	all, err := adapter.ListDeletionManifests(ctx, "")
-	require.NoError(t, err, "list all")
-	require.Len(t, all, 1)
-	assert.Equal(t, m.ID, all[0].ID)
+	require.NoError(err, "list all")
+	require.Len(all, 1)
+	assert.Equal(m.ID, all[0].ID)
 
 	pending, err := adapter.ListDeletionManifests(ctx, deletion.StatusPending)
-	require.NoError(t, err, "list pending")
-	require.Len(t, pending, 1)
+	require.NoError(err, "list pending")
+	require.Len(pending, 1)
 
 	// Get with status, cancel, verify.
 	_, status, err := adapter.GetDeletionManifest(ctx, m.ID)
-	require.NoError(t, err, "get")
-	assert.Equal(t, deletion.StatusPending, status)
+	require.NoError(err, "get")
+	assert.Equal(deletion.StatusPending, status)
 
-	require.NoError(t, adapter.CancelDeletionManifest(ctx, m.ID), "cancel")
+	require.NoError(adapter.CancelDeletionManifest(ctx, m.ID), "cancel")
 	_, status, err = adapter.GetDeletionManifest(ctx, m.ID)
-	require.NoError(t, err, "get after cancel")
-	assert.Equal(t, deletion.StatusCancelled, status)
+	require.NoError(err, "get after cancel")
+	assert.Equal(deletion.StatusCancelled, status)
 
 	cancelled, err := adapter.ListDeletionManifests(ctx, deletion.StatusCancelled)
-	require.NoError(t, err, "list cancelled")
-	assert.Len(t, cancelled, 1)
+	require.NoError(err, "list cancelled")
+	assert.Len(cancelled, 1)
 }

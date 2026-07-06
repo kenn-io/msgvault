@@ -359,6 +359,8 @@ func (m *Manager) ListByStatus(status Status) ([]*Manifest, error) {
 }
 
 func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
+	// codeql[go/path-injection] -- manifest directories are derived from the
+	// configured local data dir plus fixed status names in this single-user CLI.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -370,6 +372,11 @@ func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
 	var manifests []*Manifest
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if err := ValidateManifestID(id); err != nil {
+			log.Printf("WARNING: skipping invalid manifest filename %s: %v", e.Name(), err)
 			continue
 		}
 

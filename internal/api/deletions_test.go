@@ -81,6 +81,9 @@ func postDeletions(t *testing.T, srv *Server, body string) *httptest.ResponseRec
 }
 
 func TestStageDeletionByFilter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	st := &deletionMockStore{}
 	var gotFilter query.MessageFilter
 	engine := &querytest.MockEngine{
@@ -96,27 +99,27 @@ func TestStageDeletionByFilter(t *testing.T) {
 		"description": "old alice mail"
 	}`)
 
-	require.Equal(t, http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
-	assert.Equal(t, "alice@example.com", gotFilter.Sender)
-	require.NotNil(t, gotFilter.After, "after parsed")
-	assert.Equal(t, time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), gotFilter.After.UTC())
-	require.NotNil(t, gotFilter.Before, "before parsed")
+	require.Equal(http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal("alice@example.com", gotFilter.Sender)
+	require.NotNil(gotFilter.After, "after parsed")
+	assert.Equal(time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), gotFilter.After.UTC())
+	require.NotNil(gotFilter.Before, "before parsed")
 
 	var resp StageDeletionResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-	assert.False(t, resp.DryRun)
-	assert.Equal(t, 2, resp.MessageCount)
-	assert.NotEmpty(t, resp.ID)
-	assert.Equal(t, "pending", resp.Status)
-	assert.Empty(t, resp.SampleGmailIDs, "create response has no sample")
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.False(resp.DryRun)
+	assert.Equal(2, resp.MessageCount)
+	assert.NotEmpty(resp.ID)
+	assert.Equal("pending", resp.Status)
+	assert.Empty(resp.SampleGmailIDs, "create response has no sample")
 
-	require.Len(t, st.saved, 1, "manifest saved")
+	require.Len(st.saved, 1, "manifest saved")
 	m := st.saved[0]
-	assert.Equal(t, "api", m.CreatedBy)
-	assert.Equal(t, []string{"gm-1", "gm-2"}, m.GmailIDs)
-	assert.Equal(t, []string{"alice@example.com"}, m.Filters.Senders)
-	assert.Equal(t, "2019-01-01", m.Filters.After)
-	assert.NotEmpty(t, m.RawFilter, "raw provenance recorded")
+	assert.Equal("api", m.CreatedBy)
+	assert.Equal([]string{"gm-1", "gm-2"}, m.GmailIDs)
+	assert.Equal([]string{"alice@example.com"}, m.Filters.Senders)
+	assert.Equal("2019-01-01", m.Filters.After)
+	assert.NotEmpty(m.RawFilter, "raw provenance recorded")
 }
 
 func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
@@ -140,6 +143,9 @@ func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
 }
 
 func TestStageDeletionDryRun(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	st := &deletionMockStore{}
 	ids := make([]string, 25)
 	for i := range ids {
@@ -150,14 +156,14 @@ func TestStageDeletionDryRun(t *testing.T) {
 
 	w := postDeletions(t, srv, `{"filter": {"domain": "example.com"}, "dry_run": true}`)
 
-	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var resp StageDeletionResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-	assert.True(t, resp.DryRun)
-	assert.Equal(t, 25, resp.MessageCount)
-	assert.Len(t, resp.SampleGmailIDs, 10, "sample capped at 10")
-	assert.Empty(t, resp.ID, "dry run stages nothing")
-	assert.Empty(t, st.saved, "dry run writes nothing")
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.True(resp.DryRun)
+	assert.Equal(25, resp.MessageCount)
+	assert.Len(resp.SampleGmailIDs, 10, "sample capped at 10")
+	assert.Empty(resp.ID, "dry run stages nothing")
+	assert.Empty(st.saved, "dry run writes nothing")
 }
 
 func TestStageDeletionRejectsEmptyFilter(t *testing.T) {
@@ -220,6 +226,9 @@ func TestStageDeletionEngineUnavailable(t *testing.T) {
 }
 
 func TestListDeletions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	st := &deletionMockStore{manifests: map[deletion.Status][]*deletion.Manifest{
 		deletion.StatusPending: {{
@@ -236,27 +245,27 @@ func TestListDeletions(t *testing.T) {
 	// All statuses, newest first.
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions", nil))
-	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var resp ListDeletionsResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-	require.Len(t, resp.Manifests, 2)
-	assert.Equal(t, "batch-2", resp.Manifests[0].ID, "newest first")
-	assert.Equal(t, 2, resp.Manifests[1].MessageCount)
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	require.Len(resp.Manifests, 2)
+	assert.Equal("batch-2", resp.Manifests[0].ID, "newest first")
+	assert.Equal(2, resp.Manifests[1].MessageCount)
 
 	// Filtered by status.
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions?status=pending", nil))
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	resp = ListDeletionsResponse{}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode filtered")
-	require.Len(t, resp.Manifests, 1)
-	assert.Equal(t, "batch-1", resp.Manifests[0].ID)
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode filtered")
+	require.Len(resp.Manifests, 1)
+	assert.Equal("batch-1", resp.Manifests[0].ID)
 
 	// Invalid status.
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions?status=bogus", nil))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid_status")
+	assert.Equal(http.StatusBadRequest, w.Code)
+	assert.Contains(w.Body.String(), "invalid_status")
 }
 
 func deleteDeletion(srv *Server, id string) *httptest.ResponseRecorder {
@@ -266,16 +275,19 @@ func deleteDeletion(srv *Server, id string) *httptest.ResponseRecorder {
 }
 
 func TestCancelDeletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	st := &deletionMockStore{getStatus: deletion.StatusPending}
 	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
 
 	w := deleteDeletion(srv, "batch-1")
-	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var resp CancelDeletionResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
-	assert.Equal(t, "batch-1", resp.ID)
-	assert.Equal(t, "cancelled", resp.Status)
-	assert.Equal(t, []string{"batch-1"}, st.cancelled)
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal("batch-1", resp.ID)
+	assert.Equal("cancelled", resp.Status)
+	assert.Equal([]string{"batch-1"}, st.cancelled)
 }
 
 func TestCancelDeletionNotFound(t *testing.T) {

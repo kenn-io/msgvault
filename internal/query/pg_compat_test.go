@@ -18,6 +18,10 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+type gmailIDsByMessageIDsResolver interface {
+	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
+}
+
 // TestQueryEngine_PostgresPortability exercises the three SQL shapes
 // the external review flagged as failing on PostgreSQL:
 //
@@ -137,6 +141,20 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			assert.Len(t, msgs, 4, "ListMessages %s", sort.name)
 		})
 	}
+}
+
+func TestNewEnginePostgresSatisfiesGmailIDsByMessageIDsResolver(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	eng := query.NewEngine(st.DB(), true)
+
+	resolver, ok := eng.(gmailIDsByMessageIDsResolver)
+	require.True(ok, "PostgreSQL engine should expose the deletion message-id resolver")
+	ids, err := resolver.GetGmailIDsByMessageIDs(context.Background(), nil)
+	require.NoError(err, "empty input should not need a backend query")
+	assert.Empty(ids)
 }
 
 // TestQueryEngine_CaseInsensitiveSearch_Subject verifies that

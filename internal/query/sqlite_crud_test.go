@@ -654,25 +654,28 @@ func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 }
 
 func TestGetGmailIDsByFilter_AfterBefore(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	env := newTestEnv(t)
 	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
 	afterIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1})
-	require.NoError(t, err, "after-only")
-	assert.ElementsMatch(t, []string{"msg3", "msg4", "msg5"}, afterIDs, "after >= Feb 1 (boundary inclusive)")
+	require.NoError(err, "after-only")
+	assert.ElementsMatch([]string{"msg3", "msg4", "msg5"}, afterIDs, "after >= Feb 1 (boundary inclusive)")
 
 	beforeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Before: &feb1})
-	require.NoError(t, err, "before-only")
-	assert.ElementsMatch(t, []string{"msg1", "msg2"}, beforeIDs, "before < Feb 1 (boundary exclusive)")
+	require.NoError(err, "before-only")
+	assert.ElementsMatch([]string{"msg1", "msg2"}, beforeIDs, "before < Feb 1 (boundary exclusive)")
 
 	rangeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1, Before: &mar1})
-	require.NoError(t, err, "range")
-	assert.ElementsMatch(t, []string{"msg3", "msg4"}, rangeIDs, "Feb window")
+	require.NoError(err, "range")
+	assert.ElementsMatch([]string{"msg3", "msg4"}, rangeIDs, "Feb window")
 
 	combined, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Sender: "alice@example.com", After: &feb1})
-	require.NoError(t, err, "combined with sender")
-	assert.ElementsMatch(t, []string{"msg3"}, combined, "sender+after")
+	require.NoError(err, "combined with sender")
+	assert.ElementsMatch([]string{"msg3"}, combined, "sender+after")
 }
 
 // addMultiAuthorMessage inserts a message with TWO distinct 'from' rows so the
@@ -1340,40 +1343,46 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 }
 
 func TestGetGmailIDsByMessageIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	env := newTestEnv(t)
 
 	// Happy path: two known fixture messages (msg1=id 1, msg2=id 2).
 	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 2})
-	require.NoError(t, err, "resolve fixture ids")
-	assert.ElementsMatch(t, []string{"msg1", "msg2"}, ids)
+	require.NoError(err, "resolve fixture ids")
+	assert.ElementsMatch([]string{"msg1", "msg2"}, ids)
 
 	// Unknown IDs are silently dropped.
 	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 999999})
-	require.NoError(t, err, "unknown id")
-	assert.ElementsMatch(t, []string{"msg1"}, ids)
+	require.NoError(err, "unknown id")
+	assert.ElementsMatch([]string{"msg1"}, ids)
 
 	// Empty input: no query, no results.
 	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, nil)
-	require.NoError(t, err, "empty input")
-	assert.Empty(t, ids)
+	require.NoError(err, "empty input")
+	assert.Empty(ids)
 }
 
 func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	env := newTestEnv(t)
 
 	// Non-Gmail source message.
 	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
-	require.NoError(t, err, "insert whatsapp source")
+	require.NoError(err, "insert whatsapp source")
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (901, 1, 99, 'wa-1', 'whatsapp', '2024-01-01')`)
-	require.NoError(t, err, "insert whatsapp message")
+	require.NoError(err, "insert whatsapp message")
 
 	// Remote-deleted and dedup-soft-deleted Gmail messages (source 1 = test@gmail.com).
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (902, 1, 1, 'gone-1', 'email', '2024-01-02', '2024-06-01')`)
-	require.NoError(t, err, "insert source-deleted message")
+	require.NoError(err, "insert source-deleted message")
 	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
-	require.NoError(t, err, "insert dedup-deleted message")
+	require.NoError(err, "insert dedup-deleted message")
 
 	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
-	require.NoError(t, err, "resolve mixed ids")
-	assert.ElementsMatch(t, []string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
+	require.NoError(err, "resolve mixed ids")
+	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
 }
