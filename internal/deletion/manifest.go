@@ -296,10 +296,7 @@ func NewManager(baseDir string) (*Manager, error) {
 func (m *Manager) dirForStatus(s Status) string {
 	dirName, ok := statusDirMap[s]
 	if !ok {
-		// Fallback for unknown status; log warning and use status string.
-		// This should not happen in normal operation.
-		log.Printf("WARNING: unknown status %q has no directory mapping, using status value as directory name", s)
-		dirName = string(s)
+		panic(fmt.Sprintf("unknown persisted status %q", s))
 	}
 	return filepath.Join(m.baseDir, dirName)
 }
@@ -318,27 +315,27 @@ func (m *Manager) FailedDir() string { return m.dirForStatus(StatusFailed) }
 
 // ListPending returns all pending deletion manifests.
 func (m *Manager) ListPending() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusPending))
+	return m.listManifests(StatusPending)
 }
 
 // ListInProgress returns all in-progress deletion manifests.
 func (m *Manager) ListInProgress() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusInProgress))
+	return m.listManifests(StatusInProgress)
 }
 
 // ListCompleted returns all completed deletion manifests.
 func (m *Manager) ListCompleted() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusCompleted))
+	return m.listManifests(StatusCompleted)
 }
 
 // ListFailed returns all failed deletion manifests.
 func (m *Manager) ListFailed() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusFailed))
+	return m.listManifests(StatusFailed)
 }
 
 // ListCancelled returns all cancelled deletion manifests.
 func (m *Manager) ListCancelled() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusCancelled))
+	return m.listManifests(StatusCancelled)
 }
 
 // ListByStatus returns all manifests currently in the directory for the
@@ -348,7 +345,7 @@ func (m *Manager) ListByStatus(status Status) ([]*Manifest, error) {
 	if !isPersistedStatus(status) {
 		return nil, fmt.Errorf("invalid manifest status %q", status)
 	}
-	manifests, err := m.listManifests(m.dirForStatus(status))
+	manifests, err := m.listManifests(status)
 	if err != nil {
 		return nil, err
 	}
@@ -358,9 +355,11 @@ func (m *Manager) ListByStatus(status Status) ([]*Manifest, error) {
 	return manifests, nil
 }
 
-func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
-	// codeql[go/path-injection] -- manifest directories are derived from the
-	// configured local data dir plus fixed status names in this single-user CLI.
+func (m *Manager) listManifests(status Status) ([]*Manifest, error) {
+	if !isPersistedStatus(status) {
+		return nil, fmt.Errorf("invalid manifest status %q", status)
+	}
+	dir := m.dirForStatus(status)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
