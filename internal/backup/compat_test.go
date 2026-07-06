@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -104,11 +105,22 @@ func TestGenerateCompatFixture(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// copyFixtureRepo copies the committed fixture repository into a temp dir.
+// Restore takes a shared repository lock, which creates a file under locks/;
+// opening the fixture in place would write into the source tree and fail on
+// a read-only checkout.
+func copyFixtureRepo(t *testing.T) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.CopyFS(dst, os.DirFS(compatRepoDir)))
+	return dst
+}
+
 // TestRestoreCompatFixture proves a repository written by the pre-extraction
 // code restores correctly. After the engine generalization this is the
 // old-writer→new-reader compatibility direction.
 func TestRestoreCompatFixture(t *testing.T) {
-	r, err := backup.Open(compatRepoDir)
+	r, err := backup.Open(copyFixtureRepo(t))
 	require.NoError(t, err)
 	snaps, err := r.ListSnapshots()
 	require.NoError(t, err)
@@ -132,9 +144,20 @@ func TestRestoreCompatFixture(t *testing.T) {
 	assert.Equal(t, snaps[1].SnapshotID, res.SnapshotID)
 	assert.Equal(t, int64(3), res.AttachmentBlobs)
 
+	// Mirror the engine's sqliteURIDSN shape: absolute, slash-separated,
+	// slash-rooted — a raw Windows drive-letter path would otherwise be
+	// misparsed as a URI authority.
+	dbURIPath := res.DBPath
+	if abs, err := filepath.Abs(dbURIPath); err == nil {
+		dbURIPath = abs
+	}
+	dbURIPath = filepath.ToSlash(dbURIPath)
+	if !strings.HasPrefix(dbURIPath, "/") {
+		dbURIPath = "/" + dbURIPath
+	}
 	dsn := (&url.URL{
 		Scheme:   "file",
-		Path:     filepath.ToSlash(res.DBPath),
+		Path:     dbURIPath,
 		RawQuery: "immutable=1&mode=ro",
 	}).String()
 	db, err := sql.Open("sqlite3", dsn)
