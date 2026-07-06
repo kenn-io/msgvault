@@ -947,6 +947,14 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 	return err
 }
 
+// SetMessageEdited marks a message as edited at the source. UpsertMessage
+// does not write is_edited, so importers that observe an edit flag call this
+// after upserting.
+func (s *Store) SetMessageEdited(messageID int64) error {
+	_, err := s.db.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
+	return err
+}
+
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
 	_, err := s.db.Exec(fmt.Sprintf(`
