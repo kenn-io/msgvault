@@ -210,7 +210,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "skills" {
+		if c == skillsCmd {
 			return true
 		}
 	}

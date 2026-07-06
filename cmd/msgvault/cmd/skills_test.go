@@ -12,9 +12,20 @@ import (
 	"go.kenn.io/msgvault/internal/skills"
 )
 
+// setTestHome points os.UserHomeDir() at home for the duration of the
+// test. HOME is read on Unix; USERPROFILE is read on Windows. Setting
+// both keeps these tests platform-independent and prevents accidental
+// writes to (or deletion of) a real user's home directory when run on
+// Windows without USERPROFILE set.
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestRunSkillsInstall_DetectsAgents(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o755))
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".codex"), 0o755))
 
@@ -32,7 +43,7 @@ func TestRunSkillsInstall_DetectsAgents(t *testing.T) {
 }
 
 func TestRunSkillsInstall_NoAgentsDetected(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	var out bytes.Buffer
 	err := runSkillsInstall(&out, nil, "", false)
 	require.Error(t, err)
@@ -40,7 +51,7 @@ func TestRunSkillsInstall_NoAgentsDetected(t *testing.T) {
 }
 
 func TestRunSkillsInstall_ExplicitDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // no agent dirs; --dir must not need them
+	setTestHome(t, t.TempDir()) // no agent dirs; --dir must not need them
 	dir := filepath.Join(t.TempDir(), "custom-skills")
 	var out bytes.Buffer
 	require.NoError(t, runSkillsInstall(&out, nil, dir, false))
@@ -50,7 +61,7 @@ func TestRunSkillsInstall_ExplicitDir(t *testing.T) {
 
 func TestRunSkillsInstall_ReportsSkipped(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o755))
 
 	var out bytes.Buffer
@@ -67,7 +78,7 @@ func TestRunSkillsInstall_ReportsSkipped(t *testing.T) {
 
 func TestRunSkillsUninstall(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".codex"), 0o755))
 
 	var out bytes.Buffer

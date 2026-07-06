@@ -29,7 +29,7 @@ whole query is optional.
 | `before:` `after:` | sent date | `YYYY-MM-DD` |
 | `older_than:` `newer_than:` | relative age | `7d`, `2w`, `1m`, `1y` |
 | `larger:` `smaller:` | whole-message size | `5M`, `100K`, `1G` |
-| `message_type:` | source kind | `email`, `sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`, `calendar_event` |
+| `message_type:` | source kind | `email`, `sms`, `mms`, `whatsapp`, `imessage`, `teams`, `fbmessenger`, `calendar_event`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 
 Bare words and `"quoted phrases"` are full-text terms, matched as
 prefixes and combined with AND (no OR/NEAR support). If a search
@@ -53,9 +53,9 @@ returns nothing, retry with fewer terms or fewer filters.
 
 ### Search result JSON fields
 
-`id`, `source_message_id`, `conversation_id`, `subject`, `snippet`,
-`from_email`, `from_name`, `sent_at` (RFC3339), `size_estimate`,
-`has_attachments`, `attachment_count`, `labels`.
+`id`, `source_message_id`, `conversation_id`, `source_conversation_id`,
+`subject`, `snippet`, `from_email`, `from_name`, `sent_at` (RFC3339),
+`size_estimate`, `has_attachments`, `attachment_count`, `labels`.
 
 ## Read a message
 

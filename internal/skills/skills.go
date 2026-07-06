@@ -36,6 +36,10 @@ func Render(version string) ([]Skill, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read embedded templates: %w", err)
 	}
+	// Templates render "v{{.Version}}"; strip a leading "v" so callers
+	// that already pass a v-prefixed version (release builds inject
+	// Version as e.g. "v0.17.0") don't produce "vv0.17.0".
+	version = strings.TrimPrefix(version, "v")
 	data := struct{ Version string }{Version: version}
 	var out []Skill
 	for _, entry := range entries {
