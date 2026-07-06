@@ -77,6 +77,10 @@ make lint                     # Run linter
 
 # Maintenance
 ./msgvault repair-encoding                            # Fix UTF-8 encoding issues
+
+# Agent skills
+./msgvault skills install                             # Install agent skills (Claude Code, Codex)
+./msgvault skills uninstall                           # Remove installed agent skills
 ```
 
 ## Key Files
