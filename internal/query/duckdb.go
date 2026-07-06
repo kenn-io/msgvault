@@ -2165,6 +2165,44 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	return collectGmailIDs(rows)
 }
 
+// GetGmailIDsByMessageIDs returns Gmail message IDs for internal message
+// IDs, enforcing the same live-message and Gmail-source constraints as
+// GetGmailIDsByFilter. Non-qualifying IDs are silently dropped.
+func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+	// Delegate to SQLite for authoritative deletion status.
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetGmailIDsByMessageIDs(ctx, ids)
+	}
+	if e.analyticsDir == "" {
+		return nil, errors.New("GetGmailIDsByMessageIDs requires SQLite or Parquet data")
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		WITH %s
+		SELECT msg.source_message_id
+		FROM msg
+		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		WHERE %s AND msg.id IN (%s)
+		ORDER BY msg.sent_at DESC, msg.id DESC
+	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
+
+	rows, err := e.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get gmail ids by message ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDs(rows)
+}
+
 // HasParquetData checks if Parquet files exist and are usable.
 func HasParquetData(analyticsDir string) bool {
 	pattern := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")

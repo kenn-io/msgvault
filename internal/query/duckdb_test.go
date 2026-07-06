@@ -3572,3 +3572,19 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 		}
 	})
 }
+
+func TestDuckDBEngine_GetGmailIDsByMessageIDs(t *testing.T) {
+	ctx := context.Background()
+
+	// Parquet fallback path (no SQLite engine attached).
+	parquet := newParquetEngine(t)
+	ids, err := parquet.GetGmailIDsByMessageIDs(ctx, []int64{1, 2, 999999})
+	require.NoError(t, err, "parquet path")
+	assertSetEqual(t, ids, []string{"msg1", "msg2"})
+
+	// SQLite delegation path.
+	sqlited := newSQLiteEngine(t)
+	ids, err = sqlited.GetGmailIDsByMessageIDs(ctx, []int64{1, 2, 999999})
+	require.NoError(t, err, "sqlite delegation path")
+	assertSetEqual(t, ids, []string{"msg1", "msg2"})
+}

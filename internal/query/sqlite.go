@@ -1414,6 +1414,39 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	return collectGmailIDs(rows)
 }
 
+// GetGmailIDsByMessageIDs returns Gmail message IDs (source_message_id)
+// for the given internal message IDs. It enforces the same constraints
+// as GetGmailIDsByFilter: only live messages (LiveMessagesWhere — not
+// remote-deleted, not dedup-soft-deleted) from Gmail sources.
+// Non-qualifying IDs are silently dropped, mirroring
+// GetMessageSummariesByIDs semantics.
+func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT m.source_message_id
+		FROM messages m
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
+		WHERE %s AND m.id IN (%s)
+		ORDER BY m.sent_at DESC, m.id DESC
+	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
+
+	rows, err := e.queryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get gmail ids by message ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDs(rows)
+}
+
 // SearchByDomains returns messages where any participant (from, to, cc, or bcc)
 // belongs to one of the given domains. Uses the shared executeSearchQuery
 // path so results carry the same fields as Search/SearchFast (including

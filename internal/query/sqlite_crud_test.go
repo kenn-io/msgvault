@@ -1338,3 +1338,42 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 	require.NotNil(msg, "GetMessage returned nil for deleted message; expected the message with DeletedAt set")
 	assert.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
 }
+
+func TestGetGmailIDsByMessageIDs(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Happy path: two known fixture messages (msg1=id 1, msg2=id 2).
+	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 2})
+	require.NoError(t, err, "resolve fixture ids")
+	assert.ElementsMatch(t, []string{"msg1", "msg2"}, ids)
+
+	// Unknown IDs are silently dropped.
+	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 999999})
+	require.NoError(t, err, "unknown id")
+	assert.ElementsMatch(t, []string{"msg1"}, ids)
+
+	// Empty input: no query, no results.
+	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, nil)
+	require.NoError(t, err, "empty input")
+	assert.Empty(t, ids)
+}
+
+func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Non-Gmail source message.
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
+	require.NoError(t, err, "insert whatsapp source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (901, 1, 99, 'wa-1', 'whatsapp', '2024-01-01')`)
+	require.NoError(t, err, "insert whatsapp message")
+
+	// Remote-deleted and dedup-soft-deleted Gmail messages (source 1 = test@gmail.com).
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (902, 1, 1, 'gone-1', 'email', '2024-01-02', '2024-06-01')`)
+	require.NoError(t, err, "insert source-deleted message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
+	require.NoError(t, err, "insert dedup-deleted message")
+
+	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
+	require.NoError(t, err, "resolve mixed ids")
+	assert.ElementsMatch(t, []string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
+}
