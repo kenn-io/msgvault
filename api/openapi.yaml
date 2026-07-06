@@ -1038,6 +1038,8 @@ components:
       properties:
         index_built:
           type: boolean
+        index_state:
+          type: string
         indexed_messages:
           format: int64
           type: integer
@@ -2274,7 +2276,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.0.0
+  version: 1.1.0
 openapi: 3.1.0
 paths:
   /api/ping:

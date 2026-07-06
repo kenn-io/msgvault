@@ -3,6 +3,7 @@ package cmd
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -334,6 +335,95 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	return server, searchRequests
 }
 
+// TestSearchCmd_PrintsBackgroundIndexNote verifies the CLI caveats results
+// whenever the daemon reports the FTS index is not yet known complete: a
+// rebuild in progress (index_state="building") and an unfinished completeness
+// probe (index_state="checking") get distinct notes; a complete index gets
+// none.
+func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
+	tests := []struct {
+		name       string
+		indexState string
+		wantNote   string
+	}{
+		{
+			name:       "building warns about the rebuild",
+			indexState: "building",
+			wantNote:   "the search index is being rebuilt in the background; results may be incomplete",
+		},
+		{
+			name:       "checking warns the probe has not finished",
+			indexState: "checking",
+			wantNote:   "search index completeness is still being verified in the background; results may be incomplete",
+		},
+		{
+			name:       "complete index prints no note",
+			indexState: "",
+			wantNote:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dataDir := t.TempDir()
+
+			mux := http.NewServeMux()
+			mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+				Service: daemonService,
+				Version: Version,
+			}))
+			mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{
+					"results": [{
+						"id": 42,
+						"subject": "Lunch",
+						"from_email": "alice@example.com",
+						"sent_at": "2024-01-02T03:04:05Z"
+					}],
+					"index_state": %q
+				}`, tt.indexState)
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+			savedCfg := cfg
+			savedUseLocal := useLocal
+			defer func() {
+				cfg = savedCfg
+				useLocal = savedUseLocal
+				resetSearchFlags()
+			}()
+
+			cfg = &config.Config{
+				HomeDir: dataDir,
+				Data:    config.DataConfig{DataDir: dataDir},
+			}
+			useLocal = true
+
+			doneOut := captureStdout(t)
+			doneErr := captureStderr(t)
+			root := newTestRootCmd()
+			root.AddCommand(searchCmd)
+			root.SetArgs([]string{"search", "lunch"})
+
+			err := root.Execute()
+			out := doneOut()
+			errOut := doneErr()
+			require.NoError(err, "search command")
+
+			assert.Contains(out, "Lunch", "results still print")
+			if tt.wantNote == "" {
+				assert.NotContains(errOut, "Note:", "no index note for a complete index")
+			} else {
+				assert.Contains(errOut, tt.wantNote, "index state note")
+			}
+		})
+	}
+}
+
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -506,6 +596,11 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 		SizeEstimate: 100,
 	})
 	require.NoError(err, "insert msg")
+	// Index the message up front: the daemon backfills the FTS index in the
+	// background now, and this test is about flag leakage, not backfill
+	// timing — the text query below must match deterministically.
+	_, err = s.BackfillFTS(nil)
+	require.NoError(err, "backfill FTS")
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg

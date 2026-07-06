@@ -1620,13 +1620,25 @@ func TestHandleCLISearchCollectionScope(t *testing.T) {
 	assert.Empty(resp.Results, "results")
 }
 
-func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
+// TestHandleCLISearchDoesNotBlockOnIndexBuild is the core cold-start UX
+// contract: a search must return results immediately even while the FTS
+// completeness probe (a minute on a large archive) or a backfill is running,
+// reporting the background work's state instead of waiting on it.
+func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+
+	probeRelease := make(chan struct{})
+	backfillEntered := make(chan struct{})
+	backfillRelease := make(chan struct{})
 	st := &mockStore{
-		needsFTSBackfill: true,
+		needsFTSBackfillFunc: func() bool {
+			<-probeRelease // closed channel unblocks both probe calls
+			return true
+		},
 		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
-			time.Sleep(40 * time.Millisecond)
+			close(backfillEntered)
+			<-backfillRelease
 			return 12, nil
 		},
 	}
@@ -1646,25 +1658,205 @@ func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
 		RequestTimeout: 5 * time.Millisecond,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+	searchIndexState := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+		var resp struct {
+			Results []struct {
+				Subject string `json:"subject"`
+			} `json:"results"`
+			IndexBuilt bool   `json:"index_built"`
+			IndexState string `json:"index_state"`
+		}
+		require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+		require.Len(resp.Results, 1, "results")
+		assert.Equal("match", resp.Results[0].Subject, "subject")
+		assert.False(resp.IndexBuilt, "index_built is a pre-0.18 synchronous-build field")
+		return resp.IndexState
+	}
+
+	// The full probe is blocked and the quick tail-check found nothing, so
+	// the first search answers instantly and quietly.
+	assert.Equal("checking", searchIndexState(), "state while the probe runs")
+
+	close(probeRelease)
+	select {
+	case <-backfillEntered:
+	case <-time.After(time.Second):
+		require.FailNow("background worker never reached the backfill")
+	}
+	assert.Equal("building", searchIndexState(), "state while the backfill runs")
+
+	close(backfillRelease)
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
+	assert.Empty(searchIndexState(), "state once the index is complete")
+}
+
+// TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild reproduces the
+// probe/rebuild race (roborev finding on f91f6cb): the ensure worker's
+// completeness probe runs outside the operation gate, so a rebuild-fts can
+// invalidate the index while the probe scans the pre-rebuild state. A
+// "complete" observation from before the rebuild must be discarded — here
+// the rebuild fails, so re-memoizing complete=true would make later searches
+// trust an index the rebuild left partial.
+func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	probeEntered := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	st := &mockStore{
+		needsFTSBackfillFunc: func() bool {
+			close(probeEntered)
+			<-releaseProbe
+			return false // observed the PRE-rebuild, complete index
+		},
+		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+			return 0, errors.New("rebuild exploded mid-batch")
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	// First search spawns the ensure worker, which blocks inside the probe.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
 	w := httptest.NewRecorder()
-
 	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+	select {
+	case <-probeEntered:
+	case <-time.After(time.Second):
+		require.FailNow("the search never spawned the FTS completeness probe")
+	}
 
-	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+	// A rebuild starts and fails while the probe is still scanning.
+	resp := servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+	requireNDJSONResponse(t, resp)
+	_ = decodeNDJSONEvents[cliRebuildFTSEvent](t, resp.Body)
+	require.False(srv.ftsIndexComplete.Load(),
+		"precondition: a failed rebuild leaves the completeness flag cleared")
+
+	// The probe finishes with its pre-rebuild observation; the worker must
+	// discard it rather than re-memoize complete=true over the failed rebuild.
+	close(releaseProbe)
+	require.Eventually(func() bool { return !srv.ftsEnsureRunning.Load() },
+		time.Second, 5*time.Millisecond, "ensure worker must finish")
+	assert.False(srv.ftsIndexComplete.Load(),
+		"a probe result observed before a rebuild must not be memoized")
+}
+
+// TestHandleCLISearchProbeRefusesMemoizeDuringRebuild covers the second
+// probe/rebuild interleaving (roborev finding on a7752aa): the ensure worker
+// starts AFTER a rebuild is already mid-flight (generation bumped to odd),
+// and its probe's read snapshot may still predate the rebuild's index clear.
+// A "complete" observation under an odd generation must not be memoized —
+// here the rebuild is still running when the probe finishes, then fails.
+func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	rebuildEntered := make(chan struct{})
+	releaseRebuild := make(chan struct{})
+	st := &mockStore{
+		needsFTSBackfill: false, // probe sees the pre-clear "complete" index
+		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+			close(rebuildEntered)
+			<-releaseRebuild
+			return 0, errors.New("rebuild exploded mid-batch")
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	srv.engine = engine
+
+	rebuildDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rebuildDone <- servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+	}()
+	select {
+	case <-rebuildEntered:
+	case <-time.After(time.Second):
+		require.FailNow("rebuild never started")
+	}
+
+	// A search arrives while the rebuild is mid-flight; its ensure worker
+	// probes the (snapshot-wise still complete) index.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+	require.Eventually(func() bool { return !srv.ftsEnsureRunning.Load() },
+		time.Second, 5*time.Millisecond, "ensure worker must finish")
+
+	assert.False(srv.ftsIndexComplete.Load(),
+		"a probe observation made while a rebuild is mid-flight must not be memoized")
+
+	close(releaseRebuild)
+	select {
+	case resp := <-rebuildDone:
+		requireNDJSONResponse(t, resp)
+	case <-time.After(time.Second):
+		require.FailNow("rebuild request did not finish")
+	}
+	assert.False(srv.ftsIndexComplete.Load(),
+		"the failed rebuild must leave the completeness flag cleared")
+}
+
+// TestHandleCLISearchQuickCheckReportsBuildingImmediately verifies that when
+// the cheap tail-check already knows the index is stale, the very first
+// search reports index_state="building" — so the CLI warns about incomplete
+// results right away instead of staying silent for the minutes the full
+// completeness probe can take (roborev finding on 2328a4f).
+func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
+	require := require.New(t)
+	probeRelease := make(chan struct{})
+	t.Cleanup(func() { close(probeRelease) })
+	st := &mockStore{
+		needsFTSBackfillQuick: true,
+		needsFTSBackfillFunc: func() bool {
+			<-probeRelease // full probe stays busy for the whole test
+			return false
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
 
 	var resp struct {
-		Results []struct {
-			Subject string `json:"subject"`
-		} `json:"results"`
-		IndexBuilt      bool  `json:"index_built"`
-		IndexedMessages int64 `json:"indexed_messages"`
+		IndexState string `json:"index_state"`
 	}
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
-	assert.True(resp.IndexBuilt, "index built")
-	assert.Equal(int64(12), resp.IndexedMessages, "indexed messages")
-	require.Len(resp.Results, 1, "results")
-	assert.Equal("match", resp.Results[0].Subject, "subject")
+	assert.Equal(t, "building", resp.IndexState,
+		"a stale tail must be reported as building on the first response")
 }
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
@@ -1695,13 +1887,11 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 		OperationGate: gate,
 	})
 
+	// The search itself must not queue behind the held gate.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 	resp := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
+	srv.Router().ServeHTTP(resp, req)
+	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 
 	select {
 	case <-backfillStarted:
@@ -1715,12 +1905,8 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		require.FailNow("backfill did not start after gate release")
 	}
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		require.FailNow("search did not finish after gate release")
-	}
-	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
 }
 
 // TestHandleCLISearchMemoizesFTSComplete verifies that once the FTS index is
@@ -1742,15 +1928,124 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 		Logger: testLogger(),
 	})
 
-	for range 3 {
+	doSearch := func() {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
 	}
 
+	doSearch()
+	// The probe runs in a background worker now; wait for it to confirm
+	// completeness before checking that later searches skip it.
+	require.Eventually(t, func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "probe must confirm the index complete")
+	doSearch()
+	doSearch()
+
 	assert.Equal(int32(1), st.needsFTSBackfillCalls.Load(),
 		"NeedsFTSBackfill should be probed once, then memoized")
+}
+
+// TestHandleCLISearchReportsProbeInAuthenticatedHealth verifies that while
+// the background worker spawned by the first search runs the expensive FTS
+// completeness probe, authenticated /health tells clients what the daemon is
+// doing instead of reporting it idle.
+func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	probeEntered := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	st := &mockStore{needsFTSBackfillFunc: func() bool {
+		close(probeEntered)
+		<-releaseProbe
+		return false
+	}}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080, APIKey: "secret-key"}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	// The first search spawns the probe worker and returns without waiting.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	req.Header.Set("X-Api-Key", "secret-key")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+
+	select {
+	case <-probeEntered:
+	case <-time.After(time.Second):
+		require.FailNow("the search never spawned the FTS completeness probe")
+	}
+
+	healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq.Header.Set("X-Api-Key", "secret-key")
+	healthResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(healthResp, healthReq)
+	require.Equal(http.StatusOK, healthResp.Code, "health status")
+	var health HealthResponse
+	require.NoError(json.Unmarshal(healthResp.Body.Bytes(), &health), "decode health body")
+	require.NotNil(health.Operation, "health must report the running probe")
+	assert.True(health.Operation.Busy, "probe must report busy")
+	assert.Equal("checking the search index", health.Operation.Label, "probe label")
+	assert.NotNil(health.Operation.StartedAt, "probe start time")
+
+	close(releaseProbe)
+	require.Eventually(func() bool {
+		_, _, active := srv.currentActivity()
+		return !active && srv.ftsIndexComplete.Load()
+	}, time.Second, 5*time.Millisecond,
+		"activity must clear and the memo flag must set once the probe finishes")
+}
+
+// TestHandleCLISearchBackfillProgressUpdatesActivityLabel verifies the
+// background FTS backfill mirrors its progress into the health activity
+// label, so clients polling /health see live counts rather than a static
+// gate label.
+func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := &mockStore{needsFTSBackfill: true}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	var labelDuringBackfill string
+	st.backfillFTSFunc = func(progress func(done, total int64)) (int64, error) {
+		progress(2, 4)
+		labelDuringBackfill, _, _ = srv.currentActivity()
+		return 4, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "background backfill must complete")
+	assert.Equal("building the search index (2/4 messages)", labelDuringBackfill,
+		"activity label must carry backfill progress")
+	_, _, active := srv.currentActivity()
+	assert.False(active, "activity must be cleared once the backfill finishes")
 }
 
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {

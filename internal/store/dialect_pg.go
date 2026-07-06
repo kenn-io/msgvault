@@ -254,6 +254,13 @@ func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	return exists
 }
 
+// FTSNeedsBackfillQuick delegates to FTSNeedsBackfill: the EXISTS probe is
+// already index-served by idx_messages_search_fts_null, so the exact check
+// is as cheap as any approximation would be.
+func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
+	return d.FTSNeedsBackfill(db)
+}
+
 // FTSClearSQL returns the SQL to clear all tsvector data.
 func (d *PostgreSQLDialect) FTSClearSQL() string {
 	return "UPDATE messages SET search_fts = NULL"

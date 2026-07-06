@@ -135,11 +135,11 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 	}
 	defer func() { _ = s.Close() }()
 
+	prefix := "Searching..."
 	if info.Kind == HTTPStoreConfiguredRemote {
-		fmt.Fprintf(os.Stderr, "Searching %s...", info.URL)
-	} else {
-		fmt.Fprintf(os.Stderr, "Searching...")
+		prefix = fmt.Sprintf("Searching %s...", info.URL)
 	}
+	stopStatus := startSearchStatus(cmd.Context(), prefix, info)
 
 	hasAccount := searchAccount != "" || searchCollection != ""
 	logger.Info("search start",
@@ -163,7 +163,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		Limit:        searchLimit,
 		Offset:       searchOffset,
 	})
-	fmt.Fprintf(os.Stderr, "\r                                                      \r")
+	stopStatus()
 	if err != nil {
 		logger.Warn("search failed",
 			"query_len", len(queryStr),
@@ -173,7 +173,16 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		return query.HintRepairEncoding(fmt.Errorf("search: %w", err))
 	}
 	if resp.IndexBuilt {
+		// Pre-0.18 daemons built the index synchronously inside the request.
 		fmt.Fprintf(os.Stderr, "Built search index (%d messages indexed).\n", resp.IndexedMessages)
+	}
+	switch resp.IndexState {
+	case "building":
+		fmt.Fprintln(os.Stderr,
+			"Note: the search index is being rebuilt in the background; results may be incomplete until it finishes.")
+	case "checking":
+		fmt.Fprintln(os.Stderr,
+			"Note: search index completeness is still being verified in the background; results may be incomplete until it finishes.")
 	}
 	if searchCollection != "" {
 		label := resp.ScopeLabel
