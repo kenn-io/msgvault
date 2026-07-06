@@ -145,12 +145,12 @@ func printBackupSnapshots(w io.Writer, snapshots []*backup.Manifest) error {
 		if tag == "" {
 			tag = "-"
 		}
-		var messages int64
-		if st, err := backupapp.ParseStats(m.Stats); err == nil {
-			messages = st.Messages
+		st, err := backupapp.ParseStats(m.Stats)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: parsing manifest stats: %w", m.SnapshotID, err)
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			m.SnapshotID, m.CreatedAt, formatCount(messages), formatSize(m.BytesAdded), tag)
+			m.SnapshotID, m.CreatedAt, formatCount(st.Messages), formatSize(m.BytesAdded), tag)
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("write backup list output: %w", err)
