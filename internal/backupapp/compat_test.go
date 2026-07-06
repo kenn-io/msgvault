@@ -1,4 +1,4 @@
-package backup_test
+package backupapp_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
 )
 

@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )

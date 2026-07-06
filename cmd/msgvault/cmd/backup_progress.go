@@ -12,7 +12,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/kit/backup"
 )
 
 // backupProgressTickInterval throttles how often backupProgressRenderer

@@ -1,6 +1,6 @@
-// Package backupapp implements internal/backup's App interface for msgvault:
-// the schema queries, layout names, and manifest stats that make the generic
-// snapshot engine back up a msgvault archive.
+// Package backupapp implements go.kenn.io/kit/backup's App interface for
+// msgvault: the schema queries, layout names, and manifest stats that make the
+// generic snapshot engine back up a msgvault archive.
 package backupapp
 
 import (
@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/kit/backup"
 )
 
 // contentBearing and thumbBearing select attachment rows whose bytes live
