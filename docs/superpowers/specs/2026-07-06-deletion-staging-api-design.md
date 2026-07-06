@@ -115,8 +115,7 @@ set `CreatedBy = "api"`, then `Manager.SaveManifest`. (Do NOT use
 `CreateManifest` provides no override.)
 
 Provenance: `deletion.Filters` cannot represent several request fields
-(`sender_name`, `recipient_name`, `source_id`, `message_type`,
-`conversation_id`, `attachments_only`). Since `GmailIDs` are what the
+(`sender_name`, `recipient_name`, `source_id`). Since `GmailIDs` are what the
 executor acts on, `Filters` is display/provenance only. The handler maps
 the fields that fit into `Manifest.Filters` best-effort, and a new
 additive field records the exact request:
