@@ -283,6 +283,10 @@ func (s *FrozenSession) HasNonCanonicalAttachmentPaths(ctx context.Context) (boo
 	return found, nil
 }
 
+// Tx exposes the pinned read transaction so an App's FrozenView can run
+// its schema queries inside the frozen snapshot.
+func (s *FrozenSession) Tx() *sql.Tx { return s.tx }
+
 // Close releases the pinned transaction and connection. Idempotent.
 func (s *FrozenSession) Close() error {
 	if s.tx != nil {
