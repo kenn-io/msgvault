@@ -270,7 +270,7 @@ func (s *Server) handleListDeletions(w http.ResponseWriter, r *http.Request) {
 			MessageCount: len(m.GmailIDs),
 		})
 	}
-	sort.Slice(summaries, func(i, j int) bool {
+	sort.SliceStable(summaries, func(i, j int) bool {
 		return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
 	})
 	writeJSON(w, http.StatusOK, ListDeletionsResponse{Manifests: summaries})

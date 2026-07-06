@@ -78,17 +78,21 @@ type Execution struct {
 
 // Manifest represents a deletion batch.
 type Manifest struct {
-	Version     int             `json:"version"`
-	ID          string          `json:"id"`
-	CreatedAt   time.Time       `json:"created_at"`
-	CreatedBy   string          `json:"created_by"` // "tui", "cli", "api"
-	Description string          `json:"description"`
-	Filters     Filters         `json:"filters"`
-	Summary     *Summary        `json:"summary,omitempty"`
-	GmailIDs    []string        `json:"gmail_ids"`
-	Status      Status          `json:"status"`
-	Execution   *Execution      `json:"execution,omitempty"`
-	RawFilter   json.RawMessage `json:"raw_filter,omitempty"`
+	Version     int        `json:"version"`
+	ID          string     `json:"id"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CreatedBy   string     `json:"created_by"` // "tui", "cli", "api"
+	Description string     `json:"description"`
+	Filters     Filters    `json:"filters"`
+	Summary     *Summary   `json:"summary,omitempty"`
+	GmailIDs    []string   `json:"gmail_ids"`
+	Status      Status     `json:"status"`
+	Execution   *Execution `json:"execution,omitempty"`
+	// RawFilter preserves the verbatim staging request from the HTTP API
+	// for provenance — Filters cannot represent every request field
+	// (sender_name, recipient_name, source_id). Absent on manifests
+	// created by the TUI/CLI.
+	RawFilter json.RawMessage `json:"raw_filter,omitempty"`
 }
 
 // NewManifest creates a new deletion manifest.
