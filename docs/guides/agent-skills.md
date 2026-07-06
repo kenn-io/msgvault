@@ -35,7 +35,7 @@ and writes the skills to each agent's user-level skills directory
 msgvault skills install --agent claude     # only one agent
 msgvault skills install --dir .agents/skills   # explicit directory (e.g. project scope)
 msgvault skills install --force            # overwrite hand-edited copies
-msgvault uninstall                  # remove installed skills
+msgvault skills uninstall                  # remove installed skills
 ```
 
 Installed files carry a generation marker. Re-running `skills install`
