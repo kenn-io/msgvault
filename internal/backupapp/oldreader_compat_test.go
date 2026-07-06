@@ -108,30 +108,33 @@ func computeOldSnapshotID(createdAt time.Time, m *oldManifest) (string, error) {
 //  3. old snapshot-ID recomputation matches -- the forgery check old
 //     readers run on load still passes.
 func TestNewManifestReadableByOldReader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	archive := t.TempDir()
 	dbPath, attDir := seedCompatArchive(t, archive)
 	r, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(t, err)
+	require.NoError(err)
 	m, err := backup.Create(context.Background(), r, backupapp.New("golden-test"), backup.CreateOptions{
 		DBPath:     dbPath,
 		ContentDir: attDir,
 		DataDir:    archive,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	raw, err := os.ReadFile(
 		filepath.Join(r.Root(), "snapshots", m.SnapshotID+".mvmanifest"))
-	require.NoError(t, err)
+	require.NoError(err)
 
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var old oldManifest
-	require.NoError(t, dec.Decode(&old),
+	require.NoError(dec.Decode(&old),
 		"new manifest has fields the old reader does not know")
 
 	remarshaled, err := json.MarshalIndent(&old, "", "  ")
-	require.NoError(t, err)
-	assert.Equal(t, string(raw), string(remarshaled),
+	require.NoError(err)
+	assert.Equal(string(raw), string(remarshaled),
 		"old reader re-marshal differs: key set, order, or encoding changed")
 
 	// The old reader gates on min_reader_version before anything else
@@ -139,17 +142,17 @@ func TestNewManifestReadableByOldReader(t *testing.T) {
 	// version the pre-extraction reader supported: a new writer must not
 	// emit manifests old readers would refuse.
 	const oldSupportedReaderVersion = 2
-	assert.LessOrEqual(t, old.MinReaderVersion, oldSupportedReaderVersion,
+	assert.LessOrEqual(old.MinReaderVersion, oldSupportedReaderVersion,
 		"old reader would refuse this manifest: min_reader_version too new")
 
 	// The old reader's forgery check compares the embedded snapshot_id to
 	// the recomputed one; both must also match the manifest's filename ID.
-	assert.Equal(t, m.SnapshotID, old.SnapshotID,
+	assert.Equal(m.SnapshotID, old.SnapshotID,
 		"embedded snapshot_id differs from the ID the manifest was written under")
 	createdAt, err := time.Parse(time.RFC3339, old.CreatedAt)
-	require.NoError(t, err)
+	require.NoError(err)
 	oldID, err := computeOldSnapshotID(createdAt, &old)
-	require.NoError(t, err)
-	assert.Equal(t, m.SnapshotID, oldID,
+	require.NoError(err)
+	assert.Equal(m.SnapshotID, oldID,
 		"old reader would reject this manifest as forged/corrupt")
 }

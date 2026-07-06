@@ -46,40 +46,45 @@ func seedDB(t *testing.T) string {
 }
 
 func TestFrozenViewContentInfoAndStats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	app := backupapp.New("test")
 	session, err := backup.OpenFrozenSession(
 		context.Background(), seedDB(t), backup.NoopFreezeCoordinator{})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, session.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(session.Close()) }()
 	view := app.FrozenView(session)
 
 	info, err := view.ContentInfo(context.Background())
-	require.NoError(t, err)
-	assert.Len(t, info.Refs, 3) // 2 content hashes + 1 thumbnail
-	assert.Equal(t, int64(2), info.Rows)
-	assert.True(t, info.NonCanonicalPaths) // 'imports/eeff03'
+	require.NoError(err)
+	assert.Len(info.Refs, 3) // 2 content hashes + 1 thumbnail
+	assert.Equal(int64(2), info.Rows)
+	assert.True(info.NonCanonicalPaths) // 'imports/eeff03'
 
 	raw, err := view.Stats(context.Background())
-	require.NoError(t, err)
+	require.NoError(err)
 	stats, err := backupapp.ParseStats(raw)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), stats.Messages)
-	assert.Equal(t, int64(2), stats.AttachmentRows)
-	assert.Equal(t, int64(3), stats.AttachmentBlobs)
-	assert.Equal(t, "2024-01-01T00:00:00Z", stats.DateRange[0])
+	require.NoError(err)
+	assert.Equal(int64(2), stats.Messages)
+	assert.Equal(int64(2), stats.AttachmentRows)
+	assert.Equal(int64(3), stats.AttachmentBlobs)
+	assert.Equal("2024-01-01T00:00:00Z", stats.DateRange[0])
 
 	// Stats marshaling must be stable: ParseStats→Marshal reproduces raw.
 	again, err := json.Marshal(stats)
-	require.NoError(t, err)
-	assert.Equal(t, string(raw), string(again))
+	require.NoError(err)
+	assert.Equal(string(raw), string(again))
 }
 
 func TestAppConstants(t *testing.T) {
+	assert := assert.New(t)
+
 	app := backupapp.New("1.2.3")
-	assert.Equal(t, "msgvault.db", app.DBFileName())
-	assert.Equal(t, "attachments", app.ContentDirName())
-	assert.Equal(t, "1.2.3", app.Version())
-	assert.Equal(t,
+	assert.Equal("msgvault.db", app.DBFileName())
+	assert.Equal("attachments", app.ContentDirName())
+	assert.Equal("1.2.3", app.Version())
+	assert.Equal(
 		[]string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"},
 		app.ExcludedPaths())
 }

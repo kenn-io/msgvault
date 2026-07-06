@@ -80,12 +80,14 @@ func TestGenerateCompatFixture(t *testing.T) {
 	if os.Getenv("MSGVAULT_GENERATE_COMPAT_FIXTURE") != "1" {
 		t.Skip("set MSGVAULT_GENERATE_COMPAT_FIXTURE=1 to regenerate the committed fixture")
 	}
-	require.NoError(t, os.RemoveAll(compatRepoDir))
+	require := require.New(t)
+
+	require.NoError(os.RemoveAll(compatRepoDir))
 	archive := t.TempDir()
 	dbPath, attDir := seedCompatArchive(t, archive)
 
 	r, err := backup.Init(compatRepoDir)
-	require.NoError(t, err)
+	require.NoError(err)
 	opts := backup.CreateOptions{
 		DBPath:     dbPath,
 		ContentDir: attDir,
@@ -93,17 +95,17 @@ func TestGenerateCompatFixture(t *testing.T) {
 	}
 	app := backupapp.New("compat-fixture")
 	_, err = backup.Create(context.Background(), r, app, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// Second snapshot with a data change, so the fixture exercises the
 	// incremental path: page deltas, parent chain, inherited lists.
 	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2024-12-01T00:00:00Z')`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
+	require.NoError(err)
+	require.NoError(db.Close())
 	_, err = backup.Create(context.Background(), r, app, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 }
 
 // copyFixtureRepo copies the committed fixture repository into a temp dir.
@@ -121,19 +123,22 @@ func copyFixtureRepo(t *testing.T) string {
 // code restores correctly. After the engine generalization this is the
 // old-writer→new-reader compatibility direction.
 func TestRestoreCompatFixture(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	r, err := backup.Open(copyFixtureRepo(t))
-	require.NoError(t, err)
+	require.NoError(err)
 	snaps, err := r.ListSnapshots()
-	require.NoError(t, err)
-	require.Len(t, snaps, 2)
+	require.NoError(err)
+	require.Len(snaps, 2)
 	// Pin the exact snapshot IDs of the committed fixture. If the env-gated
 	// generator is ever rerun (producing a fixture written by post-refactor
 	// code), these IDs change and this test fails — that is the point: the
 	// fixture must remain the pre-extraction artifact.
-	require.Equal(t,
+	require.Equal(
 		"20260706T135616Z-0f5afbf4852769c6ad683bdab6082649",
 		snaps[0].SnapshotID)
-	require.Equal(t,
+	require.Equal(
 		"20260706T135617Z-70996f725e26d0bbff1fb47d5e454074",
 		snaps[1].SnapshotID)
 
@@ -141,9 +146,9 @@ func TestRestoreCompatFixture(t *testing.T) {
 	res, err := backup.Restore(context.Background(), r, backupapp.New("test"), backup.RestoreOptions{
 		TargetDir: filepath.Join(target, "restored"),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, snaps[1].SnapshotID, res.SnapshotID)
-	assert.Equal(t, int64(3), res.AttachmentBlobs)
+	require.NoError(err)
+	assert.Equal(snaps[1].SnapshotID, res.SnapshotID)
+	assert.Equal(int64(3), res.AttachmentBlobs)
 
 	// Mirror the engine's sqliteURIDSN shape: absolute, slash-separated,
 	// slash-rooted — a raw Windows drive-letter path would otherwise be
@@ -162,9 +167,9 @@ func TestRestoreCompatFixture(t *testing.T) {
 		RawQuery: "immutable=1&mode=ro",
 	}).String()
 	db, err := sql.Open("sqlite3", dsn)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
 	var messages int64
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
-	assert.Equal(t, int64(3), messages)
+	require.NoError(db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
+	assert.Equal(int64(3), messages)
 }
