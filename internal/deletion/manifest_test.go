@@ -1,6 +1,7 @@
 package deletion
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -812,4 +813,81 @@ func TestGetMoveCancelRejectTraversalID(t *testing.T) {
 
 	cancelErr := mgr.CancelManifest("../../escape")
 	require.Error(cancelErr, "CancelManifest should reject a traversal ID")
+}
+
+func TestManifestRawFilterRoundTrip(t *testing.T) {
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(t, err, "NewManager")
+
+	m := NewManifest("raw filter test", []string{"gm-1"})
+	m.RawFilter = json.RawMessage(`{"filter":{"sender":"alice@example.com"},"dry_run":false}`)
+	require.NoError(t, mgr.SaveManifest(m), "save")
+
+	loaded, _, err := mgr.GetManifest(m.ID)
+	require.NoError(t, err, "reload")
+	assert.JSONEq(t, string(m.RawFilter), string(loaded.RawFilter), "raw filter survives round-trip")
+
+	// Old manifests without the field load with a nil RawFilter.
+	old := NewManifest("no raw filter", []string{"gm-2"})
+	require.NoError(t, mgr.SaveManifest(old), "save old-style")
+	loadedOld, _, err := mgr.GetManifest(old.ID)
+	require.NoError(t, err, "reload old-style")
+	assert.Nil(t, loadedOld.RawFilter, "absent field stays nil")
+}
+
+func TestGetManifestWithStatus(t *testing.T) {
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(t, err, "NewManager")
+
+	m := NewManifest("status test", []string{"gm-1"})
+	require.NoError(t, mgr.SaveManifest(m), "save pending")
+
+	got, status, err := mgr.GetManifestWithStatus(m.ID)
+	require.NoError(t, err, "lookup pending")
+	assert.Equal(t, StatusPending, status)
+	assert.Equal(t, m.ID, got.ID)
+
+	// Directory is authoritative even when the inline field is stale:
+	// move the file to cancelled/ without rewriting the inline status.
+	require.NoError(t, mgr.MoveManifest(m.ID, StatusPending, StatusCancelled), "move")
+	_, status, err = mgr.GetManifestWithStatus(m.ID)
+	require.NoError(t, err, "lookup cancelled")
+	assert.Equal(t, StatusCancelled, status, "dir-derived status wins over stale inline field")
+
+	_, _, err = mgr.GetManifestWithStatus("does-not-exist")
+	require.Error(t, err, "missing manifest")
+	assert.ErrorIs(t, err, ErrManifestNotFound)
+}
+
+func TestListByStatus(t *testing.T) {
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(t, err, "NewManager")
+
+	a := NewManifest("batch a", []string{"gm-1"})
+	require.NoError(t, mgr.SaveManifest(a), "save a")
+	b := NewManifest("batch b", []string{"gm-2", "gm-3"})
+	require.NoError(t, mgr.SaveManifest(b), "save b")
+	require.NoError(t, mgr.CancelManifest(b.ID), "cancel b")
+
+	pending, err := mgr.ListByStatus(StatusPending)
+	require.NoError(t, err, "list pending")
+	require.Len(t, pending, 1)
+	assert.Equal(t, a.ID, pending[0].ID)
+	assert.Equal(t, StatusPending, pending[0].Status, "normalized status")
+
+	cancelled, err := mgr.ListByStatus(StatusCancelled)
+	require.NoError(t, err, "list cancelled")
+	require.Len(t, cancelled, 1)
+	assert.Equal(t, b.ID, cancelled[0].ID)
+
+	_, err = mgr.ListByStatus(Status("bogus"))
+	assert.Error(t, err, "invalid status rejected")
+}
+
+func TestIsValidStatus(t *testing.T) {
+	for _, s := range PersistedStatuses() {
+		assert.True(t, IsValidStatus(s), "status %q", s)
+	}
+	assert.False(t, IsValidStatus(Status("bogus")))
+	assert.False(t, IsValidStatus(Status("")))
 }

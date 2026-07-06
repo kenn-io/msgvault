@@ -35,6 +35,10 @@ const (
 	MethodDelete Method = "delete" // Permanent deletion
 )
 
+// ErrManifestNotFound reports a manifest ID with no file in any status
+// directory. Callers use errors.Is to map it to HTTP 404.
+var ErrManifestNotFound = errors.New("manifest not found")
+
 // Filters specifies criteria for selecting messages.
 type Filters struct {
 	Senders       []string `json:"senders,omitempty"`
@@ -74,16 +78,17 @@ type Execution struct {
 
 // Manifest represents a deletion batch.
 type Manifest struct {
-	Version     int        `json:"version"`
-	ID          string     `json:"id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CreatedBy   string     `json:"created_by"` // "tui", "cli", "api"
-	Description string     `json:"description"`
-	Filters     Filters    `json:"filters"`
-	Summary     *Summary   `json:"summary,omitempty"`
-	GmailIDs    []string   `json:"gmail_ids"`
-	Status      Status     `json:"status"`
-	Execution   *Execution `json:"execution,omitempty"`
+	Version     int             `json:"version"`
+	ID          string          `json:"id"`
+	CreatedAt   time.Time       `json:"created_at"`
+	CreatedBy   string          `json:"created_by"` // "tui", "cli", "api"
+	Description string          `json:"description"`
+	Filters     Filters         `json:"filters"`
+	Summary     *Summary        `json:"summary,omitempty"`
+	GmailIDs    []string        `json:"gmail_ids"`
+	Status      Status          `json:"status"`
+	Execution   *Execution      `json:"execution,omitempty"`
+	RawFilter   json.RawMessage `json:"raw_filter,omitempty"`
 }
 
 // NewManifest creates a new deletion manifest.
@@ -242,6 +247,12 @@ var persistedStatuses = []Status{
 	StatusPending, StatusInProgress, StatusCompleted, StatusFailed, StatusCancelled,
 }
 
+// IsValidStatus reports whether s is a persisted manifest status.
+func IsValidStatus(s Status) bool { return isPersistedStatus(s) }
+
+// PersistedStatuses returns all statuses that have on-disk directories.
+func PersistedStatuses() []Status { return slices.Clone(persistedStatuses) }
+
 // Manager handles deletion manifest files.
 type Manager struct {
 	baseDir string // ~/.msgvault/deletions
@@ -310,6 +321,23 @@ func (m *Manager) ListCancelled() ([]*Manifest, error) {
 	return m.listManifests(m.dirForStatus(StatusCancelled))
 }
 
+// ListByStatus returns all manifests currently in the directory for the
+// given status, with each Manifest.Status normalized to the
+// directory-derived status (the directory is authoritative).
+func (m *Manager) ListByStatus(status Status) ([]*Manifest, error) {
+	if !isPersistedStatus(status) {
+		return nil, fmt.Errorf("invalid manifest status %q", status)
+	}
+	manifests, err := m.listManifests(m.dirForStatus(status))
+	if err != nil {
+		return nil, err
+	}
+	for _, manifest := range manifests {
+		manifest.Status = status
+	}
+	return manifests, nil
+}
+
 func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -360,6 +388,26 @@ func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
 	}
 
 	return nil, "", fmt.Errorf("manifest %s not found", id)
+}
+
+// GetManifestWithStatus returns the manifest and its directory-derived
+// status. The directory is authoritative over the inline Status field
+// (a crash between rename and inline rewrite can leave them disagreeing).
+func (m *Manager) GetManifestWithStatus(id string) (*Manifest, Status, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, "", errors.New("batch ID is required")
+	}
+	if err := ValidateManifestID(id); err != nil {
+		return nil, "", err
+	}
+	filename := id + ".json"
+	for _, status := range persistedStatuses {
+		path := filepath.Join(m.dirForStatus(status), filename)
+		if manifest, err := LoadManifest(path); err == nil {
+			return manifest, status, nil
+		}
+	}
+	return nil, "", fmt.Errorf("manifest %s: %w", id, ErrManifestNotFound)
 }
 
 // SaveManifest saves a manifest to the appropriate directory based on status.
