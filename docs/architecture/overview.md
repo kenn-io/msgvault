@@ -17,8 +17,7 @@ msgvault/
 │   ├── tui/                 # Bubble Tea TUI
 │   ├── query/               # DuckDB/SQL query engines
 │   ├── store/               # SQLite/PostgreSQL database access
-│   ├── backup/              # Snapshot repository capture/verify/restore
-│   ├── pack/                # Backup pack-file encoding
+│   ├── backupapp/           # msgvault's App seam for the kit backup engine
 │   ├── deletion/            # Deletion staging and manifest
 │   ├── gmail/               # Gmail API client
 │   ├── gcal/                # Google Calendar API client
@@ -51,8 +50,7 @@ msgvault/
 |---|---|
 | `cmd/` | Cobra CLI commands, config loading |
 | `internal/store` | SQLite and PostgreSQL database operations, schema management |
-| `internal/backup` | Backup repository snapshots, manifests, verification, and restore |
-| `internal/pack` | Backup pack-file framing, compression, and object integrity |
+| `internal/backupapp` | msgvault's `backup.App` implementation (stats, layout, exclusions) over `go.kenn.io/kit`'s backup/pack engine |
 | `internal/sync` | Sync orchestration, MIME parsing, checkpoint management |
 | `internal/gcal` / `internal/calsync` | Google Calendar API client and event sync |
 | `internal/imap` | IMAP client, connection management, credential storage |
