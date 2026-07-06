@@ -157,11 +157,12 @@ type Server struct {
 	// can report it. See ensureCLISearchIndexAsync.
 	ftsEnsureRunning atomic.Bool
 	ftsIndexState    atomic.Value
-	// ftsRebuildGen is bumped by handleCLIRebuildFTS when it invalidates the
-	// index. The ensure worker's completeness probe runs outside the
-	// operation gate, so its result can predate a concurrent rebuild; the
-	// worker snapshots this generation before probing and discards a stale
-	// "complete" observation instead of re-memoizing over the invalidation.
+	// ftsRebuildGen is a seqlock-style generation for index rebuilds:
+	// handleCLIRebuildFTS bumps it to odd on entry and back to even on
+	// return. The ensure worker's completeness probe runs outside the
+	// operation gate, so its result can predate a concurrent rebuild's
+	// index clear; the worker snapshots this generation before probing and
+	// memoizes a "complete" observation only on an even, unchanged value.
 	ftsRebuildGen atomic.Uint64
 	// activity reports request-scoped work that health should surface even
 	// though it runs outside (or with more detail than) the operation gate,

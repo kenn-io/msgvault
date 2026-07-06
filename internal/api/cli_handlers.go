@@ -1431,13 +1431,15 @@ func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore) {
 	defer s.ftsEnsureRunning.Store(false)
 	// The probe runs outside the operation gate, so a rebuild-fts can clear
 	// and repopulate the index while it scans. A "complete" observation is
-	// only memoized if no rebuild invalidated the index in the meantime;
-	// otherwise it is discarded and the next search re-triggers the worker.
-	// The backfill path below needs no generation check: it re-probes and
-	// backfills under the gate, serialized with rebuilds.
+	// only memoized when no rebuild was in progress at the snapshot (even
+	// generation — an odd one means a rebuild handler is mid-flight and the
+	// probe's read snapshot may predate its index clear) and none started
+	// since; otherwise it is discarded and the next search re-triggers the
+	// worker. The backfill path below needs no generation check: it
+	// re-probes and backfills under the gate, serialized with rebuilds.
 	rebuildGen := s.ftsRebuildGen.Load()
 	if !s.probeFTSBackfillNeeded(cliStore) {
-		if s.ftsRebuildGen.Load() == rebuildGen {
+		if rebuildGen%2 == 0 && s.ftsRebuildGen.Load() == rebuildGen {
 			s.ftsIndexComplete.Store(true)
 		}
 		s.ftsIndexState.Store("")
@@ -1520,10 +1522,17 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {
 	// search re-probes (and serializes behind this POST via the operation
 	// gate) instead of trusting a stale "complete" cache while the index is
 	// mid-rebuild or left incomplete by a failed rebuild. Only a successful
-	// rebuild re-sets the flag. The generation bump makes an in-flight
-	// ensure worker discard a probe result observed before this
-	// invalidation (its probe runs outside the gate).
+	// rebuild re-sets the flag.
+	//
+	// The generation is seqlock-style: odd while this handler runs, bumped
+	// back to even on return. The ensure worker's ungated probe can overlap
+	// a rebuild in either direction — it may start before this bump and
+	// finish after (generation moved), or start after the bump while its
+	// read snapshot still predates the index clear (generation odd). It
+	// only memoizes a "complete" observation on an even, unchanged
+	// generation, so both interleavings discard the stale result.
 	s.ftsRebuildGen.Add(1)
+	defer s.ftsRebuildGen.Add(1)
 	s.ftsIndexComplete.Store(false)
 
 	var writeErr error

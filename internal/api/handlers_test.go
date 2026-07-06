@@ -1757,6 +1757,67 @@ func TestHandleCLISearchProbeDiscardsResultStaleAfterRebuild(t *testing.T) {
 		"a probe result observed before a rebuild must not be memoized")
 }
 
+// TestHandleCLISearchProbeRefusesMemoizeDuringRebuild covers the second
+// probe/rebuild interleaving (roborev finding on a7752aa): the ensure worker
+// starts AFTER a rebuild is already mid-flight (generation bumped to odd),
+// and its probe's read snapshot may still predate the rebuild's index clear.
+// A "complete" observation under an odd generation must not be memoized —
+// here the rebuild is still running when the probe finishes, then fails.
+func TestHandleCLISearchProbeRefusesMemoizeDuringRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	rebuildEntered := make(chan struct{})
+	releaseRebuild := make(chan struct{})
+	st := &mockStore{
+		needsFTSBackfill: false, // probe sees the pre-clear "complete" index
+		rebuildFTSFunc: func(func(done, total int64)) (int64, error) {
+			close(rebuildEntered)
+			<-releaseRebuild
+			return 0, errors.New("rebuild exploded mid-batch")
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := newCLIHandlerTestServer(st)
+	srv.engine = engine
+
+	rebuildDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rebuildDone <- servePOSTTestRequest(srv, "/api/v1/cli/rebuild-fts")
+	}()
+	select {
+	case <-rebuildEntered:
+	case <-time.After(time.Second):
+		require.FailNow("rebuild never started")
+	}
+
+	// A search arrives while the rebuild is mid-flight; its ensure worker
+	// probes the (snapshot-wise still complete) index.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+	require.Eventually(func() bool { return !srv.ftsEnsureRunning.Load() },
+		time.Second, 5*time.Millisecond, "ensure worker must finish")
+
+	assert.False(srv.ftsIndexComplete.Load(),
+		"a probe observation made while a rebuild is mid-flight must not be memoized")
+
+	close(releaseRebuild)
+	select {
+	case resp := <-rebuildDone:
+		requireNDJSONResponse(t, resp)
+	case <-time.After(time.Second):
+		require.FailNow("rebuild request did not finish")
+	}
+	assert.False(srv.ftsIndexComplete.Load(),
+		"the failed rebuild must leave the completeness flag cleared")
+}
+
 // TestHandleCLISearchQuickCheckReportsBuildingImmediately verifies that when
 // the cheap tail-check already knows the index is stale, the very first
 // search reports index_state="building" — so the CLI warns about incomplete
