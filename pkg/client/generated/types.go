@@ -834,6 +834,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 
 type CliSearchResponse struct {
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
+	IndexState       *string                  `json:"index_state,omitempty"`
 	IndexedMessages  *int64                   `json:"indexed_messages,omitempty"`
 	Results          []CLIQueryMessageSummary `json:"results,omitempty" validate:"required"`
 	ScopeLabel       *string                  `json:"scope_label,omitempty"`

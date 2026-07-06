@@ -158,8 +158,13 @@ type CLISearch struct {
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitempty"`
-	IndexBuilt       bool                   `json:"index_built,omitempty"`
-	IndexedMessages  int64                  `json:"indexed_messages,omitempty"`
+	// IndexBuilt/IndexedMessages come from pre-0.18 daemons that built the
+	// FTS index synchronously inside the search request. Current daemons
+	// build in the background and report IndexState ("checking" or
+	// "building") instead.
+	IndexBuilt      bool   `json:"index_built,omitempty"`
+	IndexedMessages int64  `json:"indexed_messages,omitempty"`
+	IndexState      string `json:"index_state,omitempty"`
 }
 
 type CLIHybridSearchRequest struct {

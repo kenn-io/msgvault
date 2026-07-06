@@ -967,6 +967,8 @@ components:
       properties:
         index_built:
           type: boolean
+        index_state:
+          type: string
         indexed_messages:
           format: int64
           type: integer

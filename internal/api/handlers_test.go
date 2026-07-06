@@ -1620,13 +1620,25 @@ func TestHandleCLISearchCollectionScope(t *testing.T) {
 	assert.Empty(resp.Results, "results")
 }
 
-func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
+// TestHandleCLISearchDoesNotBlockOnIndexBuild is the core cold-start UX
+// contract: a search must return results immediately even while the FTS
+// completeness probe (a minute on a large archive) or a backfill is running,
+// reporting the background work's state instead of waiting on it.
+func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+
+	probeRelease := make(chan struct{})
+	backfillEntered := make(chan struct{})
+	backfillRelease := make(chan struct{})
 	st := &mockStore{
-		needsFTSBackfill: true,
+		needsFTSBackfillFunc: func() bool {
+			<-probeRelease // closed channel unblocks both probe calls
+			return true
+		},
 		backfillFTSFunc: func(func(done, total int64)) (int64, error) {
-			time.Sleep(40 * time.Millisecond)
+			close(backfillEntered)
+			<-backfillRelease
 			return 12, nil
 		},
 	}
@@ -1646,25 +1658,40 @@ func TestHandleCLISearchBackfillBypassesStandardRequestTimeout(t *testing.T) {
 		RequestTimeout: 5 * time.Millisecond,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
-
-	var resp struct {
-		Results []struct {
-			Subject string `json:"subject"`
-		} `json:"results"`
-		IndexBuilt      bool  `json:"index_built"`
-		IndexedMessages int64 `json:"indexed_messages"`
+	searchIndexState := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+		var resp struct {
+			Results []struct {
+				Subject string `json:"subject"`
+			} `json:"results"`
+			IndexBuilt bool   `json:"index_built"`
+			IndexState string `json:"index_state"`
+		}
+		require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+		require.Len(resp.Results, 1, "results")
+		assert.Equal("match", resp.Results[0].Subject, "subject")
+		assert.False(resp.IndexBuilt, "index_built is a pre-0.18 synchronous-build field")
+		return resp.IndexState
 	}
-	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
-	assert.True(resp.IndexBuilt, "index built")
-	assert.Equal(int64(12), resp.IndexedMessages, "indexed messages")
-	require.Len(resp.Results, 1, "results")
-	assert.Equal("match", resp.Results[0].Subject, "subject")
+
+	// The probe is blocked, so a search must still answer instantly.
+	assert.Equal("checking", searchIndexState(), "state while the probe runs")
+
+	close(probeRelease)
+	select {
+	case <-backfillEntered:
+	case <-time.After(time.Second):
+		require.FailNow("background worker never reached the backfill")
+	}
+	assert.Equal("building", searchIndexState(), "state while the backfill runs")
+
+	close(backfillRelease)
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
+	assert.Empty(searchIndexState(), "state once the index is complete")
 }
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
@@ -1695,13 +1722,11 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 		OperationGate: gate,
 	})
 
+	// The search itself must not queue behind the held gate.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 	resp := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(resp, req)
-		close(done)
-	}()
+	srv.Router().ServeHTTP(resp, req)
+	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
 
 	select {
 	case <-backfillStarted:
@@ -1715,12 +1740,8 @@ func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		require.FailNow("backfill did not start after gate release")
 	}
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		require.FailNow("search did not finish after gate release")
-	}
-	assert.Equal(http.StatusOK, resp.Code, "status: %s", resp.Body.String())
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
 }
 
 // TestHandleCLISearchMemoizesFTSComplete verifies that once the FTS index is
@@ -1742,21 +1763,29 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 		Logger: testLogger(),
 	})
 
-	for range 3 {
+	doSearch := func() {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello&limit=10", nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
 	}
 
+	doSearch()
+	// The probe runs in a background worker now; wait for it to confirm
+	// completeness before checking that later searches skip it.
+	require.Eventually(t, func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "probe must confirm the index complete")
+	doSearch()
+	doSearch()
+
 	assert.Equal(int32(1), st.needsFTSBackfillCalls.Load(),
 		"NeedsFTSBackfill should be probed once, then memoized")
 }
 
 // TestHandleCLISearchReportsProbeInAuthenticatedHealth verifies that while
-// the first search of a daemon's lifetime runs the expensive FTS completeness
-// probe, authenticated /health tells concurrent clients what the search is
-// stuck on instead of reporting an idle daemon.
+// the background worker spawned by the first search runs the expensive FTS
+// completeness probe, authenticated /health tells clients what the daemon is
+// doing instead of reporting it idle.
 func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1780,19 +1809,17 @@ func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 		Logger: testLogger(),
 	})
 
-	searchDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
-		req.Header.Set("X-Api-Key", "secret-key")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		searchDone <- w
-	}()
+	// The first search spawns the probe worker and returns without waiting.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	req.Header.Set("X-Api-Key", "secret-key")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
 
 	select {
 	case <-probeEntered:
 	case <-time.After(time.Second):
-		require.FailNow("search never reached the FTS completeness probe")
+		require.FailNow("the search never spawned the FTS completeness probe")
 	}
 
 	healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -1808,20 +1835,16 @@ func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
 	assert.NotNil(health.Operation.StartedAt, "probe start time")
 
 	close(releaseProbe)
-	select {
-	case w := <-searchDone:
-		assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
-	case <-time.After(time.Second):
-		require.FailNow("search did not finish after probe release")
-	}
-
-	_, _, active := srv.currentActivity()
-	assert.False(active, "activity must be cleared once the probe finishes")
+	require.Eventually(func() bool {
+		_, _, active := srv.currentActivity()
+		return !active && srv.ftsIndexComplete.Load()
+	}, time.Second, 5*time.Millisecond,
+		"activity must clear and the memo flag must set once the probe finishes")
 }
 
-// TestHandleCLISearchBackfillProgressUpdatesActivityLabel verifies the FTS
-// backfill run by a first search mirrors its progress into the health
-// activity label, so a waiting client sees live counts rather than a static
+// TestHandleCLISearchBackfillProgressUpdatesActivityLabel verifies the
+// background FTS backfill mirrors its progress into the health activity
+// label, so clients polling /health see live counts rather than a static
 // gate label.
 func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
 	require := require.New(t)
@@ -1852,6 +1875,8 @@ func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
 
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
+		time.Second, 5*time.Millisecond, "background backfill must complete")
 	assert.Equal("building the search index (2/4 messages)", labelDuringBackfill,
 		"activity label must carry backfill progress")
 	_, _, active := srv.currentActivity()

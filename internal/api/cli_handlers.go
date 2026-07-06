@@ -351,9 +351,23 @@ type cliSearchResponse struct {
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
 	ScopeSourceCount int                    `json:"scope_source_count,omitempty"`
-	IndexBuilt       bool                   `json:"index_built,omitempty"`
-	IndexedMessages  int64                  `json:"indexed_messages,omitempty"`
+	// IndexBuilt/IndexedMessages are only set by daemons that built the FTS
+	// index synchronously inside the request (pre-0.18); current daemons
+	// build in the background and report IndexState instead. Kept in the
+	// schema so new CLIs understand old daemons.
+	IndexBuilt      bool  `json:"index_built,omitempty"`
+	IndexedMessages int64 `json:"indexed_messages,omitempty"`
+	// IndexState is "checking" while the FTS completeness probe runs and
+	// "building" while a backfill is repopulating the index (results may be
+	// incomplete); empty once the index is known complete.
+	IndexState string `json:"index_state,omitempty"`
 }
+
+// CLI search index states reported in cliSearchResponse.IndexState.
+const (
+	cliSearchIndexStateChecking = "checking"
+	cliSearchIndexStateBuilding = "building"
+)
 
 type CLIQueryMessageSummary query.MessageSummary
 
@@ -1367,48 +1381,12 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	resp := cliSearchResponse{
 		ScopeLabel:       scope.displayName(),
 		ScopeSourceCount: len(scope.sourceIDs()),
-	}
-	// Gate the backfill probe on a memoized completion flag: NeedsFTSBackfill
-	// scans every message when the index is already complete, so probing it on
-	// every request dominated CLI search latency. Once the index is confirmed
-	// complete, skip the probe entirely for the process lifetime.
-	//
-	// The probe and backfill both run inside a labeled activity so
-	// authenticated /health can tell a waiting client what its search is
-	// stuck on — the probe alone takes a minute on a large archive, and it
-	// runs before the operation gate would report anything.
-	if !s.ftsIndexComplete.Load() {
-		if s.probeFTSBackfillNeeded(cliStore) {
-			n, err := func() (int64, error) {
-				done, ok := s.beginLabeledOperationGateWork(r.Context(), "a search index build")
-				if !ok {
-					return 0, newAPIHTTPError(http.StatusServiceUnavailable, "server_busy", "server is busy or shutting down")
-				}
-				defer done()
-				if !cliStore.NeedsFTSBackfill() {
-					return 0, nil
-				}
-				return s.backfillFTSWithActivity(cliStore)
-			}()
-			if err != nil {
-				var apiErr *apiHTTPError
-				if errors.As(err, &apiErr) {
-					writeAPIHTTPError(w, apiErr)
-					return
-				}
-				s.logger.Error("failed to build CLI search index", "error", err)
-				writeError(w, http.StatusInternalServerError, "build_search_index_failed",
-					fmt.Sprintf("build search index: %v", err))
-				return
-			}
-			if n > 0 || !cliStore.NeedsFTSBackfill() {
-				resp.IndexBuilt = true
-				resp.IndexedMessages = n
-				s.ftsIndexComplete.Store(true)
-			}
-		} else {
-			s.ftsIndexComplete.Store(true)
-		}
+		// The FTS completeness probe scans every message (a minute on a
+		// large archive, once per daemon process), so the search never
+		// waits on it: the probe and any backfill run in the background
+		// and the response only reports their state so the CLI can warn
+		// that results may be incomplete while a backfill runs.
+		IndexState: s.ensureCLISearchIndexAsync(cliStore),
 	}
 
 	results, err := s.engine.Search(r.Context(), parsed, limit, offset)
@@ -1419,6 +1397,56 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Results = results
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ensureCLISearchIndexAsync makes sure exactly one background worker is
+// verifying (and if needed, repopulating) the FTS index, and reports what
+// that worker is currently doing so the response can carry it. Searches
+// never wait on this work: the completeness probe alone scans every message
+// — a minute on a large archive — and it used to run inline on the first
+// search of every daemon process, which reads as a hung CLI. A failed
+// backfill clears the running flag so a later search retries.
+func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore) string {
+	if s.ftsIndexComplete.Load() {
+		return ""
+	}
+	if s.ftsEnsureRunning.CompareAndSwap(false, true) {
+		s.ftsIndexState.Store(cliSearchIndexStateChecking)
+		go s.runCLISearchIndexEnsure(cliStore)
+	}
+	state, _ := s.ftsIndexState.Load().(string)
+	return state
+}
+
+func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore) {
+	defer s.ftsEnsureRunning.Store(false)
+	if !s.probeFTSBackfillNeeded(cliStore) {
+		s.ftsIndexComplete.Store(true)
+		s.ftsIndexState.Store("")
+		return
+	}
+	s.ftsIndexState.Store(cliSearchIndexStateBuilding)
+	// Background gate work, not request work: a backfill queued behind a
+	// long sync should wait its turn rather than force the sync to yield,
+	// since no request is blocked on it anymore.
+	done, ok := s.beginBackgroundOperationGateWork(context.Background(), "a search index build")
+	if !ok {
+		s.ftsIndexState.Store("")
+		return
+	}
+	defer done()
+	if !cliStore.NeedsFTSBackfill() {
+		s.ftsIndexComplete.Store(true)
+		s.ftsIndexState.Store("")
+		return
+	}
+	if _, err := s.backfillFTSWithActivity(cliStore); err != nil {
+		s.logger.Error("failed to build CLI search index", "error", err)
+		s.ftsIndexState.Store("")
+		return
+	}
+	s.ftsIndexComplete.Store(true)
+	s.ftsIndexState.Store("")
 }
 
 // probeFTSBackfillNeeded runs the expensive first-search completeness probe

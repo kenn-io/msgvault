@@ -334,6 +334,66 @@ func searchHTTPDaemon(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	return server, searchRequests
 }
 
+// TestSearchCmd_PrintsBackgroundIndexBuildNote verifies the CLI warns that
+// results may be incomplete when the daemon reports it is rebuilding the FTS
+// index in the background (index_state="building").
+func TestSearchCmd_PrintsBackgroundIndexBuildNote(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dataDir := t.TempDir()
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService,
+		Version: Version,
+	}))
+	mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results": [{
+				"id": 42,
+				"subject": "Lunch",
+				"from_email": "alice@example.com",
+				"sent_at": "2024-01-02T03:04:05Z"
+			}],
+			"index_state": "building"
+		}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	writeStatsHTTPDaemonRuntime(t, dataDir, server)
+
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	cfg = &config.Config{
+		HomeDir: dataDir,
+		Data:    config.DataConfig{DataDir: dataDir},
+	}
+	useLocal = true
+
+	doneOut := captureStdout(t)
+	doneErr := captureStderr(t)
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "lunch"})
+
+	err := root.Execute()
+	out := doneOut()
+	errOut := doneErr()
+	require.NoError(err, "search command")
+
+	assert.Contains(out, "Lunch", "results still print")
+	assert.Contains(errOut,
+		"the search index is being rebuilt in the background; results may be incomplete",
+		"background build note")
+}
+
 func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
