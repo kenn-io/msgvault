@@ -1753,6 +1753,111 @@ func TestHandleCLISearchMemoizesFTSComplete(t *testing.T) {
 		"NeedsFTSBackfill should be probed once, then memoized")
 }
 
+// TestHandleCLISearchReportsProbeInAuthenticatedHealth verifies that while
+// the first search of a daemon's lifetime runs the expensive FTS completeness
+// probe, authenticated /health tells concurrent clients what the search is
+// stuck on instead of reporting an idle daemon.
+func TestHandleCLISearchReportsProbeInAuthenticatedHealth(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	probeEntered := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	st := &mockStore{needsFTSBackfillFunc: func() bool {
+		close(probeEntered)
+		<-releaseProbe
+		return false
+	}}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080, APIKey: "secret-key"}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	searchDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+		req.Header.Set("X-Api-Key", "secret-key")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		searchDone <- w
+	}()
+
+	select {
+	case <-probeEntered:
+	case <-time.After(time.Second):
+		require.FailNow("search never reached the FTS completeness probe")
+	}
+
+	healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq.Header.Set("X-Api-Key", "secret-key")
+	healthResp := httptest.NewRecorder()
+	srv.Router().ServeHTTP(healthResp, healthReq)
+	require.Equal(http.StatusOK, healthResp.Code, "health status")
+	var health HealthResponse
+	require.NoError(json.Unmarshal(healthResp.Body.Bytes(), &health), "decode health body")
+	require.NotNil(health.Operation, "health must report the running probe")
+	assert.True(health.Operation.Busy, "probe must report busy")
+	assert.Equal("checking the search index", health.Operation.Label, "probe label")
+	assert.NotNil(health.Operation.StartedAt, "probe start time")
+
+	close(releaseProbe)
+	select {
+	case w := <-searchDone:
+		assert.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+	case <-time.After(time.Second):
+		require.FailNow("search did not finish after probe release")
+	}
+
+	_, _, active := srv.currentActivity()
+	assert.False(active, "activity must be cleared once the probe finishes")
+}
+
+// TestHandleCLISearchBackfillProgressUpdatesActivityLabel verifies the FTS
+// backfill run by a first search mirrors its progress into the health
+// activity label, so a waiting client sees live counts rather than a static
+// gate label.
+func TestHandleCLISearchBackfillProgressUpdatesActivityLabel(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := &mockStore{needsFTSBackfill: true}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	var labelDuringBackfill string
+	st.backfillFTSFunc = func(progress func(done, total int64)) (int64, error) {
+		progress(2, 4)
+		labelDuringBackfill, _, _ = srv.currentActivity()
+		return 4, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "search status: %s", w.Body.String())
+
+	assert.Equal("building the search index (2/4 messages)", labelDuringBackfill,
+		"activity label must carry backfill progress")
+	_, _, active := srv.currentActivity()
+	assert.False(active, "activity must be cleared once the backfill finishes")
+}
+
 func TestHandleCLIRebuildFTSStreamsProgress(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

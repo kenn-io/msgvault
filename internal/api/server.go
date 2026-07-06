@@ -151,7 +151,15 @@ type Server struct {
 	// a restart or `rebuild-fts` (the same limitation the /api/v1/search path
 	// already has, since it never backfills).
 	ftsIndexComplete atomic.Bool
-	cfgMu            sync.RWMutex // protects cfg.Accounts
+	// activity reports request-scoped work that health should surface even
+	// though it runs outside (or with more detail than) the operation gate,
+	// e.g. the first-search FTS completeness probe and backfill progress.
+	// See beginActivity / setActivityLabel / currentActivity.
+	activityMu    sync.Mutex
+	activityCount int
+	activityLabel string
+	activitySince time.Time
+	cfgMu         sync.RWMutex // protects cfg.Accounts
 	// vectorMu guards the vector subsystem state: the daemon installs
 	// hybridEngine/backend/vectorCfg from a background init goroutine
 	// after the server is already handling requests.
@@ -715,10 +723,15 @@ func (s *Server) operationBusyHealth() *OperationHealth {
 	return &OperationHealth{Busy: true}
 }
 
-// operationHealth reports what currently holds the operation gate, if the
-// gate can say. Unlabeled holders still get a generic label so clients can
-// tell "busy" from "idle".
+// operationHealth reports what the daemon is currently working on. A
+// request-scoped activity (which carries live progress detail) wins over the
+// operation gate holder's static label; the gate holder covers everything
+// else. Unlabeled holders still get a generic label so clients can tell
+// "busy" from "idle".
 func (s *Server) operationHealth() *OperationHealth {
+	if label, since, active := s.currentActivity(); active {
+		return &OperationHealth{Busy: true, Label: label, StartedAt: &since}
+	}
 	label, since, held := s.operationGateHolder()
 	if !held {
 		return nil
@@ -727,6 +740,53 @@ func (s *Server) operationHealth() *OperationHealth {
 		label = "an archive operation"
 	}
 	return &OperationHealth{Busy: true, Label: label, StartedAt: &since}
+}
+
+// beginActivity records that a request is doing labeled work the operation
+// gate cannot describe — either ungated work (the FTS completeness probe) or
+// gated work whose label should carry live progress (the FTS backfill). The
+// returned func ends the activity. Overlapping activities share one label:
+// the first begin sets it, the last end clears it.
+func (s *Server) beginActivity(label string) func() {
+	s.activityMu.Lock()
+	s.activityCount++
+	if s.activityCount == 1 {
+		s.activityLabel = label
+		s.activitySince = time.Now()
+	}
+	s.activityMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.activityMu.Lock()
+			s.activityCount--
+			if s.activityCount == 0 {
+				s.activityLabel = ""
+				s.activitySince = time.Time{}
+			}
+			s.activityMu.Unlock()
+		})
+	}
+}
+
+// setActivityLabel updates the current activity's label in place so progress
+// callbacks can keep health output live (e.g. "building the search index
+// (12000/48000 messages)"). No-op when no activity is active.
+func (s *Server) setActivityLabel(label string) {
+	s.activityMu.Lock()
+	if s.activityCount > 0 {
+		s.activityLabel = label
+	}
+	s.activityMu.Unlock()
+}
+
+func (s *Server) currentActivity() (string, time.Time, bool) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	if s.activityCount == 0 {
+		return "", time.Time{}, false
+	}
+	return s.activityLabel, s.activitySince, true
 }
 
 func (s *Server) operationGateHolder() (string, time.Time, bool) {

@@ -1372,8 +1372,13 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	// scans every message when the index is already complete, so probing it on
 	// every request dominated CLI search latency. Once the index is confirmed
 	// complete, skip the probe entirely for the process lifetime.
+	//
+	// The probe and backfill both run inside a labeled activity so
+	// authenticated /health can tell a waiting client what its search is
+	// stuck on — the probe alone takes a minute on a large archive, and it
+	// runs before the operation gate would report anything.
 	if !s.ftsIndexComplete.Load() {
-		if cliStore.NeedsFTSBackfill() {
+		if s.probeFTSBackfillNeeded(cliStore) {
 			n, err := func() (int64, error) {
 				done, ok := s.beginLabeledOperationGateWork(r.Context(), "a search index build")
 				if !ok {
@@ -1383,7 +1388,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 				if !cliStore.NeedsFTSBackfill() {
 					return 0, nil
 				}
-				return cliStore.BackfillFTS(nil)
+				return s.backfillFTSWithActivity(cliStore)
 			}()
 			if err != nil {
 				var apiErr *apiHTTPError
@@ -1414,6 +1419,45 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Results = results
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// probeFTSBackfillNeeded runs the expensive first-search completeness probe
+// as a labeled activity, and logs the duration when it is slow enough to be
+// what a user just sat through.
+func (s *Server) probeFTSBackfillNeeded(cliStore CLIStore) bool {
+	end := s.beginActivity("checking the search index")
+	defer end()
+	started := time.Now()
+	needs := cliStore.NeedsFTSBackfill()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		s.logger.Info("search index completeness probe finished",
+			"needs_backfill", needs,
+			"duration", elapsed.Round(time.Millisecond).String(),
+		)
+	}
+	return needs
+}
+
+// backfillFTSWithActivity runs the FTS backfill with its progress mirrored
+// into the activity label, so authenticated /health reports live counts
+// instead of the gate's static "a search index build".
+func (s *Server) backfillFTSWithActivity(cliStore CLIStore) (int64, error) {
+	end := s.beginActivity("building the search index")
+	defer end()
+	started := time.Now()
+	s.logger.Info("building CLI search index")
+	n, err := cliStore.BackfillFTS(func(done, total int64) {
+		s.setActivityLabel(fmt.Sprintf(
+			"building the search index (%d/%d messages)", done, total))
+	})
+	if err != nil {
+		return n, err
+	}
+	s.logger.Info("built CLI search index",
+		"indexed", n,
+		"duration", time.Since(started).Round(time.Millisecond).String(),
+	)
+	return n, nil
 }
 
 func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {

@@ -135,11 +135,11 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 	}
 	defer func() { _ = s.Close() }()
 
+	prefix := "Searching..."
 	if info.Kind == HTTPStoreConfiguredRemote {
-		fmt.Fprintf(os.Stderr, "Searching %s...", info.URL)
-	} else {
-		fmt.Fprintf(os.Stderr, "Searching...")
+		prefix = fmt.Sprintf("Searching %s...", info.URL)
 	}
+	stopStatus := startSearchStatus(cmd.Context(), prefix, info)
 
 	hasAccount := searchAccount != "" || searchCollection != ""
 	logger.Info("search start",
@@ -163,7 +163,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		Limit:        searchLimit,
 		Offset:       searchOffset,
 	})
-	fmt.Fprintf(os.Stderr, "\r                                                      \r")
+	stopStatus()
 	if err != nil {
 		logger.Warn("search failed",
 			"query_len", len(queryStr),
