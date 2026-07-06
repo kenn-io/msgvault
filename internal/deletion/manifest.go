@@ -90,10 +90,10 @@ type Manifest struct {
 	GmailIDs    []string   `json:"gmail_ids"`
 	Status      Status     `json:"status"`
 	Execution   *Execution `json:"execution,omitempty"`
-	// RawFilter preserves the verbatim staging request from the HTTP API
-	// for provenance — Filters cannot represent every request field
-	// (sender_name, recipient_name, source_id). Absent on manifests
-	// created by the TUI/CLI.
+	// RawFilter records the serialized HTTP API staging request fields for
+	// provenance — Filters cannot represent every request field
+	// (sender_name, recipient_name, source_id). Absent on manifests created
+	// by the TUI/CLI.
 	RawFilter json.RawMessage `json:"raw_filter,omitempty"`
 }
 
@@ -129,11 +129,11 @@ func generateID(description string) string {
 }
 
 func randomIDSuffix() string {
-	var b [2]byte
+	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// crypto/rand is effectively infallible; fall back to clock
 		// bits rather than failing manifest creation.
-		return fmt.Sprintf("%04x", time.Now().UnixNano()&0xffff)
+		return fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	}
 	return hex.EncodeToString(b[:])
 }

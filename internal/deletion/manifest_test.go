@@ -205,7 +205,7 @@ func TestGenerateID(t *testing.T) {
 			desc: "this is a very long description that exceeds twenty characters",
 			validate: func(t *testing.T, id string) {
 				t.Helper()
-				assert.LessOrEqual(t, len(id), 45, "ID too long: %d chars (%q)", len(id), id)
+				assert.LessOrEqual(t, len(id), 53, "ID too long: %d chars (%q)", len(id), id)
 			},
 		},
 		{
