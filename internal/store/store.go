@@ -800,6 +800,34 @@ func (s *Store) InitSchema() error {
 		}); err != nil {
 			return fmt.Errorf("create idx_messages_live_sent_at: %w", err)
 		}
+
+		// Partial indexes over the deletion timestamps. The analytics cache
+		// staleness check (cacheNeedsBuild) counts messages source-deleted or
+		// dedup-hidden since the last build on every daemon start, before the
+		// API server binds. Neither predicate is served by an existing index
+		// (idx_messages_deleted leads with source_id), so each COUNT was a
+		// full scan of the messages table — measured at ~4.5s on a cold page
+		// cache over a 2.5M-row archive, which was the entire cold-start
+		// latency of `msgvault search`. The partial form keeps the indexes
+		// proportional to the deleted rows only, so live-message insert and
+		// update paths pay no maintenance for them.
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_deleted_from_source_at
+				    ON messages(deleted_from_source_at)
+				    WHERE deleted_from_source_at IS NOT NULL
+			`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_deleted_at
+				    ON messages(deleted_at)
+				    WHERE deleted_at IS NOT NULL
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create deletion timestamp indexes: %w", err)
+		}
 	}
 
 	// Backfill last_modified for rows that predate the column. SQLite cannot
