@@ -111,6 +111,10 @@ func (a *App) DBFileName() string { return "msgvault.db" }
 // ContentDirName implements backup.App.
 func (a *App) ContentDirName() string { return "attachments" }
 
+// PackFileExtension implements backup.App. Existing msgvault backup
+// repositories are written with this extension, so it is frozen.
+func (a *App) PackFileExtension() string { return ".mvpack" }
+
 // ExcludedPaths implements backup.App.
 func (a *App) ExcludedPaths() []string { return manifestExcluded }
 

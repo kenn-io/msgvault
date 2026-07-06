@@ -115,6 +115,7 @@ func TestAppConstants(t *testing.T) {
 	app := backupapp.New("1.2.3")
 	assert.Equal("msgvault.db", app.DBFileName())
 	assert.Equal("attachments", app.ContentDirName())
+	assert.Equal(".mvpack", app.PackFileExtension())
 	assert.Equal("1.2.3", app.Version())
 	assert.Equal(
 		[]string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"},
