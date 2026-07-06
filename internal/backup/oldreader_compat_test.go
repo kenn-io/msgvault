@@ -134,6 +134,18 @@ func TestNewManifestReadableByOldReader(t *testing.T) {
 	assert.Equal(t, string(raw), string(remarshaled),
 		"old reader re-marshal differs: key set, order, or encoding changed")
 
+	// The old reader gates on min_reader_version before anything else
+	// (LoadManifest refuses manifests requiring a newer reader). Freeze the
+	// version the pre-extraction reader supported: a new writer must not
+	// emit manifests old readers would refuse.
+	const oldSupportedReaderVersion = 2
+	assert.LessOrEqual(t, old.MinReaderVersion, oldSupportedReaderVersion,
+		"old reader would refuse this manifest: min_reader_version too new")
+
+	// The old reader's forgery check compares the embedded snapshot_id to
+	// the recomputed one; both must also match the manifest's filename ID.
+	assert.Equal(t, m.SnapshotID, old.SnapshotID,
+		"embedded snapshot_id differs from the ID the manifest was written under")
 	createdAt, err := time.Parse(time.RFC3339, old.CreatedAt)
 	require.NoError(t, err)
 	oldID, err := computeOldSnapshotID(createdAt, &old)

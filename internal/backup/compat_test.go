@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,16 +113,31 @@ func TestRestoreCompatFixture(t *testing.T) {
 	snaps, err := r.ListSnapshots()
 	require.NoError(t, err)
 	require.Len(t, snaps, 2)
+	// Pin the exact snapshot IDs of the committed fixture. If the env-gated
+	// generator is ever rerun (producing a fixture written by post-refactor
+	// code), these IDs change and this test fails — that is the point: the
+	// fixture must remain the pre-extraction artifact.
+	require.Equal(t,
+		"20260706T135616Z-0f5afbf4852769c6ad683bdab6082649",
+		snaps[0].SnapshotID)
+	require.Equal(t,
+		"20260706T135617Z-70996f725e26d0bbff1fb47d5e454074",
+		snaps[1].SnapshotID)
 
 	target := t.TempDir()
 	res, err := backup.Restore(context.Background(), r, backup.RestoreOptions{
 		TargetDir: filepath.Join(target, "restored"),
 	})
 	require.NoError(t, err)
+	assert.Equal(t, snaps[1].SnapshotID, res.SnapshotID)
 	assert.Equal(t, int64(3), res.AttachmentBlobs)
 
-	db, err := sql.Open("sqlite3",
-		fmt.Sprintf("file:%s?immutable=1&mode=ro", res.DBPath))
+	dsn := (&url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(res.DBPath),
+		RawQuery: "immutable=1&mode=ro",
+	}).String()
+	db, err := sql.Open("sqlite3", dsn)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	var messages int64
