@@ -643,6 +643,8 @@ var _ api.CLIRunner = (*storeAPIAdapter)(nil)
 var _ api.CLIAddCalendarPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDeleteStagedPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDeletionManifestSaver = (*storeAPIAdapter)(nil)
+var _ api.DeletionManifestLister = (*storeAPIAdapter)(nil)
+var _ api.DeletionManifestCanceller = (*storeAPIAdapter)(nil)
 var _ api.CLIDeduplicatePlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIEmbeddingsPlanner = (*storeAPIAdapter)(nil)
 var _ api.CLIDedupDeleteStore = (*storeAPIAdapter)(nil)
@@ -850,12 +852,55 @@ func (a *storeAPIAdapter) PlanCLIDeleteStaged(
 	return planCLIDeleteStaged(ctx, a.store, req)
 }
 
-func (a *storeAPIAdapter) SaveCLIDeletionManifest(_ context.Context, manifest *deletion.Manifest) error {
+func (a *storeAPIAdapter) deletionManager() (*deletion.Manager, error) {
 	mgr, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
 	if err != nil {
-		return fmt.Errorf("create deletion manager: %w", err)
+		return nil, fmt.Errorf("create deletion manager: %w", err)
+	}
+	return mgr, nil
+}
+
+func (a *storeAPIAdapter) SaveCLIDeletionManifest(_ context.Context, manifest *deletion.Manifest) error {
+	mgr, err := a.deletionManager()
+	if err != nil {
+		return err
 	}
 	return mgr.SaveManifest(manifest)
+}
+
+func (a *storeAPIAdapter) ListDeletionManifests(_ context.Context, status deletion.Status) ([]*deletion.Manifest, error) {
+	mgr, err := a.deletionManager()
+	if err != nil {
+		return nil, err
+	}
+	if status != "" {
+		return mgr.ListByStatus(status)
+	}
+	var all []*deletion.Manifest
+	for _, s := range deletion.PersistedStatuses() {
+		manifests, err := mgr.ListByStatus(s)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, manifests...)
+	}
+	return all, nil
+}
+
+func (a *storeAPIAdapter) GetDeletionManifest(_ context.Context, id string) (*deletion.Manifest, deletion.Status, error) {
+	mgr, err := a.deletionManager()
+	if err != nil {
+		return nil, "", err
+	}
+	return mgr.GetManifestWithStatus(id)
+}
+
+func (a *storeAPIAdapter) CancelDeletionManifest(_ context.Context, id string) error {
+	mgr, err := a.deletionManager()
+	if err != nil {
+		return err
+	}
+	return mgr.CancelManifest(id)
 }
 
 func (a *storeAPIAdapter) PlanCLIDeduplicate(
