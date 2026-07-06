@@ -195,9 +195,17 @@ type ClientInterface interface {
 	VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResponse, error)
 	VerifyCLIWithResponse(ctx context.Context, options *VerifyCLIRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VerifyCLIResp, error)
 
+	// ListDeletions List staged deletion manifests
+	ListDeletions(ctx context.Context, options *ListDeletionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDeletionsResponseJSON, error)
+	ListDeletionsWithResponse(ctx context.Context, options *ListDeletionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDeletionsResp, error)
+
 	// StageDeletion Stage messages for deletion
 	StageDeletion(ctx context.Context, options *StageDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StageDeletionResponseJSON201, error)
 	StageDeletionWithResponse(ctx context.Context, options *StageDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StageDeletionResp, error)
+
+	// CancelDeletion Cancel a staged deletion manifest
+	CancelDeletion(ctx context.Context, options *CancelDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelDeletionResponseJSON, error)
+	CancelDeletionWithResponse(ctx context.Context, options *CancelDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelDeletionResp, error)
 
 	// GetHealth Get authenticated health details
 	GetHealth(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetHealthResponse, error)
@@ -2782,6 +2790,69 @@ func (c *Client) VerifyCLI(ctx context.Context, options *VerifyCLIRequestOptions
 	return responseParser(ctx, resp)
 }
 
+// ListDeletions List staged deletion manifests
+func (c *Client) ListDeletions(ctx context.Context, options *ListDeletionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDeletionsResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/deletions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListDeletionsResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListDeletionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListDeletionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListDeletionsResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListDeletionsResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/deletions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // StageDeletion Stage messages for deletion
 func (c *Client) StageDeletion(ctx context.Context, options *StageDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StageDeletionResponseJSON201, error) {
 	var err error
@@ -2840,6 +2911,69 @@ func (c *Client) StageDeletion(ctx context.Context, options *StageDeletionReques
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/deletions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CancelDeletion Cancel a staged deletion manifest
+func (c *Client) CancelDeletion(ctx context.Context, options *CancelDeletionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CancelDeletionResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/deletions/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CancelDeletionResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(CancelDeletionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "CancelDeletionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(CancelDeletionResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "CancelDeletionResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/deletions/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

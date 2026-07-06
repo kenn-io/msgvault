@@ -587,6 +587,16 @@ components:
       required:
         - status
       type: object
+    CancelDeletionResponse:
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - status
+      type: object
     CliAccountResponse:
       properties:
         display_name:
@@ -1039,6 +1049,30 @@ components:
         - offset
         - limit
       type: object
+    DeletionManifestSummary:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        status:
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - created_by
+        - description
+        - message_count
+      type: object
     ErrorResponse:
       properties:
         error:
@@ -1306,6 +1340,16 @@ components:
         - generation
         - took_ms
         - results
+      type: object
+    ListDeletionsResponse:
+      properties:
+        manifests:
+          items:
+            $ref: "#/components/schemas/DeletionManifestSummary"
+          nullable: true
+          type: array
+      required:
+        - manifests
       type: object
     Manifest:
       additionalProperties: false
@@ -3820,6 +3864,32 @@ paths:
       tags:
         - API
   /api/v1/deletions:
+    get:
+      operationId: listDeletions
+      parameters:
+        - description: Filter manifests by status (pending, in_progress, completed, failed, cancelled)
+          in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDeletionsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List staged deletion manifests
+      tags:
+        - API
     post:
       operationId: stageDeletion
       requestBody:
@@ -3850,6 +3920,34 @@ paths:
       security:
         - apiKey: []
       summary: Stage messages for deletion
+      tags:
+        - API
+  /api/v1/deletions/{id}:
+    delete:
+      operationId: cancelDeletion
+      parameters:
+        - description: Deletion manifest ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelDeletionResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Cancel a staged deletion manifest
       tags:
         - API
   /api/v1/health:

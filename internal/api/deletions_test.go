@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -199,4 +200,100 @@ func TestStageDeletionEngineUnavailable(t *testing.T) {
 	w := postDeletions(t, srv, `{"filter": {"sender": "alice@example.com"}}`)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), "engine_unavailable")
+}
+
+func TestListDeletions(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	st := &deletionMockStore{manifests: map[deletion.Status][]*deletion.Manifest{
+		deletion.StatusPending: {{
+			ID: "batch-1", Status: deletion.StatusPending, CreatedAt: now,
+			CreatedBy: "api", Description: "old mail", GmailIDs: []string{"gm-1", "gm-2"},
+		}},
+		deletion.StatusCancelled: {{
+			ID: "batch-2", Status: deletion.StatusCancelled, CreatedAt: now.Add(time.Hour),
+			CreatedBy: "tui", Description: "cancelled batch", GmailIDs: []string{"gm-3"},
+		}},
+	}}
+	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+
+	// All statuses, newest first.
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions", nil))
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp ListDeletionsResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	require.Len(t, resp.Manifests, 2)
+	assert.Equal(t, "batch-2", resp.Manifests[0].ID, "newest first")
+	assert.Equal(t, 2, resp.Manifests[1].MessageCount)
+
+	// Filtered by status.
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions?status=pending", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	resp = ListDeletionsResponse{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode filtered")
+	require.Len(t, resp.Manifests, 1)
+	assert.Equal(t, "batch-1", resp.Manifests[0].ID)
+
+	// Invalid status.
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/deletions?status=bogus", nil))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid_status")
+}
+
+func deleteDeletion(srv *Server, id string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/deletions/"+id, nil))
+	return w
+}
+
+func TestCancelDeletion(t *testing.T) {
+	st := &deletionMockStore{getStatus: deletion.StatusPending}
+	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+
+	w := deleteDeletion(srv, "batch-1")
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp CancelDeletionResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "decode")
+	assert.Equal(t, "batch-1", resp.ID)
+	assert.Equal(t, "cancelled", resp.Status)
+	assert.Equal(t, []string{"batch-1"}, st.cancelled)
+}
+
+func TestCancelDeletionNotFound(t *testing.T) {
+	st := &deletionMockStore{getErr: fmt.Errorf("manifest batch-x: %w", deletion.ErrManifestNotFound)}
+	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+
+	w := deleteDeletion(srv, "batch-x")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "not_found")
+	assert.Empty(t, st.cancelled)
+}
+
+func TestCancelDeletionNotCancellable(t *testing.T) {
+	for _, status := range []deletion.Status{deletion.StatusCompleted, deletion.StatusFailed, deletion.StatusCancelled} {
+		st := &deletionMockStore{getStatus: status}
+		srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+
+		w := deleteDeletion(srv, "batch-1")
+		assert.Equal(t, http.StatusConflict, w.Code, "status %s", status)
+		assert.Contains(t, w.Body.String(), "not_cancellable", "status %s", status)
+		assert.Empty(t, st.cancelled, "status %s", status)
+	}
+}
+
+func TestCancelDeletionRejectsTraversalID(t *testing.T) {
+	st := &deletionMockStore{getStatus: deletion.StatusPending}
+	srv := newDeletionTestServer(t, st, &querytest.MockEngine{})
+
+	// Traversal-shaped ID — must be rejected by ValidateManifestID before
+	// it ever reaches the store. A "../"-style ID would be normalized away
+	// by Go's ServeMux before routing, so this uses an ID that reaches the
+	// handler (dots aren't path separators) but still fails validation
+	// (dots aren't in the allowed alphabet either).
+	w := deleteDeletion(srv, "bad..id")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid_manifest_id")
+	assert.Empty(t, st.cancelled)
 }

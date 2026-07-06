@@ -47,6 +47,15 @@ func (a AddCLICollectionSourcesPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type CancelDeletionPath struct {
+	// ID Deletion manifest ID
+	ID string `json:"id" validate:"required"`
+}
+
+func (c CancelDeletionPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

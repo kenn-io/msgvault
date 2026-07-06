@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -234,6 +236,78 @@ func (s *Server) resolveStageDeletionIDs(ctx context.Context, req *StageDeletion
 		appendIDs(ids)
 	}
 	return out, nil
+}
+
+func (s *Server) handleListDeletions(w http.ResponseWriter, r *http.Request) {
+	lister, ok := s.store.(DeletionManifestLister)
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
+	var status deletion.Status
+	if raw := r.URL.Query().Get("status"); raw != "" {
+		status = deletion.Status(raw)
+		if !deletion.IsValidStatus(status) {
+			writeError(w, http.StatusBadRequest, "invalid_status",
+				"status must be one of pending, in_progress, completed, failed, cancelled")
+			return
+		}
+	}
+	manifests, err := lister.ListDeletionManifests(r.Context(), status)
+	if err != nil {
+		s.logger.Error("failed to list deletion manifests", "error", err)
+		writeError(w, http.StatusInternalServerError, "list_deletions_failed", "Failed to list deletion manifests")
+		return
+	}
+	summaries := make([]DeletionManifestSummary, 0, len(manifests))
+	for _, m := range manifests {
+		summaries = append(summaries, DeletionManifestSummary{
+			ID:           m.ID,
+			Status:       string(m.Status),
+			CreatedAt:    m.CreatedAt,
+			CreatedBy:    m.CreatedBy,
+			Description:  m.Description,
+			MessageCount: len(m.GmailIDs),
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
+	})
+	writeJSON(w, http.StatusOK, ListDeletionsResponse{Manifests: summaries})
+}
+
+func (s *Server) handleCancelDeletion(w http.ResponseWriter, r *http.Request) {
+	canceller, ok := s.store.(DeletionManifestCanceller)
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
+	id := r.PathValue("id")
+	if err := deletion.ValidateManifestID(id); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_manifest_id", err.Error())
+		return
+	}
+	_, status, err := canceller.GetDeletionManifest(r.Context(), id)
+	if errors.Is(err, deletion.ErrManifestNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("deletion manifest %q not found", id))
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to load deletion manifest", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to load deletion manifest")
+		return
+	}
+	if status != deletion.StatusPending && status != deletion.StatusInProgress {
+		writeError(w, http.StatusConflict, "not_cancellable",
+			fmt.Sprintf("deletion manifest %q has status %q and cannot be cancelled", id, status))
+		return
+	}
+	if err := canceller.CancelDeletionManifest(r.Context(), id); err != nil {
+		s.logger.Error("failed to cancel deletion manifest", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "cancel_deletion_failed", "Failed to cancel deletion manifest")
+		return
+	}
+	writeJSON(w, http.StatusOK, CancelDeletionResponse{ID: id, Status: string(deletion.StatusCancelled)})
 }
 
 // manifestFiltersFromRequest maps the request fields that

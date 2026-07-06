@@ -300,6 +300,12 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		apiV1, "stageDeletion", http.MethodPost, "/deletions",
 		"Stage messages for deletion", s.handleStageDeletion,
 		http.StatusOK, http.StatusCreated)
+	registerAPIV1RawHumaJSONRoute[ListDeletionsResponse](
+		apiV1, "listDeletions", http.MethodGet, "/deletions",
+		"List staged deletion manifests", s.handleListDeletions)
+	registerAPIV1RawHumaJSONRoute[CancelDeletionResponse](
+		apiV1, "cancelDeletion", http.MethodDelete, "/deletions/{id}",
+		"Cancel a staged deletion manifest", s.handleCancelDeletion)
 }
 
 func registerAPIV1RawHumaJSONRoute[T any](
@@ -445,6 +451,11 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return paginationParams("page", "page_size")
 	case "getMessage":
 		return []*huma.Param{pathIntegerParam("Message ID")}
+	case "listDeletions":
+		return []*huma.Param{queryStringParam("status",
+			"Filter manifests by status (pending, in_progress, completed, failed, cancelled)", false)}
+	case "cancelDeletion":
+		return []*huma.Param{pathStringParam("id", "Deletion manifest ID")}
 	case "getAttachment":
 		return []*huma.Param{pathIntegerParam("Attachment ID")}
 	case "getMessageInlinePart":

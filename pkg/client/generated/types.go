@@ -467,6 +467,15 @@ func (c CacheStats) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CancelDeletionResponse struct {
+	ID     string `json:"id" validate:"required"`
+	Status string `json:"status" validate:"required"`
+}
+
+func (c CancelDeletionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CliAccountResponse struct {
 	DisplayName        string     `json:"display_name" validate:"required"`
 	Email              string     `json:"email" validate:"required"`
@@ -911,6 +920,19 @@ func (d DeepSearchResponse) Validate() error {
 	return errors
 }
 
+type DeletionManifestSummary struct {
+	CreatedAt    time.Time `json:"created_at" validate:"required"`
+	CreatedBy    string    `json:"created_by" validate:"required"`
+	Description  string    `json:"description" validate:"required"`
+	ID           string    `json:"id" validate:"required"`
+	MessageCount int64     `json:"message_count"`
+	Status       string    `json:"status" validate:"required"`
+}
+
+func (d DeletionManifestSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type ErrorResponse struct {
 	ErrorData string  `json:"error" validate:"required"`
 	Message   *string `json:"message,omitempty"`
@@ -1121,6 +1143,25 @@ func (h HybridSearchResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ListDeletionsResponse struct {
+	Manifests []DeletionManifestSummary `json:"manifests,omitempty" validate:"required"`
+}
+
+func (l ListDeletionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range l.Manifests {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Manifests[%d]", i), err)
 			}
 		}
 	}
