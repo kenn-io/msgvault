@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // RestoreOptions parameterizes one restore run (docs/architecture/backup-format.md, Restore).

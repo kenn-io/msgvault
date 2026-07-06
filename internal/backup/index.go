@@ -13,7 +13,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 const (

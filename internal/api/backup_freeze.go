@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // backupFreezeWatchdogTimeout bounds how long a backup freeze may hold the

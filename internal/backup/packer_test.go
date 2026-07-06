@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 func TestPackAppenderAddSealsAndIndexes(t *testing.T) {
@@ -114,7 +114,7 @@ func TestPackAppenderPoisonsOnSealFailure(t *testing.T) {
 	// Pre-create the pack's final shard directory. Init only creates the
 	// top-level packs/ dir, not packs/<xx>/ shards, so without this the
 	// always-failing SyncDir stub below would fire inside
-	// mkdirAllSynced's pre-rename shard-directory creation instead of the
+	// MkdirAllSynced's pre-rename shard-directory creation instead of the
 	// post-rename directory sync in pack.Writer.Seal, which is the path
 	// this test means to exercise.
 	packID := a.w.ID()

@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"sync"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // VerifyOptions parameterizes one integrity check run (docs/architecture/backup-format.md, Verification Model).

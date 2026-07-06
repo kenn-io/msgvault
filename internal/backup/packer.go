@@ -3,7 +3,7 @@ package backup
 import (
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // PackAppender routes blobs into sealed packs, deduplicating against the

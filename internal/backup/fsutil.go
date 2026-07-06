@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // writeFileAtomic publishes data at finalRel (relative to the repo root)

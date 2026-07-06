@@ -1,5 +1,5 @@
 // Package backup implements the msgvault backup repository (docs/architecture/backup-format.md):
-// an incremental, content-addressed snapshot store built on internal/pack.
+// an incremental, content-addressed snapshot store built on kit/pack.
 package backup
 
 import (

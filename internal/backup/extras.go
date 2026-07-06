@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // ExtrasOptions selects which operational files ride along with a snapshot

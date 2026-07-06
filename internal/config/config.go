@@ -158,14 +158,14 @@ type IdentityConfig struct {
 
 // BackupConfig holds default settings for `msgvault backup` (spec Section
 // 10). Repo lets `--repo` be omitted on every invocation; ZstdLevel tunes
-// the pack compression level (0 keeps internal/pack's own default).
+// the pack compression level (0 keeps kit/pack's own default).
 type BackupConfig struct {
 	Repo      string `toml:"repo"`       // Default snapshot repository directory
 	ZstdLevel int    `toml:"zstd_level"` // 0 (default) or 1-19
 }
 
 // Validate enforces the zstd compression level range: 0 (meaning "use
-// internal/pack's default") or 1-19, matching the range the zstd encoder
+// kit/pack's default") or 1-19, matching the range the zstd encoder
 // actually accepts.
 func (b *BackupConfig) Validate() error {
 	if b.ZstdLevel == 0 || (b.ZstdLevel >= 1 && b.ZstdLevel <= 19) {

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 // ErrRepoLocked reports that another operation holds a conflicting repo lock.

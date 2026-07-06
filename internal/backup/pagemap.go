@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"go.kenn.io/msgvault/internal/pack"
+	"go.kenn.io/kit/pack"
 )
 
 const (
