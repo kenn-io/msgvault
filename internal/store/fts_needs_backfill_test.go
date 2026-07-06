@@ -51,6 +51,32 @@ func TestStore_NeedsFTSBackfill_Transition(t *testing.T) {
 		"NeedsFTSBackfill must be false after a complete backfill")
 }
 
+// TestStore_NeedsFTSBackfillQuick_Transition verifies the cheap probe's
+// contract on both backends: true while the index tail is unindexed, false
+// once backfill completes. (Interior holes are explicitly out of contract on
+// SQLite — the full NeedsFTSBackfill anti-join is authoritative for those.)
+func TestStore_NeedsFTSBackfillQuick_Transition(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+
+	const total = 20
+	ids := f.CreateMessages(total)
+	require.Len(ids, total)
+
+	assert.True(f.Store.NeedsFTSBackfillQuick(),
+		"quick probe must be true while the index tail is unindexed")
+
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	assert.False(f.Store.NeedsFTSBackfillQuick(),
+		"quick probe must be false after a complete backfill")
+}
+
 // TestStore_NeedsFTSBackfill_HoleAtLowestID (F4) verifies that a hole left at a
 // LOW id while later ids are indexed is detected on BOTH backends. This is the
 // case the old SQLite MAX(rowid)-vs-MAX(id) heuristic missed: the FTS MAX still

@@ -566,6 +566,11 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 		SizeEstimate: 100,
 	})
 	require.NoError(err, "insert msg")
+	// Index the message up front: the daemon backfills the FTS index in the
+	// background now, and this test is about flag leakage, not backfill
+	// timing — the text query below must match deterministically.
+	_, err = s.BackfillFTS(nil)
+	require.NoError(err, "backfill FTS")
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg

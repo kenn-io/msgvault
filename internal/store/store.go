@@ -899,6 +899,16 @@ func (s *Store) NeedsFTSBackfill() bool {
 	return s.dialect.FTSNeedsBackfill(s.db.DB)
 }
 
+// NeedsFTSBackfillQuick is the cheap, hot-path-safe form of NeedsFTSBackfill:
+// true means a backfill is certainly needed; false may miss interior index
+// holes (SQLite) that only the full probe finds.
+func (s *Store) NeedsFTSBackfillQuick() bool {
+	if !s.fts5Available {
+		return false
+	}
+	return s.dialect.FTSNeedsBackfillQuick(s.db.DB)
+}
+
 // Stats holds database statistics.
 //
 // MessageCount is the count of active messages: those still present in the

@@ -49,6 +49,7 @@ type CLIStore interface {
 	CountMessagesForSource(sourceID int64) (int64, error)
 	CountSourceDeletedMessages(sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfill() bool
+	NeedsFTSBackfillQuick() bool
 	BackfillFTS(progress func(done, total int64)) (int64, error)
 	RebuildFTS(progress func(done, total int64)) (int64, error)
 }
@@ -1411,7 +1412,15 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore) string {
 		return ""
 	}
 	if s.ftsEnsureRunning.CompareAndSwap(false, true) {
-		s.ftsIndexState.Store(cliSearchIndexStateChecking)
+		// The quick probe (a couple of index lookups) classifies the initial
+		// state: a visibly stale index reports "building" right away, so the
+		// very first search already warns that results may be incomplete
+		// instead of staying silent for the minutes the full probe can take.
+		state := cliSearchIndexStateChecking
+		if cliStore.NeedsFTSBackfillQuick() {
+			state = cliSearchIndexStateBuilding
+		}
+		s.ftsIndexState.Store(state)
 		go s.runCLISearchIndexEnsure(cliStore)
 	}
 	state, _ := s.ftsIndexState.Load().(string)

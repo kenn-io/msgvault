@@ -223,6 +223,9 @@ type mockStore struct {
 	messages         []APIMessage
 	total            int64
 	needsFTSBackfill bool
+	// needsFTSBackfillQuick is the cheap tail-check answer; independent of
+	// the full probe so tests can exercise their divergence.
+	needsFTSBackfillQuick bool
 	// needsFTSBackfillFunc overrides the needsFTSBackfill field when set, so
 	// tests can block inside the probe or vary its answer per call.
 	needsFTSBackfillFunc func() bool
@@ -439,6 +442,10 @@ func (m *mockStore) NeedsFTSBackfill() bool {
 		return m.needsFTSBackfillFunc()
 	}
 	return m.needsFTSBackfill
+}
+
+func (m *mockStore) NeedsFTSBackfillQuick() bool {
+	return m.needsFTSBackfillQuick
 }
 
 func (m *mockStore) BackfillFTS(progress func(done, total int64)) (int64, error) {

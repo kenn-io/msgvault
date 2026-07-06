@@ -1677,7 +1677,8 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 		return resp.IndexState
 	}
 
-	// The probe is blocked, so a search must still answer instantly.
+	// The full probe is blocked and the quick tail-check found nothing, so
+	// the first search answers instantly and quietly.
 	assert.Equal("checking", searchIndexState(), "state while the probe runs")
 
 	close(probeRelease)
@@ -1692,6 +1693,47 @@ func TestHandleCLISearchDoesNotBlockOnIndexBuild(t *testing.T) {
 	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() },
 		time.Second, 5*time.Millisecond, "backfill completion must set the memo flag")
 	assert.Empty(searchIndexState(), "state once the index is complete")
+}
+
+// TestHandleCLISearchQuickCheckReportsBuildingImmediately verifies that when
+// the cheap tail-check already knows the index is stale, the very first
+// search reports index_state="building" — so the CLI warns about incomplete
+// results right away instead of staying silent for the minutes the full
+// completeness probe can take (roborev finding on 2328a4f).
+func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
+	require := require.New(t)
+	probeRelease := make(chan struct{})
+	t.Cleanup(func() { close(probeRelease) })
+	st := &mockStore{
+		needsFTSBackfillQuick: true,
+		needsFTSBackfillFunc: func() bool {
+			<-probeRelease // full probe stays busy for the whole test
+			return false
+		},
+	}
+	engine := &querytest.MockEngine{
+		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, nil
+		},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:  st,
+		Engine: engine,
+		Logger: testLogger(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=hello", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "status: %s", w.Body.String())
+
+	var resp struct {
+		IndexState string `json:"index_state"`
+	}
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal(t, "building", resp.IndexState,
+		"a stale tail must be reported as building on the first response")
 }
 
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
