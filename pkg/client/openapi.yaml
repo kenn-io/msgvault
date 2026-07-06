@@ -1328,6 +1328,7 @@ components:
           type: array
         id:
           type: string
+        raw_filter: {}
         status:
           type: string
         summary:
@@ -1770,6 +1771,65 @@ components:
           type: array
       required:
         - accounts
+      type: object
+    StageDeletionFilter:
+      additionalProperties: false
+      properties:
+        after:
+          type: string
+        before:
+          type: string
+        domain:
+          type: string
+        label:
+          type: string
+        recipient:
+          type: string
+        recipient_name:
+          type: string
+        sender:
+          type: string
+        sender_name:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      type: object
+    StageDeletionRequest:
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        dry_run:
+          type: boolean
+        filter:
+          $ref: "#/components/schemas/StageDeletionFilter"
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
+    StageDeletionResponse:
+      properties:
+        dry_run:
+          type: boolean
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        sample_gmail_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        status:
+          type: string
+      required:
+        - dry_run
+        - message_count
       type: object
     StatsResponse:
       properties:
@@ -3757,6 +3817,39 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/deletions:
+    post:
+      operationId: stageDeletion
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StageDeletionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageDeletionResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageDeletionResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Stage messages for deletion
       tags:
         - API
   /api/v1/health:

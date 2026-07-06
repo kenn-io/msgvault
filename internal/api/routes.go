@@ -295,6 +295,11 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[backupFreezeBeginResponse](apiV1, "beginBackupFreeze", http.MethodPost, "/backup/freeze/begin", "Begin a backup freeze window", s.handleBackupFreezeBegin)
 	registerAPIV1RawHumaJSONRouteWithRequest[backupFreezeEndRequest, backupFreezeEndResponse](apiV1, "endBackupFreeze", http.MethodPost, "/backup/freeze/end", "End a backup freeze window", s.handleBackupFreezeEnd)
+
+	registerAPIV1RawHumaJSONRouteWithRequest[StageDeletionRequest, StageDeletionResponse](
+		apiV1, "stageDeletion", http.MethodPost, "/deletions",
+		"Stage messages for deletion", s.handleStageDeletion,
+		http.StatusOK, http.StatusCreated)
 }
 
 func registerAPIV1RawHumaJSONRoute[T any](

@@ -1138,6 +1138,7 @@ type Manifest struct {
 	Filters     Filters    `json:"filters"`
 	GmailIds    []string   `json:"gmail_ids,omitempty" validate:"required"`
 	ID          string     `json:"id" validate:"required"`
+	RawFilter   *struct{}  `json:"raw_filter,omitempty"`
 	Status      string     `json:"status" validate:"required"`
 	Summary     *Summary   `json:"summary,omitempty"`
 	Version     int64      `json:"version"`
@@ -1560,6 +1561,48 @@ type SourcesRequest struct {
 
 func (s SourcesRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type StageDeletionFilter struct {
+	After         *string `json:"after,omitempty"`
+	Before        *string `json:"before,omitempty"`
+	Domain        *string `json:"domain,omitempty"`
+	Label         *string `json:"label,omitempty"`
+	Recipient     *string `json:"recipient,omitempty"`
+	RecipientName *string `json:"recipient_name,omitempty"`
+	Sender        *string `json:"sender,omitempty"`
+	SenderName    *string `json:"sender_name,omitempty"`
+	SourceID      *int64  `json:"source_id,omitempty"`
+}
+
+type StageDeletionRequest struct {
+	Description *string              `json:"description,omitempty"`
+	DryRun      *bool                `json:"dry_run,omitempty"`
+	Filter      *StageDeletionFilter `json:"filter,omitempty"`
+	MessageIds  []int64              `json:"message_ids,omitempty"`
+}
+
+func (s StageDeletionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Filter != nil {
+		if v, ok := any(s.Filter).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Filter", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type StageDeletionResponse struct {
+	DryRun         bool     `json:"dry_run"`
+	ID             *string  `json:"id,omitempty"`
+	MessageCount   int64    `json:"message_count"`
+	SampleGmailIds []string `json:"sample_gmail_ids,omitempty"`
+	Status         *string  `json:"status,omitempty"`
 }
 
 type StatsResponse struct {
