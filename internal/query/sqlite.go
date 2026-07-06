@@ -1378,6 +1378,15 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		args = append(args, filter.TimeRange.Period)
 	}
 
+	if filter.After != nil {
+		conditions = append(conditions, "m.sent_at >= ?")
+		args = append(args, *filter.After)
+	}
+	if filter.Before != nil {
+		conditions = append(conditions, "m.sent_at < ?")
+		args = append(args, *filter.Before)
+	}
+
 	// Build query - only add LIMIT if explicitly set. DISTINCT is not
 	// needed because every multiplicative filter is now an EXISTS
 	// subquery; messages.id is PK so each row contributes exactly one

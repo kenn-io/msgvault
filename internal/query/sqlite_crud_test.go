@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -650,6 +651,28 @@ func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"})
 	require.NoError(t, err, "GetGmailIDsByFilter")
 	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice")
+}
+
+func TestGetGmailIDsByFilter_AfterBefore(t *testing.T) {
+	env := newTestEnv(t)
+	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	afterIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1})
+	require.NoError(t, err, "after-only")
+	assert.ElementsMatch(t, []string{"msg3", "msg4", "msg5"}, afterIDs, "after >= Feb 1 (boundary inclusive)")
+
+	beforeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Before: &feb1})
+	require.NoError(t, err, "before-only")
+	assert.ElementsMatch(t, []string{"msg1", "msg2"}, beforeIDs, "before < Feb 1 (boundary exclusive)")
+
+	rangeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1, Before: &mar1})
+	require.NoError(t, err, "range")
+	assert.ElementsMatch(t, []string{"msg3", "msg4"}, rangeIDs, "Feb window")
+
+	combined, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Sender: "alice@example.com", After: &feb1})
+	require.NoError(t, err, "combined with sender")
+	assert.ElementsMatch(t, []string{"msg3"}, combined, "sender+after")
 }
 
 // addMultiAuthorMessage inserts a message with TWO distinct 'from' rows so the

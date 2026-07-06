@@ -2045,6 +2045,27 @@ func TestDuckDBEngine_GetGmailIDsByFilter_CombinedNoMatch(t *testing.T) {
 	assert.Empty(t, ids, "results for bob+IMPORTANT")
 }
 
+// TestDuckDBEngine_GetGmailIDsByFilter_AfterBefore verifies that After/Before date
+// filters work correctly on the Parquet fallback of GetGmailIDsByFilter.
+func TestDuckDBEngine_GetGmailIDsByFilter_AfterBefore(t *testing.T) {
+	engine := newParquetEngine(t)
+	ctx := context.Background()
+	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	afterIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{After: &feb1})
+	require.NoError(t, err, "after-only")
+	assertSetEqual(t, afterIDs, []string{"msg3", "msg4", "msg5"})
+
+	beforeIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{Before: &feb1})
+	require.NoError(t, err, "before-only")
+	assertSetEqual(t, beforeIDs, []string{"msg1", "msg2"})
+
+	rangeIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{After: &feb1, Before: &mar1})
+	require.NoError(t, err, "range")
+	assertSetEqual(t, rangeIDs, []string{"msg3", "msg4"})
+}
+
 // =============================================================================
 // Search Query Filter Tests
 // =============================================================================

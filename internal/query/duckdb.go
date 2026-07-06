@@ -2131,6 +2131,15 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		args = append(args, filter.TimeRange.Period)
 	}
 
+	if filter.After != nil {
+		conditions = append(conditions, "msg.sent_at >= ?")
+		args = append(args, *filter.After)
+	}
+	if filter.Before != nil {
+		conditions = append(conditions, "msg.sent_at < ?")
+		args = append(args, *filter.Before)
+	}
+
 	// Build query — JOIN src to scope to Gmail sources authoritatively.
 	query := fmt.Sprintf(`
 		WITH %s
