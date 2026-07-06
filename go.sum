@@ -511,6 +511,8 @@ go.kenn.io/kit v0.2.1-0.20260706180241-7148b0ba0b5d h1:LvRwCZYTn09MTNql7yTtrv7ti
 go.kenn.io/kit v0.2.1-0.20260706180241-7148b0ba0b5d/go.mod h1:Xc7cV52zaILHq2uSlK4IlvcyeQMaXVchPJDmRwMlWBc=
 go.kenn.io/kit v0.2.1-0.20260706190346-45eb6e4b077c h1:mm+zs/UnVj6gEo1pzEzmJIPPEPglbTJJNkUJrlS/RYQ=
 go.kenn.io/kit v0.2.1-0.20260706190346-45eb6e4b077c/go.mod h1:Xc7cV52zaILHq2uSlK4IlvcyeQMaXVchPJDmRwMlWBc=
+go.kenn.io/kit v0.2.1-0.20260706195413-f3868640bde7 h1:9Sf1blET47mPVeEW7lDB8TF5NAwJ6KajT2mzBF5wEF4=
+go.kenn.io/kit v0.2.1-0.20260706195413-f3868640bde7/go.mod h1:Xc7cV52zaILHq2uSlK4IlvcyeQMaXVchPJDmRwMlWBc=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
 go.opencensus.io v0.22.0/go.mod h1:+kGneAE2xo2IficOXnaByMWTGM9T73dGwxeWcUqIpI8=
 go.opencensus.io v0.22.2/go.mod h1:yxeiOL68Rb0Xd1ddK5vPZ/oVn4vY4Ynel7k9FzqtOIw=
