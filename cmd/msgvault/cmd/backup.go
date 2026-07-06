@@ -106,7 +106,7 @@ func runBackupInit(cmd *cobra.Command, _ []string) error {
 	}
 	r, err := backup.Init(repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("initializing backup repository: %w", err)
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Initialized backup repository %s at %s\n",
 		r.Config().RepoID, r.Root()); err != nil {
@@ -122,11 +122,11 @@ func runBackupList(cmd *cobra.Command, _ []string) error {
 	}
 	r, err := backup.Open(repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening backup repository: %w", err)
 	}
 	snapshots, err := r.ListSnapshots()
 	if err != nil {
-		return err
+		return fmt.Errorf("listing snapshots: %w", err)
 	}
 	return printBackupSnapshots(cmd.OutOrStdout(), snapshots)
 }
@@ -165,7 +165,7 @@ func runBackupVerify(cmd *cobra.Command, args []string) error {
 	}
 	r, err := backup.Open(repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening backup repository: %w", err)
 	}
 	var snapshotID string
 	if len(args) > 0 {
@@ -188,7 +188,7 @@ func runBackupVerify(cmd *cobra.Command, args []string) error {
 		Progress:    renderer.handle,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("verifying backup repository: %w", err)
 	}
 	for _, p := range result.Problems {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "problem: snapshot %s: %s\n", p.SnapshotID, p.Detail)
@@ -211,7 +211,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	}
 	r, err := backup.Open(repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening backup repository: %w", err)
 	}
 	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget); err != nil {
 		return err
@@ -231,7 +231,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		Progress:    renderer.handle,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("restoring snapshot: %w", err)
 	}
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Restored snapshot %s to %s\n", res.SnapshotID, backupRestoreTarget)
@@ -326,7 +326,7 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	}
 	r, err := backup.Open(repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening backup repository: %w", err)
 	}
 
 	freezer, closeFreezer, err := newBackupFreezer()
@@ -364,7 +364,7 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 		Progress:              renderer.handle,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("creating backup snapshot: %w", err)
 	}
 
 	parent := m.ParentID
