@@ -35,7 +35,7 @@ func TestCreateEmitsProgressEventsInOrderWithFinalValues(t *testing.T) {
 	opts := createOpts(dbPath, attachmentsDir, dataDir, t.TempDir())
 	opts.Progress = func(ev ProgressEvent) { events = append(events, ev) }
 
-	m, err := Create(context.Background(), r, opts)
+	m, err := Create(context.Background(), r, newTestApp(), opts)
 	require.NoError(err)
 	require.NotEmpty(events)
 
@@ -110,13 +110,13 @@ func TestCreateNoChangeSkipsPackStage(t *testing.T) {
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
 	cacheDir := t.TempDir()
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	var events []ProgressEvent
 	opts := createOpts(dbPath, attachmentsDir, dataDir, cacheDir)
 	opts.Progress = func(ev ProgressEvent) { events = append(events, ev) }
-	_, err = Create(ctx, r, opts)
+	_, err = Create(ctx, r, newTestApp(), opts)
 	require.NoError(err)
 	for _, ev := range events {
 		require.NotEqual(ProgressStagePack, ev.Stage,
@@ -132,7 +132,7 @@ func TestCreateProgressNilCallbackIsSilent(t *testing.T) {
 	opts := createOpts(dbPath, attachmentsDir, dataDir, t.TempDir())
 	require.Nil(opts.Progress)
 
-	_, err := Create(context.Background(), r, opts)
+	_, err := Create(context.Background(), r, newTestApp(), opts)
 	require.NoError(err)
 }
 
@@ -143,7 +143,7 @@ func TestVerifyEmitsProgressEventsWithFinalValues(t *testing.T) {
 	r, _ := buildVerifyFixture(t)
 
 	var events []ProgressEvent
-	res, err := Verify(context.Background(), r, VerifyOptions{
+	res, err := Verify(context.Background(), r, newTestApp(), VerifyOptions{
 		Progress: func(ev ProgressEvent) { events = append(events, ev) },
 	})
 	require.NoError(err)
@@ -187,7 +187,7 @@ func TestVerifyProgressNilCallbackIsSilent(t *testing.T) {
 	require := require.New(t)
 	r, _ := buildVerifyFixture(t)
 
-	res, err := Verify(context.Background(), r, VerifyOptions{})
+	res, err := Verify(context.Background(), r, newTestApp(), VerifyOptions{})
 	require.NoError(err)
 	require.Empty(res.Problems)
 }

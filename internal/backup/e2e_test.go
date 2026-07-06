@@ -59,7 +59,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 	opts := createOpts(dbPath, attachmentsDir, dataDir, cacheDir)
 
 	// Snapshot 1.
-	m1, err := Create(ctx, r, opts)
+	m1, err := Create(ctx, r, newTestApp(), opts)
 	require.NoError(err)
 	img1 := snapshotDBFile(t, dbPath) // WAL was truncated by the freeze protocol
 
@@ -74,7 +74,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 	require.NoError(err)
 
 	// Snapshot 2 (incremental).
-	m2, err := Create(ctx, r, opts)
+	m2, err := Create(ctx, r, newTestApp(), opts)
 	require.NoError(err)
 	img2 := snapshotDBFile(t, dbPath)
 	assert.Equal(m1.SnapshotID, m2.ParentID)
@@ -84,7 +84,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 	assert.Equal(img2, materializeDB(t, r, m2), "snapshot 2 materializes byte-identically")
 
 	// Full verify across all snapshots is clean.
-	res, err := Verify(ctx, r, VerifyOptions{All: true})
+	res, err := Verify(ctx, r, newTestApp(), VerifyOptions{All: true})
 	require.NoError(err)
 	assert.Empty(res.Problems)
 	assert.Equal([]string{m1.SnapshotID, m2.SnapshotID}, res.Snapshots)
@@ -103,7 +103,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 	require.NoError(os.WriteFile(debris, []byte("junk"), 0o600))
 	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2026-06-01T00:00:00Z')`)
 	require.NoError(err)
-	m3, err := Create(ctx, r, opts)
+	m3, err := Create(ctx, r, newTestApp(), opts)
 	require.NoError(err)
 	assert.Equal(m2.SnapshotID, m3.ParentID)
 	_, statErr := os.Stat(debris)
@@ -120,7 +120,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 	data[len(data)/2] ^= 0x01
 	require.NoError(os.WriteFile(packPath, data, 0o600))
 
-	res, err = Verify(ctx, r, VerifyOptions{All: true})
+	res, err = Verify(ctx, r, newTestApp(), VerifyOptions{All: true})
 	require.NoError(err)
 	require.NotEmpty(res.Problems)
 
@@ -143,7 +143,7 @@ func TestBackupChainEndToEnd(t *testing.T) {
 		assert.NotEqual(m1.SnapshotID, p.SnapshotID,
 			"snapshot 1 cannot reference m2's new pack and must not be named by a problem")
 	}
-	res1, err := Verify(ctx, r, VerifyOptions{SnapshotID: m1.SnapshotID})
+	res1, err := Verify(ctx, r, newTestApp(), VerifyOptions{SnapshotID: m1.SnapshotID})
 	require.NoError(err)
 	assert.Empty(res1.Problems, "undamaged snapshot verifies clean")
 }

@@ -53,10 +53,6 @@ type RestoreResult struct {
 	Duration        time.Duration
 }
 
-// restoredDBFileName is the database filename inside the restore target,
-// matching the live archive layout so the target is usable as a data dir.
-const restoredDBFileName = "msgvault.db"
-
 // Restore materializes one snapshot into TargetDir and then proves the
 // result (docs/architecture/backup-format.md, Restore): every database page
 // is hash-verified against the snapshot's page-hash map as it is written,
@@ -66,7 +62,7 @@ const restoredDBFileName = "msgvault.db"
 //
 // It takes a SHARED repository lock: concurrent restores and verifies are
 // safe, a running create is not.
-func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult, error) {
+func Restore(ctx context.Context, r *Repo, app App, opts RestoreOptions) (*RestoreResult, error) {
 	start := time.Now()
 	lock, err := r.AcquireSharedLock("restore", opts.ForceUnlock)
 	if err != nil {
@@ -91,7 +87,7 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 	// target: it marks the deepest directory that already existed, so the
 	// final durability pass knows which ancestors gained new entries.
 	syncCeiling := restoreSyncCeiling(opts.TargetDir)
-	if err := prepareRestoreTarget(opts.TargetDir, opts.Overwrite); err != nil {
+	if err := prepareRestoreTarget(opts.TargetDir, opts.Overwrite, app.DBFileName()); err != nil {
 		return nil, err
 	}
 	known, err := r.LoadBlobIndex()
@@ -115,18 +111,18 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 	}
 	res := &RestoreResult{
 		SnapshotID: m.SnapshotID,
-		DBPath:     filepath.Join(opts.TargetDir, restoredDBFileName),
+		DBPath:     filepath.Join(opts.TargetDir, app.DBFileName()),
 		DBBytes:    int64(pm.PageCount * uint64(pm.PageSize)), //nolint:gosec // geometry checked against the manifest
 	}
 	if err := st.restoreDB(ctx, res.DBPath, pm, hm); err != nil {
 		return nil, err
 	}
 	res.AttachmentBlobs, res.AttachmentBytes, err = st.restoreAttachments(
-		ctx, m, res.DBPath, filepath.Join(opts.TargetDir, "attachments"))
+		ctx, app, m, res.DBPath, filepath.Join(opts.TargetDir, app.ContentDirName()))
 	if err != nil {
 		return nil, err
 	}
-	if res.ExtrasFiles, err = st.restoreExtras(m, opts.TargetDir); err != nil {
+	if res.ExtrasFiles, err = st.restoreExtras(app, m, opts.TargetDir); err != nil {
 		return nil, err
 	}
 
@@ -134,7 +130,7 @@ func Restore(ctx context.Context, r *Repo, opts RestoreOptions) (*RestoreResult,
 	// whole restored database inside SQLite and dominates on large
 	// archives) and the manifest stats comparison.
 	st.progress.emit(ProgressEvent{Stage: ProgressStageProof, Total: 2})
-	if err := proveRestoredDB(ctx, res.DBPath, m, func() {
+	if err := proveRestoredDB(ctx, app, res.DBPath, m, func() {
 		st.progress.emit(ProgressEvent{Stage: ProgressStageProof, Done: 1, Total: 2})
 	}); err != nil {
 		return nil, err
@@ -219,7 +215,7 @@ func syncRestoredTree(target, ceiling string) error {
 
 // prepareRestoreTarget creates TargetDir, refusing a non-empty existing
 // directory unless overwrite is set (docs/architecture/backup-format.md, Restore).
-func prepareRestoreTarget(target string, overwrite bool) error {
+func prepareRestoreTarget(target string, overwrite bool, dbFileName string) error {
 	if target == "" {
 		return errors.New("backup: restore target directory is required")
 	}
@@ -236,10 +232,10 @@ func prepareRestoreTarget(target string, overwrite bool) error {
 		return fmt.Errorf("backup: restore target %s is not empty (use --overwrite to restore into it anyway)", target)
 	}
 	// Overwrite merges rather than clearing the tree, but the database and
-	// its SQLite sidecars must not survive: restoreDB rewrites msgvault.db,
-	// and a stale -wal/-shm pair next to it would be replayed over the
+	// its SQLite sidecars must not survive: restoreDB rewrites the database
+	// file, and a stale -wal/-shm pair next to it would be replayed over the
 	// proven bytes on the file's first normal (non-immutable) open.
-	for _, name := range []string{restoredDBFileName, restoredDBFileName + "-wal", restoredDBFileName + "-shm"} {
+	for _, name := range []string{dbFileName, dbFileName + "-wal", dbFileName + "-shm"} {
 		if err := os.Remove(filepath.Join(target, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("backup: removing stale %s from restore target: %w", name, err)
 		}
@@ -482,7 +478,7 @@ func (s *restoreState) writeRun(f *os.File, raw []byte, id pack.BlobID, run Page
 // namespace paths beyond the plain <hash[:2]>/<hash> layout), reading blobs
 // grouped by pack. Every blob read re-derives its SHA-256 identity before
 // any file is written.
-func (s *restoreState) restoreAttachments(ctx context.Context, m *Manifest, dbPath, dir string) (int64, int64, error) {
+func (s *restoreState) restoreAttachments(ctx context.Context, app App, m *Manifest, dbPath, dir string) (int64, int64, error) {
 	refs, _, err := LoadListRefs(s.repo, s.known, m.Attachments.Lists, nil)
 	if err != nil {
 		return 0, 0, err
@@ -491,7 +487,7 @@ func (s *restoreState) restoreAttachments(ctx context.Context, m *Manifest, dbPa
 		return 0, 0, fmt.Errorf(
 			"backup: attachment lists name %d blobs but manifest reports %d", len(refs), m.Attachments.Blobs)
 	}
-	paths, err := loadRestoredAttachmentPaths(ctx, dbPath)
+	paths, err := restoredContentPaths(ctx, app, dbPath)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -533,9 +529,6 @@ func (s *restoreState) restoreAttachments(ctx context.Context, m *Manifest, dbPa
 	return int64(len(refs)), totalBytes, nil
 }
 
-// loadRestoredAttachmentPaths maps each content and thumbnail hash in the
-// restored database to every relative storage path it is recorded at. Paths
-// come from DB rows, so each is validated as local before restore writes it.
 // sqliteURIDSN builds a file: SQLite URI for path carrying rawQuery as its
 // connection parameters. Built via url.URL so a path containing '?' or '#'
 // cannot be misparsed as URI syntax — a naive path+"?params" concatenation
@@ -563,37 +556,16 @@ func restoredDBDSN(dbPath string) string {
 	return sqliteURIDSN(dbPath, "immutable=1&mode=ro")
 }
 
-func loadRestoredAttachmentPaths(ctx context.Context, dbPath string) (map[string][]string, error) {
+// restoredContentPaths opens the restored database read-only and asks the app
+// to re-derive hash → relative content paths from it, so restore can
+// materialize and verify every referenced file at the paths the app records.
+func restoredContentPaths(ctx context.Context, app App, dbPath string) (map[string][]string, error) {
 	db, err := sql.Open("sqlite3", restoredDBDSN(dbPath))
 	if err != nil {
-		return nil, fmt.Errorf("backup: opening restored database for attachment paths: %w", err)
+		return nil, fmt.Errorf("backup: opening restored database for content paths: %w", err)
 	}
 	defer func() { _ = db.Close() }()
-	// UNION deduplicates repeated (hash, path) rows across attachments.
-	rows, err := db.QueryContext(ctx,
-		"SELECT content_hash, storage_path FROM attachments WHERE "+contentBearing+
-			" UNION SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE "+thumbBearing)
-	if err != nil {
-		return nil, fmt.Errorf("backup: attachment path query: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	paths := map[string][]string{}
-	for rows.Next() {
-		var hash, p string
-		if err := rows.Scan(&hash, &p); err != nil {
-			return nil, fmt.Errorf("backup: scanning attachment path: %w", err)
-		}
-		rel := filepath.FromSlash(p)
-		if !filepath.IsLocal(rel) {
-			return nil, fmt.Errorf(
-				"backup: attachment %s storage path %q escapes the attachments directory", hash, p)
-		}
-		paths[hash] = append(paths[hash], rel)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("backup: attachment path rows: %w", err)
-	}
-	return paths, nil
+	return app.RestoredContentPaths(ctx, db)
 }
 
 // restorePackAttachments writes one pack's attachment blobs to their
@@ -660,7 +632,7 @@ func (s *restoreState) restorePackAttachments(
 
 // restoreExtras lays out the snapshot's captured extras files (deletions,
 // config, tokens) under the target, preserving their recorded modes.
-func (s *restoreState) restoreExtras(m *Manifest, target string) (int, error) {
+func (s *restoreState) restoreExtras(app App, m *Manifest, target string) (int, error) {
 	if m.Extras.Tree == "" {
 		return 0, nil
 	}
@@ -678,7 +650,7 @@ func (s *restoreState) restoreExtras(m *Manifest, target string) (int, error) {
 	}
 	s.progress.emit(ProgressEvent{Stage: ProgressStageExtras, Total: int64(len(tree.Entries))})
 	for i, entry := range tree.Entries {
-		if err := s.restoreExtrasEntry(entry, target); err != nil {
+		if err := s.restoreExtrasEntry(app, entry, target); err != nil {
 			return 0, err
 		}
 		s.progress.emit(ProgressEvent{
@@ -693,7 +665,7 @@ func (s *restoreState) restoreExtras(m *Manifest, target string) (int, error) {
 // from a decoded tree blob, so they are re-validated here: only local,
 // relative, traversal-free paths may be written under the target, and never
 // paths that overlap the database or attachments restore already produced.
-func (s *restoreState) restoreExtrasEntry(entry ExtrasEntry, target string) error {
+func (s *restoreState) restoreExtrasEntry(app App, entry ExtrasEntry, target string) error {
 	// Clean before validating: the final filepath.Join cleans the path
 	// anyway, so validating the raw form would let "safe/../msgvault.db"
 	// pass the reserved-name check below yet still land on a reserved path.
@@ -702,13 +674,15 @@ func (s *restoreState) restoreExtrasEntry(entry ExtrasEntry, target string) erro
 		return fmt.Errorf("backup: extras entry path %q escapes the restore target", entry.Path)
 	}
 	// Capture never records archive content as an extra, so an entry naming
-	// the restored database, its SQLite sidecars, or the attachments tree
-	// can only come from a tampered tree blob trying to overwrite already-
-	// proven outputs. Folded comparison: the default macOS filesystem is
-	// case-insensitive.
+	// the restored database, its SQLite sidecars, or the content tree can only
+	// come from a tampered tree blob trying to overwrite already-proven
+	// outputs. The reserved names come from the app so a generic application's
+	// extras can never overwrite its restored DB or content tree. Folded
+	// comparison: the default macOS filesystem is case-insensitive.
+	dbName := app.DBFileName()
 	first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
 	for _, reserved := range []string{
-		"attachments", restoredDBFileName, restoredDBFileName + "-wal", restoredDBFileName + "-shm",
+		app.ContentDirName(), dbName, dbName + "-wal", dbName + "-shm",
 	} {
 		if strings.EqualFold(first, reserved) {
 			return fmt.Errorf("backup: extras entry path %q overlaps restored archive content", entry.Path)
@@ -770,7 +744,7 @@ func writeRestoredFile(path string, content []byte, mode os.FileMode) error {
 // against the page-hash map during materialization.
 // checked is called after integrity_check passes, before the stats
 // comparison, so callers can report sub-step progress.
-func proveRestoredDB(ctx context.Context, dbPath string, m *Manifest, checked func()) error {
+func proveRestoredDB(ctx context.Context, app App, dbPath string, m *Manifest, checked func()) error {
 	db, err := sql.Open("sqlite3", restoredDBDSN(dbPath))
 	if err != nil {
 		return fmt.Errorf("backup: opening restored database for proof: %w", err)
@@ -800,14 +774,24 @@ func proveRestoredDB(ctx context.Context, dbPath string, m *Manifest, checked fu
 		checked()
 	}
 
-	stats, err := computeManifestStats(ctx, db)
+	restoredStats, err := app.RestoredStats(ctx, db)
 	if err != nil {
 		return err
 	}
-	if stats != m.Stats {
-		return fmt.Errorf(
-			"backup: restored database stats %+v do not match the manifest's recorded stats %+v",
-			stats, m.Stats)
+	if !bytes.Equal(compactJSON(restoredStats), compactJSON(m.Stats)) {
+		return fmt.Errorf("backup: restored database stats %s do not match manifest stats %s",
+			restoredStats, m.Stats)
 	}
 	return nil
+}
+
+// compactJSON normalizes RawMessage formatting: manifests on disk are
+// indented, and a RawMessage captured from an indented document keeps that
+// indentation, while freshly marshaled stats are compact.
+func compactJSON(raw json.RawMessage) []byte {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return raw
+	}
+	return buf.Bytes()
 }

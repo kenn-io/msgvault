@@ -47,11 +47,10 @@ func seedBackupFixture(t *testing.T) (string, string, string, *sql.DB) {
 
 func createOpts(dbPath, attachmentsDir, dataDir string, cacheDir string) CreateOptions {
 	return CreateOptions{
-		DBPath:          dbPath,
-		AttachmentsDir:  attachmentsDir,
-		DataDir:         dataDir,
-		CacheDir:        cacheDir,
-		MsgvaultVersion: "test",
+		DBPath:     dbPath,
+		ContentDir: attachmentsDir,
+		DataDir:    dataDir,
+		CacheDir:   cacheDir,
 	}
 }
 
@@ -69,7 +68,7 @@ func TestCreateManifestReaderVersionTracksStoragePaths(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, writer := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	m1, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	assert.Equal(FormatVersion, m1.FormatVersion)
 	assert.Equal(MinReaderVersion, m1.MinReaderVersion,
@@ -86,14 +85,14 @@ func TestCreateManifestReaderVersionTracksStoragePaths(t *testing.T) {
 		ref.Hash, "ns-source/"+ref.Hash[:2]+"/"+ref.Hash, ref.Size)
 	require.NoError(err)
 
-	m2, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	assert.Equal(dbPathManifestVersion, m2.FormatVersion)
 	assert.Equal(dbPathManifestVersion, m2.MinReaderVersion,
 		"a namespaced-path snapshot must be refused by version-1 readers")
 
 	// The current reader restores it, of course.
-	_, err = Restore(ctx, r, RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
+	_, err = Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
 	require.NoError(err)
 }
 
@@ -166,7 +165,7 @@ func TestCreateInitialSnapshot(t *testing.T) {
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
 
-	m, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	m, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	assert.NotEmpty(m.SnapshotID)
@@ -178,11 +177,11 @@ func TestCreateInitialSnapshot(t *testing.T) {
 	assert.Equal(int64(2), m.Attachments.Blobs)
 	assert.Len(m.Attachments.Lists, 1)
 	assert.Empty(m.Attachments.Recipes)
-	assert.Equal(int64(2), m.Stats.AttachmentRows)
+	assert.Equal(int64(2), mustParseStats(t, m.Stats).AttachmentRows)
 	assert.NotEmpty(m.NewPacks)
 	assert.NotEmpty(m.NewIndex)
 	assert.Positive(m.BytesAdded)
-	assert.Equal(manifestExcluded, m.Excluded)
+	assert.Equal(newTestApp().ExcludedPaths(), m.Excluded)
 
 	list, err := r.ListSnapshots()
 	require.NoError(err)
@@ -207,7 +206,7 @@ func TestCreateIncrementalSnapshot(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, db := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	m1, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	// Mutate: new message and a new attachment.
@@ -221,7 +220,7 @@ func TestCreateIncrementalSnapshot(t *testing.T) {
 		refC.Hash, refC.Hash[:2]+"/"+refC.Hash, refC.Size)
 	require.NoError(err)
 
-	m2, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	assert.Equal(m1.SnapshotID, m2.ParentID)
@@ -252,12 +251,12 @@ func TestCreateSameSecondChainOrder(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, db := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	m1, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2026-02-01T00:00:00Z')`)
 	require.NoError(err)
-	m2, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	assert.Greater(m2.SnapshotID, m1.SnapshotID, "second snapshot's ID must sort after the first")
@@ -269,7 +268,7 @@ func TestCreateSameSecondChainOrder(t *testing.T) {
 
 	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2026-03-01T00:00:00Z')`)
 	require.NoError(err)
-	m3, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m3, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	assert.Greater(m3.SnapshotID, m2.SnapshotID, "chain must keep extending in strictly increasing order")
@@ -325,14 +324,14 @@ func TestCreateThumbnailManifestCountersAgree(t *testing.T) {
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir := seedThumbnailFixture(t)
 
-	m, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	m, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	assert.Equal(int64(2), m.Attachments.Blobs, "one content blob plus one thumbnail blob")
-	assert.Equal(m.Attachments.Blobs, m.Stats.AttachmentBlobs, "stats population must match attachments")
+	assert.Equal(m.Attachments.Blobs, mustParseStats(t, m.Stats).AttachmentBlobs, "stats population must match attachments")
 	assert.Len(listUnion(t, r, m), 2, "list union must match the manifest counter")
 
-	res, err := Verify(context.Background(), r, VerifyOptions{})
+	res, err := Verify(context.Background(), r, newTestApp(), VerifyOptions{})
 	require.NoError(err)
 	assert.Empty(res.Problems)
 }
@@ -349,7 +348,7 @@ func TestCreateAttachmentDeletionKeepsVerifyClean(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, db := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	m1, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	require.Equal(int64(2), m1.Attachments.Blobs)
 
@@ -360,7 +359,7 @@ func TestCreateAttachmentDeletionKeepsVerifyClean(t *testing.T) {
 	require.NoError(err)
 	require.NoError(os.Remove(filepath.Join(attachmentsDir, hashB[:2], hashB)))
 
-	m2, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	var hashA string
@@ -372,7 +371,7 @@ func TestCreateAttachmentDeletionKeepsVerifyClean(t *testing.T) {
 	require.Len(union, 1, "snapshot 2 list union must equal exactly the surviving ref")
 	assert.Equal(hashA, union[0].Hash)
 
-	res, err := Verify(context.Background(), r, VerifyOptions{All: true})
+	res, err := Verify(context.Background(), r, newTestApp(), VerifyOptions{All: true})
 	require.NoError(err)
 	assert.Empty(res.Problems, "both snapshots verify cleanly after a deletion")
 }
@@ -434,9 +433,9 @@ func TestCreateNoChanges(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	_, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	_, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
-	m2, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	// Only the tiny map/hash delta objects are new; no content re-uploaded.
 	assert.Equal(int64(2), m2.Attachments.Blobs)
@@ -455,12 +454,12 @@ func TestCreatePageSizeChangeForcesFullRecapture(t *testing.T) {
 	dbPath, attachmentsDir, dataDir, db := seedBackupFixture(t)
 	cacheDir := t.TempDir()
 
-	m1, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	rebuildAtPageSize(t, db, 8192)
 
-	m2, err := Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 
 	assert.Equal(m1.SnapshotID, m2.ParentID, "lineage still records the true parent snapshot")
@@ -516,7 +515,7 @@ func TestCreateHoldsExclusiveLock(t *testing.T) {
 	sharedWaitTimeout, sharedWaitPoll = 200*time.Millisecond, 20*time.Millisecond
 	t.Cleanup(func() { sharedWaitTimeout, sharedWaitPoll = oldTimeout, oldPoll })
 
-	_, err = Create(context.Background(), r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err = Create(context.Background(), r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.ErrorIs(err, ErrRepoLocked)
 }
 

@@ -17,22 +17,27 @@ import (
 // Manifest types (docs/architecture/backup-format.md)
 
 type Manifest struct {
-	FormatVersion    int                 `json:"format_version"`
-	MinReaderVersion int                 `json:"min_reader_version"`
-	MsgvaultVersion  string              `json:"msgvault_version"`
-	SnapshotID       string              `json:"snapshot_id"`
-	ParentID         string              `json:"parent_id"`
-	CreatedAt        string              `json:"created_at"`
-	Options          ManifestOptions     `json:"options"`
-	DB               ManifestDB          `json:"db"`
-	Attachments      ManifestAttachments `json:"attachments"`
-	Extras           ManifestExtras      `json:"extras"`
-	Excluded         []string            `json:"excluded"`
-	Stats            ManifestStats       `json:"stats"`
-	NewPacks         []string            `json:"new_packs"`
-	NewIndex         string              `json:"new_index"`
-	DurationSeconds  float64             `json:"duration_seconds"`
-	BytesAdded       int64               `json:"bytes_added"`
+	FormatVersion    int `json:"format_version"`
+	MinReaderVersion int `json:"min_reader_version"`
+	// AppVersion records the application version that wrote the snapshot. The
+	// wire key is frozen at format v1: renaming it would break every existing
+	// repo's snapshot-ID recompute.
+	AppVersion  string              `json:"msgvault_version"`
+	SnapshotID  string              `json:"snapshot_id"`
+	ParentID    string              `json:"parent_id"`
+	CreatedAt   string              `json:"created_at"`
+	Options     ManifestOptions     `json:"options"`
+	DB          ManifestDB          `json:"db"`
+	Attachments ManifestAttachments `json:"attachments"`
+	Extras      ManifestExtras      `json:"extras"`
+	Excluded    []string            `json:"excluded"`
+	// Stats is the application-defined stats payload. The engine treats it as
+	// opaque bytes: recorded at create, byte-compared at restore.
+	Stats           json.RawMessage `json:"stats"`
+	NewPacks        []string        `json:"new_packs"`
+	NewIndex        string          `json:"new_index"`
+	DurationSeconds float64         `json:"duration_seconds"`
+	BytesAdded      int64           `json:"bytes_added"`
 }
 
 type ManifestOptions struct {
@@ -62,17 +67,6 @@ type ManifestAttachments struct {
 
 type ManifestExtras struct {
 	Tree string `json:"tree"`
-}
-
-type ManifestStats struct {
-	Messages        int64     `json:"messages"`
-	Conversations   int64     `json:"conversations"`
-	Sources         int64     `json:"sources"`
-	Accounts        int64     `json:"accounts"`
-	AttachmentRows  int64     `json:"attachment_rows"`
-	AttachmentBlobs int64     `json:"attachment_blobs"`
-	Labels          int64     `json:"labels"`
-	DateRange       [2]string `json:"date_range"`
 }
 
 const manifestExt = ".mvmanifest"

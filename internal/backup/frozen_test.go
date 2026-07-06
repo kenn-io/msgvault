@@ -81,30 +81,12 @@ func TestFrozenSessionPinsAndCounts(t *testing.T) {
 	_, err = writer.ExecContext(ctx, `INSERT INTO messages (sent_at) VALUES ('2026-03-01T00:00:00Z')`)
 	require.NoError(err)
 
-	// The pinned snapshot does not see the new row.
-	stats, err := s.Stats(ctx)
-	require.NoError(err)
-	assert.Equal(int64(2), stats.Messages)
-	assert.Equal(int64(1), stats.Conversations)
-	assert.Equal(int64(1), stats.Sources)
-	assert.Equal(int64(1), stats.Accounts)
-	assert.Equal(int64(2), stats.Labels)
-	assert.Equal(int64(7), stats.AttachmentRows)
-	assert.Equal(int64(5), stats.AttachmentBlobs,
-		"aa11, bb22, NULL-size dd44, http-cache-namespaced ee55, and thumbnail tt77; URL-backed and placeholder excluded")
-	assert.Equal("2026-01-01T00:00:00Z", stats.DateRange[0])
-	assert.Equal("2026-02-01T00:00:00Z", stats.DateRange[1])
-
-	refs, err := s.AttachmentRefs(ctx)
-	require.NoError(err)
-	require.Len(refs, 5)
-	assert.Equal(ContentRef{Hash: "aa11", Size: 100, StoragePath: "aa/aa11"}, refs[0])
-	assert.Equal(ContentRef{Hash: "bb22", Size: 50, StoragePath: "bb/bb22"}, refs[1])
-	assert.Equal(ContentRef{Hash: "dd44", Size: -1, StoragePath: "dd/dd44"}, refs[2],
-		"a NULL size column must not fail the scan; capture resolves the real size from the file")
-	assert.Equal(ContentRef{Hash: "ee55", Size: 25, StoragePath: "http-cache/ee/ee55"}, refs[3],
-		"a local path is free to START with http; only http:// and https:// URLs are excluded")
-	assert.Equal(ContentRef{Hash: "tt77", Size: -1, StoragePath: "tt/tt77"}, refs[4])
+	// The pinned snapshot does not see the new row. The frozen Tx is the
+	// engine's contract; the application's stats/content queries over it are
+	// covered by internal/backupapp's TestFrozenViewContentInfoAndStats.
+	var messages int64
+	require.NoError(s.Tx().QueryRowContext(ctx, "SELECT COUNT(*) FROM messages").Scan(&messages))
+	assert.Equal(int64(2), messages, "the pinned snapshot must not see the concurrently written row")
 }
 
 // TestFrozenSessionOpensPathWithQueryChars pins the session's DSN
@@ -130,9 +112,9 @@ func TestFrozenSessionOpensPathWithQueryChars(t *testing.T) {
 	s, err := OpenFrozenSession(ctx, path, NoopFreezeCoordinator{})
 	require.NoError(err)
 	defer func() { require.NoError(s.Close()) }()
-	stats, err := s.Stats(ctx)
-	require.NoError(err)
-	require.Equal(int64(1), stats.Messages,
+	var messages int64
+	require.NoError(s.Tx().QueryRowContext(ctx, "SELECT COUNT(*) FROM messages").Scan(&messages))
+	require.Equal(int64(1), messages,
 		"the session must pin the file at the odd path, not an empty side database")
 }
 

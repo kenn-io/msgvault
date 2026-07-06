@@ -106,7 +106,7 @@ func TestRestoreReproducesArchiveByteForByte(t *testing.T) {
 	// capture-and-restore round trip has a distinctive value to preserve.
 	require.NoError(os.Chmod(deletionsPath, 0o640))
 
-	m1, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m1, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	// Create checkpoint-truncated the WAL inside the freeze and nothing has
 	// written since, so the on-disk file is exactly the captured state.
@@ -128,7 +128,7 @@ func TestRestoreReproducesArchiveByteForByte(t *testing.T) {
 		newRef.Hash, newRef.Hash[:2]+"/"+newRef.Hash, newRef.Size,
 		nsRef.Hash, nsRef.StoragePath, nsRef.Size)
 	require.NoError(err)
-	m2, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
+	m2, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, cacheDir))
 	require.NoError(err)
 	require.Equal(m1.SnapshotID, m2.ParentID)
 	dbAtSnap2, err := os.ReadFile(dbPath)
@@ -137,7 +137,7 @@ func TestRestoreReproducesArchiveByteForByte(t *testing.T) {
 	// Restore the latest snapshot and compare byte-for-byte.
 	target2 := filepath.Join(t.TempDir(), "restore-2")
 	var events []ProgressEvent
-	res2, err := Restore(ctx, r, RestoreOptions{
+	res2, err := Restore(ctx, r, newTestApp(), RestoreOptions{
 		TargetDir: target2,
 		Progress:  func(ev ProgressEvent) { events = append(events, ev) },
 	})
@@ -167,7 +167,7 @@ func TestRestoreReproducesArchiveByteForByte(t *testing.T) {
 	// Restoring the PARENT from the incremental chain reproduces the older
 	// state, not the current one.
 	target1 := filepath.Join(t.TempDir(), "restore-1")
-	res1, err := Restore(ctx, r, RestoreOptions{SnapshotID: m1.SnapshotID, TargetDir: target1})
+	res1, err := Restore(ctx, r, newTestApp(), RestoreOptions{SnapshotID: m1.SnapshotID, TargetDir: target1})
 	require.NoError(err)
 	restored1, err := os.ReadFile(res1.DBPath)
 	require.NoError(err)
@@ -195,16 +195,16 @@ func TestRestoreRefusesNonEmptyTargetWithoutOverwrite(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	target := t.TempDir()
 	require.NoError(os.WriteFile(filepath.Join(target, "existing.txt"), []byte("x"), 0o600))
 
-	_, err = Restore(ctx, r, RestoreOptions{TargetDir: target})
+	_, err = Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: target})
 	require.ErrorContains(err, "not empty")
 
-	_, err = Restore(ctx, r, RestoreOptions{TargetDir: target, Overwrite: true})
+	_, err = Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: target, Overwrite: true})
 	require.NoError(err)
 }
 
@@ -217,7 +217,7 @@ func TestRestoreOverwriteRemovesStaleDBSidecars(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	target := t.TempDir()
@@ -227,7 +227,7 @@ func TestRestoreOverwriteRemovesStaleDBSidecars(t *testing.T) {
 	unrelated := filepath.Join(target, "keep-me.txt")
 	require.NoError(os.WriteFile(unrelated, []byte("survives the merge"), 0o600))
 
-	res, err := Restore(ctx, r, RestoreOptions{TargetDir: target, Overwrite: true})
+	res, err := Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: target, Overwrite: true})
 	require.NoError(err)
 	for _, name := range []string{"msgvault.db-wal", "msgvault.db-shm"} {
 		_, err := os.Stat(filepath.Join(target, name))
@@ -247,7 +247,7 @@ func TestRestoreTargetPathWithURISyntax(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	// '?' is illegal in Windows filenames, so exercise it only where the
@@ -257,7 +257,7 @@ func TestRestoreTargetPathWithURISyntax(t *testing.T) {
 		dirName = "odd dir#name"
 	}
 	target := filepath.Join(t.TempDir(), dirName)
-	res, err := Restore(ctx, r, RestoreOptions{TargetDir: target})
+	res, err := Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: target})
 	require.NoError(err)
 	require.Equal(fileSHA256(t, dbPath), fileSHA256(t, res.DBPath))
 }
@@ -298,11 +298,11 @@ func TestRestoreRelativeTarget(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	t.Chdir(t.TempDir())
-	res, err := Restore(ctx, r, RestoreOptions{TargetDir: "restore-out"})
+	res, err := Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: "restore-out"})
 	require.NoError(err)
 	require.Equal(fileSHA256(t, dbPath), fileSHA256(t, res.DBPath))
 }
@@ -315,7 +315,7 @@ func TestRestoreProofCatchesManifestStatsMismatch(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	m, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	m, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	path := r.Path(snapshotsDirName, m.SnapshotID+manifestExt)
@@ -323,7 +323,10 @@ func TestRestoreProofCatchesManifestStatsMismatch(t *testing.T) {
 	require.NoError(err)
 	var doctored Manifest
 	require.NoError(json.Unmarshal(data, &doctored))
-	doctored.Stats.Messages++
+	bumped := mustParseStats(t, doctored.Stats)
+	bumped.Messages++
+	doctored.Stats, err = json.Marshal(bumped)
+	require.NoError(err)
 	createdAt, err := time.Parse(time.RFC3339, doctored.CreatedAt)
 	require.NoError(err)
 	forgedID, err := ComputeSnapshotID(createdAt, &doctored)
@@ -334,8 +337,8 @@ func TestRestoreProofCatchesManifestStatsMismatch(t *testing.T) {
 	require.NoError(os.Remove(path))
 	require.NoError(os.WriteFile(r.Path(snapshotsDirName, forgedID+manifestExt), out, 0o600))
 
-	_, err = Restore(ctx, r, RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
-	require.ErrorContains(err, "do not match the manifest's recorded stats")
+	_, err = Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
+	require.ErrorContains(err, "do not match manifest stats")
 }
 
 func TestRestoreDetectsCorruptPack(t *testing.T) {
@@ -343,7 +346,7 @@ func TestRestoreDetectsCorruptPack(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	m, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	m, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	packID := m.NewPacks[0]
@@ -353,7 +356,7 @@ func TestRestoreDetectsCorruptPack(t *testing.T) {
 	data[len(data)/3] ^= 0x01
 	require.NoError(os.WriteFile(path, data, 0o600))
 
-	_, err = Restore(ctx, r, RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
+	_, err = Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: filepath.Join(t.TempDir(), "restore")})
 	require.Error(err, "a corrupted pack must fail the restore, never produce an unverified tree")
 }
 
@@ -364,13 +367,13 @@ func TestRestoreJobsSerialMatchesParallel(t *testing.T) {
 	ctx := context.Background()
 	r := initTestRepo(t)
 	dbPath, attachmentsDir, dataDir, _ := seedBackupFixture(t)
-	_, err := Create(ctx, r, createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
+	_, err := Create(ctx, r, newTestApp(), createOpts(dbPath, attachmentsDir, dataDir, t.TempDir()))
 	require.NoError(err)
 
 	targets := map[int]string{1: filepath.Join(t.TempDir(), "serial"), 8: filepath.Join(t.TempDir(), "parallel")}
 	trees := map[int]map[string][32]byte{}
 	for jobs, target := range targets {
-		_, err := Restore(ctx, r, RestoreOptions{TargetDir: target, Jobs: jobs})
+		_, err := Restore(ctx, r, newTestApp(), RestoreOptions{TargetDir: target, Jobs: jobs})
 		require.NoError(err)
 		trees[jobs] = snapshotDirHashes(t, target)
 	}
@@ -402,7 +405,7 @@ func TestRestoreExtrasEntryRejectsEscapingPaths(t *testing.T) {
 	target := t.TempDir()
 
 	for _, path := range []string{"", "/etc/passwd", "../outside", "a/../../outside", ".."} {
-		err := st.restoreExtrasEntry(ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
+		err := st.restoreExtrasEntry(newTestApp(), ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
 		require.ErrorContains(err, "escapes the restore target", "path %q", path)
 	}
 }
@@ -420,7 +423,7 @@ func TestRestoreExtrasEntryRejectsArchiveOverlap(t *testing.T) {
 		"msgvault.db", "MSGVAULT.DB", "msgvault.db-wal", "msgvault.db-shm",
 		"attachments/aa/aa11", "Attachments/aa/aa11", "attachments",
 	} {
-		err := st.restoreExtrasEntry(ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
+		err := st.restoreExtrasEntry(newTestApp(), ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
 		require.ErrorContains(err, "overlaps restored archive content", "path %q", path)
 	}
 
@@ -430,16 +433,16 @@ func TestRestoreExtrasEntryRejectsArchiveOverlap(t *testing.T) {
 	for _, path := range []string{
 		"safe/../msgvault.db", "safe/../MSGVAULT.DB-wal", "safe/../attachments/aa/aa11",
 	} {
-		err := st.restoreExtrasEntry(ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
+		err := st.restoreExtrasEntry(newTestApp(), ExtrasEntry{Path: path, Blob: blobID("x").String()}, target)
 		require.ErrorContains(err, "overlaps restored archive content", "path %q", path)
 	}
 
 	// A path that cleans to the target directory itself is rejected outright.
-	err := st.restoreExtrasEntry(ExtrasEntry{Path: "safe/..", Blob: blobID("x").String()}, target)
+	err := st.restoreExtrasEntry(newTestApp(), ExtrasEntry{Path: "safe/..", Blob: blobID("x").String()}, target)
 	require.ErrorContains(err, "escapes the restore target")
 
 	// Legitimate extras still restore fine (proven end-to-end elsewhere);
 	// here just confirm the reserved-name check does not reject them.
-	err = st.restoreExtrasEntry(ExtrasEntry{Path: "deletions/manifest-1.json", Blob: "not-a-blob"}, target)
+	err = st.restoreExtrasEntry(newTestApp(), ExtrasEntry{Path: "deletions/manifest-1.json", Blob: "not-a-blob"}, target)
 	require.NotContains(err.Error(), "overlaps restored archive content")
 }

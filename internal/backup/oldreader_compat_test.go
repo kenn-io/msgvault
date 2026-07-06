@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/msgvault/internal/backupapp"
 )
 
 // --- Frozen copy of the pre-extraction manifest reader. DO NOT UPDATE. ---
@@ -111,11 +112,10 @@ func TestNewManifestReadableByOldReader(t *testing.T) {
 	dbPath, attDir := seedCompatArchive(t, archive)
 	r, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
-	m, err := backup.Create(context.Background(), r, backup.CreateOptions{
-		DBPath:          dbPath,
-		AttachmentsDir:  attDir,
-		DataDir:         archive,
-		MsgvaultVersion: "golden-test",
+	m, err := backup.Create(context.Background(), r, backupapp.New("golden-test"), backup.CreateOptions{
+		DBPath:     dbPath,
+		ContentDir: attDir,
+		DataDir:    archive,
 	})
 	require.NoError(t, err)
 

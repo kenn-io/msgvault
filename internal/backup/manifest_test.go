@@ -15,7 +15,7 @@ func testManifest(created string, parent string, depth int) *Manifest {
 	return &Manifest{
 		FormatVersion:    FormatVersion,
 		MinReaderVersion: MinReaderVersion,
-		MsgvaultVersion:  "test",
+		AppVersion:       "test",
 		ParentID:         parent,
 		CreatedAt:        created,
 		DB: ManifestDB{
@@ -43,7 +43,7 @@ func TestSnapshotIDDeterministicAndContentDerived(t *testing.T) {
 	assert.Regexp(`^20260703T123015Z-[0-9a-f]{32}$`, id1)
 
 	changed := testManifest("2026-07-03T12:30:15Z", "", 0)
-	changed.Stats.Messages = 42
+	changed.Stats = json.RawMessage(`{"messages":42}`)
 	id3, err := ComputeSnapshotID(created, changed)
 	require.NoError(err)
 	assert.NotEqual(id1, id3)
@@ -216,7 +216,7 @@ func TestLoadManifestRejectsCorruptedOrRenamedManifest(t *testing.T) {
 	// Tamper: flip one stats field without recomputing the ID.
 	var doctored Manifest
 	require.NoError(json.Unmarshal(original, &doctored))
-	doctored.Stats.Messages++
+	doctored.Stats = json.RawMessage(`{"messages":1}`)
 	data, err := json.MarshalIndent(&doctored, "", "  ")
 	require.NoError(err)
 	require.NoError(os.WriteFile(path, data, 0o600))
@@ -239,4 +239,31 @@ func TestLoadManifestRejectsCorruptedOrRenamedManifest(t *testing.T) {
 	require.NoError(os.WriteFile(path, data, 0o600))
 	_, err = repo.LoadManifest(id)
 	require.ErrorContains(err, "created_at")
+}
+
+// TestLoadManifestRecomputesIDWithRawStats guards the json.RawMessage
+// transition: manifests are stored indented, RawMessage preserves captured
+// formatting, and the snapshot-ID recompute in LoadManifest must still
+// match. encoding/json compacts RawMessage during Marshal, which is what
+// makes this hold — this test is the proof.
+func TestLoadManifestRecomputesIDWithRawStats(t *testing.T) {
+	r, err := Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	m := &Manifest{
+		FormatVersion:    FormatVersion,
+		MinReaderVersion: MinReaderVersion,
+		AppVersion:       "raw-stats-test",
+		CreatedAt:        "2026-01-02T03:04:05Z",
+		DB:               ManifestDB{Engine: "sqlite", PageSize: 4096, PageCount: 1},
+		Attachments:      ManifestAttachments{Layout: []string{"loose"}, Recipes: []string{}},
+		Excluded:         []string{},
+		Stats: json.RawMessage(`{"messages":1,"conversations":0,"sources":0,` +
+			`"accounts":0,"attachment_rows":0,"attachment_blobs":0,"labels":0,` +
+			`"date_range":["",""]}`),
+	}
+	id, err := r.WriteManifest(m)
+	require.NoError(t, err)
+	loaded, err := r.LoadManifest(id) // internal ID recompute IS the assertion
+	require.NoError(t, err)
+	assert.Equal(t, id, loaded.SnapshotID)
 }

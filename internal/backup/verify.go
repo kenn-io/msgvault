@@ -64,7 +64,7 @@ var errBlobUnreadable = errors.New("backup: referenced blob failed verification"
 // manifest. Per-object failures are collected as Problems naming the
 // snapshot, blob, and pack; Verify keeps going so every affected snapshot is
 // named, rather than stopping at the first Problem.
-func Verify(ctx context.Context, r *Repo, opts VerifyOptions) (*VerifyResult, error) {
+func Verify(ctx context.Context, r *Repo, app App, opts VerifyOptions) (*VerifyResult, error) {
 	lock, err := r.AcquireSharedLock("verify", opts.ForceUnlock)
 	if err != nil {
 		return nil, err
@@ -85,6 +85,7 @@ func Verify(ctx context.Context, r *Repo, opts VerifyOptions) (*VerifyResult, er
 		jobs = runtime.GOMAXPROCS(0)
 	}
 	st := &verifyState{
+		app:           app,
 		repo:          r,
 		known:         known,
 		quick:         opts.Quick,
@@ -184,6 +185,7 @@ var maxOpenPackReaders = 64
 // readVerdict, readerErrs, contentReads, progress emission); the serial
 // phases run alone and need no locking.
 type verifyState struct {
+	app          App
 	repo         *Repo
 	known        map[pack.BlobID]IndexEntry
 	quick        bool
@@ -687,10 +689,10 @@ func (s *verifyState) checkAttachmentConsistency(m *Manifest, refs []ContentRef)
 		s.problem(m.SnapshotID, fmt.Sprintf(
 			"attachment list union sums %d bytes but manifest reports attachments.blob_bytes %d", sizeSum, m.Attachments.BlobBytes))
 	}
-	if m.Stats.AttachmentBlobs != m.Attachments.Blobs {
-		s.problem(m.SnapshotID, fmt.Sprintf(
-			"manifest stats.attachment_blobs %d disagrees with attachments.blobs %d",
-			m.Stats.AttachmentBlobs, m.Attachments.Blobs))
+	// App-level manifest consistency (e.g. stats payload vs attachment totals)
+	// is opaque to the engine; the app reports any problems it finds.
+	for _, detail := range s.app.CheckManifest(m) {
+		s.problem(m.SnapshotID, detail)
 	}
 }
 

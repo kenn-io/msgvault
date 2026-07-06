@@ -15,7 +15,7 @@ import (
 // CreateOptions parameterizes one snapshot capture.
 type CreateOptions struct {
 	DBPath                string
-	AttachmentsDir        string
+	ContentDir            string
 	DataDir               string
 	ConfigPath            string
 	IncludeConfig         bool
@@ -24,7 +24,6 @@ type CreateOptions struct {
 	Tag                   string
 	ZstdLevel             int
 	CacheDir              string
-	MsgvaultVersion       string
 	Freezer               FreezeCoordinator
 	ForceUnlock           bool
 	// Jobs is the number of concurrent attachment read+compress workers.
@@ -39,12 +38,9 @@ type CreateOptions struct {
 	Progress func(ProgressEvent)
 }
 
-// manifestExcluded names the live-archive paths a snapshot never captures.
-var manifestExcluded = []string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"}
-
 // Create captures one snapshot: freeze -> scan -> pack -> index -> manifest
 // (written last). See docs/architecture/backup-format.md.
-func Create(ctx context.Context, r *Repo, opts CreateOptions) (*Manifest, error) {
+func Create(ctx context.Context, r *Repo, app App, opts CreateOptions) (*Manifest, error) {
 	start := time.Now()
 	pr := newProgressEmitter(opts.Progress)
 	if opts.ZstdLevel == 0 {
@@ -90,15 +86,12 @@ func Create(ctx context.Context, r *Repo, opts CreateOptions) (*Manifest, error)
 		BytesDone: dbBytes, BytesTotal: dbBytes, Final: true,
 	})
 
-	stats, err := session.Stats(ctx)
+	view := app.FrozenView(session)
+	statsRaw, err := view.Stats(ctx)
 	if err != nil {
 		return nil, err
 	}
-	refs, err := session.AttachmentRefs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	nonCanonicalPaths, err := session.HasNonCanonicalAttachmentPaths(ctx)
+	info, err := view.ContentInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -187,12 +180,12 @@ func Create(ctx context.Context, r *Repo, opts CreateOptions) (*Manifest, error)
 	// would permanently fail. In that shrinkage case, write one fresh full
 	// list of exactly the current refs by capturing with an empty seen set,
 	// so the new snapshot's single list equals the current population.
-	shrunk := parentUnionShrank(parentSeen, refs)
+	shrunk := parentUnionShrank(parentSeen, info.Refs)
 	captureSeen := parentSeen
 	if shrunk {
 		captureSeen = map[string]bool{}
 	}
-	capture, err := CaptureAttachments(ctx, opts.AttachmentsDir, refs, captureSeen, appender, CaptureOptions{
+	capture, err := CaptureAttachments(ctx, opts.ContentDir, info.Refs, captureSeen, appender, CaptureOptions{
 		Jobs: opts.Jobs,
 		Progress: func(done, total int, bytesRead int64) {
 			pr.emit(ProgressEvent{
@@ -268,14 +261,14 @@ func Create(ctx context.Context, r *Repo, opts CreateOptions) (*Manifest, error)
 	// refuse them explicitly instead of restoring a broken tree.
 	manifestVersion := FormatVersion
 	manifestMinReader := MinReaderVersion
-	if nonCanonicalPaths {
+	if info.NonCanonicalPaths {
 		manifestVersion = dbPathManifestVersion
 		manifestMinReader = dbPathManifestVersion
 	}
 	m := &Manifest{
 		FormatVersion:    manifestVersion,
 		MinReaderVersion: manifestMinReader,
-		MsgvaultVersion:  opts.MsgvaultVersion,
+		AppVersion:       app.Version(),
 		CreatedAt:        createdAt.Format(time.RFC3339),
 		Options: ManifestOptions{
 			IncludeConfig: opts.IncludeConfig,
@@ -293,14 +286,14 @@ func Create(ctx context.Context, r *Repo, opts CreateOptions) (*Manifest, error)
 		},
 		Attachments: ManifestAttachments{
 			Layout:    []string{"loose"},
-			Rows:      stats.AttachmentRows,
+			Rows:      info.Rows,
 			Blobs:     capture.Blobs,
 			BlobBytes: capture.BlobBytes,
 			Recipes:   []string{},
 			Lists:     lists,
 		},
-		Excluded:        manifestExcluded,
-		Stats:           stats,
+		Excluded:        app.ExcludedPaths(),
+		Stats:           statsRaw,
 		NewPacks:        newPacks,
 		NewIndex:        newIndex,
 		DurationSeconds: time.Since(start).Seconds(),

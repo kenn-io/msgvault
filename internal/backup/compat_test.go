@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/msgvault/internal/backupapp"
 )
 
 // seedCompatArchive builds a tiny msgvault-shaped archive: a SQLite DB with
@@ -86,12 +87,12 @@ func TestGenerateCompatFixture(t *testing.T) {
 	r, err := backup.Init(compatRepoDir)
 	require.NoError(t, err)
 	opts := backup.CreateOptions{
-		DBPath:          dbPath,
-		AttachmentsDir:  attDir,
-		DataDir:         archive,
-		MsgvaultVersion: "compat-fixture",
+		DBPath:     dbPath,
+		ContentDir: attDir,
+		DataDir:    archive,
 	}
-	_, err = backup.Create(context.Background(), r, opts)
+	app := backupapp.New("compat-fixture")
+	_, err = backup.Create(context.Background(), r, app, opts)
 	require.NoError(t, err)
 
 	// Second snapshot with a data change, so the fixture exercises the
@@ -101,7 +102,7 @@ func TestGenerateCompatFixture(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2024-12-01T00:00:00Z')`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	_, err = backup.Create(context.Background(), r, opts)
+	_, err = backup.Create(context.Background(), r, app, opts)
 	require.NoError(t, err)
 }
 
@@ -137,7 +138,7 @@ func TestRestoreCompatFixture(t *testing.T) {
 		snaps[1].SnapshotID)
 
 	target := t.TempDir()
-	res, err := backup.Restore(context.Background(), r, backup.RestoreOptions{
+	res, err := backup.Restore(context.Background(), r, backupapp.New("test"), backup.RestoreOptions{
 		TargetDir: filepath.Join(target, "restored"),
 	})
 	require.NoError(t, err)

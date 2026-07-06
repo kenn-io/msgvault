@@ -258,13 +258,7 @@ func (a *App) RestoredContentPaths(ctx context.Context, db *sql.DB) (map[string]
 
 // CheckManifest returns app-level manifest consistency problems (verify).
 func (a *App) CheckManifest(m *backup.Manifest) []string {
-	// INTERIM SHIM until Task 5 makes m.Stats json.RawMessage: marshal the
-	// typed stats to reuse ParseStats. Task 5 removes the shim.
-	raw, err := json.Marshal(m.Stats)
-	if err != nil {
-		return []string{fmt.Sprintf("manifest stats unreadable: %v", err)}
-	}
-	st, err := ParseStats(raw)
+	st, err := ParseStats(m.Stats)
 	if err != nil {
 		return []string{fmt.Sprintf("manifest stats unreadable: %v", err)}
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/backup"
+	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -144,8 +145,12 @@ func printBackupSnapshots(w io.Writer, snapshots []*backup.Manifest) error {
 		if tag == "" {
 			tag = "-"
 		}
+		var messages int64
+		if st, err := backupapp.ParseStats(m.Stats); err == nil {
+			messages = st.Messages
+		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			m.SnapshotID, m.CreatedAt, formatCount(m.Stats.Messages), formatSize(m.BytesAdded), tag)
+			m.SnapshotID, m.CreatedAt, formatCount(messages), formatSize(m.BytesAdded), tag)
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("write backup list output: %w", err)
@@ -174,7 +179,7 @@ func runBackupVerify(cmd *cobra.Command, args []string) error {
 	// An error mid-stage leaves the in-place TTY line open; close it so the
 	// error prints on its own row.
 	defer renderer.finish()
-	result, err := backup.Verify(cmd.Context(), r, backup.VerifyOptions{
+	result, err := backup.Verify(cmd.Context(), r, backupapp.New(Version), backup.VerifyOptions{
 		SnapshotID:  snapshotID,
 		All:         backupVerifyAll,
 		Quick:       backupVerifyQuick,
@@ -217,7 +222,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	}
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), progressModeAuto)
 	defer renderer.finish()
-	res, err := backup.Restore(cmd.Context(), r, backup.RestoreOptions{
+	res, err := backup.Restore(cmd.Context(), r, backupapp.New(Version), backup.RestoreOptions{
 		SnapshotID:  snapshotID,
 		TargetDir:   backupRestoreTarget,
 		Overwrite:   backupRestoreOverwrite,
@@ -342,9 +347,9 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), mode)
 	defer renderer.finish()
 
-	m, err := backup.Create(cmd.Context(), r, backup.CreateOptions{
+	m, err := backup.Create(cmd.Context(), r, backupapp.New(Version), backup.CreateOptions{
 		DBPath:                dbPath,
-		AttachmentsDir:        cfg.AttachmentsDir(),
+		ContentDir:            cfg.AttachmentsDir(),
 		DataDir:               cfg.Data.DataDir,
 		ConfigPath:            cfg.ConfigFilePath(),
 		IncludeConfig:         backupCreateIncludeConfig,
@@ -353,7 +358,6 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 		Tag:                   backupCreateTag,
 		ZstdLevel:             cfg.Backup.ZstdLevel,
 		CacheDir:              filepath.Join(cfg.HomeDir, "backup-cache"),
-		MsgvaultVersion:       Version,
 		Freezer:               freezer,
 		ForceUnlock:           backupCreateForceUnlock,
 		Jobs:                  backupCreateJobs,
