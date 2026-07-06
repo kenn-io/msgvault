@@ -135,9 +135,15 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject unknown fields: a typo in a narrowing filter key would
+	// otherwise be silently dropped while a remaining broad criterion
+	// stages far more messages than intended.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	var req StageDeletionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("invalid JSON request body: %v", err))
 		return
 	}
 	if req.Filter.isEmpty() && len(req.MessageIDs) == 0 {

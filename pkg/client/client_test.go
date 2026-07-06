@@ -139,3 +139,36 @@ func TestAddAccountAcceptsIdempotentOK(t *testing.T) {
 	assert.Equal("ok", got.Status, "status")
 	assert.Equal("account already exists", got.Message, "message")
 }
+
+func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/deletions", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		// Dry runs return 200, not 201.
+		_, _ = w.Write([]byte(`{"dry_run":true,"message_count":3,"sample_gmail_ids":["gm-1","gm-2","gm-3"]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(
+		err, "New")
+
+	sender := "alice@example.com"
+	dryRun := true
+	got, err := c.StageDeletion(context.Background(), &generated.StageDeletionRequestOptions{
+		Body: &generated.StageDeletionBody{
+			Filter: &generated.StageDeletionFilter{Sender: &sender},
+			DryRun: &dryRun,
+		},
+	})
+	require.NoError(
+		err, "StageDeletion dry run")
+
+	assert.True(got.DryRun, "dry_run")
+	assert.Equal(int64(3), got.MessageCount, "message_count")
+	assert.Len(got.SampleGmailIds, 3, "sample ids")
+}

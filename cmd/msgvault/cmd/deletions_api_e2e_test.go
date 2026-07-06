@@ -101,6 +101,7 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	list2, err := http.Get(httpSrv.URL + "/api/v1/deletions?status=pending")
 	require.NoError(err, "GET /deletions after cancel")
 	defer func() { _ = list2.Body.Close() }()
+	require.Equal(http.StatusOK, list2.StatusCode, "list after cancel status")
 	var listedAfter api.ListDeletionsResponse
 	require.NoError(json.NewDecoder(list2.Body).Decode(&listedAfter), "decode second list")
 	assert.Empty(listedAfter.Manifests, "no pending manifests after cancel")

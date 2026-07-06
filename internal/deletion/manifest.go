@@ -2,6 +2,8 @@
 package deletion
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,7 +121,21 @@ func generateID(description string) string {
 	if len(sanitized) > 20 {
 		sanitized = sanitized[:20]
 	}
-	return fmt.Sprintf("%s-%s", ts, sanitized)
+	// Random suffix keeps IDs unique when two batches with the same
+	// description are created within the same second (e.g. rapid API
+	// staging requests); without it SaveManifest would silently
+	// overwrite the earlier manifest file.
+	return fmt.Sprintf("%s-%s-%s", ts, sanitized, randomIDSuffix())
+}
+
+func randomIDSuffix() string {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand is effectively infallible; fall back to clock
+		// bits rather than failing manifest creation.
+		return fmt.Sprintf("%04x", time.Now().UnixNano()&0xffff)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // ValidateManifestID rejects IDs that are unsafe to turn into a filename.
@@ -407,9 +423,17 @@ func (m *Manager) GetManifestWithStatus(id string) (*Manifest, Status, error) {
 	filename := id + ".json"
 	for _, status := range persistedStatuses {
 		path := filepath.Join(m.dirForStatus(status), filename)
-		if manifest, err := LoadManifest(path); err == nil {
-			return manifest, status, nil
+		manifest, err := LoadManifest(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			// A file that exists but cannot be loaded (corrupt JSON,
+			// permissions) is a real failure, not a missing manifest —
+			// callers map ErrManifestNotFound to HTTP 404.
+			return nil, "", fmt.Errorf("load manifest %s: %w", id, err)
 		}
+		return manifest, status, nil
 	}
 	return nil, "", fmt.Errorf("manifest %s: %w", id, ErrManifestNotFound)
 }

@@ -195,6 +195,23 @@ func TestStageDeletionInvalidDate(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "invalid_date")
 }
 
+func TestStageDeletionRejectsUnknownFields(t *testing.T) {
+	st := &deletionMockStore{}
+	engine := &querytest.MockEngine{GmailIDs: []string{"gm-1"}}
+	srv := newDeletionTestServer(t, st, engine)
+
+	// A typo'd narrowing key must fail the request, not silently widen it.
+	for _, body := range []string{
+		`{"filter": {"snder": "alice@example.com", "domain": "example.com"}}`,
+		`{"filter": {"sender": "alice@example.com"}, "dry_rn": true}`,
+	} {
+		w := postDeletions(t, srv, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "body %s -> status", body)
+		assert.Contains(t, w.Body.String(), "unknown field", "body %s -> error detail", body)
+	}
+	assert.Empty(t, st.saved, "nothing staged from rejected requests")
+}
+
 func TestStageDeletionEngineUnavailable(t *testing.T) {
 	srv := newDeletionTestServer(t, &deletionMockStore{}, nil)
 	w := postDeletions(t, srv, `{"filter": {"sender": "alice@example.com"}}`)

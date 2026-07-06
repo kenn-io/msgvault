@@ -205,7 +205,7 @@ func TestGenerateID(t *testing.T) {
 			desc: "this is a very long description that exceeds twenty characters",
 			validate: func(t *testing.T, id string) {
 				t.Helper()
-				assert.LessOrEqual(t, len(id), 40, "ID too long: %d chars (%q)", len(id), id)
+				assert.LessOrEqual(t, len(id), 45, "ID too long: %d chars (%q)", len(id), id)
 			},
 		},
 		{
@@ -213,7 +213,16 @@ func TestGenerateID(t *testing.T) {
 			desc: "",
 			validate: func(t *testing.T, id string) {
 				t.Helper()
-				assert.True(t, strings.HasSuffix(id, "-batch"), "expected -batch suffix, got %q", id)
+				assert.Contains(t, id, "-batch-", "expected -batch- segment, got %q", id)
+			},
+		},
+		{
+			name: "same description yields distinct IDs",
+			desc: "duplicate",
+			validate: func(t *testing.T, id string) {
+				t.Helper()
+				assert.NotEqual(t, generateID("duplicate"), id,
+					"IDs generated in the same second must not collide")
 			},
 		},
 	}
@@ -857,6 +866,36 @@ func TestGetManifestWithStatus(t *testing.T) {
 	_, _, err = mgr.GetManifestWithStatus("does-not-exist")
 	require.Error(t, err, "missing manifest")
 	assert.ErrorIs(t, err, ErrManifestNotFound)
+}
+
+func TestGetManifestWithStatusCorruptFile(t *testing.T) {
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(t, err, "NewManager")
+
+	require.NoError(t,
+		os.WriteFile(filepath.Join(mgr.PendingDir(), "corrupt-batch.json"), []byte("{not json"), 0o644),
+		"write corrupt manifest")
+
+	_, _, err = mgr.GetManifestWithStatus("corrupt-batch")
+	require.Error(t, err, "corrupt manifest must error")
+	assert.NotErrorIs(t, err, ErrManifestNotFound,
+		"a corrupt existing manifest must not be reported as missing (would map to HTTP 404)")
+}
+
+func TestSaveManifestRapidDuplicateDescriptions(t *testing.T) {
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(t, err, "NewManager")
+
+	first := NewManifest("same description", []string{"gm-1"})
+	second := NewManifest("same description", []string{"gm-2"})
+	require.NotEqual(t, first.ID, second.ID, "same-second IDs must differ")
+
+	require.NoError(t, mgr.SaveManifest(first), "save first")
+	require.NoError(t, mgr.SaveManifest(second), "save second")
+
+	pending, err := mgr.ListPending()
+	require.NoError(t, err, "list pending")
+	assert.Len(t, pending, 2, "both same-description manifests must persist")
 }
 
 func TestListByStatus(t *testing.T) {

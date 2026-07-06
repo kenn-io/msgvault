@@ -112,7 +112,10 @@ Response — a single schema for both outcomes (the Huma helper
 Manifest construction: `deletion.NewManifest(description, gmailIDs)`, then
 set `CreatedBy = "api"`, then `Manager.SaveManifest`. (Do NOT use
 `Manager.CreateManifest` — `NewManifest` hardcodes `CreatedBy: "cli"` and
-`CreateManifest` provides no override.)
+`CreateManifest` provides no override.) Generated manifest IDs carry a
+random suffix so two staging requests with the same description in the
+same second cannot collide and silently overwrite each other's manifest
+file.
 
 Provenance: `deletion.Filters` cannot represent several request fields
 (`sender_name`, `recipient_name`, `source_id`). Since `GmailIDs` are what the
