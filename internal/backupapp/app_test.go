@@ -14,9 +14,9 @@ import (
 	"go.kenn.io/msgvault/internal/backupapp"
 )
 
-// seedDB creates the minimal msgvault-shaped schema (same shape as
-// internal/backup's compat fixture) with 2 messages, 2 attachments, 1
-// thumbnail, one attachment recorded at a non-canonical namespaced path.
+// seedDB creates the minimal msgvault-shaped schema (same shape as the
+// internal/backupapp/testdata/compat fixture) with 2 messages, 2 attachments,
+// 1 thumbnail, one attachment recorded at a non-canonical namespaced path.
 func seedDB(t *testing.T) string {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
@@ -75,6 +75,38 @@ func TestFrozenViewContentInfoAndStats(t *testing.T) {
 	again, err := json.Marshal(stats)
 	require.NoError(err)
 	assert.Equal(string(raw), string(again))
+}
+
+func TestCheckManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	app := backupapp.New("test")
+	statsJSON, err := json.Marshal(backupapp.Stats{AttachmentBlobs: 3})
+	require.NoError(err)
+
+	matching := &backup.Manifest{
+		Stats:       statsJSON,
+		Attachments: backup.ManifestAttachments{Blobs: 3},
+	}
+	assert.Empty(app.CheckManifest(matching))
+
+	mismatched := &backup.Manifest{
+		Stats:       statsJSON,
+		Attachments: backup.ManifestAttachments{Blobs: 5},
+	}
+	problems := app.CheckManifest(mismatched)
+	require.Len(problems, 1)
+	assert.Contains(problems[0], "3")
+	assert.Contains(problems[0], "5")
+
+	unreadable := &backup.Manifest{
+		Stats:       json.RawMessage(`not json`),
+		Attachments: backup.ManifestAttachments{Blobs: 1},
+	}
+	problems = app.CheckManifest(unreadable)
+	require.Len(problems, 1)
+	assert.Contains(problems[0], "manifest stats unreadable")
 }
 
 func TestAppConstants(t *testing.T) {

@@ -17,8 +17,8 @@ import (
 
 // backupProgressTickInterval throttles how often backupProgressRenderer
 // redraws its in-place status line (TTY mode) or emits a new line (plain
-// mode). This throttling used to live inside internal/backup; it now lives
-// here because only the renderer — not the library — knows whether its
+// mode). This throttling used to live inside go.kenn.io/kit/backup; it now
+// lives here because only the renderer — not the library — knows whether its
 // output is a live terminal or a pipe (the daemon CLI subprocess, a
 // redirect, CI). It is a var, not a const, so tests can shorten it. Final
 // events always render immediately, regardless of this interval, since they
@@ -118,7 +118,7 @@ func (r *backupProgressRenderer) handle(ev backup.ProgressEvent) {
 	if ev.Stage != r.stage {
 		if r.stageOpen {
 			// Defensive: a new stage started without a preceding Final event
-			// for the last one (shouldn't happen given internal/backup's
+			// for the last one (shouldn't happen given go.kenn.io/kit/backup's
 			// contract, but this keeps a stray in-place line from being
 			// overwritten by the next stage's redraw).
 			_, _ = fmt.Fprintln(r.writer())
