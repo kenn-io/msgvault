@@ -17,7 +17,13 @@ in this design touches Gmail: execution remains exclusively the
 
 All routes live in the authenticated `/api/v1` group and are registered in
 `internal/api/routes.go` via the existing Huma registrars, so they appear
-in the generated OpenAPI spec.
+in the generated OpenAPI spec. Note that raw routes do **not** get
+path/query parameters documented automatically: they are manually
+declared per operation ID in `rawRouteParameters`
+(`internal/api/routes.go`). The new operations need entries there — the
+`status` query parameter for the list route and the `{id}` path parameter
+(string) for the delete route, mirroring existing entries like
+`getMessage`.
 
 ### POST /api/v1/deletions — stage messages
 
@@ -39,10 +45,9 @@ Request body:
 
 All fields are optional (subject to the empty-filter guard below).
 Supported `filter` fields: `sender`, `sender_name`, `recipient`,
-`recipient_name`, `domain`, `label`, `message_type` (strings, omitted or
-empty = no constraint); `source_id`, `conversation_id` (integers, omitted
-= no constraint); `after`, `before` (ISO dates); `attachments_only`
-(boolean).
+`recipient_name`, `domain`, `label` (strings, omitted or empty = no
+constraint); `source_id` (integer, omitted = no constraint); `after`,
+`before` (ISO dates).
 
 Semantics:
 
@@ -51,10 +56,29 @@ Semantics:
   reasons: pagination and sorting (meaningless for staging),
   `time_period`/`time_granularity` (covered by `after`/`before`),
   `empty_targets` (TUI drilldown concept), `hide_deleted` (the Gmail-ID
-  resolution path is already live-message scoped).
+  resolution path is already live-message scoped), `message_type`
+  (redundant — resolution is already scoped to Gmail sources),
+  `conversation_id` and `attachments_only` (`GetGmailIDsByFilter` ignores
+  them today; no staging use case justifies extending it — thread staging
+  can go through `message_ids`).
+- **Engine extension required:** `GetGmailIDsByFilter` currently ignores
+  `MessageFilter.After`/`.Before` (it only honors `TimeRange.Period`) in
+  both `internal/query/sqlite.go` and the DuckDB Parquet fallback in
+  `internal/query/duckdb.go`. Date-bounded staging is a core use case, so
+  both implementations must be extended to apply `After`/`Before` against
+  `sent_at`, with engine tests covering **every** supported filter field
+  above on both paths.
 - `message_ids` are internal message IDs (what `/messages` and `/search`
   return). Resolved to Gmail IDs via a new engine method
-  `GetGmailIDsByMessageIDs(ctx, ids []int64)`.
+  `GetGmailIDsByMessageIDs(ctx, ids []int64)`. **Contract:** it must
+  enforce the same constraints the filter path hardcodes
+  (`internal/query/sqlite.go` `GetGmailIDsByFilter`): only live messages
+  (`store.LiveMessagesWhere` — excludes remote-deleted and
+  dedup-soft-deleted) and only messages from `source_type = 'gmail'`
+  sources. Explicit IDs must not be able to stage non-Gmail,
+  source-deleted, or dedup-hidden messages; such IDs are silently dropped
+  from the result (they contribute to neither the manifest nor
+  `message_count`).
 - Filter results and `message_ids` results are unioned and deduplicated.
 - **Empty-filter guard:** `GetGmailIDsByFilter` with a zero-value filter
   returns every message in the archive
@@ -166,7 +190,16 @@ Handler tests in `internal/api` following the established
 - cancel: happy path, 404 unknown, 409 for each non-cancellable status,
   traversal ID → 400
 
-Engine tests for `GetGmailIDsByMessageIDs` (SQLite + Parquet paths).
+Engine tests:
+
+- `GetGmailIDsByFilter`: coverage for every supported filter field on
+  both the SQLite path and the DuckDB Parquet fallback, including the new
+  `After`/`Before` support (boundary dates, after-only, before-only,
+  combined with other fields).
+- `GetGmailIDsByMessageIDs` (SQLite + Parquet paths): happy path, and the
+  constraint contract — IDs of non-Gmail-source, remote-deleted, and
+  dedup-soft-deleted messages are silently dropped.
+
 Manifest round-trip test for `RawFilter` (survives save/load, absent on
 old manifests).
 
@@ -178,3 +211,7 @@ exercising stage → list → cancel through a real listener.
 - Run `make api-generate` after adding routes — the OpenAPI schemas and
   generated Go client under `api/` and `pkg/client/` are committed
   artifacts (Makefile).
+- Bump `APISchemaVersion` (`internal/api/openapi.go`) from 1.1.0 to
+  **1.2.0** with a doc comment describing the new endpoints — additive
+  change, so a minor bump; the major-version compatibility gate stays
+  at 1.
