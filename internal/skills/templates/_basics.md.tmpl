@@ -1,0 +1,23 @@
+{{define "basics"}}## msgvault conventions
+
+msgvault is an offline, searchable archive of email and messages (Gmail,
+IMAP/Outlook, SMS/MMS, WhatsApp, iMessage, Teams, Messenger, Google
+Voice, calendar events). Every command in this skill is safe for
+autonomous use: none modify the archive or any external service (they
+may refresh derived caches such as the search index or analytics cache).
+
+- Commands talk to a local or remote archive daemon transparently — no
+  connection setup needed. Pass `--local` to force the local archive
+  when a remote is configured.
+- Always pass `--json` on read commands for structured output. The
+  `query` command uses `--format json` (its default) instead.
+- IDs: JSON output includes the internal numeric `id` and the
+  `source_message_id` (e.g. Gmail message ID). `show-message`,
+  `export-eml`, and `export-attachments` accept either form.
+- `list-accounts --json` shows which accounts exist; scope other
+  commands with `--account <email>`.
+- Do NOT run archive-mutating commands (`sync-full`,
+  `sync-incremental`, `add-account`, `import-mbox`, `deduplicate`,
+  `delete-staged`, `delete-deduped`, `repair-encoding`, or the
+  `embeddings` group) without explicit user direction.
+{{end}}
