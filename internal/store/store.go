@@ -700,28 +700,39 @@ func (s *Store) InitSchema() error {
 	// Legacy databases may hold duplicate (message_id, content_hash)
 	// attachment rows from the old SELECT-then-INSERT UpsertAttachment.
 	// Dedupe before creating the partial unique index that enforces
-	// idempotency going forward. Both steps are idempotent.
+	// idempotency going forward. Gated on the applied_migrations ledger:
+	// the dedupe's GROUP BY over the full attachments table is not free on
+	// a large archive, and it never finds work after the first run.
 	//
-	// Both run under runMaintenance: on a large archive the dedupe DELETE
-	// and the unique-index build over the full attachments table exceed the
-	// pool-wide 30s statement_timeout, so the maintenance escape hatch
-	// disables it for this transaction (finding S1). They share one tx so
-	// the index is built against the just-deduped table. No-op timeout reset
-	// on SQLite.
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
-			return fmt.Errorf("dedupe attachments: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
-			    ON attachments(message_id, content_hash)
-			    WHERE content_hash IS NOT NULL AND content_hash != ''
-		`); err != nil {
-			return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
-		}
-		return nil
-	}); err != nil {
+	// Both steps run under runMaintenance: on a large archive the dedupe
+	// DELETE and the unique-index build over the full attachments table
+	// exceed the pool-wide 30s statement_timeout, so the maintenance escape
+	// hatch disables it for this transaction (finding S1). They share one tx
+	// so the index is built against the just-deduped table. No-op timeout
+	// reset on SQLite.
+	attachmentsMigrated, err := s.IsMigrationApplied(migrationAttachmentsContentHashUnique)
+	if err != nil {
 		return err
+	}
+	if !attachmentsMigrated {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			if err := s.dedupeAttachmentsBeforeUniqueIndex(ctx, tx); err != nil {
+				return fmt.Errorf("dedupe attachments: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_msg_content_hash
+				    ON attachments(message_id, content_hash)
+				    WHERE content_hash IS NOT NULL AND content_hash != ''
+			`); err != nil {
+				return fmt.Errorf("create idx_attachments_msg_content_hash: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := s.MarkMigrationApplied(migrationAttachmentsContentHashUnique); err != nil {
+			return err
+		}
 	}
 
 	// Legacy databases may have idx_participants_phone as a non-unique
@@ -741,11 +752,23 @@ func (s *Store) InitSchema() error {
 	// migrations for DBs created before later columns were introduced:
 	// SQLite emits ALTER TABLE ADD COLUMN, PostgreSQL emits the equivalent
 	// ALTER TABLE ADD COLUMN IF NOT EXISTS list (including search_fts).
+	//
+	// lastModifiedColumnAdded tracks whether the last_modified ALTER
+	// actually fired, which forces the last_modified backfill below even if
+	// its ledger sentinel is present: a just-added column holds NULLs that
+	// must be stamped. Only SQLite can signal this — its ALTER errors with
+	// a duplicate-column error when the column exists, while PostgreSQL's
+	// IF NOT EXISTS form always succeeds; PG never needs the forced path
+	// because its ADD COLUMN carries DEFAULT CURRENT_TIMESTAMP, which
+	// backfills existing rows in the same statement.
+	lastModifiedColumnAdded := false
 	for _, m := range s.dialect.LegacyColumnMigrations() {
 		if _, err := s.db.Exec(m.SQL); err != nil {
 			if !s.dialect.IsDuplicateColumnError(err) {
 				return fmt.Errorf("migrate schema (%s): %w", m.Desc, err)
 			}
+		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
+			lastModifiedColumnAdded = true
 		}
 	}
 
@@ -786,16 +809,29 @@ func (s *Store) InitSchema() error {
 	// (a NULL token would never satisfy `last_modified = ?` and the row would
 	// loop "needs embedding" forever). Idempotent and portable: on a fresh
 	// DB (or PostgreSQL, whose ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP
-	// backfills automatically) no rows are NULL, so this is a no-op. Run
-	// under runMaintenance so the full-table UPDATE on a large archive is not
-	// cut off by the pool-wide statement_timeout (no-op reset on SQLite).
-	if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE messages SET last_modified = `+s.dialect.Now()+
-				` WHERE last_modified IS NULL`)
+	// backfills automatically) no rows are NULL, so this is a no-op. Gated
+	// on the applied_migrations ledger: last_modified has no index, so the
+	// UPDATE's WHERE clause is a full scan of the messages table — the
+	// dominant cost of daemon startup on a large archive — and it never
+	// finds work after the first run. Run under runMaintenance so the
+	// full-table UPDATE on a large archive is not cut off by the pool-wide
+	// statement_timeout (no-op reset on SQLite).
+	lastModifiedMigrated, err := s.IsMigrationApplied(migrationMessagesLastModifiedBackfill)
+	if err != nil {
 		return err
-	}); err != nil {
-		return fmt.Errorf("backfill last_modified: %w", err)
+	}
+	if !lastModifiedMigrated || lastModifiedColumnAdded {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx,
+				`UPDATE messages SET last_modified = `+s.dialect.Now()+
+					` WHERE last_modified IS NULL`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("backfill last_modified: %w", err)
+		}
+		if err := s.MarkMigrationApplied(migrationMessagesLastModifiedBackfill); err != nil {
+			return err
+		}
 	}
 
 	// Create FTS indexes that depend on columns just added by the legacy
