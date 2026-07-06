@@ -95,6 +95,8 @@ var manifestExcluded = []string{"vectors.db", "analytics/", "logs/", "imports/",
 // App implements backup.App for msgvault.
 type App struct{ version string }
 
+var _ backup.App = (*App)(nil)
+
 // New returns an App recording version as the manifest's app version.
 func New(version string) *App { return &App{version: version} }
 
