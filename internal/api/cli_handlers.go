@@ -1429,8 +1429,17 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore) string {
 
 func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore) {
 	defer s.ftsEnsureRunning.Store(false)
+	// The probe runs outside the operation gate, so a rebuild-fts can clear
+	// and repopulate the index while it scans. A "complete" observation is
+	// only memoized if no rebuild invalidated the index in the meantime;
+	// otherwise it is discarded and the next search re-triggers the worker.
+	// The backfill path below needs no generation check: it re-probes and
+	// backfills under the gate, serialized with rebuilds.
+	rebuildGen := s.ftsRebuildGen.Load()
 	if !s.probeFTSBackfillNeeded(cliStore) {
-		s.ftsIndexComplete.Store(true)
+		if s.ftsRebuildGen.Load() == rebuildGen {
+			s.ftsIndexComplete.Store(true)
+		}
 		s.ftsIndexState.Store("")
 		return
 	}
@@ -1511,7 +1520,10 @@ func (s *Server) handleCLIRebuildFTS(w http.ResponseWriter, _ *http.Request) {
 	// search re-probes (and serializes behind this POST via the operation
 	// gate) instead of trusting a stale "complete" cache while the index is
 	// mid-rebuild or left incomplete by a failed rebuild. Only a successful
-	// rebuild re-sets the flag.
+	// rebuild re-sets the flag. The generation bump makes an in-flight
+	// ensure worker discard a probe result observed before this
+	// invalidation (its probe runs outside the gate).
+	s.ftsRebuildGen.Add(1)
 	s.ftsIndexComplete.Store(false)
 
 	var writeErr error
