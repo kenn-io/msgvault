@@ -42,18 +42,21 @@ func TestChangelogSkipsDocumentationOnlyChanges(t *testing.T) {
 
 	for _, dir := range []string{repo, filepath.Join(repo, "scripts")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
 			cmd := exec.Command("bash", scriptPath, "NEXT", "v0.1.0")
 			cmd.Dir = dir
 			cmd.Env = envWithPath(binDir + string(os.PathListSeparator) + os.Getenv("PATH"))
 			output, err := cmd.CombinedOutput()
-			require.NoError(t, err, string(output))
+			require.NoError(err, string(output))
 
 			text := string(output)
-			assert.Contains(t, text, "Add deletion staging endpoints")
-			assert.Contains(t, text, "internal/api/deletions.go")
-			assert.NotContains(t, text, "docs: expand release documentation")
-			assert.NotContains(t, text, "docs/usage.md")
-			assert.NotContains(t, text, "README.md")
+			assert.Contains(text, "Add deletion staging endpoints")
+			assert.Contains(text, "internal/api/deletions.go")
+			assert.NotContains(text, "docs: expand release documentation")
+			assert.NotContains(text, "docs/usage.md")
+			assert.NotContains(text, "README.md")
 		})
 	}
 }
