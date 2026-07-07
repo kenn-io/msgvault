@@ -35,6 +35,10 @@ type gmailIDsByMessageIDsResolver interface {
 	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
 }
 
+type accountsByGmailIDsResolver interface {
+	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
+}
+
 // GetGmailIDsByMessageIDs forwards the optional deletion-staging resolver
 // capability through the PostgreSQL wrapper. pgEngine intentionally embeds only
 // Engine to hide SQLite-only TextEngine methods, so optional methods that are
@@ -45,6 +49,17 @@ func (e *pgEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]
 		return nil, ErrNotImplemented
 	}
 	return resolver.GetGmailIDsByMessageIDs(ctx, ids)
+}
+
+// GetAccountsByGmailIDs forwards the optional deletion-staging account
+// resolver capability through the PostgreSQL wrapper, for the same reason
+// as GetGmailIDsByMessageIDs above.
+func (e *pgEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	resolver, ok := e.Engine.(accountsByGmailIDsResolver)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	return resolver.GetAccountsByGmailIDs(ctx, gmailIDs)
 }
 
 // NewPostgreSQLEngine creates a query engine backed by PostgreSQL. The engine

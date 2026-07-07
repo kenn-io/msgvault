@@ -22,6 +22,10 @@ type gmailIDsByMessageIDsResolver interface {
 	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
 }
 
+type accountsByGmailIDsResolver interface {
+	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
+}
+
 // TestQueryEngine_PostgresPortability exercises the three SQL shapes
 // the external review flagged as failing on PostgreSQL:
 //
@@ -155,6 +159,20 @@ func TestNewEnginePostgresSatisfiesGmailIDsByMessageIDsResolver(t *testing.T) {
 	ids, err := resolver.GetGmailIDsByMessageIDs(context.Background(), nil)
 	require.NoError(err, "empty input should not need a backend query")
 	assert.Empty(ids)
+}
+
+func TestNewEnginePostgresSatisfiesAccountsByGmailIDsResolver(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	eng := query.NewEngine(st.DB(), true)
+
+	resolver, ok := eng.(accountsByGmailIDsResolver)
+	require.True(ok, "PostgreSQL engine should expose the deletion account resolver")
+	accounts, err := resolver.GetAccountsByGmailIDs(context.Background(), nil)
+	require.NoError(err, "empty input should not need a backend query")
+	assert.Empty(accounts)
 }
 
 // TestQueryEngine_CaseInsensitiveSearch_Subject verifies that
