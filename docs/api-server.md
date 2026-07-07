@@ -224,11 +224,11 @@ use for message-type filtering when you do not need full-text ranking.
 The companion `GET /api/v1/messages/gmail-ids` endpoint returns matching Gmail
 source message IDs for email workflows such as deletion staging. It honors a
 subset of these parameters: `sender` / `sender_name`, `recipient` /
-`recipient_name`, `domain`, `label`, `source_id`, and `limit`. Results are
-always restricted to Gmail sources, exclude deleted messages, and are ordered
-newest-first; the remaining `/messages/filter` parameters (`message_type`,
-`conversation_id`, `after` / `before`, `attachments_only`, `hide_deleted`,
-`offset`, `sort`, `direction`) are ignored.
+`recipient_name`, `domain`, `label`, `source_id`, `after` / `before`, and
+`limit`. Results are always restricted to Gmail sources, exclude deleted
+messages, and are ordered newest-first; the remaining `/messages/filter`
+parameters (`message_type`, `conversation_id`, `attachments_only`,
+`hide_deleted`, `offset`, `sort`, `direction`) are ignored.
 
 ---
 
@@ -632,6 +632,114 @@ Scheduler state and per-account schedule details.
       "schedule": "0 * * * *"
     }
   ]
+}
+```
+
+---
+
+### Stage messages for deletion {#post-apiv1deletions}
+
+**Endpoint:** `POST /api/v1/deletions`
+
+Stages messages for deletion by writing a pending deletion manifest. The
+server resolves matching Gmail IDs from a filter and/or an explicit list of
+internal message IDs (as returned by `/messages` and `/search`), unions and
+deduplicates them. Staging never touches Gmail — execution remains exclusively
+the `delete-staged` command.
+
+**Request:**
+
+```json
+{
+  "filter": {
+    "sender": "newsletter@example.com",
+    "source_id": 1,
+    "after": "2019-01-01",
+    "before": "2020-01-01"
+  },
+  "message_ids": [123, 456],
+  "description": "old newsletters",
+  "dry_run": false
+}
+```
+
+Supported `filter` fields: `sender`, `sender_name`, `recipient`,
+`recipient_name`, `domain`, `label` (strings), `source_id` (integer), and
+`after` / `before` (RFC3339 or `YYYY-MM-DD` dates). At least one filter
+criterion or `message_ids` entry is required — requests with no criteria are
+rejected with `400 empty_filter`, so the entire archive cannot be staged.
+Unknown JSON fields are rejected with `400 invalid_request` so a typo'd
+filter key cannot silently widen the selection. Resolution is always
+restricted to live Gmail-source messages; deleted and non-Gmail message IDs
+are silently dropped.
+
+With `"dry_run": true` the server resolves and counts without staging
+anything, returning `200`:
+
+```json
+{
+  "dry_run": true,
+  "message_count": 1234,
+  "sample_gmail_ids": ["18c2f5a1b2c3d4e5", "..."]
+}
+```
+
+Otherwise a pending manifest is written and `201` returned:
+
+```json
+{
+  "dry_run": false,
+  "message_count": 1234,
+  "id": "20260706-153000-old-newsletters-a1b2",
+  "status": "pending"
+}
+```
+
+Criteria that match nothing return `400 no_messages_matched`.
+
+---
+
+### List staged deletions {#get-apiv1deletions}
+
+**Endpoint:** `GET /api/v1/deletions`
+
+Lists deletion manifests, newest first. The optional `status` parameter
+filters by one of `pending`, `in_progress`, `completed`, `failed`, or
+`cancelled`; omitting it returns all statuses.
+
+**Response:**
+
+```json
+{
+  "manifests": [
+    {
+      "id": "20260706-153000-old-newsletters-a1b2",
+      "status": "pending",
+      "created_at": "2026-07-06T15:30:00Z",
+      "created_by": "api",
+      "description": "old newsletters",
+      "message_count": 1234
+    }
+  ]
+}
+```
+
+---
+
+### Cancel a staged deletion {#delete-apiv1deletionsid}
+
+**Endpoint:** `DELETE /api/v1/deletions/{id}`
+
+Cancels (unstages) a pending or in-progress deletion manifest. Returns `404`
+for an unknown manifest ID and `409 not_cancellable` for manifests that are
+already completed, failed, or cancelled.
+
+**Response:**
+
+```json
+{
+  "id": "20260706-153000-old-newsletters-a1b2",
+  "status": "cancelled"
 }
 ```
 

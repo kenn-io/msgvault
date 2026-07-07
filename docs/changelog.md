@@ -7,7 +7,14 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-No notable changes yet.
+**New features**
+
+- Deletion staging endpoints on the HTTP API (schema 1.2.0):
+  `POST /api/v1/deletions` stages messages by filter and/or message IDs with
+  server-side Gmail-ID resolution and a `dry_run` preview,
+  `GET /api/v1/deletions` lists staged manifests by status, and
+  `DELETE /api/v1/deletions/{id}` cancels a pending or in-progress manifest.
+  Execution still happens only through `delete-staged`.
 
 ---
 
