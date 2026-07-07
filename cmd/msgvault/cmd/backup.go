@@ -315,6 +315,41 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 	return runBackupCreateLocal(cmd)
 }
 
+// backupExtrasSpec builds the msgvault extras selection for the generic
+// backup engine: the deletions directory always rides along; config.toml and
+// the tokens directory plus client-secret files are opt-in and marked
+// sensitive. The flag-named plaintext guard lives here so users see their
+// CLI flags in the error; the engine's own sensitive-source guard is the
+// backstop.
+func backupExtrasSpec() (backup.ExtrasSpec, error) {
+	if (backupCreateIncludeConfig || backupCreateIncludeTokens) && !backupCreateAllowPlaintextSecrets {
+		var flag string
+		switch {
+		case backupCreateIncludeConfig && backupCreateIncludeTokens:
+			flag = "--include-config/--include-tokens"
+		case backupCreateIncludeConfig:
+			flag = "--include-config"
+		default:
+			flag = "--include-tokens"
+		}
+		return backup.ExtrasSpec{}, fmt.Errorf(
+			"%s requires an encrypted repository (use --allow-plaintext-secrets to override)", flag)
+	}
+	spec := backup.ExtrasSpec{Dirs: []backup.ExtrasDirSpec{{Name: "deletions"}}}
+	if backupCreateIncludeConfig {
+		if cfgPath := cfg.ConfigFilePath(); cfgPath != "" {
+			spec.Files = append(spec.Files, backup.ExtrasFileSpec{
+				Path: cfgPath, RecordAs: "config.toml", Sensitive: true,
+			})
+		}
+	}
+	if backupCreateIncludeTokens {
+		spec.Dirs = append(spec.Dirs, backup.ExtrasDirSpec{Name: "tokens", Sensitive: true})
+		spec.Globs = append(spec.Globs, backup.ExtrasGlobSpec{Pattern: "client_secret*.json", Sensitive: true})
+	}
+	return spec, nil
+}
+
 func runBackupCreateLocal(cmd *cobra.Command) error {
 	repo, err := resolveBackupRepo(backupCreateRepo)
 	if err != nil {
@@ -347,11 +382,15 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), mode)
 	defer renderer.finish()
 
+	extras, err := backupExtrasSpec()
+	if err != nil {
+		return err
+	}
 	m, err := backup.Create(cmd.Context(), r, backupapp.New(Version), backup.CreateOptions{
 		DBPath:                dbPath,
 		ContentDir:            cfg.AttachmentsDir(),
 		DataDir:               cfg.Data.DataDir,
-		ConfigPath:            cfg.ConfigFilePath(),
+		Extras:                extras,
 		IncludeConfig:         backupCreateIncludeConfig,
 		IncludeTokens:         backupCreateIncludeTokens,
 		AllowPlaintextSecrets: backupCreateAllowPlaintextSecrets,
