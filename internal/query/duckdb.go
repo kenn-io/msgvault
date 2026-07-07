@@ -2167,7 +2167,9 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 
 // GetGmailIDsByMessageIDs returns Gmail message IDs for internal message
 // IDs, enforcing the same live-message and Gmail-source constraints as
-// GetGmailIDsByFilter. Non-qualifying IDs are silently dropped.
+// GetGmailIDsByFilter. Non-qualifying IDs are silently dropped. The
+// lookup is chunked so large explicit selections stay under
+// bind-parameter limits.
 func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
 	// Delegate to SQLite for authoritative deletion status.
 	if e.sqliteEngine != nil {
@@ -2179,6 +2181,10 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	return gmailIDsByMessageIDsChunked(ctx, ids, e.gmailIDsForMessageIDChunk)
+}
+
+func (e *DuckDBEngine) gmailIDsForMessageIDChunk(ctx context.Context, ids []int64) ([]gmailIDRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -2187,11 +2193,10 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	}
 	query := fmt.Sprintf(`
 		WITH %s
-		SELECT msg.source_message_id
+		SELECT msg.source_message_id, msg.sent_at, msg.id
 		FROM msg
 		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
 		WHERE %s AND msg.id IN (%s)
-		ORDER BY msg.sent_at DESC, msg.id DESC
 	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
 
 	rows, err := e.db.QueryContext(ctx, query, args...)
@@ -2200,7 +2205,7 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return collectGmailIDs(rows)
+	return collectGmailIDRows(rows)
 }
 
 // GetAccountsByGmailIDs returns the distinct Gmail account identifiers

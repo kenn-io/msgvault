@@ -3589,6 +3589,25 @@ func TestDuckDBEngine_GetGmailIDsByMessageIDs(t *testing.T) {
 	assertSetEqual(t, ids, []string{"msg1", "msg2"})
 }
 
+func TestDuckDBEngine_GetGmailIDsByMessageIDs_ChunkedLargeSelection(t *testing.T) {
+	ctx := context.Background()
+	parquet := newParquetEngine(t)
+
+	// More IDs than one lookup chunk; the real IDs sit in the first and
+	// last chunk so the merge proves cross-chunk newest-first ordering
+	// (msg5 is newer than msg1) on the Parquet path.
+	ids := make([]int64, 0, 1200)
+	ids = append(ids, 1)
+	for next := int64(1_000_000); len(ids) < 1199; next++ {
+		ids = append(ids, next)
+	}
+	ids = append(ids, 5)
+
+	gmailIDs, err := parquet.GetGmailIDsByMessageIDs(ctx, ids)
+	require.NoError(t, err, "chunked parquet lookup")
+	assert.Equal(t, []string{"msg5", "msg1"}, gmailIDs, "newest-first across chunks")
+}
+
 func TestDuckDBEngine_GetAccountsByGmailIDs(t *testing.T) {
 	require := require.New(t)
 

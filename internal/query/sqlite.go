@@ -1420,11 +1420,16 @@ func (e *SQLiteEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 // as GetGmailIDsByFilter: only live messages (LiveMessagesWhere — not
 // remote-deleted, not dedup-soft-deleted) from Gmail sources.
 // Non-qualifying IDs are silently dropped, mirroring
-// GetMessageSummariesByIDs semantics.
+// GetMessageSummariesByIDs semantics. The lookup is chunked so large
+// explicit selections stay under the backend's bind-parameter limit.
 func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	return gmailIDsByMessageIDsChunked(ctx, ids, e.gmailIDsForMessageIDChunk)
+}
+
+func (e *SQLiteEngine) gmailIDsForMessageIDChunk(ctx context.Context, ids []int64) ([]gmailIDRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -1432,11 +1437,10 @@ func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 		args[i] = id
 	}
 	query := fmt.Sprintf(`
-		SELECT m.source_message_id
+		SELECT m.source_message_id, m.sent_at, m.id
 		FROM messages m
 		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type = 'gmail'
 		WHERE %s AND m.id IN (%s)
-		ORDER BY m.sent_at DESC, m.id DESC
 	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
 
 	rows, err := e.queryContext(ctx, query, args...)
@@ -1445,18 +1449,19 @@ func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return collectGmailIDs(rows)
+	return collectGmailIDRows(rows)
 }
 
-// accountLookupChunkSize bounds the IN-list size per account-resolution
-// query. Deletion staging feeds the FULL resolved Gmail-ID set into
-// GetAccountsByGmailIDs, which can exceed the SQLite bind-parameter limit
-// (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default) for broad selections.
-// 500 stays well under every backend's limit.
-const accountLookupChunkSize = 500
+// inListChunkSize bounds the IN-list size per deletion-staging lookup.
+// Staging feeds full resolved Gmail-ID sets into GetAccountsByGmailIDs
+// and full explicit selections into GetGmailIDsByMessageIDs, either of
+// which can exceed the SQLite bind-parameter limit
+// (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default). 500 stays well under
+// every backend's limit.
+const inListChunkSize = 500
 
 // accountsByGmailIDsChunked runs queryChunk over gmailIDs in
-// accountLookupChunkSize batches and returns the union of accounts,
+// inListChunkSize batches and returns the union of accounts,
 // deduplicated and sorted ascending.
 func accountsByGmailIDsChunked(
 	ctx context.Context,
@@ -1464,8 +1469,8 @@ func accountsByGmailIDsChunked(
 	queryChunk func(ctx context.Context, chunk []string) ([]string, error),
 ) ([]string, error) {
 	seen := make(map[string]struct{})
-	for start := 0; start < len(gmailIDs); start += accountLookupChunkSize {
-		end := min(start+accountLookupChunkSize, len(gmailIDs))
+	for start := 0; start < len(gmailIDs); start += inListChunkSize {
+		end := min(start+inListChunkSize, len(gmailIDs))
 		accounts, err := queryChunk(ctx, gmailIDs[start:end])
 		if err != nil {
 			return nil, err

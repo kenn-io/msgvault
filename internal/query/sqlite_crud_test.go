@@ -1387,6 +1387,30 @@ func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
 }
 
+func TestGetGmailIDsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// 33k IDs exceed SQLITE_MAX_VARIABLE_NUMBER (32766) as a single IN
+	// list, so an unchunked lookup fails with "too many SQL variables".
+	// The real IDs sit in the first and last chunk — with a duplicate of
+	// the first — so the merge proves cross-chunk newest-first ordering
+	// (msg5 is newer than msg1) and input dedupe.
+	ids := make([]int64, 0, 33001)
+	ids = append(ids, 1)
+	for next := int64(1_000_000); len(ids) < 32999; next++ {
+		ids = append(ids, next)
+	}
+	ids = append(ids, 5, 1)
+
+	gmailIDs, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, ids)
+	require.NoError(err, "large selection must stay under bind-parameter limits")
+	assert.Equal([]string{"msg5", "msg1"}, gmailIDs,
+		"newest-first order restored across chunks; duplicate input deduped")
+}
+
 func TestGetAccountsByGmailIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
