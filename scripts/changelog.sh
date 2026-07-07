@@ -11,6 +11,7 @@ VERSION="${1:-NEXT}"
 START_TAG="$2"
 EXTRA_INSTRUCTIONS="$3"
 AGENT="${CHANGELOG_AGENT:-codex}"
+REPO_ROOT=$(git rev-parse --show-toplevel)
 CHANGELOG_PATHS=(
     .
     ':(exclude)docs/**'
@@ -27,10 +28,10 @@ if [ -n "$START_TAG" ] && [ "$START_TAG" != "-" ]; then
     echo "Generating changelog from $START_TAG to HEAD..." >&2
 else
     # Auto-detect previous tag
-    PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    PREV_TAG=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || echo "")
     if [ -z "$PREV_TAG" ]; then
         # No previous tag, use first commit
-        FIRST_COMMIT=$(git rev-list --max-parents=0 HEAD)
+        FIRST_COMMIT=$(git -C "$REPO_ROOT" rev-list --max-parents=0 HEAD)
         RANGE="$FIRST_COMMIT..HEAD"
         RANGE_LABEL="$FIRST_COMMIT"
         echo "No previous release found. Generating changelog for all commits..." >&2
@@ -43,8 +44,8 @@ fi
 
 # Get commit log for changelog generation. Documentation-only changes are
 # intentionally excluded from release-note material.
-COMMITS=$(git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges -- "${CHANGELOG_PATHS[@]}")
-DIFF_STAT=$(git diff --stat "$RANGE" -- "${CHANGELOG_PATHS[@]}")
+COMMITS=$(git -C "$REPO_ROOT" log "$RANGE" --pretty=format:"- %s (%h)" --no-merges -- "${CHANGELOG_PATHS[@]}")
+DIFF_STAT=$(git -C "$REPO_ROOT" diff --stat "$RANGE" -- "${CHANGELOG_PATHS[@]}")
 
 if [ -z "$COMMITS" ]; then
     echo "No non-documentation commits since $RANGE_LABEL" >&2
