@@ -29,6 +29,28 @@ You can also stage deletions through the [MCP server](/usage/chat/) by asking an
 
 The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [MCP Server](/usage/chat/#staged-deletion-via-mcp) for details.
 
+## Staging via HTTP API
+
+Web dashboards and automation scripts can stage deletion manifests through the
+[web API](/api-server/#post-apiv1deletions) without constructing a manifest
+themselves. `POST /api/v1/deletions` accepts structured filters and/or
+internal message IDs, resolves the Gmail IDs on the server, and supports
+`"dry_run": true` to preview the count and a sample before writing anything.
+
+The API can also list and cancel staged manifests:
+
+```bash
+curl -H "Authorization: Bearer $MSGVAULT_API_KEY" \
+  http://localhost:8080/api/v1/deletions
+
+curl -X DELETE -H "Authorization: Bearer $MSGVAULT_API_KEY" \
+  http://localhost:8080/api/v1/deletions/20260706-153000-old-newsletters-a1b2
+```
+
+API staging still only creates or cancels local manifests. Remote deletion
+continues to require the explicit `delete-staged` execution step and the
+`MSGVAULT_ENABLE_REMOTE_DELETE=1` guard.
+
 ## Staging Steps
 
 **From the TUI:**
@@ -43,6 +65,12 @@ The MCP `stage_deletion` tool creates a manifest through the selected daemon, th
 1. Ask the assistant to stage messages matching your criteria
 2. The assistant calls `stage_deletion`, which creates a pending manifest
 3. Review with `msgvault delete-staged --list` or `msgvault show-deletion <batch-id>`
+
+**From the HTTP API:**
+
+1. Send a dry-run `POST /api/v1/deletions` request to confirm the selection
+2. Send the same request without `dry_run` to create a pending manifest
+3. Review with `GET /api/v1/deletions` or the CLI commands above
 
 ## Selection Keys
 

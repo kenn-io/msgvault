@@ -7,6 +7,13 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+No notable changes yet.
+
+---
+
+## 0.17.1
+<small>2026-07-06</small>
+
 **New features**
 
 - Deletion staging endpoints on the HTTP API (schema 1.2.0):
@@ -15,6 +22,43 @@ All notable changes to msgvault, grouped by release.
   `GET /api/v1/deletions` lists staged manifests by status, and
   `DELETE /api/v1/deletions/{id}` cancels a pending or in-progress manifest.
   Execution still happens only through `delete-staged`.
+- The generated Go client includes deletion staging support through
+  `StageDeletion`, including both dry-run (`200`) and create (`201`)
+  responses.
+- `msgvault search` now reports full-text index readiness while the daemon is
+  checking or rebuilding the CLI search index, with long-running searches
+  showing the daemon activity they are waiting on.
+
+**Improvements**
+
+- CLI search no longer waits for the full-text index completeness probe or
+  backfill before returning results. Index checks and backfills run in the
+  background, and responses identify when results may be incomplete until the
+  index catches up.
+- SQLite archives now index deletion timestamps so daemon cold starts avoid
+  full-table deletion checks while deciding whether the analytics cache is
+  stale.
+- Automated dependency updates now use Renovate, and project dependencies were
+  refreshed.
+
+**Bug fixes**
+
+- IMAP UID enumeration now constrains searches to fetchable UID ranges and
+  raw fetches no longer depend on fragile `ENVELOPE` parsing, improving
+  robustness on servers such as iCloud IMAP.
+- API-staged deletion manifests now reject empty or unknown filter input,
+  enforce single-account selections, record the raw staging request, and avoid
+  same-second manifest ID collisions.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for the deletion staging
+  API and client support, non-blocking CLI search status reporting, deletion
+  timestamp indexes, and dependency refresh.
+- Thanks to [Tim Kersten](https://github.com/io41) for the IMAP UID
+  enumeration and raw-fetch robustness fixes.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for
+  migrating automated dependency updates to Renovate.
 
 ---
 

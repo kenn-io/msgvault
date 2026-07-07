@@ -10,7 +10,11 @@ msgvault search <query>
 ```
 
 !!! note
-    The full-text search index (FTS5) is populated automatically during sync. If you upgraded from an older version of msgvault that did not include FTS5, the index will be backfilled automatically the first time you run a search, launch the TUI, or start the MCP server.
+    The full-text search index (FTS5) is populated automatically during sync.
+    If an older archive needs an index backfill, msgvault checks and rebuilds
+    the index in the background. Search returns immediately from the index as
+    it exists now and reports when results may be incomplete while the daemon
+    is still checking or building.
 
 ## Search Operators
 
