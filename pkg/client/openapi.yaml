@@ -1857,6 +1857,8 @@ components:
       type: object
     StageDeletionResponse:
       properties:
+        account:
+          type: string
         dry_run:
           type: boolean
         id:

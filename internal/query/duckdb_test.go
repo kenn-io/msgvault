@@ -3588,3 +3588,24 @@ func TestDuckDBEngine_GetGmailIDsByMessageIDs(t *testing.T) {
 	require.NoError(t, err, "sqlite delegation path")
 	assertSetEqual(t, ids, []string{"msg1", "msg2"})
 }
+
+func TestDuckDBEngine_GetAccountsByGmailIDs(t *testing.T) {
+	ctx := context.Background()
+
+	// Parquet fallback path (no SQLite engine attached).
+	parquet := newParquetEngine(t)
+	accounts, err := parquet.GetAccountsByGmailIDs(ctx, []string{"msg1", "msg2", "does-not-exist"})
+	require.NoError(t, err, "parquet path")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
+
+	// SQLite delegation path.
+	sqlited := newSQLiteEngine(t)
+	accounts, err = sqlited.GetAccountsByGmailIDs(ctx, []string{"msg1", "msg2", "does-not-exist"})
+	require.NoError(t, err, "sqlite delegation path")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
+
+	// Empty input short-circuits.
+	accounts, err = parquet.GetAccountsByGmailIDs(ctx, nil)
+	require.NoError(t, err, "empty input")
+	assert.Empty(t, accounts)
+}

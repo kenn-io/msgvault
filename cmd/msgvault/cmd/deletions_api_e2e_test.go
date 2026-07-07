@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -68,7 +69,15 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	var staged api.StageDeletionResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&staged), "decode stage response")
 	assert.Equal(1, staged.MessageCount)
+	assert.Equal("alice@example.com", staged.Account, "resolved account reported")
 	require.NotEmpty(staged.ID, "manifest id")
+
+	// The persisted manifest must carry the account delete-staged
+	// executes against.
+	adapter := &storeAPIAdapter{store: s}
+	persisted, _, err := adapter.GetDeletionManifest(context.Background(), staged.ID)
+	require.NoError(err, "load persisted manifest")
+	assert.Equal("alice@example.com", persisted.Filters.Account, "manifest account")
 
 	// List pending — the staged manifest appears.
 	listResp, err := http.Get(httpSrv.URL + "/api/v1/deletions?status=pending")

@@ -673,6 +673,13 @@ filter key cannot silently widen the selection. Resolution is always
 restricted to live Gmail-source messages; deleted and non-Gmail message IDs
 are silently dropped.
 
+A staged manifest executes against a single mailbox, so the selection must
+resolve to exactly one Gmail account. The resolved account is stamped on the
+manifest (`delete-staged` uses it to pick the mailbox) and reported in the
+response; selections spanning multiple accounts are rejected with
+`400 multi_account_selection` — scope the request with `filter.source_id` or
+stage per account.
+
 With `"dry_run": true` the server resolves and counts without staging
 anything, returning `200`:
 
@@ -680,6 +687,7 @@ anything, returning `200`:
 {
   "dry_run": true,
   "message_count": 1234,
+  "account": "you@gmail.com",
   "sample_gmail_ids": ["18c2f5a1b2c3d4e5", "..."]
 }
 ```
@@ -690,6 +698,7 @@ Otherwise a pending manifest is written and `201` returned:
 {
   "dry_run": false,
   "message_count": 1234,
+  "account": "you@gmail.com",
   "id": "20260706-153000-old-newsletters-a1b2",
   "status": "pending"
 }

@@ -24,6 +24,15 @@ type deletionMessageIDResolver interface {
 	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
 }
 
+// deletionAccountResolver is the optional engine capability for mapping
+// staged Gmail IDs back to their owning account. Staging requires it:
+// delete-staged executes a manifest against a single mailbox chosen via
+// Manifest.Filters.Account, so every staged manifest must carry exactly
+// one account.
+type deletionAccountResolver interface {
+	GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error)
+}
+
 // DeletionManifestLister lists staged deletion manifests. Implemented by
 // the serve daemon's store adapter; status "" means all statuses.
 type DeletionManifestLister interface {
@@ -98,6 +107,7 @@ type StageDeletionRequest struct {
 type StageDeletionResponse struct {
 	DryRun         bool     `json:"dry_run"`
 	MessageCount   int      `json:"message_count"`
+	Account        string   `json:"account,omitempty"`
 	SampleGmailIDs []string `json:"sample_gmail_ids,omitempty"`
 	ID             string   `json:"id,omitempty"`
 	Status         string   `json:"status,omitempty"`
@@ -162,6 +172,12 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	account, httpErr := s.resolveStageDeletionAccount(r.Context(), gmailIDs)
+	if httpErr != nil {
+		writeAPIHTTPError(w, httpErr)
+		return
+	}
+
 	if req.DryRun {
 		sample := gmailIDs
 		if len(sample) > stageDeletionSampleSize {
@@ -170,6 +186,7 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, StageDeletionResponse{
 			DryRun:         true,
 			MessageCount:   len(gmailIDs),
+			Account:        account,
 			SampleGmailIDs: sample,
 		})
 		return
@@ -182,6 +199,11 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	manifest := deletion.NewManifest(description, gmailIDs)
 	manifest.CreatedBy = "api"
 	manifest.Filters = manifestFiltersFromRequest(req.Filter)
+	// delete-staged selects the mailbox to execute against from
+	// Filters.Account; without it an API-staged manifest cannot be
+	// executed (or worse, could be forced onto the wrong account with
+	// --account).
+	manifest.Filters.Account = account
 	raw, err := json.Marshal(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request is not serializable")
@@ -196,9 +218,40 @@ func (s *Server) handleStageDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, StageDeletionResponse{
 		MessageCount: len(gmailIDs),
+		Account:      account,
 		ID:           manifest.ID,
 		Status:       string(manifest.Status),
 	})
+}
+
+// resolveStageDeletionAccount maps the staged Gmail IDs to their owning
+// account and requires exactly one: deletion manifests execute against a
+// single mailbox, so selections spanning multiple Gmail accounts must be
+// split into per-account requests (e.g. scoped with filter.source_id).
+func (s *Server) resolveStageDeletionAccount(ctx context.Context, gmailIDs []string) (string, *apiHTTPError) {
+	resolver, ok := s.engine.(deletionAccountResolver)
+	if !ok {
+		return "", newAPIHTTPError(http.StatusServiceUnavailable, "engine_unavailable",
+			"deletion staging is not supported by this query engine")
+	}
+	accounts, err := resolver.GetAccountsByGmailIDs(ctx, gmailIDs)
+	if err != nil {
+		s.logger.Error("stage deletion account resolution failed", "error", err)
+		return "", newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Account resolution failed")
+	}
+	switch len(accounts) {
+	case 1:
+		return accounts[0], nil
+	case 0:
+		// The IDs were just resolved from live Gmail messages, so an
+		// empty account set means the archive changed underneath us.
+		return "", newAPIHTTPError(http.StatusConflict, "account_resolution_conflict",
+			"Staged messages no longer resolve to a Gmail account; retry the request")
+	default:
+		return "", newAPIHTTPError(http.StatusBadRequest, "multi_account_selection",
+			fmt.Sprintf("selection spans multiple Gmail accounts (%s); deletion manifests execute against a single mailbox — scope the request with filter.source_id or stage per account",
+				strings.Join(accounts, ", ")))
+	}
 }
 
 // resolveStageDeletionIDs unions filter-resolved and explicitly listed

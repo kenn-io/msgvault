@@ -1639,6 +1639,7 @@ func (s StageDeletionRequest) Validate() error {
 }
 
 type StageDeletionResponse struct {
+	Account        *string  `json:"account,omitempty"`
 	DryRun         bool     `json:"dry_run"`
 	ID             *string  `json:"id,omitempty"`
 	MessageCount   int64    `json:"message_count"`

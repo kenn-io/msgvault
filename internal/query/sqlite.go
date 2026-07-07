@@ -1447,6 +1447,40 @@ func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	return collectGmailIDs(rows)
 }
 
+// GetAccountsByGmailIDs returns the distinct Gmail account identifiers
+// owning live messages with the given Gmail IDs (source_message_id),
+// sorted ascending. Deletion staging uses this to stamp the manifest
+// with its account and to reject selections spanning multiple accounts,
+// since delete-staged executes a manifest against a single mailbox.
+func (e *SQLiteEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	if len(gmailIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(gmailIDs))
+	args := make([]any, len(gmailIDs))
+	for i, id := range gmailIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT s.identifier
+		FROM sources s
+		WHERE s.source_type = 'gmail' AND EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.source_id = s.id AND %s AND m.source_message_id IN (%s)
+		)
+		ORDER BY s.identifier
+	`, store.LiveMessagesWhere("m", true), strings.Join(placeholders, ","))
+
+	rows, err := e.queryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get accounts by gmail ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDs(rows)
+}
+
 // SearchByDomains returns messages where any participant (from, to, cc, or bcc)
 // belongs to one of the given domains. Uses the shared executeSearchQuery
 // path so results carry the same fields as Search/SearchFast (including

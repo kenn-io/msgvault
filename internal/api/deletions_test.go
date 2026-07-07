@@ -91,6 +91,7 @@ func TestStageDeletionByFilter(t *testing.T) {
 			gotFilter = f
 			return []string{"gm-1", "gm-2"}, nil
 		},
+		GmailAccounts: []string{"user@example.com"},
 	}
 	srv := newDeletionTestServer(t, st, engine)
 
@@ -109,6 +110,7 @@ func TestStageDeletionByFilter(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.False(resp.DryRun)
 	assert.Equal(2, resp.MessageCount)
+	assert.Equal("user@example.com", resp.Account, "resolved account reported")
 	assert.NotEmpty(resp.ID)
 	assert.Equal("pending", resp.Status)
 	assert.Empty(resp.SampleGmailIDs, "create response has no sample")
@@ -119,6 +121,8 @@ func TestStageDeletionByFilter(t *testing.T) {
 	assert.Equal([]string{"gm-1", "gm-2"}, m.GmailIDs)
 	assert.Equal([]string{"alice@example.com"}, m.Filters.Senders)
 	assert.Equal("2019-01-01", m.Filters.After)
+	assert.Equal("user@example.com", m.Filters.Account,
+		"manifest must carry the account delete-staged executes against")
 	assert.NotEmpty(m.RawFilter, "raw provenance recorded")
 }
 
@@ -132,6 +136,7 @@ func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
 			assert.Equal(t, []int64{7, 8}, ids)
 			return []string{"gm-2", "gm-3"}, nil
 		},
+		GmailAccounts: []string{"user@example.com"},
 	}
 	srv := newDeletionTestServer(t, st, engine)
 
@@ -140,6 +145,32 @@ func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
 	require.Len(t, st.saved, 1)
 	assert.Equal(t, []string{"gm-1", "gm-2", "gm-3"}, st.saved[0].GmailIDs, "union, deduped, order-preserving")
+	assert.Equal(t, "user@example.com", st.saved[0].Filters.Account, "account stamped on message-ID staging")
+}
+
+func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
+	st := &deletionMockStore{}
+	var gotGmailIDs []string
+	engine := &querytest.MockEngine{
+		GmailIDs: []string{"gm-1", "gm-2"},
+		GetAccountsByGmailIDsFunc: func(_ context.Context, gmailIDs []string) ([]string, error) {
+			gotGmailIDs = gmailIDs
+			return []string{"a@example.com", "b@example.com"}, nil
+		},
+	}
+	srv := newDeletionTestServer(t, st, engine)
+
+	for _, body := range []string{
+		`{"filter": {"domain": "example.com"}}`,
+		`{"filter": {"domain": "example.com"}, "dry_run": true}`,
+	} {
+		w := postDeletions(t, srv, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "body %s -> status", body)
+		assert.Contains(t, w.Body.String(), "multi_account_selection", "body %s -> error code", body)
+		assert.Contains(t, w.Body.String(), "a@example.com, b@example.com", "body %s -> accounts listed", body)
+	}
+	assert.Equal(t, []string{"gm-1", "gm-2"}, gotGmailIDs, "resolution queried with staged IDs")
+	assert.Empty(t, st.saved, "nothing staged across accounts")
 }
 
 func TestStageDeletionDryRun(t *testing.T) {
@@ -151,7 +182,7 @@ func TestStageDeletionDryRun(t *testing.T) {
 	for i := range ids {
 		ids[i] = "gm-" + string(rune('a'+i))
 	}
-	engine := &querytest.MockEngine{GmailIDs: ids}
+	engine := &querytest.MockEngine{GmailIDs: ids, GmailAccounts: []string{"user@example.com"}}
 	srv := newDeletionTestServer(t, st, engine)
 
 	w := postDeletions(t, srv, `{"filter": {"domain": "example.com"}, "dry_run": true}`)
@@ -161,6 +192,7 @@ func TestStageDeletionDryRun(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode")
 	assert.True(resp.DryRun)
 	assert.Equal(25, resp.MessageCount)
+	assert.Equal("user@example.com", resp.Account, "dry run reports the account")
 	assert.Len(resp.SampleGmailIDs, 10, "sample capped at 10")
 	assert.Empty(resp.ID, "dry run stages nothing")
 	assert.Empty(st.saved, "dry run writes nothing")

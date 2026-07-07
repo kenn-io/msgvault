@@ -1996,6 +1996,8 @@ components:
     StageDeletionResponse:
       additionalProperties: true
       properties:
+        account:
+          type: string
         dry_run:
           type: boolean
         id:

@@ -22,6 +22,7 @@ type MockEngine struct {
 	Accounts          []query.AccountInfo
 	AggregateRows     []query.AggregateRow
 	GmailIDs          []string
+	GmailAccounts     []string
 
 	// MessagesBySourceID maps source IDs to message details for GetMessageBySourceID.
 	// When nil, GetMessageBySourceID falls back to scanning Messages for a matching SourceMessageID.
@@ -37,6 +38,7 @@ type MockEngine struct {
 	SearchFastCountFunc          func(context.Context, *search.Query, query.MessageFilter) (int64, error)
 	GetGmailIDsByFilterFunc      func(context.Context, query.MessageFilter) ([]string, error)
 	GetGmailIDsByMessageIDsFunc  func(context.Context, []int64) ([]string, error)
+	GetAccountsByGmailIDsFunc    func(context.Context, []string) ([]string, error)
 	SearchByDomainsFunc          func(context.Context, []string, *time.Time, *time.Time, int, int) ([]query.MessageSummary, error)
 	SearchFastWithStatsFunc      func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
 	GetMessageRawFunc            func(context.Context, int64) ([]byte, error)
@@ -184,6 +186,13 @@ func (m *MockEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) (
 		return m.GetGmailIDsByMessageIDsFunc(ctx, ids)
 	}
 	return m.GmailIDs, nil
+}
+
+func (m *MockEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	if m.GetAccountsByGmailIDsFunc != nil {
+		return m.GetAccountsByGmailIDsFunc(ctx, gmailIDs)
+	}
+	return m.GmailAccounts, nil
 }
 
 func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {

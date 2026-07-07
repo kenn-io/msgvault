@@ -1386,3 +1386,53 @@ func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require.NoError(err, "resolve mixed ids")
 	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
 }
+
+func TestGetAccountsByGmailIDs(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Fixture messages all belong to the single Gmail source.
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "msg2"})
+	require.NoError(t, err, "resolve fixture accounts")
+	assert.Equal(t, []string{"test@gmail.com"}, accounts)
+
+	// Unknown IDs resolve to no account.
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"does-not-exist"})
+	require.NoError(t, err, "unknown id")
+	assert.Empty(t, accounts)
+
+	// Empty input: no query, no results.
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, nil)
+	require.NoError(t, err, "empty input")
+	assert.Empty(t, accounts)
+}
+
+func TestGetAccountsByGmailIDs_MultipleAndNonQualifying(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// Second Gmail source with a live message.
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
+	require.NoError(err, "insert second gmail source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
+	require.NoError(err, "insert second-account message")
+
+	// Non-Gmail source and a source-deleted Gmail message must not
+	// contribute accounts.
+	_, err = env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
+	require.NoError(err, "insert whatsapp source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (912, 1, 99, 'wa-1', 'whatsapp', '2024-01-06')`)
+	require.NoError(err, "insert whatsapp message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (913, 1, 98, 'gone-1', 'email', '2024-01-07', '2024-06-01')`)
+	require.NoError(err, "insert source-deleted message")
+
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "other-1", "wa-1"})
+	require.NoError(err, "resolve mixed accounts")
+	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
+		"both gmail accounts, sorted; whatsapp excluded")
+
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"gone-1", "wa-1"})
+	require.NoError(err, "resolve non-qualifying")
+	assert.Empty(accounts, "deleted and non-Gmail messages contribute no account")
+}

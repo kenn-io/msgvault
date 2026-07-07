@@ -2203,6 +2203,48 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	return collectGmailIDs(rows)
 }
 
+// GetAccountsByGmailIDs returns the distinct Gmail account identifiers
+// owning live messages with the given Gmail IDs, sorted ascending. See
+// the SQLite implementation for the deletion-staging rationale.
+func (e *DuckDBEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	// Delegate to SQLite for authoritative deletion status.
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetAccountsByGmailIDs(ctx, gmailIDs)
+	}
+	if e.analyticsDir == "" {
+		return nil, errors.New("GetAccountsByGmailIDs requires SQLite or Parquet data")
+	}
+	if len(gmailIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(gmailIDs))
+	args := make([]any, len(gmailIDs))
+	for i, id := range gmailIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	// The Parquet sources dataset exposes the account identifier as
+	// account_email (see build-cache ETL).
+	query := fmt.Sprintf(`
+		WITH %s
+		SELECT src.account_email
+		FROM src
+		WHERE COALESCE(src.source_type, 'gmail') = 'gmail' AND EXISTS (
+			SELECT 1 FROM msg
+			WHERE msg.source_id = src.id AND %s AND msg.source_message_id IN (%s)
+		)
+		ORDER BY src.account_email
+	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
+
+	rows, err := e.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get accounts by gmail ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDs(rows)
+}
+
 // HasParquetData checks if Parquet files exist and are usable.
 func HasParquetData(analyticsDir string) bool {
 	pattern := filepath.Join(analyticsDir, datasetMessages, "**", "*.parquet")
