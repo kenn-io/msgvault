@@ -1388,22 +1388,25 @@ func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 }
 
 func TestGetAccountsByGmailIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	env := newTestEnv(t)
 
 	// Fixture messages all belong to the single Gmail source.
 	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "msg2"})
-	require.NoError(t, err, "resolve fixture accounts")
-	assert.Equal(t, []string{"test@gmail.com"}, accounts)
+	require.NoError(err, "resolve fixture accounts")
+	assert.Equal([]string{"test@gmail.com"}, accounts)
 
 	// Unknown IDs resolve to no account.
 	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"does-not-exist"})
-	require.NoError(t, err, "unknown id")
-	assert.Empty(t, accounts)
+	require.NoError(err, "unknown id")
+	assert.Empty(accounts)
 
 	// Empty input: no query, no results.
 	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, nil)
-	require.NoError(t, err, "empty input")
-	assert.Empty(t, accounts)
+	require.NoError(err, "empty input")
+	assert.Empty(accounts)
 }
 
 func TestGetAccountsByGmailIDs_MultipleAndNonQualifying(t *testing.T) {

@@ -127,13 +127,16 @@ func TestStageDeletionByFilter(t *testing.T) {
 }
 
 func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	st := &deletionMockStore{}
 	engine := &querytest.MockEngine{
 		GetGmailIDsByFilterFunc: func(_ context.Context, _ query.MessageFilter) ([]string, error) {
 			return []string{"gm-1", "gm-2"}, nil
 		},
 		GetGmailIDsByMessageIDsFunc: func(_ context.Context, ids []int64) ([]string, error) {
-			assert.Equal(t, []int64{7, 8}, ids)
+			assert.Equal([]int64{7, 8}, ids)
 			return []string{"gm-2", "gm-3"}, nil
 		},
 		GmailAccounts: []string{"user@example.com"},
@@ -142,13 +145,15 @@ func TestStageDeletionByMessageIDsUnionsAndDedupes(t *testing.T) {
 
 	w := postDeletions(t, srv, `{"filter": {"sender": "alice@example.com"}, "message_ids": [7, 8]}`)
 
-	require.Equal(t, http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
-	require.Len(t, st.saved, 1)
-	assert.Equal(t, []string{"gm-1", "gm-2", "gm-3"}, st.saved[0].GmailIDs, "union, deduped, order-preserving")
-	assert.Equal(t, "user@example.com", st.saved[0].Filters.Account, "account stamped on message-ID staging")
+	require.Equal(http.StatusCreated, w.Code, "status (body: %s)", w.Body.String())
+	require.Len(st.saved, 1)
+	assert.Equal([]string{"gm-1", "gm-2", "gm-3"}, st.saved[0].GmailIDs, "union, deduped, order-preserving")
+	assert.Equal("user@example.com", st.saved[0].Filters.Account, "account stamped on message-ID staging")
 }
 
 func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
+	assert := assert.New(t)
+
 	st := &deletionMockStore{}
 	var gotGmailIDs []string
 	engine := &querytest.MockEngine{
@@ -165,12 +170,12 @@ func TestStageDeletionRejectsMultiAccountSelection(t *testing.T) {
 		`{"filter": {"domain": "example.com"}, "dry_run": true}`,
 	} {
 		w := postDeletions(t, srv, body)
-		assert.Equal(t, http.StatusBadRequest, w.Code, "body %s -> status", body)
-		assert.Contains(t, w.Body.String(), "multi_account_selection", "body %s -> error code", body)
-		assert.Contains(t, w.Body.String(), "a@example.com, b@example.com", "body %s -> accounts listed", body)
+		assert.Equal(http.StatusBadRequest, w.Code, "body %s -> status", body)
+		assert.Contains(w.Body.String(), "multi_account_selection", "body %s -> error code", body)
+		assert.Contains(w.Body.String(), "a@example.com, b@example.com", "body %s -> accounts listed", body)
 	}
-	assert.Equal(t, []string{"gm-1", "gm-2"}, gotGmailIDs, "resolution queried with staged IDs")
-	assert.Empty(t, st.saved, "nothing staged across accounts")
+	assert.Equal([]string{"gm-1", "gm-2"}, gotGmailIDs, "resolution queried with staged IDs")
+	assert.Empty(st.saved, "nothing staged across accounts")
 }
 
 func TestStageDeletionDryRun(t *testing.T) {
