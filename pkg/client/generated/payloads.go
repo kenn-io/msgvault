@@ -36,4 +36,6 @@ type AddCLIIdentityBody = AddRequest
 
 type RunCLIBody = CLIRunRequest
 
+type StageDeletionBody = StageDeletionRequest
+
 type RunQueryBody = QueryRequest

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -650,6 +651,31 @@ func TestGetGmailIDsByFilter_SenderName(t *testing.T) {
 	ids, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"})
 	require.NoError(t, err, "GetGmailIDsByFilter")
 	assert.Len(t, ids, 3, "expected 3 gmail IDs for Alice")
+}
+
+func TestGetGmailIDsByFilter_AfterBefore(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	afterIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1})
+	require.NoError(err, "after-only")
+	assert.ElementsMatch([]string{"msg3", "msg4", "msg5"}, afterIDs, "after >= Feb 1 (boundary inclusive)")
+
+	beforeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Before: &feb1})
+	require.NoError(err, "before-only")
+	assert.ElementsMatch([]string{"msg1", "msg2"}, beforeIDs, "before < Feb 1 (boundary exclusive)")
+
+	rangeIDs, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{After: &feb1, Before: &mar1})
+	require.NoError(err, "range")
+	assert.ElementsMatch([]string{"msg3", "msg4"}, rangeIDs, "Feb window")
+
+	combined, err := env.Engine.GetGmailIDsByFilter(env.Ctx, MessageFilter{Sender: "alice@example.com", After: &feb1})
+	require.NoError(err, "combined with sender")
+	assert.ElementsMatch([]string{"msg3"}, combined, "sender+after")
 }
 
 // addMultiAuthorMessage inserts a message with TWO distinct 'from' rows so the
@@ -1314,4 +1340,154 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil for deleted message; expected the message with DeletedAt set")
 	assert.NotNil(t, msg.DeletedAt, "DeletedAt should be non-nil for deleted message")
+}
+
+func TestGetGmailIDsByMessageIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// Happy path: two known fixture messages (msg1=id 1, msg2=id 2).
+	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 2})
+	require.NoError(err, "resolve fixture ids")
+	assert.ElementsMatch([]string{"msg1", "msg2"}, ids)
+
+	// Unknown IDs are silently dropped.
+	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 999999})
+	require.NoError(err, "unknown id")
+	assert.ElementsMatch([]string{"msg1"}, ids)
+
+	// Empty input: no query, no results.
+	ids, err = env.Engine.GetGmailIDsByMessageIDs(env.Ctx, nil)
+	require.NoError(err, "empty input")
+	assert.Empty(ids)
+}
+
+func TestGetGmailIDsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// Non-Gmail source message.
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
+	require.NoError(err, "insert whatsapp source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (901, 1, 99, 'wa-1', 'whatsapp', '2024-01-01')`)
+	require.NoError(err, "insert whatsapp message")
+
+	// Remote-deleted and dedup-soft-deleted Gmail messages (source 1 = test@gmail.com).
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (902, 1, 1, 'gone-1', 'email', '2024-01-02', '2024-06-01')`)
+	require.NoError(err, "insert source-deleted message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_at) VALUES (903, 1, 1, 'dedup-1', 'email', '2024-01-03', '2024-06-01')`)
+	require.NoError(err, "insert dedup-deleted message")
+
+	ids, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, []int64{1, 901, 902, 903})
+	require.NoError(err, "resolve mixed ids")
+	assert.ElementsMatch([]string{"msg1"}, ids, "non-Gmail, source-deleted, and dedup-deleted must be dropped")
+}
+
+func TestGetGmailIDsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// 33k IDs exceed SQLITE_MAX_VARIABLE_NUMBER (32766) as a single IN
+	// list, so an unchunked lookup fails with "too many SQL variables".
+	// The real IDs sit in the first and last chunk — with a duplicate of
+	// the first — so the merge proves cross-chunk newest-first ordering
+	// (msg5 is newer than msg1) and input dedupe.
+	ids := make([]int64, 0, 33001)
+	ids = append(ids, 1)
+	for next := int64(1_000_000); len(ids) < 32999; next++ {
+		ids = append(ids, next)
+	}
+	ids = append(ids, 5, 1)
+
+	gmailIDs, err := env.Engine.GetGmailIDsByMessageIDs(env.Ctx, ids)
+	require.NoError(err, "large selection must stay under bind-parameter limits")
+	assert.Equal([]string{"msg5", "msg1"}, gmailIDs,
+		"newest-first order restored across chunks; duplicate input deduped")
+}
+
+func TestGetAccountsByGmailIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// Fixture messages all belong to the single Gmail source.
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "msg2"})
+	require.NoError(err, "resolve fixture accounts")
+	assert.Equal([]string{"test@gmail.com"}, accounts)
+
+	// Unknown IDs resolve to no account.
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"does-not-exist"})
+	require.NoError(err, "unknown id")
+	assert.Empty(accounts)
+
+	// Empty input: no query, no results.
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, nil)
+	require.NoError(err, "empty input")
+	assert.Empty(accounts)
+}
+
+func TestGetAccountsByGmailIDs_MultipleAndNonQualifying(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	// Second Gmail source with a live message.
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
+	require.NoError(err, "insert second gmail source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
+	require.NoError(err, "insert second-account message")
+
+	// Non-Gmail source and a source-deleted Gmail message must not
+	// contribute accounts.
+	_, err = env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (99, 'whatsapp', 'wa@example.com')`)
+	require.NoError(err, "insert whatsapp source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (912, 1, 99, 'wa-1', 'whatsapp', '2024-01-06')`)
+	require.NoError(err, "insert whatsapp message")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at) VALUES (913, 1, 98, 'gone-1', 'email', '2024-01-07', '2024-06-01')`)
+	require.NoError(err, "insert source-deleted message")
+
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"msg1", "other-1", "wa-1"})
+	require.NoError(err, "resolve mixed accounts")
+	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
+		"both gmail accounts, sorted; whatsapp excluded")
+
+	accounts, err = env.Engine.GetAccountsByGmailIDs(env.Ctx, []string{"gone-1", "wa-1"})
+	require.NoError(err, "resolve non-qualifying")
+	assert.Empty(accounts, "deleted and non-Gmail messages contribute no account")
+}
+
+func TestGetAccountsByGmailIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
+	require.NoError(err, "insert second gmail source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
+	require.NoError(err, "insert second-account message")
+
+	// 33k IDs exceed SQLITE_MAX_VARIABLE_NUMBER (32766) as a single IN
+	// list, so an unchunked lookup fails with "too many SQL variables".
+	// The two real IDs sit in the first and last chunk to exercise the
+	// cross-chunk account union.
+	ids := make([]string, 0, 33000)
+	ids = append(ids, "msg1")
+	for len(ids) < 32999 {
+		ids = append(ids, fmt.Sprintf("missing-%d", len(ids)))
+	}
+	ids = append(ids, "other-1")
+
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, ids)
+	require.NoError(err, "large selection must stay under bind-parameter limits")
+	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
+		"accounts from different chunks must be unioned and sorted")
 }

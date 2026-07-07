@@ -2,11 +2,13 @@ package query
 
 import (
 	"bytes"
+	"cmp"
 	"compress/zlib"
 	"context"
 	"database/sql"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/mime"
@@ -478,4 +480,87 @@ func collectGmailIDs(rows *sql.Rows) ([]string, error) {
 		return nil, fmt.Errorf("iterate gmail ids: %w", err)
 	}
 	return ids, nil
+}
+
+// gmailIDRow carries the ORDER BY keys (sent_at, message id) alongside a
+// source_message_id so chunked message-ID resolution can be merged back
+// into the single-query newest-first order.
+type gmailIDRow struct {
+	gmailID string
+	sentAt  sql.NullTime
+	id      int64
+}
+
+// collectGmailIDRows scans (source_message_id, sent_at, id) rows.
+func collectGmailIDRows(rows *sql.Rows) ([]gmailIDRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []gmailIDRow
+	for rows.Next() {
+		var r gmailIDRow
+		if err := rows.Scan(&r.gmailID, &r.sentAt, &r.id); err != nil {
+			return nil, fmt.Errorf("scan gmail id row: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate gmail id rows: %w", err)
+	}
+	return out, nil
+}
+
+// gmailIDsByMessageIDsChunked resolves message IDs to Gmail IDs in
+// inListChunkSize batches so arbitrarily large explicit selections stay
+// under the backend's bind-parameter limit. Input IDs are deduplicated
+// (each message row surfaces from exactly one chunk) and the merged
+// result is re-sorted to the single-query contract: sent_at DESC,
+// id DESC, with NULL sent_at last.
+func gmailIDsByMessageIDsChunked(
+	ctx context.Context,
+	ids []int64,
+	queryChunk func(ctx context.Context, chunk []int64) ([]gmailIDRow, error),
+) ([]string, error) {
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	var merged []gmailIDRow
+	for start := 0; start < len(unique); start += inListChunkSize {
+		end := min(start+inListChunkSize, len(unique))
+		rows, err := queryChunk(ctx, unique[start:end])
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, rows...)
+	}
+
+	slices.SortFunc(merged, compareGmailIDRowsNewestFirst)
+	out := make([]string, len(merged))
+	for i, r := range merged {
+		out[i] = r.gmailID
+	}
+	return out, nil
+}
+
+// compareGmailIDRowsNewestFirst orders by sent_at DESC then id DESC,
+// with NULL sent_at sorting last (matching SQLite DESC semantics).
+func compareGmailIDRowsNewestFirst(a, b gmailIDRow) int {
+	switch {
+	case a.sentAt.Valid && !b.sentAt.Valid:
+		return -1
+	case !a.sentAt.Valid && b.sentAt.Valid:
+		return 1
+	case a.sentAt.Valid && b.sentAt.Valid && !a.sentAt.Time.Equal(b.sentAt.Time):
+		if a.sentAt.Time.After(b.sentAt.Time) {
+			return -1
+		}
+		return 1
+	default:
+		return cmp.Compare(b.id, a.id)
+	}
 }

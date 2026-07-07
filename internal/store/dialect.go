@@ -92,6 +92,13 @@ type Dialect interface {
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool
 
+	// FTSNeedsBackfillQuick is a cheap approximation of FTSNeedsBackfill for
+	// hot paths: it must never take longer than a few index lookups. True
+	// means the index is visibly behind (a backfill is certainly needed);
+	// false is not authoritative — on SQLite the MAX(rowid)-vs-MAX(id)
+	// comparison misses interior holes that only the full anti-join finds.
+	FTSNeedsBackfillQuick(db *sql.DB) bool
+
 	// FTSClearSQL returns the SQL to clear all FTS data before a full backfill.
 	FTSClearSQL() string
 

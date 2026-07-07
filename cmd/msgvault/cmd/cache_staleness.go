@@ -21,6 +21,31 @@ type cacheStaleness struct {
 	Reason      string
 }
 
+// deletedSinceBuildCountSQL counts exportable messages source-deleted since
+// the last cache build. It runs on every daemon start before the API server
+// binds, so it must be served by idx_messages_deleted_from_source_at rather
+// than a full messages scan (seconds of cold-start latency on a large
+// archive); the query-plan test locks that in.
+func deletedSinceBuildCountSQL() string {
+	return `
+		SELECT COUNT(*) FROM messages
+		WHERE deleted_from_source_at IS NOT NULL
+		  AND deleted_from_source_at >= ?
+		  AND ` + sentNonCalendarMessageWhere("")
+}
+
+// hiddenSinceBuildCountSQL counts exportable messages dedup-hidden since the
+// last cache build. Same cold-start constraint as deletedSinceBuildCountSQL:
+// it must be served by idx_messages_deleted_at.
+func hiddenSinceBuildCountSQL() string {
+	return `
+		SELECT COUNT(*) FROM messages
+		WHERE deleted_at IS NOT NULL
+		  AND deleted_at >= ?
+		  AND deleted_from_source_at IS NULL
+		  AND ` + sentNonCalendarMessageWhere("")
+}
+
 // cacheNeedsBuild checks if the analytics cache needs to be built or
 // updated. Collects all staleness signals before returning so that
 // e.g. a mixed add+delete sync correctly reports both.
@@ -118,12 +143,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 
 	syncAtStr := state.LastSyncAt.UTC().Format("2006-01-02 15:04:05")
 	var deletedSinceBuild int64
-	err = db.DB().QueryRow(`
-		SELECT COUNT(*) FROM messages
-		WHERE deleted_from_source_at IS NOT NULL
-		  AND deleted_from_source_at >= ?
-		  AND `+sentNonCalendarMessageWhere("")+`
-	`, syncAtStr).Scan(&deletedSinceBuild)
+	err = db.DB().QueryRow(deletedSinceBuildCountSQL(), syncAtStr).Scan(&deletedSinceBuild)
 	if err != nil {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,
@@ -146,13 +166,7 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 	// both source-deleted and dedup-hidden after LastSyncAt is reported
 	// once (as a deletion), not double-counted in the reason string.
 	var hiddenSinceBuild int64
-	err = db.DB().QueryRow(`
-		SELECT COUNT(*) FROM messages
-		WHERE deleted_at IS NOT NULL
-		  AND deleted_at >= ?
-		  AND deleted_from_source_at IS NULL
-		  AND `+sentNonCalendarMessageWhere("")+`
-	`, syncAtStr).Scan(&hiddenSinceBuild)
+	err = db.DB().QueryRow(hiddenSinceBuildCountSQL(), syncAtStr).Scan(&hiddenSinceBuild)
 	if err != nil {
 		return cacheStaleness{
 			NeedsBuild: true, FullRebuild: true,

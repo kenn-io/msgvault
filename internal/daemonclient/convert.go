@@ -230,6 +230,7 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),
 		IndexedMessages:  int64Value(resp.IndexedMessages),
+		IndexState:       stringValue(resp.IndexState),
 	}
 }
 

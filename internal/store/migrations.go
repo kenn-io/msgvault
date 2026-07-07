@@ -4,6 +4,16 @@ import (
 	"fmt"
 )
 
+// One-time data migrations run by InitSchema and gated on the
+// applied_migrations ledger. Without the gate their no-op verification
+// re-runs on every daemon start and scales with archive size (the
+// last_modified backfill alone is a full messages-table scan — seconds of
+// startup on a large archive).
+const (
+	migrationAttachmentsContentHashUnique = "attachments_content_hash_unique_index"
+	migrationMessagesLastModifiedBackfill = "messages_last_modified_backfill"
+)
+
 // IsMigrationApplied reports whether the named one-time data migration
 // has already run.
 func (s *Store) IsMigrationApplied(name string) (bool, error) {

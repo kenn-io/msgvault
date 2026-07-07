@@ -2,6 +2,8 @@
 package deletion
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,10 @@ const (
 	MethodTrash  Method = "trash"  // Move to Gmail trash (30-day recovery)
 	MethodDelete Method = "delete" // Permanent deletion
 )
+
+// ErrManifestNotFound reports a manifest ID with no file in any status
+// directory. Callers use errors.Is to map it to HTTP 404.
+var ErrManifestNotFound = errors.New("manifest not found")
 
 // Filters specifies criteria for selecting messages.
 type Filters struct {
@@ -84,6 +90,11 @@ type Manifest struct {
 	GmailIDs    []string   `json:"gmail_ids"`
 	Status      Status     `json:"status"`
 	Execution   *Execution `json:"execution,omitempty"`
+	// RawFilter records the serialized HTTP API staging request fields for
+	// provenance — Filters cannot represent every request field
+	// (sender_name, recipient_name, source_id). Absent on manifests created
+	// by the TUI/CLI.
+	RawFilter json.RawMessage `json:"raw_filter,omitempty"`
 }
 
 // NewManifest creates a new deletion manifest.
@@ -110,7 +121,21 @@ func generateID(description string) string {
 	if len(sanitized) > 20 {
 		sanitized = sanitized[:20]
 	}
-	return fmt.Sprintf("%s-%s", ts, sanitized)
+	// Random suffix keeps IDs unique when two batches with the same
+	// description are created within the same second (e.g. rapid API
+	// staging requests); without it SaveManifest would silently
+	// overwrite the earlier manifest file.
+	return fmt.Sprintf("%s-%s-%s", ts, sanitized, randomIDSuffix())
+}
+
+func randomIDSuffix() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand is effectively infallible; fall back to clock
+		// bits rather than failing manifest creation.
+		return fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // ValidateManifestID rejects IDs that are unsafe to turn into a filename.
@@ -242,6 +267,12 @@ var persistedStatuses = []Status{
 	StatusPending, StatusInProgress, StatusCompleted, StatusFailed, StatusCancelled,
 }
 
+// IsValidStatus reports whether s is a persisted manifest status.
+func IsValidStatus(s Status) bool { return isPersistedStatus(s) }
+
+// PersistedStatuses returns all statuses that have on-disk directories.
+func PersistedStatuses() []Status { return slices.Clone(persistedStatuses) }
+
 // Manager handles deletion manifest files.
 type Manager struct {
 	baseDir string // ~/.msgvault/deletions
@@ -265,10 +296,7 @@ func NewManager(baseDir string) (*Manager, error) {
 func (m *Manager) dirForStatus(s Status) string {
 	dirName, ok := statusDirMap[s]
 	if !ok {
-		// Fallback for unknown status; log warning and use status string.
-		// This should not happen in normal operation.
-		log.Printf("WARNING: unknown status %q has no directory mapping, using status value as directory name", s)
-		dirName = string(s)
+		panic(fmt.Sprintf("unknown persisted status %q", s))
 	}
 	return filepath.Join(m.baseDir, dirName)
 }
@@ -287,30 +315,51 @@ func (m *Manager) FailedDir() string { return m.dirForStatus(StatusFailed) }
 
 // ListPending returns all pending deletion manifests.
 func (m *Manager) ListPending() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusPending))
+	return m.listManifests(StatusPending)
 }
 
 // ListInProgress returns all in-progress deletion manifests.
 func (m *Manager) ListInProgress() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusInProgress))
+	return m.listManifests(StatusInProgress)
 }
 
 // ListCompleted returns all completed deletion manifests.
 func (m *Manager) ListCompleted() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusCompleted))
+	return m.listManifests(StatusCompleted)
 }
 
 // ListFailed returns all failed deletion manifests.
 func (m *Manager) ListFailed() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusFailed))
+	return m.listManifests(StatusFailed)
 }
 
 // ListCancelled returns all cancelled deletion manifests.
 func (m *Manager) ListCancelled() ([]*Manifest, error) {
-	return m.listManifests(m.dirForStatus(StatusCancelled))
+	return m.listManifests(StatusCancelled)
 }
 
-func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
+// ListByStatus returns all manifests currently in the directory for the
+// given status, with each Manifest.Status normalized to the
+// directory-derived status (the directory is authoritative).
+func (m *Manager) ListByStatus(status Status) ([]*Manifest, error) {
+	if !isPersistedStatus(status) {
+		return nil, fmt.Errorf("invalid manifest status %q", status)
+	}
+	manifests, err := m.listManifests(status)
+	if err != nil {
+		return nil, err
+	}
+	for _, manifest := range manifests {
+		manifest.Status = status
+	}
+	return manifests, nil
+}
+
+func (m *Manager) listManifests(status Status) ([]*Manifest, error) {
+	if !isPersistedStatus(status) {
+		return nil, fmt.Errorf("invalid manifest status %q", status)
+	}
+	dir := m.dirForStatus(status)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -322,6 +371,11 @@ func (m *Manager) listManifests(dir string) ([]*Manifest, error) {
 	var manifests []*Manifest
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if err := ValidateManifestID(id); err != nil {
+			log.Printf("WARNING: skipping invalid manifest filename %s: %v", e.Name(), err)
 			continue
 		}
 
@@ -360,6 +414,34 @@ func (m *Manager) GetManifest(id string) (*Manifest, string, error) {
 	}
 
 	return nil, "", fmt.Errorf("manifest %s not found", id)
+}
+
+// GetManifestWithStatus returns the manifest and its directory-derived
+// status. The directory is authoritative over the inline Status field
+// (a crash between rename and inline rewrite can leave them disagreeing).
+func (m *Manager) GetManifestWithStatus(id string) (*Manifest, Status, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, "", errors.New("batch ID is required")
+	}
+	if err := ValidateManifestID(id); err != nil {
+		return nil, "", err
+	}
+	filename := id + ".json"
+	for _, status := range persistedStatuses {
+		path := filepath.Join(m.dirForStatus(status), filename)
+		manifest, err := LoadManifest(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			// A file that exists but cannot be loaded (corrupt JSON,
+			// permissions) is a real failure, not a missing manifest —
+			// callers map ErrManifestNotFound to HTTP 404.
+			return nil, "", fmt.Errorf("load manifest %s: %w", id, err)
+		}
+		return manifest, status, nil
+	}
+	return nil, "", fmt.Errorf("manifest %s: %w", id, ErrManifestNotFound)
 }
 
 // SaveManifest saves a manifest to the appropriate directory based on status.

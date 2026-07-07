@@ -13,7 +13,20 @@ import (
 // APISchemaVersion is the version stamped into the OpenAPI document
 // (info.version). It tracks the HTTP wire contract, not the binary build
 // version, so clients can reason about compatibility independently of releases.
-const APISchemaVersion = "1.0.0"
+//
+// 1.1.0: GET /api/v1/cli/search no longer blocks on the FTS completeness
+// probe/backfill; it returns immediately and reports background index work in
+// the additive index_state field ("checking"/"building"). Clients older than
+// this field ignore it and see results without a completeness caveat during
+// that window — the same exposure GET /api/v1/search has always had. Additive
+// (minor bump): the major-version compatibility gate stays at 1.
+//
+// 1.2.0: adds the deletion staging endpoints — POST /api/v1/deletions
+// (server-side Gmail-ID resolution, dry-run preview), GET /api/v1/deletions
+// (list staged manifests by status), and DELETE /api/v1/deletions/{id}
+// (cancel a pending/in-progress manifest). Additive (minor bump): the
+// major-version compatibility gate stays at 1.
+const APISchemaVersion = "1.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

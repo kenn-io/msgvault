@@ -1,6 +1,7 @@
 package deletion
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -204,7 +205,7 @@ func TestGenerateID(t *testing.T) {
 			desc: "this is a very long description that exceeds twenty characters",
 			validate: func(t *testing.T, id string) {
 				t.Helper()
-				assert.LessOrEqual(t, len(id), 40, "ID too long: %d chars (%q)", len(id), id)
+				assert.LessOrEqual(t, len(id), 53, "ID too long: %d chars (%q)", len(id), id)
 			},
 		},
 		{
@@ -212,7 +213,16 @@ func TestGenerateID(t *testing.T) {
 			desc: "",
 			validate: func(t *testing.T, id string) {
 				t.Helper()
-				assert.True(t, strings.HasSuffix(id, "-batch"), "expected -batch suffix, got %q", id)
+				assert.Contains(t, id, "-batch-", "expected -batch- segment, got %q", id)
+			},
+		},
+		{
+			name: "same description yields distinct IDs",
+			desc: "duplicate",
+			validate: func(t *testing.T, id string) {
+				t.Helper()
+				assert.NotEqual(t, generateID("duplicate"), id,
+					"IDs generated in the same second must not collide")
 			},
 		},
 	}
@@ -812,4 +822,146 @@ func TestGetMoveCancelRejectTraversalID(t *testing.T) {
 
 	cancelErr := mgr.CancelManifest("../../escape")
 	require.Error(cancelErr, "CancelManifest should reject a traversal ID")
+}
+
+func TestManifestRawFilterRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	m := NewManifest("raw filter test", []string{"gm-1"})
+	m.RawFilter = json.RawMessage(`{"filter":{"sender":"alice@example.com"},"dry_run":false}`)
+	require.NoError(mgr.SaveManifest(m), "save")
+
+	loaded, _, err := mgr.GetManifest(m.ID)
+	require.NoError(err, "reload")
+	assert.JSONEq(string(m.RawFilter), string(loaded.RawFilter), "raw filter survives round-trip")
+
+	// Old manifests without the field load with a nil RawFilter.
+	old := NewManifest("no raw filter", []string{"gm-2"})
+	require.NoError(mgr.SaveManifest(old), "save old-style")
+	loadedOld, _, err := mgr.GetManifest(old.ID)
+	require.NoError(err, "reload old-style")
+	assert.Nil(loadedOld.RawFilter, "absent field stays nil")
+}
+
+func TestGetManifestWithStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	m := NewManifest("status test", []string{"gm-1"})
+	require.NoError(mgr.SaveManifest(m), "save pending")
+
+	got, status, err := mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err, "lookup pending")
+	assert.Equal(StatusPending, status)
+	assert.Equal(m.ID, got.ID)
+
+	// Directory is authoritative even when the inline field is stale:
+	// move the file to cancelled/ without rewriting the inline status.
+	require.NoError(mgr.MoveManifest(m.ID, StatusPending, StatusCancelled), "move")
+	_, status, err = mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err, "lookup cancelled")
+	assert.Equal(StatusCancelled, status, "dir-derived status wins over stale inline field")
+
+	_, _, err = mgr.GetManifestWithStatus("does-not-exist")
+	require.Error(err, "missing manifest")
+	assert.ErrorIs(err, ErrManifestNotFound)
+}
+
+func TestGetManifestWithStatusCorruptFile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	require.NoError(
+		os.WriteFile(filepath.Join(mgr.PendingDir(), "corrupt-batch.json"), []byte("{not json"), 0o644),
+		"write corrupt manifest")
+
+	_, _, err = mgr.GetManifestWithStatus("corrupt-batch")
+	require.Error(err, "corrupt manifest must error")
+	assert.NotErrorIs(err, ErrManifestNotFound,
+		"a corrupt existing manifest must not be reported as missing (would map to HTTP 404)")
+}
+
+func TestSaveManifestRapidDuplicateDescriptions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	first := NewManifest("same description", []string{"gm-1"})
+	second := NewManifest("same description", []string{"gm-2"})
+	require.NotEqual(first.ID, second.ID, "same-second IDs must differ")
+
+	require.NoError(mgr.SaveManifest(first), "save first")
+	require.NoError(mgr.SaveManifest(second), "save second")
+
+	pending, err := mgr.ListPending()
+	require.NoError(err, "list pending")
+	assert.Len(pending, 2, "both same-description manifests must persist")
+}
+
+func TestListPendingSkipsInvalidManifestFilename(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	valid := NewManifest("valid batch", []string{"gm-1"})
+	require.NoError(mgr.SaveManifest(valid), "save valid manifest")
+	require.NoError(
+		os.WriteFile(filepath.Join(mgr.PendingDir(), "bad.name.json"), []byte(`{"id":"bad.name"}`), 0o600),
+		"write invalid manifest filename",
+	)
+
+	pending, err := mgr.ListPending()
+	require.NoError(err, "list pending")
+	require.Len(pending, 1)
+	assert.Equal(valid.ID, pending[0].ID)
+}
+
+func TestListByStatus(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	mgr, err := NewManager(t.TempDir())
+	require.NoError(err, "NewManager")
+
+	a := NewManifest("batch a", []string{"gm-1"})
+	require.NoError(mgr.SaveManifest(a), "save a")
+	b := NewManifest("batch b", []string{"gm-2", "gm-3"})
+	require.NoError(mgr.SaveManifest(b), "save b")
+	require.NoError(mgr.CancelManifest(b.ID), "cancel b")
+
+	pending, err := mgr.ListByStatus(StatusPending)
+	require.NoError(err, "list pending")
+	require.Len(pending, 1)
+	assert.Equal(a.ID, pending[0].ID)
+	assert.Equal(StatusPending, pending[0].Status, "normalized status")
+
+	cancelled, err := mgr.ListByStatus(StatusCancelled)
+	require.NoError(err, "list cancelled")
+	require.Len(cancelled, 1)
+	assert.Equal(b.ID, cancelled[0].ID)
+
+	_, err = mgr.ListByStatus(Status("bogus"))
+	assert.Error(err, "invalid status rejected")
+}
+
+func TestIsValidStatus(t *testing.T) {
+	for _, s := range PersistedStatuses() {
+		assert.True(t, IsValidStatus(s), "status %q", s)
+	}
+	assert.False(t, IsValidStatus(Status("bogus")))
+	assert.False(t, IsValidStatus(Status("")))
 }

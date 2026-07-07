@@ -182,6 +182,26 @@ func (d *SQLiteDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	return exists
 }
 
+// FTSNeedsBackfillQuick compares MAX(id) against MAX(rowid) — two B-tree
+// lookups, instant at any archive size. It catches the dominant staleness
+// (tail of the messages table not yet indexed: fresh import, interrupted
+// backfill) but misses interior holes; FTSNeedsBackfill stays authoritative.
+func (d *SQLiteDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
+	var msgMax int64
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT COALESCE(MAX(id), 0) FROM messages",
+	).Scan(&msgMax); err != nil || msgMax == 0 {
+		return false
+	}
+	var ftsMax int64
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT COALESCE(MAX(rowid), 0) FROM messages_fts",
+	).Scan(&ftsMax); err != nil {
+		return false
+	}
+	return ftsMax < msgMax
+}
+
 // FTSClearSQL returns the SQL to clear all FTS5 data.
 func (d *SQLiteDialect) FTSClearSQL() string {
 	return "DELETE FROM messages_fts"

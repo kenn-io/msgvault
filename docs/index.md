@@ -41,11 +41,11 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 Then [set up OAuth credentials](/guides/oauth-setup/) and [start
 syncing](/setup/). You can also [build from source](/setup/#build-from-source).
 
-!!! note "New in 0.17.0"
-    Backup repositories, Google Calendar sync, Microsoft Teams delegated Graph
-    sync, message-type filtering, scoped embedding generations, OpenAPI docs
-    and generated client support, daemon-owned CLI archive access, faster IMAP
-    resyncs, and the completed Bubble Tea v2 TUI migration. See the
+!!! note "New in 0.17.1"
+    HTTP clients can now stage, list, and cancel deletion manifests through the
+    web API; CLI search reports when the full-text index is checking or
+    rebuilding instead of blocking on that work; IMAP sync is more robust on
+    servers with unusual UID or raw-fetch behavior. See the
     [Changelog](/changelog/) for the full release notes.
 
 ## Why msgvault?

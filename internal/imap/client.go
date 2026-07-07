@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,18 +64,19 @@ type Client struct {
 	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
 	logger      *slog.Logger
 
-	mu               sync.Mutex
-	conn             *imapclient.Client
-	selectedMailbox  string               // currently selected mailbox
-	mailboxCache     []string             // cached list of selectable mailboxes
-	messageListCache []gmailapi.MessageID // full message ID list, built once per session
-	trashMailbox     string               // cached trash mailbox name
-	junkMailbox      string               // cached junk/spam mailbox name
-	allMailFolder    string               // mailbox with \All attribute (empty if not detected)
-	msgIDToLabels    map[string][]string  // RFC822 Message-ID → mailbox memberships
-	seenRFC822IDs    map[string]bool      // dedup across All Mail + Trash/Spam
-	since            time.Time            // IMAP SINCE date filter (zero = no filter)
-	before           time.Time            // IMAP BEFORE date filter (zero = no filter)
+	mu                  sync.Mutex
+	conn                *imapclient.Client
+	selectedMailbox     string               // currently selected mailbox
+	selectedNumMessages uint32               // EXISTS count from the last SELECT
+	mailboxCache        []string             // cached list of selectable mailboxes
+	messageListCache    []gmailapi.MessageID // full message ID list, built once per session
+	trashMailbox        string               // cached trash mailbox name
+	junkMailbox         string               // cached junk/spam mailbox name
+	allMailFolder       string               // mailbox with \All attribute (empty if not detected)
+	msgIDToLabels       map[string][]string  // RFC822 Message-ID → mailbox memberships
+	seenRFC822IDs       map[string]bool      // dedup across All Mail + Trash/Spam
+	since               time.Time            // IMAP SINCE date filter (zero = no filter)
+	before              time.Time            // IMAP BEFORE date filter (zero = no filter)
 
 	priorFolderStates    map[string]FolderState // saved states from the last completed sync
 	observedFolderStates map[string]FolderState // states captured during this session's listing
@@ -204,10 +204,12 @@ func (c *Client) selectMailbox(mailbox string) error {
 	if c.selectedMailbox == mailbox {
 		return nil
 	}
-	if _, err := c.conn.Select(mailbox, nil).Wait(); err != nil {
+	data, err := c.conn.Select(mailbox, nil).Wait()
+	if err != nil {
 		return fmt.Errorf("SELECT %q: %w", mailbox, err)
 	}
 	c.selectedMailbox = mailbox
+	c.selectedNumMessages = data.NumMessages
 	return nil
 }
 
@@ -278,6 +280,52 @@ func (c *Client) listMailboxesLocked() ([]string, error) {
 	return names, nil
 }
 
+// enumerateMailboxSearchCriteria always constrains the search with an
+// explicit UID range: some servers (e.g. iCloud) return sequence-number-like
+// values for an unconstrained UID SEARCH, which later fail to fetch.
+// Callers must not run the search against an empty mailbox, where the "*"
+// in the range has no referent and some servers answer BAD.
+func enumerateMailboxSearchCriteria(since, before time.Time, minUID imap.UID) *imap.SearchCriteria {
+	if minUID == 0 {
+		minUID = 1
+	}
+	var allUIDs imap.UIDSet
+	allUIDs.AddRange(minUID, 0)
+
+	criteria := &imap.SearchCriteria{
+		UID: []imap.UIDSet{allUIDs},
+	}
+	if !since.IsZero() {
+		criteria.Since = since
+	}
+	if !before.IsZero() {
+		criteria.Before = before
+	}
+	return criteria
+}
+
+func messageIDHeaderFetchOptions() *imap.FetchOptions {
+	return &imap.FetchOptions{
+		UID: true,
+		BodySection: []*imap.FetchItemBodySection{{
+			Specifier:    imap.PartSpecifierHeader,
+			HeaderFields: []string{"Message-ID"},
+			Peek:         true,
+		}},
+	}
+}
+
+func addMessageIDsFromHeaderFetchResults(dst map[string]bool, msgs []*imapclient.FetchMessageBuffer) {
+	for _, msg := range msgs {
+		if len(msg.BodySection) == 0 {
+			continue
+		}
+		if msgID := rawMIMEMessageID(msg.BodySection[0].Bytes); msgID != "" {
+			dst[msgID] = true
+		}
+	}
+}
+
 // enumerateMailbox lists UIDs in a single mailbox. A non-zero minUID
 // restricts the search to UIDs at or above it (new messages since a
 // saved UIDNEXT watermark). It handles network errors with one
@@ -302,17 +350,14 @@ func (c *Client) enumerateMailbox(
 		}
 	}
 
-	criteria := &imap.SearchCriteria{}
-	if !c.since.IsZero() {
-		criteria.Since = c.since
-	}
-	if !c.before.IsZero() {
-		criteria.Before = c.before
-	}
-	if minUID > 0 {
-		criteria.UID = []imap.UIDSet{{imap.UIDRange{Start: minUID, Stop: 0}}}
+	// An empty mailbox has no UIDs to enumerate. Skipping the search also
+	// avoids sending "UID SEARCH UID 1:*", which some servers reject when
+	// the mailbox is empty ("*" has no referent).
+	if c.selectedNumMessages == 0 {
+		return nil, nil
 	}
 
+	criteria := enumerateMailboxSearchCriteria(c.since, c.before, minUID)
 	searchData, err := c.conn.UIDSearch(
 		criteria,
 		nil,
@@ -350,7 +395,7 @@ func (c *Client) enumerateMailbox(
 }
 
 // fetchMailboxMessageIDs fetches RFC822 Message-ID headers for all
-// UIDs in the given mailbox using ENVELOPE. Returns a map of
+// UIDs in the given mailbox. Returns a map of
 // Message-ID → true for all messages found.
 // Caller must hold mu.
 func (c *Client) fetchMailboxMessageIDs(
@@ -365,10 +410,7 @@ func (c *Client) fetchMailboxMessageIDs(
 	}
 
 	result := make(map[string]bool, len(uids))
-	fetchOpts := &imap.FetchOptions{
-		UID:      true,
-		Envelope: true,
-	}
+	fetchOpts := messageIDHeaderFetchOptions()
 
 	for chunkStart := 0; chunkStart < len(uids); chunkStart += fetchChunkSize {
 		if ctx.Err() != nil {
@@ -382,34 +424,13 @@ func (c *Client) fetchMailboxMessageIDs(
 			uidSet.AddNum(uid)
 		}
 
-		msgs, err := c.conn.Fetch(uidSet, fetchOpts).Collect()
+		msgs, _, err := c.fetchChunk(ctx, mailbox, uidSet, fetchOpts)
 		if err != nil {
-			if isNetworkError(err) {
-				if reconErr := c.reconnect(ctx); reconErr != nil {
-					return result, fmt.Errorf(
-						"reconnect failed fetching envelopes in %q: %w",
-						mailbox, reconErr)
-				}
-				if selErr := c.selectMailbox(mailbox); selErr != nil {
-					return result, selErr
-				}
-				msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
-				if err != nil {
-					return result, fmt.Errorf(
-						"envelope fetch failed in %q after reconnect: %w",
-						mailbox, err)
-				}
-			} else {
-				return result, fmt.Errorf(
-					"envelope fetch failed in %q: %w", mailbox, err)
-			}
+			return result, fmt.Errorf(
+				"message-ID fetch failed in %q: %w", mailbox, err)
 		}
 
-		for _, msg := range msgs {
-			if msg.Envelope != nil && msg.Envelope.MessageID != "" {
-				result[msg.Envelope.MessageID] = true
-			}
-		}
+		addMessageIDsFromHeaderFetchResults(result, msgs)
 	}
 	return result, nil
 }
@@ -742,192 +763,11 @@ func (c *Client) GetMessageRaw(ctx context.Context, messageID string) (*gmailapi
 	return msgs[0], nil
 }
 
-// GetMessagesRawBatch fetches multiple messages, grouping by mailbox for efficiency.
-// Results are returned in the same order as messageIDs; nil entries indicate failures.
-//
-// UIDs per mailbox are fetched in chunks of fetchChunkSize to avoid huge FETCH
-// commands that time out on large mailboxes. On network errors the connection is
-// re-established and the failed chunk is retried once; if reconnect itself fails
-// the function returns immediately with whatever results were collected.
+// GetMessagesRawBatch fetches multiple messages and drops per-item diagnostics
+// for legacy callers. Results are returned in the same order as messageIDs.
 func (c *Client) GetMessagesRawBatch(ctx context.Context, messageIDs []string) ([]*gmailapi.RawMessage, error) {
-	type idxUID struct {
-		idx int
-		uid imap.UID
-	}
-	byMailbox := make(map[string][]idxUID, 4)
-	for i, id := range messageIDs {
-		mailbox, uid, err := parseCompositeID(id)
-		if err != nil {
-			c.logger.Warn("invalid message ID in batch", "id", id, "error", err)
-			continue
-		}
-		byMailbox[mailbox] = append(byMailbox[mailbox], idxUID{i, uid})
-	}
-
-	results := make([]*gmailapi.RawMessage, len(messageIDs))
-	fetchOpts := &imap.FetchOptions{
-		UID:          true,
-		Envelope:     true, // needed for Message-ID label merging
-		InternalDate: true,
-		RFC822Size:   true,
-		BodySection:  []*imap.FetchItemBodySection{{Peek: true}}, // BODY.PEEK[] to avoid marking \Seen
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.connect(ctx); err != nil {
-		return nil, err
-	}
-
-	// Process allMailFolder first so seenRFC822IDs is populated from
-	// the canonical source before checking Trash/Junk for duplicates.
-	mailboxOrder := make([]string, 0, len(byMailbox))
-	for mb := range byMailbox {
-		mailboxOrder = append(mailboxOrder, mb)
-	}
-	sort.Strings(mailboxOrder)
-	if c.allMailFolder != "" {
-		for i, mb := range mailboxOrder {
-			if mb == c.allMailFolder {
-				mailboxOrder = append(
-					append([]string{mb}, mailboxOrder[:i]...),
-					mailboxOrder[i+1:]...,
-				)
-				break
-			}
-		}
-	}
-
-	for _, mailbox := range mailboxOrder {
-		items := byMailbox[mailbox]
-		if ctx.Err() != nil {
-			return results, ctx.Err()
-		}
-
-		if err := c.selectMailbox(mailbox); err != nil {
-			if isNetworkError(err) {
-				c.logger.Warn("network error selecting mailbox, reconnecting", "mailbox", mailbox, "error", err)
-				if reconErr := c.reconnect(ctx); reconErr != nil {
-					return results, fmt.Errorf("reconnect failed fetching mailbox %q: %w", mailbox, reconErr)
-				}
-				if err := c.selectMailbox(mailbox); err != nil {
-					c.logger.Warn("skipping mailbox batch after reconnect", "mailbox", mailbox, "error", err)
-					continue
-				}
-			} else {
-				c.logger.Warn("skipping mailbox batch", "mailbox", mailbox, "error", err)
-				continue
-			}
-		}
-
-		// Build UID→result-index map for all items in this mailbox.
-		uidToIdx := make(map[imap.UID]int, len(items))
-		for _, item := range items {
-			uidToIdx[item.uid] = item.idx
-		}
-
-		// Fetch in chunks to avoid huge UID FETCH commands that time out on
-		// large mailboxes.
-	chunkLoop:
-		for chunkStart := 0; chunkStart < len(items); chunkStart += fetchChunkSize {
-			if ctx.Err() != nil {
-				return results, ctx.Err()
-			}
-
-			chunk := items[chunkStart:]
-			if len(chunk) > fetchChunkSize {
-				chunk = chunk[:fetchChunkSize]
-			}
-
-			var uidSet imap.UIDSet
-			for _, item := range chunk {
-				uidSet.AddNum(item.uid)
-			}
-
-			msgs, err := c.conn.Fetch(uidSet, fetchOpts).Collect()
-			if err != nil {
-				if isNetworkError(err) {
-					c.logger.Warn("network error during UID FETCH, reconnecting", "mailbox", mailbox, "error", err)
-					if reconErr := c.reconnect(ctx); reconErr != nil {
-						return results, fmt.Errorf("reconnect failed fetching chunk in mailbox %q: %w", mailbox, reconErr)
-					}
-					if selErr := c.selectMailbox(mailbox); selErr != nil {
-						c.logger.Warn("skipping remaining chunks after reconnect", "mailbox", mailbox, "error", selErr)
-						break chunkLoop
-					}
-					msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
-					if err != nil {
-						c.logger.Warn("UID FETCH failed after reconnect", "mailbox", mailbox, "error", err)
-						break chunkLoop
-					}
-				} else {
-					c.logger.Warn("UID FETCH failed", "mailbox", mailbox, "error", err)
-					break chunkLoop
-				}
-			}
-
-			for _, msgBuf := range msgs {
-				idx, ok := uidToIdx[msgBuf.UID]
-				if !ok {
-					continue
-				}
-				var rawMIME []byte
-				if len(msgBuf.BodySection) > 0 {
-					rawMIME = msgBuf.BodySection[0].Bytes
-				}
-				if len(rawMIME) == 0 {
-					continue
-				}
-
-				// Dedup by RFC822 Message-ID when listing
-				// All Mail alongside Trash/Spam. On Gmail these
-				// are disjoint, but non-Gmail servers may overlap.
-				// Return a non-nil stub with empty Raw so the
-				// caller treats this as a skip, not a fetch error.
-				msgID := compositeID(mailbox, msgBuf.UID)
-				if c.seenRFC822IDs != nil &&
-					msgBuf.Envelope != nil &&
-					msgBuf.Envelope.MessageID != "" {
-					if c.seenRFC822IDs[msgBuf.Envelope.MessageID] {
-						results[idx] = &gmailapi.RawMessage{ID: msgID}
-						continue
-					}
-					c.seenRFC822IDs[msgBuf.Envelope.MessageID] = true
-				}
-
-				labels := []string{mailbox}
-
-				// Merge labels from other mailboxes via the
-				// label map built during listing. The map keys
-				// on RFC822 Message-ID and maps to the other
-				// mailbox names the message appears in. Skip the
-				// current mailbox to avoid duplicates that would
-				// violate the message_labels primary key.
-				if c.msgIDToLabels != nil &&
-					msgBuf.Envelope != nil &&
-					msgBuf.Envelope.MessageID != "" {
-					if extra, ok := c.msgIDToLabels[msgBuf.Envelope.MessageID]; ok {
-						for _, lbl := range extra {
-							if lbl != mailbox {
-								labels = append(labels, lbl)
-							}
-						}
-					}
-				}
-
-				results[idx] = &gmailapi.RawMessage{
-					ID:           msgID,
-					ThreadID:     msgID,
-					LabelIDs:     labels,
-					InternalDate: msgBuf.InternalDate.UnixMilli(),
-					SizeEstimate: msgBuf.RFC822Size,
-					Raw:          rawMIME,
-				}
-			}
-		}
-	}
-	return results, nil
+	results, err := c.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+	return rawBatchMessages(results), err
 }
 
 // ListHistory is not supported for IMAP servers.

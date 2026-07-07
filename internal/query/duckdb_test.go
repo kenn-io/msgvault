@@ -2045,6 +2045,27 @@ func TestDuckDBEngine_GetGmailIDsByFilter_CombinedNoMatch(t *testing.T) {
 	assert.Empty(t, ids, "results for bob+IMPORTANT")
 }
 
+// TestDuckDBEngine_GetGmailIDsByFilter_AfterBefore verifies that After/Before date
+// filters work correctly on the Parquet fallback of GetGmailIDsByFilter.
+func TestDuckDBEngine_GetGmailIDsByFilter_AfterBefore(t *testing.T) {
+	engine := newParquetEngine(t)
+	ctx := context.Background()
+	feb1 := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	mar1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	afterIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{After: &feb1})
+	require.NoError(t, err, "after-only")
+	assertSetEqual(t, afterIDs, []string{"msg3", "msg4", "msg5"})
+
+	beforeIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{Before: &feb1})
+	require.NoError(t, err, "before-only")
+	assertSetEqual(t, beforeIDs, []string{"msg1", "msg2"})
+
+	rangeIDs, err := engine.GetGmailIDsByFilter(ctx, MessageFilter{After: &feb1, Before: &mar1})
+	require.NoError(t, err, "range")
+	assertSetEqual(t, rangeIDs, []string{"msg3", "msg4"})
+}
+
 // =============================================================================
 // Search Query Filter Tests
 // =============================================================================
@@ -3550,4 +3571,81 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 				"expected %s.%s to be detected as missing", col.table, col.col)
 		}
 	})
+}
+
+func TestDuckDBEngine_GetGmailIDsByMessageIDs(t *testing.T) {
+	ctx := context.Background()
+
+	// Parquet fallback path (no SQLite engine attached).
+	parquet := newParquetEngine(t)
+	ids, err := parquet.GetGmailIDsByMessageIDs(ctx, []int64{1, 2, 999999})
+	require.NoError(t, err, "parquet path")
+	assertSetEqual(t, ids, []string{"msg1", "msg2"})
+
+	// SQLite delegation path.
+	sqlited := newSQLiteEngine(t)
+	ids, err = sqlited.GetGmailIDsByMessageIDs(ctx, []int64{1, 2, 999999})
+	require.NoError(t, err, "sqlite delegation path")
+	assertSetEqual(t, ids, []string{"msg1", "msg2"})
+}
+
+func TestDuckDBEngine_GetGmailIDsByMessageIDs_ChunkedLargeSelection(t *testing.T) {
+	ctx := context.Background()
+	parquet := newParquetEngine(t)
+
+	// More IDs than one lookup chunk; the real IDs sit in the first and
+	// last chunk so the merge proves cross-chunk newest-first ordering
+	// (msg5 is newer than msg1) on the Parquet path.
+	ids := make([]int64, 0, 1200)
+	ids = append(ids, 1)
+	for next := int64(1_000_000); len(ids) < 1199; next++ {
+		ids = append(ids, next)
+	}
+	ids = append(ids, 5)
+
+	gmailIDs, err := parquet.GetGmailIDsByMessageIDs(ctx, ids)
+	require.NoError(t, err, "chunked parquet lookup")
+	assert.Equal(t, []string{"msg5", "msg1"}, gmailIDs, "newest-first across chunks")
+}
+
+func TestDuckDBEngine_GetAccountsByGmailIDs(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.Background()
+
+	// Parquet fallback path (no SQLite engine attached).
+	parquet := newParquetEngine(t)
+	accounts, err := parquet.GetAccountsByGmailIDs(ctx, []string{"msg1", "msg2", "does-not-exist"})
+	require.NoError(err, "parquet path")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
+
+	// SQLite delegation path.
+	sqlited := newSQLiteEngine(t)
+	accounts, err = sqlited.GetAccountsByGmailIDs(ctx, []string{"msg1", "msg2", "does-not-exist"})
+	require.NoError(err, "sqlite delegation path")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
+
+	// Empty input short-circuits.
+	accounts, err = parquet.GetAccountsByGmailIDs(ctx, nil)
+	require.NoError(err, "empty input")
+	assert.Empty(t, accounts)
+}
+
+func TestDuckDBEngine_GetAccountsByGmailIDs_ChunkedLargeSelection(t *testing.T) {
+	ctx := context.Background()
+	parquet := newParquetEngine(t)
+
+	// More IDs than one account-lookup chunk, with the real IDs in the
+	// first and last chunk so the Parquet path exercises the cross-chunk
+	// union.
+	ids := make([]string, 0, 1200)
+	ids = append(ids, "msg1")
+	for len(ids) < 1199 {
+		ids = append(ids, fmt.Sprintf("missing-%d", len(ids)))
+	}
+	ids = append(ids, "msg5")
+
+	accounts, err := parquet.GetAccountsByGmailIDs(ctx, ids)
+	require.NoError(t, err, "chunked parquet lookup")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
 }

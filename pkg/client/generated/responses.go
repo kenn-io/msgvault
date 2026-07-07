@@ -271,6 +271,20 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type ListDeletionsResponseJSON = ListDeletionsResponse
+
+type ListDeletionsErrorResponse = ErrorResponse
+
+type StageDeletionResponseJSON = StageDeletionResponse
+
+type StageDeletionResponseJSON201 = StageDeletionResponse
+
+type StageDeletionErrorResponse = ErrorResponse
+
+type CancelDeletionResponseJSON = CancelDeletionResponse
+
+type CancelDeletionErrorResponse = ErrorResponse
+
 type GetHealthResponse = HealthResponse
 
 type GetHealthErrorResponse = ErrorResponse
@@ -748,6 +762,28 @@ type VerifyCLIResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
+}
+
+type ListDeletionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListDeletionsResponseJSON
+}
+
+type StageDeletionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *StageDeletionResponseJSON
+	JSON201      *StageDeletionResponseJSON201
+}
+
+type CancelDeletionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CancelDeletionResponseJSON
 }
 
 type GetHealthResp struct {

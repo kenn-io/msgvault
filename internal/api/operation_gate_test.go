@@ -675,3 +675,54 @@ func TestHealthOmitsOperationWhenGateIdle(t *testing.T) {
 	body := healthResponseForServer(t, srv)
 	assert.Nil(t, body.Operation, "idle gate must not report an operation")
 }
+
+// TestOperationHealthPrefersActivityOverGateLabel verifies a request-scoped
+// activity (which can carry live progress) wins over the gate holder's static
+// label, and that health falls back to the gate label once the activity ends.
+func TestOperationHealthPrefersActivityOverGateLabel(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	gate := NewSerialOperationGate()
+	srv := newOperationHealthTestServer(gate)
+
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "a search index build")
+	require.True(ok, "acquire gate")
+	defer release()
+
+	end := srv.beginActivity("building the search index")
+	srv.setActivityLabel("building the search index (2/4 messages)")
+
+	op := srv.operationHealth()
+	require.NotNil(op, "activity must be reported")
+	assert.Equal("building the search index (2/4 messages)", op.Label,
+		"activity label must win over the gate label")
+
+	end()
+	op = srv.operationHealth()
+	require.NotNil(op, "gate holder must still be reported after the activity ends")
+	assert.Equal("a search index build", op.Label, "gate label after activity end")
+}
+
+// TestBeginActivityNestingAndIdempotentEnd verifies overlapping activities
+// share one label (first begin wins, last end clears) and that calling an end
+// func twice does not clear a newer activity.
+func TestBeginActivityNestingAndIdempotentEnd(t *testing.T) {
+	assert := assert.New(t)
+	srv := newOperationHealthTestServer(nil)
+
+	endFirst := srv.beginActivity("checking the search index")
+	endSecond := srv.beginActivity("building the search index")
+
+	label, _, active := srv.currentActivity()
+	assert.True(active, "activity must be active while begun")
+	assert.Equal("checking the search index", label, "first begin sets the label")
+
+	endFirst()
+	endFirst() // second call must be a no-op, not a double decrement
+	_, _, active = srv.currentActivity()
+	assert.True(active, "activity must stay active until the last end")
+
+	endSecond()
+	_, _, active = srv.currentActivity()
+	assert.False(active, "last end must clear the activity")
+}

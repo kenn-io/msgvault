@@ -587,6 +587,16 @@ components:
       required:
         - status
       type: object
+    CancelDeletionResponse:
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - status
+      type: object
     CliAccountResponse:
       properties:
         display_name:
@@ -967,6 +977,8 @@ components:
       properties:
         index_built:
           type: boolean
+        index_state:
+          type: string
         indexed_messages:
           format: int64
           type: integer
@@ -1036,6 +1048,30 @@ components:
         - has_more
         - offset
         - limit
+      type: object
+    DeletionManifestSummary:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        status:
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - created_by
+        - description
+        - message_count
       type: object
     ErrorResponse:
       properties:
@@ -1305,6 +1341,16 @@ components:
         - took_ms
         - results
       type: object
+    ListDeletionsResponse:
+      properties:
+        manifests:
+          items:
+            $ref: "#/components/schemas/DeletionManifestSummary"
+          nullable: true
+          type: array
+      required:
+        - manifests
+      type: object
     Manifest:
       additionalProperties: false
       properties:
@@ -1326,6 +1372,7 @@ components:
           type: array
         id:
           type: string
+        raw_filter: {}
         status:
           type: string
         summary:
@@ -1769,6 +1816,67 @@ components:
       required:
         - accounts
       type: object
+    StageDeletionFilter:
+      additionalProperties: false
+      properties:
+        after:
+          type: string
+        before:
+          type: string
+        domain:
+          type: string
+        label:
+          type: string
+        recipient:
+          type: string
+        recipient_name:
+          type: string
+        sender:
+          type: string
+        sender_name:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+      type: object
+    StageDeletionRequest:
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        dry_run:
+          type: boolean
+        filter:
+          $ref: "#/components/schemas/StageDeletionFilter"
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          nullable: true
+          type: array
+      type: object
+    StageDeletionResponse:
+      properties:
+        account:
+          type: string
+        dry_run:
+          type: boolean
+        id:
+          type: string
+        message_count:
+          format: int64
+          type: integer
+        sample_gmail_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        status:
+          type: string
+      required:
+        - dry_run
+        - message_count
+      type: object
     StatsResponse:
       properties:
         active_messages:
@@ -2119,7 +2227,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.0.0
+  version: 1.2.0
 openapi: 3.0.3
 paths:
   /api/ping:
@@ -3755,6 +3863,93 @@ paths:
       security:
         - apiKey: []
       summary: Verify the CLI archive against Gmail
+      tags:
+        - API
+  /api/v1/deletions:
+    get:
+      operationId: listDeletions
+      parameters:
+        - description: Filter manifests by status (pending, in_progress, completed, failed, cancelled)
+          in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDeletionsResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List staged deletion manifests
+      tags:
+        - API
+    post:
+      operationId: stageDeletion
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StageDeletionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageDeletionResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageDeletionResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Stage messages for deletion
+      tags:
+        - API
+  /api/v1/deletions/{id}:
+    delete:
+      operationId: cancelDeletion
+      parameters:
+        - description: Deletion manifest ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelDeletionResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Cancel a staged deletion manifest
       tags:
         - API
   /api/v1/health:

@@ -414,6 +414,20 @@ func operationGateLabelFromPath(urlPath string) string {
 	return "msgvault " + name
 }
 
+// beginBackgroundOperationGateWork acquires the gate for daemon-owned
+// background work: unlike beginLabeledOperationGateWork it does not count as
+// a request waiter, so gate holders that yield to requests (scheduled syncs,
+// embed passes) are not interrupted by it.
+func (s *Server) beginBackgroundOperationGateWork(ctx context.Context, label string) (func(), bool) {
+	if s.operationGate == nil {
+		return func() {}, true
+	}
+	if lg, ok := s.operationGate.(LabeledOperationGate); ok {
+		return lg.BeginLabeledWorkContext(ctx, label)
+	}
+	return s.operationGate.BeginWorkContext(ctx)
+}
+
 func (s *Server) beginLabeledOperationGateWork(ctx context.Context, label string) (func(), bool) {
 	if s.operationGate == nil {
 		return func() {}, true

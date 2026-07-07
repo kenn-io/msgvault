@@ -5,7 +5,7 @@
   sqlite,
 }:
 let
-  version = "0.17.0";
+  version = "0.17.1";
 in
 buildGoModule {
   pname = "msgvault";
@@ -13,7 +13,7 @@ buildGoModule {
 
   src = gitignoreSource ../.;
 
-  vendorHash = "sha256-2QxitGuAKBLaBfLErGIb+ndjOXAFpD9+6btA/oN4A4Y=";
+  vendorHash = "sha256-Aoz6QsYrMZrxZhBZ+/RoI2hipENN3ANDt82GJLXFgzk=";
   proxyVendor = true;
 
   subPackages = [ "cmd/msgvault" ];

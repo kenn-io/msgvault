@@ -2131,6 +2131,15 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 		args = append(args, filter.TimeRange.Period)
 	}
 
+	if filter.After != nil {
+		conditions = append(conditions, "msg.sent_at >= ?")
+		args = append(args, *filter.After)
+	}
+	if filter.Before != nil {
+		conditions = append(conditions, "msg.sent_at < ?")
+		args = append(args, *filter.Before)
+	}
+
 	// Build query — JOIN src to scope to Gmail sources authoritatively.
 	query := fmt.Sprintf(`
 		WITH %s
@@ -2150,6 +2159,96 @@ func (e *DuckDBEngine) GetGmailIDsByFilter(ctx context.Context, filter MessageFi
 	rows, err := e.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get gmail ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDs(rows)
+}
+
+// GetGmailIDsByMessageIDs returns Gmail message IDs for internal message
+// IDs, enforcing the same live-message and Gmail-source constraints as
+// GetGmailIDsByFilter. Non-qualifying IDs are silently dropped. The
+// lookup is chunked so large explicit selections stay under
+// bind-parameter limits.
+func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error) {
+	// Delegate to SQLite for authoritative deletion status.
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetGmailIDsByMessageIDs(ctx, ids)
+	}
+	if e.analyticsDir == "" {
+		return nil, errors.New("GetGmailIDsByMessageIDs requires SQLite or Parquet data")
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return gmailIDsByMessageIDsChunked(ctx, ids, e.gmailIDsForMessageIDChunk)
+}
+
+func (e *DuckDBEngine) gmailIDsForMessageIDChunk(ctx context.Context, ids []int64) ([]gmailIDRow, error) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		WITH %s
+		SELECT msg.source_message_id, msg.sent_at, msg.id
+		FROM msg
+		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') = 'gmail'
+		WHERE %s AND msg.id IN (%s)
+	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
+
+	rows, err := e.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get gmail ids by message ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return collectGmailIDRows(rows)
+}
+
+// GetAccountsByGmailIDs returns the distinct Gmail account identifiers
+// owning live messages with the given Gmail IDs, sorted ascending. See
+// the SQLite implementation for the deletion-staging rationale and the
+// chunking that keeps large selections under bind-parameter limits.
+func (e *DuckDBEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
+	// Delegate to SQLite for authoritative deletion status.
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetAccountsByGmailIDs(ctx, gmailIDs)
+	}
+	if e.analyticsDir == "" {
+		return nil, errors.New("GetAccountsByGmailIDs requires SQLite or Parquet data")
+	}
+	if len(gmailIDs) == 0 {
+		return nil, nil
+	}
+	return accountsByGmailIDsChunked(ctx, gmailIDs, e.accountsForGmailIDChunk)
+}
+
+func (e *DuckDBEngine) accountsForGmailIDChunk(ctx context.Context, gmailIDs []string) ([]string, error) {
+	placeholders := make([]string, len(gmailIDs))
+	args := make([]any, len(gmailIDs))
+	for i, id := range gmailIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	// The Parquet sources dataset exposes the account identifier as
+	// account_email (see build-cache ETL).
+	query := fmt.Sprintf(`
+		WITH %s
+		SELECT src.account_email
+		FROM src
+		WHERE COALESCE(src.source_type, 'gmail') = 'gmail' AND EXISTS (
+			SELECT 1 FROM msg
+			WHERE msg.source_id = src.id AND %s AND msg.source_message_id IN (%s)
+		)
+		ORDER BY src.account_email
+	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), strings.Join(placeholders, ","))
+
+	rows, err := e.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get accounts by gmail ids: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

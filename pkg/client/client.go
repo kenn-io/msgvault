@@ -171,6 +171,30 @@ func (c *Client) AddAccount(
 	return nil, fmt.Errorf("add account: %w", err)
 }
 
+// StageDeletion accepts both documented success statuses. The generated
+// convenience method treats only 201 as success even though the daemon
+// returns 200 for dry-run staging requests.
+func (c *Client) StageDeletion(
+	ctx context.Context,
+	options *generated.StageDeletionRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.StageDeletionResponseJSON, error) {
+	resp, err := c.StageDeletionWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("stage deletion: %w", err)
+}
+
 type httpClientDoer struct {
 	client *http.Client
 }

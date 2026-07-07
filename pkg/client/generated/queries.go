@@ -240,6 +240,11 @@ func (v VerifyCLIQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type ListDeletionsQuery struct {
+	// Status Filter manifests by status (pending, in_progress, completed, failed, cancelled)
+	Status *string `json:"status,omitempty"`
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`
