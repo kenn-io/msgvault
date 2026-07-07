@@ -3611,3 +3611,22 @@ func TestDuckDBEngine_GetAccountsByGmailIDs(t *testing.T) {
 	require.NoError(err, "empty input")
 	assert.Empty(t, accounts)
 }
+
+func TestDuckDBEngine_GetAccountsByGmailIDs_ChunkedLargeSelection(t *testing.T) {
+	ctx := context.Background()
+	parquet := newParquetEngine(t)
+
+	// More IDs than one account-lookup chunk, with the real IDs in the
+	// first and last chunk so the Parquet path exercises the cross-chunk
+	// union.
+	ids := make([]string, 0, 1200)
+	ids = append(ids, "msg1")
+	for len(ids) < 1199 {
+		ids = append(ids, fmt.Sprintf("missing-%d", len(ids)))
+	}
+	ids = append(ids, "msg5")
+
+	accounts, err := parquet.GetAccountsByGmailIDs(ctx, ids)
+	require.NoError(t, err, "chunked parquet lookup")
+	assertSetEqual(t, accounts, []string{"test@gmail.com"})
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1447,15 +1448,55 @@ func (e *SQLiteEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 	return collectGmailIDs(rows)
 }
 
+// accountLookupChunkSize bounds the IN-list size per account-resolution
+// query. Deletion staging feeds the FULL resolved Gmail-ID set into
+// GetAccountsByGmailIDs, which can exceed the SQLite bind-parameter limit
+// (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default) for broad selections.
+// 500 stays well under every backend's limit.
+const accountLookupChunkSize = 500
+
+// accountsByGmailIDsChunked runs queryChunk over gmailIDs in
+// accountLookupChunkSize batches and returns the union of accounts,
+// deduplicated and sorted ascending.
+func accountsByGmailIDsChunked(
+	ctx context.Context,
+	gmailIDs []string,
+	queryChunk func(ctx context.Context, chunk []string) ([]string, error),
+) ([]string, error) {
+	seen := make(map[string]struct{})
+	for start := 0; start < len(gmailIDs); start += accountLookupChunkSize {
+		end := min(start+accountLookupChunkSize, len(gmailIDs))
+		accounts, err := queryChunk(ctx, gmailIDs[start:end])
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range accounts {
+			seen[a] = struct{}{}
+		}
+	}
+	accounts := make([]string, 0, len(seen))
+	for a := range seen {
+		accounts = append(accounts, a)
+	}
+	slices.Sort(accounts)
+	return accounts, nil
+}
+
 // GetAccountsByGmailIDs returns the distinct Gmail account identifiers
 // owning live messages with the given Gmail IDs (source_message_id),
 // sorted ascending. Deletion staging uses this to stamp the manifest
 // with its account and to reject selections spanning multiple accounts,
 // since delete-staged executes a manifest against a single mailbox.
+// The lookup is chunked so arbitrarily large selections stay under the
+// backend's bind-parameter limit.
 func (e *SQLiteEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
 	if len(gmailIDs) == 0 {
 		return nil, nil
 	}
+	return accountsByGmailIDsChunked(ctx, gmailIDs, e.accountsForGmailIDChunk)
+}
+
+func (e *SQLiteEngine) accountsForGmailIDChunk(ctx context.Context, gmailIDs []string) ([]string, error) {
 	placeholders := make([]string, len(gmailIDs))
 	args := make([]any, len(gmailIDs))
 	for i, id := range gmailIDs {

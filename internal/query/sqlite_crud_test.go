@@ -1439,3 +1439,31 @@ func TestGetAccountsByGmailIDs_MultipleAndNonQualifying(t *testing.T) {
 	require.NoError(err, "resolve non-qualifying")
 	assert.Empty(accounts, "deleted and non-Gmail messages contribute no account")
 }
+
+func TestGetAccountsByGmailIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	env := newTestEnv(t)
+
+	_, err := env.DB.Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (98, 'gmail', 'second@gmail.com')`)
+	require.NoError(err, "insert second gmail source")
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at) VALUES (911, 1, 98, 'other-1', 'email', '2024-01-05')`)
+	require.NoError(err, "insert second-account message")
+
+	// 33k IDs exceed SQLITE_MAX_VARIABLE_NUMBER (32766) as a single IN
+	// list, so an unchunked lookup fails with "too many SQL variables".
+	// The two real IDs sit in the first and last chunk to exercise the
+	// cross-chunk account union.
+	ids := make([]string, 0, 33000)
+	ids = append(ids, "msg1")
+	for len(ids) < 32999 {
+		ids = append(ids, fmt.Sprintf("missing-%d", len(ids)))
+	}
+	ids = append(ids, "other-1")
+
+	accounts, err := env.Engine.GetAccountsByGmailIDs(env.Ctx, ids)
+	require.NoError(err, "large selection must stay under bind-parameter limits")
+	assert.Equal([]string{"second@gmail.com", "test@gmail.com"}, accounts,
+		"accounts from different chunks must be unioned and sorted")
+}

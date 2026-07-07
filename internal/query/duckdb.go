@@ -2205,7 +2205,8 @@ func (e *DuckDBEngine) GetGmailIDsByMessageIDs(ctx context.Context, ids []int64)
 
 // GetAccountsByGmailIDs returns the distinct Gmail account identifiers
 // owning live messages with the given Gmail IDs, sorted ascending. See
-// the SQLite implementation for the deletion-staging rationale.
+// the SQLite implementation for the deletion-staging rationale and the
+// chunking that keeps large selections under bind-parameter limits.
 func (e *DuckDBEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string) ([]string, error) {
 	// Delegate to SQLite for authoritative deletion status.
 	if e.sqliteEngine != nil {
@@ -2217,6 +2218,10 @@ func (e *DuckDBEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []str
 	if len(gmailIDs) == 0 {
 		return nil, nil
 	}
+	return accountsByGmailIDsChunked(ctx, gmailIDs, e.accountsForGmailIDChunk)
+}
+
+func (e *DuckDBEngine) accountsForGmailIDChunk(ctx context.Context, gmailIDs []string) ([]string, error) {
 	placeholders := make([]string, len(gmailIDs))
 	args := make([]any, len(gmailIDs))
 	for i, id := range gmailIDs {
