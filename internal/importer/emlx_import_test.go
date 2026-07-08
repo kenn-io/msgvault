@@ -267,23 +267,32 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 	require.Equal(2, msgCount, "msgCount")
 }
 
-func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
+// A .partial.emlx holds a complete message body (only attachments are
+// uncached by Apple Mail), so it must be imported like any other file.
+func TestImportEmlxDir_PartialEmlxImported(t *testing.T) {
+	require := require.New(t)
 	st, tmp := openTestStore(t)
 
 	root := filepath.Join(tmp, "Mail")
 	mboxDir := filepath.Join(root, "Mailboxes", "Test.mbox")
 	msgDir := filepath.Join(mboxDir, "Messages")
-	require.NoError(t, os.MkdirAll(msgDir, 0700), "mkdir")
+	require.NoError(os.MkdirAll(msgDir, 0700), "mkdir")
 
-	raw := email.NewMessage().
+	raw1 := email.NewMessage().
 		From("Alice <alice@example.com>").
 		Subject("Hello").
+		Header("Message-ID", "<msg1@example.com>").
 		Body("hi\n").
 		Bytes()
-	mkEmlx(t, msgDir, "1.emlx", raw)
+	mkEmlx(t, msgDir, "1.emlx", raw1)
 
-	// Create a .partial.emlx file.
-	mkEmlx(t, msgDir, "2.partial.emlx", raw)
+	raw2 := email.NewMessage().
+		From("Bob <bob@example.com>").
+		Subject("Attachments not cached").
+		Header("Message-ID", "<msg2@example.com>").
+		Body("body only\n").
+		Bytes()
+	mkEmlx(t, msgDir, "2.partial.emlx", raw2)
 
 	summary, err := ImportEmlxDir(
 		context.Background(), st, root, EmlxImportOptions{
@@ -292,9 +301,21 @@ func TestImportEmlxDir_PartialEmlxSkipped(t *testing.T) {
 			CheckpointInterval: 1,
 		},
 	)
-	require.NoError(t, err, "ImportEmlxDir")
-	// Only the non-partial file should be imported.
-	require.Equal(t, int64(1), summary.MessagesAdded, "MessagesAdded")
+	require.NoError(err, "ImportEmlxDir")
+	require.Equal(int64(2), summary.MessagesAdded, "MessagesAdded")
+	require.Equal(int64(1), summary.PartialFiles, "PartialFiles")
+
+	var subjects []string
+	rows, err := st.DB().Query(`SELECT subject FROM messages ORDER BY subject`)
+	require.NoError(err, "query subjects")
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var s string
+		require.NoError(rows.Scan(&s), "scan subject")
+		subjects = append(subjects, s)
+	}
+	require.NoError(rows.Err(), "rows error")
+	require.Equal([]string{"Attachments not cached", "Hello"}, subjects)
 }
 
 func TestImportEmlxDir_NoMailboxes(t *testing.T) {

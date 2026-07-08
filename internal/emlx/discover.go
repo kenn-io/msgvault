@@ -222,8 +222,8 @@ func findMessagesDir(mailboxPath string) string {
 	return candidates[0]
 }
 
-// hasEmlxFiles returns true if dir contains at least one
-// non-partial .emlx file.
+// hasEmlxFiles returns true if dir contains at least one .emlx file
+// (including *.partial.emlx).
 func hasEmlxFiles(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -290,9 +290,45 @@ func isDigitDir(name string) bool {
 }
 
 func isEmlxFile(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".emlx") &&
-		!strings.HasSuffix(lower, ".partial.emlx")
+	return strings.HasSuffix(strings.ToLower(name), ".emlx")
+}
+
+// IsPartial reports whether name (or path) is a *.partial.emlx file.
+// Apple Mail uses the .partial.emlx form for IMAP/Gmail messages whose
+// body is fully downloaded but whose attachments are not cached locally;
+// the RFC822 payload is complete apart from the attachment parts.
+func IsPartial(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".partial.emlx")
+}
+
+// fullEmlxName returns the non-partial counterpart of a partial name
+// (e.g. "513139.partial.emlx" -> "513139.emlx").
+func fullEmlxName(name string) string {
+	return name[:len(name)-len(".partial.emlx")] + ".emlx"
+}
+
+// selectEmlxNames returns the .emlx file names among entries, skipping
+// a N.partial.emlx when its fully-downloaded N.emlx counterpart exists
+// in the same directory (the full copy supersedes the partial).
+func selectEmlxNames(entries []os.DirEntry) []string {
+	full := make(map[string]bool)
+	for _, e := range entries {
+		if !e.IsDir() && isEmlxFile(e.Name()) && !IsPartial(e.Name()) {
+			full[strings.ToLower(e.Name())] = true
+		}
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || !isEmlxFile(e.Name()) {
+			continue
+		}
+		if IsPartial(e.Name()) &&
+			full[strings.ToLower(fullEmlxName(e.Name()))] {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 func stripMailboxSuffix(name string) string {
@@ -329,10 +365,8 @@ func listEmlxFiles(
 	}
 
 	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && isEmlxFile(e.Name()) {
-			files = append(files, filepath.Join(msgDir, e.Name()))
-		}
+	for _, name := range selectEmlxNames(entries) {
+		files = append(files, filepath.Join(msgDir, name))
 	}
 
 	// Walk numeric partition dirs in Data/ (parent of Messages/).
@@ -375,10 +409,8 @@ func collectPartitionFiles(dir string, files *[]string) {
 			if err != nil {
 				continue
 			}
-			for _, m := range msgs {
-				if !m.IsDir() && isEmlxFile(m.Name()) {
-					*files = append(*files, filepath.Join(msgDir, m.Name()))
-				}
+			for _, n := range selectEmlxNames(msgs) {
+				*files = append(*files, filepath.Join(msgDir, n))
 			}
 		} else if isDigitDir(name) {
 			collectPartitionFiles(filepath.Join(dir, name), files)

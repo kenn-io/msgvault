@@ -371,6 +371,7 @@ func importAutoAccounts(
 		grandTotal.MessagesAdded += summary.MessagesAdded
 		grandTotal.MessagesUpdated += summary.MessagesUpdated
 		grandTotal.MessagesSkipped += summary.MessagesSkipped
+		grandTotal.PartialFiles += summary.PartialFiles
 		grandTotal.Errors += summary.Errors
 		if summary.HardErrors {
 			grandTotal.HardErrors = true
@@ -445,6 +446,12 @@ func printImportStats(out io.Writer, summary importer.EmlxImportSummary) {
 		"  Skipped (dup):  %d messages\n",
 		summary.MessagesSkipped,
 	)
+	if summary.PartialFiles > 0 {
+		_, _ = fmt.Fprintf(out,
+			"  Partial files:  %d (body imported; attachments not cached by Apple Mail)\n",
+			summary.PartialFiles,
+		)
+	}
 	_, _ = fmt.Fprintf(out,
 		"  Errors:         %d\n",
 		summary.Errors,

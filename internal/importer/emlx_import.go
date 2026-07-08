@@ -66,8 +66,13 @@ type EmlxImportSummary struct {
 	MessagesAdded     int64
 	MessagesUpdated   int64
 	MessagesSkipped   int64
-	Errors            int64
-	HardErrors        bool
+
+	// PartialFiles counts *.partial.emlx files parsed. Their bodies are
+	// complete; only attachment parts are uncached by Apple Mail.
+	PartialFiles int64
+
+	Errors     int64
+	HardErrors bool
 }
 
 type emlxCheckpoint struct {
@@ -468,6 +473,10 @@ func ImportEmlxDir(
 					"file", filePath, "error", err,
 				)
 				continue
+			}
+
+			if emlx.IsPartial(filepath.Base(filePath)) {
+				summary.PartialFiles++
 			}
 
 			sum := sha256.Sum256(msg.Raw)

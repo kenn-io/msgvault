@@ -103,7 +103,7 @@ func TestDiscoverMailboxes_EmptyMailbox(t *testing.T) {
 	require.Empty(t, mailboxes)
 }
 
-func TestDiscoverMailboxes_PartialEmlxSkipped(t *testing.T) {
+func TestDiscoverMailboxes_PartialEmlxIncluded(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
@@ -112,8 +112,41 @@ func TestDiscoverMailboxes_PartialEmlxSkipped(t *testing.T) {
 	mailboxes, err := DiscoverMailboxes(mboxDir)
 	require.NoError(err, "DiscoverMailboxes")
 	require.Len(mailboxes, 1)
-	require.Len(mailboxes[0].Files, 1, "partial should be skipped")
+	require.Len(mailboxes[0].Files, 2, "partial should be included")
 	require.Equal("1.emlx", filepath.Base(mailboxes[0].Files[0]))
+	require.Equal("2.partial.emlx", filepath.Base(mailboxes[0].Files[1]))
+}
+
+// A mailbox whose Messages/ directory contains only *.partial.emlx
+// files must still be discovered: for IMAP/Gmail accounts the partial
+// form holds the complete message body (only attachments are uncached).
+func TestDiscoverMailboxes_PartialOnlyMailbox(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	mboxDir := filepath.Join(root, "INBOX.mbox")
+	mkMailbox(t, mboxDir, "513139.partial.emlx")
+
+	mailboxes, err := DiscoverMailboxes(mboxDir)
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1, "partial-only mailbox should be discovered")
+	require.Len(mailboxes[0].Files, 1)
+	require.Equal("513139.partial.emlx", filepath.Base(mailboxes[0].Files[0]))
+}
+
+// When both N.emlx and N.partial.emlx exist in the same directory, the
+// fully-downloaded copy supersedes the partial.
+func TestDiscoverMailboxes_PartialSupersededByFull(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	mboxDir := filepath.Join(root, "Test.mbox")
+	mkMailbox(t, mboxDir, "1.emlx", "1.partial.emlx", "2.partial.emlx")
+
+	mailboxes, err := DiscoverMailboxes(mboxDir)
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+	require.Len(mailboxes[0].Files, 2, "1.partial.emlx superseded by 1.emlx")
+	require.Equal("1.emlx", filepath.Base(mailboxes[0].Files[0]))
+	require.Equal("2.partial.emlx", filepath.Base(mailboxes[0].Files[1]))
 }
 
 func TestDiscoverMailboxes_NotADirectory(t *testing.T) {
@@ -290,7 +323,7 @@ func TestDiscoverMailboxes_V10SingleMailbox(t *testing.T) {
 	assert.Equal(wantSuffix, rel, "MsgDir relative")
 }
 
-func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
+func TestDiscoverMailboxes_V10PartialIncluded(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	mboxDir := filepath.Join(root, "Test.mbox")
@@ -301,8 +334,37 @@ func TestDiscoverMailboxes_V10PartialSkipped(t *testing.T) {
 	mailboxes, err := DiscoverMailboxes(mboxDir)
 	require.NoError(err, "DiscoverMailboxes")
 	require.Len(mailboxes, 1)
-	require.Len(mailboxes[0].Files, 1)
+	require.Len(mailboxes[0].Files, 2)
 	assert.Equal(t, "1.emlx", filepath.Base(mailboxes[0].Files[0]))
+	assert.Equal(t, "2.partial.emlx", filepath.Base(mailboxes[0].Files[1]))
+}
+
+// Partition subdirectories follow the same rules: partials are
+// collected, and a partial is superseded by a full copy alongside it.
+func TestDiscoverMailboxes_V10PartitionPartials(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	guid := "9F0F15DD-4CBC-448A-9EBF-C385A47A3A67"
+	mboxDir := filepath.Join(root, "INBOX.mbox")
+
+	partDir := filepath.Join(mboxDir, guid, "Data", "3", "Messages")
+	require.NoError(os.MkdirAll(partDir, 0700), "mkdir %q", partDir)
+	for _, name := range []string{
+		"100.emlx", "100.partial.emlx", "200.partial.emlx",
+	} {
+		path := filepath.Join(partDir, name)
+		require.NoError(os.WriteFile(path, []byte("10\nFrom: x\r\n\r\n"), 0600), "write %q", path)
+	}
+
+	mailboxes, err := DiscoverMailboxes(mboxDir)
+	require.NoError(err, "DiscoverMailboxes")
+	require.Len(mailboxes, 1)
+
+	var names []string
+	for _, f := range mailboxes[0].Files {
+		names = append(names, filepath.Base(f))
+	}
+	require.Equal([]string{"100.emlx", "200.partial.emlx"}, names)
 }
 
 func TestDiscoverMailboxes_MixedLegacyAndV10(t *testing.T) {

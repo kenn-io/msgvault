@@ -196,8 +196,8 @@ Both layouts are supported. The importer discovers all `.mbox` and `.imapmbox` d
 
 Apple Mail stores its data at `~/Library/Mail/` on macOS. The auto-discover mode reads `~/Library/Accounts/Accounts4.sqlite` (the macOS accounts database) to map V10 directory GUIDs to email addresses. You can also use a Time Machine backup or a copy of the Mail directory from another machine.
 
-!!! warning
-    The `.partial.emlx` files that Apple Mail creates for incomplete downloads are automatically skipped during import.
+!!! note
+    Apple Mail stores IMAP and Gmail messages whose attachments have not been downloaded as `.partial.emlx` files. The message body in these files is complete, so they are imported normally — only the uncached attachment parts are absent. When both `N.emlx` and `N.partial.emlx` exist for the same message, the fully-downloaded copy is used. The import summary reports how many partial files were imported.
 
 ## Deduplication
 
