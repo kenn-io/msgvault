@@ -32,33 +32,26 @@ type PackRecord struct {
 // one transaction. Idempotent: re-recording an existing pack or blob is a
 // no-op, so crash reconciliation can re-run adoption safely.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin record packed blobs: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
-		INSERT OR IGNORE INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
-		VALUES (?, ?, ?, ?)`),
-		rec.PackID, rec.EntryCount, rec.StoredBytes,
-		rec.CreatedAt.UTC().Format(time.RFC3339)); err != nil {
-		return fmt.Errorf("insert attachment_packs row for %s: %w", rec.PackID, err)
-	}
-	for _, e := range entries {
+	return s.withTx(func(tx *loggedTx) error {
 		if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
-			INSERT OR IGNORE INTO attachment_pack_index
-			    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`),
-			e.BlobHash, e.PackID, e.Offset, e.StoredLen, e.RawLen,
-			int64(e.Flags), int64(e.CRC32C)); err != nil {
-			return fmt.Errorf("insert pack index row for %s: %w", e.BlobHash, err)
+			INSERT OR IGNORE INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+			VALUES (?, ?, ?, ?)`),
+			rec.PackID, rec.EntryCount, rec.StoredBytes,
+			rec.CreatedAt.UTC().Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("insert attachment_packs row for %s: %w", rec.PackID, err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit record packed blobs: %w", err)
-	}
-	return nil
+		for _, e := range entries {
+			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
+				INSERT OR IGNORE INTO attachment_pack_index
+				    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`),
+				e.BlobHash, e.PackID, e.Offset, e.StoredLen, e.RawLen,
+				int64(e.Flags), int64(e.CRC32C)); err != nil {
+				return fmt.Errorf("insert pack index row for %s: %w", e.BlobHash, err)
+			}
+		}
+		return nil
+	})
 }
 
 // GetAttachmentPackEntry returns the pack location of a blob, or (nil, nil)
