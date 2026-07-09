@@ -217,13 +217,16 @@ is the escape hatch before any downgrade.
 
 ### Backup coordination (release-blocking)
 
-Backup capture currently reads attachment bytes from loose paths:
+Backup capture historically read attachment bytes from loose paths:
 `backupapp.ContentInfo` hands DB-recorded paths to the kit engine, which
 opens files under the content dir (`kit/backup/create.go`). Once blobs are
-packed those paths do not exist. The same release that ships the packer must
-ship a kit change letting the `backup.App` supply a content **reader**
-(hash -> bytes/stream) instead of bare paths, with msgvault implementing it
-via the blob store. The blob store's loose fallback opens only the canonical
+packed those paths do not exist. **The kit hook has landed** (kit branch
+`backup-content-source`, targeting v0.4.0): `backup.CreateOptions` gains an
+optional `ContentSource` — `Open(ctx, ContentRef) (io.ReadCloser, error)` —
+called from concurrent capture workers; when set, the content dir is ignored
+and the engine still hash-verifies and size-caps every blob. msgvault's
+phase-2b work implements it via the blob store and must ship in the same
+release as the packer. The blob store's loose fallback opens only the canonical
 `<aa>/<hash>` path, so msgvault's backup reader must additionally fall back
 to the DB-recorded `storage_path`/`thumbnail_path` for blobs that are
 neither packed nor canonical — legacy noncanonical rows (e.g. SyncTech's
