@@ -151,7 +151,10 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 			seen[b.Hash] = struct{}{}
 			blobs = append(blobs, b)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate unpacked blobs: %w", err)
+		}
+		return nil
 	}
 
 	if err := collect(`
