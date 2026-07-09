@@ -196,7 +196,11 @@ Crash safety at each boundary:
 - After 3, before 4: loose files linger harmlessly; the next sweep removes
   an indexed loose file only after opening the packed copy through the
   production blob store. Corrupt metadata or pack bytes therefore preserve
-  the loose recovery copy.
+  the loose recovery copy. If the loose candidate verifies, the sweep first
+  materializes it at the canonical path and drops only that unreadable blob's
+  index row, so reads recover immediately and the next run can repack it. If
+  the loose candidate does not verify, the failing packed index is retained so
+  readers fail closed instead of serving unverified bytes.
 
 Before orphan reconciliation, the packer drops records whose canonical
 sharded pack file is missing, plus records with malformed pack IDs that no

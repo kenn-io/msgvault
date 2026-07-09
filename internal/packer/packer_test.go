@@ -636,6 +636,51 @@ func TestRunPreservesLooseCopyWhenIndexedPackIsUnreadable(t *testing.T) {
 	loose, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))))
 	require.NoError(err, "loose recovery copy must remain")
 	assert.Equal(content, loose)
+	entry, err = f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.Nil(entry, "unreadable packed index is dropped after the loose copy verifies")
+	assert.Equal(content, f.readBack(hash),
+		"production reads must recover immediately through canonical loose fallback")
+}
+
+func TestRunKeepsPackedIndexWhenLooseRecoveryCopyIsCorrupt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	first := f.run(packer.Options{})
+	require.Equal(1, first.PacksSealed)
+
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	packPath := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+blobstore.PackExt)
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, entry.Offset)
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, entry.Offset)
+	require.NoError(err)
+	require.NoError(pf.Close())
+	f.writeLoose(canonical(hash), []byte("also corrupt"))
+
+	stats := f.run(packer.Options{})
+
+	assert.Zero(stats.LooseSwept)
+	entry, err = f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.NotNil(entry, "unverified loose bytes must not become the read fallback")
+	loose, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))))
+	require.NoError(err)
+	assert.Equal([]byte("also corrupt"), loose, "both damaged copies remain available for repair")
+	bs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(bs.Close()) }()
+	_, _, err = bs.Open(hash)
+	require.Error(err, "reads fail closed while neither copy verifies")
 }
 
 func TestRunDropsMalformedPackMetadataBeforeSweepingLooseFiles(t *testing.T) {

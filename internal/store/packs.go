@@ -393,3 +393,15 @@ func (s *Store) DeletePackRecord(packID string) error {
 		return nil
 	})
 }
+
+// DeletePackIndexEntry removes one unreadable packed-blob mapping while
+// retaining the pack record and all other live entries. The packer calls this
+// only after a loose copy has been hash-verified and materialized canonically;
+// the old pack entry then becomes dead bytes for GC/repack accounting.
+func (s *Store) DeletePackIndexEntry(blobHash string) error {
+	if _, err := s.db.Exec(`
+		DELETE FROM attachment_pack_index WHERE blob_hash = ?`, blobHash); err != nil {
+		return fmt.Errorf("delete pack index entry for %s: %w", blobHash, err)
+	}
+	return nil
+}

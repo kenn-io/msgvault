@@ -508,8 +508,35 @@ func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir
 		// loose recovery copy.
 		r, _, err := packed.Open(d.Name())
 		if err != nil {
-			slog.Error("preserving indexed loose file because packed copy is unreadable",
+			slog.Error("packed copy is unreadable; validating loose recovery candidate",
 				"path", path, "hash", d.Name(), "error", err)
+			//nolint:gosec // G122: the packer holds exclusive-writer coverage;
+			// bytes are SHA-256-verified against the indexed hash before they can
+			// affect canonical storage or metadata.
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				slog.Error("preserving packed index because loose recovery candidate is unreadable",
+					"path", path, "hash", d.Name(), "error", readErr)
+				return nil
+			}
+			sum := sha256.Sum256(data)
+			if hex.EncodeToString(sum[:]) != d.Name() {
+				slog.Error("preserving packed index because loose recovery candidate hash mismatches",
+					"path", path, "hash", d.Name())
+				return nil
+			}
+			// The candidate can be a legacy noncanonical path. Materialize the
+			// verified bytes canonically before dropping the index so production
+			// readers immediately reach the loose fallback.
+			if err := restoreBlob(attachmentsDir, d.Name(), data); err != nil {
+				return fmt.Errorf("restore canonical loose recovery copy for %s: %w", d.Name(), err)
+			}
+			if err := st.DeletePackIndexEntry(d.Name()); err != nil {
+				return err
+			}
+			delete(indexed, d.Name())
+			slog.Error("dropped unreadable packed index after verifying loose recovery copy",
+				"path", path, "hash", d.Name())
 			return nil
 		}
 		if err := r.Close(); err != nil {
