@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
@@ -450,21 +450,20 @@ func (i *Importer) importMMSAttachments(sourceID int64, sourceMessageID string, 
 		if int64(len(part.Data)) > maxBytes {
 			return count, fmt.Errorf("MMS attachment %d exceeds maximum size", idx)
 		}
-		sum := sha256.Sum256(part.Data)
-		hash := hex.EncodeToString(sum[:])
 		filename := part.Filename.String
 		if filename == "" {
 			filename = fmt.Sprintf("mms-part-%d", idx)
 		}
-		storagePath := filepath.Join("synctech-sms", hash[:2], hash)
-		fullPath := filepath.Join(i.opts.AttachmentsDir, storagePath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
-			return count, fmt.Errorf("create attachment directory: %w", err)
+		att := &mime.Attachment{
+			Filename:    filename,
+			ContentType: part.ContentType,
+			Content:     part.Data,
 		}
-		if err := os.WriteFile(fullPath, part.Data, 0o600); err != nil {
-			return count, fmt.Errorf("write attachment: %w", err)
+		storagePath, err := export.StoreAttachmentFile(i.opts.AttachmentsDir, att)
+		if err != nil {
+			return count, fmt.Errorf("store MMS attachment: %w", err)
 		}
-		if err := i.store.UpsertAttachment(messageID, filename, part.ContentType, storagePath, hash, len(part.Data)); err != nil {
+		if err := i.store.UpsertAttachment(messageID, filename, part.ContentType, storagePath, att.ContentHash, len(part.Data)); err != nil {
 			return count, fmt.Errorf("upsert attachment: %w", err)
 		}
 		count++

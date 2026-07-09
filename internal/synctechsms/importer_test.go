@@ -1,6 +1,7 @@
 package synctechsms
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -52,6 +53,10 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	// The MMS parent message must record attachment metadata so the UI
 	// shows an attachment badge and attachment-only filters match.
 	assertMMSHasAttachmentMetadata(t, f.Store, 1)
+	// MMS attachments must land at the canonical content-addressed path
+	// (<hash[:2]>/<hash>), not the legacy synctech-sms/ namespace, so they
+	// are readable through the standard read paths.
+	assertAttachmentAtCanonicalPath(t, f.Store, filepath.Join(dir, "attachments"))
 	writeFile(t, filepath.Join(dir, "messages-copy.xml"), `<smses count="1">
   <sms address="+15551234567" date="1717214400000" type="1" body="hello from sms" read="1" status="-1" contact_name="Alice" />
 </smses>`)
@@ -208,6 +213,22 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 	// fixture seeds a default-thread row that is unrelated.
 	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id LIKE 'text:%' OR source_conversation_id LIKE 'calls:%'`).Scan(&got), "count conversations")
 	require.Equal(t, want, got, "conversation count")
+}
+
+// assertAttachmentAtCanonicalPath asserts that the sole attachment row's
+// storage_path is the canonical <hash[:2]>/<hash> form (not the legacy
+// synctech-sms/ namespace) and that the file exists on disk at that path.
+func assertAttachmentAtCanonicalPath(t *testing.T, st *store.Store, attachmentsDir string) {
+	t.Helper()
+	var storagePath, contentHash string
+	err := st.DB().QueryRow(`SELECT storage_path, content_hash FROM attachments LIMIT 1`).Scan(&storagePath, &contentHash)
+	require.NoError(t, err, "read attachment row")
+	require.NotEmpty(t, contentHash, "content_hash")
+	wantPath := filepath.Join(contentHash[:2], contentHash)
+	assert.Equal(t, wantPath, storagePath, "storage_path")
+	assert.NotContains(t, storagePath, "synctech-sms", "storage_path must not use legacy namespace")
+	_, err = os.Stat(filepath.Join(attachmentsDir, wantPath))
+	assert.NoError(t, err, "attachment file at canonical path")
 }
 
 func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int) {
