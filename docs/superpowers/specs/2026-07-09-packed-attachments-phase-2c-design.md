@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 
-**Status:** Revised after human review; pending final spec re-review
+**Status:** Independently reviewed; pending final human approval
 
 **Parent design:** `docs/internal/packed-attachments-design.md`
 

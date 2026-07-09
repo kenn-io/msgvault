@@ -403,8 +403,9 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	// read-only SQLite connection alongside the daemon's writer is safe
 	// under WAL. Kit releases the daemon's operation gate after pinning the
 	// database snapshot, before attachment capture, so maintenance can run
-	// concurrently; blob-store reads either follow its new mapping or fail
-	// loudly and leave the backup retryable.
+	// concurrently; blob-store reads finish through an already-open pack,
+	// follow a replacement mapping, or fail loudly and leave the backup
+	// retryable.
 	roStore, err := store.OpenReadOnly(dbPath)
 	if err != nil {
 		return fmt.Errorf("open archive for backup content reads: %w", err)
