@@ -24,30 +24,34 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 	wantHash := hex.EncodeToString(sum[:])
 
 	t.Run("stores new file at canonical path", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 		attDir := t.TempDir()
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
 
 		rel, hash, size, err := StoreAttachmentFromPath(attDir, src, 0)
-		require.NoError(t, err)
-		assert.Equal(t, wantHash[:2]+"/"+wantHash, rel)
-		assert.Equal(t, wantHash, hash)
-		assert.Equal(t, int64(len(content)), size)
+		require.NoError(err)
+		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
+		assert.Equal(wantHash, hash)
+		assert.Equal(int64(len(content)), size)
 
 		got, err := os.ReadFile(filepath.Join(attDir, wantHash[:2], wantHash))
-		require.NoError(t, err)
-		assert.Equal(t, content, got)
+		require.NoError(err)
+		assert.Equal(content, got)
 	})
 
 	t.Run("dedups against valid existing file", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 		attDir := t.TempDir()
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
 		_, _, _, err := StoreAttachmentFromPath(attDir, src, 0)
-		require.NoError(t, err)
+		require.NoError(err)
 
 		rel, hash, _, err := StoreAttachmentFromPath(attDir, src, 0)
-		require.NoError(t, err)
-		assert.Equal(t, wantHash[:2]+"/"+wantHash, rel)
-		assert.Equal(t, wantHash, hash)
+		require.NoError(err)
+		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
+		assert.Equal(wantHash, hash)
 	})
 
 	t.Run("rejects source larger than maxSize but returns no hash", func(t *testing.T) {

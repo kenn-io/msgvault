@@ -260,6 +260,8 @@ func TestAttachmentsToDir(t *testing.T) {
 }
 
 func TestAttachmentsToDirWithOpener(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	content := []byte("opener-served content")
 	sum := sha256.Sum256(content)
 	hash := hex.EncodeToString(sum[:])
@@ -267,15 +269,15 @@ func TestAttachmentsToDirWithOpener(t *testing.T) {
 	outDir := t.TempDir()
 	atts := []query.AttachmentInfo{{Filename: "doc.txt", ContentHash: hash}}
 	res := AttachmentsToDirWithOpener(outDir, atts, func(contentHash string) (io.ReadCloser, error) {
-		require.Equal(t, hash, contentHash)
+		require.Equal(hash, contentHash)
 		return io.NopCloser(bytes.NewReader(content)), nil
 	})
 
-	require.Empty(t, res.Errors)
-	require.Len(t, res.Files, 1)
+	require.Empty(res.Errors)
+	require.Len(res.Files, 1)
 	got, err := os.ReadFile(res.Files[0].Path)
-	require.NoError(t, err)
-	assert.Equal(t, content, got)
+	require.NoError(err)
+	assert.Equal(content, got)
 }
 
 func TestAttachmentsToDir_FilePermissions(t *testing.T) {

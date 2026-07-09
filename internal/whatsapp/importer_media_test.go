@@ -29,14 +29,16 @@ func TestHandleMediaFile(t *testing.T) {
 	imp := &Importer{}
 
 	t.Run("stores media at canonical content-addressed path", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
 		opts := newOpts(t)
 		rel, hash := imp.handleMediaFile(media("photo.jpg"), opts)
-		assert.Equal(t, filepath.Join(wantHash[:2], wantHash), rel)
-		assert.Equal(t, wantHash, hash)
+		assert.Equal(filepath.Join(wantHash[:2], wantHash), rel)
+		assert.Equal(wantHash, hash)
 
 		got, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, wantHash[:2], wantHash))
-		require.NoError(t, err)
-		assert.Equal(t, content, got)
+		require.NoError(err)
+		assert.Equal(content, got)
 	})
 
 	t.Run("returns empty for missing media file", func(t *testing.T) {
