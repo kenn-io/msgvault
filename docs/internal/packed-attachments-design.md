@@ -1,9 +1,11 @@
 # Packed Attachment Storage
 
 Design for storing attachment content in kit CAS pack files instead of loose
-content-addressed files. Written 2026-07-09; status: delivery steps 1-2 (see
-Delivery order below) implemented (this branch); phase 2 (kit content-reader
-hook, packer, GC) not yet started.
+content-addressed files. Written 2026-07-09; status: delivery steps 1-4 (see
+Delivery order below) implemented on this branch (packer, crash
+reconciliation, `pack-attachments`/`unpack-attachments`, backup
+ContentSource), except the auto-run hooks in step 4; those hooks, GC/repack,
+and `remove-account` integration (step 5) remain.
 
 ## Motivation
 
@@ -224,9 +226,10 @@ packed those paths do not exist. **The kit hook has landed** (kit branch
 `backup-content-source`, targeting v0.4.0): `backup.CreateOptions` gains an
 optional `ContentSource` — `Open(ctx, ContentRef) (io.ReadCloser, error)` —
 called from concurrent capture workers; when set, the content dir is ignored
-and the engine still hash-verifies and size-caps every blob. msgvault's
-phase-2b work implements it via the blob store and must ship in the same
-release as the packer. The blob store's loose fallback opens only the canonical
+and the engine still hash-verifies and size-caps every blob. msgvault
+implements it in `internal/backupapp/content_source.go` (wired in
+`runBackupCreateLocal` over a read-only store + blob store), shipping in the
+same release as the packer. The blob store's loose fallback opens only the canonical
 `<aa>/<hash>` path, so msgvault's backup reader must additionally fall back
 to the DB-recorded `storage_path`/`thumbnail_path` for blobs that are
 neither packed nor canonical — legacy noncanonical rows (e.g. SyncTech's
@@ -268,9 +271,22 @@ their entries into the repo index, skipping per-blob re-reads.
    canonicalizes them in step 4).
 3. kit change: content reader hook for backup capture.
 4. Packer + canonicalization + `pack-attachments` / `unpack-attachments`
-   commands + auto-run hooks. The same release must also switch the
-   remaining local (non-daemon) loose readers to the blob store — the MCP
-   local path (`internal/mcp/handlers.go` readAttachmentFile) and the TUI
-   local export path (`internal/tui/actions.go`) — otherwise MCP/TUI used
-   without a daemon would miss packed blobs.
+   commands + auto-run hooks. `pack-attachments` is a standard dual-mode
+   maintenance command (daemon proxy under the operation gate, or CLI-local
+   under `db.write.lock`); it is safe in both modes because it only creates
+   new ULID-named packs and deletes loose files, which the daemon never
+   holds open. `unpack-attachments` deletes pack files that a running
+   daemon's blob store holds open (blocks deletion on Windows), so it is
+   local-only and refuses to run against a daemon-owned archive (the write
+   lock directs the user to `msgvault serve stop`).
+
+   Finding (2026-07-09): the originally planned switch of the MCP local
+   reader (`internal/mcp/handlers.go` readAttachmentFile) and the TUI local
+   export path (`internal/tui/actions.go`) to the blob store is not needed.
+   Both commands are always daemon-backed — `--local` selects the local
+   daemon, not direct file access — and always install a daemon-client
+   AttachmentReader; the daemon side serves from the blob store. The
+   loose-file fallbacks in those files are reachable only from tests and
+   direct embedding, and have no store handle from which to build a blob
+   store. Revisit only if a genuinely daemon-less MCP/TUI mode is added.
 5. GC/repack + `remove-account` integration.
