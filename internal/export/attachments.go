@@ -54,13 +54,7 @@ type AttachmentOpener func(contentHash string) (io.ReadCloser, error)
 // Attachments exports the given attachments into a zip file.
 // It reads attachment content from attachmentsDir using content-hash based paths.
 func Attachments(zipFilename, attachmentsDir string, attachments []query.AttachmentInfo) ExportStats {
-	return AttachmentsWithOpener(zipFilename, attachments, func(contentHash string) (io.ReadCloser, error) {
-		storagePath, err := StoragePath(attachmentsDir, contentHash)
-		if err != nil {
-			return nil, err
-		}
-		return os.Open(storagePath)
-	})
+	return AttachmentsWithOpener(zipFilename, attachments, looseOpener(attachmentsDir))
 }
 
 // AttachmentsWithOpener exports the given attachments into a zip file using
@@ -245,11 +239,9 @@ func (r DirExportResult) TotalSize() int64 {
 	return total
 }
 
-// AttachmentsToDir exports attachments as individual files into outputDir.
-// It reads attachment content from attachmentsDir using content-hash based paths
-// and writes each file with its original filename (sanitized, deduplicated).
-// Files are created with O_EXCL to avoid overwriting existing files.
-func AttachmentsToDir(outputDir, attachmentsDir string, attachments []query.AttachmentInfo) DirExportResult {
+// AttachmentsToDirWithOpener exports attachments as individual files into
+// outputDir using the supplied opener for attachment bytes.
+func AttachmentsToDirWithOpener(outputDir string, attachments []query.AttachmentInfo, open AttachmentOpener) DirExportResult {
 	var result DirExportResult
 	usedNames := make(map[string]int)
 
@@ -264,27 +256,38 @@ func AttachmentsToDir(outputDir, attachmentsDir string, attachments []query.Atta
 		}
 
 		filename := resolveUniqueFilename(att.Filename, att.ContentHash, usedNames)
-		exported, err := exportAttachmentToFile(outputDir, attachmentsDir, att.ContentHash, filename)
+		exported, err := exportAttachmentToFile(outputDir, open, att.ContentHash, filename)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", att.Filename, err))
 			continue
 		}
-
 		result.Files = append(result.Files, exported)
 	}
-
 	return result
 }
 
-// exportAttachmentToFile streams a single attachment from content-addressed
-// storage to outputDir/filename. Uses O_EXCL to avoid overwriting; appends
-// _1, _2, etc. on conflict.
-func exportAttachmentToFile(outputDir, attachmentsDir, contentHash, filename string) (ExportedFile, error) {
-	srcPath, err := StoragePath(attachmentsDir, contentHash)
-	if err != nil {
-		return ExportedFile{}, err
+// AttachmentsToDir exports attachments as individual files into outputDir,
+// reading content from attachmentsDir's loose content-addressed files.
+func AttachmentsToDir(outputDir, attachmentsDir string, attachments []query.AttachmentInfo) DirExportResult {
+	return AttachmentsToDirWithOpener(outputDir, attachments, looseOpener(attachmentsDir))
+}
+
+// looseOpener opens loose <hash[:2]>/<hash> files under attachmentsDir.
+func looseOpener(attachmentsDir string) AttachmentOpener {
+	return func(contentHash string) (io.ReadCloser, error) {
+		p, err := StoragePath(attachmentsDir, contentHash)
+		if err != nil {
+			return nil, err
+		}
+		return os.Open(p)
 	}
-	src, err := os.Open(srcPath)
+}
+
+// exportAttachmentToFile streams a single attachment from the opener to
+// outputDir/filename. Uses O_EXCL to avoid overwriting; appends _1, _2, etc.
+// on conflict.
+func exportAttachmentToFile(outputDir string, open AttachmentOpener, contentHash, filename string) (ExportedFile, error) {
+	src, err := open(contentHash)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ExportedFile{}, fmt.Errorf("attachment file not found for hash %s", contentHash)

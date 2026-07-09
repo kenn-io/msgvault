@@ -98,14 +98,6 @@ func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
 	return exportAttachmentBinaryStream(body)
 }
 
-func exportAttachmentAsJSON(storagePath, contentHash string) error {
-	data, err := readAttachmentFile(storagePath, contentHash)
-	if err != nil {
-		return err
-	}
-	return exportAttachmentDataAsJSON(data, contentHash)
-}
-
 func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
 	output := map[string]any{
 		"content_hash": contentHash,
@@ -117,24 +109,6 @@ func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
 	return enc.Encode(output)
 }
 
-func exportAttachmentAsBase64(storagePath string) error {
-	f, err := openAttachmentFile(storagePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	encoder := base64.NewEncoder(base64.StdEncoding, os.Stdout)
-	if _, err := io.Copy(encoder, f); err != nil {
-		return fmt.Errorf("encode attachment: %w", err)
-	}
-	if err := encoder.Close(); err != nil {
-		return fmt.Errorf("finalize base64: %w", err)
-	}
-	fmt.Println() // trailing newline
-	return nil
-}
-
 func exportAttachmentStreamAsBase64(r io.Reader) error {
 	encoder := base64.NewEncoder(base64.StdEncoding, os.Stdout)
 	if _, err := io.Copy(encoder, r); err != nil {
@@ -144,28 +118,6 @@ func exportAttachmentStreamAsBase64(r io.Reader) error {
 		return fmt.Errorf("finalize base64: %w", err)
 	}
 	fmt.Println() // trailing newline
-	return nil
-}
-
-func exportAttachmentBinary(storagePath string) error {
-	f, err := openAttachmentFile(storagePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	outputPath := exportAttachmentOutput
-	if outputPath == "" || outputPath == "-" {
-		_, err = io.Copy(os.Stdout, f)
-		return err
-	}
-
-	n, err := writeAttachmentStreamToFile(outputPath, f)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "Exported attachment to: %s (%d bytes)\n", outputPath, n)
 	return nil
 }
 
@@ -260,28 +212,6 @@ func replaceOutputFile(tmpPath, outputPath string) error {
 		return fmt.Errorf("remove output backup: %w", err)
 	}
 	return nil
-}
-
-func openAttachmentFile(storagePath string) (*os.File, error) {
-	f, err := os.Open(storagePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("attachment not found: %s", filepath.Base(storagePath))
-		}
-		return nil, fmt.Errorf("read attachment: %w", err)
-	}
-	return f, nil
-}
-
-func readAttachmentFile(storagePath, contentHash string) ([]byte, error) {
-	data, err := os.ReadFile(storagePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("attachment not found: no file for hash %s", contentHash)
-		}
-		return nil, fmt.Errorf("read attachment: %w", err)
-	}
-	return data, nil
 }
 
 func init() {
