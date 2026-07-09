@@ -186,8 +186,13 @@ func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, e
 // content-addressed storage under attachmentsDir (hash[:2]/hash), hashing
 // without loading the file into memory. maxSize > 0 rejects larger sources.
 //
+// The source is staged and hashed in a single read, so the stored bytes
+// always match the returned hash and size even if the source file changes
+// concurrently; maxSize is enforced on the bytes actually read, not just the
+// pre-read stat.
+//
 // Returns the storage path relative to attachmentsDir, the content hash, and
-// the source size. On failures after the source was hashed, contentHash and
+// the stored size. On failures after the source was hashed, contentHash and
 // size are still returned (with an empty storage path) so callers can record
 // metadata for content they could not store.
 func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (string, string, int64, error) {
@@ -201,9 +206,8 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	if !linfo.Mode().IsRegular() {
 		return "", "", 0, fmt.Errorf("attachment source %q is not a regular file", srcPath)
 	}
-	size := linfo.Size()
-	if maxSize > 0 && size > maxSize {
-		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, size, maxSize)
+	if maxSize > 0 && linfo.Size() > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)
 	}
 
 	f, err := os.Open(srcPath)
@@ -212,19 +216,46 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	}
 	defer func() { _ = f.Close() }()
 
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	tmp, err := os.CreateTemp(baseDir, "attachment.tmp.")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("create temp attachment file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
+		return "", "", 0, fmt.Errorf("chmod temp attachment file: %w", err)
+	}
+
+	src := io.Reader(f)
+	if maxSize > 0 {
+		src = io.LimitReader(f, maxSize+1)
+	}
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", "", 0, fmt.Errorf("hash attachment source: %w", err)
+	size, err := io.Copy(io.MultiWriter(tmp, h), src)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("stage attachment source: %w", err)
+	}
+	if maxSize > 0 && size > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", "", 0, fmt.Errorf("close temp attachment file: %w", err)
 	}
 	contentHash := hex.EncodeToString(h.Sum(nil))
 
 	hashPrefix := contentHash[:2]
 	storagePath := path.Join(hashPrefix, contentHash)
-
-	baseDir, err := prepareStorageDir(attachmentsDir)
-	if err != nil {
-		return "", contentHash, size, err
-	}
 	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
 		return "", contentHash, size, err
 	}
@@ -239,12 +270,21 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 		return "", contentHash, size, fmt.Errorf("lstat attachment file: %w", err)
 	}
 
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
+	// A concurrent writer that wins the race between the existence check and
+	// this rename staged bytes for the same hash, so a POSIX rename replacing
+	// its file installs identical content.
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		if _, statErr := os.Lstat(fullPath); statErr == nil {
+			removeTmp = false
+			_ = os.Remove(tmpPath)
+			if err := validateExistingAttachmentFile(fullPath, size, contentHash); err != nil {
+				return "", contentHash, size, err
+			}
+			return storagePath, contentHash, size, nil
+		}
+		return "", contentHash, size, fmt.Errorf("rename attachment file into place: %w", err)
 	}
-	if err := writeAtomicFileStream(fullPath, f, size, contentHash); err != nil {
-		return "", contentHash, size, err
-	}
+	removeTmp = false
 	return storagePath, contentHash, size, nil
 }
 

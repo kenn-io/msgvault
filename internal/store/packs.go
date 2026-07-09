@@ -30,8 +30,15 @@ type PackRecord struct {
 
 // RecordPackedBlobs inserts a sealed pack's record and its blob index rows in
 // one transaction. Idempotent: re-recording an existing pack or blob is a
-// no-op, so crash reconciliation can re-run adoption safely.
+// no-op, so crash reconciliation can re-run adoption safely. Every entry must
+// belong to rec's pack; a mismatched PackID fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
+	for _, e := range entries {
+		if e.PackID != rec.PackID {
+			return fmt.Errorf("pack index entry %s has pack id %q, want %q",
+				e.BlobHash, e.PackID, rec.PackID)
+		}
+	}
 	return s.withTx(func(tx *loggedTx) error {
 		if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
 			INSERT OR IGNORE INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)

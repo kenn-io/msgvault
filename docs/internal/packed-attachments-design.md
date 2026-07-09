@@ -223,7 +223,12 @@ opens files under the content dir (`kit/backup/create.go`). Once blobs are
 packed those paths do not exist. The same release that ships the packer must
 ship a kit change letting the `backup.App` supply a content **reader**
 (hash -> bytes/stream) instead of bare paths, with msgvault implementing it
-via the blob store. Restore is unaffected: it materializes loose canonical
+via the blob store. The blob store's loose fallback opens only the canonical
+`<aa>/<hash>` path, so msgvault's backup reader must additionally fall back
+to the DB-recorded `storage_path`/`thumbnail_path` for blobs that are
+neither packed nor canonical — legacy noncanonical rows (e.g. SyncTech's
+`synctech-sms/` namespace) remain backup-readable until the packer
+canonicalizes them. Restore is unaffected: it materializes loose canonical
 files, producing a valid "fully unpacked" vault that the packer re-packs
 later.
 

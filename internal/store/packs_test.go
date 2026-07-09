@@ -46,3 +46,26 @@ func TestRecordAndGetPackedBlobs(t *testing.T) {
 	// Idempotent re-record (crash-reconciliation re-runs adoption).
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 }
+
+func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	rec := store.PackRecord{
+		PackID:      "01hzy3v7q8r9s0t1u2v3w4x5y6",
+		EntryCount:  1,
+		StoredBytes: 64,
+		CreatedAt:   time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}
+	entries := []store.PackIndexEntry{
+		{BlobHash: "dd11223344556677889900aabbccddeeff00112233445566778899aabbccddee",
+			PackID: "01hzy3v7q8r9s0t1u2v3w4x5y7", Offset: 6, StoredLen: 64, RawLen: 64},
+	}
+	err := st.RecordPackedBlobs(rec, entries)
+	require.Error(err)
+
+	// The mismatch must fail the whole call: no index row was written.
+	got, err := st.GetAttachmentPackEntry(entries[0].BlobHash)
+	require.NoError(err)
+	require.Nil(got)
+}

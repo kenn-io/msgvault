@@ -10,6 +10,7 @@
 
 ## Global Constraints
 
+- Every `go test`/`go build` command in this plan needs `-tags "fts5 sqlite_vec"` (see AGENTS.md); prefer the Makefile targets (`make test`, `make lint-ci`), which apply the tags automatically.
 - All tests use testify: `require.X` halts (setup), `assert.X` continues (independent checks). Argument order is `(want, got)`. Never `t.Fatalf`/`t.Errorf`.
 - Table-driven tests where there are 3+ cases of the same shape.
 - After any Go change: `go fmt ./...` and `go vet ./...`; stage ALL resulting changes.

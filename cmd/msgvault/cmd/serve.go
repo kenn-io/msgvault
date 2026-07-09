@@ -266,6 +266,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{store: s}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
 
+	// Closed on shutdown so cached pack readers don't hold attachment pack
+	// files open past the daemon's lifetime (blocks deletion on Windows).
+	blobStore := blobstore.New(s, cfg.AttachmentsDir())
+	defer func() { _ = blobStore.Close() }()
+
 	// Create and start API server
 	apiOpts := api.ServerOptions{
 		Config: cfg,
@@ -282,7 +287,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AnalyticsMode: analyticsMode,
 		IdleTracker:   idleTracker,
 		OperationGate: operationGate,
-		BlobStore:     blobstore.New(s, cfg.AttachmentsDir()),
+		BlobStore:     blobStore,
 	}
 	if cfg.Vector.Enabled {
 		apiOpts.VectorStatus = api.VectorStatusInitializing

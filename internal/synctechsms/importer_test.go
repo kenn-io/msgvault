@@ -224,10 +224,11 @@ func assertAttachmentAtCanonicalPath(t *testing.T, st *store.Store, attachmentsD
 	err := st.DB().QueryRow(`SELECT storage_path, content_hash FROM attachments ORDER BY id LIMIT 1`).Scan(&storagePath, &contentHash)
 	require.NoError(t, err, "read attachment row")
 	require.NotEmpty(t, contentHash, "content_hash")
-	wantPath := filepath.Join(contentHash[:2], contentHash)
+	// storage_path is stored slash-separated on every platform.
+	wantPath := contentHash[:2] + "/" + contentHash
 	assert.Equal(t, wantPath, storagePath, "storage_path")
 	assert.NotContains(t, storagePath, "synctech-sms", "storage_path must not use legacy namespace")
-	_, err = os.Stat(filepath.Join(attachmentsDir, wantPath))
+	_, err = os.Stat(filepath.Join(attachmentsDir, contentHash[:2], contentHash))
 	assert.NoError(t, err, "attachment file at canonical path")
 }
 

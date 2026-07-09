@@ -33,7 +33,8 @@ func TestHandleMediaFile(t *testing.T) {
 		assert := assert.New(t)
 		opts := newOpts(t)
 		rel, hash := imp.handleMediaFile(media("photo.jpg"), opts)
-		assert.Equal(filepath.Join(wantHash[:2], wantHash), rel)
+		// Storage paths are slash-separated on every platform.
+		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
 		assert.Equal(wantHash, hash)
 
 		got, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, wantHash[:2], wantHash))
