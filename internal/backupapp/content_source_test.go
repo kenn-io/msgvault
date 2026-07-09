@@ -323,5 +323,36 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 	assert.Equal(contentB, restoredB)
 
 	_, err = os.Stat(filepath.Join(target, "attachments", "synctech-sms"))
-	assert.ErrorIs(err, fs.ErrNotExist, "no legacy path should be restored")
+	require.ErrorIs(err, fs.ErrNotExist, "no legacy path should be restored")
+
+	// A restored vault has loose files but NO production pack files, so the
+	// pack metadata carried in the restored DB is dangling. Reads through the
+	// production blob store must fail while it remains (index hit -> missing
+	// pack -> single index retry -> fail; no loose fallback by design) — this
+	// is exactly why `backup restore` clears the metadata.
+	restoredStore, err := store.OpenForTest(restoreRes.DBPath)
+	require.NoError(err, "open restored store")
+	t.Cleanup(func() { _ = restoredStore.Close() })
+	restoredAttDir := filepath.Join(target, "attachments")
+
+	stale := blobstore.New(restoredStore, restoredAttDir)
+	_, _, err = stale.Open(hashA)
+	require.Error(err, "packed-blob read must fail while stale pack metadata remains")
+	require.ErrorIs(err, fs.ErrNotExist, "failure is the missing pack file, not the loose copy")
+	require.NoError(stale.Close(), "close stale blob store")
+
+	// Mirror the CLI restore flow (cmd/msgvault/cmd/backup.go): InitSchema is
+	// idempotent and guarantees the pack tables exist even for snapshots
+	// predating them, then the metadata is cleared.
+	require.NoError(restoredStore.InitSchema(), "init restored schema")
+	require.NoError(restoredStore.ClearAttachmentPackMetadata(), "clear restored pack metadata")
+
+	blobs := blobstore.New(restoredStore, restoredAttDir)
+	t.Cleanup(func() { _ = blobs.Close() })
+	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
+		r, size, err := blobs.Open(h)
+		require.NoErrorf(err, "blobstore.Open(%s) after clearing pack metadata", h)
+		assert.Equalf(int64(len(want)), size, "blob %s size", h)
+		assert.Equalf(want, readAllAndClose(t, r), "blob %s reads byte-identical", h)
+	}
 }

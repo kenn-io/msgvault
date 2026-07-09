@@ -235,15 +235,49 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
+	if err := clearRestoredPackMetadata(res.DBPath); err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Restored snapshot %s to %s\n", res.SnapshotID, backupRestoreTarget)
 	_, _ = fmt.Fprintf(out, "Database: %s (%s)\n", res.DBPath, formatSize(res.DBBytes))
 	_, _ = fmt.Fprintf(out, "Attachments: %d (%s)\n", res.AttachmentBlobs, formatSize(res.AttachmentBytes))
+	_, _ = fmt.Fprintf(out, "Pack metadata cleared: attachments were restored as loose files; 'msgvault pack-attachments' will re-pack them\n")
 	if res.ExtrasFiles > 0 {
 		_, _ = fmt.Fprintf(out, "Extras files: %d\n", res.ExtrasFiles)
 	}
 	_, _ = fmt.Fprintf(out, "Proof: integrity_check ok, manifest stats match\n")
 	_, _ = fmt.Fprintf(out, "Duration: %.1fs\n", res.Duration.Seconds())
+	return nil
+}
+
+// clearRestoredPackMetadata opens the just-restored database and deletes all
+// attachment_pack_index/attachment_packs rows. Restore materializes
+// attachment blobs as loose canonical files only — production pack files are
+// never part of a snapshot — so pack metadata carried in the restored DB
+// would point at packs that do not exist: reads of previously packed blobs
+// would fail, and worse, a later pack-attachments run would not re-pack those
+// "already indexed" hashes while its sweep deleted their restored loose files.
+// Clearing the two tables yields a genuinely fully-unpacked vault that
+// pack-attachments re-packs from scratch.
+//
+// The snapshot may predate the pack tables, so the restored DB goes through
+// the standard open flow: store.Open + InitSchema (idempotent CREATE IF NOT
+// EXISTS) guarantees the tables exist before the DELETEs. dbPath comes from
+// the restore result and is always a SQLite file under the target directory,
+// never the configured live archive (or PostgreSQL).
+func clearRestoredPackMetadata(dbPath string) error {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open restored database %s: %w", dbPath, err)
+	}
+	defer func() { _ = st.Close() }()
+	if err := st.InitSchema(); err != nil {
+		return fmt.Errorf("init restored database schema: %w", err)
+	}
+	if err := st.ClearAttachmentPackMetadata(); err != nil {
+		return fmt.Errorf("clear restored pack metadata: %w", err)
+	}
 	return nil
 }
 

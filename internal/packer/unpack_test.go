@@ -179,13 +179,21 @@ func TestUnpackFailsOnMissingPackWithLiveRows(t *testing.T) {
 	assert.Equal(int64(1), n, "index rows retained")
 }
 
+// TestUnpackHonorsContextCancellation pins that a cancelled ctx aborts before
+// ANY state change even when packs with restorable blobs exist: no DB rows
+// dropped, no pack files deleted, no loose files written. The per-pack flow
+// re-checks ctx between blob restores and again before the record delete, so
+// a mid-run cancellation likewise never drops rows for a pack file that still
+// exists.
 func TestUnpackHonorsContextCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFixture(t)
 
 	f.addBlob(randomContent(t, 100), canonical)
-	f.run(packer.Options{})
+	f.addBlob(randomContent(t, 100), canonical)
+	run := f.run(packer.Options{TargetSize: 100}) // two packs, one blob each
+	require.Equal(2, run.PacksSealed)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -194,6 +202,8 @@ func TestUnpackHonorsContextCancellation(t *testing.T) {
 
 	recs, err := f.store.ListPackRecords()
 	require.NoError(err)
-	assert.Len(recs, 1, "pack record retained after cancellation")
-	assert.Len(f.packFiles(), 1, "pack file retained after cancellation")
+	assert.Len(recs, 2, "pack records retained after cancellation")
+	assert.Equal(int64(2), f.packIndexRowCount(), "index rows retained after cancellation")
+	assert.Len(f.packFiles(), 2, "pack files retained after cancellation")
+	assert.Empty(f.looseFiles(), "no loose files restored after cancellation")
 }

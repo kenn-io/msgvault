@@ -212,7 +212,10 @@ func hashSourceFile(f *os.File, srcPath string, maxSize int64) (string, int64, e
 // stageAttachmentSource copies f into a temp file under baseDir, hashing in
 // the same read so the staged bytes always match the returned hash and size.
 // On success the caller owns the temp file at the returned path; on error
-// the temp file is already removed.
+// the temp file is already removed. When the failure happens after the copy
+// fully hashed the source (the temp-file close), the computed hash and size
+// are returned alongside the error so the caller can still honor
+// StoreAttachmentFromPath's failed-store metadata contract.
 func stageAttachmentSource(baseDir string, f *os.File, srcPath string, maxSize int64) (string, string, int64, error) {
 	tmp, err := os.CreateTemp(baseDir, "attachment.tmp.")
 	if err != nil {
@@ -243,7 +246,8 @@ func stageAttachmentSource(baseDir string, f *os.File, srcPath string, maxSize i
 		return "", "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", "", 0, fmt.Errorf("close temp attachment file: %w", err)
+		return "", hex.EncodeToString(h.Sum(nil)), size,
+			fmt.Errorf("close temp attachment file: %w", err)
 	}
 	staged = true
 	return tmpPath, hex.EncodeToString(h.Sum(nil)), size, nil
@@ -314,6 +318,12 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 	}
 	tmpPath, stagedHash, stagedSize, err := stageAttachmentSource(baseDir, f, srcPath, maxSize)
 	if err != nil {
+		if stagedHash != "" {
+			// The staging read hashed the full source before failing; being
+			// the most recent read, it governs the returned metadata just as
+			// it would have on success.
+			return "", stagedHash, stagedSize, err
+		}
 		return "", contentHash, size, err
 	}
 	// The staged hash governs from here so the stored bytes match the

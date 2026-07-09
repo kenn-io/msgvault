@@ -32,14 +32,15 @@ type Options struct {
 
 // Stats summarizes one packer run.
 type Stats struct {
-	PacksSealed  int   // packs written this run
-	BlobsPacked  int   // blobs appended this run
-	BytesPacked  int64 // raw bytes appended this run
-	PacksAdopted int   // orphan packs adopted during reconciliation
-	PacksRemoved int   // fully-redundant orphan packs deleted
-	BlobsMissing int   // enumerated blobs whose file was missing (left for backfill)
-	BlobsCorrupt int   // files whose bytes did not match their recorded hash (skipped)
-	LooseSwept   int   // indexed loose files removed by the sweep
+	PacksSealed    int   // packs written this run
+	BlobsPacked    int   // blobs appended this run
+	BytesPacked    int64 // raw bytes appended this run
+	PacksAdopted   int   // orphan packs adopted during reconciliation
+	PacksRemoved   int   // fully-redundant orphan packs deleted
+	RecordsDropped int   // recorded packs whose file was missing; rows dropped so blobs re-pack
+	BlobsMissing   int   // enumerated blobs whose file was missing (left for backfill)
+	BlobsCorrupt   int   // files whose bytes did not match their recorded hash (skipped)
+	LooseSwept     int   // indexed loose files removed by the sweep
 }
 
 // Run packs all unindexed loose attachment blobs into sealed packs,
@@ -58,6 +59,9 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	}
 	if err := reconcilePacks(st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
+	}
+	if err := dropDanglingPackRecords(st, packsDir, &stats); err != nil {
+		return stats, fmt.Errorf("drop dangling pack records: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return stats, err
@@ -129,14 +133,17 @@ func reconcilePacks(st *store.Store, packsDir string, stats *Stats) error {
 }
 
 // reconcileOnePack adopts an orphan pack's unindexed, verified entries, or
-// removes the pack when every entry is already indexed elsewhere.
+// removes the pack when EVERY entry was verified already indexed elsewhere.
+// An orphan whose unindexed entries fail verification is neither adopted nor
+// removed: its bytes may be the only (damaged) copy, so deleting it could
+// destroy data a repair might still recover.
 func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
 	r, err := pack.OpenReader(path, nil)
 	if err != nil {
 		slog.Warn("skipping unreadable orphan pack", "pack", id, "error", err)
 		return nil
 	}
-	adoptable, rec, err := collectAdoptable(st, r, id)
+	adoptable, rec, failed, err := collectAdoptable(st, r, id)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close orphan pack reader", "pack", id, "error", closeErr)
 	}
@@ -144,6 +151,11 @@ func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
 		return err
 	}
 	if len(adoptable) == 0 {
+		if failed > 0 {
+			slog.Error("orphan pack has unindexed entries that failed verification; leaving pack in place",
+				"pack", id, "failedEntries", failed)
+			return nil
+		}
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove redundant orphan pack %s: %w", id, err)
 		}
@@ -161,8 +173,10 @@ func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
 
 // collectAdoptable returns the orphan pack's verified entries that have no
 // index row, plus a PackRecord carrying the FULL footer totals (design:
-// "footer entry count at seal/adoption").
-func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, error) {
+// "footer entry count at seal/adoption") and the count of unindexed entries
+// that failed read/verification (so the caller never treats a damaged pack
+// as fully redundant).
+func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
 	entries := r.Entries()
 	rec := store.PackRecord{
 		PackID:     id,
@@ -170,24 +184,61 @@ func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackI
 		CreatedAt:  time.Now().UTC(),
 	}
 	var adoptable []store.PackIndexEntry
+	var failed int
 	for _, e := range entries {
 		rec.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
 		hash := e.ID.String()
 		existing, err := st.GetAttachmentPackEntry(hash)
 		if err != nil {
-			return nil, rec, err
+			return nil, rec, failed, err
 		}
 		if existing != nil {
 			continue
 		}
 		if _, err := r.ReadBlob(e); err != nil {
+			failed++
 			slog.Warn("orphan pack entry failed verification; not adopting",
 				"pack", id, "hash", hash, "error", err)
 			continue
 		}
 		adoptable = append(adoptable, indexEntry(id, e))
 	}
-	return adoptable, rec, nil
+	return adoptable, rec, failed, nil
+}
+
+// dropDanglingPackRecords removes the attachment_packs row and index rows of
+// every recorded pack whose sharded file is missing. Restored backups are the
+// known producer of this state (restore materializes loose files, never
+// production packs); without the drop, packLoose would skip these "already
+// indexed" hashes while sweepIndexed deleted their loose files — destroying
+// the only copies. Only a confirmed fs.ErrNotExist drops rows: a pack file
+// that exists but cannot be read is left alone.
+func dropDanglingPackRecords(st *store.Store, packsDir string, stats *Stats) error {
+	recs, err := st.ListPackRecords()
+	if err != nil {
+		return err
+	}
+	for _, rec := range recs {
+		if !pack.IsValidPackID(rec.PackID) {
+			slog.Error("attachment_packs row has malformed pack id; leaving it alone",
+				"pack", rec.PackID)
+			continue
+		}
+		_, statErr := os.Stat(packFilePath(packsDir, rec.PackID))
+		if statErr == nil {
+			continue
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			return fmt.Errorf("stat pack file for %s: %w", rec.PackID, statErr)
+		}
+		if err := st.DeletePackRecord(rec.PackID); err != nil {
+			return err
+		}
+		stats.RecordsDropped++
+		slog.Error("pack file missing; dropping its index rows so blobs re-pack from loose",
+			"pack", rec.PackID)
+	}
+	return nil
 }
 
 // packLoose appends every unindexed loose blob to pack writers, sealing and

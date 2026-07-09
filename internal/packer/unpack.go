@@ -37,10 +37,7 @@ func Unpack(ctx context.Context, st *store.Store, attachmentsDir string) (Unpack
 		return stats, err
 	}
 	for _, rec := range recs {
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		if err := unpackOne(st, attachmentsDir, packsDir, rec.PackID, &stats); err != nil {
+		if err := unpackOne(ctx, st, attachmentsDir, packsDir, rec.PackID, &stats); err != nil {
 			return stats, err
 		}
 	}
@@ -51,8 +48,14 @@ func Unpack(ctx context.Context, st *store.Store, attachmentsDir string) (Unpack
 // and file. Rows are dropped BEFORE the file delete: a crash between the
 // two leaves an orphan pack that reconciliation re-adopts (or removes as
 // redundant) — never an index row pointing at a missing pack, which would
-// break reads.
-func unpackOne(st *store.Store, attachmentsDir, packsDir, packID string, stats *UnpackStats) error {
+// break reads. Cancellation is honored on entry, between blob restores, and
+// before the record delete, always returning ctx.Err() without touching the
+// DB; already-restored loose files are harmless (the pack stays authoritative
+// and the packer's sweep removes indexed loose files).
+func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, packID string, stats *UnpackStats) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !pack.IsValidPackID(packID) {
 		return fmt.Errorf("attachment_packs row has malformed pack id %q", packID)
 	}
@@ -64,11 +67,14 @@ func unpackOne(st *store.Store, attachmentsDir, packsDir, packID string, stats *
 	if err != nil {
 		return fmt.Errorf("open pack %s: %w", packID, err)
 	}
-	restored, rawBytes, err := restoreEntries(r, attachmentsDir, packID)
+	restored, rawBytes, err := restoreEntries(ctx, r, attachmentsDir, packID)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close pack reader", "pack", packID, "error", closeErr)
 	}
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := st.DeletePackRecord(packID); err != nil {
@@ -86,13 +92,17 @@ func unpackOne(st *store.Store, attachmentsDir, packsDir, packID string, stats *
 	return nil
 }
 
-// restoreEntries writes every footer entry back to its canonical loose file.
-// Any read or write error aborts the run with the pack untouched, so no
-// data can be lost.
-func restoreEntries(r *pack.Reader, attachmentsDir, packID string) (int, int64, error) {
+// restoreEntries writes every footer entry back to its canonical loose file,
+// checking for cancellation before each blob. Any read or write error (or a
+// cancelled ctx) aborts the run with the pack untouched, so no data can be
+// lost.
+func restoreEntries(ctx context.Context, r *pack.Reader, attachmentsDir, packID string) (int, int64, error) {
 	var restored int
 	var rawBytes int64
 	for _, e := range r.Entries() {
+		if err := ctx.Err(); err != nil {
+			return restored, rawBytes, err
+		}
 		data, err := r.ReadBlob(e)
 		if err != nil {
 			return restored, rawBytes, fmt.Errorf("read blob %s from pack %s: %w", e.ID, packID, err)

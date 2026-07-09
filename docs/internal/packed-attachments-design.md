@@ -234,9 +234,18 @@ same release as the packer. The blob store's loose fallback opens only the canon
 to the DB-recorded `storage_path`/`thumbnail_path` for blobs that are
 neither packed nor canonical — legacy noncanonical rows (e.g. SyncTech's
 `synctech-sms/` namespace) remain backup-readable until the packer
-canonicalizes them. Restore is unaffected: it materializes loose canonical
-files, producing a valid "fully unpacked" vault that the packer re-packs
-later.
+canonicalizes them. Restore materializes loose canonical files only —
+production pack files are never part of a snapshot — so `msgvault backup
+restore` clears `attachment_pack_index`/`attachment_packs` in the restored DB
+immediately after a successful restore
+(`Store.ClearAttachmentPackMetadata`). Without the clear, stale index rows
+would break packed-blob reads (the blob store deliberately does not fall back
+to loose after an index hit) and, far worse, a later `pack-attachments` run
+would skip those "already indexed" hashes while its sweep deleted their
+restored loose files. The clear yields a genuinely fully-unpacked vault that
+the packer re-packs later. As defense in depth, the packer's reconcile phase
+also drops the rows of any recorded pack whose file is missing before it
+packs or sweeps anything.
 
 Follow-up (out of scope here): teach backup capture to adopt sealed
 production packs wholesale — copy pack files it does not have and merge
@@ -277,8 +286,10 @@ their entries into the repo index, skipping per-blob re-reads.
    new ULID-named packs and deletes loose files, which the daemon never
    holds open. `unpack-attachments` deletes pack files that a running
    daemon's blob store holds open (blocks deletion on Windows), so it is
-   local-only and refuses to run against a daemon-owned archive (the write
-   lock directs the user to `msgvault serve stop`).
+   local-only: a live-daemon runtime preflight rejects unpack on all
+   backends (directing the user to `msgvault serve stop`); on SQLite the
+   `db.write.lock` additionally guarantees exclusivity against any other
+   writer.
 
    Finding (2026-07-09): the originally planned switch of the MCP local
    reader (`internal/mcp/handlers.go` readAttachmentFile) and the TUI local

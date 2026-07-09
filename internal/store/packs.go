@@ -260,6 +260,23 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 	return n, nil
 }
 
+// ClearAttachmentPackMetadata deletes every attachment_pack_index and
+// attachment_packs row in one transaction. It is used after `backup restore`,
+// which materializes loose canonical attachment files only — never production
+// pack files — so any pack metadata carried in the restored database points
+// at packs that do not exist and must be dropped before the vault is used.
+func (s *Store) ClearAttachmentPackMetadata() error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`DELETE FROM attachment_pack_index`); err != nil {
+			return fmt.Errorf("clear attachment_pack_index: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM attachment_packs`); err != nil {
+			return fmt.Errorf("clear attachment_packs: %w", err)
+		}
+		return nil
+	})
+}
+
 // DeletePackRecord removes a pack's index rows and its attachment_packs
 // row in one transaction (used by unpack).
 func (s *Store) DeletePackRecord(packID string) error {

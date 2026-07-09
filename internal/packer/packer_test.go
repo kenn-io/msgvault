@@ -376,6 +376,93 @@ func TestRunRemovesRedundantOrphanPack(t *testing.T) {
 	assert.Equal(c, f.readBack(h))
 }
 
+// TestRunDropsDanglingPackRecords pins the restored-vault self-heal: backup
+// restore materializes loose files but no production packs, so a restored DB
+// can carry pack rows whose files do not exist. The packer must drop those
+// rows (so the blobs re-pack from loose) instead of skipping them as "already
+// indexed" while the sweep deletes their only loose copies.
+func TestRunDropsDanglingPackRecords(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	c1 := randomContent(t, 600)
+	c2 := randomContent(t, 600)
+	h1 := f.addBlob(c1, canonical)
+	h2 := f.addBlob(c2, canonical)
+
+	first := f.run(packer.Options{TargetSize: 600}) // one blob per pack
+	require.Equal(2, first.PacksSealed)
+	require.Zero(first.RecordsDropped)
+	require.Empty(f.looseFiles(), "first run's sweep removed only what it packed")
+	require.Equal(c2, f.readBack(h2), "first run left the other pack's blob readable")
+
+	// Simulate the restored-vault state: pack file gone, DB rows still
+	// present, blob bytes back as a loose canonical file (what restore
+	// materializes).
+	entry1, err := f.store.GetAttachmentPackEntry(h1)
+	require.NoError(err)
+	require.NotNil(entry1)
+	danglingID := entry1.PackID
+	require.NoError(os.Remove(
+		filepath.Join(f.dir, "packs", danglingID[:2], danglingID+blobstore.PackExt)))
+	f.writeLoose(canonical(h1), c1)
+
+	second := f.run(packer.Options{})
+
+	assert.Equal(1, second.RecordsDropped, "dangling pack record dropped")
+	assert.Equal(1, second.PacksSealed, "blob re-packed from its loose copy")
+	assert.Equal(1, second.BlobsPacked)
+
+	has, err := f.store.HasPackRecord(danglingID)
+	require.NoError(err)
+	assert.False(has, "dangling attachment_packs row removed")
+
+	entryAfter, err := f.store.GetAttachmentPackEntry(h1)
+	require.NoError(err)
+	require.NotNil(entryAfter, "blob re-indexed")
+	assert.NotEqual(danglingID, entryAfter.PackID, "index points at the new pack")
+	assert.Equal(c1, f.readBack(h1), "re-packed blob readable via blobstore")
+	assert.Equal(c2, f.readBack(h2), "untouched pack unaffected")
+	assert.Empty(f.looseFiles(), "loose copy removed after re-packing")
+}
+
+// TestRunLeavesCorruptOrphanPackInPlace pins that an orphan pack whose
+// unindexed entry fails verification is NOT treated as fully redundant: its
+// bytes may be the only (damaged) copy, so deleting it could destroy data.
+func TestRunLeavesCorruptOrphanPackInPlace(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	c := randomContent(t, 600)
+	id := buildOrphanPack(t, f.dir, c) // blob is unindexed: no DB rows exist
+	packPath := filepath.Join(f.dir, "packs", id[:2], id+blobstore.PackExt)
+
+	// Flip one byte early in the blob data region (past the header, well
+	// before the footer) so ReadBlob's CRC check fails while the SHA-verified
+	// footer still parses and reconciliation reaches verification.
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err, "open pack file for corruption")
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, 10)
+	require.NoError(err, "read byte to corrupt")
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, 10)
+	require.NoError(err, "write corrupted byte")
+	require.NoError(pf.Close(), "close pack file")
+
+	stats := f.run(packer.Options{})
+
+	assert.Zero(stats.PacksRemoved, "corrupt orphan pack must not be deleted")
+	assert.Zero(stats.PacksAdopted, "failed entries are not adopted")
+	_, err = os.Stat(packPath)
+	require.NoError(err, "pack file left in place for repair/inspection")
+	has, err := f.store.HasPackRecord(id)
+	require.NoError(err)
+	assert.False(has, "no record for the unadoptable pack")
+}
+
 func TestRunSweepsIndexedLooseLeftovers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

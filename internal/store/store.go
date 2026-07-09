@@ -830,6 +830,26 @@ func (s *Store) InitSchema() error {
 		}
 	}
 
+	// Index over attachments.thumbnail_hash, used by the attachment packer's
+	// unpacked-blob enumeration and pack-index anti-joins. PostgreSQL only
+	// here: schema_pg.sql executes before any maintenance hatch is available,
+	// and on an existing large archive the one-time build can exceed the
+	// pool-wide 30s statement_timeout, so it runs under runMaintenance
+	// (finding S1) like the other one-time index builds above. SQLite keeps
+	// the index in schema.sql — it has no statement_timeout. IF NOT EXISTS
+	// is idempotent per start.
+	if s.IsPostgreSQL() {
+		if err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash
+				    ON attachments(thumbnail_hash)
+			`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create idx_attachments_thumbnail_hash: %w", err)
+		}
+	}
+
 	// Backfill last_modified for rows that predate the column. SQLite cannot
 	// ADD COLUMN with a non-constant default, so the legacy ADD COLUMN above
 	// leaves existing rows NULL; this one-shot UPDATE sets them to

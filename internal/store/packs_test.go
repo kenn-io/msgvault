@@ -362,3 +362,31 @@ func TestPackRecordLifecycle(t *testing.T) {
 	// Deleting an absent pack is not an error (idempotent cleanup).
 	require.NoError(st.DeletePackRecord(recA.PackID))
 }
+
+func TestClearAttachmentPackMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5w1",
+		packTestHash("aa41"), packTestHash("bb42"))
+	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5w2",
+		packTestHash("cc43"))
+	require.NoError(st.RecordPackedBlobs(recA, entriesA))
+	require.NoError(st.RecordPackedBlobs(recB, entriesB))
+
+	require.NoError(st.ClearAttachmentPackMetadata())
+
+	recs, err := st.ListPackRecords()
+	require.NoError(err)
+	assert.Empty(recs, "attachment_packs cleared")
+	hashes, err := st.ListIndexedBlobHashes()
+	require.NoError(err)
+	assert.Empty(hashes, "attachment_pack_index cleared")
+	entry, err := st.GetAttachmentPackEntry(packTestHash("aa41"))
+	require.NoError(err)
+	assert.Nil(entry, "cleared blob reads as unpacked")
+
+	// Idempotent on an already-empty state (restore of an unpacked vault).
+	require.NoError(st.ClearAttachmentPackMetadata())
+}
