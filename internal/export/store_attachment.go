@@ -70,9 +70,9 @@ func prepareStorageDir(attachmentsDir string) (string, error) {
 	return resolved, nil
 }
 
-// ensureSubdirSafe creates the hash-prefix subdirectory and checks it is
-// not a symlink.
-func ensureSubdirSafe(baseDir, hashPrefix string) error {
+// checkSubdirSafe verifies the hash-prefix subdirectory is not a symlink,
+// without creating it.
+func checkSubdirSafe(baseDir, hashPrefix string) error {
 	subdirPath := filepath.Join(baseDir, hashPrefix)
 	if st, err := os.Lstat(subdirPath); err == nil {
 		if st.Mode()&os.ModeSymlink != 0 {
@@ -81,7 +81,16 @@ func ensureSubdirSafe(baseDir, hashPrefix string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("lstat attachment dir: %w", err)
 	}
-	return fileutil.SecureMkdirAll(subdirPath, 0700)
+	return nil
+}
+
+// ensureSubdirSafe creates the hash-prefix subdirectory and checks it is
+// not a symlink.
+func ensureSubdirSafe(baseDir, hashPrefix string) error {
+	if err := checkSubdirSafe(baseDir, hashPrefix); err != nil {
+		return err
+	}
+	return fileutil.SecureMkdirAll(filepath.Join(baseDir, hashPrefix), 0700)
 }
 
 // writeAtomicFile writes data to a temp file alongside fullPath and renames
@@ -182,14 +191,74 @@ func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, e
 	return storagePath, nil
 }
 
+// hashSourceFile hashes f without staging any bytes, enforcing maxSize on
+// the bytes actually read.
+func hashSourceFile(f *os.File, srcPath string, maxSize int64) (string, int64, error) {
+	src := io.Reader(f)
+	if maxSize > 0 {
+		src = io.LimitReader(f, maxSize+1)
+	}
+	h := sha256.New()
+	size, err := io.Copy(h, src)
+	if err != nil {
+		return "", 0, fmt.Errorf("hash attachment source: %w", err)
+	}
+	if maxSize > 0 && size > maxSize {
+		return "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
+	}
+	return hex.EncodeToString(h.Sum(nil)), size, nil
+}
+
+// stageAttachmentSource copies f into a temp file under baseDir, hashing in
+// the same read so the staged bytes always match the returned hash and size.
+// On success the caller owns the temp file at the returned path; on error
+// the temp file is already removed.
+func stageAttachmentSource(baseDir string, f *os.File, srcPath string, maxSize int64) (string, string, int64, error) {
+	tmp, err := os.CreateTemp(baseDir, "attachment.tmp.")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("create temp attachment file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	staged := false
+	defer func() {
+		if !staged {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
+		return "", "", 0, fmt.Errorf("chmod temp attachment file: %w", err)
+	}
+
+	src := io.Reader(f)
+	if maxSize > 0 {
+		src = io.LimitReader(f, maxSize+1)
+	}
+	h := sha256.New()
+	size, err := io.Copy(io.MultiWriter(tmp, h), src)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("stage attachment source: %w", err)
+	}
+	if maxSize > 0 && size > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", "", 0, fmt.Errorf("close temp attachment file: %w", err)
+	}
+	staged = true
+	return tmpPath, hex.EncodeToString(h.Sum(nil)), size, nil
+}
+
 // StoreAttachmentFromPath streams the regular file at srcPath into
 // content-addressed storage under attachmentsDir (hash[:2]/hash), hashing
 // without loading the file into memory. maxSize > 0 rejects larger sources.
 //
-// The source is staged and hashed in a single read, so the stored bytes
-// always match the returned hash and size even if the source file changes
-// concurrently; maxSize is enforced on the bytes actually read, not just the
-// pre-read stat.
+// The source is hashed before any bytes are staged, so importing content
+// that is already stored needs no temp-file writes and no free disk space.
+// When the blob is new, the source is re-read and staged with the hash
+// recomputed in the same read, so the stored bytes always match the returned
+// hash and size even if the source file changes between the two reads;
+// maxSize is enforced on the bytes actually read, not just the pre-read stat.
 //
 // Returns the storage path relative to attachmentsDir, the content hash, and
 // the stored size. On failures after the source was hashed, contentHash and
@@ -221,46 +290,48 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 		return "", "", 0, err
 	}
 
-	tmp, err := os.CreateTemp(baseDir, "attachment.tmp.")
+	contentHash, size, err := hashSourceFile(f, srcPath, maxSize)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("create temp attachment file: %w", err)
+		return "", "", 0, err
 	}
-	tmpPath := tmp.Name()
+	hashPrefix := contentHash[:2]
+	storagePath := path.Join(hashPrefix, contentHash)
+	if err := checkSubdirSafe(baseDir, hashPrefix); err != nil {
+		return "", contentHash, size, err
+	}
+	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
+	if _, err := os.Lstat(fullPath); err == nil {
+		if err := validateExistingAttachmentFile(fullPath, size, contentHash); err != nil {
+			return "", contentHash, size, err
+		}
+		return storagePath, contentHash, size, nil
+	} else if !os.IsNotExist(err) {
+		return "", contentHash, size, fmt.Errorf("lstat attachment file: %w", err)
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
+	}
+	tmpPath, stagedHash, stagedSize, err := stageAttachmentSource(baseDir, f, srcPath, maxSize)
+	if err != nil {
+		return "", contentHash, size, err
+	}
+	// The staged hash governs from here so the stored bytes match the
+	// returned metadata even if the source changed between the two reads.
+	contentHash, size = stagedHash, stagedSize
+	hashPrefix = contentHash[:2]
+	storagePath = path.Join(hashPrefix, contentHash)
 	removeTmp := true
 	defer func() {
 		if removeTmp {
-			_ = tmp.Close()
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if err := fileutil.SecureChmod(tmpPath, 0600); err != nil {
-		return "", "", 0, fmt.Errorf("chmod temp attachment file: %w", err)
-	}
 
-	src := io.Reader(f)
-	if maxSize > 0 {
-		src = io.LimitReader(f, maxSize+1)
-	}
-	h := sha256.New()
-	size, err := io.Copy(io.MultiWriter(tmp, h), src)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("stage attachment source: %w", err)
-	}
-	if maxSize > 0 && size > maxSize {
-		return "", "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", "", 0, fmt.Errorf("close temp attachment file: %w", err)
-	}
-	contentHash := hex.EncodeToString(h.Sum(nil))
-
-	hashPrefix := contentHash[:2]
-	storagePath := path.Join(hashPrefix, contentHash)
 	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
 		return "", contentHash, size, err
 	}
-
-	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
+	fullPath = filepath.Join(baseDir, hashPrefix, contentHash)
 	if _, err := os.Lstat(fullPath); err == nil {
 		if err := validateExistingAttachmentFile(fullPath, size, contentHash); err != nil {
 			return "", contentHash, size, err
@@ -272,11 +343,11 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 
 	// A concurrent writer that wins the race between the existence check and
 	// this rename staged bytes for the same hash, so a POSIX rename replacing
-	// its file installs identical content.
+	// its file installs identical content. On Windows, where rename does not
+	// replace, validate the winner's file and let the deferred cleanup drop
+	// our staged copy.
 	if err := os.Rename(tmpPath, fullPath); err != nil {
 		if _, statErr := os.Lstat(fullPath); statErr == nil {
-			removeTmp = false
-			_ = os.Remove(tmpPath)
 			if err := validateExistingAttachmentFile(fullPath, size, contentHash); err != nil {
 				return "", contentHash, size, err
 			}

@@ -2656,12 +2656,17 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}, []store.PackIndexEntry{entry}), "RecordPackedBlobs")
 
+	bs := blobstore.New(st, attachmentsDir)
+	// Close cached pack readers before t.TempDir cleanup; Windows cannot
+	// delete the .mvpack file while a reader holds it open.
+	t.Cleanup(func() { assert.NoError(t, bs.Close(), "close blob store") })
+
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{
 			Data: config.DataConfig{DataDir: dataDir},
 		},
 		Logger:    testLogger(),
-		BlobStore: blobstore.New(st, attachmentsDir),
+		BlobStore: bs,
 	})
 
 	t.Run("packed blob returns 200 with body", func(t *testing.T) {

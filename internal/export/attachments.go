@@ -215,7 +215,14 @@ func StoragePath(attachmentsDir, contentHash string) (string, error) {
 	if err := ValidateContentHash(contentHash); err != nil {
 		return "", err
 	}
-	return filepath.Join(attachmentsDir, contentHash[:2], contentHash), nil
+	rel := filepath.Join(contentHash[:2], contentHash)
+	// ValidateContentHash already restricts the hash to hex, but keep an
+	// explicit traversal guard on the joined path (also the barrier CodeQL's
+	// path-injection query recognizes).
+	if !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("attachment content hash %q escapes attachments dir", contentHash)
+	}
+	return filepath.Join(attachmentsDir, rel), nil
 }
 
 // ExportedFile represents a single file written to a directory.
