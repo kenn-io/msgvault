@@ -304,6 +304,46 @@ func TestRunAdoptsOrphanPack(t *testing.T) {
 	assert.Empty(f.looseFiles())
 }
 
+func TestRunSkipsMislocatedPack(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	c := randomContent(t, 600)
+	h := f.addBlob(c, canonical)
+
+	// Seal a valid pack containing the blob directly under packs/ instead of
+	// the sharded packs/<id[:2]>/ path readers construct. Reconciliation must
+	// not adopt it: doing so would index a blob the blob store cannot open,
+	// and the sweep would then delete its loose copy.
+	packsDir := filepath.Join(f.dir, "packs")
+	require.NoError(os.MkdirAll(packsDir, 0o700), "mkdir packs dir")
+	w, err := pack.NewWriter(packsDir, pack.WriterOptions{ZstdLevel: pack.DefaultZstdLevel})
+	require.NoError(err, "pack.NewWriter")
+	_, err = w.Append(c)
+	require.NoError(err, "pack append")
+	mislocatedID := w.ID()
+	mislocatedPath := filepath.Join(packsDir, mislocatedID+blobstore.PackExt)
+	_, err = w.Seal(mislocatedPath)
+	require.NoError(err, "pack seal")
+
+	stats := f.run(packer.Options{})
+
+	assert.Zero(stats.PacksAdopted, "mislocated pack is not adopted")
+	assert.Equal(1, stats.PacksSealed, "loose blob is packed normally instead")
+	has, err := f.store.HasPackRecord(mislocatedID)
+	require.NoError(err)
+	assert.False(has, "no record for the mislocated pack")
+	_, err = os.Stat(mislocatedPath)
+	require.NoError(err, "mislocated pack file is left in place")
+
+	entry, err := f.store.GetAttachmentPackEntry(h)
+	require.NoError(err)
+	require.NotNil(entry, "blob indexed via a normally sealed pack")
+	assert.NotEqual(mislocatedID, entry.PackID)
+	assert.Equal(c, f.readBack(h))
+}
+
 func TestRunRemovesRedundantOrphanPack(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

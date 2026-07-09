@@ -59,7 +59,13 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := reconcilePacks(st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
 	if err := packLoose(ctx, st, attachmentsDir, packsDir, opts, &stats); err != nil {
+		return stats, err
+	}
+	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
 	if err := sweepIndexed(st, attachmentsDir, packsDir, &stats); err != nil {
@@ -101,6 +107,14 @@ func reconcilePacks(st *store.Store, packsDir string, stats *Stats) error {
 		id := strings.TrimSuffix(d.Name(), blobstore.PackExt)
 		if !pack.IsValidPackID(id) {
 			slog.Warn("skipping pack file with invalid pack id", "path", path)
+			return nil
+		}
+		if path != packFilePath(packsDir, id) {
+			// Readers construct only the sharded path; adopting a mislocated
+			// pack would index blobs the blob store cannot open (and the
+			// sweep would then delete their loose copies).
+			slog.Warn("skipping mislocated pack file; expected sharded path",
+				"path", path, "expected", packFilePath(packsDir, id))
 			return nil
 		}
 		has, err := st.HasPackRecord(id)
@@ -238,7 +252,16 @@ func readLooseBlob(attachmentsDir string, b store.UnpackedBlob, stats *Stats) ([
 		slog.Warn("skipping blob with non-local recorded path", "hash", b.Hash, "path", b.Path)
 		return nil, false
 	}
-	data, err := os.ReadFile(filepath.Join(attachmentsDir, rel))
+	full := filepath.Join(attachmentsDir, rel)
+	if fi, err := os.Stat(full); err == nil && fi.Size() > pack.MaxRawLen {
+		// pack.Writer.Append rejects blobs over MaxRawLen and poisons the
+		// writer; skip (and avoid buffering the file) so one oversized
+		// attachment cannot permanently fail every packer run.
+		slog.Warn("skipping blob larger than pack.MaxRawLen; left loose",
+			"hash", b.Hash, "path", b.Path, "size", fi.Size())
+		return nil, false
+	}
+	data, err := os.ReadFile(full)
 	if errors.Is(err, fs.ErrNotExist) {
 		stats.BlobsMissing++
 		slog.Warn("loose blob file missing; left for backfill", "hash", b.Hash, "path", b.Path)
