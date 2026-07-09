@@ -12,7 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -364,6 +366,20 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 		return fmt.Errorf("opening backup repository: %w", err)
 	}
 
+	// Capture reads attachment bytes through the production blob store
+	// (packs + loose fallback) rather than the engine's own ContentDir
+	// reads, so a packed vault backs up without any loose files. The
+	// read-only SQLite connection alongside the daemon's writer is safe
+	// under WAL; capture runs inside the daemon freeze, so the packer
+	// cannot run concurrently (operation gate).
+	roStore, err := store.OpenReadOnly(dbPath)
+	if err != nil {
+		return fmt.Errorf("open archive for backup content reads: %w", err)
+	}
+	defer func() { _ = roStore.Close() }()
+	blobs := blobstore.New(roStore, cfg.AttachmentsDir())
+	defer func() { _ = blobs.Close() }()
+
 	freezer, closeFreezer, err := newBackupFreezer()
 	if err != nil {
 		return err
@@ -389,6 +405,7 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	m, err := backup.Create(cmd.Context(), r, backupapp.New(Version), backup.CreateOptions{
 		DBPath:                dbPath,
 		ContentDir:            cfg.AttachmentsDir(),
+		ContentSource:         backupapp.NewContentSource(blobs, cfg.AttachmentsDir()),
 		DataDir:               cfg.Data.DataDir,
 		Extras:                extras,
 		IncludeConfig:         backupCreateIncludeConfig,
