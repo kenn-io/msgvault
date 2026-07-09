@@ -267,6 +267,10 @@ func sealAndCommit(st *store.Store, packsDir string, w *pack.Writer, sources []s
 	finalPath := filepath.Join(packsDir, id[:2], id+blobstore.PackExt)
 	entries, err := w.Seal(finalPath)
 	if err != nil {
+		// Abort is safe after a failed Seal and a no-op after publish; it
+		// removes the staging file this run instead of leaving it for the
+		// next run's cleanStaging.
+		_ = w.Abort()
 		return fmt.Errorf("seal pack %s: %w", id, err)
 	}
 	rec := store.PackRecord{
