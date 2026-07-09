@@ -2,19 +2,17 @@ package whatsapp
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -591,59 +589,13 @@ func (imp *Importer) handleMediaFile(media waMedia, opts ImportOptions) (string,
 		return "", ""
 	}
 
-	// Open file and compute hash by streaming (no full-file read into memory).
-	f, err := os.Open(fullPath)
+	relStoragePath, contentHash, _, err := export.StoreAttachmentFromPath(
+		opts.AttachmentsDir, fullPath, maxSize)
 	if err != nil {
-		return "", ""
-	}
-	defer func() { _ = f.Close() }()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, io.LimitReader(f, maxSize+1)); err != nil {
-		return "", ""
-	}
-	contentHash := hex.EncodeToString(h.Sum(nil))
-
-	// Content-addressed storage: <attachmentsDir>/<hash[:2]>/<hash>
-	// The storage_path stored in DB is the relative portion: <hash[:2]>/<hash>
-	relStoragePath := filepath.Join(contentHash[:2], contentHash)
-	absStoragePath := filepath.Join(opts.AttachmentsDir, relStoragePath)
-
-	// Check for dedup — file already stored.
-	if _, err := os.Stat(absStoragePath); err == nil {
-		return relStoragePath, contentHash
-	}
-
-	// Create directory and stream-copy the file.
-	absStorageDir := filepath.Dir(absStoragePath)
-	if err := os.MkdirAll(absStorageDir, 0750); err != nil {
+		// contentHash is non-empty when hashing succeeded but storage failed;
+		// callers use it to attach metadata to the unstored attachment row.
 		return "", contentHash
 	}
-
-	// Seek back to beginning of source file for the copy.
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", contentHash
-	}
-
-	dst, err := os.OpenFile(absStoragePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-	if err != nil {
-		if os.IsExist(err) {
-			// Race: another goroutine already wrote it.
-			return relStoragePath, contentHash
-		}
-		return "", contentHash
-	}
-
-	if _, err := io.Copy(dst, io.LimitReader(f, maxSize)); err != nil {
-		_ = dst.Close()
-		_ = os.Remove(absStoragePath)
-		return "", contentHash
-	}
-	if err := dst.Close(); err != nil {
-		_ = os.Remove(absStoragePath)
-		return "", contentHash
-	}
-
 	return relStoragePath, contentHash
 }
 
