@@ -137,15 +137,19 @@ authoritative self-describing copy.
 
 `Store.Open(hash) (io.ReadSeekCloser, int64, error)`:
 
-1. Look up `attachment_pack_index` by hash.
-2. Hit: read via a small LRU cache of open `pack.Reader`s (each caches its
-   entry map); return a `bytes.Reader` over the verified blob. Validate the
-   DB-sourced `pack_id` with `pack.IsValidPackID` before building the
-   `packs/<id[:2]>/<id>.mvpack` path — the ID comes from mutable DB state
+1. Resolve attachment liveness and the optional `attachment_pack_index` row in
+   one indexed query. A hash absent from both `attachments.content_hash` and
+   `attachments.thumbnail_hash` is not live: return `fs.ErrNotExist` without
+   trying packed or loose storage. This keeps deliberately deleted hashes
+   unreadable even if best-effort cleanup left a loose crash-recovery copy.
+2. Live index hit: read via a small LRU cache of open `pack.Reader`s (each
+   caches its entry map); return a `bytes.Reader` over the verified blob.
+   Validate the DB-sourced `pack_id` with `pack.IsValidPackID` before building
+   the `packs/<id[:2]>/<id>.mvpack` path — the ID comes from mutable DB state
    and is joined straight into a filesystem path.
-3. Miss: `os.Open` the canonical loose path.
-4. **Race rules** (both resolved by retrying the index lookup once before
-   failing):
+3. Live index miss: `os.Open` the canonical loose path.
+4. **Race rules** (both resolved by retrying the resolver once before
+   failing, including the liveness check):
    - Loose open returns ENOENT: the reader missed the index just before the
      packer committed, then lost the loose file to the packer's post-commit
      delete. The retry finds the new index row.
@@ -216,6 +220,13 @@ orphan adoption transaction repoints that blob's index row to the readable
 pack. The old pack record remains for normal dead-byte accounting and later
 GC/repack.
 
+Once logical GC is enabled, orphan adoption also consults attachment liveness:
+unreferenced footer entries are dead and are never adopted. If any referenced
+entry that needs adoption or repointing fails verification, reconciliation is
+all-or-nothing for that pack — it records nothing and leaves the orphan file in
+place. This prevents a later repack from deleting a quarantined failed entry
+after partially adopting the valid entries beside it.
+
 Cancellation is checked before the pack directory is created and throughout
 staging cleanup, dangling-record repair, orphan reconciliation, packing, and
 the final sweep. A context canceled before `Run` therefore causes no filesystem
@@ -226,8 +237,9 @@ boundary without violating the same crash-ordering rules.
 
 - `remove-account` orphan sweep: loose orphans are deleted as today; packed
   orphans lose their `attachment_pack_index` rows in the same transaction as
-  the source cascade. Orphan reconciliation adopts only hashes that remain
-  referenced by an attachment row, so a later pack-file cleanup cannot
+  the source cascade. The production blob resolver refuses hashes with no
+  surviving attachment row even if loose bytes remain, and orphan
+  reconciliation adopts only referenced hashes, so later cleanup cannot
   resurrect logically deleted content.
 - Repack: rewrite a pack when its live fraction (live index rows vs.
   `attachment_packs.entry_count`) falls below 50%, with hysteresis to avoid

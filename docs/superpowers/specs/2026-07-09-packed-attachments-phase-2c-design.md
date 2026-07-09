@@ -59,9 +59,12 @@ through bounded background work.
 - `internal/packer.Run` already performs staging cleanup, dangling-record
   repair, orphan reconciliation, loose packing, and verified loose sweeping in
   that order. `packer.Options` currently controls only target pack size.
-- `internal/blobstore.Store.Open` looks up the pack index, holds its cache mutex
-  across `pack.Reader.ReadBlob`, returns an in-memory reader, and retries the
-  index once when a stale pack path returns `fs.ErrNotExist`.
+- `internal/blobstore.Store.Open` currently looks up only the pack index before
+  choosing packed or canonical loose storage. It holds its cache mutex across
+  `pack.Reader.ReadBlob`, returns an in-memory reader, and retries the index once
+  when a stale pack path returns `fs.ErrNotExist`. Phase 2c must add attachment
+  liveness to that resolution so an unreferenced loose crash leftover cannot
+  bypass logical GC.
 - The daemon's operation gate serializes mutating CLI requests, scheduled
   syncs, maintenance, and backup freeze windows. A maintenance helper called
   from inside those paths must assume the gate is already held and must not
@@ -165,25 +168,54 @@ retired before Windows can delete old packs. `storeAPIAdapter.RunCLICommand`
 recognizes this command and calls the coordinator directly while the existing
 CLI-run middleware holds the gate. It emits normal CLI stream events without
 spawning a child. This avoids a second maintenance API surface while preserving
-the standard daemon-backed command UX.
+the standard daemon-backed command UX. Add `repack-attachments` to
+`cliRunCommandAllowed` and pin that admission in the CLI-handler tests; the
+handler currently rejects an unlisted command before the adapter can dispatch
+it.
 
-### 3. Reference-aware orphan reconciliation
+### 3. Reference-aware blob resolution and orphan reconciliation
+
+An attachment row is the durable liveness authority for a content hash. Add a
+store resolver that returns, in one indexed SQL round trip, both whether the
+hash appears in any `attachments.content_hash` or
+`attachments.thumbnail_hash` row and its optional pack-index entry. The query
+uses the existing content-hash and thumbnail-hash indexes. Keep direct pack
+index access for maintenance code that deliberately examines metadata without
+asserting liveness.
+
+Change the production blob store to use this resolver on its initial lookup and
+on both race retries:
+
+1. If the hash is not referenced, return `fs.ErrNotExist` without opening a
+   pack or canonical loose file.
+2. If referenced with an index entry, use packed storage as today.
+3. If referenced without an index entry, use canonical loose storage as today.
+
+This does not add a database round trip to normal reads; it replaces the
+existing pack-index lookup with the combined resolver. A read whose liveness
+lookup began before account removal may finish, just like any already-started
+read. A lookup beginning after the removal transaction commits cannot serve a
+stale pack mapping or a loose crash leftover. Best-effort loose-file deletion
+can therefore fail without making logically deleted content addressable by the
+API's hash endpoint.
 
 Logical GC invalidates phase 2b's assumption that every valid entry found in an
 orphan pack should be indexed. An old pack can become orphaned after its source
 rows and live index mappings were intentionally deleted. Re-adopting such an
 entry would resurrect deleted content.
 
-Add a store query that reports whether a hash is still referenced by any
-`attachments.content_hash` or `attachments.thumbnail_hash` row. During orphan
-reconciliation:
+During orphan reconciliation, use the same attachment-row liveness authority
+(through a focused store method or a batched equivalent):
 
 1. An unreferenced footer entry is dead and is never adopted.
 2. A referenced entry with a readable current index mapping is redundant.
 3. A referenced entry with no mapping, or an unreadable current mapping, is
    hash-verified from the orphan and adopted/repointed as today.
-4. Verification failure for a referenced adoptable entry preserves the orphan
-   pack for recovery.
+4. Verification failure for any referenced adoptable entry makes reconciliation
+   all-or-nothing for that pack: record no pack row, adopt/repoint no entries,
+   and do not delete the file. Valid entries remain safely quarantined in the
+   unrecorded pack until every referenced recovery candidate verifies or loses
+   its attachment reference.
 5. A pack whose entries are all unreferenced or safely readable elsewhere can
    be deleted as fully redundant. Unreferenced entries do not need byte
    verification merely to authorize deletion because the database has no live
@@ -207,8 +239,9 @@ logical GC inside `RemoveSourceSerialized`:
 4. Commit all three effects together.
 
 The pack records and pack files are deliberately unchanged in this
-transaction. Once an index row is removed, normal blob-store reads by hash no
-longer reach those bytes. A transaction failure rolls back the account cascade
+transaction. Once the attachment rows and index mapping disappear together,
+the production resolver's liveness check prevents both packed and loose
+fallback reads by hash. A transaction failure rolls back the account cascade
 and every index deletion together.
 
 Return the active-sync result plus the number of packed mappings removed so the
@@ -294,7 +327,7 @@ run retries them.
 | Automatic budget reached | Current new pack sealed and indexed | Run ends normally; later run continues remaining loose blobs |
 | Regular pack sealed before index commit | Referenced orphan new pack | Reconcile adopts only still-referenced entries |
 | Source removal transaction fails | Source and all pack mappings unchanged | Retry removal |
-| Source removal commits | Unique hashes unindexed; old pack record/file retained | Data is logically dead; repack later reclaims bytes |
+| Source removal commits | Unique hashes unreferenced and unindexed; old pack record/file and possible loose leftovers retained | Resolver returns not-found; repack and loose cleanup later reclaim bytes |
 | Repack read/write fails before database swap | Old mappings/files unchanged; new staging aborted | Retry; any sealed new pack is reconciled safely |
 | New repack files seal before swap, then crash | New orphan files; old mappings authoritative | Referenced entries are redundant or recoverable; dead entries are never adopted |
 | Repack index swap commits before old deletion | New mappings live; old records/files zero-live | Next repack retries retirement/deletion |
@@ -349,9 +382,13 @@ tags.
 - Sharing through content/content, thumbnail/thumbnail, and cross-column
   content/thumbnail references preserves the mapping.
 - A forced transaction error rolls back the source and all mappings.
+- The production resolver rejects unreferenced hashes even when a canonical
+  loose file or stale pack mapping remains, without adding a second read query.
 - An orphan pack entry with no remaining attachment reference is never adopted.
 - A crash-style orphan containing a mix of referenced and deleted entries
   adopts only the referenced entries.
+- A mixed orphan with one valid adoptable entry and one referenced verification
+  failure remains wholly unrecorded and undeleted.
 - Removing a source after seal-before-index does not resurrect its blobs.
 
 ### Repack and reader retirement
@@ -394,9 +431,10 @@ API/MCP/export reads, crash injection, backup round-trip, repack, and unpack.
 
 1. **Bound automatic packing.** Add the packer budget, daemon coordinator,
    post-ingest hooks, and daily pack job. Verify and review before continuing.
-2. **Make deletion logical.** Make orphan reconciliation reference-aware,
-   and replace the account-removal refusal with transactional index GC. Verify
-   and review before continuing; physical cleanup remains safely deferred.
+2. **Make deletion logical.** Make production blob resolution and orphan
+   reconciliation reference-aware, then replace the account-removal refusal
+   with transactional index GC. Verify and review before continuing; physical
+   cleanup remains safely deferred.
 3. **Repack physically.** Add accounting, repacker transactions, daemon-native
    `repack-attachments`, shared-reader retirement, scheduled repack, and
    physical cleanup. Run full end-to-end and whole-branch review.
@@ -413,7 +451,8 @@ Phase 2c is complete when:
 2. Explicit packing still migrates the entire eligible backlog in one resumable
    run.
 3. Account removal never requires unpacking, never removes shared mappings, and
-   never lets an unreferenced orphan pack resurrect deleted hashes.
+   makes an unreferenced hash unreadable through packed or loose fallback while
+   never letting an orphan pack resurrect it.
 4. Eligible dead space is compacted into new immutable packs, and zero-live
    packs are eventually removed.
 5. Concurrent reads survive repack on Unix and Windows using the production
