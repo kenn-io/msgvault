@@ -258,6 +258,138 @@ func TestRunPacksLooseBlobs(t *testing.T) {
 		"thumbnail_path is canonicalized")
 }
 
+func TestRunHonorsSoftRawByteBudget(t *testing.T) {
+	tests := []struct {
+		name            string
+		maxBytes        int64
+		wantBlobsPacked int
+		wantBytesPacked int64
+		wantExhausted   bool
+	}{
+		{
+			name:            "below first blob boundary still makes progress",
+			maxBytes:        99,
+			wantBlobsPacked: 1,
+			wantBytesPacked: 100,
+			wantExhausted:   true,
+		},
+		{
+			name:            "exact first blob boundary",
+			maxBytes:        100,
+			wantBlobsPacked: 1,
+			wantBytesPacked: 100,
+			wantExhausted:   true,
+		},
+		{
+			name:            "above first blob boundary advances through second blob",
+			maxBytes:        101,
+			wantBlobsPacked: 2,
+			wantBytesPacked: 200,
+			wantExhausted:   true,
+		},
+		{
+			name:            "zero is unlimited",
+			maxBytes:        0,
+			wantBlobsPacked: 3,
+			wantBytesPacked: 300,
+			wantExhausted:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+
+			contents := make([][]byte, 0, 3)
+			hashes := make([]string, 0, 3)
+			for range 3 {
+				content := randomContent(t, 100)
+				contents = append(contents, content)
+				hashes = append(hashes, f.addBlob(content, canonical))
+			}
+
+			stats := f.run(packer.Options{MaxBytes: tt.maxBytes})
+
+			assert.Equal(tt.wantBlobsPacked, stats.BlobsPacked)
+			assert.Equal(tt.wantBytesPacked, stats.BytesPacked)
+			assert.Equal(tt.wantExhausted, stats.BudgetExhausted)
+			if tt.wantBlobsPacked > 0 {
+				assert.Equal(1, stats.PacksSealed, "budget stop seals the current partial writer")
+			}
+
+			for i, hash := range hashes {
+				entry, err := f.store.GetAttachmentPackEntry(hash)
+				require.NoError(err, "GetAttachmentPackEntry(%s)", hash)
+				if i < tt.wantBlobsPacked {
+					require.NotNil(entry, "packed blob %d must be indexed", i)
+					assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))),
+						"packed blob %d loose file", i)
+				} else {
+					assert.Nil(entry, "blob %d beyond the budget must remain loose", i)
+					assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))),
+						"remaining loose blob %d", i)
+				}
+				assert.Equal(contents[i], f.readBack(hash), "blob %d stays readable", i)
+			}
+		})
+	}
+}
+
+func TestRunBudgetExhaustionStillCompletesRecoveryAndSweep(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	danglingContent := randomContent(t, 600)
+	danglingHash := f.addBlob(danglingContent, canonical)
+	sweepContent := randomContent(t, 600)
+	sweepHash := f.addBlob(sweepContent, canonical)
+	first := f.run(packer.Options{TargetSize: 600})
+	require.Equal(2, first.PacksSealed, "fixture requires separate pack files")
+
+	danglingEntry, err := f.store.GetAttachmentPackEntry(danglingHash)
+	require.NoError(err)
+	require.NotNil(danglingEntry)
+	require.NoError(os.Remove(filepath.Join(
+		f.dir, "packs", danglingEntry.PackID[:2], danglingEntry.PackID+blobstore.PackExt)))
+	f.writeLoose(canonical(danglingHash), danglingContent)
+	f.writeLoose(canonical(sweepHash), sweepContent)
+
+	orphanContent := randomContent(t, 300)
+	orphanHash := f.addBlob(orphanContent, canonical)
+	orphanID := buildOrphanPack(t, f.dir, orphanContent)
+
+	remainingContent := randomContent(t, 100)
+	remainingHash := f.addBlob(remainingContent, canonical)
+
+	stats := f.run(packer.Options{MaxBytes: 100})
+
+	assert.True(stats.BudgetExhausted)
+	assert.Equal(1, stats.RecordsDropped, "dangling metadata repair still runs")
+	assert.Equal(1, stats.PacksAdopted, "orphan reconciliation still runs")
+	assert.Equal(1, stats.BlobsPacked, "soft budget makes progress by repairing one loose blob")
+	assert.Equal(int64(600), stats.BytesPacked)
+	assert.Equal(2, stats.LooseSwept, "final sweep removes adopted and already-indexed leftovers")
+
+	hasOrphan, err := f.store.HasPackRecord(orphanID)
+	require.NoError(err)
+	assert.True(hasOrphan)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(sweepHash))))
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(orphanHash))))
+	assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(remainingHash))))
+
+	for hash, content := range map[string][]byte{
+		danglingHash:  danglingContent,
+		sweepHash:     sweepContent,
+		orphanHash:    orphanContent,
+		remainingHash: remainingContent,
+	} {
+		assert.Equal(content, f.readBack(hash), "blob %s stays readable", hash)
+	}
+}
+
 func TestRunTriesAllRecordedPathsForSameHash(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

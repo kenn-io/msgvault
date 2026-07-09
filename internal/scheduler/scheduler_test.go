@@ -1421,6 +1421,102 @@ func (t *yieldingWorkTracker) ShouldYield() bool {
 	return t.yield.Load()
 }
 
+func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	oldPoll := yieldPollInterval
+	yieldPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() { yieldPollInterval = oldPoll })
+
+	tracker := &yieldingWorkTracker{}
+	started := make(chan struct{})
+	causeCh := make(chan error, 1)
+	s := New(func(context.Context, string) error { return nil }).WithWorkTracker(tracker)
+	require.NoError(s.AddJob(Job{
+		Name:     "attachment-maintenance",
+		Schedule: "17 3 * * *",
+		Run: func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			causeCh <- context.Cause(ctx)
+			return ctx.Err()
+		},
+	}), "AddJob")
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.TriggerJob("attachment-maintenance") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("generic job did not start")
+	}
+
+	tracker.yield.Store(true)
+	select {
+	case cause := <-causeCh:
+		require.ErrorIs(cause, ErrYieldedToWaiter, "generic job cancellation cause")
+	case <-time.After(time.Second):
+		require.FailNow("generic job did not yield")
+	}
+	select {
+	case err := <-errCh:
+		require.NoError(err, "yield is not a generic job failure")
+	case <-time.After(time.Second):
+		require.FailNow("TriggerJob did not return after yield")
+	}
+	require.Eventually(func() bool {
+		return tracker.active() == 0
+	}, time.Second, time.Millisecond, "gate released after generic job yield")
+	status := s.JobStatus()
+	require.Len(status, 1)
+	assert.Empty(status[0].LastError, "yield must not be recorded as a generic job error")
+
+	stopCtx := s.Stop()
+	select {
+	case <-stopCtx.Done():
+	case <-time.After(time.Second):
+		require.FailNow("scheduler did not stop after yielded generic job")
+	}
+}
+
+func TestGenericJobShutdownContextFinishesCleanly(t *testing.T) {
+	require := require.New(t)
+	started := make(chan struct{})
+	s := New(func(context.Context, string) error { return nil })
+	require.NoError(s.AddJob(Job{
+		Name:     "attachment-maintenance",
+		Schedule: "17 3 * * *",
+		Run: func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}), "AddJob")
+	s.Start()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.TriggerJob("attachment-maintenance") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.FailNow("generic job did not start")
+	}
+
+	stopCtx := s.Stop()
+	select {
+	case <-stopCtx.Done():
+	case <-time.After(time.Second):
+		require.FailNow("scheduler shutdown did not wait for canceled generic job")
+	}
+	select {
+	case err := <-errCh:
+		require.ErrorIs(err, context.Canceled, "running job observes scheduler cancellation")
+	case <-time.After(time.Second):
+		require.FailNow("TriggerJob did not finish during shutdown")
+	}
+}
+
 func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

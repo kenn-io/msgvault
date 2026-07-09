@@ -28,19 +28,23 @@ import (
 type Options struct {
 	// TargetSize is the pack size threshold; 0 means pack.DefaultTargetSize.
 	TargetSize int64
+	// MaxBytes is a soft raw-byte budget checked after each verified append;
+	// 0 means unlimited.
+	MaxBytes int64
 }
 
 // Stats summarizes one packer run.
 type Stats struct {
-	PacksSealed    int   // packs written this run
-	BlobsPacked    int   // blobs appended this run
-	BytesPacked    int64 // raw bytes appended this run
-	PacksAdopted   int   // orphan packs adopted during reconciliation
-	PacksRemoved   int   // fully-redundant orphan packs deleted
-	RecordsDropped int   // unusable pack records dropped so loose blobs can re-pack
-	BlobsMissing   int   // enumerated blobs whose file was missing (left for backfill)
-	BlobsCorrupt   int   // files whose bytes did not match their recorded hash (skipped)
-	LooseSwept     int   // indexed loose files removed by the sweep
+	PacksSealed     int   // packs written this run
+	BlobsPacked     int   // blobs appended this run
+	BytesPacked     int64 // raw bytes appended this run
+	PacksAdopted    int   // orphan packs adopted during reconciliation
+	PacksRemoved    int   // fully-redundant orphan packs deleted
+	RecordsDropped  int   // unusable pack records dropped so loose blobs can re-pack
+	BlobsMissing    int   // enumerated blobs whose file was missing (left for backfill)
+	BlobsCorrupt    int   // files whose bytes did not match their recorded hash (skipped)
+	LooseSwept      int   // indexed loose files removed by the sweep
+	BudgetExhausted bool  // packing stopped after reaching the soft raw-byte budget
 }
 
 // Run packs all unindexed loose attachment blobs into sealed packs,
@@ -334,7 +338,8 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 		stats.BlobsPacked++
 		stats.BytesPacked += int64(len(data))
 		sources = append(sources, source)
-		if w.Full() {
+		budgetExhausted := opts.MaxBytes > 0 && stats.BytesPacked >= opts.MaxBytes
+		if w.Full() || budgetExhausted {
 			if err := ctx.Err(); err != nil {
 				abort()
 				return err
@@ -343,6 +348,10 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 				return err
 			}
 			w = nil
+			if budgetExhausted {
+				stats.BudgetExhausted = true
+				break
+			}
 		}
 	}
 	if w != nil {

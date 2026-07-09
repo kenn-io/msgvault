@@ -167,6 +167,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer cancel()
 	idleTracker := newDaemonIdleTracker(cfg, cancel)
 	operationGate := api.NewSerialOperationGate()
+	// Closed on shutdown so cached pack readers don't hold attachment pack
+	// files open past the daemon's lifetime (blocks deletion on Windows).
+	blobStore := blobstore.New(s, cfg.AttachmentsDir())
+	defer func() { _ = blobStore.Close() }()
+	attachmentMaint := &attachmentMaintenance{
+		store:          s,
+		blob:           blobStore,
+		attachmentsDir: cfg.AttachmentsDir(),
+		logger:         logger,
+	}
 
 	// Vector misconfiguration still fails startup fast; the expensive
 	// backend open/migrate/backfill runs in the background after the API
@@ -195,7 +205,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// by the background startVectorInit) discovers them on its next run, so
 	// the sync path no longer threads the vector features.
 	syncFunc := func(ctx context.Context, email string) error {
-		return runScheduledSync(ctx, email, s, getOAuthMgr)
+		return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+			return runScheduledSync(ctx, email, s, getOAuthMgr)
+		})
 	}
 
 	// Create and configure scheduler
@@ -220,7 +232,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:     jobName,
 			Schedule: source.Schedule,
 			Run: func(ctx context.Context) error {
-				return runConfiguredSynctechSMSSourceWithStore(ctx, s, source)
+				return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+					return runConfiguredSynctechSMSSourceWithStore(ctx, s, source)
+				})
 			},
 		}); err != nil {
 			logger.Error("failed to schedule synctech-sms source", "source", source.Name, "error", err)
@@ -247,13 +261,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:     jobName,
 			Schedule: source.Schedule,
 			Run: func(ctx context.Context) error {
-				return runConfiguredGCalSync(ctx, s, source)
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runConfiguredGCalSync(ctx, s, source)
+				})
 			},
 		}); err != nil {
 			logger.Error("failed to schedule gcal source", "source", source.Name, "error", err)
 		} else {
 			logger.Info("scheduled gcal source", "source", source.Name, "schedule", source.Schedule)
 		}
+	}
+	if err := registerAttachmentMaintenanceJob(sched, attachmentMaint); err != nil {
+		return fmt.Errorf("schedule attachment maintenance: %w", err)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -263,13 +282,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 
 	// Create adapters for the API interfaces
-	storeAdapter := &storeAPIAdapter{store: s}
+	storeAdapter := &storeAPIAdapter{store: s, attachmentMaintenance: attachmentMaint}
 	schedAdapter := &schedulerAdapter{scheduler: sched}
-
-	// Closed on shutdown so cached pack readers don't hold attachment pack
-	// files open past the daemon's lifetime (blocks deletion on Windows).
-	blobStore := blobstore.New(s, cfg.AttachmentsDir())
-	defer func() { _ = blobStore.Close() }()
 
 	// Create and start API server
 	apiOpts := api.ServerOptions{
@@ -634,7 +648,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc) *api.IdleTr
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store *store.Store
+	store                 *store.Store
+	attachmentMaintenance *attachmentMaintenance
 }
 
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
@@ -747,12 +762,36 @@ func (a *storeAPIAdapter) RunCLISync(
 	req api.CLISyncRequest,
 	emit func(api.CLISyncEvent) error,
 ) error {
-	return runDaemonCLISubprocessStream(ctx, cliSyncSubprocessArgs(req), func(stream, data string) error {
+	return a.runCLISyncWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+}
+
+type cliSyncSubprocessRunner func(
+	context.Context,
+	[]string,
+	func(stream, data string) error,
+) error
+
+func (a *storeAPIAdapter) runCLISyncWithRunner(
+	ctx context.Context,
+	req api.CLISyncRequest,
+	emit func(api.CLISyncEvent) error,
+	run cliSyncSubprocessRunner,
+) error {
+	emitSubprocess := func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
 		return emit(api.CLISyncEvent{Type: stream, Data: data})
-	})
+	}
+	emitWarning := func(message string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
+	}
+	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
+		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
+	}, emitWarning)
 }
 
 func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
@@ -830,12 +869,47 @@ func (a *storeAPIAdapter) RunCLICommand(
 	req api.CLIRunRequest,
 	emit func(api.CLIRunEvent) error,
 ) error {
-	return runDaemonCLISubprocessStreamWithEnv(ctx, req.Args, req.Env, req.Cwd, func(stream, data string) error {
+	return a.runCLICommandWithRunner(ctx, req, emit, runDaemonCLISubprocessStreamWithEnv)
+}
+
+type cliCommandSubprocessRunner func(
+	context.Context,
+	[]string,
+	map[string]string,
+	string,
+	func(stream, data string) error,
+) error
+
+func (a *storeAPIAdapter) runCLICommandWithRunner(
+	ctx context.Context,
+	req api.CLIRunRequest,
+	emit func(api.CLIRunEvent) error,
+	run cliCommandSubprocessRunner,
+) error {
+	emitSubprocess := func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
-	})
+	}
+	runSubprocess := func(ctx context.Context) error {
+		return run(ctx, req.Args, req.Env, req.Cwd, emitSubprocess)
+	}
+	if !attachmentProducingCommand(req.Args) {
+		return runSubprocess(ctx)
+	}
+	emitWarning := func(message string) error {
+		if emit == nil {
+			return nil
+		}
+		return emit(api.CLIRunEvent{Type: "stderr", Data: message})
+	}
+	return runAfterSuccessfulAttachmentIngest(
+		ctx,
+		a.attachmentMaintenance,
+		runSubprocess,
+		emitWarning,
+	)
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

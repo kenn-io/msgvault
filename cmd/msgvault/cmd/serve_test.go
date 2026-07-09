@@ -506,6 +506,174 @@ func TestStoreAPIAdapterServesSourceStatus(t *testing.T) {
 	assert.Equal("history-2", *got.LastSuccessfulSync.CursorAfter, "LastSuccessfulSync.CursorAfter")
 }
 
+func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		predecessorErr error
+		wantPacked     bool
+		wantAttempts   int
+	}{
+		{name: "success", wantPacked: true, wantAttempts: 1},
+		{name: "failure", predecessorErr: errors.New("sync subprocess failed")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			hash := f.addLoose([]byte("CLI sync attachment payload"))
+			adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+			var events []api.CLISyncEvent
+			runnerCalls := 0
+
+			err := adapter.runCLISyncWithRunner(
+				context.Background(),
+				api.CLISyncRequest{Email: "alice@example.com"},
+				func(event api.CLISyncEvent) error {
+					events = append(events, event)
+					return nil
+				},
+				func(_ context.Context, args []string, _ func(string, string) error) error {
+					runnerCalls++
+					assert.Equal([]string{"sync", "alice@example.com"}, args)
+					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
+					return tt.predecessorErr
+				},
+			)
+
+			if tt.predecessorErr != nil {
+				require.ErrorIs(err, tt.predecessorErr)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(1, runnerCalls)
+			assert.Equal(tt.wantPacked, f.packedEntry(hash) != nil)
+			assert.Equal(tt.wantAttempts,
+				strings.Count(f.logs.String(), "automatic attachment maintenance complete"))
+			assert.Empty(events, "successful automatic maintenance writes no normal CLI output")
+		})
+	}
+}
+
+func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		predecessorErr error
+		wantPacked     bool
+		wantAttempts   int
+	}{
+		{
+			name:         "allowlisted success",
+			args:         []string{importMboxCommand, "archive.mbox"},
+			wantPacked:   true,
+			wantAttempts: 1,
+		},
+		{
+			name: "unrelated success",
+			args: []string{"remove-account", "alice@example.com"},
+		},
+		{
+			name:           "allowlisted failure",
+			args:           []string{"sync-teams", "alice@example.com"},
+			predecessorErr: errors.New("command subprocess failed"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			hash := f.addLoose([]byte("generic CLI attachment payload"))
+			adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+			var events []api.CLIRunEvent
+			runnerCalls := 0
+
+			err := adapter.runCLICommandWithRunner(
+				context.Background(),
+				api.CLIRunRequest{Args: tt.args, Env: map[string]string{"TEST": "value"}, Cwd: "/tmp"},
+				func(event api.CLIRunEvent) error {
+					events = append(events, event)
+					return nil
+				},
+				func(
+					_ context.Context,
+					args []string,
+					env map[string]string,
+					cwd string,
+					_ func(string, string) error,
+				) error {
+					runnerCalls++
+					assert.Equal(tt.args, args)
+					assert.Equal(map[string]string{"TEST": "value"}, env)
+					assert.Equal("/tmp", cwd)
+					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
+					return tt.predecessorErr
+				},
+			)
+
+			if tt.predecessorErr != nil {
+				require.ErrorIs(err, tt.predecessorErr)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(1, runnerCalls)
+			assert.Equal(tt.wantPacked, f.packedEntry(hash) != nil)
+			assert.Equal(tt.wantAttempts,
+				strings.Count(f.logs.String(), "automatic attachment maintenance complete"))
+			assert.Empty(events, "successful automatic maintenance writes no normal CLI output")
+		})
+	}
+}
+
+func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+	adapter := &storeAPIAdapter{store: maintenance.store, attachmentMaintenance: maintenance}
+	var events []api.CLISyncEvent
+
+	err := adapter.runCLISyncWithRunner(
+		context.Background(),
+		api.CLISyncRequest{Email: "alice@example.com"},
+		func(event api.CLISyncEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		func(context.Context, []string, func(string, string) error) error { return nil },
+	)
+
+	require.NoError(err, "automatic maintenance failure must preserve sync success")
+	require.Len(events, 1, "one concise warning event")
+	assert.Equal("stderr", events[0].Type)
+	assert.Contains(events[0].Data, "pack-attachments")
+	assert.Contains(events[0].Data, "retry")
+	assert.Contains(logs.String(), "automatic attachment maintenance failed")
+}
+
+func TestStoreAPIAdapterMaintenanceWarningStreamFailurePreservesSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+	adapter := &storeAPIAdapter{store: maintenance.store, attachmentMaintenance: maintenance}
+	warningErr := errors.New("client disconnected")
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(),
+		api.CLIRunRequest{Args: []string{importMboxCommand, "archive.mbox"}},
+		func(api.CLIRunEvent) error { return warningErr },
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			return nil
+		},
+	)
+
+	require.NoError(err, "warning stream failure must preserve command success")
+	assert.Contains(logs.String(), "failed to emit automatic attachment maintenance warning")
+	assert.Contains(logs.String(), warningErr.Error())
+}
+
 func TestStoreAPIAdapterServesCLIInitDB(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -24,10 +24,10 @@ const (
 )
 
 // backupFreezeState tracks the single active backup freeze window, if any.
-// The backup subprocess calls Begin, checkpoints/pins its own SQLite
-// session, does its read work, then calls End; the daemon's operation gate
-// stays held for the whole window so no other daemon-owned mutation runs
-// concurrently with the backup read.
+// The backup subprocess calls Begin, checkpoints and pins its own SQLite
+// session, then calls End; the daemon's operation gate stays held across that
+// window. Attachment capture runs after the gate is released and may overlap
+// daemon-owned attachment maintenance.
 type backupFreezeState struct {
 	mu sync.Mutex
 	// active is set as soon as Begin reserves the window, before the

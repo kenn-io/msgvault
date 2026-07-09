@@ -1,0 +1,336 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
+)
+
+type attachmentMaintenanceFixture struct {
+	t           *testing.T
+	store       *store.Store
+	dir         string
+	blob        *blobstore.Store
+	maintenance *attachmentMaintenance
+	logs        *bytes.Buffer
+	messageID   int64
+	sequence    int
+}
+
+func newAttachmentMaintenanceFixture(t *testing.T) *attachmentMaintenanceFixture {
+	t.Helper()
+	storeFixture := storetest.New(t)
+	dir := t.TempDir()
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	blob := blobstore.New(storeFixture.Store, dir)
+	t.Cleanup(func() { require.NoError(t, blob.Close(), "close blob store") })
+	return &attachmentMaintenanceFixture{
+		t:         t,
+		store:     storeFixture.Store,
+		dir:       dir,
+		blob:      blob,
+		logs:      logs,
+		messageID: storeFixture.CreateMessage("attachment-maintenance"),
+		maintenance: &attachmentMaintenance{
+			store:          storeFixture.Store,
+			blob:           blob,
+			attachmentsDir: dir,
+			logger:         logger,
+		},
+	}
+}
+
+func newFailingAttachmentMaintenance(t *testing.T) (*attachmentMaintenance, *bytes.Buffer) {
+	t.Helper()
+	storeFixture := storetest.New(t)
+	attachmentsPath := filepath.Join(t.TempDir(), "attachments")
+	require.NoError(t, os.WriteFile(attachmentsPath, []byte("not a directory"), 0o600))
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	blob := blobstore.New(storeFixture.Store, attachmentsPath)
+	t.Cleanup(func() { require.NoError(t, blob.Close(), "close blob store") })
+	return &attachmentMaintenance{
+		store:          storeFixture.Store,
+		blob:           blob,
+		attachmentsDir: attachmentsPath,
+		logger:         logger,
+	}, logs
+}
+
+func (f *attachmentMaintenanceFixture) addLoose(content []byte) string {
+	f.t.Helper()
+	f.sequence++
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	rel := hash[:2] + "/" + hash
+	full := filepath.Join(f.dir, filepath.FromSlash(rel))
+	require.NoError(f.t, os.MkdirAll(filepath.Dir(full), 0o700), "create loose blob directory")
+	require.NoError(f.t, os.WriteFile(full, content, 0o600), "write loose blob")
+	require.NoError(f.t, f.store.UpsertAttachment(
+		f.messageID,
+		fmt.Sprintf("attachment-%d.bin", f.sequence),
+		"application/octet-stream",
+		rel,
+		hash,
+		len(content),
+	), "record loose attachment")
+	return hash
+}
+
+func (f *attachmentMaintenanceFixture) packedEntry(hash string) *store.PackIndexEntry {
+	f.t.Helper()
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(f.t, err, "GetAttachmentPackEntry(%s)", hash)
+	return entry
+}
+
+func (f *attachmentMaintenanceFixture) readBlob(hash string) []byte {
+	f.t.Helper()
+	r, _, err := f.blob.Open(hash)
+	require.NoError(f.t, err, "open blob %s", hash)
+	defer func() { require.NoError(f.t, r.Close(), "close blob reader") }()
+	data, err := io.ReadAll(r)
+	require.NoError(f.t, err, "read blob %s", hash)
+	return data
+}
+
+func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const wantAutomaticAttachmentBytes int64 = 256 << 20
+	f := newAttachmentMaintenanceFixture(t)
+	content := []byte("automatic attachment maintenance payload")
+	hash := f.addLoose(content)
+	warnings := 0
+
+	err := f.maintenance.runAutomaticPack(context.Background(), func(string) error {
+		warnings++
+		return nil
+	})
+
+	require.NoError(err, "runAutomaticPack")
+	gotAutomaticAttachmentBytes := automaticAttachmentBytes
+	assert.Equal(wantAutomaticAttachmentBytes, gotAutomaticAttachmentBytes)
+	assert.Equal("attachment-maintenance", attachmentMaintenanceJob)
+	assert.Equal("17 3 * * *", attachmentMaintenanceCron)
+	assert.Zero(warnings, "successful automatic packing must not emit CLI output")
+	require.NotNil(f.packedEntry(hash), "loose attachment must be packed")
+	assert.Equal(content, f.readBlob(hash), "packed attachment stays readable")
+
+	logOutput := f.logs.String()
+	assert.Contains(logOutput, "level=INFO msg=\"automatic attachment maintenance complete\"")
+	assert.Equal(1, strings.Count(logOutput, "automatic attachment maintenance complete"),
+		"one trigger makes exactly one maintenance attempt")
+	for _, field := range []string{
+		"max_bytes=268435456",
+		"packs_sealed=1",
+		"blobs_packed=1",
+		"bytes_packed=40",
+		"packs_adopted=0",
+		"packs_removed=0",
+		"records_dropped=0",
+		"blobs_missing=0",
+		"blobs_corrupt=0",
+		"loose_swept=0",
+		"budget_exhausted=false",
+	} {
+		assert.Contains(logOutput, field, "complete stats field %q", field)
+	}
+}
+
+func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	warnings := 0
+
+	err := f.maintenance.runAutomaticPack(ctx, func(string) error {
+		warnings++
+		return nil
+	})
+
+	require.ErrorIs(err, context.Canceled)
+	assert.Zero(warnings)
+	assert.Contains(f.logs.String(), "level=INFO msg=\"automatic attachment maintenance canceled\"")
+	assert.NotContains(f.logs.String(), "level=WARN")
+}
+
+func TestAutomaticAttachmentMaintenanceFailureWarnsWithoutReplacingIngestSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+	var warning string
+
+	err := runAfterSuccessfulAttachmentIngest(
+		context.Background(),
+		maintenance,
+		func(context.Context) error { return nil },
+		func(message string) error {
+			warning = message
+			return nil
+		},
+	)
+
+	require.NoError(err, "maintenance failure must preserve successful ingest")
+	assert.Contains(warning, "pack-attachments")
+	assert.Contains(warning, "retry")
+	assert.Contains(logs.String(), "level=WARN msg=\"automatic attachment maintenance failed\"")
+	assert.Contains(logs.String(), "pack-attachments", "log names the explicit retry command")
+}
+
+func TestAutomaticAttachmentMaintenanceWarningFailurePreservesIngestSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+	warningErr := errors.New("warning stream closed")
+
+	err := runAfterSuccessfulAttachmentIngest(
+		context.Background(),
+		maintenance,
+		func(context.Context) error { return nil },
+		func(string) error { return warningErr },
+	)
+
+	require.NoError(err, "warning failure must preserve successful ingest")
+	assert.Contains(logs.String(), "failed to emit automatic attachment maintenance warning")
+	assert.Contains(logs.String(), warningErr.Error())
+}
+
+func TestRunScheduledSourcePacksOnlySuccessfulAttachmentSources(t *testing.T) {
+	tests := []struct {
+		name                string
+		attachmentProducing bool
+		predecessorErr      error
+		wantPacked          bool
+		wantMaintenanceRuns int
+	}{
+		{
+			name:                "successful Gmail IMAP or Teams provider",
+			attachmentProducing: true,
+			wantPacked:          true,
+			wantMaintenanceRuns: 1,
+		},
+		{
+			name:                "failed attachment provider",
+			attachmentProducing: true,
+			predecessorErr:      errors.New("scheduled ingest failed"),
+		},
+		{
+			name:                "successful GCal source",
+			attachmentProducing: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			hash := f.addLoose([]byte("scheduled source payload"))
+			predecessorCalls := 0
+
+			err := runScheduledSource(
+				context.Background(),
+				f.maintenance,
+				tt.attachmentProducing,
+				func(context.Context) error {
+					predecessorCalls++
+					assert.Nil(f.packedEntry(hash), "packing must happen only after predecessor success")
+					return tt.predecessorErr
+				},
+			)
+
+			if tt.predecessorErr != nil {
+				require.ErrorIs(err, tt.predecessorErr)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(1, predecessorCalls)
+			assert.Equal(tt.wantPacked, f.packedEntry(hash) != nil)
+			assert.Equal(tt.wantMaintenanceRuns,
+				strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
+				"automatic attempts")
+		})
+	}
+}
+
+func TestRegisterAttachmentMaintenanceJobAndTrigger(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	hash := f.addLoose([]byte("daily maintenance payload"))
+	sched := scheduler.New(func(context.Context, string) error { return nil }).WithLogger(f.maintenance.logger)
+	t.Cleanup(func() {
+		ctx := sched.Stop()
+		<-ctx.Done()
+	})
+
+	require.NoError(registerAttachmentMaintenanceJob(sched, f.maintenance), "register maintenance job")
+	require.True(sched.IsJobScheduled(attachmentMaintenanceJob), "maintenance job must be registered")
+	status := sched.JobStatus()
+	require.Len(status, 1)
+	assert.Equal(attachmentMaintenanceJob, status[0].Name)
+	assert.Equal(attachmentMaintenanceCron, status[0].Schedule)
+
+	require.NoError(sched.TriggerJob(attachmentMaintenanceJob), "TriggerJob")
+	require.NotNil(f.packedEntry(hash), "triggered daily job must perform real packing")
+	assert.Equal(1, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
+		"daily trigger makes exactly one bounded attempt")
+	assert.Contains(f.logs.String(), "max_bytes=268435456")
+}
+
+func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
+	allowlisted := []string{
+		"backfill-teams-media",
+		"import",
+		"import-emlx",
+		"import-gvoice",
+		"import-imessage",
+		importMboxCommand,
+		"import-messenger",
+		"import-pst",
+		"import-synctech-sms",
+		"import-whatsapp",
+		"sync-synctech-sms",
+		"sync-teams",
+	}
+	for _, command := range allowlisted {
+		t.Run("allows "+command, func(t *testing.T) {
+			assert.True(t, attachmentProducingCommand([]string{command, "--example"}))
+		})
+	}
+
+	for _, command := range []string{
+		"pack-attachments",
+		"sync-calendar",
+		"add-account",
+		"remove-account",
+		"build-cache",
+		"unrelated-command",
+	} {
+		t.Run("rejects "+command, func(t *testing.T) {
+			assert.False(t, attachmentProducingCommand([]string{command}))
+		})
+	}
+	assert.False(t, attachmentProducingCommand(nil))
+}
