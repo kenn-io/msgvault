@@ -260,5 +260,9 @@ their entries into the repo index, skipping per-blob re-reads.
    canonicalizes them in step 4).
 3. kit change: content reader hook for backup capture.
 4. Packer + canonicalization + `pack-attachments` / `unpack-attachments`
-   commands + auto-run hooks.
+   commands + auto-run hooks. The same release must also switch the
+   remaining local (non-daemon) loose readers to the blob store — the MCP
+   local path (`internal/mcp/handlers.go` readAttachmentFile) and the TUI
+   local export path (`internal/tui/actions.go`) — otherwise MCP/TUI used
+   without a daemon would miss packed blobs.
 5. GC/repack + `remove-account` integration.

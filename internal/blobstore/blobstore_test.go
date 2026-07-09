@@ -265,7 +265,7 @@ func TestOpenConcurrent(t *testing.T) {
 	wg.Wait()
 	close(errCh)
 	for err := range errCh {
-		t.Error(err)
+		assert.NoError(t, err)
 	}
 }
 
