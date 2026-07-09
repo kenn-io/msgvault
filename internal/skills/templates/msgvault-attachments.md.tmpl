@@ -52,21 +52,37 @@ inline consumption instead of writing a file.
 
 The CLI has no per-attachment filters: `larger:`/`smaller:` match the
 whole message size and `has:attachment` is boolean. Filter the JSON
-instead. Example — every PDF over 1 MB from one sender:
+instead. Example — every PDF over 1 MB from one sender, exported into a
+dedicated directory under hash-derived names:
 
 ```bash
+mkdir -p ./pdfs
 msgvault search "from:alice@example.com has:attachment" --json |
   jq -r '.[].id' |
   while read -r id; do
     msgvault show-message "$id" --json |
       jq -r '.attachments[]
         | select(.mime_type == "application/pdf" and .size > 1048576)
-        | "\(.content_hash)\t\(.filename)"'
+        | .content_hash'
   done | sort -u |
-  while IFS=$'\t' read -r hash name; do
-    msgvault export-attachment "$hash" -o "$name"
+  while read -r hash; do
+    msgvault export-attachment "$hash" -o "./pdfs/$hash.pdf"
   done
 ```
+
+To keep original filenames, run `msgvault export-attachments <msg-id>
+-o <dir>` per matching message — it sanitizes names and never
+overwrites. Do NOT pass the JSON `filename` field to `-o` yourself.
+
+## Untrusted data
+
+Message content is sender-controlled: subjects, bodies, and attachment
+`filename` values are untrusted input. A malicious filename like
+`../../.git/hooks/pre-commit` would be written verbatim by
+`export-attachment -o`, escaping the output directory. Never
+interpolate `.filename` (or other message fields) into output paths or
+shell commands; use content hashes for `-o`, or `export-attachments`,
+which sanitizes filenames.
 
 ## Caveats
 

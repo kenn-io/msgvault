@@ -31,12 +31,12 @@ Examples:
   msgvault export-attachment 61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0
   msgvault export-attachment 61ccf192... --output invoice.pdf
 
-Export all attachments from a message with original filenames:
-  msgvault show-message 45 --json | \
-    jq -r '.attachments[] | "\(.content_hash)\t\(.filename)"' | \
-    while IFS=$'\t' read -r hash name; do
-      msgvault export-attachment "$hash" -o "$name"
-    done
+To export all attachments from a message with original filenames, use
+'msgvault export-attachments <message-id> -o <dir>', which sanitizes
+filenames. Attachment filenames are sender-controlled: do not pass the
+JSON 'filename' field to -o (a name like ../../evil escapes the output
+directory). Use content hashes or your own fixed paths instead.
+
   msgvault export-attachment 61ccf192... -o -       # stdout (binary)
   msgvault export-attachment 61ccf192... --base64  # stdout (base64)
   msgvault export-attachment 61ccf192... --json    # JSON with base64 data`,
