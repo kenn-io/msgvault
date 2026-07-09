@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1991,6 +1992,28 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := msgexport.ValidateContentHash(contentHash); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_content_hash", err.Error())
+		return
+	}
+
+	if s.blobStore != nil {
+		rc, size, err := s.blobStore.Open(contentHash)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
+				return
+			}
+			s.logger.Error("failed to open CLI attachment", "content_hash", contentHash, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve attachment")
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.Header().Set("X-Msgvault-Content-Hash", contentHash)
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, rc); err != nil {
+			s.logger.Error("failed to write CLI attachment", "content_hash", contentHash, "error", err)
+		}
 		return
 	}
 

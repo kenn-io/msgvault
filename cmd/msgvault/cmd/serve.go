@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gmail"
@@ -281,6 +282,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AnalyticsMode: analyticsMode,
 		IdleTracker:   idleTracker,
 		OperationGate: operationGate,
+		BlobStore:     blobstore.New(s, cfg.AttachmentsDir()),
 	}
 	if cfg.Vector.Enabled {
 		apiOpts.VectorStatus = api.VectorStatusInitializing

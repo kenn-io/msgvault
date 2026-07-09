@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -116,6 +117,13 @@ type SyncScheduler interface {
 // AccountStatus is an alias for scheduler.AccountStatus — single source of truth.
 type AccountStatus = scheduler.AccountStatus
 
+// AttachmentBlobStore serves attachment bytes by content hash from packed or
+// loose storage. Implemented by *blobstore.Store. Not-found errors satisfy
+// errors.Is(err, fs.ErrNotExist).
+type AttachmentBlobStore interface {
+	Open(hash string) (io.ReadSeekCloser, int64, error)
+}
+
 // Server represents the HTTP API server.
 type Server struct {
 	cfg            *config.Config
@@ -185,6 +193,10 @@ type Server struct {
 	// backupFreeze tracks the single active backup freeze window opened via
 	// POST /api/v1/backup/freeze/begin. See backup_freeze.go.
 	backupFreeze backupFreezeState
+	// blobStore serves attachment bytes for handleCLIAttachment. Nil in tests
+	// and embedded callers that construct a Server without options, which
+	// fall back to the legacy loose-file open.
+	blobStore AttachmentBlobStore
 }
 
 type SQLQueryRunner func(ctx context.Context, sql string) (*query.QueryResult, error)
@@ -230,6 +242,10 @@ type ServerOptions struct {
 	Logger        *slog.Logger
 	IdleTracker   *IdleTracker
 	OperationGate OperationGate
+	// BlobStore serves attachment bytes for /api/v1/cli/attachment through
+	// packed CAS storage with a loose-file fallback. Nil keeps the legacy
+	// loose-file-only read path.
+	BlobStore AttachmentBlobStore
 	// RequestTimeout caps each request by adding a deadline to the request
 	// context. Zero defaults to 60s. The underlying http.Server's WriteTimeout
 	// is set to RequestTimeout + 5s so handlers that honor cancellation can
@@ -281,6 +297,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		analyticsMode:       opts.AnalyticsMode,
 		idleTracker:         opts.IdleTracker,
 		operationGate:       opts.OperationGate,
+		blobStore:           opts.BlobStore,
 	}
 	s.vectorStatus = opts.VectorStatus
 	if s.vectorStatus == "" {
