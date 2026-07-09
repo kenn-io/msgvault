@@ -86,14 +86,15 @@ simply a fully-unpacked store; the packer migrating it is the upgrade.
 New table in the main DB (SQLite and PostgreSQL):
 
 ```sql
+-- pack_offset, not offset: OFFSET is a reserved word in SQLite and PostgreSQL.
 CREATE TABLE attachment_pack_index (
-    blob_hash  TEXT PRIMARY KEY,   -- SHA-256 hex; content OR thumbnail blob
-    pack_id    TEXT NOT NULL,      -- ULID of the sealed pack
-    offset     BIGINT NOT NULL,
-    stored_len BIGINT NOT NULL,
-    raw_len    BIGINT NOT NULL,
-    flags      INTEGER NOT NULL,   -- pack.BlobFlags (compressed, ...)
-    crc32c     BIGINT NOT NULL     -- CRC over stored bytes, from pack.Entry
+    blob_hash   TEXT PRIMARY KEY,   -- SHA-256 hex; content OR thumbnail blob
+    pack_id     TEXT NOT NULL,      -- ULID of the sealed pack
+    pack_offset BIGINT NOT NULL,
+    stored_len  BIGINT NOT NULL,
+    raw_len     BIGINT NOT NULL,
+    flags       INTEGER NOT NULL,   -- pack.BlobFlags (compressed, ...)
+    crc32c      BIGINT NOT NULL     -- CRC over stored bytes, from pack.Entry
 );
 CREATE INDEX idx_attachment_pack_index_pack ON attachment_pack_index(pack_id);
 
@@ -121,7 +122,7 @@ including thumbnails. The read path locates the pack via the index;
 `pack.OpenReader` parses the pack's footer once on first open (small: 61
 bytes per entry) and the cached reader serves subsequent reads from its
 entry map, so steady-state reads are one DB lookup plus one pread. The
-remaining entry columns (`offset` through `crc32c`) let GC compute per-pack
+remaining entry columns (`pack_offset` through `crc32c`) let GC compute per-pack
 dead bytes without opening packs, support crash reconciliation and `unpack`,
 and would enable a future kit API that preads from an externally supplied
 `pack.Entry` without any footer parse. The pack footer remains the

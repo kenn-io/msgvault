@@ -530,3 +530,30 @@ CREATE TABLE IF NOT EXISTS applied_migrations (
     name        TEXT PRIMARY KEY,
     applied_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Packed attachment storage (docs/internal/packed-attachments-design.md).
+-- attachment_pack_index maps content-addressed blobs (attachment content and
+-- thumbnails) to sealed pack files under attachments/packs/. Rows exist only
+-- for live packed blobs; loose files have no row. pack_offset et al mirror
+-- the pack footer's entry so reads need no footer parse ("offset" is a
+-- reserved word in SQLite and PostgreSQL, hence the prefix).
+CREATE TABLE IF NOT EXISTS attachment_pack_index (
+    blob_hash   TEXT PRIMARY KEY,
+    pack_id     TEXT NOT NULL,
+    pack_offset BIGINT NOT NULL,
+    stored_len  BIGINT NOT NULL,
+    raw_len     BIGINT NOT NULL,
+    flags       INTEGER NOT NULL,
+    crc32c      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachment_pack_index_pack
+    ON attachment_pack_index(pack_id);
+
+-- Immutable per-pack totals captured at seal/adoption. GC derives dead bytes
+-- as stored_bytes minus the sum of the pack's live index rows.
+CREATE TABLE IF NOT EXISTS attachment_packs (
+    pack_id      TEXT PRIMARY KEY,
+    entry_count  BIGINT NOT NULL,
+    stored_bytes BIGINT NOT NULL,
+    created_at   TEXT NOT NULL
+);
