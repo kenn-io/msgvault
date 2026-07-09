@@ -5,7 +5,9 @@ content-addressed files. Written 2026-07-09; status: delivery steps 1-4 (see
 Delivery order below) implemented on this branch (packer, crash
 reconciliation, `pack-attachments`/`unpack-attachments`, backup
 ContentSource), except the auto-run hooks in step 4; those hooks, GC/repack,
-and `remove-account` integration (step 5) remain.
+and `remove-account` integration (step 5) remain. Their detailed phase-2c
+contract is in
+`docs/superpowers/specs/2026-07-09-packed-attachments-phase-2c-design.md`.
 
 ## Motivation
 
@@ -223,17 +225,25 @@ boundary without violating the same crash-ordering rules.
 ### GC and repack
 
 - `remove-account` orphan sweep: loose orphans are deleted as today; packed
-  orphans just lose their `attachment_pack_index` rows.
+  orphans lose their `attachment_pack_index` rows in the same transaction as
+  the source cascade. Orphan reconciliation adopts only hashes that remain
+  referenced by an attachment row, so a later pack-file cleanup cannot
+  resurrect logically deleted content.
 - Repack: rewrite a pack when its live fraction (live index rows vs.
   `attachment_packs.entry_count`) falls below 50%, with hysteresis to avoid
   churn — only packs older than 24 h (`attachment_packs.created_at`) and
   with at least 8 MiB of dead stored bytes
   (`attachment_packs.stored_bytes` minus the sum of live `stored_len`).
   All accounting comes from the two tables without opening packs. Copy live
-  blobs to a new pack, swap index rows and the `attachment_packs` rows
-  transactionally, delete the old pack file. Readers holding a just-stale
-  index row survive the deletion via the pack-open retry rule above. Runs
-  after `remove-account` and via `msgvault repack-attachments`.
+  blobs to new target-sized packs and swap their index rows transactionally.
+  Keep the old `attachment_packs` rows until the daemon's shared blob store
+  has waited for active reads, closed cached readers, and deleted the old
+  files under its reader-cache mutex; then delete the now-empty records.
+  Readers holding a just-stale index row either finish before retirement or
+  hit the pack-open retry rule above and find the new mapping. Zero-live packs
+  bypass the age/dead-byte thresholds. Bounded repack runs after
+  `remove-account` and on the daemon maintenance schedule; explicit
+  `msgvault repack-attachments` is unbounded.
 
 Until that step-5 integration lands, `remove-account` refuses before its
 cascade when the selected source owns any unique packed blobs, and directs the
@@ -347,4 +357,6 @@ their entries into the repo index, skipping per-blob re-reads.
    loose-file fallbacks in those files are reachable only from tests and
    direct embedding, and have no store handle from which to build a blob
    store. Revisit only if a genuinely daemon-less MCP/TUI mode is added.
-5. GC/repack + `remove-account` integration.
+5. Bounded auto-pack hooks, reference-aware packed GC/repack, and
+   `remove-account` integration. See the phase-2c design linked above for the
+   daemon ownership, reader-retirement, crash-ordering, and delivery details.
