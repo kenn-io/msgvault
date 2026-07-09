@@ -96,7 +96,21 @@ CREATE TABLE attachment_pack_index (
     crc32c     BIGINT NOT NULL     -- CRC over stored bytes, from pack.Entry
 );
 CREATE INDEX idx_attachment_pack_index_pack ON attachment_pack_index(pack_id);
+
+CREATE TABLE attachment_packs (
+    pack_id      TEXT PRIMARY KEY,  -- ULID
+    entry_count  BIGINT NOT NULL,   -- footer entry count at seal/adoption
+    stored_bytes BIGINT NOT NULL,   -- sum of entry stored_len at seal/adoption
+    created_at   TEXT NOT NULL
+);
 ```
+
+`attachment_packs` captures each pack's immutable totals when the packer
+seals it (or adopts it during crash reconciliation). Because
+`attachment_pack_index` holds only live rows — GC deletes rows for dead
+blobs — the index alone cannot tell how much of a pack is dead; dead bytes =
+`stored_bytes` minus the sum of the pack's live index rows. `created_at`
+feeds the repack age hysteresis without stat-ing pack files.
 
 BIGINT, not INTEGER: PostgreSQL `INTEGER` is 4-byte signed, too small for a
 `uint32` CRC32C and for raw/stored lengths up to `pack.MaxRawLen` (4 GiB).
@@ -162,9 +176,9 @@ window.
    missing on disk (logged, left for a future backfill).
 2. Append blobs to a `pack.Writer` (32 MB target), seal each pack
    (durable, atomic publish under `packs/<id[:2]>/`).
-3. In one DB transaction per sealed pack: insert index rows and
-   **canonicalize** any noncanonical local `storage_path`/`thumbnail_path`
-   rows for those hashes to `<aa>/<hash>`.
+3. In one DB transaction per sealed pack: insert the `attachment_packs`
+   row and the index rows, and **canonicalize** any noncanonical local
+   `storage_path`/`thumbnail_path` rows for those hashes to `<aa>/<hash>`.
 4. Delete the loose files (including noncanonical originals).
 
 Crash safety at each boundary:
@@ -180,19 +194,21 @@ Crash safety at each boundary:
 
 - `remove-account` orphan sweep: loose orphans are deleted as today; packed
   orphans just lose their `attachment_pack_index` rows.
-- Repack: rewrite a pack when its live fraction (index rows referencing it
-  vs. footer entry count) falls below 50%, with hysteresis to avoid churn —
-  only packs older than 24 h and with at least 8 MiB of dead stored bytes.
-  Copy live blobs to a new pack, swap index rows transactionally, delete the
-  old pack file. Readers holding a just-stale index row survive the deletion
-  via the pack-open retry rule above. Dead-byte accounting comes from the
-  index (`stored_len` of rows vs. footer totals) without opening packs. Runs
+- Repack: rewrite a pack when its live fraction (live index rows vs.
+  `attachment_packs.entry_count`) falls below 50%, with hysteresis to avoid
+  churn — only packs older than 24 h (`attachment_packs.created_at`) and
+  with at least 8 MiB of dead stored bytes
+  (`attachment_packs.stored_bytes` minus the sum of live `stored_len`).
+  All accounting comes from the two tables without opening packs. Copy live
+  blobs to a new pack, swap index rows and the `attachment_packs` rows
+  transactionally, delete the old pack file. Readers holding a just-stale
+  index row survive the deletion via the pack-open retry rule above. Runs
   after `remove-account` and via `msgvault repack-attachments`.
 
 ### Downgrade: `msgvault unpack-attachments`
 
 Streams every packed blob back to a canonical loose file, verifies hashes,
-drops the index rows, deletes empty packs. Because the packer canonicalizes
+drops the index and `attachment_packs` rows, deletes empty packs. Because the packer canonicalizes
 `storage_path`/`thumbnail_path` rows at pack time, canonical output paths
 are always consistent with the DB. Old binaries cannot read packs, so this
 is the escape hatch before any downgrade.
