@@ -1,0 +1,225 @@
+# Packed Attachment Storage
+
+Design for storing attachment content in kit CAS pack files instead of loose
+content-addressed files. Written 2026-07-09; status: approved design, not yet
+implemented.
+
+## Motivation
+
+Attachment content is stored today as loose files under
+`~/.msgvault/attachments/<sha256[:2]>/<sha256>`, one file per unique blob.
+Measurements on a real archive (46,060 blobs, 7.6 GiB, from 208,532
+attachment rows):
+
+- 72% of files are under 64 KiB but hold only 6.6% of the bytes. File count,
+  not byte count, is the cost driver.
+- Large file counts hurt most on Windows and NAS deployments: per-file open
+  and antivirus-scan overhead, slow enumeration, slow copies.
+- zstd-3 over a 900-file sample saved only ~13% (attachments are mostly
+  already-compressed media). Compression is a minor win; the kit pack
+  format's per-blob "compress only if it saves >= 3%" rule handles this
+  automatically.
+
+Goals, in priority order:
+
+1. **Uniform architecture** — all attachment bytes end up in sealed,
+   immutable pack files; loose files exist only transiently.
+2. **Backup synergy** — production packs use the exact kit pack format,
+   blob IDs, extension, target size, and shard layout that `msgvault backup`
+   uses, so a future release can teach backup to adopt production packs
+   wholesale instead of re-reading and re-packing every blob.
+
+Non-goals for this design: at-rest encryption (kit supports it; msgvault
+does not use it yet), backup pack adoption itself (follow-up), disk-space
+reduction as a primary objective.
+
+## Current state (verified 2026-07-09)
+
+- Canonical write path: `export.StoreAttachmentFile`
+  (`internal/export/store_attachment.go`) — atomic temp+rename, dedup by
+  existence + hash validation. Callers: Gmail/IMAP sync, mbox/emlx/pst
+  importers, Teams.
+- Three importers hand-roll writes and must be unified onto
+  `StoreAttachmentFile` as prep work: WhatsApp
+  (`internal/whatsapp/importer.go:607`), SyncTech SMS
+  (`internal/synctechsms/importer.go:459`), FB Messenger
+  (`internal/fbmessenger/importer.go:696`).
+- Read paths all re-derive the canonical `<aa>/<hash>` path from the hash
+  via `export.StoragePath`: HTTP CLI API (`internal/api/cli_handlers.go`),
+  MCP (`internal/mcp/handlers.go`), TUI/zip/dir export
+  (`internal/export/attachments.go`). Daemon-mode consumers go through the
+  `AttachmentReader` HTTP interface.
+- Thumbnails are separate content-addressed blobs
+  (`attachments.thumbnail_hash` / `thumbnail_path`) and are treated as
+  content-bearing by backup (`internal/backupapp/app.go`).
+- **Pre-existing bug**: SyncTech records `storage_path =
+  synctech-sms/<aa>/<hash>` but every serving read path derives the
+  canonical path from the hash, so SyncTech MMS attachments are unreadable
+  through the API/MCP/export today. This design fixes it via
+  canonicalization (below).
+- kit pack format (`go.kenn.io/kit/pack`, v0.3.0): sealed-immutable packs,
+  `MVPK` header, per-blob zstd-3 with >= 3% savings gate, footer entry table
+  (`ID, Offset, StoredLen, RawLen, Flags, CRC32C`), SHA-256-verified footer,
+  atomic staging+fsync+publish. `pack.Reader.ReadBlob` is true random access
+  via pread: CRC32C check on stored bytes, decompress, re-verify SHA-256
+  against the blob ID. Entry tables are written only at `Seal`; an unsealed
+  staging pack is unreadable.
+- Backup repos shard packs as `packs/<packID[:2]>/<packID>.mvpack`
+  (`backup.Repo.packPath`).
+
+## Design
+
+### Layout
+
+```
+~/.msgvault/attachments/
+  packs/<ulid[:2]>/<ulid>.mvpack   # sealed, immutable, ~32 MB target
+  <aa>/<sha256>                    # loose blobs: fresh writes + not-yet-packed legacy
+```
+
+The `packs/` shard layout, `.mvpack` extension, 32 MB target size, and
+SHA-256 blob IDs match `msgvault backup` exactly. An existing vault is
+simply a fully-unpacked store; the packer migrating it is the upgrade.
+
+### Index
+
+New table in the main DB (SQLite and PostgreSQL):
+
+```sql
+CREATE TABLE attachment_pack_index (
+    blob_hash  TEXT PRIMARY KEY,   -- SHA-256 hex; content OR thumbnail blob
+    pack_id    TEXT NOT NULL,      -- ULID of the sealed pack
+    offset     INTEGER NOT NULL,
+    stored_len INTEGER NOT NULL,
+    raw_len    INTEGER NOT NULL,
+    flags      INTEGER NOT NULL,   -- pack.BlobFlags (compressed, ...)
+    crc32c     INTEGER NOT NULL    -- CRC over stored bytes, from pack.Entry
+);
+CREATE INDEX idx_attachment_pack_index_pack ON attachment_pack_index(pack_id);
+```
+
+The column is `blob_hash`, not `content_hash`: it indexes every packed blob,
+including thumbnails. Storing the full `pack.Entry` (including `crc32c`)
+means a cold read is one DB lookup plus one pread — no footer parse. The
+pack footer remains the authoritative self-describing copy, used for
+crash reconciliation and by `unpack`.
+
+### Blob store (`internal/blobstore`)
+
+`Store.Open(hash) (io.ReadSeekCloser, int64, error)`:
+
+1. Look up `attachment_pack_index` by hash.
+2. Hit: read via a small LRU cache of open `pack.Reader`s (each caches its
+   entry map); return a `bytes.Reader` over the verified blob.
+3. Miss: `os.Open` the canonical loose path.
+4. **Race rule**: if the loose open returns ENOENT, retry the index lookup
+   once before failing. A reader can miss the index just before the packer
+   commits, then lose the loose file to the packer's post-commit delete.
+
+All read consumers (HTTP handler, MCP, TUI export, zip/dir export) switch
+from `StoragePath` + `os.Open` to the blob store. The `AttachmentReader`
+HTTP interface is unchanged; its server side uses the blob store.
+
+### Write path
+
+Unchanged. `StoreAttachmentFile` keeps writing loose canonical files with
+atomic rename; DB rows commit immediately and blobs are readable
+immediately. Loose files are the staging area.
+
+Prep work (separate PR, before the packer): unify WhatsApp, SyncTech, and
+FB Messenger onto `StoreAttachmentFile` so no new noncanonical paths are
+created.
+
+### Packer
+
+`msgvault pack-attachments`; also runs automatically at the end of sync and
+import runs and on the daemon schedule. It acquires the daemon operation
+gate (like other maintenance ops), so it can never overlap a backup freeze
+window.
+
+1. Enumerate loose blobs from the DB: distinct local (non-URL)
+   `content_hash` and `thumbnail_hash` values without an index row, locating
+   files by DB-recorded `storage_path`/`thumbnail_path` (which finds
+   noncanonical legacy paths, not just canonical ones). Rows with empty or
+   URL storage paths are skipped, as are hashes whose recorded file is
+   missing on disk (logged, left for a future backfill).
+2. Append blobs to a `pack.Writer` (32 MB target), seal each pack
+   (durable, atomic publish under `packs/<id[:2]>/`).
+3. In one DB transaction per sealed pack: insert index rows and
+   **canonicalize** any noncanonical local `storage_path`/`thumbnail_path`
+   rows for those hashes to `<aa>/<hash>`.
+4. Delete the loose files (including noncanonical originals).
+
+Crash safety at each boundary:
+
+- After 2, before 3: a sealed pack with no index rows. On the next run the
+  packer scans `packs/` for unreferenced packs, reads their footers, and
+  adopts entries for hashes still unindexed (verifying blob hashes), or
+  deletes the pack if fully redundant.
+- After 3, before 4: loose files linger harmlessly; the next sweep removes
+  any loose file whose hash is indexed (reads prefer the pack).
+
+### GC and repack
+
+- `remove-account` orphan sweep: loose orphans are deleted as today; packed
+  orphans just lose their `attachment_pack_index` rows.
+- Repack: rewrite a pack when its live fraction (index rows referencing it
+  vs. footer entry count) falls below 50%, with hysteresis to avoid churn —
+  only packs older than 24 h and with at least 8 MiB of dead stored bytes.
+  Copy live blobs to a new pack, swap index rows transactionally, delete the
+  old pack file. Runs after `remove-account` and via
+  `msgvault repack-attachments`.
+
+### Downgrade: `msgvault unpack-attachments`
+
+Streams every packed blob back to a canonical loose file, verifies hashes,
+drops the index rows, deletes empty packs. Because the packer canonicalizes
+`storage_path`/`thumbnail_path` rows at pack time, canonical output paths
+are always consistent with the DB. Old binaries cannot read packs, so this
+is the escape hatch before any downgrade.
+
+### Backup coordination (release-blocking)
+
+Backup capture currently reads attachment bytes from loose paths:
+`backupapp.ContentInfo` hands DB-recorded paths to the kit engine, which
+opens files under the content dir (`kit/backup/create.go`). Once blobs are
+packed those paths do not exist. The same release that ships the packer must
+ship a kit change letting the `backup.App` supply a content **reader**
+(hash -> bytes/stream) instead of bare paths, with msgvault implementing it
+via the blob store. Restore is unaffected: it materializes loose canonical
+files, producing a valid "fully unpacked" vault that the packer re-packs
+later.
+
+Follow-up (out of scope here): teach backup capture to adopt sealed
+production packs wholesale — copy pack files it does not have and merge
+their entries into the repo index, skipping per-blob re-reads.
+
+## Testing
+
+- `internal/blobstore` unit tests: index hit, loose fallback, ENOENT retry
+  race rule, CRC-corruption rejection, LRU behavior.
+- Packer crash injection at each ordering boundary: sealed-pack-no-index
+  (adoption), index-no-delete (idempotent re-sweep), mid-seal abort
+  (staging file cleanup).
+- Canonicalization: SyncTech-style namespaced rows become readable and
+  canonical after packing.
+- Repack: live-blob preservation, threshold + hysteresis, transactional
+  index swap.
+- `unpack-attachments` round-trip: pack -> unpack -> byte-identical loose
+  tree, index empty.
+- `remove-account` GC over mixed loose/packed orphans.
+- End-to-end: import -> pack -> read via API/MCP/export -> backup ->
+  restore -> read again.
+- PostgreSQL backend: index table migrations and packer transaction
+  semantics under `MSGVAULT_TEST_DB`.
+
+## Delivery order
+
+1. Prep: unify WhatsApp/SyncTech/FB Messenger writes onto
+   `StoreAttachmentFile`.
+2. `internal/blobstore` + index migration + read-path switch (inert until
+   packs exist; loose fallback covers everything).
+3. kit change: content reader hook for backup capture.
+4. Packer + canonicalization + `pack-attachments` / `unpack-attachments`
+   commands + auto-run hooks.
+5. GC/repack + `remove-account` integration.
