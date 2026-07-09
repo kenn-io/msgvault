@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -838,61 +839,13 @@ func handleAttachment(att Attachment, attachmentsDir string) (string, string, in
 	if attachmentsDir == "" || att.AbsPath == "" {
 		return "", "", 0
 	}
-	linfo, err := os.Lstat(att.AbsPath)
+	rel, contentHash, size, err := export.StoreAttachmentFromPath(attachmentsDir, att.AbsPath, 0)
 	if err != nil {
-		return "", "", 0
-	}
-	if !linfo.Mode().IsRegular() {
-		return "", "", 0
-	}
-	f, err := os.Open(att.AbsPath)
-	if err != nil {
-		return "", "", 0
-	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
-	if err != nil {
-		return "", "", 0
-	}
-	if !info.Mode().IsRegular() {
-		return "", "", 0
-	}
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", "", 0
-	}
-	contentHash := hex.EncodeToString(h.Sum(nil))
-	rel := filepath.Join(contentHash[:2], contentHash)
-	absStorage := filepath.Join(attachmentsDir, rel)
-
-	if _, err := os.Stat(absStorage); err == nil {
-		return rel, contentHash, int(info.Size())
-	}
-	if err := os.MkdirAll(filepath.Dir(absStorage), 0750); err != nil {
+		// contentHash is set when hashing succeeded but storage failed —
+		// preserved so the caller's failed-store bookkeeping still works.
 		return "", contentHash, 0
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", contentHash, 0
-	}
-	dst, err := os.OpenFile(absStorage, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-	if err != nil {
-		if os.IsExist(err) {
-			return rel, contentHash, int(info.Size())
-		}
-		return "", contentHash, 0
-	}
-	if _, err := io.Copy(dst, f); err != nil {
-		_ = dst.Close()
-		_ = os.Remove(absStorage)
-		return "", contentHash, 0
-	}
-	if err := dst.Close(); err != nil {
-		_ = os.Remove(absStorage)
-		return "", contentHash, 0
-	}
-	return rel, contentHash, int(info.Size())
+	return rel, contentHash, int(size)
 }
 
 func hashAttachmentSource(att Attachment) string {
