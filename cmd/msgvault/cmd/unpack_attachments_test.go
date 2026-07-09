@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"io"
 	"net"
 	"net/http/httptest"
 	"os"
 	"strconv"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 // TestRefuseUnpackWithLiveDaemon pins the unpack preflight: unlike the SQLite
@@ -52,4 +55,30 @@ func TestRefuseUnpackWithLiveDaemon(t *testing.T) {
 	err = refuseUnpackWithLiveDaemon(dataDir)
 	require.ErrorContains(err, "msgvault serve stop",
 		"live daemon (even incompatible) must be refused with actionable guidance")
+}
+
+func TestRunUnpackAttachmentsLocalRejectsConfiguredRemote(t *testing.T) {
+	require := require.New(t)
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	t.Cleanup(func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+	})
+
+	dataDir := t.TempDir()
+	cfg = &config.Config{
+		Data:   config.DataConfig{DataDir: dataDir},
+		Remote: config.RemoteConfig{URL: "https://vault.example.com"},
+	}
+	useLocal = false
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+
+	err := runUnpackAttachmentsLocal(cmd)
+	require.ErrorContains(err, "local-only")
+	require.ErrorContains(err, "archive host")
+	_, statErr := os.Stat(cfg.DatabaseDSN())
+	require.ErrorIs(statErr, os.ErrNotExist,
+		"remote refusal must happen before initializing a local archive")
 }

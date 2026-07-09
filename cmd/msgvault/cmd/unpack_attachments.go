@@ -21,7 +21,8 @@ as it is written back.
 The daemon must be stopped first ('msgvault serve stop'): a running
 daemon holds pack files open, so this command refuses to run while one
 is detected. Re-running 'msgvault pack-attachments' packs everything
-again.`,
+again. When a remote server is configured, run this command on the archive
+host or pass --local to select this machine's local archive intentionally.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runUnpackAttachmentsLocal(cmd)
@@ -45,6 +46,11 @@ func refuseUnpackWithLiveDaemon(dataDir string) error {
 }
 
 func runUnpackAttachmentsLocal(cmd *cobra.Command) error {
+	if IsRemoteMode() {
+		return errors.New(
+			"unpack-attachments is local-only; run it on the archive host, " +
+				"or pass --local to select this machine's local archive intentionally")
+	}
 	if err := refuseUnpackWithLiveDaemon(cfg.Data.DataDir); err != nil {
 		return err
 	}

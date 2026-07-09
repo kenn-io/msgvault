@@ -138,6 +138,96 @@ func TestUnpackDropsMissingPackWithNoLiveRows(t *testing.T) {
 	assert.False(has, "stale record dropped")
 }
 
+func TestUnpackSkipsZeroLiveCorruptPackAfterOrphanRescue(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	packed := f.run(packer.Options{})
+	require.Equal(1, packed.PacksSealed)
+
+	stale, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(stale)
+	oldPackPath := filepath.Join(f.dir, "packs", stale.PackID[:2], stale.PackID+blobstore.PackExt)
+	pf, err := os.OpenFile(oldPackPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, stale.Offset)
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, stale.Offset)
+	require.NoError(err)
+	require.NoError(pf.Close())
+
+	orphanID := buildOrphanPack(t, f.dir, content)
+	rescued := f.run(packer.Options{})
+	require.Equal(1, rescued.PacksAdopted)
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	require.Equal(orphanID, entry.PackID)
+	oldLive, err := f.store.CountPackIndexEntries(stale.PackID)
+	require.NoError(err)
+	require.Zero(oldLive, "corrupt source pack is now entirely dead")
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "zero-live corrupt pack must be dropped without opening it")
+
+	assert.Equal(1, stats.PacksUnpacked, "only the live replacement pack restores blobs")
+	assert.Equal(1, stats.BlobsRestored)
+	assert.Equal(content, f.readBack(hash))
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	assert.Empty(recs)
+	assert.Empty(f.packFiles())
+}
+
+func TestUnpackRestoresOnlyLivePackEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	deadContent := randomContent(t, 600)
+	deadHash := f.addBlob(deadContent, canonical)
+	liveContent := randomContent(t, 600)
+	liveHash := f.addBlob(liveContent, canonical)
+	packed := f.run(packer.Options{})
+	require.Equal(1, packed.PacksSealed)
+
+	deadEntry, err := f.store.GetAttachmentPackEntry(deadHash)
+	require.NoError(err)
+	require.NotNil(deadEntry)
+	packPath := filepath.Join(f.dir, "packs", deadEntry.PackID[:2], deadEntry.PackID+blobstore.PackExt)
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, deadEntry.Offset)
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, deadEntry.Offset)
+	require.NoError(err)
+	require.NoError(pf.Close())
+
+	_, err = f.store.DB().Exec(f.store.Rebind(
+		`DELETE FROM attachment_pack_index WHERE blob_hash = ?`), deadHash)
+	require.NoError(err, "mark corrupt footer entry dead")
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "dead corrupt footer entry must not block live restore")
+
+	assert.Equal(1, stats.PacksUnpacked)
+	assert.Equal(1, stats.BlobsRestored)
+	assert.Equal(int64(len(liveContent)), stats.BytesRestored)
+	live, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(liveHash))))
+	require.NoError(err)
+	assert.Equal(liveContent, live)
+	_, err = os.Stat(filepath.Join(f.dir, filepath.FromSlash(canonical(deadHash))))
+	assert.ErrorIs(err, fs.ErrNotExist, "dead blob must not be resurrected as loose content")
+}
+
 func TestUnpackFailsOnMalformedPackID(t *testing.T) {
 	require := require.New(t)
 	f := newFixture(t)

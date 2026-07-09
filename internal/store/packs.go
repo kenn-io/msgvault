@@ -134,6 +134,37 @@ func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error)
 	return &e, nil
 }
 
+// ListAttachmentPackEntries returns the live blob index rows owned by one
+// pack, ordered by their position in the pack. Footer entries without a live
+// index row are dead and must not be served or restored by unpack.
+func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, error) {
+	rows, err := s.db.Query(`
+		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
+		FROM attachment_pack_index
+		WHERE pack_id = ?
+		ORDER BY pack_offset, blob_hash`, packID)
+	if err != nil {
+		return nil, fmt.Errorf("list pack index entries for %s: %w", packID, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	var entries []PackIndexEntry
+	for rows.Next() {
+		var e PackIndexEntry
+		var flags, crc int64
+		if err := rows.Scan(&e.BlobHash, &e.PackID, &e.Offset, &e.StoredLen,
+			&e.RawLen, &flags, &crc); err != nil {
+			return nil, fmt.Errorf("scan pack index entry for %s: %w", packID, err)
+		}
+		e.Flags = uint8(flags) //nolint:gosec // flags column stores a single byte
+		e.CRC32C = uint32(crc) //nolint:gosec // crc32c column stores a uint32
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pack index entries for %s: %w", packID, err)
+	}
+	return entries, nil
+}
+
 // UnpackedBlob is one distinct local blob that has no pack index row.
 // Path is the DB-recorded path relative to the attachments dir,
 // slash-separated; Size is -1 when unknown (thumbnail-only blobs).

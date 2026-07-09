@@ -23,11 +23,12 @@ type UnpackStats struct {
 	BytesRestored int64 // raw bytes written back
 }
 
-// Unpack streams every packed blob back to a canonical loose file
-// (hash-verified by pack.Reader.ReadBlob), then drops the pack's index
-// and attachment_packs rows and deletes the pack file. The caller must
-// hold the archive's exclusive-writer coverage AND the daemon must not
-// be running (its cached pack readers would hold deleted packs open).
+// Unpack streams every live packed blob back to a canonical loose file
+// (hash-verified by pack.Reader.ReadBlob). Only blobs with live index rows
+// are restored; dead footer entries are ignored. It then drops the pack's
+// index and attachment_packs rows and deletes the pack file. The caller must
+// hold the archive's exclusive-writer coverage AND the daemon must not be
+// running (its cached pack readers would hold deleted packs open).
 func Unpack(ctx context.Context, st *store.Store, attachmentsDir string) (UnpackStats, error) {
 	var stats UnpackStats
 	attachmentsDir = filepath.Clean(attachmentsDir)
@@ -60,14 +61,22 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 		return fmt.Errorf("attachment_packs row has malformed pack id %q", packID)
 	}
 	path := packFilePath(packsDir, packID)
+	liveEntries, err := st.ListAttachmentPackEntries(packID)
+	if err != nil {
+		return err
+	}
+	if len(liveEntries) == 0 {
+		return dropDeadPack(st, path, packID)
+	}
 	r, err := pack.OpenReader(path, nil)
 	if errors.Is(err, fs.ErrNotExist) {
-		return dropMissingPack(st, packID)
+		return fmt.Errorf("pack %s file is missing but %d blobs are indexed in it; "+
+			"restore the pack file (e.g. from a backup) before unpacking", packID, len(liveEntries))
 	}
 	if err != nil {
 		return fmt.Errorf("open pack %s: %w", packID, err)
 	}
-	restored, rawBytes, err := restoreEntries(ctx, r, attachmentsDir, packID)
+	restored, rawBytes, err := restoreEntries(ctx, r, liveEntries, attachmentsDir, packID)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close pack reader", "pack", packID, "error", closeErr)
 	}
@@ -92,16 +101,26 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 	return nil
 }
 
-// restoreEntries writes every footer entry back to its canonical loose file,
-// checking for cancellation before each blob. Any read or write error (or a
-// cancelled ctx) aborts the run with the pack untouched, so no data can be
-// lost.
-func restoreEntries(ctx context.Context, r *pack.Reader, attachmentsDir, packID string) (int, int64, error) {
+// restoreEntries writes every live index entry back to its canonical loose
+// file, resolving the authoritative read metadata from the pack footer.
+// Footer-only entries are dead and deliberately ignored. Any read or write
+// error (or a cancelled ctx) aborts the run with the pack untouched, so no
+// data can be lost.
+func restoreEntries(ctx context.Context, r *pack.Reader, liveEntries []store.PackIndexEntry, attachmentsDir, packID string) (int, int64, error) {
+	footerEntries := make(map[string]pack.Entry, len(r.Entries()))
+	for _, e := range r.Entries() {
+		footerEntries[e.ID.String()] = e
+	}
 	var restored int
 	var rawBytes int64
-	for _, e := range r.Entries() {
+	for _, live := range liveEntries {
 		if err := ctx.Err(); err != nil {
 			return restored, rawBytes, err
+		}
+		e, ok := footerEntries[live.BlobHash]
+		if !ok {
+			return restored, rawBytes, fmt.Errorf("indexed blob %s is absent from pack %s footer",
+				live.BlobHash, packID)
 		}
 		data, err := r.ReadBlob(e)
 		if err != nil {
@@ -132,21 +151,20 @@ func restoreBlob(attachmentsDir, hash string, data []byte) error {
 	return err
 }
 
-// dropMissingPack handles a recorded pack whose file is gone: with zero
-// live index rows the record is stale and safe to drop; with live rows the
-// blobs are unreachable, so fail rather than silently dropping them.
-func dropMissingPack(st *store.Store, packID string) error {
-	n, err := st.CountPackIndexEntries(packID)
-	if err != nil {
-		return err
+// dropDeadPack removes a zero-live pack without opening it. Dead packs may be
+// corrupt (for example after orphan rescue), and their footer entries must not
+// block downgrade or be resurrected as loose blobs.
+func dropDeadPack(st *store.Store, path, packID string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove dead pack file %s: %w", path, err)
 	}
-	if n > 0 {
-		return fmt.Errorf("pack %s file is missing but %d blobs are indexed in it; "+
-			"restore the pack file (e.g. from a backup) before unpacking", packID, n)
-	}
+	// With no live rows it is safe to remove the bytes first. A crash before
+	// the record delete leaves only a harmless zero-live missing-pack record,
+	// which the next unpack run drops through this same path.
 	if err := st.DeletePackRecord(packID); err != nil {
 		return err
 	}
-	slog.Info("dropped record for missing pack with no live blobs", "pack", packID)
+	_ = os.Remove(filepath.Dir(path))
+	slog.Info("dropped pack with no live blobs", "pack", packID)
 	return nil
 }

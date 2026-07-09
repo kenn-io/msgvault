@@ -225,11 +225,15 @@ GC/repack.
 
 ### Downgrade: `msgvault unpack-attachments`
 
-Streams every packed blob back to a canonical loose file, verifies hashes,
-drops the index and `attachment_packs` rows, deletes empty packs. Because the packer canonicalizes
-`storage_path`/`thumbnail_path` rows at pack time, canonical output paths
-are always consistent with the DB. Old binaries cannot read packs, so this
-is the escape hatch before any downgrade.
+Streams every live `attachment_pack_index` blob back to a canonical loose
+file, verifies hashes, drops the index and `attachment_packs` rows, and
+deletes the pack files. Footer entries with no live index row are dead and
+are not restored; a zero-live pack is dropped without opening it, so a dead
+corrupt pack retained after orphan rescue cannot block downgrade or resurrect
+deleted content. Because the packer canonicalizes `storage_path`/
+`thumbnail_path` rows at pack time, canonical output paths are always
+consistent with the DB. Old binaries cannot read packs, so this is the escape
+hatch before any downgrade.
 
 ### Backup coordination (release-blocking)
 
@@ -307,7 +311,9 @@ their entries into the repo index, skipping per-blob re-reads.
    local-only: a live-daemon runtime preflight rejects unpack on all
    backends (directing the user to `msgvault serve stop`); on SQLite the
    `db.write.lock` additionally guarantees exclusivity against any other
-   writer.
+   writer. When `[remote].url` is active, unpack refuses before opening local
+   storage; the operator must run it on the archive host, or pass `--local`
+   to select the client machine's local archive intentionally.
 
    Finding (2026-07-09): the originally planned switch of the MCP local
    reader (`internal/mcp/handlers.go` readAttachmentFile) and the TUI local
