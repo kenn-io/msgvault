@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -376,6 +375,42 @@ func TestRunRemovesRedundantOrphanPack(t *testing.T) {
 	assert.Equal(c, f.readBack(h))
 }
 
+// TestRunRepairsDanglingRecordsBeforeReconcilingOrphans pins the ordering
+// between the two recovery passes. A stale index row for a missing pack must
+// be removed before an orphan pack is classified: otherwise the orphan looks
+// redundant, is deleted, and the stale row is then dropped, destroying the
+// only readable copy.
+func TestRunRepairsDanglingRecordsBeforeReconcilingOrphans(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	first := f.run(packer.Options{})
+	require.Equal(1, first.PacksSealed)
+
+	stale, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(stale)
+	require.NoError(os.Remove(filepath.Join(
+		f.dir, "packs", stale.PackID[:2], stale.PackID+blobstore.PackExt)))
+
+	orphanID := buildOrphanPack(t, f.dir, content)
+	second := f.run(packer.Options{})
+
+	assert.Equal(1, second.RecordsDropped, "missing recorded pack is repaired")
+	assert.Equal(1, second.PacksAdopted, "orphan copy is adopted after stale index removal")
+	assert.Zero(second.PacksRemoved, "the only readable orphan copy must not be deleted")
+	assert.Zero(second.BlobsMissing, "adoption must not fall through to the absent loose file")
+
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(orphanID, entry.PackID)
+	assert.Equal(content, f.readBack(hash))
+}
+
 // TestRunDropsDanglingPackRecords pins the restored-vault self-heal: backup
 // restore materializes loose files but no production packs, so a restored DB
 // can carry pack rows whose files do not exist. The packer must drop those
@@ -470,15 +505,13 @@ func TestRunSweepsIndexedLooseLeftovers(t *testing.T) {
 
 	c := randomContent(t, 600)
 	h := f.addBlob(c, canonical)
-	// Simulate "indexed, loose not deleted": record the pack + index rows as
-	// if a previous run crashed after commit but before source deletion.
-	rec := store.PackRecord{
-		PackID: "01hzy3v7q8r9s0t1u2v3w4x5y6", EntryCount: 1,
-		StoredBytes: 600, CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
-	}
-	require.NoError(f.store.RecordPackedBlobs(rec, []store.PackIndexEntry{
-		{BlobHash: h, PackID: rec.PackID, Offset: 6, StoredLen: 600, RawLen: 600},
-	}))
+	first := f.run(packer.Options{})
+	require.Equal(1, first.PacksSealed)
+	require.Empty(f.looseFiles())
+
+	// Recreate the source after a real pack and index exist, simulating a crash
+	// after the pack transaction committed but before source deletion.
+	f.writeLoose(canonical(h), c)
 
 	stats := f.run(packer.Options{})
 
@@ -486,6 +519,75 @@ func TestRunSweepsIndexedLooseLeftovers(t *testing.T) {
 	assert.Zero(stats.PacksSealed)
 	assert.Zero(stats.BlobsPacked)
 	assert.Empty(f.looseFiles(), "lingering loose file removed by the sweep")
+}
+
+func TestRunPreservesLooseCopyWhenIndexedPackIsUnreadable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	first := f.run(packer.Options{})
+	require.Equal(1, first.PacksSealed)
+
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	packPath := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+blobstore.PackExt)
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, entry.Offset)
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, entry.Offset)
+	require.NoError(err)
+	require.NoError(pf.Close())
+
+	// Simulate an indexed loose leftover. The corrupt pack is not a readable
+	// authoritative copy, so the sweep must preserve these verified bytes.
+	f.writeLoose(canonical(hash), content)
+	stats := f.run(packer.Options{})
+
+	assert.Zero(stats.LooseSwept)
+	loose, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))))
+	require.NoError(err, "loose recovery copy must remain")
+	assert.Equal(content, loose)
+}
+
+func TestRunDropsMalformedPackMetadataBeforeSweepingLooseFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	const invalidPackID = "01hzy3v7q8r9s0t1u2v3w4x5y6"
+
+	// Seed malformed restored/corrupt metadata directly, bypassing
+	// RecordPackedBlobs' input validation. The loose file is the only readable
+	// copy and must not be swept merely because an index row exists.
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 1, 600, ?)`), invalidPackID, "2026-07-09T12:00:00Z")
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		INSERT INTO attachment_pack_index
+		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, 6, 600, 600, 0, 0)`), hash, invalidPackID)
+	require.NoError(err)
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.RecordsDropped, "malformed metadata is removed before enumeration")
+	assert.Equal(1, stats.PacksSealed, "the readable loose blob is packed normally")
+	assert.Equal(1, stats.BlobsPacked)
+	assert.Zero(stats.LooseSwept, "the loose copy is removed only by a successful pack commit")
+	assert.Equal(content, f.readBack(hash))
+	has, err := f.store.HasPackRecord(invalidPackID)
+	require.NoError(err)
+	assert.False(has)
 }
 
 func TestRunRemovesStaleStagingFiles(t *testing.T) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"go.kenn.io/kit/pack"
 )
 
 // PackIndexEntry mirrors one kit pack.Entry for a packed attachment blob.
@@ -34,10 +36,13 @@ type PackRecord struct {
 // design's one-transaction rule: the pack is adopted and the DB paths point
 // at the canonical blob location atomically). URL-backed paths are never
 // rewritten. Idempotent: re-recording an existing pack or blob is a no-op,
-// so crash reconciliation can re-run adoption safely. Every entry must
-// belong to rec's pack and carry a 64-char blob hash; any violation fails
-// the whole call.
+// so crash reconciliation can re-run adoption safely. The record must carry a
+// canonical pack ID, and every entry must belong to that pack and carry a
+// 64-char blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
+	if !pack.IsValidPackID(rec.PackID) {
+		return fmt.Errorf("attachment pack record has malformed pack id %q", rec.PackID)
+	}
 	for _, e := range entries {
 		if e.PackID != rec.PackID {
 			return fmt.Errorf("pack index entry %s has pack id %q, want %q",
@@ -261,20 +266,52 @@ func (s *Store) CountPackIndexEntries(packID string) (int64, error) {
 }
 
 // ClearAttachmentPackMetadata deletes every attachment_pack_index and
-// attachment_packs row in one transaction. It is used after `backup restore`,
-// which materializes loose canonical attachment files only — never production
-// pack files — so any pack metadata carried in the restored database points
-// at packs that do not exist and must be dropped before the vault is used.
+// attachment_packs row in one transaction. Missing tables are a no-op so
+// restoring a snapshot from before packed storage does not have to initialize
+// or migrate the rest of the database merely to perform this cleanup.
+//
+// It is used after `backup restore`, which materializes loose canonical
+// attachment files only — never production pack files — so any pack metadata
+// carried in the restored database points at packs that do not exist and must
+// be dropped before the vault is used.
 func (s *Store) ClearAttachmentPackMetadata() error {
+	indexExists, err := s.tableExists("attachment_pack_index")
+	if err != nil {
+		return fmt.Errorf("check attachment_pack_index table: %w", err)
+	}
+	packsExists, err := s.tableExists("attachment_packs")
+	if err != nil {
+		return fmt.Errorf("check attachment_packs table: %w", err)
+	}
+	if !indexExists && !packsExists {
+		return nil
+	}
 	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`DELETE FROM attachment_pack_index`); err != nil {
-			return fmt.Errorf("clear attachment_pack_index: %w", err)
+		if indexExists {
+			if _, err := tx.Exec(`DELETE FROM attachment_pack_index`); err != nil {
+				return fmt.Errorf("clear attachment_pack_index: %w", err)
+			}
 		}
-		if _, err := tx.Exec(`DELETE FROM attachment_packs`); err != nil {
-			return fmt.Errorf("clear attachment_packs: %w", err)
+		if packsExists {
+			if _, err := tx.Exec(`DELETE FROM attachment_packs`); err != nil {
+				return fmt.Errorf("clear attachment_packs: %w", err)
+			}
 		}
 		return nil
 	})
+}
+
+func (s *Store) tableExists(name string) (bool, error) {
+	query := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`
+	if s.dialect.DriverName() == "pgx" {
+		query = `SELECT COUNT(*) FROM information_schema.tables
+		         WHERE table_schema = current_schema() AND table_name = ?`
+	}
+	var count int
+	if err := s.db.QueryRow(query, name).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // DeletePackRecord removes a pack's index rows and its attachment_packs

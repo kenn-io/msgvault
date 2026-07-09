@@ -192,7 +192,16 @@ Crash safety at each boundary:
   adopts entries for hashes still unindexed (verifying blob hashes), or
   deletes the pack if fully redundant.
 - After 3, before 4: loose files linger harmlessly; the next sweep removes
-  any loose file whose hash is indexed (reads prefer the pack).
+  an indexed loose file only after opening the packed copy through the
+  production blob store. Corrupt metadata or pack bytes therefore preserve
+  the loose recovery copy.
+
+Before orphan reconciliation, the packer drops records whose canonical
+sharded pack file is missing, plus records with malformed pack IDs that no
+reader could open. Repairing metadata first is important when a missing
+recorded pack and an orphan pack contain the same blob: reconciliation can
+adopt the orphan instead of mistaking it for a redundant copy and deleting
+it.
 
 ### GC and repack
 
@@ -243,9 +252,11 @@ would break packed-blob reads (the blob store deliberately does not fall back
 to loose after an index hit) and, far worse, a later `pack-attachments` run
 would skip those "already indexed" hashes while its sweep deleted their
 restored loose files. The clear yields a genuinely fully-unpacked vault that
-the packer re-packs later. As defense in depth, the packer's reconcile phase
-also drops the rows of any recorded pack whose file is missing before it
-packs or sweeps anything.
+the packer re-packs later. The cleanup checks whether the two pack tables
+exist and does not run schema initialization, so restoring a pre-pack snapshot
+cannot trigger unrelated migrations after kit has already verified the
+restore. As defense in depth, the packer drops missing or malformed pack
+records before orphan reconciliation, packing, or sweeping.
 
 Follow-up (out of scope here): teach backup capture to adopt sealed
 production packs wholesale — copy pack files it does not have and merge
@@ -257,7 +268,8 @@ their entries into the repo index, skipping per-blob re-reads.
   race rule, CRC-corruption rejection, LRU behavior.
 - Packer crash injection at each ordering boundary: sealed-pack-no-index
   (adoption), index-no-delete (idempotent re-sweep), mid-seal abort
-  (staging file cleanup).
+  (staging file cleanup), missing-recorded-pack plus orphan-pack recovery,
+  corrupt packed copy plus readable loose-copy preservation.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
 - Repack: live-blob preservation, threshold + hysteresis, transactional

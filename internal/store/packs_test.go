@@ -18,7 +18,7 @@ func TestRecordAndGetPackedBlobs(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	rec := store.PackRecord{
-		PackID:      "01hzy3v7q8r9s0t1u2v3w4x5y6",
+		PackID:      "01hzy3v7q8r9s0t1a2v3w4x5y6",
 		EntryCount:  2,
 		StoredBytes: 4096,
 		CreatedAt:   time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
@@ -53,14 +53,14 @@ func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	rec := store.PackRecord{
-		PackID:      "01hzy3v7q8r9s0t1u2v3w4x5y6",
+		PackID:      "01hzy3v7q8r9s0t1a2v3w4x5y6",
 		EntryCount:  1,
 		StoredBytes: 64,
 		CreatedAt:   time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 	}
 	entries := []store.PackIndexEntry{
 		{BlobHash: "dd11223344556677889900aabbccddeeff00112233445566778899aabbccddee",
-			PackID: "01hzy3v7q8r9s0t1u2v3w4x5y7", Offset: 6, StoredLen: 64, RawLen: 64},
+			PackID: "01hzy3v7q8r9s0t1a2v3w4x5y7", Offset: 6, StoredLen: 64, RawLen: 64},
 	}
 	err := st.RecordPackedBlobs(rec, entries)
 	require.Error(err)
@@ -69,6 +69,27 @@ func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
 	got, err := st.GetAttachmentPackEntry(entries[0].BlobHash)
 	require.NoError(err)
 	require.Nil(got)
+}
+
+func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	// Crockford base32 excludes "u", so this 26-character value is not a
+	// canonical pack ULID even though its shape looks plausible.
+	const invalidPackID = "01hzy3v7q8r9s0t1u2v3w4x5y6"
+	hash := packTestHash("ee06")
+	rec, entries := packTestRecord(invalidPackID, hash)
+
+	err := st.RecordPackedBlobs(rec, entries)
+	require.ErrorContains(err, "malformed pack id")
+
+	has, err := st.HasPackRecord(invalidPackID)
+	require.NoError(err)
+	require.False(has, "invalid metadata must not be persisted")
+	entry, err := st.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.Nil(entry, "invalid metadata must fail atomically")
 }
 
 // packTestHash returns a synthetic 64-char blob hash unique per prefix.
@@ -191,7 +212,7 @@ func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
 	fx.setThumbnail(hashThumbURL, hashThumbURL, "http://cdn.example.com/t/"+hashThumbURL)
 	fx.addAttachment(hashUnpacked, "synctech-sms/ff/"+hashUnpacked, 100)
 
-	rec, entries := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5z1",
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z1",
 		hashLoose, hashCanonical, hashURL, hashThumb, hashThumbURL)
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
@@ -225,7 +246,7 @@ func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
 	hashGood := packTestHash("aa11")
 	fx.addAttachment(hashGood, "synctech-sms/aa/"+hashGood, 100)
 
-	rec, entries := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5z2", hashGood)
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z2", hashGood)
 	entries = append(entries, store.PackIndexEntry{
 		BlobHash: "deadbeef", PackID: rec.PackID, Offset: 134, StoredLen: 8, RawLen: 8,
 	})
@@ -269,7 +290,7 @@ func TestListUnpackedBlobs(t *testing.T) {
 	fx.setThumbnail(hashLoose, hashBoth, "thumbs/"+hashBoth)
 	fx.setThumbnail(hashPacked, hashThumbOnly, "thumbs/"+hashThumbOnly)
 
-	rec, entries := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5z3", hashPacked)
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z3", hashPacked)
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
 	blobs, err := st.ListUnpackedBlobs()
@@ -313,8 +334,8 @@ func TestPackRecordLifecycle(t *testing.T) {
 	hashB := packTestHash("bb32")
 	hashC := packTestHash("cc33")
 
-	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5z4", hashA, hashB)
-	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5z5", hashC)
+	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z4", hashA, hashB)
+	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z5", hashC)
 	require.NoError(st.RecordPackedBlobs(recA, entriesA))
 	require.NoError(st.RecordPackedBlobs(recB, entriesB))
 
@@ -331,14 +352,14 @@ func TestPackRecordLifecycle(t *testing.T) {
 	has, err := st.HasPackRecord(recA.PackID)
 	require.NoError(err)
 	assert.True(has)
-	has, err = st.HasPackRecord("01hzy3v7q8r9s0t1u2v3w4x5z9")
+	has, err = st.HasPackRecord("01hzy3v7q8r9s0t1a2v3w4x5z9")
 	require.NoError(err)
 	assert.False(has)
 
 	n, err := st.CountPackIndexEntries(recA.PackID)
 	require.NoError(err)
 	assert.Equal(int64(2), n)
-	n, err = st.CountPackIndexEntries("01hzy3v7q8r9s0t1u2v3w4x5z9")
+	n, err = st.CountPackIndexEntries("01hzy3v7q8r9s0t1a2v3w4x5z9")
 	require.NoError(err)
 	assert.Zero(n)
 
@@ -368,9 +389,9 @@ func TestClearAttachmentPackMetadata(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
-	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5w1",
+	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5w1",
 		packTestHash("aa41"), packTestHash("bb42"))
-	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1u2v3w4x5w2",
+	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5w2",
 		packTestHash("cc43"))
 	require.NoError(st.RecordPackedBlobs(recA, entriesA))
 	require.NoError(st.RecordPackedBlobs(recB, entriesB))

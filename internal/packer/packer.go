@@ -37,7 +37,7 @@ type Stats struct {
 	BytesPacked    int64 // raw bytes appended this run
 	PacksAdopted   int   // orphan packs adopted during reconciliation
 	PacksRemoved   int   // fully-redundant orphan packs deleted
-	RecordsDropped int   // recorded packs whose file was missing; rows dropped so blobs re-pack
+	RecordsDropped int   // unusable pack records dropped so loose blobs can re-pack
 	BlobsMissing   int   // enumerated blobs whose file was missing (left for backfill)
 	BlobsCorrupt   int   // files whose bytes did not match their recorded hash (skipped)
 	LooseSwept     int   // indexed loose files removed by the sweep
@@ -57,11 +57,11 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := cleanStaging(packsDir); err != nil {
 		return stats, err
 	}
-	if err := reconcilePacks(st, packsDir, &stats); err != nil {
-		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
-	}
 	if err := dropDanglingPackRecords(st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("drop dangling pack records: %w", err)
+	}
+	if err := reconcilePacks(st, packsDir, &stats); err != nil {
+		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return stats, err
@@ -206,13 +206,15 @@ func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackI
 	return adoptable, rec, failed, nil
 }
 
-// dropDanglingPackRecords removes the attachment_packs row and index rows of
-// every recorded pack whose sharded file is missing. Restored backups are the
-// known producer of this state (restore materializes loose files, never
-// production packs); without the drop, packLoose would skip these "already
-// indexed" hashes while sweepIndexed deleted their loose files — destroying
-// the only copies. Only a confirmed fs.ErrNotExist drops rows: a pack file
-// that exists but cannot be read is left alone.
+// dropDanglingPackRecords removes unusable attachment_packs records and their
+// index rows before orphan reconciliation. That ordering matters when a
+// missing recorded pack and an orphan pack contain the same blob: removing the
+// stale index first lets reconciliation adopt the orphan instead of deleting
+// it as redundant. Restored backups are the known producer of missing-pack
+// records (restore materializes loose files, never production packs), while
+// malformed pack IDs can only come from corrupt or manually edited metadata.
+// Only a confirmed fs.ErrNotExist drops a valid record; a pack file that exists
+// but cannot be read is left alone.
 func dropDanglingPackRecords(st *store.Store, packsDir string, stats *Stats) error {
 	recs, err := st.ListPackRecords()
 	if err != nil {
@@ -220,7 +222,15 @@ func dropDanglingPackRecords(st *store.Store, packsDir string, stats *Stats) err
 	}
 	for _, rec := range recs {
 		if !pack.IsValidPackID(rec.PackID) {
-			slog.Error("attachment_packs row has malformed pack id; leaving it alone",
+			// Readers can never open a malformed pack ID, so retaining its index
+			// rows would make packLoose skip readable loose copies and let the
+			// final sweep delete them. Drop the unusable metadata first so normal
+			// enumeration can recover any loose blobs.
+			if err := st.DeletePackRecord(rec.PackID); err != nil {
+				return err
+			}
+			stats.RecordsDropped++
+			slog.Error("attachment_packs row has malformed pack id; dropped unusable metadata",
 				"pack", rec.PackID)
 			continue
 		}
@@ -392,8 +402,11 @@ func indexEntry(packID string, e pack.Entry) store.PackIndexEntry {
 }
 
 // sweepIndexed removes every loose file (outside the packs subtree) whose
-// base name is an indexed blob hash: canonical leftovers from a crash between
-// commit and delete, and noncanonical originals whose basename is the hash.
+// base name is an indexed blob hash and whose packed copy is readable through
+// the production blob store. These files are canonical leftovers from a crash
+// between commit and delete, or noncanonical originals whose basename is the
+// hash. Verification preserves the loose recovery copy when the index or pack
+// bytes are corrupt.
 func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
 	indexed, err := st.ListIndexedBlobHashes()
 	if err != nil {
@@ -402,6 +415,12 @@ func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats
 	if len(indexed) == 0 {
 		return nil
 	}
+	packed := blobstore.New(st, attachmentsDir)
+	defer func() {
+		if err := packed.Close(); err != nil {
+			slog.Warn("close blob store after loose sweep", "error", err)
+		}
+	}()
 	var dirs []string
 	err = filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -421,6 +440,19 @@ func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats
 		}
 		if _, ok := indexed[d.Name()]; !ok {
 			return nil
+		}
+		// An index row alone is not proof that the packed copy is readable:
+		// restored/corrupt metadata or damaged pack bytes can make blobstore
+		// reads fail. Verify through the production read path before deleting a
+		// loose recovery copy.
+		r, _, err := packed.Open(d.Name())
+		if err != nil {
+			slog.Error("preserving indexed loose file because packed copy is unreadable",
+				"path", path, "hash", d.Name(), "error", err)
+			return nil
+		}
+		if err := r.Close(); err != nil {
+			slog.Warn("close verified packed blob", "hash", d.Name(), "error", err)
 		}
 		//nolint:gosec // G122: the sweep removes the user's own loose files
 		// under their attachments dir; the packer holds exclusive-writer

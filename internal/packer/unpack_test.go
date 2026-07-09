@@ -146,9 +146,15 @@ func TestUnpackFailsOnMalformedPackID(t *testing.T) {
 		PackID:    "not-a-ulid",
 		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 	}
-	require.NoError(f.store.RecordPackedBlobs(rec, nil), "record pack with bad id")
+	// Seed corrupt metadata directly: RecordPackedBlobs rejects malformed IDs
+	// at the write boundary, while Unpack must still fail safely on a damaged or
+	// externally restored database that already contains one.
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 0, 0, ?)`), rec.PackID, rec.CreatedAt.Format(time.RFC3339))
+	require.NoError(err, "seed pack with bad id")
 
-	_, err := packer.Unpack(context.Background(), f.store, f.dir)
+	_, err = packer.Unpack(context.Background(), f.store, f.dir)
 	require.Error(err, "malformed pack id must not be sliced into a path")
 	require.Contains(err.Error(), rec.PackID)
 }

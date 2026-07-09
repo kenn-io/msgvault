@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestResolveBackupRepoPrecedence(t *testing.T) {
@@ -131,4 +132,35 @@ func TestResolveBackupRepoNilConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/flag/repo", repo)
+}
+
+func TestClearRestoredPackMetadataDoesNotMigrateLegacyDatabase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := store.Open(dbPath)
+	require.NoError(err)
+	_, err = legacy.DB().Exec(`CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY)`)
+	require.NoError(err)
+	require.NoError(legacy.Close())
+
+	require.NoError(clearRestoredPackMetadata(dbPath))
+
+	got, err := store.Open(dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(got.Close()) }()
+	var packTables int
+	err = got.DB().QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table'
+		  AND name IN ('attachment_pack_index', 'attachment_packs')`).Scan(&packTables)
+	require.NoError(err)
+	assert.Zero(packTables, "restore cleanup must not initialize unrelated current schema")
+	var markerTables int
+	err = got.DB().QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'legacy_marker'`).Scan(&markerTables)
+	require.NoError(err)
+	assert.Equal(1, markerTables, "legacy database remains otherwise intact")
 }

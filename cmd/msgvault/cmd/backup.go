@@ -261,20 +261,17 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 // Clearing the two tables yields a genuinely fully-unpacked vault that
 // pack-attachments re-packs from scratch.
 //
-// The snapshot may predate the pack tables, so the restored DB goes through
-// the standard open flow: store.Open + InitSchema (idempotent CREATE IF NOT
-// EXISTS) guarantees the tables exist before the DELETEs. dbPath comes from
-// the restore result and is always a SQLite file under the target directory,
-// never the configured live archive (or PostgreSQL).
+// The snapshot may predate the pack tables; ClearAttachmentPackMetadata checks
+// for them and does nothing when absent, avoiding unrelated schema migrations
+// after the restore proof has already completed. dbPath comes from the restore
+// result and is always a SQLite file under the target directory, never the
+// configured live archive (or PostgreSQL).
 func clearRestoredPackMetadata(dbPath string) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open restored database %s: %w", dbPath, err)
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.InitSchema(); err != nil {
-		return fmt.Errorf("init restored database schema: %w", err)
-	}
 	if err := st.ClearAttachmentPackMetadata(); err != nil {
 		return fmt.Errorf("clear restored pack metadata: %w", err)
 	}
