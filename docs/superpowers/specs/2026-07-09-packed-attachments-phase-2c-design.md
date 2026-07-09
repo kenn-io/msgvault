@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 
-**Status:** Approved for implementation planning
+**Status:** Revised after human review; pending final spec re-review
 
 **Parent design:** `docs/internal/packed-attachments-design.md`
 
@@ -76,8 +76,11 @@ through bounded background work.
   cascade in one exclusive transaction. Phase 2b temporarily refuses removal
   when that transaction finds a unique packed blob.
 - `attachment_packs` describes physical immutable pack files. Its footer totals
-  include dead entries. `attachment_pack_index` contains only live, readable
-  mappings and is the authority for user-facing blob reads.
+  include dead entries. `attachment_pack_index` contains storage mappings, but
+  today a mapping can outlive its last attachment row: Teams inline replacement,
+  permanent message deletion, and generic cascades delete attachment rows
+  without updating the pack index. Attachment rows, not index rows alone, are
+  the liveness authority.
 - Production and backup packs deliberately share the kit format and sharded
   layout, but current restore materializes loose canonical files and clears
   production pack metadata.
@@ -116,10 +119,33 @@ writer merely because the budget expired. A run with no eligible bytes creates
 no pack.
 
 The budget applies only to new loose data. Staging cleanup, dangling-record
-repair, orphan reconciliation, and the final verified sweep always run. Those
-steps enforce correctness and cannot be skipped because a migration budget was
-consumed. Existing context checks still let scheduled work yield between
-recovery, blob, and sweep boundaries.
+repair, reference repair, orphan reconciliation, and the final loose-file sweep
+always run. Those steps enforce correctness and cannot be skipped because a
+migration budget was consumed. Existing context checks still let scheduled work
+yield between recovery, blob, and sweep boundaries.
+
+Add one store repair primitive that deletes `attachment_pack_index` rows whose
+hash is absent from both attachment hash columns. It runs under the caller's
+existing exclusive coverage and reports the deleted row count. Call it from
+`packer.Run` before orphan reconciliation, from `repacker.Run` before
+accounting, and from `Unpack` before enumerating rows to restore. This makes
+explicit repack and downgrade safe even when no packer run preceded them, while
+the daily pipeline's second call is normally a no-op.
+
+Extend the packer's existing loose-tree walk rather than adding a second scan.
+Load the referenced-hash and indexed-hash sets once, skip the `packs/` subtree,
+and classify each regular hash-named file:
+
+1. If its hash is unreferenced, delete it as a loose orphan without treating its
+   bytes as recoverable. A failure is warned and retried by the next packer run.
+2. If it is referenced and indexed, retain the existing verify-packed-copy,
+   recover-from-verified-loose, or sweep behavior.
+3. If it is referenced and unindexed, leave it as live loose content.
+
+This covers canonical and legacy noncanonical paths because both use the hash as
+their basename. Files that are not named as valid content hashes and everything
+inside `packs/` are outside this cleanup. Add stats for pruned mappings,
+unreferenced loose files removed, and quarantined orphan packs.
 
 `pack-attachments` continues to call the packer with zero `MaxBytes`. Automatic
 callers use 256 MiB and log the resulting stats at INFO. A canceled automatic
@@ -225,6 +251,17 @@ This rule covers regular packer crashes, repack crashes, and the sequence where
 an account is removed after a new pack was sealed but before that pack was
 recorded.
 
+Quarantine deliberately favors preservation over availability. A valid
+referenced entry with no other readable mapping remains unavailable when a
+different referenced recovery candidate in the same orphan fails; partially
+recording the pack would hide the failed entry from reconciliation and let a
+later repack discard its only remaining bytes. Increment a distinct
+`PacksQuarantined` stat and emit one ERROR summary containing the pack ID,
+failed referenced-entry count, and withheld adoptable-entry count. Explicit
+`pack-attachments` output reports the quarantine count. Automatic maintenance
+retries and re-verifies the referenced candidates on every run until the pack
+can be adopted, becomes redundant, or the failed reference is removed.
+
 ### 4. Logical packed-blob GC during account removal
 
 Replace the temporary `UniquePackedBlobsError` refusal with transactional
@@ -256,31 +293,37 @@ Add `internal/repacker` with a `Run` function, options, and stats parallel to
 the packer. The caller supplies the production store, the shared blob store,
 the attachments directory, and an optional raw-byte budget.
 
-The store exposes pack accounting that left-joins `attachment_packs` to live
-index rows and returns immutable totals, live entry count, live stored bytes,
-and live raw bytes. Repacker selection is deterministic by creation time then
-pack ID:
+For all repack queries, "live" means an index row whose hash is still present in
+at least one attachment hash column. After running the shared reference repair,
+the store exposes pack accounting that left-joins `attachment_packs` to those
+referenced index rows and returns immutable totals, live entry count, live
+stored bytes, and live raw bytes. Repacker selection is deterministic by
+creation time then pack ID:
 
 - Select every zero-live pack, regardless of age or size.
 - Select partially live packs only when all sparse-pack thresholds pass.
 - Stop adding source packs when the automatic raw-byte budget is reached,
   except that at least one eligible source pack is selected.
 
-For partially live packs, enumerate only their current index rows and read each
-blob through the production blob store. Append verified bytes to new kit pack
-writers, combining live entries from multiple sparse source packs into normal
-target-sized packs. Seal all new packs before changing the database. A read,
-append, or seal failure aborts the active writer and leaves every old mapping
-and file authoritative. Any already-sealed new files are safe orphans for the
-reference-aware reconciler.
+For partially live packs, enumerate only referenced index rows and read each
+blob through the production blob store. This is not a CRC-only copy: kit
+`ReadBlob` verifies stored CRC, decoding, and SHA-256 against the requested blob
+ID before returning bytes; `pack.Writer.Append` independently recomputes the new
+entry ID, and the repacker requires that returned ID to equal the expected hash.
+Append those verified bytes to new kit pack writers, combining live entries
+from multiple sparse source packs into normal target-sized packs. Seal all new
+packs before changing the database. A read, hash, append, or seal failure aborts
+the active writer and leaves every old mapping and file authoritative. Any
+already-sealed new files are safe orphans for the reference-aware reconciler.
 
 Commit the repack in one store transaction:
 
 1. Insert records for every new sealed pack.
 2. Compare-and-swap every live blob mapping from its expected old pack to its
    new pack entry, requiring exactly one affected row per blob.
-3. Verify that the expected live rows from the selected old packs were neither
-   omitted nor added.
+3. Verify that the expected referenced index rows from the selected old packs
+   were neither omitted nor added. Unreferenced rows pruned during reference
+   repair are not part of the compare-and-swap set.
 4. Commit the new mappings while retaining old `attachment_packs` records.
 
 Retaining the old records until physical deletion makes `attachment_packs` a
@@ -313,6 +356,14 @@ Holding the mutex through deletion provides the required ordering:
 - Windows sees every daemon-owned handle closed before `os.Remove`, avoiding
   its open-file deletion failure. Unix follows the same deterministic path.
 
+The daemon cache is the only supported long-lived attachment pack cache: TUI,
+MCP, and CLI exports use the daemon even with `--local`, while backup's
+short-lived blob store holds a backup-freeze gate that excludes repack. If a
+future or embedded out-of-process reader bypasses that coordination, safety
+still degrades conservatively: Windows returns a delete error and retains the
+zero-live file/record for retry; on Unix an already-open handle can finish while
+new lookups resolve the replacement mapping.
+
 After successful deletion, remove the old `attachment_packs` row with a guarded
 store method that succeeds only when no live index row names that pack. If the
 process crashes after file deletion but before record deletion, the packer's
@@ -326,8 +377,10 @@ run retries them.
 |---|---|---|
 | Automatic budget reached | Current new pack sealed and indexed | Run ends normally; later run continues remaining loose blobs |
 | Regular pack sealed before index commit | Referenced orphan new pack | Reconcile adopts only still-referenced entries |
+| Attachment replacement/deletion removes the last reference without updating its pack mapping | Stale index row and possibly a loose file remain | Resolver returns not-found; the next packer/repacker repair prunes the mapping, and the packer sweep retries loose deletion |
 | Source removal transaction fails | Source and all pack mappings unchanged | Retry removal |
-| Source removal commits | Unique hashes unreferenced and unindexed; old pack record/file and possible loose leftovers retained | Resolver returns not-found; repack and loose cleanup later reclaim bytes |
+| Source removal commits | Unique hashes unreferenced and unindexed; old pack record/file and possible loose leftovers retained | Resolver returns not-found; repack reclaims pack bytes and the next packer sweep retries loose deletion |
+| Referenced orphan candidate fails verification beside valid adoptable entries | Entire orphan remains unrecorded and undeleted | Distinct quarantine stat/error names pack; every maintenance run retries verification |
 | Repack read/write fails before database swap | Old mappings/files unchanged; new staging aborted | Retry; any sealed new pack is reconciled safely |
 | New repack files seal before swap, then crash | New orphan files; old mappings authoritative | Referenced entries are redundant or recoverable; dead entries are never adopted |
 | Repack index swap commits before old deletion | New mappings live; old records/files zero-live | Next repack retries retirement/deletion |
@@ -369,6 +422,10 @@ tags.
 - Budget exhaustion seals the current writer and leaves no staging file.
 - Explicit zero-budget option remains unlimited.
 - Recovery and verified sweep still run after the packing budget is exhausted.
+- Reference repair prunes mappings left stale by attachment replacement,
+  permanent message deletion, and cascades.
+- The loose-tree sweep deletes unreferenced canonical and noncanonical files,
+  retries deletion failures on later runs, and preserves referenced loose files.
 - Manual sync, generic ingest, scheduled provider ingest, and the daily job
   each trigger exactly one bounded pack attempt only after successful ingest.
 - Maintenance failure warns but does not replace a successful ingest result.
@@ -388,14 +445,22 @@ tags.
 - A crash-style orphan containing a mix of referenced and deleted entries
   adopts only the referenced entries.
 - A mixed orphan with one valid adoptable entry and one referenced verification
-  failure remains wholly unrecorded and undeleted.
+  failure remains wholly unrecorded and undeleted, increments the quarantine
+  stat, and logs the pack ID and both entry counts.
 - Removing a source after seal-before-index does not resurrect its blobs.
+- Pack Teams inline media, replace the inline attachment set so the old hash
+  loses its final row, then verify repair prunes its mapping and repack proceeds
+  without treating it as live.
+- The same stale mapping is not restored by `unpack-attachments`; a pack made
+  zero-live by repair is dropped without opening its dead entry.
 
 ### Repack and reader retirement
 
 - Eligibility boundaries for live fraction, age, dead bytes, and zero-live
   exceptions.
 - Deterministic bounded selection and multi-source-pack compaction.
+- Accounting, enumeration, and compare-and-swap use referenced index rows, not
+  stale index rows alone; direct repack runs reference repair first.
 - Byte-identical live blobs and unchanged user-facing reads after swap.
 - Compare-and-swap mismatch rolls back every new mapping.
 - Fault injection after seal, during the index transaction, after swap, during
@@ -432,9 +497,10 @@ API/MCP/export reads, crash injection, backup round-trip, repack, and unpack.
 1. **Bound automatic packing.** Add the packer budget, daemon coordinator,
    post-ingest hooks, and daily pack job. Verify and review before continuing.
 2. **Make deletion logical.** Make production blob resolution and orphan
-   reconciliation reference-aware, then replace the account-removal refusal
-   with transactional index GC. Verify and review before continuing; physical
-   cleanup remains safely deferred.
+   reconciliation reference-aware, add shared stale-mapping repair and
+   retryable unreferenced-loose cleanup, then replace the account-removal
+   refusal with transactional index GC. Verify and review before continuing;
+   physical pack cleanup remains safely deferred.
 3. **Repack physically.** Add accounting, repacker transactions, daemon-native
    `repack-attachments`, shared-reader retirement, scheduled repack, and
    physical cleanup. Run full end-to-end and whole-branch review.
@@ -453,12 +519,17 @@ Phase 2c is complete when:
 3. Account removal never requires unpacking, never removes shared mappings, and
    makes an unreferenced hash unreadable through packed or loose fallback while
    never letting an orphan pack resurrect it.
-4. Eligible dead space is compacted into new immutable packs, and zero-live
+4. Attachment replacement and other non-account deletion paths cannot leave a
+   stale mapping counted as live or permanently wedge repack; unreferenced loose
+   cleanup failures are retried.
+5. Eligible dead space is compacted into new immutable packs, and zero-live
    packs are eventually removed.
-5. Concurrent reads survive repack on Unix and Windows using the production
+6. Concurrent reads survive repack on Unix and Windows using the production
    cache and retry path.
-6. Every crash boundary leaves either the old or new verified mapping
+7. Every crash boundary leaves either the old or new verified mapping
    authoritative, with deterministic cleanup on a later run.
-7. Backup restore remains a fully loose, readable vault that can be repacked.
-8. Automated, backend, Windows, race, crash-injection, and exact-head review
+8. Quarantined damaged orphans are preserved and observably retried without
+   allowing partial adoption to hide failed referenced entries.
+9. Backup restore remains a fully loose, readable vault that can be repacked.
+10. Automated, backend, Windows, race, crash-injection, and exact-head review
    gates pass before real-vault hardening is proposed.

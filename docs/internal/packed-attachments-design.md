@@ -112,11 +112,13 @@ CREATE TABLE attachment_packs (
 ```
 
 `attachment_packs` captures each pack's immutable totals when the packer
-seals it (or adopts it during crash reconciliation). Because
-`attachment_pack_index` holds only live rows — GC deletes rows for dead
-blobs — the index alone cannot tell how much of a pack is dead; dead bytes =
-`stored_bytes` minus the sum of the pack's live index rows. `created_at`
-feeds the repack age hysteresis without stat-ing pack files.
+seals it (or adopts it during crash reconciliation). The intended
+`attachment_pack_index` invariant is one mapping per attachment-referenced
+blob, but attachment replacement and other row-deletion paths can remove the
+last reference without touching the index. Phase-2c repair prunes those stale
+mappings before pack/repack accounting. Dead bytes are therefore
+`stored_bytes` minus the sum of referenced live index rows. `created_at` feeds
+the repack age hysteresis without stat-ing pack files.
 
 BIGINT, not INTEGER: PostgreSQL `INTEGER` is 4-byte signed, too small for a
 `uint32` CRC32C and for raw/stored lengths up to `pack.MaxRawLen` (4 GiB).
@@ -225,7 +227,25 @@ unreferenced footer entries are dead and are never adopted. If any referenced
 entry that needs adoption or repointing fails verification, reconciliation is
 all-or-nothing for that pack — it records nothing and leaves the orphan file in
 place. This prevents a later repack from deleting a quarantined failed entry
-after partially adopting the valid entries beside it.
+after partially adopting the valid entries beside it. The tradeoff is explicit:
+otherwise-valid adoptable entries in that pack remain unavailable. The packer
+increments a quarantine stat and logs one ERROR with the pack ID and failed and
+withheld entry counts; each later run re-verifies the referenced candidates.
+
+Before reconciliation, the packer also deletes index mappings whose hashes no
+longer appear in either attachment hash column. Teams inline replacement,
+permanent message deletion, and generic cascades can otherwise leave such rows
+behind. Repack runs the same repair before accounting so an explicit repack is
+safe even when no packer run preceded it. `unpack-attachments` runs it before
+enumerating restore rows so downgrade cannot materialize a stale mapping.
+
+The packer's final filesystem walk classifies every regular hash-named file
+outside `packs/` from one referenced-hash set and one indexed-hash set.
+Unreferenced files are deleted without being treated as recovery copies and a
+failure is retried on the next run. Referenced indexed files retain the existing
+verify-before-sweep/recovery behavior; referenced unindexed files remain live
+loose content. This covers canonical and legacy noncanonical paths without a
+second tree walk.
 
 Cancellation is checked before the pack directory is created and throughout
 staging cleanup, dangling-record repair, orphan reconciliation, packing, and
@@ -246,8 +266,13 @@ boundary without violating the same crash-ordering rules.
   churn — only packs older than 24 h (`attachment_packs.created_at`) and
   with at least 8 MiB of dead stored bytes
   (`attachment_packs.stored_bytes` minus the sum of live `stored_len`).
-  All accounting comes from the two tables without opening packs. Copy live
-  blobs to new target-sized packs and swap their index rows transactionally.
+  A live entry means an index row whose hash is still attachment-referenced;
+  stale rows are repaired before selection, and accounting/enumeration/CAS use
+  the referenced rows as defense in depth. All accounting comes from the
+  database without opening packs. Copy live blobs to new target-sized packs
+  and swap their index rows transactionally. The production read verifies CRC,
+  decoding, and SHA-256 before append; the new writer independently derives the
+  same blob ID, which repack requires to match.
   Keep the old `attachment_packs` rows until the daemon's shared blob store
   has waited for active reads, closed cached readers, and deleted the old
   files under its reader-cache mutex; then delete the now-empty records.
@@ -256,6 +281,12 @@ boundary without violating the same crash-ordering rules.
   bypass the age/dead-byte thresholds. Bounded repack runs after
   `remove-account` and on the daemon maintenance schedule; explicit
   `msgvault repack-attachments` is unbounded.
+
+  The daemon blob store is the only supported long-lived pack-reader cache:
+  TUI, MCP, and exports remain daemon-backed even with `--local`, and backup's
+  short-lived reader holds the freeze gate. A future out-of-process reader is
+  still fail-safe: Windows can leave the zero-live pack for retry when another
+  handle blocks deletion, while an already-open Unix handle can finish.
 
 Until that step-5 integration lands, `remove-account` refuses before its
 cascade when the selected source owns any unique packed blobs, and directs the
@@ -268,8 +299,9 @@ across both hash columns.
 
 ### Downgrade: `msgvault unpack-attachments`
 
-Streams every live `attachment_pack_index` blob back to a canonical loose
-file, verifies hashes, drops the index and `attachment_packs` rows, and
+Prunes unreferenced mappings, then streams every attachment-referenced live
+`attachment_pack_index` blob back to a canonical loose file, verifies hashes,
+drops the index and `attachment_packs` rows, and
 deletes the pack files. Footer entries with no live index row are dead and
 are not restored; a zero-live pack is dropped without opening it, so a dead
 corrupt pack retained after orphan rescue cannot block downgrade or resurrect
@@ -323,11 +355,14 @@ their entries into the repo index, skipping per-blob re-reads.
   (staging file cleanup), missing-recorded-pack plus orphan-pack recovery,
   corrupt indexed pack plus readable orphan-pack rescue, corrupt packed copy
   plus readable loose-copy preservation, duplicate recorded paths with a valid
-  fallback, cancellation before the first recovery mutation.
+  fallback, cancellation before the first recovery mutation, stale mapping
+  repair after Teams inline replacement, and retryable unreferenced loose-file
+  cleanup.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
-- Repack: live-blob preservation, threshold + hysteresis, transactional
-  index swap.
+- Repack: referenced-live accounting despite stale index rows, live-blob
+  preservation, threshold + hysteresis, transactional index swap, and explicit
+  SHA-verified copy semantics.
 - `unpack-attachments` round-trip: pack -> unpack -> byte-identical loose
   tree, index empty.
 - `remove-account` GC over mixed loose/packed orphans.
