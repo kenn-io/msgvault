@@ -49,18 +49,21 @@ type Stats struct {
 // operation gate or db.write.lock).
 func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Options) (Stats, error) {
 	var stats Stats
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
 	attachmentsDir = filepath.Clean(attachmentsDir)
 	packsDir := filepath.Join(attachmentsDir, "packs")
 	if err := os.MkdirAll(packsDir, 0o700); err != nil {
 		return stats, fmt.Errorf("create packs dir: %w", err)
 	}
-	if err := cleanStaging(packsDir); err != nil {
+	if err := cleanStaging(ctx, packsDir); err != nil {
 		return stats, err
 	}
-	if err := dropDanglingPackRecords(st, packsDir, &stats); err != nil {
+	if err := dropDanglingPackRecords(ctx, st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("drop dangling pack records: %w", err)
 	}
-	if err := reconcilePacks(st, attachmentsDir, packsDir, &stats); err != nil {
+	if err := reconcilePacks(ctx, st, attachmentsDir, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -72,7 +75,7 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
-	if err := sweepIndexed(st, attachmentsDir, packsDir, &stats); err != nil {
+	if err := sweepIndexed(ctx, st, attachmentsDir, packsDir, &stats); err != nil {
 		return stats, err
 	}
 	return stats, nil
@@ -80,14 +83,20 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 
 // cleanStaging removes every *.staging file directly under packsDir. The
 // packer runs exclusively, so any staging file is a dead mid-seal abort.
-func cleanStaging(packsDir string) error {
+func cleanStaging(ctx context.Context, packsDir string) error {
 	entries, err := os.ReadDir(packsDir)
 	if err != nil {
 		return fmt.Errorf("read packs dir: %w", err)
 	}
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".staging") {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		p := filepath.Join(packsDir, e.Name())
 		if err := os.Remove(p); err != nil {
@@ -100,7 +109,7 @@ func cleanStaging(packsDir string) error {
 
 // reconcilePacks walks packsDir for *.mvpack files with no attachment_packs
 // row and adopts or removes each one.
-func reconcilePacks(st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
+func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
 	existingBlobs := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := existingBlobs.Close(); err != nil {
@@ -108,6 +117,9 @@ func reconcilePacks(st *store.Store, attachmentsDir, packsDir string, stats *Sta
 		}
 	}()
 	return filepath.WalkDir(packsDir, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -134,7 +146,7 @@ func reconcilePacks(st *store.Store, attachmentsDir, packsDir string, stats *Sta
 		if has {
 			return nil
 		}
-		return reconcileOnePack(st, existingBlobs, path, id, stats)
+		return reconcileOnePack(ctx, st, existingBlobs, path, id, stats)
 	})
 }
 
@@ -143,17 +155,20 @@ func reconcilePacks(st *store.Store, attachmentsDir, packsDir string, stats *Sta
 // An orphan whose unindexed entries fail verification is neither adopted nor
 // removed: its bytes may be the only (damaged) copy, so deleting it could
 // destroy data a repair might still recover.
-func reconcileOnePack(st *store.Store, existingBlobs *blobstore.Store, path, id string, stats *Stats) error {
+func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, stats *Stats) error {
 	r, err := pack.OpenReader(path, nil)
 	if err != nil {
 		slog.Warn("skipping unreadable orphan pack", "pack", id, "error", err)
 		return nil
 	}
-	adoptable, rec, failed, err := collectAdoptable(st, existingBlobs, r, id)
+	adoptable, rec, failed, err := collectAdoptable(ctx, st, existingBlobs, r, id)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close orphan pack reader", "pack", id, "error", closeErr)
 	}
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if len(adoptable) == 0 {
@@ -183,7 +198,7 @@ func reconcileOnePack(st *store.Store, existingBlobs *blobstore.Store, path, id 
 // seal/adoption") and the count of candidate entries that failed orphan
 // read/verification (so the caller never treats a damaged pack as fully
 // redundant).
-func collectAdoptable(st *store.Store, existingBlobs *blobstore.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
+func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
 	entries := r.Entries()
 	rec := store.PackRecord{
 		PackID:     id,
@@ -193,6 +208,9 @@ func collectAdoptable(st *store.Store, existingBlobs *blobstore.Store, r *pack.R
 	var adoptable []store.PackIndexEntry
 	var failed int
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, rec, failed, err
+		}
 		rec.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
 		hash := e.ID.String()
 		existing, err := st.GetAttachmentPackEntry(hash)
@@ -230,17 +248,23 @@ func collectAdoptable(st *store.Store, existingBlobs *blobstore.Store, r *pack.R
 // malformed pack IDs can only come from corrupt or manually edited metadata.
 // Only a confirmed fs.ErrNotExist drops a valid record; a pack file that exists
 // but cannot be read is left alone.
-func dropDanglingPackRecords(st *store.Store, packsDir string, stats *Stats) error {
+func dropDanglingPackRecords(ctx context.Context, st *store.Store, packsDir string, stats *Stats) error {
 	recs, err := st.ListPackRecords()
 	if err != nil {
 		return err
 	}
 	for _, rec := range recs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !pack.IsValidPackID(rec.PackID) {
 			// Readers can never open a malformed pack ID, so retaining its index
 			// rows would make packLoose skip readable loose copies and let the
 			// final sweep delete them. Drop the unusable metadata first so normal
 			// enumeration can recover any loose blobs.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := st.DeletePackRecord(rec.PackID); err != nil {
 				return err
 			}
@@ -255,6 +279,9 @@ func dropDanglingPackRecords(st *store.Store, packsDir string, stats *Stats) err
 		}
 		if !errors.Is(statErr, fs.ErrNotExist) {
 			return fmt.Errorf("stat pack file for %s: %w", rec.PackID, statErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := st.DeletePackRecord(rec.PackID); err != nil {
 			return err
@@ -287,7 +314,7 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 			abort()
 			return err
 		}
-		data, ok := readLooseBlob(attachmentsDir, b, stats)
+		data, source, ok := readLooseBlob(attachmentsDir, b, stats)
 		if !ok {
 			continue
 		}
@@ -306,8 +333,12 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 		}
 		stats.BlobsPacked++
 		stats.BytesPacked += int64(len(data))
-		sources = append(sources, filepath.Join(attachmentsDir, filepath.FromSlash(b.Path)))
+		sources = append(sources, source)
 		if w.Full() {
+			if err := ctx.Err(); err != nil {
+				abort()
+				return err
+			}
 			if err := sealAndCommit(st, packsDir, w, sources, stats); err != nil {
 				return err
 			}
@@ -315,6 +346,10 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 		}
 	}
 	if w != nil {
+		if err := ctx.Err(); err != nil {
+			abort()
+			return err
+		}
 		return sealAndCommit(st, packsDir, w, sources, stats)
 	}
 	return nil
@@ -322,39 +357,47 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 
 // readLooseBlob loads and verifies one enumerated blob's bytes; a false
 // return means the blob was skipped (counted in stats where applicable).
-func readLooseBlob(attachmentsDir string, b store.UnpackedBlob, stats *Stats) ([]byte, bool) {
-	rel := filepath.FromSlash(b.Path)
-	if !filepath.IsLocal(rel) {
-		slog.Warn("skipping blob with non-local recorded path", "hash", b.Hash, "path", b.Path)
-		return nil, false
+func readLooseBlob(attachmentsDir string, b store.UnpackedBlob, stats *Stats) ([]byte, string, bool) {
+	var sawMissing, sawCorrupt bool
+	for _, path := range b.Paths {
+		rel := filepath.FromSlash(path)
+		if !filepath.IsLocal(rel) {
+			slog.Warn("skipping blob candidate with non-local recorded path", "hash", b.Hash, "path", path)
+			continue
+		}
+		full := filepath.Join(attachmentsDir, rel)
+		if fi, err := os.Stat(full); err == nil && fi.Size() > pack.MaxRawLen {
+			// pack.Writer.Append rejects blobs over MaxRawLen and poisons the
+			// writer; try any alternate path before leaving the blob loose.
+			slog.Warn("skipping blob candidate larger than pack.MaxRawLen",
+				"hash", b.Hash, "path", path, "size", fi.Size())
+			continue
+		}
+		data, err := os.ReadFile(full)
+		if errors.Is(err, fs.ErrNotExist) {
+			sawMissing = true
+			slog.Warn("loose blob candidate missing", "hash", b.Hash, "path", path)
+			continue
+		}
+		if err != nil {
+			slog.Warn("skipping unreadable loose blob candidate", "hash", b.Hash, "path", path, "error", err)
+			continue
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != b.Hash {
+			sawCorrupt = true
+			slog.Error("loose blob candidate bytes do not match recorded hash",
+				"hash", b.Hash, "path", path)
+			continue
+		}
+		return data, full, true
 	}
-	full := filepath.Join(attachmentsDir, rel)
-	if fi, err := os.Stat(full); err == nil && fi.Size() > pack.MaxRawLen {
-		// pack.Writer.Append rejects blobs over MaxRawLen and poisons the
-		// writer; skip (and avoid buffering the file) so one oversized
-		// attachment cannot permanently fail every packer run.
-		slog.Warn("skipping blob larger than pack.MaxRawLen; left loose",
-			"hash", b.Hash, "path", b.Path, "size", fi.Size())
-		return nil, false
-	}
-	data, err := os.ReadFile(full)
-	if errors.Is(err, fs.ErrNotExist) {
-		stats.BlobsMissing++
-		slog.Warn("loose blob file missing; left for backfill", "hash", b.Hash, "path", b.Path)
-		return nil, false
-	}
-	if err != nil {
-		slog.Warn("skipping unreadable loose blob", "hash", b.Hash, "path", b.Path, "error", err)
-		return nil, false
-	}
-	sum := sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != b.Hash {
+	if sawCorrupt {
 		stats.BlobsCorrupt++
-		slog.Error("loose blob bytes do not match recorded hash; skipping",
-			"hash", b.Hash, "path", b.Path)
-		return nil, false
+	} else if sawMissing {
+		stats.BlobsMissing++
 	}
-	return data, true
+	return nil, "", false
 }
 
 // sealAndCommit seals the writer to its final sharded path, records the pack
@@ -422,7 +465,7 @@ func indexEntry(packID string, e pack.Entry) store.PackIndexEntry {
 // between commit and delete, or noncanonical originals whose basename is the
 // hash. Verification preserves the loose recovery copy when the index or pack
 // bytes are corrupt.
-func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
+func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
 	indexed, err := st.ListIndexedBlobHashes()
 	if err != nil {
 		return err
@@ -438,6 +481,9 @@ func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats
 	}()
 	var dirs []string
 	err = filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -468,6 +514,9 @@ func sweepIndexed(st *store.Store, attachmentsDir, packsDir string, stats *Stats
 		}
 		if err := r.Close(); err != nil {
 			slog.Warn("close verified packed blob", "hash", d.Name(), "error", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		//nolint:gosec // G122: the sweep removes the user's own loose files
 		// under their attachments dir; the packer holds exclusive-writer

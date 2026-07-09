@@ -333,17 +333,18 @@ func TestListUnpackedBlobs(t *testing.T) {
 
 	require.Contains(byHash, hashLoose)
 	assert.Equal(store.UnpackedBlob{
-		Hash: hashLoose, Path: hashLoose[:2] + "/" + hashLoose, Size: 100,
+		Hash: hashLoose, Paths: []string{hashLoose[:2] + "/" + hashLoose}, Size: 100,
 	}, byHash[hashLoose])
 
 	require.Contains(byHash, hashBoth)
 	assert.Equal(int64(300), byHash[hashBoth].Size,
 		"content-vs-thumbnail dup keeps the content row (with size)")
-	assert.Equal(hashBoth[:2]+"/"+hashBoth, byHash[hashBoth].Path)
+	assert.Equal([]string{hashBoth[:2] + "/" + hashBoth, "thumbs/" + hashBoth},
+		byHash[hashBoth].Paths, "all content and thumbnail candidate paths are retained")
 
 	require.Contains(byHash, hashThumbOnly)
 	assert.Equal(store.UnpackedBlob{
-		Hash: hashThumbOnly, Path: "thumbs/" + hashThumbOnly, Size: -1,
+		Hash: hashThumbOnly, Paths: []string{"thumbs/" + hashThumbOnly}, Size: -1,
 	}, byHash[hashThumbOnly], "thumbnail-only blobs have Size -1")
 
 	assert.Len(blobs, 3)

@@ -258,6 +258,48 @@ func TestRunPacksLooseBlobs(t *testing.T) {
 		"thumbnail_path is canonicalized")
 }
 
+func TestRunTriesAllRecordedPathsForSameHash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := hashOf(content)
+	f.addRow(hash, "00-missing/"+hash, len(content))
+	src, err := f.store.GetSourceByIdentifier("alice@example.com")
+	require.NoError(err)
+	convID, err := f.store.EnsureConversation(src.ID, "thread-pack", "Pack Thread")
+	require.NoError(err)
+	msgID, err := f.store.UpsertMessage(&store.Message{
+		ConversationID: convID, SourceID: src.ID,
+		SourceMessageID: "pack-msg-second-path", MessageType: "email",
+	})
+	require.NoError(err)
+	validPath := "zz-valid/" + hash
+	require.NoError(f.store.UpsertAttachment(msgID, "valid.bin", "application/octet-stream",
+		validPath, hash, len(content)))
+	f.writeLoose(validPath, content)
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.BlobsPacked, "valid alternate path must be packed")
+	assert.Zero(stats.BlobsMissing, "one missing candidate does not make the blob missing")
+	assert.Equal(content, f.readBack(hash))
+}
+
+func TestRunAlreadyCanceledDoesNotMutatePackDirectory(t *testing.T) {
+	require := require.New(t)
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := packer.Run(ctx, f.store, f.dir, packer.Options{})
+	require.ErrorIs(err, context.Canceled)
+	_, err = os.Stat(filepath.Join(f.dir, "packs"))
+	require.ErrorIs(err, os.ErrNotExist,
+		"pre-canceled run must return before creating or reconciling the pack directory")
+}
+
 func TestRunSecondRunIsNoOp(t *testing.T) {
 	assert := assert.New(t)
 	f := newFixture(t)

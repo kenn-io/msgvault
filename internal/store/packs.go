@@ -166,22 +166,24 @@ func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, erro
 }
 
 // UnpackedBlob is one distinct local blob that has no pack index row.
-// Path is the DB-recorded path relative to the attachments dir,
-// slash-separated; Size is -1 when unknown (thumbnail-only blobs).
+// Paths contains every distinct DB-recorded local candidate path relative to
+// the attachments dir, slash-separated. Size is -1 when unknown
+// (thumbnail-only blobs).
 type UnpackedBlob struct {
-	Hash string
-	Path string
-	Size int64
+	Hash  string
+	Paths []string
+	Size  int64
 }
 
 // ListUnpackedBlobs returns every distinct local (non-URL) content and
-// thumbnail blob that has no attachment_pack_index row, with its
-// DB-recorded relative path. Content blobs come first, then blobs seen
-// only as thumbnails (Size -1); a hash appearing as both is listed once,
-// as a content blob.
+// thumbnail blob that has no attachment_pack_index row, preserving all of its
+// DB-recorded relative candidate paths. Content blobs come first, then blobs
+// seen only as thumbnails (Size -1); a hash appearing as both is listed once
+// with content and thumbnail paths combined.
 func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 	var blobs []UnpackedBlob
-	seen := make(map[string]struct{})
+	byHash := make(map[string]int)
+	seenPaths := make(map[string]map[string]struct{})
 
 	collect := func(query string, scanSize bool) error {
 		rows, err := s.db.Query(query)
@@ -190,21 +192,33 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		}
 		defer rows.Close() //nolint:errcheck // read-only cursor
 		for rows.Next() {
-			var b UnpackedBlob
+			var hash, path string
+			var size int64
 			if scanSize {
-				err = rows.Scan(&b.Hash, &b.Path, &b.Size)
+				err = rows.Scan(&hash, &path, &size)
 			} else {
-				b.Size = -1
-				err = rows.Scan(&b.Hash, &b.Path)
+				size = -1
+				err = rows.Scan(&hash, &path)
 			}
 			if err != nil {
 				return fmt.Errorf("scan unpacked blob: %w", err)
 			}
-			if _, dup := seen[b.Hash]; dup {
+			if _, ok := seenPaths[hash]; !ok {
+				seenPaths[hash] = make(map[string]struct{})
+			}
+			if _, dup := seenPaths[hash][path]; dup {
 				continue
 			}
-			seen[b.Hash] = struct{}{}
-			blobs = append(blobs, b)
+			seenPaths[hash][path] = struct{}{}
+			if idx, ok := byHash[hash]; ok {
+				blobs[idx].Paths = append(blobs[idx].Paths, path)
+				if scanSize && size > blobs[idx].Size {
+					blobs[idx].Size = size
+				}
+				continue
+			}
+			byHash[hash] = len(blobs)
+			blobs = append(blobs, UnpackedBlob{Hash: hash, Paths: []string{path}, Size: size})
 		}
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("iterate unpacked blobs: %w", err)
@@ -213,7 +227,7 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 	}
 
 	if err := collect(`
-		SELECT content_hash, MIN(storage_path), COALESCE(MAX(size), -1)
+		SELECT content_hash, storage_path, COALESCE(MAX(size), -1)
 		FROM attachments
 		WHERE content_hash IS NOT NULL AND content_hash != ''
 		  AND storage_path IS NOT NULL AND storage_path != ''
@@ -221,12 +235,12 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		  AND storage_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
 		                  WHERE p.blob_hash = attachments.content_hash)
-		GROUP BY content_hash
-		ORDER BY MIN(id)`, true); err != nil {
+		GROUP BY content_hash, storage_path
+		ORDER BY MIN(id), storage_path`, true); err != nil {
 		return nil, err
 	}
 	if err := collect(`
-		SELECT thumbnail_hash, MIN(thumbnail_path)
+		SELECT thumbnail_hash, thumbnail_path
 		FROM attachments
 		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
 		  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
@@ -234,8 +248,8 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		  AND thumbnail_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
 		                  WHERE p.blob_hash = attachments.thumbnail_hash)
-		GROUP BY thumbnail_hash
-		ORDER BY MIN(id)`, false); err != nil {
+		GROUP BY thumbnail_hash, thumbnail_path
+		ORDER BY MIN(id), thumbnail_path`, false); err != nil {
 		return nil, err
 	}
 	return blobs, nil

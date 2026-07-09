@@ -174,10 +174,12 @@ window.
 
 1. Enumerate loose blobs from the DB: distinct local (non-URL)
    `content_hash` and `thumbnail_hash` values without an index row, locating
-   files by DB-recorded `storage_path`/`thumbnail_path` (which finds
-   noncanonical legacy paths, not just canonical ones). Rows with empty or
-   URL storage paths are skipped, as are hashes whose recorded file is
-   missing on disk (logged, left for a future backfill).
+   files by every distinct DB-recorded `storage_path`/`thumbnail_path` (which
+   finds noncanonical legacy paths, not just canonical ones). If duplicate
+   rows record different paths for one hash, candidates are tried until one
+   verifies; one missing or corrupt candidate cannot pin a valid copy. Rows
+   with empty or URL storage paths are skipped, as are hashes with no readable,
+   verified candidate on disk (logged, left for a future backfill).
 2. Append blobs to a `pack.Writer` (32 MB target), seal each pack
    (durable, atomic publish under `packs/<id[:2]>/`).
 3. In one DB transaction per sealed pack: insert the `attachment_packs`
@@ -207,6 +209,12 @@ production blob store. If that read fails but the orphan entry verifies, the
 orphan adoption transaction repoints that blob's index row to the readable
 pack. The old pack record remains for normal dead-byte accounting and later
 GC/repack.
+
+Cancellation is checked before the pack directory is created and throughout
+staging cleanup, dangling-record repair, orphan reconciliation, packing, and
+the final sweep. A context canceled before `Run` therefore causes no filesystem
+or metadata mutation; mid-run cancellation stops at the next recovery/blob
+boundary without violating the same crash-ordering rules.
 
 ### GC and repack
 
@@ -288,7 +296,8 @@ their entries into the repo index, skipping per-blob re-reads.
   (adoption), index-no-delete (idempotent re-sweep), mid-seal abort
   (staging file cleanup), missing-recorded-pack plus orphan-pack recovery,
   corrupt indexed pack plus readable orphan-pack rescue, corrupt packed copy
-  plus readable loose-copy preservation.
+  plus readable loose-copy preservation, duplicate recorded paths with a valid
+  fallback, cancellation before the first recovery mutation.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
 - Repack: live-blob preservation, threshold + hysteresis, transactional
