@@ -223,6 +223,13 @@ GC/repack.
   index row survive the deletion via the pack-open retry rule above. Runs
   after `remove-account` and via `msgvault repack-attachments`.
 
+Until that step-5 integration lands, `remove-account` refuses before its
+cascade when the selected source owns any unique packed blobs, and directs the
+operator to stop the daemon and run `unpack-attachments` first. Packed blobs
+that remain referenced by another source do not block account removal. This
+keeps the phase-2b branch independently safe without folding physical repack
+into the account-removal transaction.
+
 ### Downgrade: `msgvault unpack-attachments`
 
 Streams every live `attachment_pack_index` blob back to a canonical loose

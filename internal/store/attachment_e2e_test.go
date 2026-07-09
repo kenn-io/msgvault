@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -232,6 +233,18 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 	c.addAttachment("msg-a2", "unique-a.pdf", hashUniqA)
 	c.addAttachment("msg-b1", "shared.pdf", hashShared)
 	c.addAttachment("msg-b2", "unique-b.pdf", hashUniqB)
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x5p1"
+	rec := store.PackRecord{
+		PackID:      packID,
+		EntryCount:  3,
+		StoredBytes: 300,
+		CreatedAt:   time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}
+	require.NoError(c.store.RecordPackedBlobs(rec, []store.PackIndexEntry{
+		{BlobHash: hashShared, PackID: packID, StoredLen: 100, RawLen: 100},
+		{BlobHash: hashUniqA, PackID: packID, Offset: 100, StoredLen: 100, RawLen: 100},
+		{BlobHash: hashUniqB, PackID: packID, Offset: 200, StoredLen: 100, RawLen: 100},
+	}))
 
 	// Before removing B: A's unique-set is just hashUniqA.
 	pathsA, err := c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
@@ -248,6 +261,12 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 	if assert.Len(pathsB, 1, "pathsB before A removal") {
 		assert.Equal(wantB, pathsB[0], "pathsB[0] before A removal")
 	}
+	packedA, err := c.store.CountPackedBlobsUniqueToSource(c.srcA.ID)
+	require.NoError(err)
+	assert.Equal(1, packedA, "A's shared packed blob must not block removal")
+	packedB, err := c.store.CountPackedBlobsUniqueToSource(c.srcB.ID)
+	require.NoError(err)
+	assert.Equal(1, packedB, "B's shared packed blob must not block removal")
 
 	// Remove source B. The shared hash is now unique to A.
 	err = c.store.RemoveSource(c.srcB.ID)
@@ -260,6 +279,9 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 		assert.Truef(got[want], "paths missing %q after B removal; got %v", want, pathsA)
 	}
 	assert.Len(pathsA, 2, "pathsA len after B removal; got %v", pathsA)
+	packedA, err = c.store.CountPackedBlobsUniqueToSource(c.srcA.ID)
+	require.NoError(err)
+	assert.Equal(2, packedA, "shared packed blob becomes unique after B is removed")
 }
 
 // TestAttachment_E2E_RemoveSourceCascadesAttachmentRows verifies that

@@ -184,7 +184,11 @@ func (s *Store) RemoveSource(sourceID int64) error {
 // closes the race where a sync starts between a pre-check and RemoveSource:
 // StartSync blocks on our exclusive lock, so either (a) it committed before
 // us and we observe the running row, or (b) it has not yet started and will
-// fail after we commit because the source is gone.
+// fail after we commit because the source is gone. The unique-packed-blob
+// guard runs under the same lock so two concurrent account removals cannot
+// each mistake a shared packed blob for one that the other source will retain.
+//
+// UniquePackedBlobsError leaves the source untouched.
 func (s *Store) RemoveSourceSerialized(
 	ctx context.Context, sourceID int64,
 ) (hadActiveSync bool, err error) {
@@ -211,6 +215,17 @@ func (s *Store) RemoveSourceSerialized(
 		return false, fmt.Errorf("check active syncs: %w", err)
 	}
 	hadActiveSync = count > 0
+
+	var uniquePacked int
+	if err := conn.QueryRowContext(ctx,
+		s.dialect.Rebind(countPackedBlobsUniqueToSourceSQL),
+		sourceID, sourceID, sourceID,
+	).Scan(&uniquePacked); err != nil {
+		return hadActiveSync, fmt.Errorf("check unique packed blobs: %w", err)
+	}
+	if uniquePacked > 0 {
+		return hadActiveSync, &UniquePackedBlobsError{Count: uniquePacked}
+	}
 
 	if s.fts5Available {
 		if _, err := conn.ExecContext(
@@ -239,6 +254,17 @@ func (s *Store) RemoveSourceSerialized(
 	}
 	committed = true
 	return hadActiveSync, nil
+}
+
+// UniquePackedBlobsError reports that a source cascade would orphan live pack
+// index rows. Callers should leave the source intact and direct the operator to
+// unpack before retrying until packed-orphan GC is available.
+type UniquePackedBlobsError struct {
+	Count int
+}
+
+func (e *UniquePackedBlobsError) Error() string {
+	return fmt.Sprintf("source has %d unique packed attachment blob(s)", e.Count)
 }
 
 // removeSourceExec performs the FTS + sources DELETE on a generic executor

@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,6 +179,32 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be removed")
+}
+
+func TestStore_RemoveSourceSerialized_RefusesUniquePackedBlob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	hash := "aa" + strings.Repeat("0", 62)
+	msgID := f.CreateMessage("msg-packed")
+	require.NoError(f.Store.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+		hash[:2]+"/"+hash, hash, 10))
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r1"
+	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 10,
+		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}, []store.PackIndexEntry{
+		{BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10},
+	}))
+
+	_, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	var packedErr *store.UniquePackedBlobsError
+	require.ErrorAs(err, &packedErr)
+	assert.Equal(1, packedErr.Count)
+
+	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
+	require.NoError(err, "guarded transaction must roll back the source cascade")
+	assert.NotNil(src)
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {

@@ -37,6 +37,8 @@ and must be rebuilt. Run 'msgvault build-cache' afterward to rebuild it.
 
 Attachment files on disk that are not shared with another account are deleted.
 Shared attachments (same content hash across multiple accounts) are kept.
+If unique attachments are currently packed, removal is refused with instructions
+to run unpack-attachments first; shared packed attachments do not block removal.
 
 Examples:
   msgvault remove-account you@gmail.com
@@ -137,7 +139,6 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 				"Use --yes to force removal", email,
 		)
 	}
-
 	msgCount, err := s.CountMessagesForSource(source.ID)
 	if err != nil {
 		return fmt.Errorf("count messages: %w", err)
@@ -176,6 +177,14 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 	// the source is gone.
 	hadActiveSync, err := s.RemoveSourceSerialized(cmd.Context(), source.ID)
 	if err != nil {
+		var packedErr *store.UniquePackedBlobsError
+		if errors.As(err, &packedErr) {
+			return fmt.Errorf(
+				"remove-account cannot safely delete %d unique packed attachment blob(s); "+
+					"on the archive host, stop the daemon and run `msgvault unpack-attachments`, then retry",
+				packedErr.Count,
+			)
+		}
 		return fmt.Errorf("remove account: %w", err)
 	}
 

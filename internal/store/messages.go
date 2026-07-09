@@ -2101,6 +2101,46 @@ func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) 
 	return paths, rows.Err()
 }
 
+const countPackedBlobsUniqueToSourceSQL = `
+		WITH source_blobs(blob_hash) AS (
+		    SELECT a.content_hash
+		    FROM attachments a
+		    JOIN messages m ON m.id = a.message_id
+		    WHERE m.source_id = ?
+		      AND a.content_hash IS NOT NULL AND a.content_hash != ''
+		    UNION
+		    SELECT a.thumbnail_hash
+		    FROM attachments a
+		    JOIN messages m ON m.id = a.message_id
+		    WHERE m.source_id = ?
+		      AND a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		)
+		SELECT COUNT(*)
+		FROM source_blobs sb
+		JOIN attachment_pack_index p ON p.blob_hash = sb.blob_hash
+		WHERE NOT EXISTS (
+		    SELECT 1
+		    FROM attachments a2
+		    JOIN messages m2 ON m2.id = a2.message_id
+		    WHERE m2.source_id != ?
+		      AND (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
+		)`
+
+// CountPackedBlobsUniqueToSource returns the number of live packed content or
+// thumbnail blobs referenced by sourceID and by no other source. Phase-2b
+// account removal uses the same query inside its serialized cascade to refuse
+// an unsafe removal until packed-orphan GC lands; shared packed blobs do not
+// block removal because their other source references remain live.
+func (s *Store) CountPackedBlobsUniqueToSource(sourceID int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(countPackedBlobsUniqueToSourceSQL,
+		sourceID, sourceID, sourceID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count unique packed blobs for source %d: %w", sourceID, err)
+	}
+	return count, nil
+}
+
 // IsAttachmentPathReferenced returns true if any attachment record still
 // points to the given storage_path. Use this immediately before deleting a
 // file to guard against a concurrent sync that added a new reference after

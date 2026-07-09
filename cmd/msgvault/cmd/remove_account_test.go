@@ -2,7 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,9 +18,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/packer"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -244,6 +250,67 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 
 	_, err = os.Stat(filePath)
 	assert.NoError(t, err, "shared attachment file should be preserved")
+}
+
+func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	attachmentsDir := filepath.Join(tmpDir, "attachments")
+	content := []byte("unique packed attachment")
+	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	storagePath := hash[:2] + "/" + hash
+
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedMessageWithAttachment(t, s,
+		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
+	seedAttachmentFile(t, attachmentsDir, storagePath, string(content))
+	packed, err := packer.Run(context.Background(), s, attachmentsDir, packer.Options{})
+	require.NoError(err)
+	require.Equal(1, packed.BlobsPacked)
+	require.NoError(s.Close())
+
+	savedCfg := cfg
+	defer func() { cfg = savedCfg }()
+	cfg = &config.Config{
+		HomeDir: tmpDir,
+		Data:    config.DataConfig{DataDir: tmpDir},
+	}
+
+	runRemove := func() error {
+		root := newTestRootCmd()
+		root.AddCommand(newRemoveAccountLocalTestCmd())
+		root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
+		return root.Execute()
+	}
+
+	err = runRemove()
+	require.ErrorContains(err, "unpack-attachments",
+		"phase 2b must refuse rather than leave a unique packed blob addressable")
+
+	stillPacked, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	src, err := stillPacked.GetSourceByIdentifier("alice@example.com")
+	require.NoError(err, "refusal must leave the account intact")
+	require.NotNil(src)
+	_, err = packer.Unpack(context.Background(), stillPacked, attachmentsDir)
+	require.NoError(err)
+	require.NoError(stillPacked.Close())
+
+	require.NoError(runRemove(), "removal succeeds after the operator unpacks")
+
+	removed, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	require.NoError(err)
+	defer func() { require.NoError(removed.Close()) }()
+	_, err = removed.GetSourceByIdentifier("alice@example.com")
+	require.ErrorIs(err, store.ErrSourceNotFound)
+	bs := blobstore.New(removed, attachmentsDir)
+	defer func() { require.NoError(bs.Close()) }()
+	_, _, err = bs.Open(hash)
+	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
+	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(storagePath)))
+	require.ErrorIs(err, fs.ErrNotExist, "unpacked loose copy is removed with the account")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
