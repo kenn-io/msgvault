@@ -1,0 +1,199 @@
+package packer_test
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+// packIndexRowCount returns the total number of attachment_pack_index rows.
+func (f *fixture) packIndexRowCount() int64 {
+	f.t.Helper()
+	var n int64
+	err := f.store.DB().QueryRow(`SELECT COUNT(*) FROM attachment_pack_index`).Scan(&n)
+	require.NoError(f.t, err, "count pack index rows")
+	return n
+}
+
+// packFiles returns the paths of all *.mvpack files under the packs dir.
+func (f *fixture) packFiles() []string {
+	f.t.Helper()
+	var files []string
+	err := filepath.WalkDir(filepath.Join(f.dir, "packs"),
+		func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && strings.HasSuffix(d.Name(), blobstore.PackExt) {
+				files = append(files, path)
+			}
+			return nil
+		})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	require.NoError(f.t, err, "walk packs dir")
+	return files
+}
+
+func TestUnpackRoundTrip(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	var contents [][]byte
+	var hashes []string
+	for range 4 {
+		c := randomContent(t, 600)
+		contents = append(contents, c)
+		hashes = append(hashes, f.addBlob(c, canonical))
+	}
+	ncContent := randomContent(t, 600)
+	ncHash := f.addBlob(ncContent, func(h string) string {
+		return "synctech-sms/" + h[:2] + "/" + h
+	})
+	contents = append(contents, ncContent)
+	hashes = append(hashes, ncHash)
+
+	run := f.run(packer.Options{TargetSize: 1024})
+	require.Equal(3, run.PacksSealed)
+	require.Empty(f.looseFiles(), "all loose files packed away")
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "packer.Unpack")
+
+	assert.Equal(3, stats.PacksUnpacked)
+	assert.Equal(5, stats.BlobsRestored)
+	assert.Equal(int64(5*600), stats.BytesRestored)
+
+	for i, h := range hashes {
+		data, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(h))))
+		require.NoErrorf(err, "canonical loose file for %s", h)
+		assert.Equalf(contents[i], data, "blob %s restored byte-identical", h)
+		entry, err := f.store.GetAttachmentPackEntry(h)
+		require.NoErrorf(err, "GetAttachmentPackEntry(%s)", h)
+		assert.Nilf(entry, "blob %s no longer indexed", h)
+	}
+
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	assert.Empty(recs, "attachment_packs empty")
+	assert.Zero(f.packIndexRowCount(), "attachment_pack_index empty")
+	assert.Empty(f.packFiles(), "no .mvpack files remain")
+	assert.Equal(contents[0], f.readBack(hashes[0]),
+		"production read path serves the restored loose file")
+}
+
+func TestUnpackRestoresEmptyBlob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	buildOrphanPack(t, f.dir, []byte{})
+	adopted := f.run(packer.Options{})
+	require.Equal(1, adopted.PacksAdopted, "orphan pack with empty blob adopted")
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "packer.Unpack")
+
+	assert.Equal(1, stats.PacksUnpacked)
+	assert.Equal(1, stats.BlobsRestored)
+	assert.Zero(stats.BytesRestored)
+	emptyHash := hashOf(nil)
+	data, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(emptyHash))))
+	require.NoError(err, "canonical loose file for empty blob")
+	assert.Empty(data)
+	assert.Zero(f.packIndexRowCount())
+}
+
+func TestUnpackDropsMissingPackWithNoLiveRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	rec := store.PackRecord{
+		PackID:    "01hzy3v7q8r9s0t1a2b3c4d5e6",
+		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}
+	require.NoError(f.store.RecordPackedBlobs(rec, nil), "record empty pack")
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "missing pack file with no live rows is not an error")
+
+	assert.Equal(packer.UnpackStats{}, stats, "dropped record is not counted as unpacked")
+	has, err := f.store.HasPackRecord(rec.PackID)
+	require.NoError(err)
+	assert.False(has, "stale record dropped")
+}
+
+func TestUnpackFailsOnMalformedPackID(t *testing.T) {
+	require := require.New(t)
+	f := newFixture(t)
+
+	rec := store.PackRecord{
+		PackID:    "not-a-ulid",
+		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}
+	require.NoError(f.store.RecordPackedBlobs(rec, nil), "record pack with bad id")
+
+	_, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err, "malformed pack id must not be sliced into a path")
+	require.Contains(err.Error(), rec.PackID)
+}
+
+func TestUnpackFailsOnMissingPackWithLiveRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	f.addBlob(randomContent(t, 600), canonical)
+	f.run(packer.Options{})
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	require.Len(recs, 1)
+	id := recs[0].PackID
+	require.NoError(os.Remove(filepath.Join(f.dir, "packs", id[:2], id+blobstore.PackExt)),
+		"delete pack file out from under the record")
+
+	_, err = packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err, "live blobs are unreachable")
+	assert.Contains(err.Error(), id, "error names the pack")
+
+	has, err := f.store.HasPackRecord(id)
+	require.NoError(err)
+	assert.True(has, "record retained")
+	n, err := f.store.CountPackIndexEntries(id)
+	require.NoError(err)
+	assert.Equal(int64(1), n, "index rows retained")
+}
+
+func TestUnpackHonorsContextCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	f.addBlob(randomContent(t, 100), canonical)
+	f.run(packer.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := packer.Unpack(ctx, f.store, f.dir)
+	require.ErrorIs(err, context.Canceled)
+
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	assert.Len(recs, 1, "pack record retained after cancellation")
+	assert.Len(f.packFiles(), 1, "pack file retained after cancellation")
+}

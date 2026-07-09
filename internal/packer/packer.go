@@ -264,7 +264,7 @@ func readLooseBlob(attachmentsDir string, b store.UnpackedBlob, stats *Stats) ([
 // adopted by reconciliation on the next run (design crash boundary).
 func sealAndCommit(st *store.Store, packsDir string, w *pack.Writer, sources []string, stats *Stats) error {
 	id := w.ID()
-	finalPath := filepath.Join(packsDir, id[:2], id+blobstore.PackExt)
+	finalPath := packFilePath(packsDir, id)
 	entries, err := w.Seal(finalPath)
 	if err != nil {
 		// Abort is safe after a failed Seal and a no-op after publish; it
@@ -297,6 +297,11 @@ func sealAndCommit(st *store.Store, packsDir string, w *pack.Writer, sources []s
 		_ = os.Remove(filepath.Dir(src))
 	}
 	return nil
+}
+
+// packFilePath returns a pack's sharded final path under packsDir.
+func packFilePath(packsDir, packID string) string {
+	return filepath.Join(packsDir, packID[:2], packID+blobstore.PackExt)
 }
 
 // indexEntry converts one kit pack entry to its store index row.
