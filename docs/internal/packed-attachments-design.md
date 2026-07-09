@@ -1,8 +1,9 @@
 # Packed Attachment Storage
 
 Design for storing attachment content in kit CAS pack files instead of loose
-content-addressed files. Written 2026-07-09; status: approved design, not yet
-implemented.
+content-addressed files. Written 2026-07-09; status: delivery steps 1-2 (see
+Delivery order below) implemented (this branch); phase 2 (kit content-reader
+hook, packer, GC) not yet started.
 
 ## Motivation
 

@@ -100,6 +100,7 @@ make lint                     # Run linter
 - `store/schema.sql` - Core SQLite schema
 - `store/schema_sqlite.sql` - FTS5 virtual table
 - `deletion/manifest.go` - Deletion staging and manifest generation
+- `blobstore/blobstore.go` - Attachment blob reads: packed CAS with loose-file fallback
 - `gmail/client.go` - Gmail API client with rate limiting
 - `oauth/oauth.go` - OAuth2 flows (browser + device)
 - `sync/sync.go` - Sync orchestration, MIME parsing
