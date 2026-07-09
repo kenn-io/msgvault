@@ -308,7 +308,8 @@ their entries into the repo index, skipping per-blob re-reads.
 - End-to-end: import -> pack -> read via API/MCP/export -> backup ->
   restore -> read again.
 - PostgreSQL backend: index table migrations and packer transaction
-  semantics under `MSGVAULT_TEST_DB`.
+  semantics under `MSGVAULT_TEST_DB`; thumbnail hash/path supporting indexes
+  build through the maintenance timeout hatch on existing archives.
 
 ## Delivery order
 
