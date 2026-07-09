@@ -201,7 +201,12 @@ sharded pack file is missing, plus records with malformed pack IDs that no
 reader could open. Repairing metadata first is important when a missing
 recorded pack and an orphan pack contain the same blob: reconciliation can
 adopt the orphan instead of mistaking it for a redundant copy and deleting
-it.
+it. An existing index row is likewise not sufficient proof that an orphan
+entry is redundant: reconciliation reads the indexed copy through the
+production blob store. If that read fails but the orphan entry verifies, the
+orphan adoption transaction repoints that blob's index row to the readable
+pack. The old pack record remains for normal dead-byte accounting and later
+GC/repack.
 
 ### GC and repack
 
@@ -269,7 +274,8 @@ their entries into the repo index, skipping per-blob re-reads.
 - Packer crash injection at each ordering boundary: sealed-pack-no-index
   (adoption), index-no-delete (idempotent re-sweep), mid-seal abort
   (staging file cleanup), missing-recorded-pack plus orphan-pack recovery,
-  corrupt packed copy plus readable loose-copy preservation.
+  corrupt indexed pack plus readable orphan-pack rescue, corrupt packed copy
+  plus readable loose-copy preservation.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
 - Repack: live-blob preservation, threshold + hysteresis, transactional

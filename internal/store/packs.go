@@ -40,6 +40,19 @@ type PackRecord struct {
 // canonical pack ID, and every entry must belong to that pack and carry a
 // 64-char blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
+	return s.recordPackedBlobs(rec, entries, false)
+}
+
+// AdoptPackedBlobs records a reconciled orphan pack and transactionally
+// repoints the supplied blob index entries to it. The caller must submit only
+// entries that were absent from the index or whose previously indexed packed
+// copy failed verification. Repointing instead of deleting stale rows before
+// adoption avoids a crash window with no readable packed index.
+func (s *Store) AdoptPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
+	return s.recordPackedBlobs(rec, entries, true)
+}
+
+func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, replaceExisting bool) error {
 	if !pack.IsValidPackID(rec.PackID) {
 		return fmt.Errorf("attachment pack record has malformed pack id %q", rec.PackID)
 	}
@@ -61,6 +74,12 @@ func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) erro
 			return fmt.Errorf("insert attachment_packs row for %s: %w", rec.PackID, err)
 		}
 		for _, e := range entries {
+			if replaceExisting {
+				if _, err := tx.Exec(`
+					DELETE FROM attachment_pack_index WHERE blob_hash = ?`, e.BlobHash); err != nil {
+					return fmt.Errorf("replace pack index row for %s: %w", e.BlobHash, err)
+				}
+			}
 			if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
 				INSERT OR IGNORE INTO attachment_pack_index
 				    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)

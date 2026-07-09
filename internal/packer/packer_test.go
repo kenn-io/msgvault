@@ -411,6 +411,46 @@ func TestRunRepairsDanglingRecordsBeforeReconcilingOrphans(t *testing.T) {
 	assert.Equal(content, f.readBack(hash))
 }
 
+// TestRunAdoptsOrphanWhenIndexedPackIsUnreadable pins the other orphan
+// classification hazard: an index row is not proof that its packed copy is
+// readable. A valid orphan must replace an unreadable indexed copy instead of
+// being deleted as redundant.
+func TestRunAdoptsOrphanWhenIndexedPackIsUnreadable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	first := f.run(packer.Options{})
+	require.Equal(1, first.PacksSealed)
+
+	stale, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(stale)
+	packPath := filepath.Join(f.dir, "packs", stale.PackID[:2], stale.PackID+blobstore.PackExt)
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := make([]byte, 1)
+	_, err = pf.ReadAt(buf, stale.Offset)
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, stale.Offset)
+	require.NoError(err)
+	require.NoError(pf.Close())
+
+	orphanID := buildOrphanPack(t, f.dir, content)
+	second := f.run(packer.Options{})
+
+	assert.Equal(1, second.PacksAdopted, "valid orphan replaces unreadable indexed copy")
+	assert.Zero(second.PacksRemoved, "valid orphan must not be classified as redundant")
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(orphanID, entry.PackID)
+	assert.Equal(content, f.readBack(hash))
+}
+
 // TestRunDropsDanglingPackRecords pins the restored-vault self-heal: backup
 // restore materializes loose files but no production packs, so a restored DB
 // can carry pack rows whose files do not exist. The packer must drop those

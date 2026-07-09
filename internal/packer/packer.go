@@ -60,7 +60,7 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := dropDanglingPackRecords(st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("drop dangling pack records: %w", err)
 	}
-	if err := reconcilePacks(st, packsDir, &stats); err != nil {
+	if err := reconcilePacks(st, attachmentsDir, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -100,7 +100,13 @@ func cleanStaging(packsDir string) error {
 
 // reconcilePacks walks packsDir for *.mvpack files with no attachment_packs
 // row and adopts or removes each one.
-func reconcilePacks(st *store.Store, packsDir string, stats *Stats) error {
+func reconcilePacks(st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
+	existingBlobs := blobstore.New(st, attachmentsDir)
+	defer func() {
+		if err := existingBlobs.Close(); err != nil {
+			slog.Warn("close blob store after pack reconciliation", "error", err)
+		}
+	}()
 	return filepath.WalkDir(packsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -128,7 +134,7 @@ func reconcilePacks(st *store.Store, packsDir string, stats *Stats) error {
 		if has {
 			return nil
 		}
-		return reconcileOnePack(st, path, id, stats)
+		return reconcileOnePack(st, existingBlobs, path, id, stats)
 	})
 }
 
@@ -137,13 +143,13 @@ func reconcilePacks(st *store.Store, packsDir string, stats *Stats) error {
 // An orphan whose unindexed entries fail verification is neither adopted nor
 // removed: its bytes may be the only (damaged) copy, so deleting it could
 // destroy data a repair might still recover.
-func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
+func reconcileOnePack(st *store.Store, existingBlobs *blobstore.Store, path, id string, stats *Stats) error {
 	r, err := pack.OpenReader(path, nil)
 	if err != nil {
 		slog.Warn("skipping unreadable orphan pack", "pack", id, "error", err)
 		return nil
 	}
-	adoptable, rec, failed, err := collectAdoptable(st, r, id)
+	adoptable, rec, failed, err := collectAdoptable(st, existingBlobs, r, id)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close orphan pack reader", "pack", id, "error", closeErr)
 	}
@@ -163,7 +169,7 @@ func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
 		slog.Info("removed fully-redundant orphan pack", "pack", id)
 		return nil
 	}
-	if err := st.RecordPackedBlobs(rec, adoptable); err != nil {
+	if err := st.AdoptPackedBlobs(rec, adoptable); err != nil {
 		return fmt.Errorf("adopt orphan pack %s: %w", id, err)
 	}
 	stats.PacksAdopted++
@@ -172,11 +178,12 @@ func reconcileOnePack(st *store.Store, path, id string, stats *Stats) error {
 }
 
 // collectAdoptable returns the orphan pack's verified entries that have no
-// index row, plus a PackRecord carrying the FULL footer totals (design:
-// "footer entry count at seal/adoption") and the count of unindexed entries
-// that failed read/verification (so the caller never treats a damaged pack
-// as fully redundant).
-func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
+// index row or whose currently indexed packed copy is unreadable, plus a
+// PackRecord carrying the FULL footer totals (design: "footer entry count at
+// seal/adoption") and the count of candidate entries that failed orphan
+// read/verification (so the caller never treats a damaged pack as fully
+// redundant).
+func collectAdoptable(st *store.Store, existingBlobs *blobstore.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
 	entries := r.Entries()
 	rec := store.PackRecord{
 		PackID:     id,
@@ -192,8 +199,16 @@ func collectAdoptable(st *store.Store, r *pack.Reader, id string) ([]store.PackI
 		if err != nil {
 			return nil, rec, failed, err
 		}
-		if existing != nil {
-			continue
+		if existing != nil && existing.PackID != id {
+			existingReader, _, readErr := existingBlobs.Open(hash)
+			if readErr == nil {
+				if closeErr := existingReader.Close(); closeErr != nil {
+					slog.Warn("close verified existing packed blob", "hash", hash, "error", closeErr)
+				}
+				continue
+			}
+			slog.Error("existing packed blob is unreadable; adopting orphan replacement",
+				"hash", hash, "existingPack", existing.PackID, "orphanPack", id, "error", readErr)
 		}
 		if _, err := r.ReadBlob(e); err != nil {
 			failed++

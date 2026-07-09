@@ -92,6 +92,30 @@ func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
 	require.Nil(entry, "invalid metadata must fail atomically")
 }
 
+func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	hash := packTestHash("fa07")
+	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a1", hash)
+	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a2", hash)
+	require.NoError(st.RecordPackedBlobs(recA, entriesA))
+
+	require.NoError(st.AdoptPackedBlobs(recB, entriesB))
+
+	entry, err := st.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(recB.PackID, entry.PackID, "adoption transaction replaces unreadable source index")
+	oldCount, err := st.CountPackIndexEntries(recA.PackID)
+	require.NoError(err)
+	assert.Zero(oldCount, "old pack remains recorded but no longer owns the rescued blob")
+	newCount, err := st.CountPackIndexEntries(recB.PackID)
+	require.NoError(err)
+	assert.Equal(int64(1), newCount)
+}
+
 // packTestHash returns a synthetic 64-char blob hash unique per prefix.
 func packTestHash(prefix string) string {
 	const filler = "0000000000000000000000000000000000000000000000000000000000000000"
