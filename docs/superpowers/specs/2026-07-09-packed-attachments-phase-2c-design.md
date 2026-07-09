@@ -68,7 +68,9 @@ through bounded background work.
 - The daemon's operation gate serializes mutating CLI requests, scheduled
   syncs, maintenance, and backup freeze windows. A maintenance helper called
   from inside those paths must assume the gate is already held and must not
-  reacquire it.
+  reacquire it. Kit releases the gate after pinning the backup's database
+  snapshot, before attachment capture, so the backup content reader can overlap
+  later maintenance.
 - Manual sync uses `storeAPIAdapter.RunCLISync`; most other ingest commands use
   `storeAPIAdapter.RunCLICommand`. Both execute subprocesses while the parent
   daemon continues to own the operation gate and the long-lived blob store.
@@ -145,7 +147,8 @@ and classify each regular hash-named file:
 This covers canonical and legacy noncanonical paths because both use the hash as
 their basename. Files that are not named as valid content hashes and everything
 inside `packs/` are outside this cleanup. Add stats for pruned mappings,
-unreferenced loose files removed, and quarantined orphan packs.
+unreferenced loose files removed, quarantined orphan packs, and unreadable
+orphan packs.
 
 `pack-attachments` continues to call the packer with zero `MaxBytes`. Automatic
 callers use 256 MiB and log the resulting stats at INFO. A canceled automatic
@@ -262,6 +265,14 @@ failed referenced-entry count, and withheld adoptable-entry count. Explicit
 retries and re-verifies the referenced candidates on every run until the pack
 can be adopted, becomes redundant, or the failed reference is removed.
 
+An orphan whose footer cannot be opened is a separate condition because its
+entries and reference counts are unknown. Preserve and retry it, increment
+`PacksUnreadable`, and emit a distinct ERROR containing the pack ID, path, and
+open error. Do not also count it as `PacksQuarantined`. Explicit
+`pack-attachments` output reports both counts, so an operator can distinguish
+an unreadable pack container from a readable pack with damaged referenced
+entries.
+
 ### 4. Logical packed-blob GC during account removal
 
 Replace the temporary `UniquePackedBlobsError` refusal with transactional
@@ -356,13 +367,24 @@ Holding the mutex through deletion provides the required ordering:
 - Windows sees every daemon-owned handle closed before `os.Remove`, avoiding
   its open-file deletion failure. Unix follows the same deterministic path.
 
-The daemon cache is the only supported long-lived attachment pack cache: TUI,
-MCP, and CLI exports use the daemon even with `--local`, while backup's
-short-lived blob store holds a backup-freeze gate that excludes repack. If a
-future or embedded out-of-process reader bypasses that coordination, safety
-still degrades conservatively: Windows returns a delete error and retains the
-zero-live file/record for retry; on Unix an already-open handle can finish while
-new lookups resolve the replacement mapping.
+TUI, MCP, and CLI exports use the daemon's shared cache even with `--local`.
+Backup is the supported exception: it creates an independent short-lived blob
+store, and kit releases the operation gate after pinning the database snapshot
+but before attachment capture. Backup can therefore overlap repack, and daemon
+reader retirement cannot close its cached pack handles.
+
+That boundary remains conservative. On Windows, a backup-held handle can make
+old-pack deletion fail after the mapping swap; the repacker reports the error
+and retains the zero-live file and record until a later run after backup closes.
+On Unix, deletion can unlink the old path while the backup's already-open handle
+remains usable; a new lookup sees the replacement mapping. Repack never omits
+or mutates live bytes, so capture either completes with verified content or
+fails loudly and can be retried. The existing backup limitation also remains:
+if a concurrent logical deletion removes a reference from the live database
+after the snapshot was pinned, the reference-aware content source may reject
+that snapshot-only hash and the backup fails loudly rather than silently
+omitting it. Any future independent pack reader must obey the same retryable
+contract.
 
 After successful deletion, remove the old `attachment_packs` row with a guarded
 store method that succeeds only when no live index row names that pack. If the
@@ -381,12 +403,14 @@ run retries them.
 | Source removal transaction fails | Source and all pack mappings unchanged | Retry removal |
 | Source removal commits | Unique hashes unreferenced and unindexed; old pack record/file and possible loose leftovers retained | Resolver returns not-found; repack reclaims pack bytes and the next packer sweep retries loose deletion |
 | Referenced orphan candidate fails verification beside valid adoptable entries | Entire orphan remains unrecorded and undeleted | Distinct quarantine stat/error names pack; every maintenance run retries verification |
+| Orphan footer cannot be opened | Pack remains unrecorded and undeleted; entry liveness is unknown | Distinct unreadable-pack stat/error names pack and path; every maintenance run retries opening it |
 | Repack read/write fails before database swap | Old mappings/files unchanged; new staging aborted | Retry; any sealed new pack is reconciled safely |
 | New repack files seal before swap, then crash | New orphan files; old mappings authoritative | Referenced entries are redundant or recoverable; dead entries are never adopted |
 | Repack index swap commits before old deletion | New mappings live; old records/files zero-live | Next repack retries retirement/deletion |
 | Old file deletes before old record cleanup | Zero-live record points to missing file | Dangling-record repair removes record |
 | Old file deletion fails | New mappings remain live; zero-live old record/file retained | Report error and retry later |
 | Reader fetched old index before swap | It either finishes before retirement or gets `ENOENT` afterward | Existing index retry opens the new pack |
+| Backup overlaps repack and holds an old pack handle | New mappings are authoritative; Windows may retain the zero-live old file/record, while Unix may unlink it beneath the open handle | Capture uses its open handle or the new mapping; a loud capture/delete failure is retryable, and later repack removes retained files after backup closes |
 | Backup restore | Canonical loose files; pack metadata cleared | Automatic packing resumes gradually or explicit packing migrates immediately |
 
 ## User experience and migration
@@ -447,6 +471,9 @@ tags.
 - A mixed orphan with one valid adoptable entry and one referenced verification
   failure remains wholly unrecorded and undeleted, increments the quarantine
   stat, and logs the pack ID and both entry counts.
+- An orphan whose footer cannot open remains wholly unrecorded and undeleted,
+  increments only the unreadable-pack stat, and logs its pack ID, path, and
+  error.
 - Removing a source after seal-before-index does not resurrect its blobs.
 - Pack Teams inline media, replace the inline attachment set so the old hash
   loses its final row, then verify repair prunes its mapping and repack proceeds
@@ -470,6 +497,13 @@ tags.
 - Cached handles are closed before deletion. The normal Windows CI job must run
   this test so Windows' stricter file semantics validate the real ordering.
 - Race runs cover the blob-store cache and repacker coordination.
+- A backup `ContentSource` backed by its independent blob-store cache overlaps a
+  mapping swap. Capture must either return verified bytes or a loud retryable
+  error, never omit content. On Windows, hold its old-pack handle across
+  retirement and verify deletion fails with the zero-live file/record intact;
+  after closing the backup store, the next repack removes both. On Unix, verify
+  an already-open handle remains usable after unlink while new opens follow the
+  new mapping.
 
 ### End to end
 
@@ -524,12 +558,14 @@ Phase 2c is complete when:
    cleanup failures are retried.
 5. Eligible dead space is compacted into new immutable packs, and zero-live
    packs are eventually removed.
-6. Concurrent reads survive repack on Unix and Windows using the production
-   cache and retry path.
+6. Concurrent reads survive repack on Unix and Windows using both the daemon
+   cache and backup's independent cache; external-handle deletion failures
+   retain a truthful zero-live file/record and succeed on a later retry.
 7. Every crash boundary leaves either the old or new verified mapping
    authoritative, with deterministic cleanup on a later run.
-8. Quarantined damaged orphans are preserved and observably retried without
-   allowing partial adoption to hide failed referenced entries.
+8. Quarantined damaged-entry orphans and unreadable-footer orphans are
+   preserved, distinctly observable, and retried without allowing partial
+   adoption to hide failed referenced entries.
 9. Backup restore remains a fully loose, readable vault that can be repacked.
 10. Automated, backend, Windows, race, crash-injection, and exact-head review
    gates pass before real-vault hardening is proposed.

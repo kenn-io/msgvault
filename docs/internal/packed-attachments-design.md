@@ -177,8 +177,9 @@ created.
 
 `msgvault pack-attachments`; also runs automatically at the end of sync and
 import runs and on the daemon schedule. It acquires the daemon operation
-gate (like other maintenance ops), so it can never overlap a backup freeze
-window.
+gate (like other maintenance ops), so it cannot overlap the short backup
+checkpoint-and-pin window. Kit releases that gate before attachment capture,
+which can overlap later maintenance through its independent blob store.
 
 1. Enumerate loose blobs from the DB: distinct local (non-URL)
    `content_hash` and `thumbnail_hash` values without an index row, locating
@@ -231,6 +232,9 @@ after partially adopting the valid entries beside it. The tradeoff is explicit:
 otherwise-valid adoptable entries in that pack remain unavailable. The packer
 increments a quarantine stat and logs one ERROR with the pack ID and failed and
 withheld entry counts; each later run re-verifies the referenced candidates.
+An orphan whose footer cannot be opened is preserved and retried under a
+separate unreadable-pack stat and ERROR containing the pack ID, path, and open
+error; it is not also counted as a quarantined readable-footer pack.
 
 Before reconciliation, the packer also deletes index mappings whose hashes no
 longer appear in either attachment hash column. Teams inline replacement,
@@ -282,11 +286,16 @@ boundary without violating the same crash-ordering rules.
   `remove-account` and on the daemon maintenance schedule; explicit
   `msgvault repack-attachments` is unbounded.
 
-  The daemon blob store is the only supported long-lived pack-reader cache:
-  TUI, MCP, and exports remain daemon-backed even with `--local`, and backup's
-  short-lived reader holds the freeze gate. A future out-of-process reader is
-  still fail-safe: Windows can leave the zero-live pack for retry when another
-  handle blocks deletion, while an already-open Unix handle can finish.
+  TUI, MCP, and exports remain daemon-backed even with `--local`. Backup is the
+  supported independent reader: kit releases the freeze gate after pinning its
+  database snapshot and before attachment capture, so its short-lived blob
+  store can overlap repack and keep an old pack handle open. On Windows that
+  handle can make old-file deletion fail; the truthful zero-live record/file is
+  retained until a later retry after backup closes. On Unix an already-open
+  handle remains usable after unlink while new opens follow the replacement
+  mapping. Capture either returns verified content or fails loudly and is
+  retryable, including the existing case where a concurrent logical deletion
+  makes a pinned-snapshot-only reference unavailable.
 
 Until that step-5 integration lands, `remove-account` refuses before its
 cascade when the selected source owns any unique packed blobs, and directs the
@@ -362,7 +371,10 @@ their entries into the repo index, skipping per-blob re-reads.
   canonical after packing.
 - Repack: referenced-live accounting despite stale index rows, live-blob
   preservation, threshold + hysteresis, transactional index swap, and explicit
-  SHA-verified copy semantics.
+  SHA-verified copy semantics. Race coverage includes backup's independent
+  reader cache: Windows retains an old zero-live pack when the handle blocks
+  deletion and removes it on the next run after close; Unix open handles remain
+  readable after unlink while new lookups use the replacement mapping.
 - `unpack-attachments` round-trip: pack -> unpack -> byte-identical loose
   tree, index empty.
 - `remove-account` GC over mixed loose/packed orphans.

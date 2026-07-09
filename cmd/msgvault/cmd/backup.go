@@ -401,8 +401,10 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 	// (packs + loose fallback) rather than the engine's own ContentDir
 	// reads, so a packed vault backs up without any loose files. The
 	// read-only SQLite connection alongside the daemon's writer is safe
-	// under WAL; capture runs inside the daemon freeze, so the packer
-	// cannot run concurrently (operation gate).
+	// under WAL. Kit releases the daemon's operation gate after pinning the
+	// database snapshot, before attachment capture, so maintenance can run
+	// concurrently; blob-store reads either follow its new mapping or fail
+	// loudly and leave the backup retryable.
 	roStore, err := store.OpenReadOnly(dbPath)
 	if err != nil {
 		return fmt.Errorf("open archive for backup content reads: %w", err)
