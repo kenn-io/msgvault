@@ -1,8 +1,10 @@
 package export
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -86,6 +88,11 @@ func ensureSubdirSafe(baseDir, hashPrefix string) error {
 // it into place. On rename conflict (concurrent writer), validates the
 // existing file instead.
 func writeAtomicFile(fullPath string, data []byte, expectedSize int64, expectedHash string) error {
+	return writeAtomicFileStream(fullPath, bytes.NewReader(data), expectedSize, expectedHash)
+}
+
+// writeAtomicFileStream is writeAtomicFile for a streaming source.
+func writeAtomicFileStream(fullPath string, src io.Reader, expectedSize int64, expectedHash string) error {
 	dir := filepath.Dir(fullPath)
 	base := filepath.Base(fullPath)
 
@@ -106,7 +113,7 @@ func writeAtomicFile(fullPath string, data []byte, expectedSize int64, expectedH
 		return fmt.Errorf("chmod temp attachment file: %w", err)
 	}
 
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := io.Copy(tmp, src); err != nil {
 		return fmt.Errorf("write attachment file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -114,8 +121,6 @@ func writeAtomicFile(fullPath string, data []byte, expectedSize int64, expectedH
 	}
 
 	if err := os.Rename(tmpPath, fullPath); err != nil {
-		// Another writer may have installed the final file first (notably on
-		// Windows; Unix rename typically overwrites). Validate the existing file.
 		if _, statErr := os.Lstat(fullPath); statErr == nil {
 			removeTmp = false
 			_ = os.Remove(tmpPath)
@@ -172,6 +177,72 @@ func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, e
 		return "", err
 	}
 	return storagePath, nil
+}
+
+// StoreAttachmentFromPath streams the regular file at srcPath into
+// content-addressed storage under attachmentsDir (hash[:2]/hash), hashing
+// without loading the file into memory. maxSize > 0 rejects larger sources.
+//
+// Returns the storage path relative to attachmentsDir, the content hash, and
+// the source size. On failures after the source was hashed, contentHash and
+// size are still returned (with an empty storage path) so callers can record
+// metadata for content they could not store.
+func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (string, string, int64, error) {
+	if attachmentsDir == "" || srcPath == "" {
+		return "", "", 0, errors.New("attachments dir and source path are required")
+	}
+	linfo, err := os.Lstat(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("lstat attachment source: %w", err)
+	}
+	if !linfo.Mode().IsRegular() {
+		return "", "", 0, fmt.Errorf("attachment source %q is not a regular file", srcPath)
+	}
+	size := linfo.Size()
+	if maxSize > 0 && size > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, size, maxSize)
+	}
+
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open attachment source: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", "", 0, fmt.Errorf("hash attachment source: %w", err)
+	}
+	contentHash := hex.EncodeToString(h.Sum(nil))
+
+	hashPrefix := contentHash[:2]
+	storagePath := path.Join(hashPrefix, contentHash)
+
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", contentHash, size, err
+	}
+	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
+		return "", contentHash, size, err
+	}
+
+	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
+	if _, err := os.Lstat(fullPath); err == nil {
+		if err := validateExistingAttachmentFile(fullPath, size, contentHash); err != nil {
+			return "", contentHash, size, err
+		}
+		return storagePath, contentHash, size, nil
+	} else if !os.IsNotExist(err) {
+		return "", contentHash, size, fmt.Errorf("lstat attachment file: %w", err)
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
+	}
+	if err := writeAtomicFileStream(fullPath, f, size, contentHash); err != nil {
+		return "", contentHash, size, err
+	}
+	return storagePath, contentHash, size, nil
 }
 
 func validateExistingAttachmentFile(fullPath string, expectedSize int64, expectedHash string) error {
