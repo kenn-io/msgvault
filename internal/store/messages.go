@@ -2054,37 +2054,39 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 	return err
 }
 
-// AttachmentPathsUniqueToSource returns storage_path values for attachments
-// belonging to sourceID whose content_hash is not shared with any other source.
-// Call this before RemoveSource so the cascade hasn't run yet.
-//
-// Note: thumbnail_path values are not included. No sync/import code currently
-// writes thumbnail files to disk, so there are no thumbnail files to clean up.
-// If thumbnail storage is added in the future, this function and the delete
-// loop in remove_account.go must be extended to cover thumbnail_path as well.
+// AttachmentPathsUniqueToSource returns local content and thumbnail paths for
+// blobs referenced by sourceID and by no other source. Sharing is checked
+// across both hash columns: a content blob used as another source's thumbnail
+// (or vice versa) is preserved. Call this before RemoveSource so the cascade
+// has not run yet.
 func (s *Store) AttachmentPathsUniqueToSource(sourceID int64) ([]string, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT a.storage_path
-		FROM attachments a
-		WHERE EXISTS (
-		    SELECT 1 FROM messages m
-		    WHERE m.id = a.message_id AND m.source_id = ?
-		  )
-		  AND a.content_hash IS NOT NULL
-		  AND a.content_hash != ''
-		  AND a.storage_path IS NOT NULL
-		  AND a.storage_path != ''
-		  AND a.storage_path NOT LIKE 'http://%'
-		  AND a.storage_path NOT LIKE 'https://%'
+		WITH source_blob_paths(blob_hash, blob_path) AS (
+		    SELECT a.content_hash, a.storage_path
+		    FROM attachments a
+		    JOIN messages m ON m.id = a.message_id
+		    WHERE m.source_id = ?
+		      AND a.content_hash IS NOT NULL AND a.content_hash != ''
+		    UNION
+		    SELECT a.thumbnail_hash, a.thumbnail_path
+		    FROM attachments a
+		    JOIN messages m ON m.id = a.message_id
+		    WHERE m.source_id = ?
+		      AND a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
+		)
+		SELECT DISTINCT sb.blob_path
+		FROM source_blob_paths sb
+		WHERE sb.blob_path IS NOT NULL
+		  AND sb.blob_path != ''
+		  AND sb.blob_path NOT LIKE 'http://%'
+		  AND sb.blob_path NOT LIKE 'https://%'
 		  AND NOT EXISTS (
 		      SELECT 1 FROM attachments a2
-		      WHERE a2.content_hash = a.content_hash
-		        AND EXISTS (
-		            SELECT 1 FROM messages m2
-		            WHERE m2.id = a2.message_id AND m2.source_id != ?
-		        )
+		      JOIN messages m2 ON m2.id = a2.message_id
+		      WHERE m2.source_id != ?
+		        AND (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
 		  )
-	`, sourceID, sourceID)
+	`, sourceID, sourceID, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -2142,14 +2144,14 @@ func (s *Store) CountPackedBlobsUniqueToSource(sourceID int64) (int, error) {
 }
 
 // IsAttachmentPathReferenced returns true if any attachment record still
-// points to the given storage_path. Use this immediately before deleting a
-// file to guard against a concurrent sync that added a new reference after
-// the candidate list was collected.
+// points to the given content or thumbnail path. Use this immediately before
+// deleting a file to guard against a concurrent sync that added a new
+// reference after the candidate list was collected.
 func (s *Store) IsAttachmentPathReferenced(storagePath string) (bool, error) {
 	var count int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM attachments WHERE storage_path = ?`,
-		storagePath,
+		`SELECT COUNT(*) FROM attachments WHERE storage_path = ? OR thumbnail_path = ?`,
+		storagePath, storagePath,
 	).Scan(&count)
 	if err != nil {
 		return true, err // fail safe: treat error as referenced

@@ -259,16 +259,24 @@ func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
 	content := []byte("unique packed attachment")
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
 	storagePath := hash[:2] + "/" + hash
+	thumbnail := []byte("unique packed thumbnail")
+	thumbnailHash := fmt.Sprintf("%x", sha256.Sum256(thumbnail))
+	thumbnailPath := thumbnailHash[:2] + "/" + thumbnailHash
 
 	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)
 	require.NoError(s.InitSchema())
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
+	_, err = s.DB().Exec(s.Rebind(`
+		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
+		WHERE content_hash = ?`), thumbnailHash, thumbnailPath, hash)
+	require.NoError(err)
 	seedAttachmentFile(t, attachmentsDir, storagePath, string(content))
+	seedAttachmentFile(t, attachmentsDir, thumbnailPath, string(thumbnail))
 	packed, err := packer.Run(context.Background(), s, attachmentsDir, packer.Options{})
 	require.NoError(err)
-	require.Equal(1, packed.BlobsPacked)
+	require.Equal(2, packed.BlobsPacked)
 	require.NoError(s.Close())
 
 	savedCfg := cfg
@@ -309,8 +317,12 @@ func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
 	defer func() { require.NoError(bs.Close()) }()
 	_, _, err = bs.Open(hash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
+	_, _, err = bs.Open(thumbnailHash)
+	require.ErrorIs(err, fs.ErrNotExist, "removed thumbnail is no longer addressable by hash")
 	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(storagePath)))
 	require.ErrorIs(err, fs.ErrNotExist, "unpacked loose copy is removed with the account")
+	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(thumbnailPath)))
+	require.ErrorIs(err, fs.ErrNotExist, "unpacked loose thumbnail is removed with the account")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {

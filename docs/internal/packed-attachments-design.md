@@ -228,7 +228,9 @@ cascade when the selected source owns any unique packed blobs, and directs the
 operator to stop the daemon and run `unpack-attachments` first. Packed blobs
 that remain referenced by another source do not block account removal. This
 keeps the phase-2b branch independently safe without folding physical repack
-into the account-removal transaction.
+into the account-removal transaction. After unpack, the existing orphan-file
+sweep covers both loose content and thumbnail paths, with sharing checked
+across both hash columns.
 
 ### Downgrade: `msgvault unpack-attachments`
 

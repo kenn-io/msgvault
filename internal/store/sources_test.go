@@ -280,6 +280,12 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	err = f.Store.UpsertAttachment(uniqueMsg, "u.pdf", "application/pdf",
 		"aa/uniquehash", "uniquehash", 10)
 	require.NoError(err, "upsert unique attachment")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE attachments
+		SET thumbnail_hash = ?, thumbnail_path = ?
+		WHERE message_id = ? AND content_hash = ?`),
+		"uniquethumbhash", "dd/uniquethumbhash", uniqueMsg, "uniquehash")
+	require.NoError(err, "set unique thumbnail")
 
 	// Attachment shared with another source (same content_hash).
 	sharedMsg := f.CreateMessage("msg-shared")
@@ -289,6 +295,15 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	err = f.Store.UpsertAttachment(otherMsgID, "s.pdf", "application/pdf",
 		"bb/sharedhash", "sharedhash", 20)
 	require.NoError(err, "upsert shared attachment in other source")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE attachments
+		SET thumbnail_hash = ?, thumbnail_path = ?
+		WHERE message_id = ? AND content_hash = ?`),
+		"crosshash", "ee/crosshash", sharedMsg, "sharedhash")
+	require.NoError(err, "set cross-type shared thumbnail")
+	err = f.Store.UpsertAttachment(otherMsgID, "cross.pdf", "application/pdf",
+		"ee/crosshash", "crosshash", 20)
+	require.NoError(err, "share default-source thumbnail as other-source content")
 
 	// Attachment with NULL content_hash (must be excluded).
 	nullHashMsg := f.CreateMessage("msg-null-hash")
@@ -324,8 +339,11 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	paths, err := f.Store.AttachmentPathsUniqueToSource(f.Source.ID)
 	require.NoError(err, "AttachmentPathsUniqueToSource")
 
-	require.Len(paths, 1, "paths: %v", paths)
-	assert.Equal(t, "aa/uniquehash", paths[0], "path[0]")
+	require.Len(paths, 2, "paths: %v", paths)
+	got := testutil.MakeSet(paths...)
+	assert.True(t, got["aa/uniquehash"], "unique content path missing: %v", paths)
+	assert.True(t, got["dd/uniquethumbhash"], "unique thumbnail path missing: %v", paths)
+	assert.False(t, got["ee/crosshash"], "cross-type shared thumbnail must be preserved: %v", paths)
 }
 
 func TestStore_GetSourceByID(t *testing.T) {
@@ -360,6 +378,14 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 	referenced, err := f.Store.IsAttachmentPathReferenced("aa/hash1")
 	require.NoError(err, "IsAttachmentPathReferenced (hit)")
 	assert.True(referenced, "expected true for referenced path")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+		UPDATE attachments SET thumbnail_path = ?
+		WHERE message_id = ? AND content_hash = ?`),
+		"thumbs/hash1", msgID, "hash1")
+	require.NoError(err, "set thumbnail path")
+	referenced, err = f.Store.IsAttachmentPathReferenced("thumbs/hash1")
+	require.NoError(err, "IsAttachmentPathReferenced (thumbnail hit)")
+	assert.True(referenced, "expected thumbnail path to count as referenced")
 
 	referenced, err = f.Store.IsAttachmentPathReferenced("zz/nothere")
 	require.NoError(err, "IsAttachmentPathReferenced (miss)")
