@@ -89,20 +89,29 @@ New table in the main DB (SQLite and PostgreSQL):
 CREATE TABLE attachment_pack_index (
     blob_hash  TEXT PRIMARY KEY,   -- SHA-256 hex; content OR thumbnail blob
     pack_id    TEXT NOT NULL,      -- ULID of the sealed pack
-    offset     INTEGER NOT NULL,
-    stored_len INTEGER NOT NULL,
-    raw_len    INTEGER NOT NULL,
+    offset     BIGINT NOT NULL,
+    stored_len BIGINT NOT NULL,
+    raw_len    BIGINT NOT NULL,
     flags      INTEGER NOT NULL,   -- pack.BlobFlags (compressed, ...)
-    crc32c     INTEGER NOT NULL    -- CRC over stored bytes, from pack.Entry
+    crc32c     BIGINT NOT NULL     -- CRC over stored bytes, from pack.Entry
 );
 CREATE INDEX idx_attachment_pack_index_pack ON attachment_pack_index(pack_id);
 ```
 
+BIGINT, not INTEGER: PostgreSQL `INTEGER` is 4-byte signed, too small for a
+`uint32` CRC32C and for raw/stored lengths up to `pack.MaxRawLen` (4 GiB).
+SQLite integers are 8-byte regardless.
+
 The column is `blob_hash`, not `content_hash`: it indexes every packed blob,
-including thumbnails. Storing the full `pack.Entry` (including `crc32c`)
-means a cold read is one DB lookup plus one pread — no footer parse. The
-pack footer remains the authoritative self-describing copy, used for
-crash reconciliation and by `unpack`.
+including thumbnails. The read path locates the pack via the index;
+`pack.OpenReader` parses the pack's footer once on first open (small: 61
+bytes per entry) and the cached reader serves subsequent reads from its
+entry map, so steady-state reads are one DB lookup plus one pread. The
+remaining entry columns (`offset` through `crc32c`) let GC compute per-pack
+dead bytes without opening packs, support crash reconciliation and `unpack`,
+and would enable a future kit API that preads from an externally supplied
+`pack.Entry` without any footer parse. The pack footer remains the
+authoritative self-describing copy.
 
 ### Blob store (`internal/blobstore`)
 
@@ -110,11 +119,19 @@ crash reconciliation and by `unpack`.
 
 1. Look up `attachment_pack_index` by hash.
 2. Hit: read via a small LRU cache of open `pack.Reader`s (each caches its
-   entry map); return a `bytes.Reader` over the verified blob.
+   entry map); return a `bytes.Reader` over the verified blob. Validate the
+   DB-sourced `pack_id` with `pack.IsValidPackID` before building the
+   `packs/<id[:2]>/<id>.mvpack` path — the ID comes from mutable DB state
+   and is joined straight into a filesystem path.
 3. Miss: `os.Open` the canonical loose path.
-4. **Race rule**: if the loose open returns ENOENT, retry the index lookup
-   once before failing. A reader can miss the index just before the packer
-   commits, then lose the loose file to the packer's post-commit delete.
+4. **Race rules** (both resolved by retrying the index lookup once before
+   failing):
+   - Loose open returns ENOENT: the reader missed the index just before the
+     packer committed, then lost the loose file to the packer's post-commit
+     delete. The retry finds the new index row.
+   - Pack open returns ENOENT (or the blob is absent from the pack's entry
+     map): the reader loaded an index row just before a repack swapped rows
+     and deleted the old pack. The retry finds the new `pack_id`.
 
 All read consumers (HTTP handler, MCP, TUI export, zip/dir export) switch
 from `StoragePath` + `os.Open` to the blob store. The `AttachmentReader`
@@ -167,8 +184,10 @@ Crash safety at each boundary:
   vs. footer entry count) falls below 50%, with hysteresis to avoid churn —
   only packs older than 24 h and with at least 8 MiB of dead stored bytes.
   Copy live blobs to a new pack, swap index rows transactionally, delete the
-  old pack file. Runs after `remove-account` and via
-  `msgvault repack-attachments`.
+  old pack file. Readers holding a just-stale index row survive the deletion
+  via the pack-open retry rule above. Dead-byte accounting comes from the
+  index (`stored_len` of rows vs. footer totals) without opening packs. Runs
+  after `remove-account` and via `msgvault repack-attachments`.
 
 ### Downgrade: `msgvault unpack-attachments`
 
@@ -218,7 +237,9 @@ their entries into the repo index, skipping per-blob re-reads.
 1. Prep: unify WhatsApp/SyncTech/FB Messenger writes onto
    `StoreAttachmentFile`.
 2. `internal/blobstore` + index migration + read-path switch (inert until
-   packs exist; loose fallback covers everything).
+   packs exist; no regression for currently readable blobs — legacy
+   noncanonical SyncTech rows stay unreadable, as today, until the packer
+   canonicalizes them in step 4).
 3. kit change: content reader hook for backup capture.
 4. Packer + canonicalization + `pack-attachments` / `unpack-attachments`
    commands + auto-run hooks.
