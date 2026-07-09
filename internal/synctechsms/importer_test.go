@@ -221,7 +221,7 @@ func assertConversationCount(t *testing.T, st *store.Store, want int) {
 func assertAttachmentAtCanonicalPath(t *testing.T, st *store.Store, attachmentsDir string) {
 	t.Helper()
 	var storagePath, contentHash string
-	err := st.DB().QueryRow(`SELECT storage_path, content_hash FROM attachments LIMIT 1`).Scan(&storagePath, &contentHash)
+	err := st.DB().QueryRow(`SELECT storage_path, content_hash FROM attachments ORDER BY id LIMIT 1`).Scan(&storagePath, &contentHash)
 	require.NoError(t, err, "read attachment row")
 	require.NotEmpty(t, contentHash, "content_hash")
 	wantPath := filepath.Join(contentHash[:2], contentHash)

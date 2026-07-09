@@ -122,6 +122,9 @@ func writeAtomicFileStream(fullPath string, src io.Reader, expectedSize int64, e
 
 	if err := os.Rename(tmpPath, fullPath); err != nil {
 		if _, statErr := os.Lstat(fullPath); statErr == nil {
+			// Another writer may have installed the final file first (notably
+			// on Windows; Unix rename typically overwrites). Validate the
+			// existing file.
 			removeTmp = false
 			_ = os.Remove(tmpPath)
 			return validateExistingAttachmentFile(fullPath, expectedSize, expectedHash)

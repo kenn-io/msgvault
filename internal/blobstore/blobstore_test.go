@@ -1,12 +1,16 @@
 package blobstore
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -199,4 +203,102 @@ func TestOpenRetriesIndexAfterPackMiss(t *testing.T) {
 	s := New(&staleIndex{stale: &stale, live: idx[h]}, dir)
 	defer func() { _ = s.Close() }()
 	assert.Equal(t, content, readAll(t, s, h))
+}
+
+// TestOpenConcurrent runs concurrent Open calls against a mix of packed and
+// loose hashes; run with -race to catch data races in the reader cache.
+func TestOpenConcurrent(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+
+	packedBlobs := [][]byte{
+		[]byte("concurrent packed blob one"),
+		[]byte("concurrent packed blob two"),
+		[]byte("concurrent packed blob three"),
+	}
+	idx := buildPack(t, dir, packedBlobs...)
+
+	looseBlobs := [][]byte{
+		[]byte("concurrent loose blob one"),
+		[]byte("concurrent loose blob two"),
+	}
+	for _, b := range looseBlobs {
+		h := hashOf(b)
+		require.NoError(os.MkdirAll(filepath.Join(dir, h[:2]), 0o700))
+		require.NoError(os.WriteFile(filepath.Join(dir, h[:2], h), b, 0o600))
+	}
+
+	all := make([][]byte, 0, len(packedBlobs)+len(looseBlobs))
+	all = append(all, packedBlobs...)
+	all = append(all, looseBlobs...)
+
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { _ = s.Close() }()
+
+	// t.Error/t.Errorf are safe to call from non-test goroutines; t.Fatal
+	// family is not, so failures are collected here and reported after
+	// wg.Wait rather than inside the goroutines.
+	const goroutines = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines*len(all))
+	for range goroutines {
+		wg.Go(func() {
+			for _, want := range all {
+				h := hashOf(want)
+				r, size, err := s.Open(h)
+				if err != nil {
+					errCh <- fmt.Errorf("open %s: %w", h, err)
+					continue
+				}
+				got, err := io.ReadAll(r)
+				_ = r.Close()
+				if err != nil {
+					errCh <- fmt.Errorf("read %s: %w", h, err)
+					continue
+				}
+				if size != int64(len(got)) || !bytes.Equal(got, want) {
+					errCh <- fmt.Errorf("content mismatch for %s", h)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+}
+
+// TestOpenEvictsAndReopens builds more packs than maxOpenReaders, opens each
+// through one Store to force FIFO eviction, then re-opens the first pack
+// (guaranteed evicted) to prove eviction correctly closes and a later Open
+// reopens the pack file rather than returning stale/closed state.
+func TestOpenEvictsAndReopens(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+
+	const numPacks = maxOpenReaders + 4
+	blobs := make([][]byte, numPacks)
+	idx := make(map[string]*store.PackIndexEntry, numPacks)
+	for i := range numPacks {
+		b := fmt.Appendf(nil, "eviction blob %d", i)
+		blobs[i] = b
+		maps.Copy(idx, buildPack(t, dir, b))
+	}
+
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { _ = s.Close() }()
+
+	for _, b := range blobs {
+		assert.Equal(t, b, readAll(t, s, hashOf(b)))
+	}
+
+	s.mu.Lock()
+	numOpen := len(s.readers)
+	s.mu.Unlock()
+	require.LessOrEqual(numOpen, maxOpenReaders)
+
+	// The first pack opened is the first evicted under FIFO; re-opening it
+	// must still return correct content.
+	assert.Equal(t, blobs[0], readAll(t, s, hashOf(blobs[0])))
 }
