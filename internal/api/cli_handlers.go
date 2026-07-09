@@ -1052,6 +1052,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-whatsapp",
 		"list-deletions",
 		"logs",
+		"pack-attachments",
 		"remove-account",
 		"show-deletion",
 		"sync-calendar",

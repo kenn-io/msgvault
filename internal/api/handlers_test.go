@@ -1287,6 +1287,8 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"backup unknown subcommand rejected", []string{"backup", "restore"}, false},
 		{"logs still allowed", []string{"logs"}, true},
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
+		{"pack-attachments allowed", []string{"pack-attachments"}, true},
+		{"unpack-attachments rejected", []string{"unpack-attachments"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
