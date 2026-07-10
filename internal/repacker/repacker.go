@@ -137,6 +137,10 @@ func Run(ctx context.Context, st *store.Store, blobs BlobStore, attachmentsDir s
 		if err := ctx.Err(); err != nil {
 			return stats, errors.Join(runErr, err)
 		}
+		if automatic && stats.BytesRepacked >= opts.MaxBytes {
+			stats.BudgetExhausted = true
+			break
+		}
 		if limit := usageLimit(candidate); limit != nil {
 			stats.PacksDeferredOversized++
 			logPackLimit(candidate.PackID, limit)
@@ -172,11 +176,6 @@ func Run(ctx context.Context, st *store.Store, blobs BlobStore, attachmentsDir s
 			runErr = errors.Join(runErr, contentErr)
 			continue
 		}
-		if automatic && stats.BytesRepacked >= opts.MaxBytes {
-			stats.BudgetExhausted = true
-			continue
-		}
-
 		result, err := rewriteSource(ctx, blobs, packsDir, opts.TargetSize, candidate.PackID, entries)
 		if err != nil {
 			var limitErr *blobstore.LimitError

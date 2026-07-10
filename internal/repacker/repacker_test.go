@@ -619,6 +619,75 @@ func TestRunAutomaticJoinsKnownContentFailuresAndCommitsHealthySource(t *testing
 	assert.NoFileExists(healthyPath)
 }
 
+func TestRunAutomaticStopsBeforeTouchingSourcesPastCommittedBudget(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	firstLive := []byte("first healthy source crosses the small budget")
+	missingLive := []byte("missing later source must not be inspected")
+	laterLive := []byte("later healthy source must also remain untouched")
+	firstHash := f.reference(firstLive)
+	missingHash := f.reference(missingLive)
+	laterHash := f.reference(laterLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	first, _, firstPath := f.seal(firstLive, dead, []byte("first dead sibling"))
+	missing, _, missingPath := f.seal(missingLive, dead, []byte("missing dead sibling"))
+	later, _, laterPath := f.seal(laterLive, dead, []byte("later dead sibling"))
+	for i, packID := range []string{first.PackID, missing.PackID, later.PackID} {
+		_, err := f.store.DB().Exec(f.store.Rebind(`
+			UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+			f.created.Add(time.Duration(i-2)*time.Hour).Format(time.RFC3339), packID)
+		require.NoError(err)
+	}
+	require.NoError(os.Remove(missingPath))
+
+	originalOpen := openMaintenancePack
+	var opened []string
+	openMaintenancePack = func(path string) (maintenancePackReader, error) {
+		opened = append(opened, path)
+		return originalOpen(path)
+	}
+	t.Cleanup(func() { openMaintenancePack = originalOpen })
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	injected := &injectedReadErrorStore{Store: realBlobs, errors: map[string]error{}}
+
+	stats, err := Run(context.Background(), f.store, injected, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.True(stats.BudgetExhausted)
+	assert.Equal(1, stats.PacksRewritten)
+	assert.Equal(1, stats.PacksSealed)
+	assert.Equal(1, stats.PacksRemoved)
+	assert.Equal(1, stats.BlobsRepacked)
+	assert.Equal(int64(len(firstLive)), stats.BytesRepacked)
+	assert.Zero(stats.PacksDeferredOversized)
+	require.Len(opened, 1)
+	assert.Equal(first.PackID+blobstore.PackExt, filepath.Base(opened[0]))
+	assert.Equal([]string{firstHash}, injected.reads)
+
+	firstEntry, getErr := f.store.GetAttachmentPackEntry(firstHash)
+	require.NoError(getErr)
+	require.NotNil(firstEntry)
+	assert.NotEqual(first.PackID, firstEntry.PackID)
+	assert.NoFileExists(firstPath)
+	for hash, oldPackID := range map[string]string{
+		missingHash: missing.PackID,
+		laterHash:   later.PackID,
+	} {
+		entry, entryErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(entryErr)
+		require.NotNil(entry)
+		assert.Equal(oldPackID, entry.PackID)
+		has, hasErr := f.store.HasPackRecord(oldPackID)
+		require.NoError(hasErr)
+		assert.True(has)
+	}
+	assert.NoFileExists(missingPath)
+	assert.FileExists(laterPath)
+}
+
 func TestRunAutomaticWriterCreationFailureStopsBeforeLaterSource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
