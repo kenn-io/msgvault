@@ -97,7 +97,10 @@ msgvault tui
 | `add-teams EMAIL` | Authorize delegated Microsoft Graph access for Teams |
 | `sync-teams EMAIL` | Sync Microsoft Teams chats and channels |
 | `backup` | Initialize, create, list, verify, and restore backup snapshots |
-| `tui` | Launch the interactive TUI (`--account` to filter, `--local` to bypass HTTP) |
+| `pack-attachments` | Migrate all eligible loose attachment files into immutable packs |
+| `repack-attachments` | Reclaim dead space from sparse attachment packs |
+| `unpack-attachments` | Restore packed attachments to loose files for downgrade or recovery |
+| `tui` | Launch the interactive TUI (`--account` to filter, `--local` to force the local daemon) |
 | `search QUERY` | Search messages (`--account` and `--message-type` to filter, `--json` for machine output) |
 | `show-message ID` | View full message details (`--json` for machine output) |
 | `mcp` | Start the MCP server for AI assistant integration |
@@ -240,6 +243,31 @@ command after `init`.
 
 See the [Backup guide](https://msgvault.io/usage/backup/) for repository format,
 secret-handling flags, restore proof, and operating recommendations.
+
+### Packed Attachment Storage
+
+Msgvault stores attachment bytes in sealed content-addressed packs to reduce
+file-count overhead, especially on Windows and NAS filesystems. Existing loose
+vaults remain readable and migrate gradually after successful ingest runs and
+during daily maintenance; no startup migration is required. Run the following
+once to migrate the complete eligible backlog immediately:
+
+```bash
+msgvault pack-attachments
+```
+
+Reads, exports, MCP, and backups work transparently with loose, packed, or mixed
+storage. `repack-attachments` reclaims dead pack space and also runs
+automatically as bounded maintenance. A restored backup intentionally contains
+loose attachment files and can be packed again with the command above.
+
+`unpack-attachments` is the downgrade escape hatch. It requires exclusive local
+access because it deletes production pack files, so stop the local daemon first:
+
+```bash
+msgvault serve stop
+msgvault unpack-attachments
+```
 
 ## Configuration
 
