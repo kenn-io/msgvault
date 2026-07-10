@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 
-**Status:** Independently reviewed; pending final human approval
+**Status:** Implemented on the delivery branch; exact-head review and CI pending on PR #464
 
 **Parent design:** `docs/internal/packed-attachments-design.md`
 

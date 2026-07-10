@@ -1,13 +1,12 @@
 # Packed Attachment Storage
 
 Design for storing attachment content in kit CAS pack files instead of loose
-content-addressed files. Written 2026-07-09; status: delivery steps 1-4 (see
-Delivery order below) implemented on this branch (packer, crash
-reconciliation, `pack-attachments`/`unpack-attachments`, backup
-ContentSource), except the auto-run hooks in step 4; those hooks, GC/repack,
-and `remove-account` integration (step 5) remain. Their detailed phase-2c
-contract is in
-`docs/superpowers/specs/2026-07-09-packed-attachments-phase-2c-design.md`.
+content-addressed files. Written 2026-07-09; status: delivery steps 1-5 (see
+Delivery order below) are implemented on the `packed-attachments` branch.
+Exact-head review and cross-platform verification are tracked by PR #464. The
+detailed phase-2c contract is in
+`docs/superpowers/specs/2026-07-09-packed-attachments-phase-2c-design.md`;
+pack-native restore remains the separate follow-up in issue #466.
 
 ## Motivation
 
