@@ -4,9 +4,8 @@ Design for storing attachment content in kit CAS pack files instead of loose
 content-addressed files. Written 2026-07-09; status: delivery steps 1-5 (see
 Delivery order below) are implemented and copy-based real-archive hardening is
 complete on the `packed-attachments` branch. Exact-head review and the full
-cross-platform CI matrix passed on PR #464. The detailed phase-2c contract is in
-`docs/superpowers/specs/2026-07-09-packed-attachments-phase-2c-design.md`;
-pack-native restore remains the separate follow-up in issue #466.
+cross-platform CI matrix passed on PR #464. Pack-native restore remains the
+separate follow-up in issue #466.
 
 ## Motivation
 
@@ -256,6 +255,75 @@ the final sweep. A context canceled before `Run` therefore causes no filesystem
 or metadata mutation; mid-run cancellation stops at the next recovery/blob
 boundary without violating the same crash-ordering rules.
 
+### Automatic maintenance policy
+
+Automatic pack and repack runs each have a 256 MiB raw-byte budget. The budget
+is soft at one eligible-blob or eligible-source-pack boundary: a run finishes
+and seals the current output after crossing it, so normal work cannot leave a
+live staging writer. Correctness work is not budgeted — staging cleanup,
+dangling-record and reference repair, orphan reconciliation, inventory
+accounting, zero-live retirement, and the final loose-file sweep still run.
+Explicit `pack-attachments` and `repack-attachments` have no aggregate byte
+budget.
+
+The daemon owns one maintenance coordinator over its production store, shared
+blob store, and attachments directory. Callers already hold the daemon
+operation gate; the coordinator does not acquire it recursively. Successful
+manual and scheduled attachment-producing sync/import commands run bounded
+packing as best-effort follow-up. The generic command allowlist is
+`backfill-teams-media`; `import`, `import-emlx`, `import-gvoice`,
+`import-imessage`, `import-mbox`, `import-messenger`, `import-pst`,
+`import-synctech-sms`, and `import-whatsapp`; plus `sync-synctech-sms` and
+`sync-teams`. The dedicated sync path covers `sync` and `sync-full`. Setup and
+calendar-only commands are excluded because they do not currently ingest
+attachment bytes. The allowlist and its test must change together if a setup
+path starts writing attachments.
+
+A daily `attachment-maintenance` scheduler job runs at 03:17 daemon-local time:
+bounded pack first, then bounded repack. Packing first repairs recoverable
+metadata before repack accounts for live bytes. Ingest success is not rolled
+back when best-effort maintenance fails; the command streams or logs a warning
+and the daily job retries. The daily job itself records a failure. Explicit
+maintenance remains fail-fast. `repack-attachments` executes in the parent
+daemon because only that process owns the shared reader cache that must be
+retired before Windows file deletion.
+
+### Per-blob memory ceiling
+
+kit v0.4 accepts a complete `[]byte` in `pack.Writer.Append`, and
+`pack.Reader.ReadBlob` materializes a complete decoded blob. Packing therefore
+holds the raw bytes plus an encoding buffer; repacking can additionally hold
+the production reader's materialized bytes and an `io.ReadAll` copy. The pack
+format's 4 GiB `pack.MaxRawLen` is a corruption/representation bound, not a
+safe daemon-memory policy.
+
+Until kit exposes verified streaming reads and writes, both automatic and
+explicit maintenance enforce a fixed 64 MiB raw-blob ceiling:
+
+- The loose packer reads through a 64 MiB + 1 byte bounded reader, rather than
+  `os.ReadFile`. A larger candidate is counted and warned, remains unindexed
+  and loose, and packing continues with later candidates. Reads, exports, and
+  backup continue through the normal loose fallback. Alternate recorded paths
+  remain eligible for verification; the blob is counted once if none fit.
+- Pack usage accounting includes the largest referenced entry's raw length.
+  A partially-live source pack with any live entry above 64 MiB is excluded
+  before repack budget accounting, counted and warned as deferred, and left
+  entirely authoritative. This prevents one old oversized pack from consuming
+  the daily budget and starving later eligible packs. Oversized dead entries
+  do not block rewriting the remaining small live entries, and a zero-live pack
+  still retires without reading any blob.
+- The ceiling is independent of the 256 MiB aggregate automatic budget. Only
+  eligible blobs/source packs consume that budget, and explicit commands do
+  not bypass the ceiling.
+
+No new database state marks a deferral. A later maintenance run re-evaluates
+the loose blob or source pack, so a future streaming implementation can lift
+the constant and pick up every deferred item without migration. This preserves
+availability and crash safety at the cost of leaving a small number of large
+loose files or unreclaimed sparse packs in place. Large-file count is not the
+Windows/NAS bottleneck this design targets; the benefit comes primarily from
+packing the much more numerous small files.
+
 ### GC and repack
 
 - `remove-account` orphan sweep: loose orphans are deleted as today; packed
@@ -369,15 +437,21 @@ their entries into the repo index, skipping per-blob re-reads.
   plus readable loose-copy preservation, duplicate recorded paths with a valid
   fallback, cancellation before the first recovery mutation, stale mapping
   repair after Teams inline replacement, and retryable unreferenced loose-file
-  cleanup.
+  cleanup. Memory-bound coverage verifies that a loose blob above 64 MiB is
+  detected by a bounded read, remains loose and readable, does not consume the
+  automatic byte budget, and does not prevent later eligible blobs from
+  packing.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
 - Repack: referenced-live accounting despite stale index rows, live-blob
   preservation, threshold + hysteresis, transactional index swap, and explicit
-  SHA-verified copy semantics. Race coverage includes backup's independent
-  reader cache: Windows retains an old zero-live pack when the handle blocks
-  deletion and removes it on the next run after close; Unix open handles remain
-  readable after unlink while new lookups use the replacement mapping.
+  SHA-verified copy semantics. A partially-live pack with an oversized live
+  entry is deferred before selection/budget accounting, while oversized dead
+  entries and zero-live packs do not block reclamation. Race coverage includes
+  backup's independent reader cache: Windows retains an old zero-live pack when
+  the handle blocks deletion and removes it on the next run after close; Unix
+  open handles remain readable after unlink while new lookups use the
+  replacement mapping.
 - `unpack-attachments` round-trip: pack -> unpack -> byte-identical loose
   tree, index empty.
 - `remove-account` GC over mixed loose/packed orphans.
@@ -416,6 +490,10 @@ and 46,060 distinct local blobs totaling 8,193,617,238 bytes.
   verified through single-file CLI export and the raw HTTP API; a five-file
   directory export matched its expected hash multiset; daemon-backed MCP
   `get_attachment` returned hash-identical bytes.
+- Memory ceiling: the largest blob in this archive was approximately 23 MiB,
+  below the 64 MiB in-memory maintenance ceiling. Oversized behavior is
+  therefore pinned by synthetic bounded-read and repack-selection tests rather
+  than this dataset.
 - Crash recovery: the daemon was sent `SIGKILL` with 135 sealed packs, one
   staging file, 26,513 indexed blobs, and 19,547 loose blobs. Restart removed
   staging and packed exactly the remaining 19,547 blobs in 12.1 seconds,
@@ -472,5 +550,6 @@ baseline for the pack-native restore optimization tracked by issue #466.
    direct embedding, and have no store handle from which to build a blob
    store. Revisit only if a genuinely daemon-less MCP/TUI mode is added.
 5. Bounded auto-pack hooks, reference-aware packed GC/repack, and
-   `remove-account` integration. See the phase-2c design linked above for the
-   daemon ownership, reader-retirement, crash-ordering, and delivery details.
+   `remove-account` integration. The daemon ownership, automatic policy,
+   memory ceiling, reader-retirement, and crash-ordering contracts are recorded
+   above.
