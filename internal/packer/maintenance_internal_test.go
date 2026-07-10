@@ -100,6 +100,55 @@ func installCanonicalizationFailure(t *testing.T, st *store.Store, point canonic
 	return failureMessage
 }
 
+const packingRecordFailure = "injected target pack recording failure"
+
+func installPackingRecordFailureForHash(t *testing.T, st *store.Store, hash string) {
+	t.Helper()
+
+	const (
+		triggerName  = "block_target_pack_recording"
+		functionName = "block_target_pack_recording_fn"
+	)
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(fmt.Sprintf(`
+			CREATE FUNCTION %s() RETURNS trigger AS $$
+			BEGIN
+				IF LOWER(OLD.content_hash) = '%s' THEN
+					RAISE EXCEPTION '%s';
+				END IF;
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql`, functionName, hash, packingRecordFailure))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, cleanupErr := st.DB().Exec(fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName))
+			require.NoError(t, cleanupErr)
+		})
+
+		_, err = st.DB().Exec(fmt.Sprintf(`
+			CREATE TRIGGER %s
+			BEFORE UPDATE OF storage_path ON attachments
+			FOR EACH ROW EXECUTE FUNCTION %s()`, triggerName, functionName))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, cleanupErr := st.DB().Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON attachments", triggerName))
+			require.NoError(t, cleanupErr)
+		})
+		return
+	}
+
+	_, err := st.DB().Exec(fmt.Sprintf(`
+		CREATE TRIGGER %s
+		BEFORE UPDATE OF storage_path ON attachments
+		WHEN LOWER(OLD.content_hash) = '%s'
+		BEGIN SELECT RAISE(ABORT, '%s'); END`, triggerName, hash, packingRecordFailure))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, cleanupErr := st.DB().Exec("DROP TRIGGER IF EXISTS " + triggerName)
+		require.NoError(t, cleanupErr)
+	})
+}
+
 func (c *cancelAfterErrContext) Err() error {
 	c.calls++
 	if c.calls >= c.cancelAfter {
@@ -234,6 +283,76 @@ func TestRunAcceptsLooseBlobAtMaintenanceLimit(t *testing.T) {
 	assert.Equal(1, stats.BlobsPacked)
 	assert.Zero(stats.BlobsDeferredOversized)
 	assert.Equal(content, f.read(hash))
+}
+
+func TestRunDoesNotCountPackWhenSealFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	content := []byte("loose blob retained after seal failure")
+	_, loose := f.addBlob(content, maintenanceCanonical)
+	packsDir := filepath.Join(f.dir, "packs")
+	require.NoError(os.MkdirAll(packsDir, 0o700))
+	for _, first := range "01234567" {
+		for _, second := range "0123456789abcdefghjkmnpqrstvwxyz" {
+			require.NoError(os.WriteFile(filepath.Join(packsDir, string([]rune{first, second})),
+				[]byte("blocks pack shard directory"), 0o600))
+		}
+	}
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{MaxBytes: 1})
+	require.Error(err)
+	assert.Zero(stats.PacksSealed)
+	assert.Zero(stats.BlobsPacked)
+	assert.Zero(stats.BytesPacked)
+	assert.False(stats.BudgetExhausted)
+	assert.FileExists(loose)
+}
+
+func TestRunDoesNotCountPackWhenDatabaseRecordFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	content := []byte("loose blob retained after database failure")
+	hash, loose := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	installPackingRecordFailureForHash(t, f.store, hash)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{MaxBytes: 1})
+	require.ErrorContains(err, packingRecordFailure)
+	assert.Zero(stats.PacksSealed)
+	assert.Zero(stats.BlobsPacked)
+	assert.Zero(stats.BytesPacked)
+	assert.False(stats.BudgetExhausted)
+	assert.FileExists(loose)
+	entry, lookupErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(lookupErr)
+	assert.Nil(entry)
+}
+
+func TestRunCountsOnlyCommittedPackWhenLaterDatabaseRecordFails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	firstContent := []byte("first committed loose blob")
+	firstHash, firstLoose := f.addBlob(firstContent, func(hash string) string { return "legacy/" + hash })
+	secondContent := []byte("second uncommitted loose blob")
+	secondHash, secondLoose := f.addBlob(secondContent, func(hash string) string { return "legacy/" + hash })
+	installPackingRecordFailureForHash(t, f.store, secondHash)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{TargetSize: 1})
+	require.ErrorContains(err, packingRecordFailure)
+	assert.Equal(1, stats.PacksSealed)
+	assert.Equal(1, stats.BlobsPacked)
+	assert.Equal(int64(len(firstContent)), stats.BytesPacked)
+	assert.False(stats.BudgetExhausted)
+	assert.NoFileExists(firstLoose)
+	assert.FileExists(secondLoose)
+	firstEntry, lookupErr := f.store.GetAttachmentPackEntry(firstHash)
+	require.NoError(lookupErr)
+	assert.NotNil(firstEntry)
+	secondEntry, lookupErr := f.store.GetAttachmentPackEntry(secondHash)
+	require.NoError(lookupErr)
+	assert.Nil(secondEntry)
 }
 
 func TestRunDefersOversizedCanonicalBlobOncePerHash(t *testing.T) {

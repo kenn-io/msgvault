@@ -34,9 +34,9 @@ type Options struct {
 
 // Stats summarizes one packer run.
 type Stats struct {
-	PacksSealed            int   // packs written this run
-	BlobsPacked            int   // blobs appended this run
-	BytesPacked            int64 // raw bytes appended this run
+	PacksSealed            int   // packs committed to pack metadata this run
+	BlobsPacked            int   // blobs committed to pack metadata this run
+	BytesPacked            int64 // raw bytes committed to pack metadata this run
 	PacksAdopted           int   // orphan packs adopted during reconciliation
 	PacksRemoved           int   // fully-redundant orphan packs deleted
 	PacksQuarantined       int   // readable orphans withheld after a referenced candidate failed verification
@@ -506,6 +506,7 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 	}
 	var w *pack.Writer
 	var sources []packedLooseSource
+	var pendingRawBytes int64
 	appended := make(map[normalizedBlobHash]struct{}, len(blobs))
 	abort := func() {
 		if w != nil {
@@ -550,14 +551,14 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 			return fmt.Errorf("append blob %s to pack %s: %w", b.Hash, w.ID(), err)
 		}
 		appended[hash] = struct{}{}
-		stats.BlobsPacked++
-		stats.BytesPacked += int64(len(data))
+		pendingRawBytes += int64(len(data))
 		aliases := append([]string(nil), b.OriginalHashes...)
 		if len(aliases) == 0 {
 			aliases = []string{b.Hash}
 		}
 		sources = append(sources, packedLooseSource{path: source, originalHashes: aliases})
-		budgetExhausted := opts.MaxBytes > 0 && stats.BytesPacked >= opts.MaxBytes
+		budgetExhausted := opts.MaxBytes > 0 &&
+			(stats.BytesPacked >= opts.MaxBytes || pendingRawBytes >= opts.MaxBytes-stats.BytesPacked)
 		if w.Full() || len(sources) >= maintenancePackEntries || budgetExhausted {
 			if err := ctx.Err(); err != nil {
 				abort()
@@ -567,6 +568,7 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 				return err
 			}
 			w = nil
+			pendingRawBytes = 0
 			if budgetExhausted {
 				stats.BudgetExhausted = true
 				break
@@ -769,8 +771,10 @@ func sealAndCommit(st *store.Store, packsDir string, w *pack.Writer, sources []p
 			id, len(entries), len(sources))
 	}
 	adoptions := make([]store.PackIndexAdoption, 0, len(entries))
+	var rawBytes int64
 	for i, e := range entries {
 		rec.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
+		rawBytes += int64(e.RawLen)           //nolint:gosec // raw lengths are bounded by pack.MaxRawLen
 		adoptions = append(adoptions, store.PackIndexAdoption{
 			Entry:          indexEntry(id, e),
 			OriginalHashes: sources[i].originalHashes,
@@ -780,6 +784,8 @@ func sealAndCommit(st *store.Store, packsDir string, w *pack.Writer, sources []p
 		return fmt.Errorf("record pack %s: %w", id, err)
 	}
 	stats.PacksSealed++
+	stats.BlobsPacked += len(entries)
+	stats.BytesPacked += rawBytes
 	slog.Info("sealed pack", "pack", id, "entries", len(entries), "storedBytes", rec.StoredBytes)
 	for _, src := range sources {
 		if err := os.Remove(src.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
