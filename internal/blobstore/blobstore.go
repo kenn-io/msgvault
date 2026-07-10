@@ -24,8 +24,8 @@ import (
 // release can share packs between production and backup repos.
 const PackExt = ".mvpack"
 
-// maxOpenReaders bounds the cache of open pack readers (file handle plus
-// parsed footer each).
+// maxOpenReaders bounds cached pack slots. A slot may own both kit's ordinary
+// reader and blobstore's bounded reader for the same pack.
 const maxOpenReaders = 16
 
 // PackIndex resolves both attachment liveness and its optional pack location
@@ -39,12 +39,13 @@ type Store struct {
 	index          PackIndex
 	attachmentsDir string
 
-	// mu guards readers/order and is held across packed reads so an evicted
-	// reader is never closed while another goroutine is mid-ReadBlob.
+	// mu guards both reader caches/order and is held across packed reads so
+	// an evicted descriptor is never closed while another goroutine uses it.
 	// Packed reads are short (one pread + optional zstd decode).
-	mu      sync.Mutex
-	readers map[string]*pack.Reader
-	order   []string
+	mu             sync.Mutex
+	readers        map[string]*pack.Reader
+	boundedReaders map[string]*boundedPackReader
+	order          []string
 }
 
 // New creates a blob store over attachmentsDir backed by index.
@@ -53,6 +54,7 @@ func New(index PackIndex, attachmentsDir string) *Store {
 		index:          index,
 		attachmentsDir: attachmentsDir,
 		readers:        make(map[string]*pack.Reader),
+		boundedReaders: make(map[string]*boundedPackReader),
 	}
 }
 
@@ -69,9 +71,9 @@ func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
 	return resolveBlob(s, hash, s.openLoose, s.openPacked)
 }
 
-// ReadBounded returns the kit-verified blob bytes directly while enforcing
-// maxBytes against both raw and stored representations. Packed cache misses
-// also apply the fixed maintenance container/footer/entry ceilings.
+// ReadBounded returns verified blob bytes directly while enforcing maxBytes
+// against both raw and stored representations. Packed cache misses also apply
+// the fixed maintenance container/footer/entry ceilings.
 func (s *Store) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
 	if err := export.ValidateContentHash(hash); err != nil {
 		return nil, 0, err
@@ -152,15 +154,21 @@ func (s *Store) Opener() export.AttachmentOpener {
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var firstErr error
-	for id, r := range s.readers {
-		if err := r.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("close pack reader %s: %w", id, err)
-		}
+	ids := make(map[string]struct{}, len(s.readers)+len(s.boundedReaders))
+	for id := range s.readers {
+		ids[id] = struct{}{}
+	}
+	for id := range s.boundedReaders {
+		ids[id] = struct{}{}
+	}
+	var closeErr error
+	for id := range ids {
+		closeErr = errors.Join(closeErr, s.closePackSlotLocked(id))
 	}
 	s.readers = make(map[string]*pack.Reader)
+	s.boundedReaders = make(map[string]*boundedPackReader)
 	s.order = nil
-	return firstErr
+	return closeErr
 }
 
 // RetirePack closes and forgets the daemon-owned cached reader for packID,
@@ -175,8 +183,6 @@ func (s *Store) RetirePack(packID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	reader := s.readers[packID]
-	delete(s.readers, packID)
 	order := s.order[:0]
 	for _, id := range s.order {
 		if id != packID {
@@ -185,12 +191,7 @@ func (s *Store) RetirePack(packID string) error {
 	}
 	s.order = order
 
-	var closeErr error
-	if reader != nil {
-		if err := reader.Close(); err != nil {
-			closeErr = fmt.Errorf("close pack reader %s: %w", packID, err)
-		}
-	}
+	closeErr := s.closePackSlotLocked(packID)
 	path := filepath.Join(s.attachmentsDir, "packs", packID[:2], packID+PackExt)
 	var removeErr error
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -299,20 +300,11 @@ func (s *Store) readPackedBounded(hash string, e *store.PackIndexEntry, maxBytes
 	if err != nil {
 		return nil, 0, err
 	}
-	entries := r.Entries()
-	if len(entries) > MaxMaintenancePackEntries {
+	if len(r.entries) > MaxMaintenancePackEntries {
 		return nil, 0, fmt.Errorf("%w: cached pack %s has %d entries, limit %d",
-			ErrBlobTooLarge, e.PackID, len(entries), MaxMaintenancePackEntries)
+			ErrBlobTooLarge, e.PackID, len(r.entries), MaxMaintenancePackEntries)
 	}
-	var footerEntry pack.Entry
-	found := false
-	for _, candidate := range entries {
-		if candidate.ID == blobID {
-			footerEntry = candidate
-			found = true
-			break
-		}
-	}
+	footerEntry, found := r.entries[blobID]
 	if !found {
 		return nil, 0, &fs.PathError{
 			Op:   "find attachment blob in pack footer",
@@ -320,25 +312,16 @@ func (s *Store) readPackedBounded(hash string, e *store.PackIndexEntry, maxBytes
 			Err:  fs.ErrNotExist,
 		}
 	}
-	if r.ID() != e.PackID || e.BlobHash != footerEntry.ID.String() ||
+	if e.BlobHash != footerEntry.ID.String() ||
 		e.Offset < 0 || uint64(e.Offset) != footerEntry.Offset ||
 		e.StoredLen < 0 || uint64(e.StoredLen) != footerEntry.StoredLen ||
 		e.RawLen < 0 || uint64(e.RawLen) != footerEntry.RawLen ||
 		pack.BlobFlags(e.Flags) != footerEntry.Flags || e.CRC32C != footerEntry.CRC32C {
 		return nil, 0, fmt.Errorf("pack index metadata mismatch for blob %s in pack %s", hash, e.PackID)
 	}
-	limit := uint64(maxBytes) //nolint:gosec // ReadBounded rejects negative limits before dispatch
-	if footerEntry.RawLen > limit {
-		return nil, 0, fmt.Errorf("%w: blob %s raw length is %d bytes, limit %d",
-			ErrBlobTooLarge, hash, footerEntry.RawLen, maxBytes)
-	}
-	if footerEntry.StoredLen > limit {
-		return nil, 0, fmt.Errorf("%w: blob %s stored length is %d bytes, limit %d",
-			ErrBlobTooLarge, hash, footerEntry.StoredLen, maxBytes)
-	}
-	data, err := r.ReadBlob(footerEntry)
+	data, err := r.readBlob(footerEntry, maxBytes)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read blob %s from pack %s: %w", hash, e.PackID, err)
+		return nil, 0, fmt.Errorf("read bounded blob %s from pack %s: %w", hash, e.PackID, err)
 	}
 	return data, int64(len(data)), nil
 }
@@ -356,53 +339,69 @@ func (s *Store) readerLocked(packID string) (*pack.Reader, error) {
 		// Open's retry rule depends on.
 		return nil, fmt.Errorf("open pack %s: %w", packID, err)
 	}
-	if len(s.order) >= maxOpenReaders {
-		oldest := s.order[0]
-		s.order = s.order[1:]
-		if old, ok := s.readers[oldest]; ok {
-			_ = old.Close()
-			delete(s.readers, oldest)
-		}
-	}
+	s.addPackSlotLocked(packID)
 	s.readers[packID] = r
-	s.order = append(s.order, packID)
 	return r, nil
 }
 
-// boundedReaderLocked applies maintenance preflight before each cache miss.
-// Caller holds s.mu.
-func (s *Store) boundedReaderLocked(packID string) (*pack.Reader, error) {
-	if r, ok := s.readers[packID]; ok {
-		if len(r.Entries()) > MaxMaintenancePackEntries {
+// boundedReaderLocked opens, validates, and caches the exact descriptor used
+// by bounded stored reads. Caller holds s.mu.
+func (s *Store) boundedReaderLocked(packID string) (*boundedPackReader, error) {
+	if r, ok := s.boundedReaders[packID]; ok {
+		if len(r.entries) > MaxMaintenancePackEntries {
 			return nil, fmt.Errorf("%w: cached pack %s has %d entries, limit %d",
-				ErrBlobTooLarge, packID, len(r.Entries()), MaxMaintenancePackEntries)
+				ErrBlobTooLarge, packID, len(r.entries), MaxMaintenancePackEntries)
 		}
 		return r, nil
 	}
 	p := filepath.Join(s.attachmentsDir, "packs", packID[:2], packID+PackExt)
-	if err := preflightPlainPack(p); err != nil {
-		return nil, fmt.Errorf("preflight pack %s: %w", packID, err)
-	}
-	r, err := pack.OpenReader(p, nil)
+	r, err := openBoundedPack(p)
 	if err != nil {
-		return nil, fmt.Errorf("open pack %s: %w", packID, err)
+		return nil, fmt.Errorf("open bounded pack %s: %w", packID, err)
 	}
-	if len(r.Entries()) > MaxMaintenancePackEntries {
+	if len(r.entries) > MaxMaintenancePackEntries {
 		_ = r.Close()
 		return nil, fmt.Errorf("%w: pack %s has %d entries, limit %d",
-			ErrBlobTooLarge, packID, len(r.Entries()), MaxMaintenancePackEntries)
+			ErrBlobTooLarge, packID, len(r.entries), MaxMaintenancePackEntries)
+	}
+	s.addPackSlotLocked(packID)
+	s.boundedReaders[packID] = r
+	return r, nil
+}
+
+// addPackSlotLocked adds packID to the shared FIFO if neither cache already
+// owns that pack. Ordinary and bounded readers for one pack share one slot.
+func (s *Store) addPackSlotLocked(packID string) {
+	if _, ok := s.readers[packID]; ok {
+		return
+	}
+	if _, ok := s.boundedReaders[packID]; ok {
+		return
 	}
 	if len(s.order) >= maxOpenReaders {
 		oldest := s.order[0]
 		s.order = s.order[1:]
-		if old, ok := s.readers[oldest]; ok {
-			_ = old.Close()
-			delete(s.readers, oldest)
-		}
+		_ = s.closePackSlotLocked(oldest)
 	}
-	s.readers[packID] = r
 	s.order = append(s.order, packID)
-	return r, nil
+}
+
+// closePackSlotLocked closes and removes both reader forms for packID.
+func (s *Store) closePackSlotLocked(packID string) error {
+	var closeErr error
+	if r, ok := s.readers[packID]; ok {
+		if err := r.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close pack reader %s: %w", packID, err))
+		}
+		delete(s.readers, packID)
+	}
+	if r, ok := s.boundedReaders[packID]; ok {
+		if err := r.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close bounded pack reader %s: %w", packID, err))
+		}
+		delete(s.boundedReaders, packID)
+	}
+	return closeErr
 }
 
 type nopSeekCloser struct{ *bytes.Reader }

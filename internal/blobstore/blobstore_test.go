@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"maps"
@@ -194,7 +195,8 @@ func TestReadBoundedLooseGrowthProbe(t *testing.T) {
 	defer func() { require.NoError(t, s.Close()) }()
 
 	_, _, err := s.ReadBounded(hash, MaxMaintenanceBlobBytes)
-	assert.Error(t, err, "a separate byte probe must detect content beyond the stat-sized allocation")
+	assert.ErrorIs(t, err, ErrBlobTooLarge,
+		"a separate byte probe must detect content beyond the stat-sized allocation")
 }
 
 func TestReadBoundedPreflightsPackLimits(t *testing.T) {
@@ -252,15 +254,83 @@ func TestReadBoundedPreflightsPackLimits(t *testing.T) {
 func TestReadBoundedChecksCachedReaderEntryLimit(t *testing.T) {
 	dir := t.TempDir()
 	path, hash, entry := buildSyntheticEntryHeavyPack(t, dir)
-	r, err := pack.OpenReader(path, nil)
+	f, err := os.Open(path)
 	require.NoError(t, err)
+	entries := make(map[pack.BlobID]pack.Entry, MaxMaintenancePackEntries+1)
+	for i := range MaxMaintenancePackEntries + 1 {
+		var id pack.BlobID
+		binary.LittleEndian.PutUint32(id[:4], uint32(i))
+		entries[id] = pack.Entry{ID: id}
+	}
+	r := &boundedPackReader{file: f, entries: entries}
 	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
-	s.readers[entry.PackID] = r
+	s.boundedReaders[entry.PackID] = r
 	s.order = append(s.order, entry.PackID)
 	defer func() { require.NoError(t, s.Close()) }()
 
 	_, _, err = s.ReadBounded(hash, MaxMaintenanceBlobBytes)
 	assert.ErrorIs(t, err, ErrBlobTooLarge)
+}
+
+func TestBoundedPackVersionIsPinnedToStableV1(t *testing.T) {
+	assert.Equal(t, plainPackVersion, byte(1))
+}
+
+func TestBoundedPackReaderKeepsPreflightedDescriptor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("replacing an open file is not supported on Windows")
+	}
+	dir := t.TempDir()
+	original := []byte("bytes from the preflighted descriptor")
+	idx := buildPack(t, dir, original)
+	hash := hashOf(original)
+	entry := idx[hash]
+	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+	r, err := openBoundedPack(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Close()) }()
+
+	replacementDir := t.TempDir()
+	replacement := []byte("replacement path bytes must not be observed")
+	replacementIdx := buildPack(t, replacementDir, replacement)
+	replacementEntry := replacementIdx[hashOf(replacement)]
+	replacementPath := filepath.Join(replacementDir, "packs", replacementEntry.PackID[:2], replacementEntry.PackID+PackExt)
+	require.NoError(t, os.Rename(replacementPath, path))
+
+	blobID, err := pack.ParseBlobID(hash)
+	require.NoError(t, err)
+	footerEntry, ok := r.entries[blobID]
+	require.True(t, ok)
+	got, err := r.readBlob(footerEntry, int64(len(original)))
+	require.NoError(t, err)
+	assert.Equal(t, original, got)
+}
+
+func TestBoundedReaderLifecycleClosesHeldDescriptor(t *testing.T) {
+	for _, lifecycle := range []string{"close", "retire"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			dir := t.TempDir()
+			content := []byte("bounded descriptor lifecycle")
+			idx := buildPack(t, dir, content)
+			hash := hashOf(content)
+			entry := idx[hash]
+			s := New(&mapIndex{m: idx}, dir)
+			assert.Equal(t, content, readBounded(t, s, hash, int64(len(content))))
+
+			s.mu.Lock()
+			cached := s.boundedReaders[entry.PackID]
+			s.mu.Unlock()
+			require.NotNil(t, cached)
+			if lifecycle == "close" {
+				require.NoError(t, s.Close())
+			} else {
+				require.NoError(t, s.RetirePack(entry.PackID))
+				require.NoError(t, s.Close())
+			}
+			_, err := cached.file.ReadAt(make([]byte, 1), 0)
+			assert.Error(t, err, "cache lifecycle must close the held pack descriptor")
+		})
+	}
 }
 
 func TestReadBoundedRejectsAuthoritativeFooterLengths(t *testing.T) {
@@ -297,6 +367,159 @@ func TestReadBoundedRejectsAuthoritativeFooterLengths(t *testing.T) {
 
 		_, _, err := s.ReadBounded(hash, entry.RawLen)
 		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+}
+
+func TestReadBoundedCapsCompressedOutputAtFooterRawLength(t *testing.T) {
+	dir := t.TempDir()
+	content := bytes.Repeat([]byte("zstd expansion must stop at the footer bound"), 1<<18)
+	idx := buildPack(t, dir, content)
+	hash := hashOf(content)
+	entry := idx[hash]
+	require.Equal(t, uint8(pack.BlobCompressed), entry.Flags&uint8(pack.BlobCompressed))
+
+	const forgedRawLen = 64
+	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+	rewritePlainPackFooter(t, path, func(footer []byte) {
+		binary.LittleEndian.PutUint64(footer[4+48:], forgedRawLen)
+	})
+	entry.RawLen = forgedRawLen
+	maxBytes := max(entry.StoredLen, int64(forgedRawLen))
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	_, _, err := s.ReadBounded(hash, maxBytes)
+	require.ErrorIs(t, err, pack.ErrCorrupt)
+	assert.ErrorContains(t, err, "exceeds declared raw length",
+		"the bounded decoder must stop at its guarded destination capacity")
+}
+
+func TestReadBoundedRejectsDuplicateFooterBlobIDs(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("duplicate footer blob id")
+	staging := t.TempDir()
+	w, err := pack.NewWriter(staging, pack.WriterOptions{})
+	require.NoError(t, err)
+	first, err := w.Append(content)
+	require.NoError(t, err)
+	_, err = w.Append(content)
+	require.NoError(t, err)
+	packID := w.ID()
+	path := filepath.Join(dir, "packs", packID[:2], packID+PackExt)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	_, err = w.Seal(path)
+	require.NoError(t, err)
+
+	hash := hashOf(content)
+	entry := &store.PackIndexEntry{
+		BlobHash: hash, PackID: packID, Offset: int64(first.Offset),
+		StoredLen: int64(first.StoredLen), RawLen: int64(first.RawLen),
+		Flags: uint8(first.Flags), CRC32C: first.CRC32C,
+	}
+	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	_, _, err = s.ReadBounded(hash, int64(len(content)))
+	require.ErrorIs(t, err, pack.ErrCorrupt)
+	assert.ErrorContains(t, err, "duplicate blob id")
+}
+
+func TestReadBoundedRejectsUnsupportedFooterFlags(t *testing.T) {
+	for name, flags := range map[string]uint8{
+		"encrypted": uint8(pack.BlobEncrypted),
+		"unknown":   1 << 7,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			content := []byte("unsupported bounded footer flags")
+			idx := buildPack(t, dir, content)
+			hash := hashOf(content)
+			entry := idx[hash]
+			path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+			rewritePlainPackFooter(t, path, func(footer []byte) {
+				footer[4+56] = flags
+			})
+			entry.Flags = flags
+			s := New(&mapIndex{m: idx}, dir)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			_, _, err := s.ReadBounded(hash, int64(len(content)))
+			require.ErrorIs(t, err, pack.ErrCorrupt)
+			assert.ErrorContains(t, err, "unsupported blob flags")
+		})
+	}
+}
+
+func TestReadBoundedVerifiesLocalPackIntegrity(t *testing.T) {
+	t.Run("footer checksum", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded footer checksum")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		contents, err := os.ReadFile(path)
+		require.NoError(t, err)
+		footerLen := int(binary.LittleEndian.Uint32(contents[len(contents)-40:]))
+		contents[len(contents)-40-footerLen+4] ^= 0x01
+		require.NoError(t, os.WriteFile(path, contents, 0o600))
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err = s.ReadBounded(hash, int64(len(content)))
+		assert.ErrorIs(t, err, pack.ErrChecksum)
+	})
+
+	t.Run("stored crc32c", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded stored crc32c")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		require.NoError(t, err)
+		stored := make([]byte, entry.StoredLen)
+		_, err = f.ReadAt(stored, entry.Offset)
+		require.NoError(t, err)
+		stored[0] ^= 0x01
+		_, err = f.WriteAt(stored, entry.Offset)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err = s.ReadBounded(hash, int64(len(content)))
+		require.ErrorIs(t, err, pack.ErrCorrupt)
+		assert.ErrorContains(t, err, "crc mismatch")
+	})
+
+	t.Run("blob sha256", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded blob sha256")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		require.NoError(t, err)
+		stored := make([]byte, entry.StoredLen)
+		_, err = f.ReadAt(stored, entry.Offset)
+		require.NoError(t, err)
+		stored[0] ^= 0x01
+		_, err = f.WriteAt(stored, entry.Offset)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		newCRC := crc32.Checksum(stored, crc32.MakeTable(crc32.Castagnoli))
+		rewritePlainPackFooter(t, path, func(footer []byte) {
+			binary.LittleEndian.PutUint32(footer[4+57:], newCRC)
+		})
+		entry.CRC32C = newCRC
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err = s.ReadBounded(hash, int64(len(content)))
+		assert.ErrorIs(t, err, pack.ErrBlobMismatch)
 	})
 }
 
@@ -595,6 +818,69 @@ func TestOpenConcurrent(t *testing.T) {
 	for err := range errCh {
 		assert.NoError(t, err)
 	}
+}
+
+// TestOpenAndReadBoundedConcurrent exercises the ordinary and bounded caches
+// for the same packs under the race detector.
+func TestOpenAndReadBoundedConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	blobs := [][]byte{
+		[]byte("mixed cache packed blob one"),
+		[]byte("mixed cache packed blob two"),
+		bytes.Repeat([]byte("mixed compressed cache blob"), 256),
+	}
+	idx := buildPack(t, dir, blobs...)
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	const goroutines = 8
+	const iterations = 10
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines*iterations*len(blobs))
+	for worker := range goroutines {
+		wg.Go(func() {
+			for iteration := range iterations {
+				for _, want := range blobs {
+					hash := hashOf(want)
+					if (worker+iteration)%2 == 0 {
+						r, size, err := s.Open(hash)
+						if err != nil {
+							errCh <- fmt.Errorf("open %s: %w", hash, err)
+							continue
+						}
+						got, err := io.ReadAll(r)
+						_ = r.Close()
+						if err != nil {
+							errCh <- fmt.Errorf("read ordinary %s: %w", hash, err)
+							continue
+						}
+						if size != int64(len(got)) || !bytes.Equal(got, want) {
+							errCh <- fmt.Errorf("ordinary content mismatch for %s", hash)
+						}
+						continue
+					}
+					got, size, err := s.ReadBounded(hash, int64(len(want)))
+					if err != nil {
+						errCh <- fmt.Errorf("read bounded %s: %w", hash, err)
+						continue
+					}
+					if size != int64(len(got)) || !bytes.Equal(got, want) {
+						errCh <- fmt.Errorf("bounded content mismatch for %s", hash)
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	s.mu.Lock()
+	assert.Len(t, s.readers, 1)
+	assert.Len(t, s.boundedReaders, 1)
+	assert.Len(t, s.order, 1, "ordinary and bounded readers for one pack share a FIFO slot")
+	s.mu.Unlock()
 }
 
 // TestOpenEvictsAndReopens builds more packs than maxOpenReaders, opens each
