@@ -3,6 +3,9 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -656,18 +660,86 @@ func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	fx := newPackAttachmentFixture(t, st)
+	attachmentsDir := t.TempDir()
 
-	hash := packTestHash("ab0c")
-	uppercaseHash := strings.ToUpper(hash)
-	canonical := hash[:2] + "/" + hash
-	fx.addAttachment(uppercaseHash, "legacy/"+uppercaseHash, 100)
-	carrierHash := packTestHash("ab0d")
-	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
-	fx.setThumbnail(carrierHash, uppercaseHash, "legacy/thumb/"+uppercaseHash)
+	content := []byte("uppercase content hash loose read")
+	thumbnail := []byte("uppercase thumbnail hash loose read")
+	contentHash := pack.ComputeBlobID(content).String()
+	thumbnailHash := pack.ComputeBlobID(thumbnail).String()
+	uppercaseContentHash := strings.ToUpper(contentHash)
+	uppercaseThumbnailHash := strings.ToUpper(thumbnailHash)
+	contentPath := contentHash[:2] + "/" + contentHash
+	thumbnailPath := thumbnailHash[:2] + "/" + thumbnailHash
+	contentURL := "HTTPS://cdn.example.com/" + uppercaseContentHash
+	thumbnailURL := "Http://cdn.example.com/" + uppercaseThumbnailHash
 
-	require.NoError(st.CanonicalizeAttachmentBlobPaths(uppercaseHash))
-	assert.Equal([]string{canonical}, fx.pathsForContentHash(uppercaseHash))
-	assert.Equal([]string{canonical}, fx.thumbnailPathsForHash(uppercaseHash))
+	fx.addAttachmentOnNewMessage(uppercaseContentHash, "legacy/"+uppercaseContentHash, len(content))
+	fx.addAttachmentOnNewMessage(uppercaseContentHash, contentURL, len(content))
+	fx.addAttachmentOnNewMessage(uppercaseContentHash, "", len(content))
+	carrierLocal := packTestHash("ab0d")
+	fx.addAttachment(carrierLocal, carrierLocal[:2]+"/"+carrierLocal, 100)
+	fx.setThumbnail(carrierLocal, uppercaseThumbnailHash, "legacy/thumb/"+uppercaseThumbnailHash)
+	carrierURL := packTestHash("ab0e")
+	fx.addAttachment(carrierURL, carrierURL[:2]+"/"+carrierURL, 100)
+	fx.setThumbnail(carrierURL, uppercaseThumbnailHash, thumbnailURL)
+	carrierEmpty := packTestHash("ab0f")
+	fx.addAttachment(carrierEmpty, carrierEmpty[:2]+"/"+carrierEmpty, 100)
+	fx.setThumbnail(carrierEmpty, uppercaseThumbnailHash, "")
+
+	for path, data := range map[string][]byte{
+		contentPath:   content,
+		thumbnailPath: thumbnail,
+	} {
+		fullPath := filepath.Join(attachmentsDir, filepath.FromSlash(path))
+		require.NoError(os.MkdirAll(filepath.Dir(fullPath), 0o700))
+		require.NoError(os.WriteFile(fullPath, data, 0o600))
+	}
+
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(uppercaseContentHash))
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(uppercaseThumbnailHash))
+
+	var storedContentHash, storedContentPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT content_hash, storage_path FROM attachments WHERE storage_path = ?`),
+		contentPath).Scan(&storedContentHash, &storedContentPath))
+	assert.Equal(contentHash, storedContentHash)
+	assert.Equal(contentPath, storedContentPath)
+	var storedThumbnailHash, storedThumbnailPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE thumbnail_path = ?`),
+		thumbnailPath).Scan(&storedThumbnailHash, &storedThumbnailPath))
+	assert.Equal(thumbnailHash, storedThumbnailHash)
+	assert.Equal(thumbnailPath, storedThumbnailPath)
+
+	var preserved int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM attachments
+		WHERE content_hash = ? AND (storage_path = ? OR storage_path = '')`),
+		uppercaseContentHash, contentURL).Scan(&preserved))
+	assert.Equal(2, preserved, "content URL and empty rows retain their original hash and path")
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM attachments
+		WHERE thumbnail_hash = ? AND (thumbnail_path = ? OR thumbnail_path = '')`),
+		uppercaseThumbnailHash, thumbnailURL).Scan(&preserved))
+	assert.Equal(2, preserved, "thumbnail URL and empty rows retain their original hash and path")
+
+	loose := blobstore.New(st, attachmentsDir)
+	t.Cleanup(func() { require.NoError(loose.Close()) })
+	for _, tc := range []struct {
+		hash string
+		want []byte
+	}{
+		{hash: storedContentHash, want: content},
+		{hash: storedThumbnailHash, want: thumbnail},
+	} {
+		reader, size, err := loose.Open(tc.hash)
+		require.NoError(err)
+		got, err := io.ReadAll(reader)
+		require.NoError(err)
+		require.NoError(reader.Close())
+		assert.Equal(int64(len(tc.want)), size)
+		assert.Equal(tc.want, got)
+	}
 }
 
 func TestCanonicalizeAttachmentBlobPathsRejectsMalformedHash(t *testing.T) {
@@ -822,6 +894,33 @@ func TestListUnpackedBlobs(t *testing.T) {
 	}, byHash[hashThumbOnly], "thumbnail-only blobs have Size -1")
 
 	assert.Len(blobs, 3)
+}
+
+func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	require.NoError(err)
+	fx := newPackAttachmentFixture(t, st)
+
+	contentURLHash := packTestHash("aa27")
+	thumbnailURLHash := packTestHash("bb28")
+	fx.addAttachment(contentURLHash, "HTTPS://cdn.example.com/"+contentURLHash, 100)
+	carrierHash := packTestHash("cc29")
+	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
+	fx.setThumbnail(carrierHash, thumbnailURLHash, "Http://cdn.example.com/"+thumbnailURLHash)
+
+	blobs, err := st.ListUnpackedBlobs()
+	require.NoError(err)
+	byHash := make(map[string]store.UnpackedBlob, len(blobs))
+	for _, blob := range blobs {
+		byHash[blob.Hash] = blob
+	}
+	assert.NotContains(byHash, contentURLHash)
+	assert.NotContains(byHash, thumbnailURLHash)
 }
 
 func TestPackRecordLifecycle(t *testing.T) {

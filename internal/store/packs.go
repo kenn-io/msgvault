@@ -235,21 +235,23 @@ func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
 func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
 	if _, err := tx.Exec(`
-		UPDATE attachments SET storage_path = ?
-		WHERE (content_hash = ? OR content_hash = ?) AND storage_path != ?
+		UPDATE attachments SET storage_path = ?, content_hash = ?
+		WHERE (content_hash = ? OR content_hash = ?)
+		  AND (storage_path != ? OR content_hash != ?)
 		  AND storage_path IS NOT NULL AND storage_path != ''
 		  AND LOWER(storage_path) NOT LIKE 'http://%'
 		  AND LOWER(storage_path) NOT LIKE 'https://%'`,
-		canonical, blobHash, lookupHash, canonical); err != nil {
+		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
 	}
 	if _, err := tx.Exec(`
-		UPDATE attachments SET thumbnail_path = ?
-		WHERE (thumbnail_hash = ? OR thumbnail_hash = ?) AND thumbnail_path != ?
+		UPDATE attachments SET thumbnail_path = ?, thumbnail_hash = ?
+		WHERE (thumbnail_hash = ? OR thumbnail_hash = ?)
+		  AND (thumbnail_path != ? OR thumbnail_hash != ?)
 		  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
 		  AND LOWER(thumbnail_path) NOT LIKE 'http://%'
 		  AND LOWER(thumbnail_path) NOT LIKE 'https://%'`,
-		canonical, blobHash, lookupHash, canonical); err != nil {
+		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize thumbnail_path for %s: %w", blobHash, err)
 	}
 	return nil
@@ -449,8 +451,8 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		FROM attachments
 		WHERE content_hash IS NOT NULL AND content_hash != ''
 		  AND storage_path IS NOT NULL AND storage_path != ''
-		  AND storage_path NOT LIKE 'http://%'
-		  AND storage_path NOT LIKE 'https://%'
+		  AND LOWER(storage_path) NOT LIKE 'http://%'
+		  AND LOWER(storage_path) NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
 		                  WHERE p.blob_hash = attachments.content_hash)
 		GROUP BY content_hash, storage_path
@@ -462,8 +464,8 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		FROM attachments
 		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''
 		  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
-		  AND thumbnail_path NOT LIKE 'http://%'
-		  AND thumbnail_path NOT LIKE 'https://%'
+		  AND LOWER(thumbnail_path) NOT LIKE 'http://%'
+		  AND LOWER(thumbnail_path) NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
 		                  WHERE p.blob_hash = attachments.thumbnail_hash)
 		GROUP BY thumbnail_hash, thumbnail_path
