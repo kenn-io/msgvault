@@ -56,6 +56,12 @@ type Stats struct {
 // cleanup. Production always uses os.Remove.
 var removeLooseFile = os.Remove
 
+// readExistingBounded is a narrow ordering seam for orphan-planning tests.
+// Production always delegates to the bounded blob store.
+var readExistingBounded = func(blobs *blobstore.Store, hash string, limit int64) ([]byte, int64, error) {
+	return blobs.ReadBounded(hash, limit)
+}
+
 // Run packs all unindexed loose attachment blobs into sealed packs,
 // reconciling crash leftovers first and sweeping indexed loose files after.
 // The caller must hold the archive's exclusive-writer coverage (daemon
@@ -187,11 +193,14 @@ func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsD
 func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced map[string]struct{}, stats *Stats) error {
 	r, err := blobstore.OpenMaintenancePack(path)
 	if err != nil {
-		if errors.Is(err, blobstore.ErrBlobTooLarge) {
+		var limitErr *blobstore.LimitError
+		if errors.As(err, &limitErr) {
 			stats.PacksDeferredOversized++
-			slog.Warn("orphan pack exceeds maintenance ceiling; deferring whole pack",
-				"pack", id, "path", path, "limit", blobstore.MaxMaintenancePackBytes, "error", err)
+			logOrphanLimitDeferral(id, limitErr, 0)
 			return nil
+		}
+		if errors.Is(err, blobstore.ErrBlobTooLarge) {
+			return fmt.Errorf("orphan pack %s returned an unclassified maintenance limit: %w", id, err)
 		}
 		stats.PacksUnreadable++
 		slog.Error("orphan pack container is unreadable; leaving pack in place",
@@ -202,8 +211,11 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 	if len(entries) > maintenancePackEntries {
 		_ = r.Close()
 		stats.PacksDeferredOversized++
-		slog.Warn("orphan pack entry count exceeds maintenance ceiling; deferring whole pack",
-			"pack", id, "path", path, "entries", len(entries), "limit", maintenancePackEntries)
+		logOrphanLimitDeferral(id, &blobstore.LimitError{
+			Dimension: blobstore.LimitPackEntryCount,
+			Actual:    uint64(len(entries)),
+			Limit:     uint64(maintenancePackEntries), //nolint:gosec // positive fixed production/test limit
+		}, 0)
 		return nil
 	}
 	collection, err := collectAdoptable(ctx, st, existingBlobs, r, id, referenced)
@@ -215,9 +227,7 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 	}
 	if collection.deferred {
 		stats.PacksDeferredOversized++
-		slog.Warn("orphan pack requires an oversized referenced blob; deferring whole pack",
-			"pack", id, "raw_bytes", collection.deferredRaw, "max_raw_bytes", maintenanceBlobBytes,
-			"withheld_entries", collection.withheld)
+		logOrphanLimitDeferral(id, collection.limit, collection.withheld)
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -246,12 +256,17 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 }
 
 type orphanCollection struct {
-	adoptable   []store.PackIndexEntry
-	record      store.PackRecord
-	failed      int
-	deferredRaw uint64
-	withheld    int
-	deferred    bool
+	adoptable []store.PackIndexEntry
+	record    store.PackRecord
+	failed    int
+	limit     *blobstore.LimitError
+	withheld  int
+	deferred  bool
+}
+
+type orphanCandidatePlan struct {
+	entry    pack.Entry
+	existing *store.PackIndexEntry
 }
 
 // collectAdoptable plans every referenced candidate before reading any of
@@ -266,13 +281,7 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		EntryCount: int64(len(entries)),
 		CreatedAt:  time.Now().UTC(),
 	}}
-	referencedEntries := 0
-	for _, entry := range entries {
-		if _, live := referenced[entry.ID.String()]; live {
-			referencedEntries++
-		}
-	}
-	var candidates []pack.Entry
+	var plans []orphanCandidatePlan
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -282,29 +291,54 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		if _, live := referenced[hash]; !live {
 			continue
 		}
+		result.withheld++
 		existing, err := st.GetAttachmentPackEntry(hash)
 		if err != nil {
 			return result, err
 		}
+		plans = append(plans, orphanCandidatePlan{entry: e, existing: existing})
+		maintenanceLimit := uint64(maintenanceBlobBytes) //nolint:gosec // positive fixed production/test limit
+		if e.RawLen > maintenanceLimit {
+			if result.limit == nil || e.RawLen > result.limit.Actual {
+				result.limit = &blobstore.LimitError{
+					Dimension: blobstore.LimitBlobRawBytes, Actual: e.RawLen, Limit: maintenanceLimit,
+				}
+			}
+			result.deferred = true
+		} else if e.StoredLen > maintenanceLimit {
+			if result.limit == nil || e.StoredLen > result.limit.Actual {
+				result.limit = &blobstore.LimitError{
+					Dimension: blobstore.LimitBlobStoredBytes, Actual: e.StoredLen, Limit: maintenanceLimit,
+				}
+			}
+			result.deferred = true
+		}
+	}
+	if result.deferred {
+		return result, nil
+	}
+
+	var candidates []pack.Entry
+	for _, plan := range plans {
+		e := plan.entry
+		hash := e.ID.String()
+		existing := plan.existing
 		if existing != nil && existing.PackID != id {
-			_, _, readErr := existingBlobs.ReadBounded(hash, maintenanceBlobBytes)
+			_, _, readErr := readExistingBounded(existingBlobs, hash, maintenanceBlobBytes)
 			if readErr == nil {
 				continue
 			}
-			if errors.Is(readErr, blobstore.ErrBlobTooLarge) {
-				result.deferredRaw = max(uint64(existing.RawLen), uint64(existing.StoredLen)) //nolint:gosec // validated store metadata is nonnegative
-				result.withheld = referencedEntries
+			var limitErr *blobstore.LimitError
+			if errors.As(readErr, &limitErr) {
+				result.limit = limitErr
 				result.deferred = true
 				return result, nil
 			}
+			if errors.Is(readErr, blobstore.ErrBlobTooLarge) {
+				return result, fmt.Errorf("existing packed blob %s returned an unclassified maintenance limit: %w", hash, readErr)
+			}
 			slog.Error("existing packed blob is unreadable; adopting orphan replacement",
 				"hash", hash, "existingPack", existing.PackID, "orphanPack", id, "error", readErr)
-		}
-		if e.RawLen > uint64(maintenanceBlobBytes) || e.StoredLen > uint64(maintenanceBlobBytes) { //nolint:gosec // maintenance limit is a positive fixed constant
-			result.deferredRaw = max(e.RawLen, e.StoredLen)
-			result.withheld = referencedEntries
-			result.deferred = true
-			return result, nil
 		}
 		candidates = append(candidates, e)
 	}
@@ -323,6 +357,29 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		result.adoptable = append(result.adoptable, indexEntry(id, e))
 	}
 	return result, nil
+}
+
+func logOrphanLimitDeferral(packID string, limit *blobstore.LimitError, withheld int) {
+	args := []any{
+		"pack", packID,
+		"limit_dimension", limit.Dimension,
+		"withheld_entries", withheld,
+	}
+	switch limit.Dimension {
+	case blobstore.LimitBlobRawBytes:
+		args = append(args, "raw_bytes", limit.Actual, "max_raw_bytes", limit.Limit)
+	case blobstore.LimitBlobStoredBytes:
+		args = append(args, "stored_bytes", limit.Actual, "max_stored_bytes", limit.Limit)
+	case blobstore.LimitBlobStatBytes:
+		args = append(args, "observed_bytes", limit.Actual, "stat_bytes", limit.Limit)
+	case blobstore.LimitPackContainerBytes:
+		args = append(args, "pack_bytes", limit.Actual, "max_pack_bytes", limit.Limit)
+	case blobstore.LimitPackFooterBytes:
+		args = append(args, "footer_bytes", limit.Actual, "max_footer_bytes", limit.Limit)
+	case blobstore.LimitPackEntryCount:
+		args = append(args, "pack_entries", limit.Actual, "max_pack_entries", limit.Limit)
+	}
+	slog.Warn("orphan pack exceeds a maintenance limit; deferring whole pack", args...)
 }
 
 // dropDanglingPackRecords removes unusable attachment_packs records and their

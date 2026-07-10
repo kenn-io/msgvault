@@ -407,6 +407,80 @@ func TestRunDefersWholeOrphanBeforeReadingCandidateWhenExistingCopyIsOversized(t
 	assert.Contains(logs.String(), "withheld_entries=2")
 }
 
+func TestRunPlansAllOrphanEntryLimitsBeforeExistingContentReads(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	small := []byte("small existing packed blob")
+	large := make([]byte, 1025)
+	f.addBlob(small, maintenanceCanonical)
+	f.addBlob(large, maintenanceCanonical)
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	_, orphanPath := buildMaintenanceOrphan(t, f.dir, small, large)
+	assert.FileExists(orphanPath)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	oldRead := readExistingBounded
+	reads := 0
+	readExistingBounded = func(blobs *blobstore.Store, hash string, limit int64) ([]byte, int64, error) {
+		reads++
+		return oldRead(blobs, hash, limit)
+	}
+	t.Cleanup(func() { readExistingBounded = oldRead })
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(reads, "a later oversized referenced entry must prevent every earlier content read")
+}
+
+func TestRunLogsExistingPackContainerLimitWithoutMislabelingRawBytes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	content := []byte("small blob in an oversized existing pack container")
+	hash, _ := f.addBlob(content, maintenanceCanonical)
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	existing, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(existing)
+	existingPath := filepath.Join(f.dir, "packs", existing.PackID[:2], existing.PackID+blobstore.PackExt)
+	actualPackBytes := int64(blobstore.MaxMaintenancePackBytes + 1)
+	require.NoError(os.Truncate(existingPath, actualPackBytes))
+
+	orphanID, orphanPath := buildMaintenanceOrphan(t, f.dir, content)
+	r, err := blobstore.OpenMaintenancePack(orphanPath)
+	require.NoError(err)
+	entries := r.Entries()
+	require.Len(entries, 1)
+	orphanOffset := int64(entries[0].Offset)
+	require.NoError(r.Close())
+	packFile, err := os.OpenFile(orphanPath, os.O_RDWR, 0)
+	require.NoError(err)
+	var corrupt [1]byte
+	_, err = packFile.ReadAt(corrupt[:], orphanOffset)
+	require.NoError(err)
+	corrupt[0] ^= 0xff
+	_, err = packFile.WriteAt(corrupt[:], orphanOffset)
+	require.NoError(err)
+	require.NoError(packFile.Close())
+	logs := captureMaintenanceLogs(t)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(stats.PacksQuarantined, "pack metadata deferral must happen before the orphan blob read")
+	has, err := f.store.HasPackRecord(orphanID)
+	require.NoError(err)
+	assert.False(has)
+	assert.Contains(logs.String(), "limit_dimension=pack_container_bytes")
+	assert.Contains(logs.String(), fmt.Sprintf("pack_bytes=%d", actualPackBytes))
+	assert.Contains(logs.String(), fmt.Sprintf("max_pack_bytes=%d", blobstore.MaxMaintenancePackBytes))
+	assert.Contains(logs.String(), "withheld_entries=1")
+	assert.NotContains(logs.String(), "raw_bytes=", "pack metadata limits are not blob raw sizes")
+}
+
 func TestRunSealsWriterBeforeEntryCountLimitIsExceeded(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -515,7 +589,7 @@ func TestCanonicalizeLooseSourceStopsBeforeDatabaseCommitWhenContextCancels(t *t
 		"a fully published canonical copy is harmless recovery data")
 }
 
-func TestPublishLooseFallbackNeverClobbersRacingDestination(t *testing.T) {
+func TestPublishLooseNeverClobbersRacingDestination(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
@@ -523,17 +597,12 @@ func TestPublishLooseFallbackNeverClobbersRacingDestination(t *testing.T) {
 	canonical := filepath.Join(dir, "canonical")
 	require.NoError(os.WriteFile(staging, []byte("new canonical bytes"), 0o600))
 	oldLink := linkLooseFile
-	oldCreate := createExclusiveLooseFile
-	linkLooseFile = func(_, _ string) error { return errors.New("hard links unsupported") }
-	createExclusiveLooseFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+	linkLooseFile = func(_, name string) error {
 		require.Equal(canonical, name)
 		require.NoError(os.WriteFile(canonical, []byte("racing writer bytes"), 0o600))
-		return oldCreate(name, flag, perm)
+		return fs.ErrExist
 	}
-	t.Cleanup(func() {
-		linkLooseFile = oldLink
-		createExclusiveLooseFile = oldCreate
-	})
+	t.Cleanup(func() { linkLooseFile = oldLink })
 
 	err := publishLooseNoClobber(staging, canonical)
 	require.ErrorIs(err, fs.ErrExist)
@@ -541,4 +610,29 @@ func TestPublishLooseFallbackNeverClobbersRacingDestination(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]byte("racing writer bytes"), got)
 	assert.FileExists(staging, "failed publication retains the verified staging source")
+}
+
+func TestRunFailsClosedWhenAtomicNoReplacePublishIsUnsupported(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := make([]byte, 1025)
+	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	canonical := canonicalLoosePath(f.dir, hash)
+	oldLink := linkLooseFile
+	linkLooseFile = func(_, _ string) error { return errors.New("atomic no-replace unavailable") }
+	t.Cleanup(func() { linkLooseFile = oldLink })
+
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.ErrorContains(err, "atomic no-replace unavailable")
+	assert.NoFileExists(canonical, "failed publication must never expose a partial final pathname")
+	assert.FileExists(legacy)
+	assert.Equal("legacy/"+hash, f.storagePath(hash))
+	legacyBytes, readErr := os.ReadFile(legacy)
+	require.NoError(readErr)
+	assert.Equal(content, legacyBytes)
+	stagingFiles, globErr := filepath.Glob(filepath.Join(filepath.Dir(canonical), ".*.staging"))
+	require.NoError(globErr)
+	assert.Empty(stagingFiles, "failed publication cleans only its private same-directory staging file")
 }

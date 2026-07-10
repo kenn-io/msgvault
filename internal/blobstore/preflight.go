@@ -31,6 +31,37 @@ const (
 // supplied or maintenance safety ceiling.
 var ErrBlobTooLarge = errors.New("attachment blob exceeds bounded read limit")
 
+// LimitDimension identifies which bounded-maintenance quantity exceeded its
+// ceiling. Callers can report the actual constraint without parsing errors.
+type LimitDimension string
+
+const (
+	LimitBlobRawBytes       LimitDimension = "blob_raw_bytes"
+	LimitBlobStoredBytes    LimitDimension = "blob_stored_bytes"
+	LimitBlobStatBytes      LimitDimension = "blob_stat_bytes"
+	LimitPackContainerBytes LimitDimension = "pack_container_bytes"
+	LimitPackFooterBytes    LimitDimension = "pack_footer_bytes"
+	LimitPackEntryCount     LimitDimension = "pack_entry_count"
+)
+
+// LimitError preserves ErrBlobTooLarge while carrying a machine-readable
+// dimension and the exact values that crossed the boundary.
+type LimitError struct {
+	Dimension LimitDimension
+	Actual    uint64
+	Limit     uint64
+}
+
+func (e *LimitError) Error() string {
+	return fmt.Sprintf("%s: %s is %d, limit %d", ErrBlobTooLarge, e.Dimension, e.Actual, e.Limit)
+}
+
+func (e *LimitError) Unwrap() error { return ErrBlobTooLarge }
+
+func newLimitError(dimension LimitDimension, actual, limit uint64) error {
+	return &LimitError{Dimension: dimension, Actual: actual, Limit: limit}
+}
+
 const (
 	// These constants intentionally duplicate the stable plain v1 wire
 	// format instead of following kit's mutable current-version constant.
@@ -119,8 +150,7 @@ func openBoundedPack(path string) (*boundedPackReader, error) {
 	}
 	size := info.Size()
 	if size > MaxMaintenancePackBytes {
-		return nil, fmt.Errorf("%w: pack container is %d bytes, limit %d",
-			ErrBlobTooLarge, size, MaxMaintenancePackBytes)
+		return nil, newLimitError(LimitPackContainerBytes, uint64(size), MaxMaintenancePackBytes)
 	}
 	if size < plainPackHeaderSize+plainPackTrailerSize {
 		return nil, fmt.Errorf("%w: %d bytes is too small for a plain pack", pack.ErrTruncated, size)
@@ -150,8 +180,7 @@ func openBoundedPack(path string) (*boundedPackReader, error) {
 	}
 	footerLen := uint64(binary.LittleEndian.Uint32(trailer[:4]))
 	if footerLen > MaxMaintenanceFooterBytes {
-		return nil, fmt.Errorf("%w: pack footer is %d bytes, limit %d",
-			ErrBlobTooLarge, footerLen, MaxMaintenanceFooterBytes)
+		return nil, newLimitError(LimitPackFooterBytes, footerLen, MaxMaintenanceFooterBytes)
 	}
 	fileSize := uint64(size)
 	if footerLen < 4 || fileSize < plainPackHeaderSize+plainPackTrailerSize+footerLen {
@@ -165,8 +194,7 @@ func openBoundedPack(path string) (*boundedPackReader, error) {
 	}
 	count := uint64(binary.LittleEndian.Uint32(countBytes[:]))
 	if count > MaxMaintenancePackEntries {
-		return nil, fmt.Errorf("%w: pack footer has %d entries, limit %d",
-			ErrBlobTooLarge, count, MaxMaintenancePackEntries)
+		return nil, newLimitError(LimitPackEntryCount, count, MaxMaintenancePackEntries)
 	}
 	wantFooterLen := uint64(4) + count*plainPackEntrySize
 	if footerLen != wantFooterLen {
@@ -234,19 +262,20 @@ func readBoundedPackAt(f *os.File, dst []byte, offset int64, part string) error 
 func (r *boundedPackReader) readBlob(entry pack.Entry, maxBytes int64) ([]byte, error) {
 	limit := uint64(maxBytes) //nolint:gosec // ReadBounded rejects negative limits before dispatch
 	if entry.RawLen > limit {
-		return nil, fmt.Errorf("%w: raw length is %d bytes, limit %d",
-			ErrBlobTooLarge, entry.RawLen, maxBytes)
+		return nil, newLimitError(LimitBlobRawBytes, entry.RawLen, limit)
 	}
 	if entry.StoredLen > limit {
-		return nil, fmt.Errorf("%w: stored length is %d bytes, limit %d",
-			ErrBlobTooLarge, entry.StoredLen, maxBytes)
+		return nil, newLimitError(LimitBlobStoredBytes, entry.StoredLen, limit)
 	}
 	if entry.Flags & ^pack.BlobCompressed != 0 {
 		return nil, fmt.Errorf("%w: unsupported blob flags %#x", pack.ErrCorrupt, entry.Flags)
 	}
 	maxInt := uint64(^uint(0) >> 1)
 	if entry.RawLen > maxInt || entry.StoredLen > maxInt {
-		return nil, fmt.Errorf("%w: blob lengths exceed addressable memory", ErrBlobTooLarge)
+		if entry.RawLen > maxInt {
+			return nil, newLimitError(LimitBlobRawBytes, entry.RawLen, maxInt)
+		}
+		return nil, newLimitError(LimitBlobStoredBytes, entry.StoredLen, maxInt)
 	}
 
 	stored := make([]byte, int(entry.StoredLen))

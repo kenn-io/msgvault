@@ -235,9 +235,12 @@ func (s *Store) readLooseBounded(hash string, maxBytes int64) ([]byte, int64, er
 	if size < 0 {
 		return nil, 0, fmt.Errorf("stat loose attachment %s: negative size %d", hash, size)
 	}
-	if size > maxBytes || uint64(size) > uint64(^uint(0)>>1) {
-		return nil, 0, fmt.Errorf("%w: loose attachment %s is %d bytes, limit %d",
-			ErrBlobTooLarge, hash, size, maxBytes)
+	if size > maxBytes {
+		return nil, 0, newLimitError(LimitBlobRawBytes, uint64(size), uint64(maxBytes)) //nolint:gosec // nonnegative size and validated limit
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if uint64(size) > maxInt {
+		return nil, 0, newLimitError(LimitBlobRawBytes, uint64(size), maxInt)
 	}
 	data := make([]byte, int(size))
 	if _, err := io.ReadFull(f, data); err != nil {
@@ -246,8 +249,7 @@ func (s *Store) readLooseBounded(hash string, maxBytes int64) ([]byte, int64, er
 	var probe [1]byte
 	n, err := f.Read(probe[:])
 	if n != 0 {
-		return nil, 0, fmt.Errorf("%w: loose attachment %s grew beyond its stat size %d",
-			ErrBlobTooLarge, hash, size)
+		return nil, 0, newLimitError(LimitBlobStatBytes, uint64(size)+uint64(n), uint64(size)) //nolint:gosec // nonnegative descriptor stat
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, 0, fmt.Errorf("probe loose attachment %s for growth: %w", hash, err)
@@ -304,8 +306,7 @@ func (s *Store) readPackedBounded(hash string, e *store.PackIndexEntry, maxBytes
 		return nil, 0, err
 	}
 	if len(r.entries) > MaxMaintenancePackEntries {
-		return nil, 0, fmt.Errorf("%w: cached pack %s has %d entries, limit %d",
-			ErrBlobTooLarge, e.PackID, len(r.entries), MaxMaintenancePackEntries)
+		return nil, 0, newLimitError(LimitPackEntryCount, uint64(len(r.entries)), MaxMaintenancePackEntries)
 	}
 	footerEntry, found := r.entries[blobID]
 	if !found {
@@ -367,8 +368,7 @@ func packIndexMatchesFooter(index *store.PackIndexEntry, footer pack.Entry) bool
 func (s *Store) boundedReaderLocked(packID string) (*boundedPackReader, error) {
 	if r, ok := s.boundedReaders[packID]; ok {
 		if len(r.entries) > MaxMaintenancePackEntries {
-			return nil, fmt.Errorf("%w: cached pack %s has %d entries, limit %d",
-				ErrBlobTooLarge, packID, len(r.entries), MaxMaintenancePackEntries)
+			return nil, newLimitError(LimitPackEntryCount, uint64(len(r.entries)), MaxMaintenancePackEntries)
 		}
 		return r, nil
 	}
@@ -379,8 +379,7 @@ func (s *Store) boundedReaderLocked(packID string) (*boundedPackReader, error) {
 	}
 	if len(r.entries) > MaxMaintenancePackEntries {
 		_ = r.Close()
-		return nil, fmt.Errorf("%w: pack %s has %d entries, limit %d",
-			ErrBlobTooLarge, packID, len(r.entries), MaxMaintenancePackEntries)
+		return nil, newLimitError(LimitPackEntryCount, uint64(len(r.entries)), MaxMaintenancePackEntries)
 	}
 	s.addPackSlotLocked(packID)
 	s.boundedReaders[packID] = r

@@ -25,10 +25,9 @@ var (
 	maintenancePackEntries = blobstore.MaxMaintenancePackEntries
 	// openLooseFile is a narrow test seam; production always uses os.Open.
 	openLooseFile = os.Open
-	// Publication seams let tests force filesystems without hard-link support
-	// and a destination race. Production always uses the os implementations.
-	linkLooseFile            = os.Link
-	createExclusiveLooseFile = os.OpenFile
+	// linkLooseFile lets tests force unsupported atomic no-replace publication
+	// and destination races. Production always uses os.Link.
+	linkLooseFile = os.Link
 )
 
 var errLooseHashMismatch = errors.New("loose attachment bytes do not match hash")
@@ -63,9 +62,15 @@ func readVerifiedLoose(path, hash string, limit int64) ([]byte, int64, error) {
 		return nil, 0, err
 	}
 	size := info.Size()
-	if size < 0 || size > limit {
-		return nil, size, fmt.Errorf("%w: loose blob is %d bytes, limit %d",
-			blobstore.ErrBlobTooLarge, size, limit)
+	if size < 0 {
+		return nil, size, fmt.Errorf("negative loose blob size %d", size)
+	}
+	if size > limit {
+		return nil, size, &blobstore.LimitError{
+			Dimension: blobstore.LimitBlobRawBytes,
+			Actual:    uint64(size),
+			Limit:     uint64(limit), //nolint:gosec // positive fixed production/test limit
+		}
 	}
 	data := make([]byte, int(size))
 	if _, err := io.ReadFull(f, data); err != nil {
@@ -74,8 +79,11 @@ func readVerifiedLoose(path, hash string, limit int64) ([]byte, int64, error) {
 	var probe [1]byte
 	n, probeErr := f.Read(probe[:])
 	if n != 0 || probeErr == nil {
-		return nil, size + int64(n), fmt.Errorf("%w: loose blob grew beyond stat size %d",
-			blobstore.ErrBlobTooLarge, size)
+		return nil, size + int64(n), &blobstore.LimitError{
+			Dimension: blobstore.LimitBlobStatBytes,
+			Actual:    uint64(size) + uint64(n), //nolint:gosec // nonnegative descriptor stat
+			Limit:     uint64(size),
+		}
 	}
 	if !errors.Is(probeErr, io.EOF) {
 		return nil, size, fmt.Errorf("probe loose blob growth: %w", probeErr)
@@ -239,45 +247,17 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 }
 
 func publishLooseNoClobber(staging, canonical string) error {
-	if err := linkLooseFile(staging, canonical); err == nil {
+	err := linkLooseFile(staging, canonical)
+	if err == nil {
 		if err := os.Remove(staging); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
-	} else if errors.Is(err, fs.ErrExist) {
+	}
+	if errors.Is(err, fs.ErrExist) {
 		return err
 	}
-
-	source, err := openLooseFile(staging)
-	if err != nil {
-		return fmt.Errorf("open canonical loose staging file for publish: %w", err)
-	}
-	defer source.Close() //nolint:errcheck // copy error is authoritative
-	destination, err := createExclusiveLooseFile(canonical, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	published := false
-	defer func() {
-		_ = destination.Close()
-		if !published {
-			_ = os.Remove(canonical)
-		}
-	}()
-	if _, err := io.CopyBuffer(destination, source, make([]byte, looseCopyBufferBytes)); err != nil {
-		return fmt.Errorf("copy canonical loose destination: %w", err)
-	}
-	if err := destination.Sync(); err != nil {
-		return fmt.Errorf("sync canonical loose destination: %w", err)
-	}
-	if err := destination.Close(); err != nil {
-		return fmt.Errorf("close canonical loose destination: %w", err)
-	}
-	published = true
-	if err := os.Remove(staging); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove canonical loose staging file after publish: %w", err)
-	}
-	return nil
+	return fmt.Errorf("atomic no-replace canonical loose publish: %w", err)
 }
 
 // canonicalizeLooseSource publishes verified canonical bytes, commits the DB

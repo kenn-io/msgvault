@@ -325,6 +325,26 @@ func TestOpenMaintenancePackPreflightsContainerFooterAndCount(t *testing.T) {
 	})
 }
 
+func TestOpenMaintenancePackReportsTypedContainerLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("typed oversized maintenance container")
+	idx := buildPack(t, dir, content)
+	entry := idx[hashOf(content)]
+	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+	actual := int64(MaxMaintenancePackBytes + 1)
+	require.NoError(os.Truncate(path, actual))
+
+	_, err := OpenMaintenancePack(path)
+	require.ErrorIs(err, ErrBlobTooLarge)
+	var limitErr *LimitError
+	require.ErrorAs(err, &limitErr)
+	assert.Equal(LimitPackContainerBytes, limitErr.Dimension)
+	assert.Equal(uint64(actual), limitErr.Actual)
+	assert.Equal(uint64(MaxMaintenancePackBytes), limitErr.Limit)
+}
+
 func TestReadBoundedChecksCachedReaderEntryLimit(t *testing.T) {
 	dir := t.TempDir()
 	path, hash, entry := buildSyntheticEntryHeavyPack(t, dir)
