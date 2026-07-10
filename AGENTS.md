@@ -6,6 +6,13 @@ This file applies to all AI coding agents (Claude Code, Codex, Copilot CLI, etc.
 
 - Project guide: `CLAUDE.md` (this file is authoritative; AGENTS.md inherits its rules).
 
+## Roborev
+
+- Never manually invoke `roborev review` in any form unless the user explicitly
+  asks for it. Never invoke a roborev skill (including `roborev-fix` or
+  `roborev-design-review-branch`) unless the user explicitly asks for that
+  skill.
+
 ## Testing — Use testify
 
 All Go tests use `github.com/stretchr/testify`. New tests and modifications to existing tests MUST use `assert.X` or `require.X` from testify — never `t.Errorf`, `t.Fatalf`, `t.Fatal`, or `t.Error`.
