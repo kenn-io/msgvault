@@ -134,6 +134,42 @@ func (s *Store) Close() error {
 	return firstErr
 }
 
+// RetirePack closes and forgets the daemon-owned cached reader for packID,
+// then removes the canonical pack file while packed reads remain excluded.
+// It deliberately does not alter database metadata; callers may remove a
+// zero-live pack record only after this physical retirement succeeds.
+func (s *Store) RetirePack(packID string) error {
+	if !pack.IsValidPackID(packID) {
+		return fmt.Errorf("invalid pack id %q", packID)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reader := s.readers[packID]
+	delete(s.readers, packID)
+	order := s.order[:0]
+	for _, id := range s.order {
+		if id != packID {
+			order = append(order, id)
+		}
+	}
+	s.order = order
+
+	var closeErr error
+	if reader != nil {
+		if err := reader.Close(); err != nil {
+			closeErr = fmt.Errorf("close pack reader %s: %w", packID, err)
+		}
+	}
+	path := filepath.Join(s.attachmentsDir, "packs", packID[:2], packID+PackExt)
+	var removeErr error
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		removeErr = fmt.Errorf("remove pack %s: %w", packID, err)
+	}
+	return errors.Join(closeErr, removeErr)
+}
+
 func (s *Store) openLoose(hash string) (io.ReadSeekCloser, int64, error) {
 	p, err := export.StoragePath(s.attachmentsDir, hash)
 	if err != nil {

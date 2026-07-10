@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -895,8 +896,39 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		return run(ctx, req.Args, req.Env, req.Cwd, emitSubprocess)
 	}
+	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
+		if len(req.Args) != 1 {
+			return errors.New("repack-attachments accepts no arguments")
+		}
+		if a.attachmentMaintenance == nil {
+			return errors.New("attachment maintenance is unavailable")
+		}
+		stats, err := a.attachmentMaintenance.repack(ctx, 0)
+		if err != nil {
+			return err
+		}
+		if emit != nil {
+			var output bytes.Buffer
+			writeRepackAttachmentsStats(&output, stats)
+			if err := emit(api.CLIRunEvent{Type: cliStreamStdout, Data: output.String()}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if !attachmentProducingCommand(req.Args) {
-		return runSubprocess(ctx)
+		if len(req.Args) == 0 || req.Args[0] != removeAccountCommandName {
+			return runSubprocess(ctx)
+		}
+		emitWarning := func(message string) error {
+			if emit == nil {
+				return nil
+			}
+			return emit(api.CLIRunEvent{Type: cliStreamStderr, Data: message})
+		}
+		return runAfterSuccessfulAttachmentRemoval(
+			ctx, a.attachmentMaintenance, runSubprocess, emitWarning,
+		)
 	}
 	emitWarning := func(message string) error {
 		if emit == nil {

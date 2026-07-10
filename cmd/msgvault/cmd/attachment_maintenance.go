@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/msgvault/internal/repacker"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -32,6 +33,12 @@ type attachmentMaintenance struct {
 // pack performs one packer pass with the requested soft raw-byte budget.
 func (m *attachmentMaintenance) pack(ctx context.Context, maxBytes int64) (packer.Stats, error) {
 	return packer.Run(ctx, m.store, m.attachmentsDir, packer.Options{MaxBytes: maxBytes})
+}
+
+// repack performs one physical-GC pass through the daemon's shared blob-store
+// cache with the requested soft live-raw-byte budget.
+func (m *attachmentMaintenance) repack(ctx context.Context, maxBytes int64) (repacker.Stats, error) {
+	return repacker.Run(ctx, m.store, m.blob, m.attachmentsDir, repacker.Options{MaxBytes: maxBytes})
 }
 
 // runAutomaticPack performs one bounded maintenance pass. Errors remain
@@ -78,6 +85,46 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 	return nil
 }
 
+func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarning func(string) error) error {
+	stats, err := m.repack(ctx, automaticAttachmentBytes)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			m.log().Info("automatic attachment repack canceled")
+			return err
+		}
+		const retry = "run `msgvault repack-attachments` to retry"
+		m.log().Warn("automatic attachment repack failed", "error", err, "retry", retry)
+		if emitWarning != nil {
+			warning := fmt.Sprintf("Automatic attachment repack failed: %v; %s.\n", err, retry)
+			if emitErr := emitWarning(warning); emitErr != nil {
+				m.log().Warn("failed to emit automatic attachment repack warning", "error", emitErr)
+			}
+		}
+		return err
+	}
+	m.log().Info("automatic attachment repack complete",
+		"max_bytes", automaticAttachmentBytes,
+		"mappings_pruned", stats.MappingsPruned,
+		"packs_selected", stats.PacksSelected,
+		"packs_rewritten", stats.PacksRewritten,
+		"packs_sealed", stats.PacksSealed,
+		"packs_removed", stats.PacksRemoved,
+		"blobs_repacked", stats.BlobsRepacked,
+		"bytes_repacked", stats.BytesRepacked,
+		"budget_exhausted", stats.BudgetExhausted)
+	return nil
+}
+
+// daily runs the two bounded phases in order. A failed pack phase stops the
+// job so the scheduler records the failure instead of obscuring it with a
+// second maintenance result.
+func (m *attachmentMaintenance) daily(ctx context.Context) error {
+	if err := m.runAutomaticPack(ctx, nil); err != nil {
+		return err
+	}
+	return m.runAutomaticRepack(ctx, nil)
+}
+
 func (m *attachmentMaintenance) log() *slog.Logger {
 	if m != nil && m.logger != nil {
 		return m.logger
@@ -103,6 +150,24 @@ func runAfterSuccessfulAttachmentIngest(
 	return nil
 }
 
+// runAfterSuccessfulAttachmentRemoval runs bounded physical GC only after a
+// successful removal. Repack and warning-stream failures never replace the
+// already committed removal result.
+func runAfterSuccessfulAttachmentRemoval(
+	ctx context.Context,
+	maintenance *attachmentMaintenance,
+	remove func(context.Context) error,
+	emitWarning func(string) error,
+) error {
+	if err := remove(ctx); err != nil {
+		return err
+	}
+	if maintenance != nil {
+		_ = maintenance.runAutomaticRepack(ctx, emitWarning)
+	}
+	return nil
+}
+
 // runScheduledSource distinguishes attachment-producing provider/SyncTech
 // sources from calendar-only sources while preserving one shared wrapper.
 func runScheduledSource(
@@ -122,7 +187,7 @@ func registerAttachmentMaintenanceJob(sched *scheduler.Scheduler, maintenance *a
 		Name:     attachmentMaintenanceJob,
 		Schedule: attachmentMaintenanceCron,
 		Run: func(ctx context.Context) error {
-			return maintenance.runAutomaticPack(ctx, nil)
+			return maintenance.daily(ctx)
 		},
 	})
 }

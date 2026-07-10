@@ -628,6 +628,99 @@ func TestStoreAPIAdapterRunCLICommandPacksOnlyAllowlistedSuccess(t *testing.T) {
 	}
 }
 
+func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	oldPackID := f.makeZeroLivePack([]byte("explicit parent repack dead bytes"))
+	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+	var events []api.CLIRunEvent
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(), api.CLIRunRequest{Args: []string{"repack-attachments"}},
+		func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			require.FailNow("explicit repack must never spawn a child process")
+			return nil
+		},
+	)
+
+	require.NoError(err)
+	has, err := f.store.HasPackRecord(oldPackID)
+	require.NoError(err)
+	assert.False(has)
+	require.Len(events, 1)
+	assert.Equal("stdout", events[0].Type)
+	assert.Contains(events[0].Data, "removed 1 old pack(s)")
+}
+
+func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
+	tests := []struct {
+		name           string
+		predecessorErr error
+		wantRemoved    bool
+	}{
+		{name: "successful removal", wantRemoved: true},
+		{name: "failed removal", predecessorErr: errors.New("remove failed")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttachmentMaintenanceFixture(t)
+			oldPackID := f.makeZeroLivePack([]byte("post removal dead bytes"))
+			adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+			runnerCalls := 0
+
+			err := adapter.runCLICommandWithRunner(
+				context.Background(),
+				api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
+				nil,
+				func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+					runnerCalls++
+					return tt.predecessorErr
+				},
+			)
+			if tt.predecessorErr != nil {
+				require.ErrorIs(err, tt.predecessorErr)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(1, runnerCalls)
+			has, hasErr := f.store.HasPackRecord(oldPackID)
+			require.NoError(hasErr)
+			assert.Equal(!tt.wantRemoved, has)
+		})
+	}
+}
+
+func TestStoreAPIAdapterPostRemovalRepackWarningPreservesSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, _ := newFailingAttachmentMaintenance(t)
+	adapter := &storeAPIAdapter{store: maintenance.store, attachmentMaintenance: maintenance}
+	var events []api.CLIRunEvent
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(), api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
+		func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			return nil
+		},
+	)
+
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Equal("stderr", events[0].Type)
+	assert.Contains(events[0].Data, "repack-attachments")
+}
+
 func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

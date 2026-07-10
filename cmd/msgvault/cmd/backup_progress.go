@@ -211,8 +211,13 @@ func (r *backupProgressRenderer) startElapsedTickerLocked() {
 	}
 	stop := make(chan struct{})
 	r.tickerStop = stop
+	// Snapshot the package-level test seams before launching. Tests restore
+	// them during cleanup; letting this goroutine read the globals lazily can
+	// race that restoration even after finish has closed stop.
+	elapsedTick := backupProgressElapsedTick
+	renderInterval := backupProgressTickInterval
 	go func() {
-		ticker := time.NewTicker(backupProgressElapsedTick)
+		ticker := time.NewTicker(elapsedTick)
 		defer ticker.Stop()
 		for {
 			select {
@@ -220,7 +225,7 @@ func (r *backupProgressRenderer) startElapsedTickerLocked() {
 				return
 			case <-ticker.C:
 				r.mu.Lock()
-				if r.stageOpen && time.Since(r.lastRender) >= backupProgressTickInterval {
+				if r.stageOpen && time.Since(r.lastRender) >= renderInterval {
 					r.render(r.lastEvent)
 				}
 				r.mu.Unlock()

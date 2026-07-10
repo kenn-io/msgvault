@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -334,4 +335,107 @@ func TestOpenEvictsAndReopens(t *testing.T) {
 	// The first pack opened is the first evicted under FIFO; re-opening it
 	// must still return correct content.
 	assert.Equal(t, blobs[0], readAll(t, s, hashOf(blobs[0])))
+}
+
+func TestRetirePackValidatesAndTreatsMissingAsSuccess(t *testing.T) {
+	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{}}, t.TempDir())
+	defer func() { require.NoError(t, s.Close()) }()
+
+	require.ErrorContains(t, s.RetirePack("../../../outside"), "invalid pack id")
+	require.NoError(t, s.RetirePack(pack.NewPackID()), "an absent canonical pack file is already retired")
+}
+
+func TestRetirePackClosesCacheAndRemovesEveryFIFOEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("reader retired before physical deletion")
+	idx := buildPack(t, dir, content)
+	hash := hashOf(content)
+	entry := idx[hash]
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { require.NoError(s.Close()) }()
+
+	assert.Equal(content, readAll(t, s, hash))
+	s.mu.Lock()
+	cached := s.readers[entry.PackID]
+	require.NotNil(cached)
+	s.order = append(s.order, entry.PackID, entry.PackID)
+	s.mu.Unlock()
+
+	require.NoError(s.RetirePack(entry.PackID))
+	s.mu.Lock()
+	_, cachedStillPresent := s.readers[entry.PackID]
+	order := append([]string(nil), s.order...)
+	s.mu.Unlock()
+	assert.False(cachedStillPresent)
+	assert.NotContains(order, entry.PackID)
+	_, statErr := os.Stat(filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt))
+	require.ErrorIs(statErr, fs.ErrNotExist)
+
+	blobID, err := pack.ParseBlobID(hash)
+	require.NoError(err)
+	_, err = cached.ReadBlob(pack.Entry{
+		ID: blobID, Offset: uint64(entry.Offset), StoredLen: uint64(entry.StoredLen),
+		RawLen: uint64(entry.RawLen), Flags: pack.BlobFlags(entry.Flags), CRC32C: entry.CRC32C,
+	})
+	assert.Error(err, "retirement closes the daemon-owned cached reader")
+}
+
+func TestRetirePackAllowsStaleIndexRetryToReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("stale index retries after old reader retirement")
+	oldIndex := buildPack(t, dir, content)
+	newIndex := buildPack(t, dir, content)
+	hash := hashOf(content)
+	oldEntry := oldIndex[hash]
+
+	daemon := New(&mapIndex{m: oldIndex}, dir)
+	require.Equal(content, readAll(t, daemon, hash))
+	require.NoError(daemon.RetirePack(oldEntry.PackID))
+	require.NoError(daemon.Close())
+
+	retrying := New(&staleIndex{stale: oldEntry, live: newIndex[hash]}, dir)
+	defer func() { require.NoError(retrying.Close()) }()
+	assert.Equal(content, readAll(t, retrying, hash))
+}
+
+func TestIndependentReaderAcrossRetire(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	first := []byte("first blob opens the independent old-pack reader")
+	second := []byte("second blob proves the independent old reader remains usable")
+	oldIndex := buildPack(t, dir, first, second)
+	newIndex := buildPack(t, dir, first, second)
+	oldPackID := oldIndex[hashOf(first)].PackID
+	oldPath := filepath.Join(dir, "packs", oldPackID[:2], oldPackID+PackExt)
+
+	backupReader := New(&mapIndex{m: oldIndex}, dir)
+	assert.Equal(first, readAll(t, backupReader, hashOf(first)))
+
+	daemon := New(&mapIndex{m: newIndex}, dir)
+	defer func() { require.NoError(daemon.Close()) }()
+	retireErr := daemon.RetirePack(oldPackID)
+	if runtime.GOOS == "windows" {
+		require.Error(retireErr, "Windows must retain a pack held by an independent reader")
+		_, err := os.Stat(oldPath)
+		require.NoError(err)
+		require.NoError(backupReader.Close())
+		require.NoError(daemon.RetirePack(oldPackID))
+		_, err = os.Stat(oldPath)
+		require.ErrorIs(err, fs.ErrNotExist)
+	} else {
+		require.NoError(retireErr)
+		_, err := os.Stat(oldPath)
+		require.ErrorIs(err, fs.ErrNotExist)
+		assert.Equal(second, readAll(t, backupReader, hashOf(second)),
+			"Unix open handles remain usable after unlink")
+		require.NoError(backupReader.Close())
+	}
+
+	assert.Equal(second, readAll(t, daemon, hashOf(second)),
+		"new daemon opens follow the replacement mapping")
 }

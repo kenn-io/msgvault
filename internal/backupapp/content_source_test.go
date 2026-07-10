@@ -2,6 +2,7 @@ package backupapp_test
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,7 +10,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/msgvault/internal/repacker"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -355,4 +360,195 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 		assert.Equalf(int64(len(want)), size, "blob %s size", h)
 		assert.Equalf(want, readAllAndClose(t, r), "blob %s reads byte-identical", h)
 	}
+}
+
+type blockingOpenedSource struct {
+	inner   backup.ContentSource
+	opened  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingOpenedSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCloser, error) {
+	r, err := s.inner.Open(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("open real backup content source: %w", err)
+	}
+	s.once.Do(func() { close(s.opened) })
+	select {
+	case <-ctx.Done():
+		_ = r.Close()
+		return nil, ctx.Err()
+	case <-s.release:
+		return r, nil
+	}
+}
+
+type blockingBeforeOpenSource struct {
+	inner   backup.ContentSource
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingBeforeOpenSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCloser, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		r, err := s.inner.Open(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("open released backup content source: %w", err)
+		}
+		return r, nil
+	}
+}
+
+func randomBytes(t *testing.T, size int) []byte {
+	t.Helper()
+	data := make([]byte, size)
+	_, err := crand.Read(data)
+	require.NoError(t, err)
+	return data
+}
+
+func makeSparsePackedVault(t *testing.T, f *vaultFixture) (string, []byte, string) {
+	t.Helper()
+	live := []byte("backup captures byte-identical live content while repack overlaps")
+	liveHash := f.addBlob(live, canonicalPath(hashOf(live)))
+	deadA := randomBytes(t, (8<<20)+(256<<10))
+	deadAHash := f.addBlob(deadA, canonicalPath(hashOf(deadA)))
+	deadB := []byte("second dead entry makes the live fraction strictly below half")
+	deadBHash := f.addBlob(deadB, canonicalPath(hashOf(deadB)))
+	stats := f.pack()
+	require.Equal(t, 3, stats.BlobsPacked)
+
+	entry, err := f.store.GetAttachmentPackEntry(liveHash)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadAHash, deadBHash)
+	require.NoError(t, err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		time.Now().UTC().Add(-48*time.Hour).Format(time.RFC3339), entry.PackID)
+	require.NoError(t, err)
+	return liveHash, live, entry.PackID
+}
+
+func TestBackupCaptureOverlapsRepack(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newVaultFixture(t)
+	liveHash, live, oldPackID := makeSparsePackedVault(t, f)
+	oldPath := filepath.Join(f.attDir, "packs", oldPackID[:2], oldPackID+blobstore.PackExt)
+
+	backupBlobs := blobstore.New(f.store, f.attDir)
+	realSource := backupapp.NewContentSource(backupBlobs, f.attDir)
+	blocked := &blockingOpenedSource{
+		inner: realSource, opened: make(chan struct{}), release: make(chan struct{}),
+	}
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	type createResult struct {
+		manifest *backup.Manifest
+		err      error
+	}
+	created := make(chan createResult, 1)
+	go func() {
+		manifest, createErr := backup.Create(context.Background(), repo, backupapp.New("test"), backup.CreateOptions{
+			DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
+			ContentSource: blocked, Jobs: 1,
+		})
+		created <- createResult{manifest: manifest, err: createErr}
+	}()
+
+	select {
+	case <-blocked.opened:
+	case <-time.After(10 * time.Second):
+		require.FailNow("backup did not open the old packed blob")
+	}
+	daemonBlobs := blobstore.New(f.store, f.attDir)
+	repackStats, repackErr := repacker.Run(context.Background(), f.store, daemonBlobs, f.attDir, repacker.Options{})
+	if runtime.GOOS == "windows" {
+		require.Error(repackErr, "backup-held independent reader must make Windows deletion retryable")
+		has, hasErr := f.store.HasPackRecord(oldPackID)
+		require.NoError(hasErr)
+		assert.True(has)
+		assert.FileExists(oldPath)
+	} else {
+		require.NoError(repackErr)
+		assert.Equal(1, repackStats.PacksRemoved)
+		assert.NoFileExists(oldPath)
+	}
+	close(blocked.release)
+	var result createResult
+	select {
+	case result = <-created:
+	case <-time.After(10 * time.Second):
+		require.FailNow("backup did not finish after releasing its content source")
+	}
+	require.NoError(result.err)
+	require.NotNil(result.manifest)
+	assert.Equal(int64(1), result.manifest.Attachments.Blobs)
+	require.NoError(backupBlobs.Close())
+	if runtime.GOOS == "windows" {
+		retryStats, retryErr := repacker.Run(context.Background(), f.store, daemonBlobs, f.attDir, repacker.Options{})
+		require.NoError(retryErr)
+		assert.Equal(1, retryStats.PacksRemoved)
+		assert.NoFileExists(oldPath)
+	}
+	require.NoError(daemonBlobs.Close())
+
+	verify, err := backup.Verify(context.Background(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})
+	require.NoError(err)
+	assert.Empty(verify.Problems)
+	current := blobstore.New(f.store, f.attDir)
+	defer func() { require.NoError(current.Close()) }()
+	r, _, err := current.Open(liveHash)
+	require.NoError(err)
+	assert.Equal(live, readAllAndClose(t, r))
+}
+
+func TestBackupCaptureFailsLoudlyAfterLogicalDeletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newVaultFixture(t)
+	content := []byte("snapshot-only reference must not be omitted silently")
+	hash := f.addBlob(content, canonicalPath(hashOf(content)))
+	f.pack()
+
+	blobs := blobstore.New(f.store, f.attDir)
+	defer func() { require.NoError(blobs.Close()) }()
+	blocked := &blockingBeforeOpenSource{
+		inner:   backupapp.NewContentSource(blobs, f.attDir),
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	created := make(chan error, 1)
+	go func() {
+		_, createErr := backup.Create(context.Background(), repo, backupapp.New("test"), backup.CreateOptions{
+			DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
+			ContentSource: blocked, Jobs: 1,
+		})
+		created <- createErr
+	}()
+	select {
+	case <-blocked.started:
+	case <-time.After(10 * time.Second):
+		require.FailNow("backup did not reach attachment capture")
+	}
+	_, err = f.store.DB().Exec(f.store.Rebind(`DELETE FROM attachments WHERE content_hash = ?`), hash)
+	require.NoError(err)
+	close(blocked.release)
+	var createErr error
+	select {
+	case createErr = <-created:
+	case <-time.After(10 * time.Second):
+		require.FailNow("backup did not fail after releasing its deleted content reference")
+	}
+	require.Error(createErr)
+	assert.Contains(createErr.Error(), hash)
 }

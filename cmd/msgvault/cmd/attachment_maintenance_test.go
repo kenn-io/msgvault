@@ -112,6 +112,19 @@ func (f *attachmentMaintenanceFixture) readBlob(hash string) []byte {
 	return data
 }
 
+func (f *attachmentMaintenanceFixture) makeZeroLivePack(content []byte) string {
+	f.t.Helper()
+	hash := f.addLoose(content)
+	_, err := f.maintenance.pack(context.Background(), 0)
+	require.NoError(f.t, err, "pack zero-live fixture")
+	entry := f.packedEntry(hash)
+	require.NotNil(f.t, entry)
+	_, err = f.store.DB().Exec(f.store.Rebind(
+		`DELETE FROM attachments WHERE content_hash = ? OR thumbnail_hash = ?`), hash, hash)
+	require.NoError(f.t, err, "logically delete packed fixture")
+	return entry.PackID
+}
+
 func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -301,6 +314,48 @@ func TestRegisterAttachmentMaintenanceJobAndTrigger(t *testing.T) {
 	assert.Equal(1, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
 		"daily trigger makes exactly one bounded attempt")
 	assert.Contains(f.logs.String(), "max_bytes=268435456")
+}
+
+func TestAttachmentMaintenanceDailyPacksThenRepacks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	deadPackID := f.makeZeroLivePack([]byte("daily repack old dead bytes"))
+	live := []byte("daily packing new loose bytes")
+	liveHash := f.addLoose(live)
+
+	require.NoError(f.maintenance.daily(context.Background()))
+	require.NotNil(f.packedEntry(liveHash))
+	assert.Equal(live, f.readBlob(liveHash))
+	has, err := f.store.HasPackRecord(deadPackID)
+	require.NoError(err)
+	assert.False(has)
+	logs := f.logs.String()
+	packAt := strings.Index(logs, "automatic attachment maintenance complete")
+	repackAt := strings.Index(logs, "automatic attachment repack complete")
+	assert.GreaterOrEqual(packAt, 0)
+	assert.Greater(repackAt, packAt, "daily maintenance packs before repacking")
+}
+
+func TestPostRemovalRepackFailureWarnsWithoutReplacingSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+	var warning string
+
+	err := runAfterSuccessfulAttachmentRemoval(
+		context.Background(), maintenance,
+		func(context.Context) error { return nil },
+		func(message string) error {
+			warning = message
+			return nil
+		},
+	)
+
+	require.NoError(err)
+	assert.Contains(warning, "repack-attachments")
+	assert.Contains(warning, "retry")
+	assert.Contains(logs.String(), "automatic attachment repack failed")
 }
 
 func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
