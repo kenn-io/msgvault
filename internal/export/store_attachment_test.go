@@ -365,7 +365,13 @@ func TestValidateExistingAttachmentFileRetriesIdentitySwapBeforeOpen(t *testing.
 	require.NoError(os.WriteFile(canonical, content, 0o600))
 	displaced := canonical + ".displaced"
 	originalLstat := lstatValidatedAttachmentFile
+	originalSnapshot := snapshotAttachmentFileIdentity
 	var canonicalLstats int
+	var identitySnapshots int
+	snapshotAttachmentFileIdentity = func(info os.FileInfo) bool {
+		identitySnapshots++
+		return originalSnapshot(info)
+	}
 	lstatValidatedAttachmentFile = func(path string) (os.FileInfo, error) {
 		if filepath.Clean(path) != filepath.Clean(canonical) {
 			return originalLstat(path)
@@ -376,20 +382,41 @@ func TestValidateExistingAttachmentFileRetriesIdentitySwapBeforeOpen(t *testing.
 		}
 		info, err := originalLstat(path)
 		require.NoError(err)
+		require.Equal(1, identitySnapshots,
+			"the saved production lstat helper must snapshot identity before replacement")
 		require.NoError(os.Rename(canonical, displaced))
 		require.NoError(os.WriteFile(canonical, content, 0o600))
 		return info, nil
 	}
-	t.Cleanup(func() { lstatValidatedAttachmentFile = originalLstat })
+	t.Cleanup(func() {
+		lstatValidatedAttachmentFile = originalLstat
+		snapshotAttachmentFileIdentity = originalSnapshot
+	})
 
 	err := validateExistingAttachmentFile(canonical, int64(len(content)), hashText)
 	require.NoError(err)
 	assert.Equal(3, canonicalLstats)
+	assert.Equal(3, identitySnapshots)
 	assert.FileExists(canonical)
 	assert.FileExists(displaced)
 	got, err := os.ReadFile(canonical)
 	require.NoError(err)
 	assert.Equal(content, got)
+}
+
+func TestLstatAttachmentIdentityFailsClosedWhenSnapshotUnavailable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	filePath := filepath.Join(t.TempDir(), "attachment")
+	require.NoError(os.WriteFile(filePath, []byte("content"), 0o600))
+	originalSnapshot := snapshotAttachmentFileIdentity
+	snapshotAttachmentFileIdentity = func(os.FileInfo) bool { return false }
+	t.Cleanup(func() { snapshotAttachmentFileIdentity = originalSnapshot })
+
+	info, err := lstatAttachmentIdentity(filePath)
+	require.Error(err)
+	assert.Nil(info)
+	assert.Contains(err.Error(), "snapshot attachment file identity")
 }
 
 func TestValidateExistingAttachmentFileRehashesReplacementWithSameMetadata(t *testing.T) {

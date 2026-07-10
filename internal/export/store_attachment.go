@@ -33,9 +33,27 @@ type validatedAttachmentFile struct {
 // always fsyncs the validated final canonical descriptor.
 var syncDurableAttachmentFile = func(f *os.File) error { return f.Sync() }
 
+// snapshotAttachmentFileIdentity is a narrow test seam. Production uses a
+// self-comparison to force platforms with lazy FileInfo identities (notably
+// Windows) to materialize the file ID before the pathname can be replaced.
+var snapshotAttachmentFileIdentity = func(info os.FileInfo) bool {
+	return os.SameFile(info, info)
+}
+
+func lstatAttachmentIdentity(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !snapshotAttachmentFileIdentity(info) {
+		return nil, fmt.Errorf("snapshot attachment file identity for %q", path)
+	}
+	return info, nil
+}
+
 // lstatValidatedAttachmentFile is a narrow identity-swap test seam.
-// Production always uses os.Lstat.
-var lstatValidatedAttachmentFile = os.Lstat
+// Production eagerly snapshots the identity returned by os.Lstat.
+var lstatValidatedAttachmentFile = lstatAttachmentIdentity
 
 var errAttachmentFileIdentityChanged = errors.New("attachment file identity changed")
 
