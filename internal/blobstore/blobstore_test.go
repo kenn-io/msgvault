@@ -721,6 +721,77 @@ func TestOpenRejectsInvalidPackID(t *testing.T) {
 	assert.NotErrorIs(t, err, fs.ErrNotExist)
 }
 
+func TestOpenRejectsForgedPackMetadataBeforeReadBlob(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("ordinary reads trust the footer, not database coordinates")
+	idx := buildPack(t, dir, content)
+	hash := hashOf(content)
+	good := *idx[hash]
+	const hugeDBValue int64 = 1<<63 - 1
+
+	tests := map[string]func(*store.PackIndexEntry){
+		"blob hash":  func(e *store.PackIndexEntry) { e.BlobHash = hashOf([]byte("other ordinary blob")) },
+		"offset":     func(e *store.PackIndexEntry) { e.Offset = hugeDBValue },
+		"stored len": func(e *store.PackIndexEntry) { e.StoredLen = hugeDBValue },
+		"raw len":    func(e *store.PackIndexEntry) { e.RawLen = hugeDBValue },
+		"flags":      func(e *store.PackIndexEntry) { e.Flags ^= uint8(pack.BlobCompressed) },
+		"crc32c":     func(e *store.PackIndexEntry) { e.CRC32C++ },
+	}
+	for name, forge := range tests {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			forged := good
+			forge(&forged)
+			s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: &forged}}, dir)
+			defer func() { require.NoError(s.Close()) }()
+
+			var openErr error
+			assert.NotPanics(func() {
+				r, _, err := s.Open(hash)
+				openErr = err
+				if r != nil {
+					_ = r.Close()
+				}
+			}, "forged positive metadata must be rejected before kit allocates")
+			require.Error(openErr)
+			require.ErrorContains(openErr, "pack index metadata mismatch")
+			assert.NotErrorIs(openErr, fs.ErrNotExist)
+		})
+	}
+}
+
+func TestOpenRejectsDuplicateFooterBlobIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("ordinary duplicate footer blob id")
+	w, err := pack.NewWriter(t.TempDir(), pack.WriterOptions{})
+	require.NoError(err)
+	first, err := w.Append(content)
+	require.NoError(err)
+	_, err = w.Append(content)
+	require.NoError(err)
+	packID := w.ID()
+	path := filepath.Join(dir, "packs", packID[:2], packID+PackExt)
+	require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+	_, err = w.Seal(path)
+	require.NoError(err)
+
+	hash := hashOf(content)
+	entry := &store.PackIndexEntry{
+		BlobHash: hash, PackID: packID, Offset: int64(first.Offset),
+		StoredLen: int64(first.StoredLen), RawLen: int64(first.RawLen),
+		Flags: uint8(first.Flags), CRC32C: first.CRC32C,
+	}
+	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
+	defer func() { require.NoError(s.Close()) }()
+
+	_, _, err = s.Open(hash)
+	require.ErrorIs(err, pack.ErrCorrupt)
+	assert.ErrorContains(err, "duplicate blob id")
+}
+
 // flipIndex returns nothing on the first lookup, then the real entry —
 // simulating the packer committing between a reader's index miss and its
 // loose-file open (the loose file never existed here).
@@ -779,6 +850,21 @@ func TestOpenRetriesIndexAfterPackMiss(t *testing.T) {
 	s := New(&staleIndex{stale: &stale, live: idx[h]}, dir)
 	defer func() { _ = s.Close() }()
 	assert.Equal(t, content, readAll(t, s, h))
+}
+
+func TestOpenRetriesIndexAfterFooterEntryMiss(t *testing.T) {
+	dir := t.TempDir()
+	wanted := []byte("ordinary replacement footer entry")
+	other := []byte("ordinary stale pack contains another blob")
+	staleEntries := buildPack(t, dir, other)
+	liveEntries := buildPack(t, dir, wanted)
+	hash := hashOf(wanted)
+	stale := *staleEntries[hashOf(other)]
+	stale.BlobHash = hash
+
+	s := New(&staleIndex{stale: &stale, live: liveEntries[hash]}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+	assert.Equal(t, wanted, readAll(t, s, hash))
 }
 
 // TestOpenConcurrent runs concurrent Open calls against a mix of packed and

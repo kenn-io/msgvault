@@ -43,7 +43,7 @@ type Store struct {
 	// an evicted descriptor is never closed while another goroutine uses it.
 	// Packed reads are short (one pread + optional zstd decode).
 	mu             sync.Mutex
-	readers        map[string]*pack.Reader
+	readers        map[string]*ordinaryPackReader
 	boundedReaders map[string]*boundedPackReader
 	order          []string
 }
@@ -53,7 +53,7 @@ func New(index PackIndex, attachmentsDir string) *Store {
 	return &Store{
 		index:          index,
 		attachmentsDir: attachmentsDir,
-		readers:        make(map[string]*pack.Reader),
+		readers:        make(map[string]*ordinaryPackReader),
 		boundedReaders: make(map[string]*boundedPackReader),
 	}
 }
@@ -165,7 +165,7 @@ func (s *Store) Close() error {
 	for id := range ids {
 		closeErr = errors.Join(closeErr, s.closePackSlotLocked(id))
 	}
-	s.readers = make(map[string]*pack.Reader)
+	s.readers = make(map[string]*ordinaryPackReader)
 	s.boundedReaders = make(map[string]*boundedPackReader)
 	s.order = nil
 	return closeErr
@@ -263,22 +263,25 @@ func (s *Store) openPacked(hash string, e *store.PackIndexEntry) (io.ReadSeekClo
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse blob id %s: %w", hash, err)
 	}
-	pe := pack.Entry{
-		ID:        blobID,
-		Offset:    uint64(e.Offset),    //nolint:gosec // column mirrors a uint64
-		StoredLen: uint64(e.StoredLen), //nolint:gosec // column mirrors a uint64
-		RawLen:    uint64(e.RawLen),    //nolint:gosec // column mirrors a uint64
-		Flags:     pack.BlobFlags(e.Flags),
-		CRC32C:    e.CRC32C,
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, err := s.readerLocked(e.PackID)
 	if err != nil {
 		return nil, 0, err
 	}
-	data, err := r.ReadBlob(pe)
+	entryIndex, found := r.entryIndexes[blobID]
+	if !found {
+		return nil, 0, &fs.PathError{
+			Op:   "find attachment blob in pack footer",
+			Path: hash,
+			Err:  fs.ErrNotExist,
+		}
+	}
+	footerEntry := r.Entries()[entryIndex]
+	if r.ID() != e.PackID || !packIndexMatchesFooter(e, footerEntry) {
+		return nil, 0, fmt.Errorf("pack index metadata mismatch for blob %s in pack %s", hash, e.PackID)
+	}
+	data, err := r.ReadBlob(footerEntry)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read blob %s from pack %s: %w", hash, e.PackID, err)
 	}
@@ -312,11 +315,7 @@ func (s *Store) readPackedBounded(hash string, e *store.PackIndexEntry, maxBytes
 			Err:  fs.ErrNotExist,
 		}
 	}
-	if e.BlobHash != footerEntry.ID.String() ||
-		e.Offset < 0 || uint64(e.Offset) != footerEntry.Offset ||
-		e.StoredLen < 0 || uint64(e.StoredLen) != footerEntry.StoredLen ||
-		e.RawLen < 0 || uint64(e.RawLen) != footerEntry.RawLen ||
-		pack.BlobFlags(e.Flags) != footerEntry.Flags || e.CRC32C != footerEntry.CRC32C {
+	if !packIndexMatchesFooter(e, footerEntry) {
 		return nil, 0, fmt.Errorf("pack index metadata mismatch for blob %s in pack %s", hash, e.PackID)
 	}
 	data, err := r.readBlob(footerEntry, maxBytes)
@@ -328,20 +327,39 @@ func (s *Store) readPackedBounded(hash string, e *store.PackIndexEntry, maxBytes
 
 // readerLocked returns a cached reader for the pack, opening and caching it
 // (with FIFO eviction) on miss. Caller holds s.mu.
-func (s *Store) readerLocked(packID string) (*pack.Reader, error) {
+func (s *Store) readerLocked(packID string) (*ordinaryPackReader, error) {
 	if r, ok := s.readers[packID]; ok {
 		return r, nil
 	}
 	p := filepath.Join(s.attachmentsDir, "packs", packID[:2], packID+PackExt)
-	r, err := pack.OpenReader(p, nil)
+	kitReader, err := pack.OpenReader(p, nil)
 	if err != nil {
 		// %w preserves errors.Is(err, fs.ErrNotExist) through the wrap, which
 		// Open's retry rule depends on.
 		return nil, fmt.Errorf("open pack %s: %w", packID, err)
 	}
+	footerEntries := kitReader.Entries()
+	entryIndexes := make(map[pack.BlobID]int, len(footerEntries))
+	for i, entry := range footerEntries {
+		if _, duplicate := entryIndexes[entry.ID]; duplicate {
+			_ = kitReader.Close()
+			return nil, fmt.Errorf("%w: duplicate blob id %s in pack %s footer",
+				pack.ErrCorrupt, entry.ID, packID)
+		}
+		entryIndexes[entry.ID] = i
+	}
+	r := &ordinaryPackReader{Reader: kitReader, entryIndexes: entryIndexes}
 	s.addPackSlotLocked(packID)
 	s.readers[packID] = r
 	return r, nil
+}
+
+func packIndexMatchesFooter(index *store.PackIndexEntry, footer pack.Entry) bool {
+	return index.BlobHash == footer.ID.String() &&
+		index.Offset >= 0 && uint64(index.Offset) == footer.Offset &&
+		index.StoredLen >= 0 && uint64(index.StoredLen) == footer.StoredLen &&
+		index.RawLen >= 0 && uint64(index.RawLen) == footer.RawLen &&
+		pack.BlobFlags(index.Flags) == footer.Flags && index.CRC32C == footer.CRC32C
 }
 
 // boundedReaderLocked opens, validates, and caches the exact descriptor used
@@ -402,6 +420,14 @@ func (s *Store) closePackSlotLocked(packID string) error {
 		delete(s.boundedReaders, packID)
 	}
 	return closeErr
+}
+
+// ordinaryPackReader keeps kit's verified reader and an immutable O(1)
+// footer lookup built once when the cache slot opens.
+type ordinaryPackReader struct {
+	*pack.Reader
+
+	entryIndexes map[pack.BlobID]int
 }
 
 type nopSeekCloser struct{ *bytes.Reader }
