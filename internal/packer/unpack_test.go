@@ -533,6 +533,34 @@ func TestUnpackRejectsFooterDatabaseMismatchBeforeWriting(t *testing.T) {
 	assertUnpackPackPreserved(t, f, path, entry.PackID, 1)
 }
 
+func TestUnpackClassifiesMissingFooterEntryAsCorrupt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	footerContent := []byte("footer-only identity")
+	footerEntry := syntheticUnpackEntry(t, footerContent, 6,
+		uint64(len(footerContent)), uint64(len(footerContent)))
+	path := recordSyntheticUnpackPack(t, f, []pack.Entry{footerEntry}, map[string][]byte{
+		footerEntry.ID.String(): footerContent,
+	})
+	liveContent := []byte("live database identity")
+	liveHash := hashOf(liveContent)
+	f.addRow(liveHash, canonical(liveHash), len(liveContent))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_pack_index SET blob_hash = ? WHERE blob_hash = ?`),
+		liveHash, footerEntry.ID.String())
+	require.NoError(err)
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err)
+	require.ErrorIs(err, pack.ErrCorrupt)
+	assert.Contains(err.Error(), liveHash)
+	assert.Contains(err.Error(), syntheticUnpackPackID)
+	assert.Equal(packer.UnpackStats{}, stats)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(liveHash))))
+	assertUnpackPackPreserved(t, f, path, syntheticUnpackPackID, 1)
+}
+
 func TestUnpackAcceptsBlobAtExactMaintenanceLimit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exact 64 MiB boundary test")

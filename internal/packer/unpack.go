@@ -148,8 +148,8 @@ func planRestoreEntries(ctx context.Context, r unpackPackReader, liveEntries []s
 		}
 		e, ok := footerEntries[live.BlobHash]
 		if !ok {
-			return nil, fmt.Errorf("indexed blob %s is absent from pack %s footer",
-				live.BlobHash, packID)
+			return nil, fmt.Errorf("%w: indexed blob %s is absent from pack %s footer",
+				pack.ErrCorrupt, live.BlobHash, packID)
 		}
 		if live.PackID != packID || uint64(live.Offset) != e.Offset || //nolint:gosec // store scan rejects negative values
 			uint64(live.StoredLen) != e.StoredLen || //nolint:gosec // store scan rejects negative values
