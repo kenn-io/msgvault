@@ -57,6 +57,18 @@ func (s *blobSource) Open(ctx context.Context, ref backup.ContentRef) (io.ReadCl
 	}
 	f, ferr := os.Open(filepath.Join(s.attachmentsDir, native))
 	if ferr != nil {
+		if errors.Is(ferr, fs.ErrNotExist) {
+			// The packer may have committed the blob's pack mapping and
+			// removed this legacy file after the initial blob-store lookup.
+			// Retry once so the now-authoritative packed location wins.
+			r, _, retryErr := s.blobs.Open(ref.Hash)
+			if retryErr == nil {
+				return r, nil
+			}
+			if !errors.Is(retryErr, fs.ErrNotExist) {
+				return nil, retryErr
+			}
+		}
 		return nil, fmt.Errorf("attachment %s not in packs, canonical loose, or recorded path %q: %w",
 			ref.Hash, rel, ferr)
 	}

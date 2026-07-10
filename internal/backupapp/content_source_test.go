@@ -111,6 +111,34 @@ func (f *vaultFixture) contentSource() backup.ContentSource {
 	return backupapp.NewContentSource(blobs, f.attDir)
 }
 
+// blockingSecondLookupIndex freezes a blobstore.Open after it has observed
+// the target hash as loose on both index lookups. This lets a test run the
+// production packer before Open returns that now-stale result to its caller.
+type blockingSecondLookupIndex struct {
+	inner   blobstore.PackIndex
+	hash    string
+	reached chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	lookups int
+}
+
+func (i *blockingSecondLookupIndex) ResolveAttachmentBlob(hash string) (store.AttachmentBlobLocation, error) {
+	loc, err := i.inner.ResolveAttachmentBlob(hash)
+	if hash != i.hash || err != nil {
+		return loc, err
+	}
+	i.mu.Lock()
+	i.lookups++
+	lookup := i.lookups
+	i.mu.Unlock()
+	if lookup == 2 {
+		close(i.reached)
+		<-i.release
+	}
+	return loc, nil
+}
+
 // pack runs the packer over the fixture vault.
 func (f *vaultFixture) pack() packer.Stats {
 	f.t.Helper()
@@ -202,6 +230,54 @@ func TestContentSourceNoncanonicalFallback(t *testing.T) {
 	})
 	require.NoError(err)
 	assert.Equal(content, readAllAndClose(t, rc))
+}
+
+func TestContentSourceRetriesPackedLookupWhenLegacyOpenLosesRace(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newVaultFixture(t)
+
+	content := []byte("legacy payload packed during backup open")
+	h := hashOf(content)
+	rel := "synctech-sms/" + h[:2] + "/" + h
+	f.addBlob(content, rel)
+	index := &blockingSecondLookupIndex{
+		inner: f.store, hash: h, reached: make(chan struct{}), release: make(chan struct{}),
+	}
+	blobs := blobstore.New(index, f.attDir)
+	t.Cleanup(func() { require.NoError(blobs.Close()) })
+	src := backupapp.NewContentSource(blobs, f.attDir)
+
+	type openResult struct {
+		rc  io.ReadCloser
+		err error
+	}
+	opened := make(chan openResult, 1)
+	go func() {
+		rc, err := src.Open(context.Background(), backup.ContentRef{
+			Hash: h, Size: int64(len(content)), StoragePath: rel,
+		})
+		opened <- openResult{rc: rc, err: err}
+	}()
+
+	select {
+	case <-index.reached:
+	case <-time.After(10 * time.Second):
+		require.FailNow("blob store did not reach its second loose index lookup")
+	}
+	stats := f.pack()
+	require.Equal(1, stats.BlobsPacked)
+	assert.Empty(f.looseFiles(), "packer must remove the legacy source")
+	close(index.release)
+
+	var result openResult
+	select {
+	case result = <-opened:
+	case <-time.After(10 * time.Second):
+		require.FailNow("content source did not finish after packer committed")
+	}
+	require.NoError(result.err)
+	assert.Equal(content, readAllAndClose(t, result.rc))
 }
 
 func TestContentSourceMissingBlob(t *testing.T) {
