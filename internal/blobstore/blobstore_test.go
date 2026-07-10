@@ -183,13 +183,13 @@ func TestReadBoundedAcceptsExactLimit(t *testing.T) {
 }
 
 func TestReadBoundedLooseGrowthProbe(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("procfs zero-size files provide a deterministic stat/read race fixture")
+	if runtime.GOOS == "windows" {
+		t.Skip("the deterministic zero-size device fixture is Unix-only")
 	}
 	dir := t.TempDir()
-	hash := hashOf([]byte("procfs-backed loose attachment"))
+	hash := hashOf([]byte("device-backed loose attachment"))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
-	require.NoError(t, os.Symlink("/proc/self/status", filepath.Join(dir, hash[:2], hash)))
+	require.NoError(t, os.Symlink("/dev/zero", filepath.Join(dir, hash[:2], hash)))
 	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{}, referenced: map[string]bool{hash: true}}, dir)
 	defer func() { require.NoError(t, s.Close()) }()
 
