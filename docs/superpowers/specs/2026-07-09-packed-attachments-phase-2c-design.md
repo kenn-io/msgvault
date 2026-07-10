@@ -179,14 +179,16 @@ lifecycle. The coordinator is invoked from these existing gated paths:
 | Successful `remove-account` | Bounded repack | Stream warning and keep removal success |
 | Explicit `repack-attachments` | Unbounded repack | Return failure to the command |
 
-The generic command predicate is explicit and test-pinned. It includes the
-commands that can write attachment content: account/source setup commands that
-may perform initial ingest, `backfill-teams-media`, every local attachment
-import command, `sync-synctech-sms`, and `sync-teams`. Calendar-only sync is
-excluded. The dedicated `RunCLISync` path covers `sync` and `sync-full`.
-Redundant no-op packing after a setup command that wrote no attachment is
-acceptable; missing a writer is not. The daily job is the backstop for future
-or overlooked writers.
+The generic command predicate is explicit and test-pinned. Its exact allowlist
+is `backfill-teams-media`; `import`, `import-emlx`, `import-gvoice`,
+`import-imessage`, `import-mbox`, `import-messenger`, `import-pst`,
+`import-synctech-sms`, and `import-whatsapp`; plus `sync-synctech-sms` and
+`sync-teams`. Calendar-only sync and account/source setup commands are
+excluded because the current setup paths do not ingest attachment bytes. The
+dedicated `RunCLISync` path covers `sync` and `sync-full`. If a future setup
+path begins ingesting attachments, its command and the pinned allowlist test
+must change together; the daily job remains the operational backstop for an
+overlooked writer.
 
 The daily job is registered with `scheduler.AddJob`, so the existing work
 tracker gives it operation-gate serialization, shutdown cancellation, and

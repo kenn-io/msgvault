@@ -300,14 +300,13 @@ boundary without violating the same crash-ordering rules.
   retryable, including the existing case where a concurrent logical deletion
   makes a pinned-snapshot-only reference unavailable.
 
-Until that step-5 integration lands, `remove-account` refuses before its
-cascade when the selected source owns any unique packed blobs, and directs the
-operator to stop the daemon and run `unpack-attachments` first. Packed blobs
-that remain referenced by another source do not block account removal. This
-keeps the phase-2b branch independently safe without folding physical repack
-into the account-removal transaction. After unpack, the existing orphan-file
-sweep covers both loose content and thumbnail paths, with sharing checked
-across both hash columns.
+With phase 2c integrated, `remove-account` no longer requires unpacking first.
+The source cascade and deletion of its unique packed mappings commit together;
+mappings shared by another source across either hash column remain live. The
+parent daemon then attempts bounded repack as best-effort physical cleanup,
+while the existing loose-file sweep continues to cover content and thumbnail
+paths. A repack failure delays byte reclamation but cannot resurrect the
+logically deleted hashes or roll back a successful account removal.
 
 ### Downgrade: `msgvault unpack-attachments`
 
