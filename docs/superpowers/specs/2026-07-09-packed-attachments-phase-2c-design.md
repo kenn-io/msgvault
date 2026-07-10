@@ -103,8 +103,11 @@ The first implementation uses constants rather than new configuration:
 Both byte budgets are soft at one atomic boundary. Packing may exceed its
 budget by one blob; repack may exceed its budget by one selected source pack.
 This guarantees forward progress for a single large blob or pack while still
-bounding ordinary automatic work. Explicit `pack-attachments` and
-`repack-attachments` runs are unbounded.
+bounding the payload bytes rewritten by ordinary automatic work. This is not a
+wall-clock or total-row-scan bound: reference repair and pack-usage accounting
+still inspect the archive inventory, and every zero-live pack is selected even
+after the rewrite budget because it needs no blob rewrite. Explicit
+`pack-attachments` and `repack-attachments` runs are unbounded.
 
 ## Architecture
 

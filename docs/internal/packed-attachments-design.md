@@ -284,7 +284,10 @@ boundary without violating the same crash-ordering rules.
   hit the pack-open retry rule above and find the new mapping. Zero-live packs
   bypass the age/dead-byte thresholds. Bounded repack runs after
   `remove-account` and on the daemon maintenance schedule; explicit
-  `msgvault repack-attachments` is unbounded.
+  `msgvault repack-attachments` is unbounded. Here "bounded" applies to live
+  payload bytes rewritten, not total metadata work: reference repair and usage
+  accounting inspect the pack inventory, and every zero-live pack remains
+  eligible because reclaiming it requires no blob rewrite.
 
   TUI, MCP, and exports remain daemon-backed even with `--local`. Backup is the
   supported independent reader: kit releases the freeze gate after pinning its

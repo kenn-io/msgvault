@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -897,8 +898,8 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return run(ctx, req.Args, req.Env, req.Cwd, emitSubprocess)
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
-		if len(req.Args) != 1 {
-			return errors.New("repack-attachments accepts no arguments")
+		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {
+			return errors.New("repack-attachments accepts no command-specific arguments")
 		}
 		if a.attachmentMaintenance == nil {
 			return errors.New("attachment maintenance is unavailable")
@@ -942,6 +943,27 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		runSubprocess,
 		emitWarning,
 	)
+}
+
+// repackAttachmentsParentArgsAllowed accepts only root logging flags that
+// daemonCLIArgsFromCobra deliberately forwards after the command word. The
+// parent performs repack itself rather than spawning a child, so those flags
+// need no further interpretation here, but they must not be mistaken for
+// command-specific arguments.
+func repackAttachmentsParentArgsAllowed(args []string) bool {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--") {
+			return false
+		}
+		name := strings.TrimPrefix(arg, "--")
+		if before, _, ok := strings.Cut(name, "="); ok {
+			name = before
+		}
+		if !loggingPassthroughFlags[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

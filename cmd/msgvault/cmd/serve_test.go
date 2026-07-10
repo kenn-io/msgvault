@@ -657,6 +657,51 @@ func TestStoreAPIAdapterInterceptsExplicitRepackInDaemonParent(t *testing.T) {
 	assert.Contains(events[0].Data, "removed 1 old pack(s)")
 }
 
+func TestStoreAPIAdapterExplicitRepackAcceptsLoggingPassthroughFlags(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	oldPackID := f.makeZeroLivePack([]byte("explicit repack with root logging flags"))
+	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+
+	err := adapter.runCLICommandWithRunner(
+		context.Background(), api.CLIRunRequest{Args: []string{
+			"repack-attachments", "--log-level=debug", "--log-sql",
+			"--log-sql-slow-ms=250", "--verbose",
+		}}, nil,
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			require.FailNow("explicit repack with root flags must still run in the daemon parent")
+			return nil
+		},
+	)
+
+	require.NoError(err)
+	has, err := f.store.HasPackRecord(oldPackID)
+	require.NoError(err)
+	assert.False(has)
+}
+
+func TestRepackAttachmentsParentArgsAllowed(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "none", want: true},
+		{name: "forwarded logging", args: []string{
+			"--log-level=debug", "--log-sql", "--log-sql-slow-ms=250", "--verbose",
+		}, want: true},
+		{name: "non-forwarded root flag", args: []string{"--config=/tmp/config.toml"}},
+		{name: "command-specific flag", args: []string{"--target-size=1024"}},
+		{name: "positional argument", args: []string{"unexpected"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, repackAttachmentsParentArgsAllowed(tt.args))
+		})
+	}
+}
+
 func TestStoreAPIAdapterRepackAfterSuccessfulRemovalOnly(t *testing.T) {
 	tests := []struct {
 		name           string
