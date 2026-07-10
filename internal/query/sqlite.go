@@ -697,8 +697,7 @@ func (e *SQLiteEngine) buildAggregateSearchParts(
 	if groupBy == ViewLabels && len(q.Labels) > 0 {
 		var labelParts []string
 		for _, label := range q.Labels {
-			labelParts = append(labelParts,
-				`LOWER(l.name) LIKE LOWER(?) ESCAPE '\'`)
+			labelParts = append(labelParts, metadataContainsExpression(e.dialect, "l.name"))
 			args = append(args,
 				"%"+escapeSQLiteLike(label)+"%")
 		}
@@ -1664,22 +1663,20 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
 	for _, label := range q.Labels {
-		conditions = append(conditions, `EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_labels ml_lbl
 			JOIN labels l_lbl ON l_lbl.id = ml_lbl.label_id
 			WHERE ml_lbl.message_id = m.id
-			  AND LOWER(l_lbl.name) LIKE LOWER(?) ESCAPE '\'
-		)`)
+			  AND %s
+		)`, metadataContainsExpression(e.dialect, "l_lbl.name")))
 		args = append(args, "%"+escapeSQLiteLike(label)+"%")
 	}
 
-	// Subject filter. LOWER both sides so PostgreSQL's case-sensitive
-	// LIKE matches the same rows the store API path returns (which
-	// already lowercases). SQLite's LIKE is ASCII-case-insensitive but
-	// the LOWER wrapper still works there.
+	// Subject filter. Use the dialect's Unicode-aware fold on both sides so
+	// SQLite and PostgreSQL retain the same case-insensitive substring contract.
 	if len(q.SubjectTerms) > 0 {
 		for _, term := range q.SubjectTerms {
-			conditions = append(conditions, "LOWER(m.subject) LIKE LOWER(?) ESCAPE '\\'")
+			conditions = append(conditions, metadataContainsExpression(e.dialect, "m.subject"))
 			args = append(args, "%"+escapeSQLiteLike(term)+"%")
 		}
 	}

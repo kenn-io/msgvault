@@ -82,7 +82,8 @@ When `mode` is omitted, free text matches subject, snippet, sender, and
 recipient metadata, never message bodies. Use `search_message_bodies` for
 body keywords; it accepts operators such as `from:` and `label:` as filters
 but still requires at least one free-text term. When additional body contexts
-are omitted by the five-snippet cap, `context_snippets_truncated` is `true`.
+are omitted by the five-snippet cap or the 1 MiB per-body context scan limit,
+`context_snippets_truncated` is `true`.
 Gmail-only operators such as `list:` are rejected because msgvault does not
 index `List-ID` locally; use Gmail-side validation for those checks.
 To restrict mixed archives to values such as `email`, `calendar_event`,

@@ -175,6 +175,73 @@ func TestSearchFast_MetadataUnicodeCaseFold(t *testing.T) {
 	}
 }
 
+func TestSearchFast_StructuredMetadataUnicodeCaseFold(t *testing.T) {
+	f := storetest.New(t)
+	ctx := context.Background()
+
+	subjectID := createSearchScopeMessage(t, f, "unicode-structured-subject",
+		"École newsletter", "ordinary preview", "ordinary body", 0, 0)
+	labelMessageID := createSearchScopeMessage(t, f, "unicode-structured-label",
+		"ordinary subject", "ordinary preview", "ordinary body", 0, 0)
+	labels := f.EnsureLabels(map[string]string{"unicode-label": "Étiquette"}, "user")
+	require.NoError(t, f.Store.ReplaceMessageLabels(labelMessageID, []int64{labels["unicode-label"]}),
+		"ReplaceMessageLabels")
+
+	engine := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())
+	tests := []struct {
+		name     string
+		query    *search.Query
+		queryStr string
+		groupBy  query.ViewType
+		wantID   int64
+	}{
+		{
+			name:     "subject",
+			query:    &search.Query{SubjectTerms: []string{"école"}},
+			queryStr: "subject:école",
+			groupBy:  query.ViewSenders,
+			wantID:   subjectID,
+		},
+		{
+			name:     "label",
+			query:    &search.Query{Labels: []string{"étiquette"}},
+			queryStr: "label:étiquette",
+			groupBy:  query.ViewLabels,
+			wantID:   labelMessageID,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			messages, err := engine.SearchFast(ctx, tc.query, query.MessageFilter{}, 10, 0)
+			require.NoError(err, "SearchFast")
+			require.Len(messages, 1, "structured metadata hit")
+			assert.Equal(tc.wantID, messages[0].ID, "structured metadata hit ID")
+
+			count, err := engine.SearchFastCount(ctx, tc.query, query.MessageFilter{})
+			require.NoError(err, "SearchFastCount")
+			assert.Equal(int64(1), count, "structured metadata count")
+
+			result, err := engine.SearchFastWithStats(ctx, tc.query, tc.queryStr,
+				query.MessageFilter{}, tc.groupBy, 10, 0)
+			require.NoError(err, "SearchFastWithStats")
+			require.NotNil(result.Stats, "structured metadata stats")
+			assert.Equal(int64(1), result.TotalCount, "structured result total")
+			assert.Equal(int64(1), result.Stats.MessageCount, "structured stats total")
+
+			if tc.groupBy == query.ViewLabels {
+				opts := query.DefaultAggregateOptions()
+				opts.SearchQuery = tc.queryStr
+				rows, err := engine.Aggregate(ctx, query.ViewLabels, opts)
+				require.NoError(err, "Aggregate(ViewLabels)")
+				require.Len(rows, 1, "Unicode label aggregate")
+				assert.Equal("Étiquette", rows[0].Key, "Unicode label aggregate key")
+			}
+		})
+	}
+}
+
 // TestSearchMessageBodies_BodyColumnOnly runs against SQLite by default and
 // PostgreSQL in the test-pg lane. Every non-body FTS field carries the same
 // term in a different message, proving the optional capability scopes the

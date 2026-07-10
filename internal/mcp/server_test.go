@@ -126,6 +126,21 @@ type listAccountsTrackingEngine struct {
 	listAccountsCalled bool
 }
 
+type cancelAfterErrContext struct {
+	context.Context
+
+	cancelAfter int
+	errCalls    int
+}
+
+func (c *cancelAfterErrContext) Err() error {
+	c.errCalls++
+	if c.errCalls >= c.cancelAfter {
+		return context.Canceled
+	}
+	return nil
+}
+
 func (e *listAccountsTrackingEngine) ListAccounts(ctx context.Context) ([]query.AccountInfo, error) {
 	e.listAccountsCalled = true
 	return e.MockEngine.ListAccounts(ctx)
@@ -200,6 +215,64 @@ func TestSearchMessages(t *testing.T) {
 		assert.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
 		assert.Contains(t, txt, "list:", "expected list operator context, got: %s")
 	})
+}
+
+func TestSearchMessagesRejectsInvalidQueryBeforeDispatch(t *testing.T) {
+	queries := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{name: "invalid typed value", text: "needle before:not-a-date", want: []string{"invalid value", "before:"}},
+		{name: "unsupported operator", text: "needle list:alerts.example.com", want: []string{"unsupported_search_operator", "list:"}},
+	}
+	paths := []string{"metadata", "local hybrid", "daemon hybrid"}
+	for _, queryCase := range queries {
+		for _, path := range paths {
+			t.Run(queryCase.name+"/"+path, func(t *testing.T) {
+				assert := assert.New(t)
+				var backendCalled bool
+				engine := &listAccountsTrackingEngine{MockEngine: &querytest.MockEngine{
+					Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com"}},
+					SearchFastFunc: func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error) {
+						backendCalled = true
+						return nil, nil
+					},
+				}}
+				h := &handlers{engine: engine}
+				var localBackend *fakeBackend
+				args := map[string]any{
+					"query":   queryCase.text,
+					"account": "alice@example.com",
+				}
+				switch path {
+				case "local hybrid":
+					localBackend = &fakeBackend{}
+					h = newHybridHandlersForErrorTest(localBackend)
+					h.engine = engine
+					args["mode"] = searchModeHybrid
+				case "daemon hybrid":
+					h.hybridSearcher = hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
+						backendCalled = true
+						return nil, errors.New("unexpected daemon hybrid search")
+					})
+					args["mode"] = searchModeHybrid
+				}
+
+				result := runToolExpectError(t, "search_messages", h.searchMessages, args)
+				text := resultText(t, result)
+				for _, want := range queryCase.want {
+					assert.Contains(text, want)
+				}
+				assert.False(engine.listAccountsCalled, "invalid query must not resolve account filters")
+				assert.False(backendCalled, "invalid query must not reach metadata or daemon search")
+				if localBackend != nil {
+					assert.Zero(localBackend.activeCalls, "invalid query must not resolve a vector generation")
+					assert.Zero(localBackend.fusedCalls, "invalid query must not run local hybrid search")
+				}
+			})
+		}
+	}
 }
 
 // TestSearchMessages_MetadataOnly verifies that search_messages uses only the
@@ -538,11 +611,20 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 				assert.NotContains(resp.Data[0].ContextSnippets[0], tc.reject,
 					"context must start from an FTS token-prefix match")
 			}
-			exact := extractContextChar(tc.body, search.Parse(tc.query).TextTerms, searchContextChars)
+			exact, _ := extractContextForTest(t, tc.body, search.Parse(tc.query).TextTerms, searchContextChars)
 			require.NotEmpty(exact, "context matcher must locate the real FTS token without fallback")
 			assert.Contains(exact[0], tc.wantContext)
 		})
 	}
+}
+
+func extractContextForTest(t *testing.T, body string, terms []string, contextChars int) ([]string, bool) {
+	t.Helper()
+	snippets, truncated, err := extractContextChar(
+		context.Background(), body, terms, contextChars, maxContextSnippets,
+	)
+	require.NoError(t, err, "extract context")
+	return snippets, truncated
 }
 
 func TestSearchMessageBodies_PhraseContextSurvivesSnippetCap(t *testing.T) {
@@ -576,12 +658,64 @@ func TestSearchMessageBodies_PhraseContextSurvivesSnippetCap(t *testing.T) {
 	assert.True(foundPhrase, "context snippets must include the matched phrase")
 }
 
+func TestSearchMessageBodies_ContextExtractionHonorsCancellation(t *testing.T) {
+	messageID := int64(91)
+	engine := &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{testutil.NewMessageSummary(messageID).Build()}, nil
+		},
+		GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+			return testutil.NewMessageDetail(messageID).
+				WithBodyText(strings.Repeat("hay ", 10_000) + "needle").
+				BuildPtr(), nil
+		},
+	}
+	h := newTestHandlers(engine)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "search_message_bodies"
+	req.Params.Arguments = map[string]any{"query": "needle"}
+
+	result, err := h.searchMessageBodies(ctx, req)
+	require.NoError(t, err, "handler returned error")
+	require.True(t, result.IsError, "canceled extraction must return a tool error")
+	assert.Contains(t, resultText(t, result), context.Canceled.Error())
+}
+
+func TestSearchMessageBodies_MarksContextScanBudgetTruncation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	messageID := int64(92)
+	body := strings.Repeat("hay ", 300_000) + "needle marker"
+	engine := &querytest.MockEngine{
+		SearchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return []query.MessageSummary{testutil.NewMessageSummary(messageID).Build()}, nil
+		},
+		GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+			return testutil.NewMessageDetail(messageID).WithBodyText(body).BuildPtr(), nil
+		},
+	}
+
+	response := runTool[paginatedSearchMessages](t, "search_message_bodies",
+		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "needle"})
+	require.Len(response.Data, 1, "body hit")
+	assert.True(response.Data[0].ContextSnippetsTruncated,
+		"bodies beyond the context scan budget must advertise omitted context")
+	require.Len(response.Data[0].ContextSnippets, 1, "bounded fallback context")
+	assert.NotContains(response.Data[0].ContextSnippets[0], "needle",
+		"the extractor must not claim an unscanned late match")
+	assert.LessOrEqual(len(response.Data[0].ContextSnippets[0]), searchContextChars)
+	assert.True(utf8.ValidString(response.Data[0].ContextSnippets[0]),
+		"bounded fallback context must be valid UTF-8")
+}
+
 func TestExtractContextChar(t *testing.T) {
 	t.Run("short body", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		body := "The resistor value should be 5.1k ohms not 10k as previously stated."
-		snippets := extractContextChar(body, []string{"5.1k"}, 200)
+		snippets, _ := extractContextForTest(t, body, []string{"5.1k"}, 200)
 		require.Len(snippets, 1)
 		assert.Contains(snippets[0], "5.1k")
 		assert.LessOrEqual(len(snippets[0]), 200)
@@ -592,7 +726,7 @@ func TestExtractContextChar(t *testing.T) {
 		assert := assert.New(t)
 		quoted := strings.Repeat("> This is quoted history that should not bloat the snippet. ", 40)
 		body := "See below:\n" + quoted + "\nThe actual answer is 5.1k ohms."
-		snippets := extractContextChar(body, []string{"5.1k"}, 300)
+		snippets, _ := extractContextForTest(t, body, []string{"5.1k"}, 300)
 		require.Len(snippets, 1)
 		assert.Contains(snippets[0], "5.1k")
 		assert.Len(snippets[0], 300)
@@ -603,7 +737,7 @@ func TestExtractContextChar(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		body := "foo bar foo baz"
-		snippets := extractContextChar(body, []string{"foo"}, 20)
+		snippets, _ := extractContextForTest(t, body, []string{"foo"}, 20)
 		require.Len(snippets, 1)
 		assert.Equal(body, snippets[0])
 	})
@@ -612,7 +746,7 @@ func TestExtractContextChar(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		body := "needle" + strings.Repeat("x", 500)
-		snippets := extractContextChar(body, []string{"needle"}, 100)
+		snippets, _ := extractContextForTest(t, body, []string{"needle"}, 100)
 		require.Len(snippets, 1)
 		assert.Len(snippets[0], 100)
 		assert.Equal(body[:100], snippets[0])
@@ -622,7 +756,7 @@ func TestExtractContextChar(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		body := strings.Repeat("a", 500) + " needle"
-		snippets := extractContextChar(body, []string{"needle"}, 100)
+		snippets, _ := extractContextForTest(t, body, []string{"needle"}, 100)
 		require.Len(snippets, 1)
 		assert.Len(snippets[0], 100)
 		assert.Equal(body[len(body)-100:], snippets[0])
@@ -630,18 +764,21 @@ func TestExtractContextChar(t *testing.T) {
 
 	t.Run("no matches", func(t *testing.T) {
 		assert := assert.New(t)
-		assert.Nil(extractContextChar("hello world", []string{"zzz"}, 300))
+		snippets, truncated := extractContextForTest(t, "hello world", []string{"zzz"}, 300)
+		assert.Nil(snippets)
+		assert.False(truncated, "fully scanned no-match body")
 	})
 
 	t.Run("empty body", func(t *testing.T) {
 		assert := assert.New(t)
-		assert.Nil(extractContextChar("", []string{"foo"}, 300))
+		snippets, _ := extractContextForTest(t, "", []string{"foo"}, 300)
+		assert.Nil(snippets)
 	})
 
 	t.Run("one-character term matched", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		snippets := extractContextChar("abc", []string{"a"}, 300)
+		snippets, _ := extractContextForTest(t, "abc", []string{"a"}, 300)
 		require.Len(snippets, 1)
 		assert.Equal("abc", snippets[0])
 	})
@@ -649,12 +786,48 @@ func TestExtractContextChar(t *testing.T) {
 	t.Run("dense overlapping matches stay bounded and UTF-8 safe", func(t *testing.T) {
 		const contextChars = 24
 		body := strings.Repeat("é a ", 40)
-		snippets := extractContextChar(body, []string{"a"}, contextChars)
+		snippets, _ := extractContextForTest(t, body, []string{"a"}, contextChars)
 		require.NotEmpty(t, snippets)
 		for _, snippet := range snippets {
 			assert.LessOrEqual(t, len(snippet), contextChars, "bounded extractor context")
 			assert.True(t, utf8.ValidString(snippet), "extractor context must be valid UTF-8")
 		}
+	})
+
+	t.Run("six separated matches stop at five", func(t *testing.T) {
+		var body strings.Builder
+		for range maxContextSnippets + 1 {
+			body.WriteString("needle ")
+			body.WriteString(strings.Repeat("x", searchContextChars+20))
+			body.WriteByte(' ')
+		}
+		snippets, truncated := extractContextForTest(t, body.String(), []string{"needle"}, searchContextChars)
+		require.Len(t, snippets, maxContextSnippets, "bounded snippets")
+		assert.True(t, truncated, "sixth non-overlapping context must set truncation marker")
+	})
+
+	t.Run("oversized token does not bridge phrase", func(t *testing.T) {
+		body := "alpha " + strings.Repeat("x", maxContextLexemeBytes+1) + " beta"
+		snippets, truncated := extractContextForTest(t, body, []string{"alpha beta"}, searchContextChars)
+		assert.Nil(t, snippets, "oversized placeholder must keep phrase lexemes non-adjacent")
+		assert.True(t, truncated, "skipped token normalization must set truncation marker")
+	})
+
+	t.Run("oversized query lexeme is not normalized", func(t *testing.T) {
+		term := strings.Repeat("a", maxContextQueryBytes+1)
+		snippets, truncated := extractContextForTest(t, "ordinary body", []string{term}, searchContextChars)
+		assert.Nil(t, snippets, "oversized query lexeme must not produce a context")
+		assert.True(t, truncated, "skipped query normalization must set truncation marker")
+	})
+
+	t.Run("checks cancellation during scan", func(t *testing.T) {
+		ctx := &cancelAfterErrContext{Context: context.Background(), cancelAfter: 3}
+		_, _, err := extractContextChar(ctx,
+			strings.Repeat("hay ", 10_000)+"needle", []string{"needle"},
+			searchContextChars, maxContextSnippets)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.GreaterOrEqual(t, ctx.errCalls, ctx.cancelAfter,
+			"extractor must re-check context after entry")
 	})
 }
 
@@ -2478,6 +2651,7 @@ type fakeBackend struct {
 	loadCalls    int
 	active       vector.Generation
 	activeErr    error
+	activeCalls  int
 	searchHits   []vector.Hit
 	searchErr    error
 	searchCalls  int
@@ -2485,6 +2659,7 @@ type fakeBackend struct {
 	searchFilter vector.Filter
 	fusedHits    []vector.FusedHit
 	fusedErr     error
+	fusedCalls   int
 	building     *vector.Generation
 	buildingErr  error
 	stats        map[vector.GenerationID]vector.Stats
@@ -2502,6 +2677,7 @@ func (f *fakeBackend) EmbeddedMessageCount(_ context.Context, _ vector.Generatio
 	return 0, errors.New("not implemented")
 }
 func (f *fakeBackend) ActiveGeneration(_ context.Context) (vector.Generation, error) {
+	f.activeCalls++
 	return f.active, f.activeErr
 }
 func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []float32, _ int, filter vector.Filter) ([]vector.Hit, error) {
@@ -2511,6 +2687,7 @@ func (f *fakeBackend) Search(_ context.Context, gen vector.GenerationID, _ []flo
 	return f.searchHits, f.searchErr
 }
 func (f *fakeBackend) FusedSearch(_ context.Context, req vector.FusedRequest) ([]vector.FusedHit, bool, error) {
+	f.fusedCalls++
 	if f.fusedErr != nil {
 		return nil, false, f.fusedErr
 	}

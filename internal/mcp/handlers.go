@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"container/heap"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -34,6 +34,15 @@ const (
 	maxSearchMessagesLimit = 50
 	defaultSearchLimit     = 20
 	maxContextSnippets     = 5
+	// Context extraction is deliberately resource-bounded. Message bodies are
+	// imported data and can be attacker-controlled; a single search result must
+	// not force unbounded tokenization, normalization, or term comparisons.
+	maxContextScanBytes        = 1 << 20
+	maxContextScanLexemes      = 200_000
+	maxContextMatchComparisons = 1_000_000
+	maxContextQueryBytes       = 32 << 10
+	maxContextQueryLexemes     = 256
+	maxContextLexemeBytes      = 32 << 10
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
 	searchContextChars = 300
@@ -340,14 +349,22 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	mode, _ := args["mode"].(string)
 	explain, _ := args["explain"].(bool)
 
-	if mode == searchModeVector || mode == searchModeHybrid {
-		return h.searchMessagesHybrid(ctx, args, queryStr, mode, explain)
-	}
-
-	if mode != "" {
+	if mode != "" && mode != searchModeVector && mode != searchModeHybrid {
 		return mcp.NewToolResultError(
 			fmt.Sprintf("invalid mode %q: must be %s or %s (or omit for metadata search)", mode, searchModeVector, searchModeHybrid),
 		), nil
+	}
+
+	q := search.Parse(queryStr)
+	if err := q.Err(); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
+		return mcp.NewToolResultError(msg), nil
+	}
+
+	if mode == searchModeVector || mode == searchModeHybrid {
+		return h.searchMessagesHybrid(ctx, args, queryStr, q, mode, explain)
 	}
 
 	limit := searchLimitArg(args)
@@ -359,10 +376,6 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	q := search.Parse(queryStr)
-	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
-		return mcp.NewToolResultError(msg), nil
-	}
 	if sourceID != nil {
 		q.AccountIDs = []int64{*sourceID}
 	}
@@ -467,16 +480,20 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 		if msg.BodyText == "" {
 			return mcp.NewToolResultError(fmt.Sprintf("body context unavailable for message %d: stored body is empty", r.ID)), nil
 		}
-		snippets := extractContextChar(msg.BodyText, q.TextTerms, searchContextChars)
+		snippets, contextTruncated, err := extractContextChar(
+			ctx, msg.BodyText, q.TextTerms, searchContextChars, maxContextSnippets,
+		)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("body context unavailable for message %d: %v", r.ID, err)), nil
+		}
+		item.ContextSnippetsTruncated = contextTruncated
 		if len(snippets) == 0 {
 			// The backend already proved this is an exact body-index hit. If its
-			// tokenizer ever diverges from the context matcher, preserve the
-			// every-hit-context contract with a bounded body prefix.
+			// tokenizer diverges from the context matcher or the scan budget ends
+			// before the match, preserve the every-hit-context contract with a
+			// bounded body prefix. context_snippets_truncated distinguishes the
+			// resource-limited case.
 			snippets = []string{bodyByteSlice(msg.BodyText, 0, min(len(msg.BodyText), searchContextChars))}
-		}
-		if len(snippets) > maxContextSnippets {
-			item.ContextSnippetsTruncated = true
-			snippets = snippets[:maxContextSnippets]
 		}
 		item.ContextSnippets = snippets
 		data = append(data, item)
@@ -534,10 +551,10 @@ type searchMessagesHybridResponse struct {
 // search_in_message for body content).
 func (h *handlers) searchMessagesHybrid(
 	ctx context.Context, args map[string]any,
-	queryStr, mode string, explain bool,
+	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*mcp.CallToolResult, error) {
 	if h.hybridSearcher != nil {
-		return h.searchMessagesHybridViaSearcher(ctx, args, queryStr, mode, explain)
+		return h.searchMessagesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
 	}
 	if h.hybridEngine == nil {
 		return mcp.NewToolResultError(
@@ -555,10 +572,6 @@ func (h *handlers) searchMessagesHybrid(
 	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
 
-	parsed := search.Parse(queryStr)
-	if msg := unsupportedSearchOperatorMessage(parsed); msg != "" {
-		return mcp.NewToolResultError(msg), nil
-	}
 	freeText := strings.Join(parsed.TextTerms, " ")
 
 	// mode=vector|hybrid requires at least one free-text term; filter-only
@@ -696,13 +709,12 @@ func (h *handlers) searchMessagesHybrid(
 
 func (h *handlers) searchMessagesHybridViaSearcher(
 	ctx context.Context, args map[string]any,
-	queryStr, mode string, explain bool,
+	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*mcp.CallToolResult, error) {
 	limit := searchLimitArg(args)
 	offset := limitArg(args, "offset", 0)
 	requestedEnd := offset + limit
 
-	parsed := search.Parse(queryStr)
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
 		return mcp.NewToolResultError(
@@ -1077,6 +1089,40 @@ type contextLexeme struct {
 	normalized string
 }
 
+type contextSpan struct {
+	start int
+	end   int
+}
+
+type contextSpanHeap []contextSpan
+
+func (h *contextSpanHeap) Len() int { return len(*h) }
+
+func (h *contextSpanHeap) Less(i, j int) bool {
+	if (*h)[i].start == (*h)[j].start {
+		return (*h)[i].end < (*h)[j].end
+	}
+	return (*h)[i].start < (*h)[j].start
+}
+
+func (h *contextSpanHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+
+func (h *contextSpanHeap) Push(value any) {
+	span, ok := value.(contextSpan)
+	if !ok {
+		panic(fmt.Sprintf("context span heap received %T", value))
+	}
+	*h = append(*h, span)
+}
+
+func (h *contextSpanHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
+
 var contextCaseFolder = cases.Fold()
 
 // normalizeContextLexeme applies the case and diacritic folding needed to
@@ -1095,80 +1141,168 @@ func normalizeContextLexeme(s string) string {
 	return contextCaseFolder.String(folded.String())
 }
 
-// contextBodyLexemes tokenizes body text on runes outside letters/digits and
-// attached nonspacing marks, retaining original UTF-8 byte offsets.
-func contextBodyLexemes(body string) []contextLexeme {
-	var lexemes []contextLexeme
-	start := -1
-	flush := func(end int) {
-		if start < 0 {
-			return
-		}
-		normalized := normalizeContextLexeme(body[start:end])
-		if normalized != "" {
-			lexemes = append(lexemes, contextLexeme{
-				start: start, end: end, normalized: normalized,
-			})
-		}
-		start = -1
-	}
-
-	for byteOffset, r := range body {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			if start < 0 {
-				start = byteOffset
-			}
-		case start >= 0 && unicode.Is(unicode.Mn, r):
-			// Nonspacing marks continue an existing token so decomposed text stays
-			// intact for normalization. A leading mark, or a spacing/enclosing
-			// mark, reaches the default branch and never starts a lexeme by itself.
-		default:
-			flush(byteOffset)
-		}
-	}
-	flush(len(body))
-	return lexemes
-}
-
 // extractContextChar returns up to contextChars of body text centered on each
-// normalized FTS term-group match, merging overlapping windows. Lexemes within
-// one parsed term stay adjacent: all but the final lexeme match exactly and the
-// final lexeme uses prefix semantics, mirroring the body FTS dialects.
-func extractContextChar(body string, terms []string, contextChars int) []string {
+// normalized FTS term-group match, merging overlapping windows. It streams a
+// bounded body prefix instead of materializing every lexeme and match. Lexemes
+// within one parsed term stay adjacent: all but the final lexeme match exactly
+// and the final lexeme uses prefix semantics, mirroring the body FTS dialects.
+// truncated reports omitted contexts caused by either the snippet cap or an
+// extraction safety budget.
+func extractContextChar(
+	ctx context.Context,
+	body string,
+	terms []string,
+	contextChars int,
+	maxSnippets int,
+) (snippets []string, truncated bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if body == "" || len(terms) == 0 || contextChars <= 0 {
-		return nil
+		return nil, false, nil
+	}
+	if maxSnippets <= 0 {
+		return nil, true, nil
 	}
 
 	queryGroups := make([][]string, 0, len(terms))
+	queryByteCount := 0
+	queryLexemeCount := 0
+	maxGroupLen := 0
 	for _, term := range terms {
-		var group []string
-		for _, lexeme := range sqldialect.EscapeTSQueryTerm(term) {
+		if len(term) > maxContextQueryBytes-queryByteCount {
+			truncated = true
+			break
+		}
+		queryByteCount += len(term)
+		lexemes := sqldialect.EscapeTSQueryTerm(term)
+		if queryLexemeCount+len(lexemes) > maxContextQueryLexemes {
+			truncated = true
+			break
+		}
+		group := make([]string, 0, len(lexemes))
+		for _, lexeme := range lexemes {
 			normalized := normalizeContextLexeme(lexeme)
 			if normalized != "" {
 				group = append(group, normalized)
 			}
 		}
-		if len(group) > 0 {
-			queryGroups = append(queryGroups, group)
+		if len(group) == 0 {
+			continue
 		}
+		queryLexemeCount += len(lexemes)
+		queryGroups = append(queryGroups, group)
+		maxGroupLen = max(maxGroupLen, len(group))
 	}
 	if len(queryGroups) == 0 {
-		return nil
+		return nil, truncated, nil
 	}
-	bodyLexemes := contextBodyLexemes(body)
 
-	type span struct {
-		start, end int
+	scanEnd := len(body)
+	if scanEnd > maxContextScanBytes {
+		scanEnd = maxContextScanBytes
+		for scanEnd > 0 && !utf8.RuneStart(body[scanEnd]) {
+			scanEnd--
+		}
+		truncated = true
 	}
-	var spans []span
 
-	for _, group := range queryGroups {
-		for bodyIndex := 0; bodyIndex+len(group) <= len(bodyLexemes); bodyIndex++ {
+	queue := make([]contextLexeme, maxGroupLen)
+	queueHead := 0
+	queueLen := 0
+	queueAt := func(index int) contextLexeme {
+		return queue[(queueHead+index)%len(queue)]
+	}
+	queuePush := func(value contextLexeme) {
+		queue[(queueHead+queueLen)%len(queue)] = value
+		queueLen++
+	}
+	queuePop := func() {
+		queueHead = (queueHead + 1) % len(queue)
+		queueLen--
+	}
+
+	pending := contextSpanHeap{}
+	heap.Init(&pending)
+	merged := make([]contextSpan, 0, maxSnippets)
+	appendMerged := func(candidate contextSpan) bool {
+		if len(merged) == 0 {
+			merged = append(merged, candidate)
+			return true
+		}
+		last := &merged[len(merged)-1]
+		unionStart := min(last.start, candidate.start)
+		unionEnd := max(last.end, candidate.end)
+		if candidate.start <= last.end && unionEnd-unionStart <= contextChars {
+			last.start = unionStart
+			last.end = unionEnd
+			return true
+		}
+		if len(merged) >= maxSnippets {
+			truncated = true
+			return false
+		}
+		merged = append(merged, candidate)
+		return true
+	}
+
+	var scanErr error
+	spanLimitReached := false
+	flushPending := func(safeBefore int, final bool) bool {
+		popped := 0
+		for pending.Len() > 0 && (final || pending[0].start < safeBefore) {
+			if popped%256 == 0 {
+				if err := ctx.Err(); err != nil {
+					scanErr = err
+					return false
+				}
+			}
+			value := heap.Pop(&pending)
+			candidate, ok := value.(contextSpan)
+			if !ok {
+				panic(fmt.Sprintf("context span heap returned %T", value))
+			}
+			if !appendMerged(candidate) {
+				spanLimitReached = true
+				return false
+			}
+			popped++
+		}
+		return true
+	}
+
+	comparisonCount := 0
+	workLimitReached := false
+	processStart := func() bool {
+		first := queueAt(0)
+		// A future match starts at or after first.start. Its centered window
+		// cannot move back a full contextChars bytes, so older heap entries are
+		// now globally ordered and safe to merge.
+		if !flushPending(first.start-contextChars, false) {
+			return false
+		}
+		for _, group := range queryGroups {
+			if len(group) > queueLen {
+				continue
+			}
 			matched := true
 			for groupIndex, queryLexeme := range group {
-				bodyLexeme := bodyLexemes[bodyIndex+groupIndex]
-				if groupIndex == len(group)-1 {
+				if comparisonCount >= maxContextMatchComparisons {
+					truncated = true
+					workLimitReached = true
+					return false
+				}
+				comparisonCount++
+				if comparisonCount%1024 == 0 {
+					if err := ctx.Err(); err != nil {
+						scanErr = err
+						return false
+					}
+				}
+				bodyLexeme := queueAt(groupIndex)
+				if bodyLexeme.normalized == "" {
+					matched = false
+				} else if groupIndex == len(group)-1 {
 					matched = strings.HasPrefix(bodyLexeme.normalized, queryLexeme)
 				} else {
 					matched = bodyLexeme.normalized == queryLexeme
@@ -1178,42 +1312,107 @@ func extractContextChar(body string, terms []string, contextChars int) []string 
 				}
 			}
 			if matched {
-				first := bodyLexemes[bodyIndex]
-				last := bodyLexemes[bodyIndex+len(group)-1]
+				last := queueAt(len(group) - 1)
 				matchLen := min(last.end-first.start, contextChars)
 				start, end := contextWindow(len(body), first.start, matchLen, contextChars)
-				spans = append(spans, span{start: start, end: end})
+				heap.Push(&pending, contextSpan{start: start, end: end})
 			}
 		}
+		return true
 	}
 
-	if len(spans) == 0 {
-		return nil
-	}
-
-	sort.Slice(spans, func(i, j int) bool {
-		if spans[i].start == spans[j].start {
-			return spans[i].end < spans[j].end
+	lexemeCount := 0
+	emitLexeme := func(start, end int) bool {
+		if lexemeCount >= maxContextScanLexemes {
+			truncated = true
+			return false
 		}
-		return spans[i].start < spans[j].start
-	})
-
-	merged := []span{spans[0]}
-	for _, s := range spans[1:] {
-		last := &merged[len(merged)-1]
-		unionEnd := max(last.end, s.end)
-		if s.start <= last.end && unionEnd-last.start <= contextChars {
-			last.end = unionEnd
-			continue
+		lexemeCount++
+		normalized := ""
+		if end-start > maxContextLexemeBytes {
+			// Retain an unmatchable placeholder so phrase terms on either side
+			// cannot become falsely adjacent when normalization is skipped.
+			truncated = true
+		} else {
+			normalized = normalizeContextLexeme(body[start:end])
 		}
-		merged = append(merged, s)
+		queuePush(contextLexeme{start: start, end: end, normalized: normalized})
+		if queueLen == maxGroupLen {
+			if !processStart() {
+				return false
+			}
+			queuePop()
+		}
+		return true
 	}
 
-	out := make([]string, 0, len(merged))
-	for _, s := range merged {
-		out = append(out, bodyByteSlice(body, s.start, s.end))
+	tokenStart := -1
+	stopped := false
+	lastContextCheck := 0
+
+scanLoop:
+	for byteOffset, r := range body[:scanEnd] {
+		if byteOffset-lastContextCheck >= 4096 {
+			if err := ctx.Err(); err != nil {
+				scanErr = err
+				stopped = true
+				break
+			}
+			lastContextCheck = byteOffset
+		}
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if tokenStart < 0 {
+				tokenStart = byteOffset
+			}
+		case tokenStart >= 0 && unicode.Is(unicode.Mn, r):
+			// Nonspacing marks continue an existing token so decomposed text stays
+			// intact. A leading mark never starts a token by itself.
+		default:
+			if tokenStart >= 0 && !emitLexeme(tokenStart, byteOffset) {
+				stopped = true
+				break scanLoop
+			}
+			tokenStart = -1
+		}
 	}
-	return out
+	if scanErr != nil {
+		return nil, false, scanErr
+	}
+	if !stopped && tokenStart >= 0 {
+		emitLexeme(tokenStart, scanEnd)
+	}
+	if scanErr != nil {
+		return nil, false, scanErr
+	}
+
+	// Complete starts already captured in the bounded queue. A lexeme limit
+	// may stop tokenization while still leaving useful, fully observed matches.
+	if !spanLimitReached && !workLimitReached {
+		for queueLen > 0 {
+			if !processStart() {
+				break
+			}
+			queuePop()
+		}
+	}
+	if scanErr != nil {
+		return nil, false, scanErr
+	}
+	if !spanLimitReached {
+		flushPending(0, true)
+	}
+	if scanErr != nil {
+		return nil, false, scanErr
+	}
+	if len(merged) == 0 {
+		return nil, truncated, nil
+	}
+	snippets = make([]string, 0, len(merged))
+	for _, candidate := range merged {
+		snippets = append(snippets, bodyByteSlice(body, candidate.start, candidate.end))
+	}
+	return snippets, truncated, nil
 }
 
 type getMessageResponse struct {
