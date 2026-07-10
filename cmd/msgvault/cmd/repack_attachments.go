@@ -29,6 +29,11 @@ func writeRepackAttachmentsStats(out io.Writer, stats repacker.Stats) {
 	if stats.MappingsPruned > 0 {
 		_, _ = fmt.Fprintf(out, "Pruned %d stale packed blob mapping(s).\n", stats.MappingsPruned)
 	}
+	if stats.PacksDeferredOversized > 0 {
+		_, _ = fmt.Fprintf(out,
+			"Deferred %d oversized pack(s); they remain authoritative for a future maintenance run.\n",
+			stats.PacksDeferredOversized)
+	}
 	if stats.BudgetExhausted {
 		_, _ = fmt.Fprintln(out, "Repack byte budget reached; another run will continue with remaining sparse packs.")
 	}

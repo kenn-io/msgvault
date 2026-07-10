@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,6 +127,29 @@ func (f *attachmentMaintenanceFixture) makeZeroLivePack(content []byte) string {
 	return entry.PackID
 }
 
+func (f *attachmentMaintenanceFixture) makeSparsePack(live []byte, createdAt time.Time) (string, string) {
+	f.t.Helper()
+	liveHash := f.addLoose(live)
+	dead := make([]byte, (8<<20)+(256<<10))
+	_, err := crand.Read(dead)
+	require.NoError(f.t, err, "fill incompressible dead attachment")
+	deadHash := f.addLoose(dead)
+	deadSmallHash := f.addLoose(fmt.Appendf(nil,
+		"second dead entry %d makes the source pack sparse", f.sequence))
+	_, err = f.maintenance.pack(context.Background(), 0)
+	require.NoError(f.t, err, "pack sparse fixture")
+	entry := f.packedEntry(liveHash)
+	require.NotNil(f.t, entry)
+	_, err = f.store.DB().Exec(f.store.Rebind(
+		`DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadHash, deadSmallHash)
+	require.NoError(f.t, err, "delete sparse fixture entries")
+	_, err = f.store.DB().Exec(f.store.Rebind(
+		`UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		createdAt.UTC().Format(time.RFC3339), entry.PackID)
+	require.NoError(f.t, err, "age sparse fixture pack")
+	return liveHash, entry.PackID
+}
+
 func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -161,6 +186,8 @@ func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testi
 		"packs_removed=0",
 		"packs_quarantined=0",
 		"packs_unreadable=0",
+		"blobs_deferred_oversized=0",
+		"packs_deferred_oversized=0",
 		"records_dropped=0",
 		"mappings_pruned=0",
 		"blobs_missing=0",
@@ -211,8 +238,15 @@ func TestAutomaticAttachmentMaintenanceFailureWarnsWithoutReplacingIngestSuccess
 	require.NoError(err, "maintenance failure must preserve successful ingest")
 	assert.Contains(warning, "pack-attachments")
 	assert.Contains(warning, "retry")
-	assert.Contains(logs.String(), "level=WARN msg=\"automatic attachment maintenance failed\"")
-	assert.Contains(logs.String(), "pack-attachments", "log names the explicit retry command")
+	logOutput := logs.String()
+	progressAt := strings.Index(logOutput, "level=INFO msg=\"automatic attachment maintenance progress\"")
+	warnAt := strings.Index(logOutput, "level=WARN msg=\"automatic attachment maintenance failed\"")
+	assert.GreaterOrEqual(progressAt, 0, "partial stats are logged on error")
+	assert.Greater(warnAt, progressAt, "progress must be observable before the warning")
+	assert.NotContains(logOutput, "automatic attachment maintenance complete")
+	assert.Contains(logOutput, "blobs_deferred_oversized=0")
+	assert.Contains(logOutput, "packs_deferred_oversized=0")
+	assert.Contains(logOutput, "pack-attachments", "log names the explicit retry command")
 }
 
 func TestAutomaticAttachmentMaintenanceWarningFailurePreservesIngestSuccess(t *testing.T) {
@@ -355,7 +389,72 @@ func TestPostRemovalRepackFailureWarnsWithoutReplacingSuccess(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(warning, "repack-attachments")
 	assert.Contains(warning, "retry")
-	assert.Contains(logs.String(), "automatic attachment repack failed")
+	logOutput := logs.String()
+	progressAt := strings.Index(logOutput, "level=INFO msg=\"automatic attachment repack progress\"")
+	warnAt := strings.Index(logOutput, "level=WARN msg=\"automatic attachment repack failed\"")
+	assert.GreaterOrEqual(progressAt, 0, "partial stats are logged on error")
+	assert.Greater(warnAt, progressAt, "progress must be observable before the warning")
+	assert.NotContains(logOutput, "automatic attachment repack complete")
+	for _, field := range []string{
+		"max_bytes=268435456",
+		"mappings_pruned=0",
+		"packs_selected=0",
+		"packs_rewritten=0",
+		"packs_sealed=0",
+		"packs_removed=0",
+		"packs_deferred_oversized=0",
+		"blobs_repacked=0",
+		"bytes_repacked=0",
+		"budget_exhausted=false",
+	} {
+		assert.Contains(logOutput, field, "progress stats field %q", field)
+	}
+}
+
+func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	now := time.Now().UTC()
+	_, corruptPackID := f.makeSparsePack([]byte("live blob in corrupt oldest source"), now.Add(-72*time.Hour))
+	healthyLive := []byte("healthy sibling remains eligible after the corrupt source")
+	healthyHash, healthyPackID := f.makeSparsePack(healthyLive, now.Add(-48*time.Hour))
+	corruptPath := filepath.Join(f.dir, "packs", corruptPackID[:2], corruptPackID+blobstore.PackExt)
+	require.NoError(os.WriteFile(corruptPath, []byte("truncated corrupt pack"), 0o600), "corrupt oldest source")
+	var warning string
+
+	err := f.maintenance.runAutomaticRepack(context.Background(), func(message string) error {
+		warning = message
+		return nil
+	})
+
+	require.Error(err, "corrupt source remains an aggregate maintenance error")
+	assert.Contains(err.Error(), corruptPackID)
+	assert.Contains(warning, "repack-attachments")
+	newEntry := f.packedEntry(healthyHash)
+	require.NotNil(newEntry)
+	assert.NotEqual(healthyPackID, newEntry.PackID, "healthy sibling mapping commits")
+	assert.Equal(healthyLive, f.readBlob(healthyHash))
+	logs := f.logs.String()
+	progressAt := strings.Index(logs, "level=INFO msg=\"automatic attachment repack progress\"")
+	warnAt := strings.Index(logs, "level=WARN msg=\"automatic attachment repack failed\"")
+	assert.GreaterOrEqual(progressAt, 0)
+	assert.Greater(warnAt, progressAt, "committed progress is logged before the aggregate warning")
+	assert.NotContains(logs, "automatic attachment repack complete")
+	for _, field := range []string{
+		"max_bytes=268435456",
+		"mappings_pruned=2",
+		"packs_selected=2",
+		"packs_rewritten=1",
+		"packs_sealed=1",
+		"packs_removed=1",
+		"packs_deferred_oversized=0",
+		"blobs_repacked=1",
+		fmt.Sprintf("bytes_repacked=%d", len(healthyLive)),
+		"budget_exhausted=false",
+	} {
+		assert.Contains(logs, field, "progress stats field %q", field)
+	}
 }
 
 func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {

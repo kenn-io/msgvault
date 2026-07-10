@@ -4,8 +4,9 @@ Design for storing attachment content in kit CAS pack files instead of loose
 content-addressed files. Written 2026-07-09; status: delivery steps 1-5 (see
 Delivery order below) are implemented and copy-based real-archive hardening is
 complete on the `packed-attachments` branch. The 64 MiB memory-ceiling
-amendment below is approved but pending implementation and verification.
-Pack-native restore remains the separate follow-up in issue #466.
+amendment is implemented and locally verified through automated boundary,
+fault-injection, and race tests. Pack-native restore remains the separate
+follow-up in issue #466.
 
 ## Motivation
 
@@ -38,7 +39,7 @@ Non-goals for this design: at-rest encryption (kit supports it; msgvault
 does not use it yet), backup pack adoption itself (follow-up), disk-space
 reduction as a primary objective.
 
-## Current state (verified 2026-07-09)
+## Baseline used for the design (verified 2026-07-09)
 
 - Canonical write path: `export.StoreAttachmentFile`
   (`internal/export/store_attachment.go`) — atomic temp+rename, dedup by
@@ -124,6 +125,16 @@ BIGINT, not INTEGER: PostgreSQL `INTEGER` is 4-byte signed, too small for a
 `uint32` CRC32C and for raw/stored lengths up to `pack.MaxRawLen` (4 GiB).
 SQLite integers are 8-byte regardless.
 
+Historical attachment rows can spell the same valid SHA-256 hash with
+different letter case. Pack-index keys and pack footer IDs are canonical
+lowercase; liveness and inventory queries normalize references with
+`LOWER(content_hash)` / `LOWER(thumbnail_hash)`. Matching expression indexes
+(`idx_attachments_content_hash_lower` and
+`idx_attachments_thumbnail_hash_lower`) keep those lookups indexed. SQLite
+declares them in its schema; PostgreSQL creates them during `Store.InitSchema`
+under the maintenance transaction that disables the ordinary statement
+timeout for one-time builds on large archives.
+
 The column is `blob_hash`, not `content_hash`: it indexes every packed blob,
 including thumbnails. The read path locates the pack via the index;
 `pack.OpenReader` parses the pack's footer once on first open (small: 61
@@ -184,16 +195,20 @@ which can overlap later maintenance through its independent blob store.
 1. Enumerate loose blobs from the DB: distinct local (non-URL)
    `content_hash` and `thumbnail_hash` values without an index row, locating
    files by every distinct DB-recorded `storage_path`/`thumbnail_path` (which
-   finds noncanonical legacy paths, not just canonical ones). If duplicate
-   rows record different paths for one hash, candidates are tried until one
-   verifies; one missing or corrupt candidate cannot pin a valid copy. Rows
-   with empty or URL storage paths are skipped, as are hashes with no readable,
+   finds noncanonical legacy paths, not just canonical ones). Valid hashes are
+   grouped by normalized lowercase identity before append; every original case
+   spelling and candidate path is retained. Candidates are tried until one
+   verifies, so one missing or corrupt alias cannot pin a valid copy. Rows with
+   empty or URL storage paths are skipped, as are hashes with no readable,
    verified candidate on disk (logged, left for a future backfill).
 2. Append blobs to a `pack.Writer` (32 MB target), seal each pack
    (durable, atomic publish under `packs/<id[:2]>/`).
 3. In one DB transaction per sealed pack: insert the `attachment_packs`
-   row and the index rows, and **canonicalize** any noncanonical local
-   `storage_path`/`thumbnail_path` rows for those hashes to `<aa>/<hash>`.
+   row and one canonical index row per normalized hash, then **canonicalize**
+   every case alias and noncanonical local `storage_path`/`thumbnail_path` row
+   to lowercase `<aa>/<hash>`. Orphan adoption applies the same alias
+   coalescing and can repoint a case-equivalent existing mapping; a duplicate
+   normalized footer ID is rejected before metadata commit or loose deletion.
 4. Delete the loose files (including noncanonical originals).
 
 Crash safety at each boundary:
@@ -292,12 +307,12 @@ retired before Windows file deletion.
 
 ### Per-blob memory ceiling
 
-kit v0.4 accepts a complete `[]byte` in `pack.Writer.Append`, and
-`pack.Reader.ReadBlob` materializes a complete decoded blob. Packing therefore
-holds the raw bytes plus an encoding buffer; repacking can additionally hold
-the production reader's materialized bytes and an `io.ReadAll` copy. The pack
-format's 4 GiB `pack.MaxRawLen` is a corruption/representation bound, not a
-safe daemon-memory policy.
+kit v0.4 accepts a complete `[]byte` in `pack.Writer.Append`, and its ordinary
+production `pack.Reader.ReadBlob` materializes a complete decoded blob. The
+pack format's 4 GiB `pack.MaxRawLen` is therefore a representation bound, not a
+safe daemon-memory policy. Maintenance does not use kit's ordinary reader: the
+msgvault blob store owns a bounded stable-plain-v1 parser and decoder described
+below, while writers still require one ceiling-eligible blob in memory.
 
 Until kit exposes verified streaming reads and writes, both automatic and
 explicit maintenance enforce a fixed 64 MiB raw-blob ceiling:
@@ -312,17 +327,19 @@ explicit maintenance enforce a fixed 64 MiB raw-blob ceiling:
 - A larger noncanonical legacy candidate cannot merely be skipped: production
   reads derive only the canonical path. Copy it to a canonical temp file with a
   fixed buffer while streaming SHA-256, fsync and close the temp, publish it
-  without replacing an existing destination, and fsync the canonical parent
-  directory. Only after durable publication does a transaction canonicalize
-  every matching DB path; only after that commit may the legacy source be
-  removed best-effort. A hash mismatch removes the temp and tries the next
-  recorded path. If the canonical destination already exists, streaming-verify
-  and reuse it only when its hash matches; never replace it or delete the
-  verified legacy source when destination validation/publication fails. A crash
-  or DB failure after publication can leave a redundant legacy file but cannot
-  make the verified canonical copy unreadable. Future runs see the canonical
-  oversized file and do not re-hash it merely to defer packing. If legacy
-  deletion fails after the DB update, the final sweep retries it: a referenced,
+  without replacing an existing destination, and sync the canonical parent
+  where the platform supports directory fsync (kit's Windows directory sync
+  is intentionally a no-op). Only after publication does a transaction
+  canonicalize every matching DB path; only after that commit may the legacy
+  source be removed best-effort. A hash mismatch removes the temp and tries the
+  next recorded path. If the canonical destination already exists,
+  streaming-verify and reuse it only when its hash matches; never replace it or
+  delete the verified legacy source when destination validation/publication
+  fails. A crash or DB failure after publication can leave a redundant legacy
+  file, but cannot make the verified canonical copy unreadable. Future runs see
+  the canonical oversized file and do not re-hash it merely to defer packing.
+  If legacy deletion fails after the DB update, the final sweep retries it. A
+  referenced,
   unindexed noncanonical hash-named file is redundant only after the canonical
   file streaming-verifies, then it is removed best-effort.
 - Orphan reconciliation inspects footer `RawLen` before any production or
@@ -361,29 +378,33 @@ loose files or unreclaimed sparse packs in place. Large-file count is not the
 Windows/NAS bottleneck this design targets; the benefit comes primarily from
 packing the much more numerous small files.
 
-Before maintenance calls `pack.OpenReader`, it performs a fixed-size preflight
-of the stable plain-pack header and 40-byte trailer, then reads only the
-footer's four-byte entry count. It rejects a container above 128 MiB, a footer
-above 8 MiB, more than 100,000 entries, inconsistent footer-length/count math,
-or encrypted/invalid header/trailer metadata before kit allocates the footer or
-decoded entry table. Normal production packs target 32 MiB and can cross that
-target by at most one ceiling-eligible 64 MiB append; the remaining headroom
-covers the bounded footer. Packer and repacker seal a writer before a new append
-would exceed 100,000 entries, so they cannot create a pack their own maintenance
-reader later defers. Cached readers are checked against the same entry ceiling
-before bounded use. An oversized orphan or recorded repack source remains
-preserved, is excluded before budget charging, and is reported with the other
-oversized pack deferrals.
+Maintenance opens a pack once and retains that exact file descriptor from
+preflight through every entry read. Msgvault's parser is deliberately pinned to
+the stable unencrypted plain-v1 wire layout instead of following kit's mutable
+current-version reader. It validates the fixed header and 40-byte trailer,
+container and footer lengths, footer checksum, entry count, entry spans and
+flags, and unique blob IDs before exposing entries. It rejects a container
+above 128 MiB, a footer above 8 MiB, or more than 100,000 entries before a large
+allocation. The retained descriptor prevents a pathname replacement between
+preflight and read; bounded zstd decode caps output and window memory to the
+authoritative entry length, then verifies CRC32C, decoded length, and SHA-256.
 
-Maintenance reads of packed content use a bounded blob-store operation that
-cross-checks mutable DB offsets and lengths against the matching cached footer
-entry before allocation, then rejects either authoritative `RawLen` or
-`StoredLen` above the ceiling. Store scans validate offsets/lengths and BIGINT
-flag/CRC ranges before narrowing them to Go integer types. The bounded operation
-returns kit's verified byte slice directly; repack does not make a second
-`io.ReadAll` copy. Repack uses it even after selection has screened DB
-aggregates, so corrupt metadata cannot turn the accounting guard into a large
-allocation.
+Normal production packs target 32 MiB and can cross that target by at most one
+ceiling-eligible 64 MiB append; the remaining headroom covers the bounded
+footer. Packer and repacker seal before a new append would exceed 100,000
+entries, so they cannot create a pack their own maintenance reader later
+defers. An oversized orphan or recorded repack source remains preserved, is
+excluded before budget charging, and is reported with the other oversized pack
+deferrals.
+
+Maintenance reads of packed content cross-check mutable DB offsets and lengths
+against the matching retained-reader footer entry before allocation, then
+reject either authoritative `RawLen` or `StoredLen` above the ceiling. Store
+scans validate offsets/lengths and BIGINT flag/CRC ranges before narrowing them
+to Go integer types. The bounded blob-store operation returns its verified byte
+slice directly; repack does not make a second `io.ReadAll` copy. Repack uses it
+even after selection has screened DB aggregates, so corrupt metadata cannot
+turn the accounting guard into a large allocation.
 
 Deferral is operator-visible. `packer.Stats` exposes
 `BlobsDeferredOversized` and `PacksDeferredOversized`; `repacker.Stats` exposes
@@ -391,10 +412,14 @@ Deferral is operator-visible. `packer.Stats` exposes
 actual/largest raw size, 64 MiB limit, and (for an orphan) the number of
 withheld referenced candidates using literal keys `hash`, `pack`, `raw_bytes`,
 `max_raw_bytes`, and `withheld_entries` where applicable. Blob counts are once
-per distinct hash, not once per recorded candidate. Explicit command output
-includes these counters, while automatic maintenance records them in its INFO
-summary. A size exactly equal to 64 MiB is eligible; 64 MiB + 1 byte is
-deferred.
+per normalized distinct hash, not once per recorded case alias or candidate.
+Explicit output emits only nonzero deferrals: large canonical blobs are named
+as left loose, packer's oversized orphans are named as deferred untouched, and
+repack's oversized authoritative source packs are named as deferred. Automatic
+summaries always include the counters. On a non-cancellation error, automatic
+maintenance logs an INFO `progress` summary (including committed work,
+deferrals, and budget state) before WARN; only success is labeled `complete`.
+A size exactly equal to 64 MiB is eligible; 64 MiB + 1 byte is deferred.
 
 ### GC and repack
 
@@ -505,7 +530,20 @@ raw/stored entry ceiling before writing the first loose blob from each live
 pack. A pre-amendment pack outside those bounds fails safely with its complete
 index, record, and file retained for a future streaming-capable release;
 zero-live packs still delete without opening their footer. Packs completed
-earlier in the command remain independently and consistently unpacked.
+earlier in the command remain independently and consistently unpacked. Every
+restored canonical file is hash-verified through a no-follow descriptor and
+the final file descriptor is flushed before pack authority is dropped. Its
+parent directory, and the attachments base when a hash directory is created,
+are synced where the platform supports directory fsync; kit's Windows
+directory sync is intentionally a no-op. Windows opens the final component as
+a reparse point rather than following it, rejects reparse objects, and compares
+pre-open, descriptor, and post-open filesystem identity before accepting or
+syncing an existing destination.
+
+The local command holds the archive's `daemon.lock` lease for the full run,
+from the live-daemon check through store cleanup and pack deletion. This closes
+the PostgreSQL race in which a daemon could start after a one-shot runtime-file
+preflight; SQLite additionally retains its ordinary exclusive writer lock.
 
 ### Backup coordination (release-blocking)
 
@@ -618,8 +656,9 @@ and 46,060 distinct local blobs totaling 8,193,617,238 bytes.
   `get_attachment` returned hash-identical bytes.
 - Memory ceiling: the largest blob in this archive was approximately 23 MiB,
   below the 64 MiB in-memory maintenance ceiling. Oversized behavior is
-  therefore covered by synthetic bounded-read and repack-selection tests rather
-  than this dataset once the amendment is implemented.
+  therefore covered by implemented synthetic bounded-read, footer-preflight,
+  deferral, and repack-selection tests rather than this real dataset. No
+  greater-than-64-MiB real-archive blob was exercised.
 - Crash recovery: the daemon was sent `SIGKILL` with 135 sealed packs, one
   staging file, 26,513 indexed blobs, and 19,547 loose blobs. Restart removed
   staging and packed exactly the remaining 19,547 blobs in 12.1 seconds,
@@ -659,12 +698,13 @@ baseline for the pack-native restore optimization tracked by issue #466.
    new ULID-named packs and deletes loose files, which the daemon never
    holds open. `unpack-attachments` deletes pack files that a running
    daemon's blob store holds open (blocks deletion on Windows), so it is
-   local-only: a live-daemon runtime preflight rejects unpack on all
-   backends (directing the user to `msgvault serve stop`); on SQLite the
-   `db.write.lock` additionally guarantees exclusivity against any other
-   writer. When `[remote].url` is active, unpack refuses before opening local
-   storage; the operator must run it on the archive host, or pass `--local`
-   to select the client machine's local archive intentionally.
+   local-only: the command holds `daemon.lock` for its entire execution and a
+   live-daemon runtime preflight rejects unpack on all backends (directing the
+   user to `msgvault serve stop`); on SQLite the `db.write.lock` additionally
+   guarantees exclusivity against any other writer. When `[remote].url` is
+   active, unpack refuses before opening local storage; the operator must run
+   it on the archive host, or pass `--local` to select the client machine's
+   local archive intentionally.
 
    Finding (2026-07-09): the originally planned switch of the MCP local
    reader (`internal/mcp/handlers.go` readAttachmentFile) and the TUI local

@@ -78,6 +78,16 @@ func writePackAttachmentsStats(out io.Writer, stats packer.Stats) {
 	if stats.PacksUnreadable > 0 {
 		_, _ = fmt.Fprintf(out, "Found %d unreadable orphan pack(s).\n", stats.PacksUnreadable)
 	}
+	if stats.BlobsDeferredOversized > 0 {
+		_, _ = fmt.Fprintf(out,
+			"Left %d large canonical blob(s) loose because they exceed the 64 MiB maintenance limit.\n",
+			stats.BlobsDeferredOversized)
+	}
+	if stats.PacksDeferredOversized > 0 {
+		_, _ = fmt.Fprintf(out,
+			"Deferred %d oversized orphan pack(s); they remain untouched for a future maintenance run.\n",
+			stats.PacksDeferredOversized)
+	}
 }
 
 func init() {

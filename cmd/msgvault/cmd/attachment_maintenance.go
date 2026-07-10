@@ -52,6 +52,7 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 			return err
 		}
 
+		m.logAutomaticPackSummary("automatic attachment maintenance progress", stats)
 		const retry = "run `msgvault pack-attachments` to retry"
 		m.log().Warn("automatic attachment maintenance failed",
 			"error", err,
@@ -66,7 +67,12 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		return err
 	}
 
-	m.log().Info("automatic attachment maintenance complete",
+	m.logAutomaticPackSummary("automatic attachment maintenance complete", stats)
+	return nil
+}
+
+func (m *attachmentMaintenance) logAutomaticPackSummary(message string, stats packer.Stats) {
+	m.log().Info(message,
 		"max_bytes", automaticAttachmentBytes,
 		"packs_sealed", stats.PacksSealed,
 		"blobs_packed", stats.BlobsPacked,
@@ -75,6 +81,8 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		"packs_removed", stats.PacksRemoved,
 		"packs_quarantined", stats.PacksQuarantined,
 		"packs_unreadable", stats.PacksUnreadable,
+		"blobs_deferred_oversized", stats.BlobsDeferredOversized,
+		"packs_deferred_oversized", stats.PacksDeferredOversized,
 		"records_dropped", stats.RecordsDropped,
 		"mappings_pruned", stats.MappingsPruned,
 		"blobs_missing", stats.BlobsMissing,
@@ -82,7 +90,6 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		"loose_swept", stats.LooseSwept,
 		"loose_orphans_removed", stats.LooseOrphansRemoved,
 		"budget_exhausted", stats.BudgetExhausted)
-	return nil
 }
 
 func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarning func(string) error) error {
@@ -92,6 +99,7 @@ func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarn
 			m.log().Info("automatic attachment repack canceled")
 			return err
 		}
+		m.logAutomaticRepackSummary("automatic attachment repack progress", stats)
 		const retry = "run `msgvault repack-attachments` to retry"
 		m.log().Warn("automatic attachment repack failed", "error", err, "retry", retry)
 		if emitWarning != nil {
@@ -102,17 +110,22 @@ func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarn
 		}
 		return err
 	}
-	m.log().Info("automatic attachment repack complete",
+	m.logAutomaticRepackSummary("automatic attachment repack complete", stats)
+	return nil
+}
+
+func (m *attachmentMaintenance) logAutomaticRepackSummary(message string, stats repacker.Stats) {
+	m.log().Info(message,
 		"max_bytes", automaticAttachmentBytes,
 		"mappings_pruned", stats.MappingsPruned,
 		"packs_selected", stats.PacksSelected,
 		"packs_rewritten", stats.PacksRewritten,
 		"packs_sealed", stats.PacksSealed,
 		"packs_removed", stats.PacksRemoved,
+		"packs_deferred_oversized", stats.PacksDeferredOversized,
 		"blobs_repacked", stats.BlobsRepacked,
 		"bytes_repacked", stats.BytesRepacked,
 		"budget_exhausted", stats.BudgetExhausted)
-	return nil
 }
 
 // daily runs the two bounded phases in order. A failed pack phase stops the
