@@ -2,9 +2,9 @@
 
 Design for storing attachment content in kit CAS pack files instead of loose
 content-addressed files. Written 2026-07-09; status: delivery steps 1-5 (see
-Delivery order below) are implemented on the `packed-attachments` branch.
-Exact-head review and cross-platform verification are tracked by PR #464. The
-detailed phase-2c contract is in
+Delivery order below) are implemented and copy-based real-archive hardening is
+complete on the `packed-attachments` branch. Exact-head review and the full
+cross-platform CI matrix passed on PR #464. The detailed phase-2c contract is in
 `docs/superpowers/specs/2026-07-09-packed-attachments-phase-2c-design.md`;
 pack-native restore remains the separate follow-up in issue #466.
 
@@ -386,6 +386,58 @@ their entries into the repo index, skipping per-blob re-reads.
 - PostgreSQL backend: index table migrations and packer transaction
   semantics under `MSGVAULT_TEST_DB`; thumbnail hash/path supporting indexes
   build through the maintenance timeout hatch on existing archives.
+
+## Real-archive hardening (2026-07-09)
+
+The reviewed branch head `f75a7854` was exercised against isolated copy-on-write
+clones of a real SQLite archive. The installed binary and live archive were not
+modified. The dataset contained 2,483,627 messages, 208,532 attachment rows,
+and 46,060 distinct local blobs totaling 8,193,617,238 bytes.
+
+- Baseline: all 46,060 loose files independently SHA-256 verified against their
+  content-addressed names, and that hash set exactly matched every local content
+  and thumbnail reference in the database.
+- Loose backup: the initial snapshot completed in 74.4 seconds, added 44.3 GiB
+  in 1,346 repository packs, and captured every attachment at about 392 MiB/s.
+  Full verification read 74.5 GiB across 63,114 blobs with zero problems.
+- Restore: the fully loose restore completed in 919.1 seconds, including a
+  36-second database materialization, 205-second attachment materialization,
+  and 11m15s database integrity proof. It restored 46,060 byte-identical loose
+  blobs and cleared both production pack tables.
+- Pack: explicit packing converted all 46,060 blobs in 40.7 seconds into 202
+  packs with zero loose files. Stored entry bytes were 7,135,743,828, a 12.91%
+  reduction from the verified loose payload.
+- Packed backup: the next incremental snapshot completed in 19.5 seconds and
+  added only 4.8 MiB because attachment content deduplicated. Its attachment
+  capture stage read all 46,060 production-packed blobs at about 815 MiB/s,
+  2.08x the initial loose capture rate. Later packed snapshots reached about
+  844 MiB/s.
+- Read surfaces: small, approximately 1 MiB, and approximately 23 MiB blobs
+  verified through single-file CLI export and the raw HTTP API; a five-file
+  directory export matched its expected hash multiset; daemon-backed MCP
+  `get_attachment` returned hash-identical bytes.
+- Crash recovery: the daemon was sent `SIGKILL` with 135 sealed packs, one
+  staging file, 26,513 indexed blobs, and 19,547 loose blobs. Restart removed
+  staging and packed exactly the remaining 19,547 blobs in 12.1 seconds,
+  yielding the original 46,060-hash manifest with 202 records/files and no
+  loose content.
+- Downgrade/upgrade: unpack restored and verified all 46,060 loose blobs in
+  18.8 seconds, removed every pack/index record and pack file, and reproduced
+  the baseline hash manifest. Re-packing completed in 32.8 seconds and returned
+  to 202 packs.
+- Physical GC/repack: on another clone, one production pack was made zero-live
+  and one aged pack was reduced to 53/134 live entries. Repack pruned 242 stale
+  mappings, rewrote the 53 survivors, removed both old packs, rejected deleted
+  hashes through the API, and preserved the exact 45,818-hash survivor set.
+  A backup of that result captured every survivor and full verification read
+  74.4 GiB across 62,887 blobs with zero problems.
+
+The real archive contained no local thumbnail hashes, so thumbnail behavior is
+covered by automated SQLite/PostgreSQL tests rather than this dataset. The
+hardening host was macOS/APFS; the real Windows sharing-violation behavior is
+covered by the passing Windows CI job, but full-archive Windows performance
+remains unmeasured. The 205-second loose attachment restore is the concrete
+baseline for the pack-native restore optimization tracked by issue #466.
 
 ## Delivery order
 

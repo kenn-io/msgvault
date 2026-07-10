@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 
-**Status:** Implemented on the delivery branch; exact-head review and CI pending on PR #464
+**Status:** Implemented and hardened on an isolated real-archive copy; exact-head review and CI passed on PR #464
 
 **Parent design:** `docs/internal/packed-attachments-design.md`
 
@@ -533,10 +533,13 @@ tags.
   each checkpoint; request roborev at each checkpoint and an exact-head
   whole-branch review after all three.
 
-After automated verification passes, a separate explicit user approval gates
-the hardening run on a copy of the real `~/.msgvault`. The live archive is never
-the test target. That run measures file count and elapsed time and covers pack,
-API/MCP/export reads, crash injection, backup round-trip, repack, and unpack.
+After automated verification passed, the separately approved hardening run used
+copy-on-write clones of the real archive; the live archive was never a branch
+binary target. It covered exhaustive loose-byte baselining, backup and full
+verification, fully loose restore, pack, API/MCP/export reads, abrupt daemon
+death and reconciliation, unpack/repack, zero-live removal, and sparse-pack
+rewriting. Aggregate timings, counts, results, and remaining dataset limitations
+are recorded in `docs/internal/packed-attachments-design.md`.
 
 ## Delivery checkpoints on PR #464
 
