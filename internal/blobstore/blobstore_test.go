@@ -450,6 +450,28 @@ func TestReadBoundedRejectsUnsupportedFooterFlags(t *testing.T) {
 	}
 }
 
+func TestReadBoundedRejectsPackWithAnyRawLengthAboveKitV1Maximum(t *testing.T) {
+	dir := t.TempDir()
+	wanted := []byte("valid target in structurally invalid pack")
+	other := []byte("entry with impossible raw length")
+	idx := buildPack(t, dir, wanted, other)
+	wantedHash := hashOf(wanted)
+	entry := idx[wantedHash]
+	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+	rewritePlainPackFooter(t, path, func(footer []byte) {
+		const secondEntry = 4 + 61
+		binary.LittleEndian.PutUint64(footer[secondEntry+48:], uint64(pack.MaxRawLen)+1)
+	})
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	_, _, err := s.ReadBounded(wantedHash, int64(len(wanted)))
+	require.ErrorIs(t, err, pack.ErrCorrupt,
+		"every footer entry is structurally validated before any target can be served")
+	assert.NotErrorIs(t, err, ErrBlobTooLarge,
+		"the pack is corrupt; this is not a target-specific byte-limit rejection")
+}
+
 func TestReadBoundedVerifiesLocalPackIntegrity(t *testing.T) {
 	t.Run("footer checksum", func(t *testing.T) {
 		dir := t.TempDir()
@@ -915,6 +937,49 @@ func TestOpenEvictsAndReopens(t *testing.T) {
 	// The first pack opened is the first evicted under FIFO; re-opening it
 	// must still return correct content.
 	assert.Equal(t, blobs[0], readAll(t, s, hashOf(blobs[0])))
+}
+
+func TestReadBoundedEvictsClosesAndReopens(t *testing.T) {
+	dir := t.TempDir()
+	const numPacks = maxOpenReaders + 1
+	blobs := make([][]byte, numPacks)
+	idx := make(map[string]*store.PackIndexEntry, numPacks)
+	for i := range numPacks {
+		blob := fmt.Appendf(nil, "bounded eviction blob %d", i)
+		blobs[i] = blob
+		maps.Copy(idx, buildPack(t, dir, blob))
+	}
+	s := New(&mapIndex{m: idx}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	firstHash := hashOf(blobs[0])
+	assert.Equal(t, blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
+	firstPackID := idx[firstHash].PackID
+	s.mu.Lock()
+	firstReader := s.boundedReaders[firstPackID]
+	s.mu.Unlock()
+	require.NotNil(t, firstReader)
+
+	for _, blob := range blobs[1:] {
+		assert.Equal(t, blob, readBounded(t, s, hashOf(blob), int64(len(blob))))
+	}
+	s.mu.Lock()
+	_, stillCached := s.boundedReaders[firstPackID]
+	numBounded := len(s.boundedReaders)
+	numSlots := len(s.order)
+	s.mu.Unlock()
+	assert.False(t, stillCached)
+	assert.LessOrEqual(t, numBounded, maxOpenReaders)
+	assert.LessOrEqual(t, numSlots, maxOpenReaders)
+	_, err := firstReader.file.ReadAt(make([]byte, 1), 0)
+	require.Error(t, err, "FIFO eviction closes the bounded descriptor")
+
+	assert.Equal(t, blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
+	s.mu.Lock()
+	reopened := s.boundedReaders[firstPackID]
+	s.mu.Unlock()
+	require.NotNil(t, reopened)
+	assert.NotSame(t, firstReader, reopened)
 }
 
 func TestRetirePackValidatesAndTreatsMissingAsSuccess(t *testing.T) {

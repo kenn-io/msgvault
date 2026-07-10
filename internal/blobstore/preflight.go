@@ -148,6 +148,10 @@ func openBoundedPack(path string) (*boundedPackReader, error) {
 		entry.RawLen = binary.LittleEndian.Uint64(footer[off+48:])
 		entry.Flags = pack.BlobFlags(footer[off+56])
 		entry.CRC32C = binary.LittleEndian.Uint32(footer[off+57:])
+		if entry.RawLen > pack.MaxRawLen {
+			return nil, fmt.Errorf("%w: entry %d raw length %d exceeds max %d",
+				pack.ErrCorrupt, i, entry.RawLen, uint64(pack.MaxRawLen))
+		}
 		if entry.Flags & ^pack.BlobCompressed != 0 {
 			return nil, fmt.Errorf("%w: entry %d has unsupported blob flags %#x",
 				pack.ErrCorrupt, i, entry.Flags)
