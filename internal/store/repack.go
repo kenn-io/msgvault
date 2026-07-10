@@ -39,8 +39,8 @@ func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error) {
 			    FROM attachment_pack_index i
 			    WHERE EXISTS (
 			        SELECT 1 FROM attachments a
-			        WHERE a.content_hash = i.blob_hash
-			           OR a.thumbnail_hash = i.blob_hash
+			        WHERE LOWER(a.content_hash) = i.blob_hash
+			           OR LOWER(a.thumbnail_hash) = i.blob_hash
 			    )
 			)
 			SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
@@ -110,15 +110,21 @@ func (s *Store) ListReferencedPackEntries(ctx context.Context, packID string) ([
 	}
 	var entries []PackIndexEntry
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		// Keep noncanonical case rows in the result so scan validation reports
+		// legacy-corrupt index metadata instead of silently hiding it behind the
+		// canonical liveness predicate.
 		rows, err := tx.QueryContext(ctx, `
 			SELECT i.blob_hash, i.pack_id, i.pack_offset, i.stored_len,
 			       i.raw_len, i.flags, i.crc32c
 			FROM attachment_pack_index i
 			WHERE i.pack_id = ?
-			  AND EXISTS (
-			      SELECT 1 FROM attachments a
-			      WHERE a.content_hash = i.blob_hash
-			         OR a.thumbnail_hash = i.blob_hash
+			  AND (
+			      EXISTS (
+			          SELECT 1 FROM attachments a
+			          WHERE LOWER(a.content_hash) = i.blob_hash
+			             OR LOWER(a.thumbnail_hash) = i.blob_hash
+			      )
+			      OR i.blob_hash != LOWER(i.blob_hash)
 			  )
 			ORDER BY i.pack_offset, i.blob_hash`, packID)
 		if err != nil {
@@ -165,8 +171,8 @@ func (s *Store) CommitRepack(
 				WHERE i.pack_id = ?
 				  AND EXISTS (
 				      SELECT 1 FROM attachments a
-				      WHERE a.content_hash = i.blob_hash
-				         OR a.thumbnail_hash = i.blob_hash
+				      WHERE LOWER(a.content_hash) = i.blob_hash
+				         OR LOWER(a.thumbnail_hash) = i.blob_hash
 				  )`, sourcePackID)
 			if err != nil {
 				return fmt.Errorf("list current referenced mappings for %s: %w", sourcePackID, err)
@@ -234,8 +240,8 @@ func (s *Store) CommitRepack(
 				WHERE i.pack_id = ?
 				  AND EXISTS (
 				      SELECT 1 FROM attachments a
-				      WHERE a.content_hash = i.blob_hash
-				         OR a.thumbnail_hash = i.blob_hash
+				      WHERE LOWER(a.content_hash) = i.blob_hash
+				         OR LOWER(a.thumbnail_hash) = i.blob_hash
 				  )`, sourcePackID).Scan(&remaining); err != nil {
 				return fmt.Errorf("verify source pack %s is empty: %w", sourcePackID, err)
 			}
@@ -333,8 +339,8 @@ func (s *Store) DeleteEmptyPackRecord(ctx context.Context, packID string) (bool,
 			WHERE i.pack_id = ?
 			  AND EXISTS (
 			      SELECT 1 FROM attachments a
-			      WHERE a.content_hash = i.blob_hash
-			         OR a.thumbnail_hash = i.blob_hash
+			      WHERE LOWER(a.content_hash) = i.blob_hash
+			         OR LOWER(a.thumbnail_hash) = i.blob_hash
 			  )`, packID).Scan(&live); err != nil {
 			return fmt.Errorf("count referenced mappings for pack %s: %w", packID, err)
 		}

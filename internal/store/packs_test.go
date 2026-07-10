@@ -357,6 +357,17 @@ type packAttachmentFixture struct {
 	seq   int
 }
 
+func forceCaseSensitiveSQLiteLike(t *testing.T, st *store.Store) {
+	t.Helper()
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		return
+	}
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	require.NoError(t, err)
+}
+
 func newPackAttachmentFixture(t *testing.T, st *store.Store) *packAttachmentFixture {
 	t.Helper()
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -455,6 +466,47 @@ func TestResolveAttachmentBlob(t *testing.T) {
 	require.NoError(err)
 	assert.False(loc.Referenced)
 	assert.Nil(loc.Pack)
+}
+
+func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+	}{
+		{name: "URL only", path: func(hash string) string {
+			return "HTTPS://cdn.example.com/" + hash
+		}},
+		{name: "empty path only", path: func(string) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			forceCaseSensitiveSQLiteLike(t, st)
+			fx := newPackAttachmentFixture(t, st)
+
+			hash := packTestHash("a106")
+			uppercase := strings.ToUpper(hash)
+			preservedPath := tc.path(uppercase)
+			fx.addAttachment(uppercase, preservedPath, 100)
+			rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v4", hash)
+			require.NoError(st.RecordPackedBlobs(rec, entries))
+
+			for _, requested := range []string{hash, uppercase} {
+				loc, err := st.ResolveAttachmentBlob(requested)
+				require.NoError(err)
+				assert.True(loc.Referenced)
+				require.NotNil(loc.Pack)
+				assert.Equal(entries[0], *loc.Pack)
+			}
+			assert.Equal([]string{preservedPath}, fx.pathsForContentHash(uppercase))
+			assert.Empty(fx.pathsForContentHash(hash))
+		})
+	}
+
+	st := testutil.NewTestStore(t)
+	_, err := st.ResolveAttachmentBlob("not-a-content-hash")
+	require.ErrorContains(t, err, "malformed blob hash")
 }
 
 func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
@@ -1009,6 +1061,35 @@ func TestListUnpackedBlobs(t *testing.T) {
 	}, byHash[hashThumbOnly], "thumbnail-only blobs have Size -1")
 
 	assert.Len(blobs, 3)
+}
+
+func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	forceCaseSensitiveSQLiteLike(t, st)
+	fx := newPackAttachmentFixture(t, st)
+
+	contentHash := packTestHash("aa2a")
+	thumbnailHash := packTestHash("bb2b")
+	uppercaseContent := strings.ToUpper(contentHash)
+	uppercaseThumbnail := strings.ToUpper(thumbnailHash)
+	fx.addAttachment(uppercaseContent, "legacy/"+uppercaseContent, 100)
+	carrierHash := packTestHash("cc2c")
+	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
+	fx.setThumbnail(carrierHash, uppercaseThumbnail, "legacy/thumb/"+uppercaseThumbnail)
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z6", contentHash, thumbnailHash)
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+
+	blobs, err := st.ListUnpackedBlobs()
+
+	require.NoError(err)
+	byHash := make(map[string]store.UnpackedBlob, len(blobs))
+	for _, blob := range blobs {
+		byHash[blob.Hash] = blob
+	}
+	assert.NotContains(byHash, uppercaseContent)
+	assert.NotContains(byHash, uppercaseThumbnail)
 }
 
 func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {

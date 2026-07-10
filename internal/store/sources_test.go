@@ -294,6 +294,77 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	assert.FileExists(loosePath, "file cleanup remains best effort and separate from logical GC")
 }
 
+func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+	}{
+		{name: "URL only", path: func(hash string) string {
+			return "HTTPS://cdn.example.com/" + hash
+		}},
+		{name: "empty path only", path: func(string) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				f.Store.DB().SetMaxOpenConns(1)
+				f.Store.DB().SetMaxIdleConns(1)
+				_, err := f.Store.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+				require.NoError(err)
+			}
+
+			hash := "ab" + strings.Repeat("1", 62)
+			uppercase := strings.ToUpper(hash)
+			removedMessage := f.CreateMessage("msg-packed-case-alias-removed")
+			require.NoError(f.Store.UpsertAttachment(removedMessage, "removed.bin",
+				"application/octet-stream", hash[:2]+"/"+hash, hash, 10))
+
+			survivor, err := f.Store.GetOrCreateSource("gmail", "survivor@example.com")
+			require.NoError(err)
+			survivorConversation, err := f.Store.EnsureConversation(
+				survivor.ID, "case-alias-thread", "Case Alias Thread")
+			require.NoError(err)
+			survivorMessage, err := f.Store.UpsertMessage(&store.Message{
+				ConversationID:  survivorConversation,
+				SourceID:        survivor.ID,
+				SourceMessageID: "msg-packed-case-alias-survivor",
+				MessageType:     "email",
+				SizeEstimate:    10,
+			})
+			require.NoError(err)
+			require.NoError(f.Store.UpsertAttachment(survivorMessage, "survivor.bin",
+				"application/octet-stream", tc.path(uppercase), uppercase, 10))
+
+			const packID = "01hzy3v7q8r9s0t1a2v3w4x5r3"
+			require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+				PackID: packID, EntryCount: 1, StoredBytes: 10,
+				CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+			}, []store.PackIndexEntry{{
+				BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10,
+			}}))
+
+			had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+
+			require.NoError(err)
+			assert.False(had)
+			assert.Zero(removed, "the surviving uppercase alias keeps the canonical mapping live")
+			entry, err := f.Store.GetAttachmentPackEntry(hash)
+			require.NoError(err)
+			require.NotNil(entry)
+			assert.Equal(packID, entry.PackID)
+			for _, requested := range []string{hash, uppercase} {
+				loc, err := f.Store.ResolveAttachmentBlob(requested)
+				require.NoError(err)
+				assert.True(loc.Referenced)
+				require.NotNil(loc.Pack)
+				assert.Equal(packID, loc.Pack.PackID)
+			}
+		})
+	}
+}
+
 func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -633,6 +633,65 @@ func TestRunAdoptsOrphanForUppercaseReferenceAtomically(t *testing.T) {
 	assert.Equal(content, f.readBack(hash))
 }
 
+func TestRunPreservesUppercaseExternalReferencesToAdoptedOrphans(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+	}{
+		{name: "URL only", path: func(hash string) string {
+			return "HTTPS://cdn.example.com/" + hash
+		}},
+		{name: "empty path only", path: func(string) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+			if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+				f.store.DB().SetMaxOpenConns(1)
+				f.store.DB().SetMaxIdleConns(1)
+				_, err := f.store.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+				require.NoError(err)
+			}
+
+			content := randomContent(t, 600)
+			hash := hashOf(content)
+			uppercase := strings.ToUpper(hash)
+			preservedPath := tc.path(uppercase)
+			f.addRow(uppercase, preservedPath, len(content))
+			orphanID := buildOrphanPack(t, f.dir, content)
+			orphanPath := filepath.Join(f.dir, "packs", orphanID[:2], orphanID+blobstore.PackExt)
+
+			first := f.run(packer.Options{})
+
+			assert.Equal(1, first.PacksAdopted)
+			assert.Equal([]string{preservedPath}, f.storagePaths(uppercase),
+				"external metadata policy must preserve the original hash and path")
+			assert.Empty(f.storagePaths(hash))
+			for _, requested := range []string{hash, uppercase} {
+				assert.Equal(content, f.readBack(requested))
+			}
+			usage, err := f.store.ListPackUsage(context.Background())
+			require.NoError(err)
+			require.Len(usage, 1)
+			assert.Equal(int64(1), usage[0].LiveEntries)
+			live, err := f.store.ListReferencedPackEntries(context.Background(), orphanID)
+			require.NoError(err)
+			assert.Len(live, 1)
+
+			second := f.run(packer.Options{})
+
+			assert.Zero(second.MappingsPruned)
+			assert.Zero(second.PacksRemoved)
+			assert.FileExists(orphanPath)
+			entry, err := f.store.GetAttachmentPackEntry(hash)
+			require.NoError(err)
+			require.NotNil(entry)
+			assert.Equal(orphanID, entry.PackID)
+		})
+	}
+}
+
 func TestRunPrunesTeamsReplacement(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,113 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 	require.Len(entries, 2)
 	assert.Equal(liveA, entries[0].BlobHash)
 	assert.Equal(liveA2, entries[1].BlobHash)
+}
+
+func TestPackMaintenanceUsesPreservedCaseAliasesForLiveness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+	}{
+		{name: "URL only", path: func(hash string) string {
+			return "HTTPS://cdn.example.com/" + hash
+		}},
+		{name: "empty path only", path: func(string) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			forceCaseSensitiveSQLiteLike(t, st)
+			fx := newPackAttachmentFixture(t, st)
+
+			const (
+				oldPack = "01hzy3v7q8r9s0t1a2v3w4x6a2"
+				newPack = "01hzy3v7q8r9s0t1a2v3w4x6a3"
+			)
+			hash := packTestHash("a804")
+			uppercase := strings.ToUpper(hash)
+			preservedPath := tc.path(uppercase)
+			fx.addAttachment(uppercase, preservedPath, 100)
+			created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+				PackID: oldPack, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
+			}, []store.PackIndexEntry{{
+				BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 80, RawLen: 100,
+			}}))
+
+			usage, err := st.ListPackUsage(context.Background())
+			require.NoError(err)
+			require.Len(usage, 1)
+			assert.Equal(int64(1), usage[0].LiveEntries)
+			entries, err := st.ListReferencedPackEntries(context.Background(), oldPack)
+			require.NoError(err)
+			require.Len(entries, 1)
+			assert.Equal(hash, entries[0].BlobHash)
+			deleted, err := st.DeleteEmptyPackRecord(context.Background(), oldPack)
+			require.NoError(err)
+			assert.False(deleted, "uppercase alias keeps the source pack live")
+
+			require.NoError(st.CommitRepack(context.Background(), []string{oldPack}, []store.PackRecord{{
+				PackID: newPack, EntryCount: 1, StoredBytes: 50, CreatedAt: created.Add(time.Hour),
+			}}, []store.RepackMove{{
+				OldPackID: oldPack,
+				NewEntry: store.PackIndexEntry{
+					BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 50, RawLen: 100,
+				},
+			}}))
+
+			entry, err := st.GetAttachmentPackEntry(hash)
+			require.NoError(err)
+			require.NotNil(entry)
+			assert.Equal(newPack, entry.PackID)
+			entries, err = st.ListReferencedPackEntries(context.Background(), newPack)
+			require.NoError(err)
+			assert.Len(entries, 1)
+			assert.Equal([]string{preservedPath}, fx.pathsForContentHash(uppercase),
+				"repack metadata must not rewrite external attachment policy")
+			assert.Empty(fx.pathsForContentHash(hash))
+		})
+	}
+}
+
+func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	forceCaseSensitiveSQLiteLike(t, st)
+	fx := newPackAttachmentFixture(t, st)
+
+	const (
+		oldPack = "01hzy3v7q8r9s0t1a2v3w4x6a4"
+		newPack = "01hzy3v7q8r9s0t1a2v3w4x6a5"
+	)
+	hash := packTestHash("a805")
+	uppercase := strings.ToUpper(hash)
+	fx.addAttachment(uppercase, "HTTPS://cdn.example.com/"+uppercase, 100)
+	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+		PackID: oldPack, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
+	}, []store.PackIndexEntry{{
+		BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 80, RawLen: 100,
+	}}))
+
+	err := st.CommitRepack(context.Background(), []string{oldPack}, []store.PackRecord{{
+		PackID: newPack, EntryCount: 1, StoredBytes: 50, CreatedAt: created.Add(time.Hour),
+	}}, []store.RepackMove{{
+		OldPackID: oldPack,
+		NewEntry: store.PackIndexEntry{
+			BlobHash: uppercase, PackID: newPack, Offset: 6, StoredLen: 50, RawLen: 100,
+		},
+	}})
+
+	require.ErrorContains(err, "exact")
+	entry, getErr := st.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(oldPack, entry.PackID)
+	has, getErr := st.HasPackRecord(newPack)
+	require.NoError(getErr)
+	assert.False(has, "case-mismatched CAS must roll back the output record")
 }
 
 func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {

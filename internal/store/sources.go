@@ -292,12 +292,12 @@ func (s *Store) RemoveSourceSerialized(
 
 const packedBlobHashesUniqueToSourceSQL = `
 	WITH source_blobs(blob_hash) AS (
-	    SELECT a.content_hash FROM attachments a
+	    SELECT LOWER(a.content_hash) FROM attachments a
 	    WHERE a.content_hash IS NOT NULL AND a.content_hash != ''
 	      AND EXISTS (SELECT 1 FROM messages m
 	                  WHERE m.id = a.message_id AND m.source_id = ?)
 	    UNION
-	    SELECT a.thumbnail_hash FROM attachments a
+	    SELECT LOWER(a.thumbnail_hash) FROM attachments a
 	    WHERE a.thumbnail_hash IS NOT NULL AND a.thumbnail_hash != ''
 	      AND EXISTS (SELECT 1 FROM messages m
 	                  WHERE m.id = a.message_id AND m.source_id = ?)
@@ -308,7 +308,7 @@ const packedBlobHashesUniqueToSourceSQL = `
 	              WHERE p.blob_hash = sb.blob_hash)
 	  AND NOT EXISTS (
 	      SELECT 1 FROM attachments a2
-	      WHERE (a2.content_hash = sb.blob_hash OR a2.thumbnail_hash = sb.blob_hash)
+	      WHERE (LOWER(a2.content_hash) = sb.blob_hash OR LOWER(a2.thumbnail_hash) = sb.blob_hash)
 	        AND EXISTS (SELECT 1 FROM messages m2
 	                    WHERE m2.id = a2.message_id AND m2.source_id != ?)
 	  )

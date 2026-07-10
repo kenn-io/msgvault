@@ -330,20 +330,39 @@ func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error)
 // the liveness authority, so stale unreferenced index rows are never exposed
 // to the production read path.
 func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, error) {
+	canonicalHash, err := normalizeBlobHash(blobHash)
+	if err != nil {
+		return AttachmentBlobLocation{}, err
+	}
+	if canonicalHash != blobHash {
+		var legacyIndexRows int
+		err = s.db.QueryRow(s.dialect.Rebind(`
+			SELECT COUNT(*) FROM attachment_pack_index WHERE blob_hash = ?`), blobHash).
+			Scan(&legacyIndexRows)
+		if err != nil {
+			return AttachmentBlobLocation{}, fmt.Errorf(
+				"check noncanonical pack index key %s: %w", blobHash, err)
+		}
+		if legacyIndexRows != 0 {
+			return AttachmentBlobLocation{}, fmt.Errorf(
+				"resolve attachment blob %s: malformed pack index key must use canonical lowercase hex",
+				blobHash)
+		}
+	}
 	var referenced int
 	var hash, packID sql.NullString
 	var offset, storedLen, rawLen, flags, crc sql.NullInt64
-	err := s.db.QueryRow(s.dialect.Rebind(`
+	err = s.db.QueryRow(s.dialect.Rebind(`
 		WITH requested(blob_hash) AS (VALUES (CAST(? AS TEXT)))
 		SELECT CASE WHEN EXISTS (
 		           SELECT 1 FROM attachments a
-		           WHERE a.content_hash = requested.blob_hash
-		              OR a.thumbnail_hash = requested.blob_hash
+		           WHERE LOWER(a.content_hash) = requested.blob_hash
+		              OR LOWER(a.thumbnail_hash) = requested.blob_hash
 		       ) THEN 1 ELSE 0 END,
 		       p.blob_hash, p.pack_id, p.pack_offset,
 		       p.stored_len, p.raw_len, p.flags, p.crc32c
 		FROM requested
-		LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`), blobHash).
+		LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`), canonicalHash).
 		Scan(&referenced, &hash, &packID, &offset, &storedLen, &rawLen, &flags, &crc)
 	if err != nil {
 		return AttachmentBlobLocation{}, fmt.Errorf("resolve attachment blob %s: %w", blobHash, err)
@@ -510,7 +529,7 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		  AND LOWER(storage_path) NOT LIKE 'http://%'
 		  AND LOWER(storage_path) NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
-		                  WHERE p.blob_hash = attachments.content_hash)
+		                  WHERE p.blob_hash = LOWER(attachments.content_hash))
 		GROUP BY content_hash, storage_path
 		ORDER BY MIN(id), storage_path`, true); err != nil {
 		return nil, err
@@ -523,7 +542,7 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 		  AND LOWER(thumbnail_path) NOT LIKE 'http://%'
 		  AND LOWER(thumbnail_path) NOT LIKE 'https://%'
 		  AND NOT EXISTS (SELECT 1 FROM attachment_pack_index p
-		                  WHERE p.blob_hash = attachments.thumbnail_hash)
+		                  WHERE p.blob_hash = LOWER(attachments.thumbnail_hash))
 		GROUP BY thumbnail_hash, thumbnail_path
 		ORDER BY MIN(id), thumbnail_path`, false); err != nil {
 		return nil, err
