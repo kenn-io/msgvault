@@ -316,6 +316,13 @@ referenced index rows and returns immutable totals, live entry count, live
 stored bytes, and live raw bytes. Repacker selection is deterministic by
 creation time then pack ID:
 
+Reference repair, usage accounting, referenced-entry enumeration, the CAS,
+and guarded old-record deletion are context-aware store maintenance
+operations. They run with PostgreSQL's transaction-local
+`statement_timeout` disabled so explicit and scheduled repack do not wedge on
+archive-scale metadata scans, while caller cancellation still interrupts the
+work.
+
 - Select every zero-live pack, regardless of age or size.
 - Select partially live packs only when all sparse-pack thresholds pass.
 - Stop adding source packs when the automatic raw-byte budget is reached,

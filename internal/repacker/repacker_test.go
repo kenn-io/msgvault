@@ -462,7 +462,7 @@ func TestRunCancellationAtCleanupBoundaryLeavesRetryableInventory(t *testing.T) 
 
 	stats, err := Run(ctx, f.store, canceling, f.dir, Options{})
 	require.ErrorIs(err, context.Canceled)
-	assert.Equal(1, stats.PacksRemoved)
+	assert.Zero(stats.PacksRemoved)
 	require.NotEmpty(canceling.retired)
 
 	for _, candidate := range []struct {
@@ -472,7 +472,7 @@ func TestRunCancellationAtCleanupBoundaryLeavesRetryableInventory(t *testing.T) 
 		has, hasErr := f.store.HasPackRecord(candidate.record.PackID)
 		require.NoError(hasErr)
 		if candidate.record.PackID == canceling.retired {
-			assert.False(has, "retirement already completed before cancellation")
+			assert.True(has, "canceled record cleanup retains inventory for dangling-record repair")
 			assert.NoFileExists(candidate.path)
 			continue
 		}
@@ -482,7 +482,7 @@ func TestRunCancellationAtCleanupBoundaryLeavesRetryableInventory(t *testing.T) 
 
 	retryStats, retryErr := Run(context.Background(), f.store, realBlobs, f.dir, Options{})
 	require.NoError(retryErr)
-	assert.Equal(1, retryStats.PacksRemoved)
+	assert.Equal(2, retryStats.PacksRemoved)
 }
 
 type cancelAfterOpenStore struct {

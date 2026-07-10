@@ -93,7 +93,7 @@ func Run(
 		return stats, fmt.Errorf("create attachment packs dir: %w", err)
 	}
 
-	pruned, err := st.PruneUnreferencedPackIndex()
+	pruned, err := st.PruneUnreferencedPackIndex(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("prune unreferenced pack index before repack: %w", err)
 	}
@@ -105,7 +105,7 @@ func Run(
 		return stats, err
 	}
 
-	usage, err := st.ListPackUsage()
+	usage, err := st.ListPackUsage(ctx)
 	if err != nil {
 		return stats, err
 	}
@@ -127,7 +127,7 @@ func Run(
 		if selectedPack.LiveEntries == 0 {
 			continue
 		}
-		entries, err := st.ListReferencedPackEntries(selectedPack.PackID)
+		entries, err := st.ListReferencedPackEntries(ctx, selectedPack.PackID)
 		if err != nil {
 			return stats, err
 		}
@@ -178,7 +178,7 @@ func Run(
 				fmt.Errorf("retire old attachment pack %s: %w", selectedPack.PackID, err))
 			continue
 		}
-		deleted, err := st.DeleteEmptyPackRecord(selectedPack.PackID)
+		deleted, err := st.DeleteEmptyPackRecord(ctx, selectedPack.PackID)
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr,
 				fmt.Errorf("delete retired attachment pack record %s: %w", selectedPack.PackID, err))

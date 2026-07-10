@@ -41,7 +41,7 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 		{BlobHash: staleA, PackID: packA, Offset: 46, StoredLen: 60, RawLen: 333},
 	}))
 
-	usage, err := st.ListPackUsage()
+	usage, err := st.ListPackUsage(context.Background())
 	require.NoError(err)
 	require.Len(usage, 2)
 	assert.Equal(packA, usage[0].PackID, "equal timestamps order by pack ID")
@@ -50,7 +50,7 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 	assert.Equal(int64(111), usage[0].LiveRawBytes)
 	assert.Equal(packB, usage[1].PackID)
 
-	entries, err := st.ListReferencedPackEntries(packA)
+	entries, err := st.ListReferencedPackEntries(context.Background(), packA)
 	require.NoError(err)
 	require.Len(entries, 1)
 	assert.Equal(liveA, entries[0].BlobHash)
@@ -74,7 +74,7 @@ func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
 		VALUES (?, ?, 6, 2, 100, 0, 0)`), hash, packID)
 	require.NoError(err)
 
-	_, err = st.ListPackUsage()
+	_, err = st.ListPackUsage(context.Background())
 	require.ErrorContains(err, "impossible accounting")
 }
 
@@ -300,14 +300,14 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 		PackID: stalePack, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: staleHash, PackID: stalePack, Offset: 6, StoredLen: 90, RawLen: 200}}))
 
-	deleted, err := st.DeleteEmptyPackRecord(livePack)
+	deleted, err := st.DeleteEmptyPackRecord(context.Background(), livePack)
 	require.NoError(err)
 	assert.False(deleted)
 	has, err := st.HasPackRecord(livePack)
 	require.NoError(err)
 	assert.True(has)
 
-	deleted, err = st.DeleteEmptyPackRecord(stalePack)
+	deleted, err = st.DeleteEmptyPackRecord(context.Background(), stalePack)
 	require.NoError(err)
 	assert.True(deleted)
 	has, err = st.HasPackRecord(stalePack)
@@ -316,4 +316,21 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 	entry, err := st.GetAttachmentPackEntry(staleHash)
 	require.NoError(err)
 	assert.Nil(entry, "stale index rows are deleted explicitly with the pack record")
+}
+
+func TestRepackMetadataMaintenanceHonorsCancellation(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x6h1"
+
+	_, err := st.PruneUnreferencedPackIndex(ctx)
+	require.ErrorIs(err, context.Canceled)
+	_, err = st.ListPackUsage(ctx)
+	require.ErrorIs(err, context.Canceled)
+	_, err = st.ListReferencedPackEntries(ctx, packID)
+	require.ErrorIs(err, context.Canceled)
+	_, err = st.DeleteEmptyPackRecord(ctx, packID)
+	require.ErrorIs(err, context.Canceled)
 }

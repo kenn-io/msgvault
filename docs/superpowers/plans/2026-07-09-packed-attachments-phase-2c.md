@@ -260,7 +260,7 @@ type AttachmentBlobLocation struct {
 
 func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, error)
 func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error)
-func (s *Store) PruneUnreferencedPackIndex() (int64, error)
+func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error)
 ```
 
 Use one dialect-rebound query for resolution. It must always return one row and left-join the optional mapping while computing liveness from both attachment hash columns:
@@ -522,11 +522,18 @@ type RepackMove struct {
     NewEntry  PackIndexEntry
 }
 
-func (s *Store) ListPackUsage() ([]PackUsage, error)
-func (s *Store) ListReferencedPackEntries(packID string) ([]PackIndexEntry, error)
+func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error)
+func (s *Store) ListReferencedPackEntries(ctx context.Context, packID string) ([]PackIndexEntry, error)
 func (s *Store) CommitRepack(ctx context.Context, sourcePackIDs []string, records []PackRecord, moves []RepackMove) error
-func (s *Store) DeleteEmptyPackRecord(packID string) (bool, error)
+func (s *Store) DeleteEmptyPackRecord(ctx context.Context, packID string) (bool, error)
 ```
+
+Run prune, usage accounting, referenced-entry enumeration, CAS, and guarded
+record deletion through the store's context-aware maintenance transaction.
+This preserves cancellation while disabling PostgreSQL's pool-wide
+`statement_timeout` for archive-scale metadata work. Add a PostgreSQL test
+with a deliberately short session timeout and slow delete triggers proving
+prune and zero-live cleanup complete through the maintenance escape hatch.
 
 Every live aggregate/enumeration query includes an `EXISTS` against content or thumbnail attachment references even though callers repair first. `CommitRepack` uses `runMaintenance` and performs this order in one transaction:
 

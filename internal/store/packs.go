@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -210,22 +211,26 @@ func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
 
 // PruneUnreferencedPackIndex removes stale storage mappings whose hash no
 // longer appears in either attachment hash column.
-func (s *Store) PruneUnreferencedPackIndex() (int64, error) {
-	res, err := s.db.Exec(`
-		DELETE FROM attachment_pack_index
-		WHERE NOT EXISTS (
-		    SELECT 1 FROM attachments a
-		    WHERE a.content_hash = attachment_pack_index.blob_hash
-		       OR a.thumbnail_hash = attachment_pack_index.blob_hash
-		)`)
-	if err != nil {
-		return 0, fmt.Errorf("prune unreferenced pack index: %w", err)
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count pruned pack index rows: %w", err)
-	}
-	return rows, nil
+func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error) {
+	var pruned int64
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		res, err := tx.ExecContext(ctx, `
+			DELETE FROM attachment_pack_index
+			WHERE NOT EXISTS (
+			    SELECT 1 FROM attachments a
+			    WHERE a.content_hash = attachment_pack_index.blob_hash
+			       OR a.thumbnail_hash = attachment_pack_index.blob_hash
+			)`)
+		if err != nil {
+			return fmt.Errorf("prune unreferenced pack index: %w", err)
+		}
+		pruned, err = res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count pruned pack index rows: %w", err)
+		}
+		return nil
+	})
+	return pruned, err
 }
 
 // ListAttachmentPackEntries returns the live blob index rows owned by one

@@ -272,8 +272,10 @@ boundary without violating the same crash-ordering rules.
   A live entry means an index row whose hash is still attachment-referenced;
   stale rows are repaired before selection, and accounting/enumeration/CAS use
   the referenced rows as defense in depth. All accounting comes from the
-  database without opening packs. Copy live blobs to new target-sized packs
-  and swap their index rows transactionally. The production read verifies CRC,
+  database without opening packs. These metadata phases and guarded cleanup
+  use context-aware maintenance transactions so PostgreSQL disables its
+  statement timeout without losing cancellation. Copy live blobs to new
+  target-sized packs and swap their index rows transactionally. The production read verifies CRC,
   decoding, and SHA-256 before append; the new writer independently derives the
   same blob ID, which repack requires to match.
   Keep the old `attachment_packs` rows until the daemon's shared blob store

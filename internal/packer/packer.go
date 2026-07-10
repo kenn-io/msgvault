@@ -76,7 +76,7 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := dropDanglingPackRecords(ctx, st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("drop dangling pack records: %w", err)
 	}
-	pruned, err := st.PruneUnreferencedPackIndex()
+	pruned, err := st.PruneUnreferencedPackIndex(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("prune unreferenced pack index: %w", err)
 	}

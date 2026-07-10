@@ -38,7 +38,7 @@ func Unpack(ctx context.Context, st *store.Store, attachmentsDir string) (Unpack
 	}
 	attachmentsDir = filepath.Clean(attachmentsDir)
 	packsDir := filepath.Join(attachmentsDir, "packs")
-	pruned, err := st.PruneUnreferencedPackIndex()
+	pruned, err := st.PruneUnreferencedPackIndex(ctx)
 	if err != nil {
 		return stats, err
 	}

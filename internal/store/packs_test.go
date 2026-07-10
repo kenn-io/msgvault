@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -265,7 +266,7 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 		contentHash, thumbnailHash, staleA, staleB)
 	require.NoError(st.RecordPackedBlobs(rec, entries))
 
-	pruned, err := st.PruneUnreferencedPackIndex()
+	pruned, err := st.PruneUnreferencedPackIndex(context.Background())
 	require.NoError(err)
 	assert.Equal(int64(2), pruned)
 
@@ -273,7 +274,7 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(map[string]struct{}{contentHash: {}, thumbnailHash: {}}, indexed)
 
-	pruned, err = st.PruneUnreferencedPackIndex()
+	pruned, err = st.PruneUnreferencedPackIndex(context.Background())
 	require.NoError(err)
 	assert.Zero(pruned, "repair is idempotent")
 }

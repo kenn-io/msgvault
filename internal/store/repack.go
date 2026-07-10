@@ -28,50 +28,53 @@ type RepackMove struct {
 
 // ListPackUsage returns every recorded pack in deterministic creation order.
 // Attachment references, not index rows alone, define the live aggregates.
-func (s *Store) ListPackUsage() ([]PackUsage, error) {
-	rows, err := s.db.Query(`
-		WITH referenced AS (
-		    SELECT i.blob_hash, i.pack_id, i.stored_len, i.raw_len
-		    FROM attachment_pack_index i
-		    WHERE EXISTS (
-		        SELECT 1 FROM attachments a
-		        WHERE a.content_hash = i.blob_hash
-		           OR a.thumbnail_hash = i.blob_hash
-		    )
-		)
-		SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
-		       COUNT(r.blob_hash), COALESCE(SUM(r.stored_len), 0),
-		       COALESCE(SUM(r.raw_len), 0)
-		FROM attachment_packs p
-		LEFT JOIN referenced r ON r.pack_id = p.pack_id
-		GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-		ORDER BY p.created_at, p.pack_id`)
-	if err != nil {
-		return nil, fmt.Errorf("list attachment pack usage: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // read-only cursor
-
+func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error) {
 	var usage []PackUsage
-	for rows.Next() {
-		var u PackUsage
-		var createdAt string
-		if err := rows.Scan(&u.PackID, &u.EntryCount, &u.StoredBytes, &createdAt,
-			&u.LiveEntries, &u.LiveStoredBytes, &u.LiveRawBytes); err != nil {
-			return nil, fmt.Errorf("scan attachment pack usage: %w", err)
-		}
-		u.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `
+			WITH referenced AS (
+			    SELECT i.blob_hash, i.pack_id, i.stored_len, i.raw_len
+			    FROM attachment_pack_index i
+			    WHERE EXISTS (
+			        SELECT 1 FROM attachments a
+			        WHERE a.content_hash = i.blob_hash
+			           OR a.thumbnail_hash = i.blob_hash
+			    )
+			)
+			SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
+			       COUNT(r.blob_hash), COALESCE(SUM(r.stored_len), 0),
+			       COALESCE(SUM(r.raw_len), 0)
+			FROM attachment_packs p
+			LEFT JOIN referenced r ON r.pack_id = p.pack_id
+			GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
+			ORDER BY p.created_at, p.pack_id`)
 		if err != nil {
-			return nil, fmt.Errorf("parse created_at for pack %s: %w", u.PackID, err)
+			return fmt.Errorf("list attachment pack usage: %w", err)
 		}
-		if err := validatePackUsage(u); err != nil {
-			return nil, err
+		defer rows.Close() //nolint:errcheck // read-only cursor
+
+		for rows.Next() {
+			var u PackUsage
+			var createdAt string
+			if err := rows.Scan(&u.PackID, &u.EntryCount, &u.StoredBytes, &createdAt,
+				&u.LiveEntries, &u.LiveStoredBytes, &u.LiveRawBytes); err != nil {
+				return fmt.Errorf("scan attachment pack usage: %w", err)
+			}
+			u.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+			if err != nil {
+				return fmt.Errorf("parse created_at for pack %s: %w", u.PackID, err)
+			}
+			if err := validatePackUsage(u); err != nil {
+				return err
+			}
+			usage = append(usage, u)
 		}
-		usage = append(usage, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate attachment pack usage: %w", err)
-	}
-	return usage, nil
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate attachment pack usage: %w", err)
+		}
+		return nil
+	})
+	return usage, err
 }
 
 func validatePackUsage(u PackUsage) error {
@@ -91,30 +94,31 @@ func validatePackUsage(u PackUsage) error {
 
 // ListReferencedPackEntries returns only index rows that still have an
 // attachment reference, ordered by their physical position.
-func (s *Store) ListReferencedPackEntries(packID string) ([]PackIndexEntry, error) {
+func (s *Store) ListReferencedPackEntries(ctx context.Context, packID string) ([]PackIndexEntry, error) {
 	if !pack.IsValidPackID(packID) {
 		return nil, fmt.Errorf("list referenced pack entries: malformed pack id %q", packID)
 	}
-	rows, err := s.db.Query(`
-		SELECT i.blob_hash, i.pack_id, i.pack_offset, i.stored_len,
-		       i.raw_len, i.flags, i.crc32c
-		FROM attachment_pack_index i
-		WHERE i.pack_id = ?
-		  AND EXISTS (
-		      SELECT 1 FROM attachments a
-		      WHERE a.content_hash = i.blob_hash
-		         OR a.thumbnail_hash = i.blob_hash
-		  )
-		ORDER BY i.pack_offset, i.blob_hash`, packID)
-	if err != nil {
-		return nil, fmt.Errorf("list referenced pack entries for %s: %w", packID, err)
-	}
-	defer rows.Close() //nolint:errcheck // read-only cursor
-	entries, err := scanPackIndexEntries(rows, packID)
-	if err != nil {
-		return nil, err
-	}
-	return entries, nil
+	var entries []PackIndexEntry
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT i.blob_hash, i.pack_id, i.pack_offset, i.stored_len,
+			       i.raw_len, i.flags, i.crc32c
+			FROM attachment_pack_index i
+			WHERE i.pack_id = ?
+			  AND EXISTS (
+			      SELECT 1 FROM attachments a
+			      WHERE a.content_hash = i.blob_hash
+			         OR a.thumbnail_hash = i.blob_hash
+			  )
+			ORDER BY i.pack_offset, i.blob_hash`, packID)
+		if err != nil {
+			return fmt.Errorf("list referenced pack entries for %s: %w", packID, err)
+		}
+		defer rows.Close() //nolint:errcheck // read-only cursor
+		entries, err = scanPackIndexEntries(rows, packID)
+		return err
+	})
+	return entries, err
 }
 
 func scanPackIndexEntries(rows *loggedRows, packID string) ([]PackIndexEntry, error) {
@@ -331,12 +335,12 @@ func validateRepackInput(
 // DeleteEmptyPackRecord removes a pack record only when no referenced mapping
 // names it. Stale unreferenced index rows are deleted explicitly in the same
 // transaction because the schema deliberately has no foreign-key cascade.
-func (s *Store) DeleteEmptyPackRecord(packID string) (bool, error) {
+func (s *Store) DeleteEmptyPackRecord(ctx context.Context, packID string) (bool, error) {
 	if !pack.IsValidPackID(packID) {
 		return false, fmt.Errorf("delete empty pack record: malformed pack id %q", packID)
 	}
 	var deleted bool
-	err := s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		var live int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM attachment_pack_index i
