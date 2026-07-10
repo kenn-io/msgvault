@@ -22,6 +22,87 @@ type PackIndexEntry struct {
 	CRC32C    uint32
 }
 
+func scanPackIndexEntry(row scanner) (PackIndexEntry, error) {
+	var entry PackIndexEntry
+	var flags, crc int64
+	if err := row.Scan(&entry.BlobHash, &entry.PackID, &entry.Offset,
+		&entry.StoredLen, &entry.RawLen, &flags, &crc); err != nil {
+		return PackIndexEntry{}, err
+	}
+	return decodePackIndexEntry(entry, flags, crc)
+}
+
+func decodePackIndexEntry(entry PackIndexEntry, flags, crc int64) (PackIndexEntry, error) {
+	if err := validatePackIndexBlobHash(entry.BlobHash); err != nil {
+		return PackIndexEntry{}, err
+	}
+	if !pack.IsValidPackID(entry.PackID) {
+		return PackIndexEntry{}, fmt.Errorf("malformed pack id %q", entry.PackID)
+	}
+	if entry.Offset < 0 {
+		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has negative offset %d",
+			entry.BlobHash, entry.Offset)
+	}
+	if entry.StoredLen < 0 {
+		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has negative stored length %d",
+			entry.BlobHash, entry.StoredLen)
+	}
+	if entry.RawLen < 0 || entry.RawLen > int64(pack.MaxRawLen) {
+		return PackIndexEntry{}, fmt.Errorf(
+			"pack index entry %s has raw length %d outside 0..%d",
+			entry.BlobHash, entry.RawLen, uint64(pack.MaxRawLen))
+	}
+	if flags < 0 || flags > int64(^uint8(0)) {
+		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has flags %d outside uint8 range",
+			entry.BlobHash, flags)
+	}
+	if crc < 0 || crc > int64(^uint32(0)) {
+		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has crc32c %d outside uint32 range",
+			entry.BlobHash, crc)
+	}
+	entry.Flags = uint8(flags)
+	entry.CRC32C = uint32(crc)
+	return entry, nil
+}
+
+func scanPackIndexEntries(
+	rows *loggedRows,
+	description string,
+	expectedPackID string,
+) ([]PackIndexEntry, error) {
+	var entries []PackIndexEntry
+	for rows.Next() {
+		entry, err := scanPackIndexEntry(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan %s: %w", description, err)
+		}
+		if expectedPackID != "" && entry.PackID != expectedPackID {
+			return nil, fmt.Errorf("scan %s: entry %s belongs to pack %s",
+				description, entry.BlobHash, entry.PackID)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s: %w", description, err)
+	}
+	return entries, nil
+}
+
+func validateBlobHash(blobHash string) error {
+	id, err := pack.ParseBlobID(blobHash)
+	if err != nil || id.String() != blobHash {
+		return fmt.Errorf("malformed blob hash %q", blobHash)
+	}
+	return nil
+}
+
+func validatePackIndexBlobHash(blobHash string) error {
+	if len(blobHash) != 64 {
+		return fmt.Errorf("malformed blob hash %q", blobHash)
+	}
+	return nil
+}
+
 // AttachmentBlobLocation is the production read resolution for one content
 // hash. Referenced is authoritative: callers must not serve either Pack or a
 // loose fallback when it is false. Pack is nil for a referenced loose blob.
@@ -70,8 +151,8 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 			return fmt.Errorf("pack index entry %s has pack id %q, want %q",
 				e.BlobHash, e.PackID, rec.PackID)
 		}
-		if len(e.BlobHash) != 64 {
-			return fmt.Errorf("pack index entry has malformed blob hash %q", e.BlobHash)
+		if err := validatePackIndexBlobHash(e.BlobHash); err != nil {
+			return fmt.Errorf("pack index entry: %w", err)
 		}
 	}
 	return s.withTx(func(tx *loggedTx) error {
@@ -99,48 +180,62 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 			}
 		}
 		for _, e := range entries {
-			canonical := e.BlobHash[:2] + "/" + e.BlobHash
-			if _, err := tx.Exec(`
-				UPDATE attachments SET storage_path = ?
-				WHERE content_hash = ? AND storage_path != ?
-				  AND storage_path IS NOT NULL AND storage_path != ''
-				  AND storage_path NOT LIKE 'http://%'
-				  AND storage_path NOT LIKE 'https://%'`,
-				canonical, e.BlobHash, canonical); err != nil {
-				return fmt.Errorf("canonicalize storage_path for %s: %w", e.BlobHash, err)
-			}
-			if _, err := tx.Exec(`
-				UPDATE attachments SET thumbnail_path = ?
-				WHERE thumbnail_hash = ? AND thumbnail_path != ?
-				  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
-				  AND thumbnail_path NOT LIKE 'http://%'
-				  AND thumbnail_path NOT LIKE 'https://%'`,
-				canonical, e.BlobHash, canonical); err != nil {
-				return fmt.Errorf("canonicalize thumbnail_path for %s: %w", e.BlobHash, err)
+			if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
 }
 
+// CanonicalizeAttachmentBlobPaths transactionally rewrites every nonempty
+// local content and thumbnail path for blobHash to its content-addressed path.
+// URL-backed and empty paths are left unchanged.
+func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
+	if err := validateBlobHash(blobHash); err != nil {
+		return err
+	}
+	return s.withTx(func(tx *loggedTx) error {
+		return canonicalizeAttachmentBlobPathsTx(tx, blobHash)
+	})
+}
+
+func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash string) error {
+	canonical := blobHash[:2] + "/" + blobHash
+	if _, err := tx.Exec(`
+		UPDATE attachments SET storage_path = ?
+		WHERE content_hash = ? AND storage_path != ?
+		  AND storage_path IS NOT NULL AND storage_path != ''
+		  AND storage_path NOT LIKE 'http://%'
+		  AND storage_path NOT LIKE 'https://%'`,
+		canonical, blobHash, canonical); err != nil {
+		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
+	}
+	if _, err := tx.Exec(`
+		UPDATE attachments SET thumbnail_path = ?
+		WHERE thumbnail_hash = ? AND thumbnail_path != ?
+		  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
+		  AND thumbnail_path NOT LIKE 'http://%'
+		  AND thumbnail_path NOT LIKE 'https://%'`,
+		canonical, blobHash, canonical); err != nil {
+		return fmt.Errorf("canonicalize thumbnail_path for %s: %w", blobHash, err)
+	}
+	return nil
+}
+
 // GetAttachmentPackEntry returns the pack location of a blob, or (nil, nil)
 // when the blob is not packed (loose or unknown).
 func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error) {
-	var e PackIndexEntry
-	var flags, crc int64
-	err := s.db.QueryRow(`
+	entry, err := scanPackIndexEntry(s.db.QueryRow(`
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM attachment_pack_index WHERE blob_hash = ?`, blobHash).
-		Scan(&e.BlobHash, &e.PackID, &e.Offset, &e.StoredLen, &e.RawLen, &flags, &crc)
+		FROM attachment_pack_index WHERE blob_hash = ?`, blobHash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // (nil, nil) signals "not packed"; blobstore.PackIndex callers nil-check the pointer
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get pack index entry for %s: %w", blobHash, err)
 	}
-	e.Flags = uint8(flags) //nolint:gosec // flags column stores a single byte
-	e.CRC32C = uint32(crc) //nolint:gosec // crc32c column stores a uint32
-	return &e, nil
+	return &entry, nil
 }
 
 // ResolveAttachmentBlob determines attachment liveness and the optional pack
@@ -170,15 +265,22 @@ func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, 
 	if !loc.Referenced || !hash.Valid {
 		return loc, nil
 	}
-	loc.Pack = &PackIndexEntry{
+	if !packID.Valid || !offset.Valid || !storedLen.Valid || !rawLen.Valid ||
+		!flags.Valid || !crc.Valid {
+		return AttachmentBlobLocation{}, fmt.Errorf(
+			"resolve attachment blob %s: incomplete pack index metadata", blobHash)
+	}
+	entry, err := decodePackIndexEntry(PackIndexEntry{
 		BlobHash:  hash.String,
 		PackID:    packID.String,
 		Offset:    offset.Int64,
 		StoredLen: storedLen.Int64,
 		RawLen:    rawLen.Int64,
-		Flags:     uint8(flags.Int64), //nolint:gosec // flags column stores a single byte
-		CRC32C:    uint32(crc.Int64),  //nolint:gosec // crc32c column stores a uint32
+	}, flags.Int64, crc.Int64)
+	if err != nil {
+		return AttachmentBlobLocation{}, fmt.Errorf("resolve attachment blob %s: %w", blobHash, err)
 	}
+	loc.Pack = &entry
 	return loc, nil
 }
 
@@ -246,22 +348,7 @@ func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, erro
 		return nil, fmt.Errorf("list pack index entries for %s: %w", packID, err)
 	}
 	defer rows.Close() //nolint:errcheck // read-only cursor
-	var entries []PackIndexEntry
-	for rows.Next() {
-		var e PackIndexEntry
-		var flags, crc int64
-		if err := rows.Scan(&e.BlobHash, &e.PackID, &e.Offset, &e.StoredLen,
-			&e.RawLen, &flags, &crc); err != nil {
-			return nil, fmt.Errorf("scan pack index entry for %s: %w", packID, err)
-		}
-		e.Flags = uint8(flags) //nolint:gosec // flags column stores a single byte
-		e.CRC32C = uint32(crc) //nolint:gosec // crc32c column stores a uint32
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pack index entries for %s: %w", packID, err)
-	}
-	return entries, nil
+	return scanPackIndexEntries(rows, "pack index entries for "+packID, packID)
 }
 
 // UnpackedBlob is one distinct local blob that has no pack index row.
@@ -373,6 +460,28 @@ func (s *Store) ListIndexedBlobHashes() (map[string]struct{}, error) {
 		return nil, fmt.Errorf("list indexed blob hashes: %w", err)
 	}
 	return hashes, nil
+}
+
+// ListIndexedBlobEntries returns every packed blob mapping keyed by blob hash.
+// It includes stale mappings so filesystem sweep can account for every index
+// row before reference pruning.
+func (s *Store) ListIndexedBlobEntries() (map[string]PackIndexEntry, error) {
+	rows, err := s.db.Query(`
+		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
+		FROM attachment_pack_index`)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed blob entries: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	entries, err := scanPackIndexEntries(rows, "indexed blob entries", "")
+	if err != nil {
+		return nil, err
+	}
+	byHash := make(map[string]PackIndexEntry, len(entries))
+	for _, entry := range entries {
+		byHash[entry.BlobHash] = entry
+	}
+	return byHash, nil
 }
 
 // ListPackRecords returns all attachment pack records ordered by pack_id.

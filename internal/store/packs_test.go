@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -178,6 +179,26 @@ func (f *packAttachmentFixture) addAttachment(hash, path string, size int) {
 	require.NoErrorf(f.t, err, "UpsertAttachment(%s)", name)
 }
 
+func (f *packAttachmentFixture) addAttachmentOnNewMessage(hash, path string, size int) {
+	f.t.Helper()
+	f.seq++
+	src, err := f.store.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(f.t, err, "GetOrCreateSource")
+	convID, err := f.store.EnsureConversation(src.ID, "thread-pack", "Pack Thread")
+	require.NoError(f.t, err, "EnsureConversation")
+	msgID, err := f.store.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: fmt.Sprintf("pack-msg-%d", f.seq),
+		MessageType:     "email",
+		SizeEstimate:    100,
+	})
+	require.NoError(f.t, err, "UpsertMessage")
+	err = f.store.UpsertAttachment(msgID, fmt.Sprintf("file-%d.bin", f.seq),
+		"application/octet-stream", path, hash, size)
+	require.NoErrorf(f.t, err, "UpsertAttachment(%s)", hash)
+}
+
 // setThumbnail sets thumbnail columns on the newest row with contentHash.
 func (f *packAttachmentFixture) setThumbnail(contentHash, thumbHash, thumbPath string) {
 	f.t.Helper()
@@ -228,6 +249,72 @@ func TestResolveAttachmentBlob(t *testing.T) {
 	require.NoError(err)
 	assert.False(loc.Referenced)
 	assert.Nil(loc.Pack)
+}
+
+func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		value int64
+	}{
+		{name: "negative offset", field: "pack_offset", value: -1},
+		{name: "negative stored length", field: "stored_len", value: -1},
+		{name: "negative raw length", field: "raw_len", value: -1},
+		{name: "raw length beyond pack limit", field: "raw_len", value: int64(pack.MaxRawLen) + 1},
+		{name: "negative flags", field: "flags", value: -1},
+		{name: "flags beyond uint8", field: "flags", value: int64(^uint8(0)) + 1},
+		{name: "negative crc32c", field: "crc32c", value: -1},
+		{name: "crc32c beyond uint32", field: "crc32c", value: int64(^uint32(0)) + 1},
+	}
+	readers := []struct {
+		name string
+		read func(*store.Store, string, string) error
+	}{
+		{name: "get", read: func(st *store.Store, hash, _ string) error {
+			_, err := st.GetAttachmentPackEntry(hash)
+			return err
+		}},
+		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
+			_, err := st.ResolveAttachmentBlob(hash)
+			return err
+		}},
+		{name: "list pack", read: func(st *store.Store, _, packID string) error {
+			_, err := st.ListAttachmentPackEntries(packID)
+			return err
+		}},
+		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
+			_, err := st.ListReferencedPackEntries(context.Background(), packID)
+			return err
+		}},
+		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
+			_, err := st.ListIndexedBlobEntries()
+			return err
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+			hash := packTestHash("ac01")
+			const packID = "01hzy3v7q8r9s0t1a2v3w4x5t1"
+			fx.addAttachment(hash, hash[:2]+"/"+hash, 100)
+			rec, entries := packTestRecord(packID, hash)
+			require.NoError(t, st.RecordPackedBlobs(rec, entries))
+
+			_, err := st.DB().Exec(st.Rebind(fmt.Sprintf(
+				"UPDATE attachment_pack_index SET %s = ? WHERE blob_hash = ?", tc.field,
+			)), tc.value, hash)
+			require.NoError(t, err)
+
+			for _, reader := range readers {
+				t.Run(reader.name, func(t *testing.T) {
+					assert.Error(t, reader.read(st, hash, packID),
+						"corrupt BIGINT metadata must be rejected before narrowing")
+				})
+			}
+		})
+	}
 }
 
 func TestListReferencedBlobHashes(t *testing.T) {
@@ -302,6 +389,86 @@ func (f *packAttachmentFixture) thumbnailPathForHash(thumbHash string) string {
 		SELECT thumbnail_path FROM attachments WHERE thumbnail_hash = ?`), thumbHash).Scan(&p)
 	require.NoErrorf(f.t, err, "query thumbnail_path for %s", thumbHash)
 	return p
+}
+
+func (f *packAttachmentFixture) thumbnailPathsForHash(thumbHash string) []string {
+	f.t.Helper()
+	rows, err := f.store.DB().Query(f.store.Rebind(`
+		SELECT thumbnail_path FROM attachments WHERE thumbnail_hash = ? ORDER BY id`), thumbHash)
+	require.NoErrorf(f.t, err, "query thumbnail_path for %s", thumbHash)
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	var paths []string
+	for rows.Next() {
+		var path string
+		require.NoError(f.t, rows.Scan(&path), "scan thumbnail_path")
+		paths = append(paths, path)
+	}
+	require.NoError(f.t, rows.Err(), "rows.Err")
+	return paths
+}
+
+func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("ab01")
+	canonical := hash[:2] + "/" + hash
+	for _, path := range []string{
+		"legacy/one/" + hash,
+		"legacy/two/" + hash,
+		canonical,
+		"https://cdn.example.com/" + hash,
+		"",
+	} {
+		fx.addAttachmentOnNewMessage(hash, path, 100)
+	}
+	thumbnailPaths := []string{
+		"legacy/thumb-one/" + hash,
+		"legacy/thumb-two/" + hash,
+		canonical,
+		"http://cdn.example.com/" + hash,
+		"",
+	}
+	for i, path := range thumbnailPaths {
+		contentHash := packTestHash(fmt.Sprintf("c%03x", i))
+		fx.addAttachment(contentHash, contentHash[:2]+"/"+contentHash, 100)
+		fx.setThumbnail(contentHash, hash, path)
+	}
+
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(hash))
+
+	assert.Equal([]string{
+		canonical,
+		canonical,
+		canonical,
+		"https://cdn.example.com/" + hash,
+		"",
+	}, fx.pathsForContentHash(hash))
+	assert.Equal([]string{
+		canonical,
+		canonical,
+		canonical,
+		"http://cdn.example.com/" + hash,
+		"",
+	}, fx.thumbnailPathsForHash(hash))
+}
+
+func TestCanonicalizeAttachmentBlobPathsRejectsMalformedHash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	malformed := packTestHash("zzzz")
+	path := "legacy/" + malformed
+	fx.addAttachment(malformed, path, 100)
+
+	err := st.CanonicalizeAttachmentBlobPaths(malformed)
+	require.ErrorContains(err, "malformed blob hash")
+	assert.Equal([]string{path}, fx.pathsForContentHash(malformed),
+		"validation failure leaves paths untouched")
 }
 
 func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
@@ -499,6 +666,26 @@ func TestPackRecordLifecycle(t *testing.T) {
 
 	// Deleting an absent pack is not an error (idempotent cleanup).
 	require.NoError(st.DeletePackRecord(recA.PackID))
+}
+
+func TestListIndexedBlobEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	hashA := packTestHash("ad31")
+	hashB := packTestHash("be32")
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5r1", hashA, hashB)
+	entries[0].Flags = 1
+	entries[0].CRC32C = 4022250974
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+
+	indexed, err := st.ListIndexedBlobEntries()
+	require.NoError(err)
+	assert.Equal(map[string]store.PackIndexEntry{
+		hashA: entries[0],
+		hashB: entries[1],
+	}, indexed, "sweep metadata includes every referenced or stale index row")
 }
 
 func TestClearAttachmentPackMetadata(t *testing.T) {

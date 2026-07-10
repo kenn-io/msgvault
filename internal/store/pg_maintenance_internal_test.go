@@ -298,6 +298,8 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 	require.NoError(err, "usage accounting shares the context-aware maintenance path")
 	require.Len(usage, 1)
 	assert.Zero(usage[0].LiveEntries)
+	assert.Zero(usage[0].MaxLiveStoredLen)
+	assert.Zero(usage[0].MaxLiveRawLen)
 	entries, err := st.ListReferencedPackEntries(ctx, packID)
 	require.NoError(err, "referenced enumeration shares the maintenance path")
 	assert.Empty(entries)

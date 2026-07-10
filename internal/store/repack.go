@@ -14,9 +14,11 @@ import (
 type PackUsage struct {
 	PackRecord
 
-	LiveEntries     int64
-	LiveStoredBytes int64
-	LiveRawBytes    int64
+	LiveEntries      int64
+	LiveStoredBytes  int64
+	LiveRawBytes     int64
+	MaxLiveStoredLen int64
+	MaxLiveRawLen    int64
 }
 
 // RepackMove describes one compare-and-swap from an expected old pack to an
@@ -43,7 +45,9 @@ func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error) {
 			)
 			SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
 			       COUNT(r.blob_hash), COALESCE(SUM(r.stored_len), 0),
-			       COALESCE(SUM(r.raw_len), 0)
+			       COALESCE(SUM(r.raw_len), 0),
+			       COALESCE(MAX(r.stored_len), 0),
+			       COALESCE(MAX(r.raw_len), 0)
 			FROM attachment_packs p
 			LEFT JOIN referenced r ON r.pack_id = p.pack_id
 			GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
@@ -57,7 +61,8 @@ func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error) {
 			var u PackUsage
 			var createdAt string
 			if err := rows.Scan(&u.PackID, &u.EntryCount, &u.StoredBytes, &createdAt,
-				&u.LiveEntries, &u.LiveStoredBytes, &u.LiveRawBytes); err != nil {
+				&u.LiveEntries, &u.LiveStoredBytes, &u.LiveRawBytes,
+				&u.MaxLiveStoredLen, &u.MaxLiveRawLen); err != nil {
 				return fmt.Errorf("scan attachment pack usage: %w", err)
 			}
 			u.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
@@ -83,11 +88,16 @@ func validatePackUsage(u PackUsage) error {
 	}
 	if u.EntryCount < 0 || u.StoredBytes < 0 || u.LiveEntries < 0 ||
 		u.LiveStoredBytes < 0 || u.LiveRawBytes < 0 ||
-		u.LiveEntries > u.EntryCount || u.LiveStoredBytes > u.StoredBytes {
+		u.MaxLiveStoredLen < 0 || u.MaxLiveRawLen < 0 ||
+		u.LiveEntries > u.EntryCount || u.LiveStoredBytes > u.StoredBytes ||
+		u.MaxLiveStoredLen > u.LiveStoredBytes || u.MaxLiveRawLen > u.LiveRawBytes ||
+		u.MaxLiveRawLen > int64(pack.MaxRawLen) ||
+		(u.LiveEntries == 0 && (u.LiveStoredBytes != 0 || u.LiveRawBytes != 0 ||
+			u.MaxLiveStoredLen != 0 || u.MaxLiveRawLen != 0)) {
 		return fmt.Errorf(
-			"attachment pack %s has impossible accounting: entries=%d live_entries=%d stored_bytes=%d live_stored_bytes=%d live_raw_bytes=%d",
+			"attachment pack %s has impossible accounting: entries=%d live_entries=%d stored_bytes=%d live_stored_bytes=%d live_raw_bytes=%d max_live_stored_len=%d max_live_raw_len=%d",
 			u.PackID, u.EntryCount, u.LiveEntries, u.StoredBytes,
-			u.LiveStoredBytes, u.LiveRawBytes)
+			u.LiveStoredBytes, u.LiveRawBytes, u.MaxLiveStoredLen, u.MaxLiveRawLen)
 	}
 	return nil
 }
@@ -115,34 +125,10 @@ func (s *Store) ListReferencedPackEntries(ctx context.Context, packID string) ([
 			return fmt.Errorf("list referenced pack entries for %s: %w", packID, err)
 		}
 		defer rows.Close() //nolint:errcheck // read-only cursor
-		entries, err = scanPackIndexEntries(rows, packID)
+		entries, err = scanPackIndexEntries(rows, "referenced pack entries for "+packID, packID)
 		return err
 	})
 	return entries, err
-}
-
-func scanPackIndexEntries(rows *loggedRows, packID string) ([]PackIndexEntry, error) {
-	var entries []PackIndexEntry
-	for rows.Next() {
-		var entry PackIndexEntry
-		var flags, crc int64
-		if err := rows.Scan(&entry.BlobHash, &entry.PackID, &entry.Offset,
-			&entry.StoredLen, &entry.RawLen, &flags, &crc); err != nil {
-			return nil, fmt.Errorf("scan referenced pack entry for %s: %w", packID, err)
-		}
-		if entry.PackID != packID || len(entry.BlobHash) != 64 || entry.Offset < 0 ||
-			entry.StoredLen < 0 || entry.RawLen < 0 || flags < 0 || flags > 255 ||
-			crc < 0 || crc > int64(^uint32(0)) {
-			return nil, fmt.Errorf("pack %s has malformed referenced index entry for %q", packID, entry.BlobHash)
-		}
-		entry.Flags = uint8(flags)
-		entry.CRC32C = uint32(crc)
-		entries = append(entries, entry)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate referenced pack entries for %s: %w", packID, err)
-	}
-	return entries, nil
 }
 
 // CommitRepack atomically records newly sealed packs and moves every currently

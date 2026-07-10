@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -21,11 +22,15 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 	const (
 		packA = "01hzy3v7q8r9s0t1a2v3w4x6a1"
 		packB = "01hzy3v7q8r9s0t1a2v3w4x6b1"
+		packC = "01hzy3v7q8r9s0t1a2v3w4x6c1"
 	)
 	liveA := packTestHash("a801")
+	liveA2 := packTestHash("a803")
 	staleA := packTestHash("a802")
 	liveB := packTestHash("b801")
+	staleC := packTestHash("c802")
 	fx.addAttachment(liveA, liveA[:2]+"/"+liveA, 111)
+	fx.addAttachment(liveA2, liveA2[:2]+"/"+liveA2, 90)
 	fx.addAttachment(liveB, liveB[:2]+"/"+liveB, 222)
 
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
@@ -35,25 +40,42 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 		BlobHash: liveB, PackID: packB, Offset: 6, StoredLen: 70, RawLen: 222,
 	}}))
 	require.NoError(st.RecordPackedBlobs(store.PackRecord{
-		PackID: packA, EntryCount: 2, StoredBytes: 100, CreatedAt: created,
+		PackID: packA, EntryCount: 3, StoredBytes: 120, CreatedAt: created,
 	}, []store.PackIndexEntry{
 		{BlobHash: liveA, PackID: packA, Offset: 6, StoredLen: 40, RawLen: 111},
-		{BlobHash: staleA, PackID: packA, Offset: 46, StoredLen: 60, RawLen: 333},
+		{BlobHash: liveA2, PackID: packA, Offset: 46, StoredLen: 20, RawLen: 90},
+		{BlobHash: staleA, PackID: packA, Offset: 66, StoredLen: 60, RawLen: 333},
+	}))
+	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+		PackID: packC, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
+	}, []store.PackIndexEntry{
+		{BlobHash: staleC, PackID: packC, Offset: 6, StoredLen: 80, RawLen: 444},
 	}))
 
 	usage, err := st.ListPackUsage(context.Background())
 	require.NoError(err)
-	require.Len(usage, 2)
+	require.Len(usage, 3)
 	assert.Equal(packA, usage[0].PackID, "equal timestamps order by pack ID")
-	assert.Equal(int64(1), usage[0].LiveEntries)
-	assert.Equal(int64(40), usage[0].LiveStoredBytes)
-	assert.Equal(int64(111), usage[0].LiveRawBytes)
+	assert.Equal(int64(2), usage[0].LiveEntries)
+	assert.Equal(int64(60), usage[0].LiveStoredBytes)
+	assert.Equal(int64(201), usage[0].LiveRawBytes)
+	assert.Equal(int64(40), usage[0].MaxLiveStoredLen,
+		"larger dead entry is excluded from the referenced maximum")
+	assert.Equal(int64(111), usage[0].MaxLiveRawLen,
+		"larger dead entry is excluded from the referenced maximum")
 	assert.Equal(packB, usage[1].PackID)
+	assert.Equal(int64(70), usage[1].MaxLiveStoredLen)
+	assert.Equal(int64(222), usage[1].MaxLiveRawLen)
+	assert.Equal(packC, usage[2].PackID)
+	assert.Zero(usage[2].LiveEntries)
+	assert.Zero(usage[2].MaxLiveStoredLen, "zero-live pack has no referenced maximum")
+	assert.Zero(usage[2].MaxLiveRawLen, "zero-live pack has no referenced maximum")
 
 	entries, err := st.ListReferencedPackEntries(context.Background(), packA)
 	require.NoError(err)
-	require.Len(entries, 1)
+	require.Len(entries, 2)
 	assert.Equal(liveA, entries[0].BlobHash)
+	assert.Equal(liveA2, entries[1].BlobHash)
 }
 
 func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
@@ -76,6 +98,85 @@ func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
 
 	_, err = st.ListPackUsage(context.Background())
 	require.ErrorContains(err, "impossible accounting")
+}
+
+func TestPackUsageRejectsNegativeTotals(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		entryCount  int64
+		storedBytes int64
+	}{
+		{name: "entry count", entryCount: -1, storedBytes: 0},
+		{name: "stored bytes", entryCount: 0, storedBytes: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			_, err := st.DB().Exec(st.Rebind(`
+				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, ?, ?, ?)`), "01hzy3v7q8r9s0t1a2v3w4x6c2", tc.entryCount,
+				tc.storedBytes, time.Now().UTC().Format(time.RFC3339))
+			require.NoError(t, err)
+
+			_, err = st.ListPackUsage(context.Background())
+			require.ErrorContains(t, err, "impossible accounting")
+		})
+	}
+}
+
+func TestPackUsageRejectsInconsistentMaxima(t *testing.T) {
+	for _, field := range []string{"stored_len", "raw_len"} {
+		t.Run(field, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+			hashA := packTestHash("ca01")
+			hashB := packTestHash("ca02")
+			fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 10)
+			fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 10)
+			const packID = "01hzy3v7q8r9s0t1a2v3w4x6c3"
+			_, err := st.DB().Exec(st.Rebind(`
+				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, 2, 20, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
+			require.NoError(t, err)
+			for i, hash := range []string{hashA, hashB} {
+				storedLen, rawLen := int64(10), int64(10)
+				if field == "stored_len" && i == 1 {
+					storedLen = -9
+				}
+				if field == "raw_len" && i == 1 {
+					rawLen = -9
+				}
+				_, err = st.DB().Exec(st.Rebind(`
+					INSERT INTO attachment_pack_index
+					    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, ?, ?, ?, 0, 0)`), hash, packID, 6+i*10, storedLen, rawLen)
+				require.NoError(t, err)
+			}
+
+			_, err = st.ListPackUsage(context.Background())
+			require.ErrorContains(t, err, "impossible accounting",
+				"a maximum cannot exceed its nonnegative aggregate")
+		})
+	}
+}
+
+func TestPackUsageRejectsRawMaximumBeyondPackLimit(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+	hash := packTestHash("ca03")
+	fx.addAttachment(hash, hash[:2]+"/"+hash, 10)
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x6c4"
+	_, err := st.DB().Exec(st.Rebind(`
+		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+		VALUES (?, 1, 10, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
+	require.NoError(t, err)
+	_, err = st.DB().Exec(st.Rebind(`
+		INSERT INTO attachment_pack_index
+		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+		VALUES (?, ?, 6, 10, ?, 0, 0)`), hash, packID, int64(pack.MaxRawLen)+1)
+	require.NoError(t, err)
+
+	_, err = st.ListPackUsage(context.Background())
+	require.ErrorContains(t, err, "impossible accounting")
 }
 
 func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
