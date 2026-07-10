@@ -1048,7 +1048,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 // GetAttachmentByHash retrieves attachment metadata by content hash.
 func (e *SQLiteEngine) GetAttachmentByHash(ctx context.Context, contentHash string) (*AttachmentInfo, error) {
 	var att AttachmentInfo
-	err := e.db.QueryRowContext(ctx, `
+	err := e.queryRowContext(ctx, `
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, '')
 		FROM attachments
 		WHERE content_hash = ?

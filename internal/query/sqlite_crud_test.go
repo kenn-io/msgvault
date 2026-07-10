@@ -12,6 +12,18 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
+type rebindRecordingDialect struct {
+	Dialect
+
+	queries []string
+}
+
+func (d *rebindRecordingDialect) Rebind(query string) string {
+	rebound := d.Dialect.Rebind(query)
+	d.queries = append(d.queries, rebound)
+	return rebound
+}
+
 // emptyTargets creates an EmptyValueTargets map for testing with the given ViewType(s).
 func emptyTargets(views ...ViewType) map[ViewType]bool {
 	m := make(map[ViewType]bool)
@@ -294,6 +306,27 @@ func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
 	require.NotNil(att)
 	assert.Empty(att.ContentHash)
 	assert.Equal("https://sp/recording.mp4", att.URL)
+}
+
+func TestGetAttachmentByHashUsesDialectRebind(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	_, err := env.DB.Exec(`
+		INSERT INTO attachments (message_id, filename, mime_type, size, content_hash, storage_path)
+		VALUES (1, 'report.pdf', 'application/pdf', 123, ?, '01/report.pdf')
+	`, hash)
+	require.NoError(err, "insert attachment")
+
+	dialect := &rebindRecordingDialect{Dialect: PostgreSQLQueryDialect{}}
+	engine := NewEngineWithDialect(env.DB, dialect)
+	att, err := engine.GetAttachmentByHash(env.Ctx, hash)
+	require.NoError(err, "GetAttachmentByHash")
+	require.NotNil(att, "attachment")
+	require.NotEmpty(dialect.queries, "dialect Rebind calls")
+	assert.Contains(dialect.queries[len(dialect.queries)-1], "content_hash = $1", "rebound query")
 }
 
 func TestGetMessageBySourceID(t *testing.T) {

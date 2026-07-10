@@ -2545,10 +2545,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 
 	hash := r.PathValue("hash")
 
-	// StoragePath validates the hash is exactly 64 hex characters, which also
-	// guards against path traversal before we touch the filesystem.
-	path, err := msgexport.StoragePath(s.cfg.AttachmentsDir(), hash)
-	if err != nil {
+	if err := msgexport.ValidateContentHash(hash); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_hash", "Attachment hash must be a 64-character hex SHA-256")
 		return
 	}
@@ -2564,24 +2561,38 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	f, err := os.Open(path)
+	var content io.ReadCloser
+	var contentLength int64
+	if s.blobStore != nil {
+		content, contentLength, err = s.blobStore.Open(hash)
+	} else {
+		var path string
+		path, err = msgexport.StoragePath(s.cfg.AttachmentsDir(), hash)
+		if err == nil {
+			var f *os.File
+			f, err = os.Open(path)
+			if err == nil {
+				var info os.FileInfo
+				info, err = f.Stat()
+				if err == nil {
+					content = f
+					contentLength = info.Size()
+				} else {
+					_ = f.Close()
+				}
+			}
+		}
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "not_found", "Attachment content not available")
 			return
 		}
-		s.logger.Error("failed to open attachment file", "error", err, "hash", hash)
+		s.logger.Error("failed to open attachment content", "error", err, "hash", hash)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
-	if err != nil {
-		s.logger.Error("failed to stat attachment file", "error", err, "hash", hash)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read attachment")
-		return
-	}
+	defer func() { _ = content.Close() }()
 
 	contentType := att.MimeType
 	if contentType == "" {
@@ -2589,10 +2600,10 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	if _, err := io.Copy(w, f); err != nil {
+	if _, err := io.Copy(w, content); err != nil {
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
 	}

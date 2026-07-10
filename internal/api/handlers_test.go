@@ -2683,6 +2683,15 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		},
 		Logger:    testLogger(),
 		BlobStore: bs,
+		Engine: &querytest.MockEngine{AttachmentsByHash: map[string]*query.AttachmentInfo{
+			entry.BlobHash: {
+				ID:          1,
+				Filename:    "packed.bin",
+				MimeType:    "application/octet-stream",
+				Size:        int64(len(content)),
+				ContentHash: entry.BlobHash,
+			},
+		}},
 	})
 
 	t.Run("packed blob returns 200 with body", func(t *testing.T) {
@@ -2695,6 +2704,19 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		assert.Equal(http.StatusOK, w.Code, "status")
 		assert.Equal("application/octet-stream", w.Header().Get("Content-Type"), "Content-Type")
 		assert.Equal(entry.BlobHash, w.Header().Get("X-Msgvault-Content-Hash"), "ContentHash")
+		assert.Equal(content, w.Body.Bytes(), "data")
+	})
+
+	t.Run("public content endpoint serves packed blob", func(t *testing.T) {
+		assert := assert.New(t)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+entry.BlobHash+"/content", nil)
+		w := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(w, req)
+
+		assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		assert.Equal("application/octet-stream", w.Header().Get("Content-Type"), "Content-Type")
+		assert.Equal(`attachment; filename="packed.bin"`, w.Header().Get("Content-Disposition"), "Content-Disposition")
 		assert.Equal(content, w.Body.Bytes(), "data")
 	})
 
