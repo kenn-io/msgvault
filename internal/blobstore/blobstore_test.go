@@ -3,6 +3,7 @@ package blobstore
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -83,6 +84,299 @@ func readAll(t *testing.T, s *Store, hash string) []byte {
 	require.NoError(t, err)
 	assert.Equal(t, int64(len(data)), size)
 	return data
+}
+
+func readBounded(t *testing.T, s *Store, hash string, maxBytes int64) []byte {
+	t.Helper()
+	data, size, err := s.ReadBounded(hash, maxBytes)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(data)), size)
+	return data
+}
+
+// buildSyntheticEntryHeavyPack writes a valid plain v1 pack whose footer has
+// more entries than maintenance reads permit. Zero-length duplicate entries
+// keep the fixture small while still exercising kit's real footer parser.
+func buildSyntheticEntryHeavyPack(t *testing.T, attachmentsDir string) (string, string, *store.PackIndexEntry) {
+	t.Helper()
+	packID := pack.NewPackID()
+	hash := hashOf(nil)
+	blobID, err := pack.ParseBlobID(hash)
+	require.NoError(t, err)
+
+	count := MaxMaintenancePackEntries + 1
+	footer := make([]byte, 4+count*61)
+	binary.LittleEndian.PutUint32(footer[:4], uint32(count))
+	for i := range count {
+		off := 4 + i*61
+		copy(footer[off:off+32], blobID[:])
+		binary.LittleEndian.PutUint64(footer[off+32:], 6)
+		// The remaining entry fields are zero: empty stored/raw lengths,
+		// plain flags, and the CRC32C of an empty byte slice.
+	}
+	footerLen := make([]byte, 4)
+	binary.LittleEndian.PutUint32(footerLen, uint32(len(footer)))
+	sum := sha256.Sum256(append(append([]byte(nil), footer...), footerLen...))
+	contents := make([]byte, 0, 6+len(footer)+40)
+	contents = append(contents, []byte("MVPK\x01\x00")...)
+	contents = append(contents, footer...)
+	contents = append(contents, footerLen...)
+	contents = append(contents, sum[:]...)
+	contents = append(contents, []byte("KPVM")...)
+
+	path := filepath.Join(attachmentsDir, "packs", packID[:2], packID+PackExt)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, contents, 0o600))
+	return path, hash, &store.PackIndexEntry{BlobHash: hash, PackID: packID, Offset: 6}
+}
+
+func rewritePlainPackFooter(t *testing.T, path string, mutate func([]byte)) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(contents), 46)
+	trailer := contents[len(contents)-40:]
+	footerLen := int(binary.LittleEndian.Uint32(trailer[:4]))
+	footerStart := len(contents) - 40 - footerLen
+	require.GreaterOrEqual(t, footerStart, 6)
+	footer := contents[footerStart : len(contents)-40]
+	mutate(footer)
+	sum := sha256.Sum256(contents[footerStart : len(contents)-36])
+	copy(trailer[4:36], sum[:])
+	require.NoError(t, os.WriteFile(path, contents, 0o600))
+}
+
+func TestReadBoundedConstants(t *testing.T) {
+	assert.Equal(t, 64<<20, MaxMaintenanceBlobBytes)
+	assert.Equal(t, 100_000, MaxMaintenancePackEntries)
+	assert.Equal(t, 8<<20, MaxMaintenanceFooterBytes)
+	assert.Equal(t, 128<<20, MaxMaintenancePackBytes)
+}
+
+func TestReadBoundedAcceptsExactLimit(t *testing.T) {
+	for _, storage := range []string{"packed", "loose"} {
+		t.Run(storage, func(t *testing.T) {
+			dir := t.TempDir()
+			content := []byte("exact bounded attachment bytes")
+			hash := hashOf(content)
+			idx := map[string]*store.PackIndexEntry{}
+			referenced := map[string]bool{}
+			if storage == "packed" {
+				idx = buildPack(t, dir, content)
+			} else {
+				referenced[hash] = true
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, hash[:2], hash), content, 0o600))
+			}
+			s := New(&mapIndex{m: idx, referenced: referenced}, dir)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			got := readBounded(t, s, hash, int64(len(content)))
+			assert.Equal(t, content, got)
+			if storage == "loose" {
+				assert.Equal(t, len(got), cap(got), "loose reads allocate exactly the stat-reported size")
+			}
+			_, _, err := s.ReadBounded(hash, int64(len(content)-1))
+			assert.ErrorIs(t, err, ErrBlobTooLarge)
+		})
+	}
+}
+
+func TestReadBoundedLooseGrowthProbe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("procfs zero-size files provide a deterministic stat/read race fixture")
+	}
+	dir := t.TempDir()
+	hash := hashOf([]byte("procfs-backed loose attachment"))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
+	require.NoError(t, os.Symlink("/proc/self/status", filepath.Join(dir, hash[:2], hash)))
+	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{}, referenced: map[string]bool{hash: true}}, dir)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	_, _, err := s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+	assert.Error(t, err, "a separate byte probe must detect content beyond the stat-sized allocation")
+}
+
+func TestReadBoundedPreflightsPackLimits(t *testing.T) {
+	t.Run("container", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("oversized sparse container")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		require.NoError(t, os.Truncate(path, MaxMaintenancePackBytes+1))
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err := s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+		assert.ErrorIs(t, err, ErrBlobTooLarge,
+			"the stat limit must win before OpenReader sees the now-invalid trailer")
+	})
+
+	t.Run("footer", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("oversized claimed footer")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		require.NoError(t, err)
+		st, err := f.Stat()
+		require.NoError(t, err)
+		var encoded [4]byte
+		binary.LittleEndian.PutUint32(encoded[:], MaxMaintenanceFooterBytes+1)
+		_, err = f.WriteAt(encoded[:], st.Size()-40)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err = s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+		assert.ErrorIs(t, err, ErrBlobTooLarge,
+			"the footer bound must win before OpenReader verifies the stale checksum")
+	})
+
+	t.Run("entry count", func(t *testing.T) {
+		dir := t.TempDir()
+		_, hash, entry := buildSyntheticEntryHeavyPack(t, dir)
+		s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err := s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+}
+
+func TestReadBoundedChecksCachedReaderEntryLimit(t *testing.T) {
+	dir := t.TempDir()
+	path, hash, entry := buildSyntheticEntryHeavyPack(t, dir)
+	r, err := pack.OpenReader(path, nil)
+	require.NoError(t, err)
+	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
+	s.readers[entry.PackID] = r
+	s.order = append(s.order, entry.PackID)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	_, _, err = s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+	assert.ErrorIs(t, err, ErrBlobTooLarge)
+}
+
+func TestReadBoundedRejectsAuthoritativeFooterLengths(t *testing.T) {
+	t.Run("raw length", func(t *testing.T) {
+		dir := t.TempDir()
+		content := bytes.Repeat([]byte("compressible"), 1024)
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		require.Less(t, entry.StoredLen, entry.RawLen)
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err := s.ReadBounded(hash, entry.StoredLen)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+
+	t.Run("stored length", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("footer stored length is authoritative")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		entry := idx[hash]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		rewritePlainPackFooter(t, path, func(footer []byte) {
+			// Claim a smaller raw length while retaining the genuine stored
+			// span. ReadBlob would reject this frame, but the bounded read must
+			// reject its stored allocation first.
+			binary.LittleEndian.PutUint64(footer[4+48:], uint64(len(content)-1))
+		})
+		entry.RawLen = int64(len(content) - 1)
+		s := New(&mapIndex{m: idx}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+
+		_, _, err := s.ReadBounded(hash, entry.RawLen)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+}
+
+func TestReadBoundedRejectsForgedIndexMetadata(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("footer metadata must override the database index")
+	idx := buildPack(t, dir, content)
+	hash := hashOf(content)
+	good := *idx[hash]
+
+	tests := map[string]func(*store.PackIndexEntry){
+		"blob hash":  func(e *store.PackIndexEntry) { e.BlobHash = hashOf([]byte("other blob")) },
+		"offset":     func(e *store.PackIndexEntry) { e.Offset++ },
+		"stored len": func(e *store.PackIndexEntry) { e.StoredLen-- },
+		"raw len":    func(e *store.PackIndexEntry) { e.RawLen++ },
+		"flags":      func(e *store.PackIndexEntry) { e.Flags ^= uint8(pack.BlobCompressed) },
+		"crc32c":     func(e *store.PackIndexEntry) { e.CRC32C++ },
+	}
+	for name, forge := range tests {
+		t.Run(name, func(t *testing.T) {
+			forged := good
+			forge(&forged)
+			s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: &forged}}, dir)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			_, _, err := s.ReadBounded(hash, MaxMaintenanceBlobBytes)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "pack index metadata")
+			assert.NotErrorIs(t, err, fs.ErrNotExist)
+		})
+	}
+}
+
+func TestReadBoundedPreservesLooseFallbackAndRetries(t *testing.T) {
+	t.Run("loose fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded loose fallback")
+		hash := hashOf(content)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, hash[:2], hash), content, 0o600))
+		s := New(&mapIndex{m: map[string]*store.PackIndexEntry{}, referenced: map[string]bool{hash: true}}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+		assert.Equal(t, content, readBounded(t, s, hash, int64(len(content))))
+	})
+
+	t.Run("packer index race", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded packed between lookups")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		s := New(&flipIndex{entry: idx[hash]}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+		assert.Equal(t, content, readBounded(t, s, hash, int64(len(content))))
+	})
+
+	t.Run("repacker missing file race", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("bounded survives missing old pack")
+		idx := buildPack(t, dir, content)
+		hash := hashOf(content)
+		stale := *idx[hash]
+		stale.PackID = pack.NewPackID()
+		s := New(&staleIndex{stale: &stale, live: idx[hash]}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+		assert.Equal(t, content, readBounded(t, s, hash, int64(len(content))))
+	})
+
+	t.Run("repacker missing footer entry race", func(t *testing.T) {
+		dir := t.TempDir()
+		wanted := []byte("bounded replacement footer entry")
+		other := []byte("stale pack contains a different blob")
+		staleIndexEntries := buildPack(t, dir, other)
+		liveIndex := buildPack(t, dir, wanted)
+		hash := hashOf(wanted)
+		stale := *staleIndexEntries[hashOf(other)]
+		stale.BlobHash = hash
+		s := New(&staleIndex{stale: &stale, live: liveIndex[hash]}, dir)
+		defer func() { require.NoError(t, s.Close()) }()
+		assert.Equal(t, wanted, readBounded(t, s, hash, int64(len(wanted))))
+	})
 }
 
 func TestOpenPacked(t *testing.T) {
