@@ -278,6 +278,30 @@ func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
 	assert.Equal(int64(1), usage[0].LiveEntries)
 }
 
+func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("fa0c")
+	uppercase := strings.ToUpper(hash)
+	canonical := hash[:2] + "/" + hash
+	fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
+	fx.addAttachment(hash, "legacy/"+hash, 100)
+
+	err := st.CanonicalizeAttachmentBlobAliases(hash, []string{uppercase, hash})
+	require.NoError(err)
+
+	var rows int
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM attachments
+		WHERE message_id = ? AND LOWER(content_hash) = ?`), fx.msgID, hash).Scan(&rows))
+	assert.Equal(1, rows, "case-equivalent content rows are one logical attachment")
+	assert.Equal([]string{canonical}, fx.pathsForContentHash(hash))
+	assert.Empty(fx.pathsForContentHash(uppercase))
+}
+
 func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T) {
 	tests := []struct {
 		name  string

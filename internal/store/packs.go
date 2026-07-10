@@ -328,6 +328,21 @@ func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashe
 
 func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
+	// The unique attachment key is case-sensitive, so legacy rows for one
+	// message can contain case-equivalent hashes. Collapse those logical
+	// duplicates before lowercasing; otherwise the update below collides with
+	// idx_attachments_msg_content_hash and wedges every later maintenance run.
+	// Retaining MIN(id) matches the one-shot legacy duplicate migration.
+	if _, err := tx.Exec(`
+		DELETE FROM attachments
+		WHERE LOWER(content_hash) = ?
+		  AND id NOT IN (
+			SELECT MIN(id) FROM attachments
+			WHERE LOWER(content_hash) = ?
+			GROUP BY message_id
+		  )`, blobHash, blobHash); err != nil {
+		return fmt.Errorf("deduplicate case-equivalent attachment rows for %s: %w", blobHash, err)
+	}
 	if _, err := tx.Exec(`
 		UPDATE attachments SET storage_path = ?, content_hash = ?
 		WHERE (content_hash = ? OR content_hash = ?)
