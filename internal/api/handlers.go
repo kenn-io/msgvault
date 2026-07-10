@@ -2531,7 +2531,14 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, AttachmentInfo(*att))
+	writeJSON(w, http.StatusOK, AttachmentInfo{
+		ID:          att.ID,
+		Filename:    att.Filename,
+		MimeType:    att.MimeType,
+		Size:        att.Size,
+		ContentHash: att.ContentHash,
+		URL:         att.URL,
+	})
 }
 
 // handleGetAttachmentContent streams a stored attachment's raw bytes by its
@@ -2565,23 +2572,11 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	var contentLength int64
 	if s.blobStore != nil {
 		content, contentLength, err = s.blobStore.Open(hash)
-	} else {
-		var path string
-		path, err = msgexport.StoragePath(s.cfg.AttachmentsDir(), hash)
-		if err == nil {
-			var f *os.File
-			f, err = os.Open(path)
-			if err == nil {
-				var info os.FileInfo
-				info, err = f.Stat()
-				if err == nil {
-					content = f
-					contentLength = info.Size()
-				} else {
-					_ = f.Close()
-				}
-			}
-		}
+	}
+	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
+		content, contentLength, err = openLooseAttachmentContent(
+			s.cfg.AttachmentsDir(), hash, att.StoragePath,
+		)
 	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2607,6 +2602,61 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
 	}
+}
+
+func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string) (io.ReadCloser, int64, error) {
+	var path string
+	var err error
+	if storagePath == "" {
+		path, err = msgexport.StoragePath(attachmentsDir, contentHash)
+	} else {
+		path, err = resolveRecordedAttachmentPath(attachmentsDir, storagePath)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, 0, fmt.Errorf("attachment storage path %q is not a regular file", storagePath)
+	}
+	return f, info.Size(), nil
+}
+
+func resolveRecordedAttachmentPath(attachmentsDir, storagePath string) (string, error) {
+	lowerPath := strings.ToLower(storagePath)
+	if strings.HasPrefix(lowerPath, "http://") || strings.HasPrefix(lowerPath, "https://") {
+		return "", errors.New("attachment storage path must be local")
+	}
+	localPath := filepath.Clean(filepath.FromSlash(storagePath))
+	if !filepath.IsLocal(localPath) {
+		return "", fmt.Errorf("attachment storage path %q escapes attachments directory", storagePath)
+	}
+	basePath, err := filepath.Abs(attachmentsDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve attachments directory: %w", err)
+	}
+	basePath, err = filepath.EvalSymlinks(basePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve attachments directory: %w", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(basePath, localPath))
+	if err != nil {
+		return "", err
+	}
+	relativePath, err := filepath.Rel(basePath, resolvedPath)
+	if err != nil || !filepath.IsLocal(relativePath) {
+		return "", fmt.Errorf("attachment storage path %q escapes attachments directory", storagePath)
+	}
+	return resolvedPath, nil
 }
 
 func contentDisposition(filename string) string {

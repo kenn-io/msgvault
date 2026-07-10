@@ -92,6 +92,7 @@ type AttachmentInfo struct {
 	Size        int64
 	ContentHash string
 	URL         string
+	StoragePath string
 }
 
 // ViewType represents the type of aggregate view.

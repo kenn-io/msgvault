@@ -2683,15 +2683,7 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		},
 		Logger:    testLogger(),
 		BlobStore: bs,
-		Engine: &querytest.MockEngine{AttachmentsByHash: map[string]*query.AttachmentInfo{
-			entry.BlobHash: {
-				ID:          1,
-				Filename:    "packed.bin",
-				MimeType:    "application/octet-stream",
-				Size:        int64(len(content)),
-				ContentHash: entry.BlobHash,
-			},
-		}},
+		Engine:    query.NewSQLiteEngine(st.DB()),
 	})
 
 	t.Run("packed blob returns 200 with body", func(t *testing.T) {
@@ -2718,6 +2710,25 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		assert.Equal("application/octet-stream", w.Header().Get("Content-Type"), "Content-Type")
 		assert.Equal(`attachment; filename="packed.bin"`, w.Header().Get("Content-Disposition"), "Content-Disposition")
 		assert.Equal(content, w.Body.Bytes(), "data")
+	})
+
+	t.Run("public content endpoint serves legacy namespaced loose blob", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		hash := "5bc8e75b9fa9867b99fe7498fcb611a46ab49326ff94a96b2a6f68a723f46d91"
+		legacyContent := []byte("legacy namespaced attachment")
+		storagePath := filepath.Join("synctech-sms", hash[:2], hash)
+		require.NoError(st.UpsertAttachment(msgID, "legacy.bin", "application/octet-stream",
+			storagePath, hash, len(legacyContent)), "UpsertAttachment legacy")
+		require.NoError(os.MkdirAll(filepath.Join(attachmentsDir, filepath.Dir(storagePath)), 0o700), "create legacy dir")
+		require.NoError(os.WriteFile(filepath.Join(attachmentsDir, storagePath), legacyContent, 0o600), "write legacy attachment")
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		assert.Equal(legacyContent, w.Body.Bytes(), "data")
 	})
 
 	t.Run("unknown hash returns 404", func(t *testing.T) {
@@ -6139,6 +6150,20 @@ func TestHandleGetAttachmentContent_MetadataButFileMissing(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 
 	assert.Equal(http.StatusNotFound, w.Code, "status (body: %s)", w.Body.String())
+}
+
+func TestResolveRecordedAttachmentPathRejectsUnsafePaths(t *testing.T) {
+	assert := assert.New(t)
+	attachmentsDir := t.TempDir()
+
+	for _, storagePath := range []string{
+		"../outside.bin",
+		filepath.Join(string(filepath.Separator), "absolute.bin"),
+		"https://example.com/attachment.bin",
+	} {
+		_, err := resolveRecordedAttachmentPath(attachmentsDir, storagePath)
+		assert.Error(err, "storage path %q", storagePath)
+	}
 }
 
 // TestHandleGetMessage_ExposesAttachmentContentHash verifies the message
