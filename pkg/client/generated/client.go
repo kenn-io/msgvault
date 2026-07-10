@@ -243,7 +243,7 @@ type ClientInterface interface {
 	SearchMessages(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResponse, error)
 	SearchMessagesWithResponse(ctx context.Context, options *SearchMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchMessagesResp, error)
 
-	// DeepSearch Run deep aggregate search
+	// DeepSearch Run full-text message search
 	DeepSearch(ctx context.Context, options *DeepSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeepSearchResponseJSON, error)
 	DeepSearchWithResponse(ctx context.Context, options *DeepSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeepSearchResp, error)
 
@@ -3546,7 +3546,7 @@ func (c *Client) SearchMessages(ctx context.Context, options *SearchMessagesRequ
 	return responseParser(ctx, resp)
 }
 
-// DeepSearch Run deep aggregate search
+// DeepSearch Run full-text message search
 func (c *Client) DeepSearch(ctx context.Context, options *DeepSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeepSearchResponseJSON, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

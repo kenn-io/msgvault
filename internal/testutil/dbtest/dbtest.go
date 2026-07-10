@@ -10,8 +10,8 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // TestDB wraps a *sql.DB with auto-increment counters and builder helpers
@@ -31,7 +31,7 @@ type TestDB struct {
 func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
 	tb.Helper()
 
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(sqliteutil.DriverName(), ":memory:")
 	require.NoError(tb, err, "open db")
 	tb.Cleanup(func() { _ = db.Close() })
 

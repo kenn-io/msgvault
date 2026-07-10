@@ -18,6 +18,15 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/sqldialect"
+	"go.kenn.io/msgvault/internal/sqliteutil"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+type messageBodyContextBackend uint8
+
+const (
+	messageBodyContextSQLite messageBodyContextBackend = iota
+	messageBodyContextPostgreSQL
 )
 
 // Dialect abstracts SQL generation differences for SQLite vs PostgreSQL.
@@ -69,6 +78,17 @@ type Dialect interface {
 	// tsquery support prefix matching via dialect-appropriate syntax.
 	BuildFTSTerm(terms []string) (expr string, arg string)
 
+	// BuildFTSBodyTerm is the exact-body counterpart to BuildFTSTerm.
+	// SQLite scopes the FTS5 query to its body column; PostgreSQL restricts
+	// tsquery lexemes to weight D in the versioned search_fts layout.
+	BuildFTSBodyTerm(terms []string) (expr string, arg string)
+
+	// FTSBodySearchReadinessSQL returns a query that yields true when the
+	// backend's body-search layout is ready, or "" when no version probe is
+	// needed. PostgreSQL uses messages.indexing_version; SQLite's FTS5 table
+	// has a durable body column and needs no separate version watermark.
+	FTSBodySearchReadinessSQL() string
+
 	// SanitizeFTSQuery converts a raw user search string to a form safe to
 	// pass to FTSSearchExpression. Returns "" if the result is empty after
 	// sanitization (caller should treat as no-match).
@@ -79,6 +99,15 @@ type Dialect interface {
 	// must emit "col = 1"; PostgreSQL has a real BOOLEAN type and rejects
 	// integer comparisons, so the bare column name is the right form.
 	BoolTrueExpr(col string) string
+
+	// UnicodeLowerExpression returns a Unicode-aware lowercasing SQL expression.
+	// SQLite delegates to a deterministic Go scalar registered on every
+	// connection; PostgreSQL uses its collation-aware LOWER implementation.
+	UnicodeLowerExpression(expr string) string
+
+	// messageBodyContextBackend selects the backend-native highlighter used to
+	// extract exact context for body-index hits.
+	messageBodyContextBackend() messageBodyContextBackend
 }
 
 // SQLiteQueryDialect implements Dialect for SQLite.
@@ -87,6 +116,14 @@ type SQLiteQueryDialect struct{}
 func (SQLiteQueryDialect) Rebind(query string) string { return query }
 
 func (SQLiteQueryDialect) BoolTrueExpr(col string) string { return col + " = 1" }
+
+func (SQLiteQueryDialect) UnicodeLowerExpression(expr string) string {
+	return sqliteutil.UnicodeLowerFunction + "(" + expr + ")"
+}
+
+func (SQLiteQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
+	return messageBodyContextSQLite
+}
 
 func (SQLiteQueryDialect) TimeTruncExpression(column string, granularity string) string {
 	switch granularity {
@@ -131,6 +168,16 @@ func (SQLiteQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string)
 	return "messages_fts MATCH ?", strings.Join(ftsTerms, " ")
 }
 
+func (d SQLiteQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
+	expr, arg = d.BuildFTSTerm(terms)
+	if arg == "" {
+		return expr, arg
+	}
+	return expr, "body : (" + arg + ")"
+}
+
+func (SQLiteQueryDialect) FTSBodySearchReadinessSQL() string { return "" }
+
 // SanitizeFTSQuery strips FTS5 metacharacters from a single query string
 // and wraps it in quotes for literal phrase interpretation with prefix match.
 func (SQLiteQueryDialect) SanitizeFTSQuery(query string) string {
@@ -162,6 +209,14 @@ func (PostgreSQLQueryDialect) Rebind(query string) string {
 }
 
 func (PostgreSQLQueryDialect) BoolTrueExpr(col string) string { return col }
+
+func (PostgreSQLQueryDialect) UnicodeLowerExpression(expr string) string {
+	return "LOWER(" + expr + ")"
+}
+
+func (PostgreSQLQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
+	return messageBodyContextPostgreSQL
+}
 
 func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity string) string {
 	switch granularity {
@@ -223,6 +278,40 @@ func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg str
 		return "FALSE", ""
 	}
 	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(tsTerms, " & ")
+}
+
+func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
+	termGroups := make([]string, 0, len(terms))
+	for _, term := range terms {
+		lexemes := sqldialect.EscapeTSQueryTerm(term)
+		parts := make([]string, len(lexemes))
+		for i, lexeme := range lexemes {
+			suffix := ":D"
+			if i == len(lexemes)-1 {
+				suffix = ":*D"
+			}
+			parts[i] = lexeme + suffix
+		}
+		switch len(parts) {
+		case 0:
+			continue
+		case 1:
+			termGroups = append(termGroups, parts[0])
+		default:
+			termGroups = append(termGroups, "("+strings.Join(parts, " <-> ")+")")
+		}
+	}
+	if len(termGroups) == 0 {
+		return "FALSE", ""
+	}
+	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(termGroups, " & ")
+}
+
+func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
+	return fmt.Sprintf(
+		"SELECT NOT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
+		store.CurrentFTSIndexingVersion,
+	)
 }
 
 // SanitizeFTSQuery builds a tsquery arg from a single user string using the

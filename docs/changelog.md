@@ -7,7 +7,28 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-No notable changes yet.
+**New features**
+
+- MCP message search now separates metadata and body search:
+  `search_messages` searches metadata when `mode` is omitted, while
+  `search_message_bodies` performs body-only full-text search with bounded
+  context around each match. Explicit `vector` and `hybrid` modes remain on
+  `search_messages` when vector search is configured.
+- MCP `list_messages` accepts a `conversation_id` filter for listing one
+  conversation or thread.
+- The daemon HTTP API schema is now 1.3.0 and supports `scope=body` on deep
+  search so daemon-backed clients can require an exact body-only response;
+  bounded excerpts are returned in an ID-keyed `body_contexts` companion.
+
+**Improvements**
+
+- Metadata and body search scopes are enforced consistently across SQLite,
+  PostgreSQL, DuckDB, and daemon-backed MCP sessions. Metadata result counts
+  and aggregate statistics use the same predicate, and body-search snippets
+  remain bounded, UTF-8-safe, and are selected by each backend's native FTS
+  tokenizer.
+- PostgreSQL full-text indexes use a versioned field layout so stale indexes
+  are detected and must be backfilled before body-only search.
 
 ---
 

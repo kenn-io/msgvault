@@ -3551,7 +3551,7 @@ func (c *Client) SearchMessagesWithResponse(ctx context.Context, options *Search
 	}
 }
 
-// DeepSearch Run deep aggregate search
+// DeepSearch Run full-text message search
 func (c *Client) DeepSearchWithResponse(ctx context.Context, options *DeepSearchRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeepSearchResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

@@ -23,27 +23,29 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
-	ID                   int64      `json:"id"`
-	SourceMessageID      string     `json:"source_message_id"`
-	ConversationID       int64      `json:"conversation_id"`
-	SourceConversationID string     `json:"source_conversation_id"` // Gmail Thread ID
-	Subject              string     `json:"subject"`
-	Snippet              string     `json:"snippet"`
-	FromEmail            string     `json:"from_email"`
-	FromName             string     `json:"from_name"`
-	FromPhone            string     `json:"from_phone,omitempty"` // Phone number (for WhatsApp/chat sources)
-	To                   []Address  `json:"to,omitempty"`
-	Cc                   []Address  `json:"cc,omitempty"`
-	Bcc                  []Address  `json:"bcc,omitempty"`
-	SentAt               time.Time  `json:"sent_at"`
-	SizeEstimate         int64      `json:"size_estimate"`
-	HasAttachments       bool       `json:"has_attachments"`
-	AttachmentCount      int        `json:"attachment_count"`
-	Labels               []string   `json:"labels"`
-	DeletedAt            *time.Time `json:"deleted_at,omitempty"`         // When message was deleted from server (nil if not deleted)
-	MessageType          string     `json:"message_type,omitempty"`       // e.g., "email", "whatsapp" — from messages.message_type
-	ConversationTitle    string     `json:"conversation_title,omitempty"` // Group/chat name from conversations.title
-	BodyText             string     `json:"body_text,omitempty"`          // Full body text (only populated for timeline views)
+	ID                           int64      `json:"id"`
+	SourceMessageID              string     `json:"source_message_id"`
+	ConversationID               int64      `json:"conversation_id"`
+	SourceConversationID         string     `json:"source_conversation_id"` // Gmail Thread ID
+	Subject                      string     `json:"subject"`
+	Snippet                      string     `json:"snippet"`
+	FromEmail                    string     `json:"from_email"`
+	FromName                     string     `json:"from_name"`
+	FromPhone                    string     `json:"from_phone,omitempty"` // Phone number (for WhatsApp/chat sources)
+	To                           []Address  `json:"to,omitempty"`
+	Cc                           []Address  `json:"cc,omitempty"`
+	Bcc                          []Address  `json:"bcc,omitempty"`
+	SentAt                       time.Time  `json:"sent_at"`
+	SizeEstimate                 int64      `json:"size_estimate"`
+	HasAttachments               bool       `json:"has_attachments"`
+	AttachmentCount              int        `json:"attachment_count"`
+	Labels                       []string   `json:"labels"`
+	DeletedAt                    *time.Time `json:"deleted_at,omitempty"`         // When message was deleted from server (nil if not deleted)
+	MessageType                  string     `json:"message_type,omitempty"`       // e.g., "email", "whatsapp" — from messages.message_type
+	ConversationTitle            string     `json:"conversation_title,omitempty"` // Group/chat name from conversations.title
+	BodyText                     string     `json:"body_text,omitempty"`          // Full body text (only populated for timeline views)
+	BodyContextSnippets          []string   `json:"-"`
+	BodyContextSnippetsTruncated bool       `json:"-"`
 }
 
 // MessageDetail represents a full message with body and attachments.

@@ -32,6 +32,7 @@ type Engine struct {
 // Compile-time check that Engine implements query.Engine.
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
+var _ query.MessageBodySearcher = (*Engine)(nil)
 
 // NewEngine creates a new daemon-backed query engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -404,10 +405,50 @@ func messageSummariesFromGenerated(msgs []generated.MessageSummary) []query.Mess
 		return nil
 	}
 	result := make([]query.MessageSummary, len(msgs))
-	for i, m := range msgs {
-		result[i] = querySummaryFromAPIMessage(generatedMessageToAPIMessage(m))
+	for i, message := range msgs {
+		result[i] = querySummaryFromAPIMessage(generatedMessageToAPIMessage(message))
 	}
 	return result
+}
+
+func bodySearchSummariesFromGenerated(
+	msgs []generated.MessageSummary,
+	contexts []generated.BodySearchContext,
+) ([]query.MessageSummary, error) {
+	result := messageSummariesFromGenerated(msgs)
+	byID := make(map[int64]int, len(result))
+	for i, message := range result {
+		if _, duplicate := byID[message.ID]; duplicate {
+			return nil, fmt.Errorf("daemon returned duplicate body-search message %d", message.ID)
+		}
+		byID[message.ID] = i
+	}
+	seen := make(map[int64]struct{}, len(contexts))
+	for _, bodyContext := range contexts {
+		index, ok := byID[bodyContext.MessageID]
+		if !ok {
+			return nil, fmt.Errorf("daemon returned body context for unknown message %d", bodyContext.MessageID)
+		}
+		if _, duplicate := seen[bodyContext.MessageID]; duplicate {
+			return nil, fmt.Errorf("daemon returned duplicate body context for message %d", bodyContext.MessageID)
+		}
+		seen[bodyContext.MessageID] = struct{}{}
+		result[index].BodyContextSnippets = bodyContext.ContextSnippets
+		truncated := false
+		if bodyContext.ContextSnippetsTruncated != nil {
+			truncated = *bodyContext.ContextSnippetsTruncated
+		}
+		if len(bodyContext.ContextSnippets) == 0 && !truncated {
+			return nil, fmt.Errorf("daemon returned empty untruncated body context for message %d", bodyContext.MessageID)
+		}
+		result[index].BodyContextSnippetsTruncated = truncated
+	}
+	for _, message := range result {
+		if _, ok := seen[message.ID]; !ok {
+			return nil, fmt.Errorf("daemon omitted body context for message %d", message.ID)
+		}
+	}
+	return result, nil
 }
 
 func queryAttachmentFromGenerated(att *generated.AttachmentInfo) *query.AttachmentInfo {
@@ -764,6 +805,33 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 		return nil, err
 	}
 	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
+}
+
+// SearchMessageBodies requests the daemon's exact body-only search scope and
+// requires the response to echo that scope. Requiring the echo fails closed
+// against older daemons that ignore the additive query parameter and would
+// otherwise return generic composite-search false positives.
+func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+	if q == nil || len(q.TextTerms) == 0 {
+		return nil, errors.New("message body search requires at least one free-text term")
+	}
+	queryStr := buildSearchQueryString(q)
+	queryParams, err := deepSearchQuery(queryStr, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	queryParams.Scope = optionalString("body")
+
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.DeepSearchResp, error) {
+		return client.DeepSearchWithResponse(ctx, &generated.DeepSearchRequestOptions{Query: queryParams})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200.Scope == nil || *resp.JSON200.Scope != "body" {
+		return nil, errors.New("daemon did not confirm body-only search scope; upgrade the daemon to API schema 1.3.0 or newer")
+	}
+	return bodySearchSummariesFromGenerated(resp.JSON200.Messages, resp.JSON200.BodyContexts)
 }
 
 // SearchFast searches message metadata only (no body text).

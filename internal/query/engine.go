@@ -2,9 +2,22 @@ package query
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+)
+
+var (
+	// ErrMessageBodySearchUnavailable means the backend cannot execute exact
+	// body-only search without violating the no-body-scan contract.
+	ErrMessageBodySearchUnavailable = errors.New("exact message body search is unavailable")
+	// ErrMessageBodySearchIndexStale means the backend has an FTS index, but
+	// its field layout is not the version required for exact body scoping.
+	ErrMessageBodySearchIndexStale = errors.New("message body search index layout is stale")
+	// ErrMessageBodySearchInvalidQuery means exact body search rejected a
+	// bounded-work query limit before touching the index.
+	ErrMessageBodySearchInvalidQuery = errors.New("invalid message body search query")
 )
 
 // Engine provides query operations for msgvault data.
@@ -46,7 +59,8 @@ type Engine interface {
 
 	// SearchFast searches message metadata only (no body text).
 	// This is much faster for large archives as it queries Parquet files directly.
-	// Searches: subject, sender email/name (case-insensitive).
+	// Free text searches subject, snippet, and sender/recipient metadata
+	// (case-insensitive).
 	// The filter parameter allows contextual search within a drill-down.
 	SearchFast(ctx context.Context, query *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error)
 
@@ -81,6 +95,13 @@ type Engine interface {
 
 	// Close releases any resources held by the engine.
 	Close() error
+}
+
+// MessageBodySearcher is an optional capability for exact full-text search of
+// message bodies. It is deliberately separate from Engine so generic Search
+// retains its composite subject/body/participant semantics.
+type MessageBodySearcher interface {
+	SearchMessageBodies(ctx context.Context, query *search.Query, limit, offset int) ([]MessageSummary, error)
 }
 
 // SearchFastResult holds the combined results of a fast search:

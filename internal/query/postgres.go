@@ -11,6 +11,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"go.kenn.io/msgvault/internal/search"
 )
 
 // ErrNotImplemented is a sentinel returned by engine methods that the current
@@ -30,6 +32,8 @@ var ErrNotImplemented = errors.New("query: method not implemented for this engin
 type pgEngine struct {
 	Engine
 }
+
+var _ MessageBodySearcher = (*pgEngine)(nil)
 
 type gmailIDsByMessageIDsResolver interface {
 	GetGmailIDsByMessageIDs(ctx context.Context, ids []int64) ([]string, error)
@@ -60,6 +64,20 @@ func (e *pgEngine) GetAccountsByGmailIDs(ctx context.Context, gmailIDs []string)
 		return nil, ErrNotImplemented
 	}
 	return resolver.GetAccountsByGmailIDs(ctx, gmailIDs)
+}
+
+// SearchMessageBodies forwards exact body-only search through the PostgreSQL
+// wrapper. pgEngine hides optional SQLite-only capabilities by default, so
+// capabilities implemented with PostgreSQL-safe SQL must be promoted
+// explicitly.
+func (e *pgEngine) SearchMessageBodies(
+	ctx context.Context, q *search.Query, limit, offset int,
+) ([]MessageSummary, error) {
+	bodySearcher, ok := e.Engine.(MessageBodySearcher)
+	if !ok {
+		return nil, ErrMessageBodySearchUnavailable
+	}
+	return bodySearcher.SearchMessageBodies(ctx, q, limit, offset)
 }
 
 // NewPostgreSQLEngine creates a query engine backed by PostgreSQL. The engine

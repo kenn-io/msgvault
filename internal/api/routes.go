@@ -279,7 +279,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "searchMessagesByDomains", http.MethodGet, "/search/domains", "Search messages by participant domains", s.handleSearchByDomains)
 	registerAPIV1RawHumaJSONRoute[similarSearchResponse](apiV1, "findSimilarMessages", http.MethodGet, "/search/similar", "Find messages similar to a seed message", s.handleSimilarSearch)
 	registerAPIV1RawHumaJSONRoute[SearchFastResponse](apiV1, "fastSearch", http.MethodGet, "/search/fast", "Run fast aggregate search", s.handleFastSearch)
-	registerAPIV1RawHumaJSONRoute[DeepSearchResponse](apiV1, "deepSearch", http.MethodGet, "/search/deep", "Run deep aggregate search", s.handleDeepSearch)
+	registerAPIV1RawHumaJSONRoute[DeepSearchResponse](apiV1, "deepSearch", http.MethodGet, "/search/deep", "Run full-text message search", s.handleDeepSearch)
 	registerAPIV1RawHumaJSONRoute[TextConversationsResponse](apiV1, "listTextConversations", http.MethodGet, "/text/conversations", "List text conversations", s.handleTextConversations)
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getTextAggregates", http.MethodGet, "/text/aggregates", "Get text aggregate rows", s.handleTextAggregates)
 	registerAPIV1RawHumaJSONRoute[TextMessagesResponse](apiV1, "listTextConversationMessages", http.MethodGet, "/text/conversations/{id}/messages", "List messages in a text conversation", s.handleTextConversationMessages)
@@ -522,6 +522,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "deepSearch":
 		return append([]*huma.Param{
 			queryStringParam("q", "Search query", true),
+			queryStringParam("scope", "Exact search scope: body; omit for composite full-text search", false),
 		}, messageFilterParams()...)
 	case "listTextConversations":
 		return textFilterParams()

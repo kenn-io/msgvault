@@ -4409,6 +4409,173 @@ func TestHandleDeepSearch(t *testing.T) {
 	assert.Equal(t, "agenda", resp["query"], "query")
 }
 
+type bodySearchTestEngine struct {
+	*querytest.MockEngine
+
+	searchMessageBodiesFunc func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
+}
+
+func (e *bodySearchTestEngine) SearchMessageBodies(
+	ctx context.Context, q *search.Query, limit, offset int,
+) ([]query.MessageSummary, error) {
+	return e.searchMessageBodiesFunc(ctx, q, limit, offset)
+}
+
+func TestHandleDeepSearchBodyScope(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var genericCalled, bodyCalled bool
+	engine := &bodySearchTestEngine{
+		MockEngine: &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				genericCalled = true
+				return []query.MessageSummary{{ID: 1, Subject: "generic false positive"}}, nil
+			},
+		},
+		searchMessageBodiesFunc: func(_ context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+			bodyCalled = true
+			assert.Equal([]string{"bodyneedle"}, q.TextTerms, "body TextTerms")
+			assert.Equal(11, limit, "limit includes has_more probe")
+			assert.Equal(3, offset, "offset")
+			return []query.MessageSummary{{
+				ID:                           2,
+				Subject:                      "body hit",
+				BodyContextSnippets:          []string{"exact body context"},
+				BodyContextSnippetsTruncated: true,
+			}}, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/search/deep?q=bodyneedle&scope=body&limit=10&offset=3", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.False(genericCalled, "generic Search must not handle scope=body")
+	assert.True(bodyCalled, "SearchMessageBodies must handle scope=body")
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.Equal("body", resp["scope"], "echoed scope")
+	messages, ok := resp["messages"].([]any)
+	require.True(ok, "messages response type")
+	require.Len(messages, 1)
+	message, ok := messages[0].(map[string]any)
+	require.True(ok, "message response type")
+	assert.InDelta(float64(2), message["id"], 0, "body hit ID")
+	assert.NotContains(message, "context_snippets",
+		"body search must preserve the shared MessageSummary schema")
+	assert.NotContains(message, "context_snippets_truncated")
+	contexts, ok := resp["body_contexts"].([]any)
+	require.True(ok, "body_contexts response type")
+	require.Len(contexts, 1)
+	bodyContext, ok := contexts[0].(map[string]any)
+	require.True(ok, "body context response type")
+	assert.InDelta(float64(2), bodyContext["message_id"], 0, "body context message ID")
+	assert.Equal([]any{"exact body context"}, bodyContext["context_snippets"])
+	assert.Equal(true, bodyContext["context_snippets_truncated"])
+}
+
+func TestHandleDeepSearchScopeValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		engine     query.Engine
+		wantStatus int
+	}{
+		{
+			name:       "invalid scope",
+			path:       "/api/v1/search/deep?q=needle&scope=metadata",
+			engine:     &querytest.MockEngine{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "body scope requires free text",
+			path:       "/api/v1/search/deep?q=from%3Aalice%40example.com&scope=body",
+			engine:     &bodySearchTestEngine{MockEngine: &querytest.MockEngine{}, searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) { return nil, nil }},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "body capability unavailable",
+			path:       "/api/v1/search/deep?q=needle&scope=body",
+			engine:     struct{ query.Engine }{Engine: &querytest.MockEngine{}},
+			wantStatus: http.StatusNotImplemented,
+		},
+		{
+			name: "body work limit is a client error",
+			path: "/api/v1/search/deep?q=needle&scope=body",
+			engine: &bodySearchTestEngine{
+				MockEngine: &querytest.MockEngine{},
+				searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+					return nil, fmt.Errorf("%w: supports at most 32 free-text terms", query.ErrMessageBodySearchInvalidQuery)
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServerWithEngine(t, tc.engine)
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assert.Equal(t, tc.wantStatus, w.Code, "status (body: %s)", w.Body.String())
+		})
+	}
+}
+
+func TestHandleDeepSearchBodyReadinessErrorIsActionable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	engine := &bodySearchTestEngine{
+		MockEngine: &querytest.MockEngine{},
+		searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' or complete the FTS backfill", query.ErrMessageBodySearchIndexStale)
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=needle&scope=body", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusServiceUnavailable, w.Code, "status (body: %s)", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode error")
+	assert.Equal("body_search_index_unavailable", resp.Error, "error code")
+	assert.Contains(resp.Message, "rebuild-fts", "actionable rebuild guidance")
+	assert.Contains(resp.Message, "backfill", "actionable backfill guidance")
+}
+
+func TestHandleDeepSearchOmittedScopeUsesGenericSearch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	var genericCalled bool
+	engine := &bodySearchTestEngine{
+		MockEngine: &querytest.MockEngine{
+			SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+				genericCalled = true
+				return nil, nil
+			},
+		},
+		searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+			assert.Fail("SearchMessageBodies must not handle omitted scope")
+			return nil, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/deep?q=needle", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.True(genericCalled, "generic Search handles omitted scope")
+	var resp map[string]any
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	assert.NotContains(resp, "scope", "omitted scope stays generic")
+}
+
 func TestHandleDeepSearchMissingQuery(t *testing.T) {
 	engine := &querytest.MockEngine{}
 	srv := newTestServerWithEngine(t, engine)

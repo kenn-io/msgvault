@@ -31,6 +31,7 @@ type MockEngine struct {
 	// Optional overrides — set these to customise behavior per-test.
 	SearchFastFunc               func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error)
 	SearchFunc                   func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
+	SearchMessageBodiesFunc      func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error)
 	GetMessageFunc               func(context.Context, int64) (*query.MessageDetail, error)
 	GetMessageBySourceIDFunc     func(context.Context, string) (*query.MessageDetail, error)
 	GetTotalStatsFunc            func(context.Context, query.StatsOptions) (*query.TotalStats, error)
@@ -49,6 +50,7 @@ type MockEngine struct {
 
 // Compile-time check.
 var _ query.Engine = (*MockEngine)(nil)
+var _ query.MessageBodySearcher = (*MockEngine)(nil)
 
 func (m *MockEngine) Aggregate(_ context.Context, _ query.ViewType, _ query.AggregateOptions) ([]query.AggregateRow, error) {
 	return m.AggregateRows, nil
@@ -144,6 +146,13 @@ func (m *MockEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error
 func (m *MockEngine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
 	if m.SearchFunc != nil {
 		return m.SearchFunc(ctx, q, limit, offset)
+	}
+	return m.SearchResults, nil
+}
+
+func (m *MockEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+	if m.SearchMessageBodiesFunc != nil {
+		return m.SearchMessageBodiesFunc(ctx, q, limit, offset)
 	}
 	return m.SearchResults, nil
 }

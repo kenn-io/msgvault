@@ -420,6 +420,9 @@ type DeepSearchQuery struct {
 	// Q Search query
 	Q string `json:"q" validate:"required"`
 
+	// Scope Exact search scope: body; omit for composite full-text search
+	Scope *string `json:"scope,omitempty"`
+
 	// Sender Sender email/address filter
 	Sender *string `json:"sender,omitempty"`
 

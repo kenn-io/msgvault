@@ -209,8 +209,9 @@ message in your archive, embeds missing rows in batches through your
 configured embedder, and atomically activates the generation once
 coverage reaches zero. During the
 first build, when no active generation exists yet, HTTP and MCP
-vector/hybrid search return `index_building`; use `mode=fts` for the
-interim.
+vector/hybrid search return `index_building`. For interim keyword search,
+use `mode=fts` on the CLI or HTTP API. In MCP, omit `mode` for metadata
+search or use `search_message_bodies` for body keywords.
 
 !!! tip
     You can interrupt and resume. Each invocation of `msgvault embeddings build`
@@ -345,10 +346,11 @@ msgvault search "message_type:teams release planning" --mode vector
 ```
 
 If the active generation is scoped to `teams`, an unscoped vector/hybrid query
-or a query scoped to `email` returns `index_scope_mismatch`. Use `mode=fts` for
-unscoped keyword searches, add the matching message-type filter, or rebuild an
-unscoped generation by clearing `[vector.embed.scope].message_types` and running
-a full rebuild.
+or a query scoped to `email` returns `index_scope_mismatch`. For unscoped
+keyword search, use `mode=fts` on the CLI or HTTP API; in MCP, omit `mode` for
+metadata or use `search_message_bodies` for body keywords. Alternatively, add
+the matching message-type filter or rebuild an unscoped generation by clearing
+`[vector.embed.scope].message_types` and running a full rebuild.
 
 ## Search
 
@@ -381,16 +383,21 @@ candidate page.
 the free text is what gets embedded as the query vector. A query
 that is purely operators (e.g. `from:alice label:IMPORTANT`) is
 rejected; HTTP and MCP return `missing_free_text`. Use `mode=fts` for
-those.
+filter-only CLI or HTTP queries. In MCP, omit `mode` for metadata-only
+filtering.
 
 **MCP tools:**
 
-- `search_messages` accepts `mode` (`fts`/`vector`/`hybrid`) and
-  `explain` arguments. It paginates with `offset` and `limit`; for
-  vector/hybrid modes, pagination is limited to the configured
+- `search_messages` searches metadata when `mode` is omitted and accepts
+  explicit `vector` or `hybrid` modes plus an `explain` argument. It
+  paginates with `offset` and `limit`; for vector/hybrid modes, pagination
+  is limited to the configured
   `[vector.search].max_page_size_hybrid` ranking window when that cap
   is positive. Requests whose `offset` is at or beyond that window
   return `pagination_limit`.
+- `search_message_bodies` performs body-only full-text search and returns
+  bounded context around each keyword match. It requires a free-text term
+  and does not depend on the vector index.
 - `find_similar_messages` takes a seed `message_id` and returns
   nearest neighbors (excluding the seed itself). Optional `account`,
   `after`, `before`, `has_attachment` filters.
@@ -411,25 +418,30 @@ embedding output policy. While the rebuild is in flight,
 `mode=vector` and `mode=hybrid` return `index_stale` (the
 previously-active generation no longer matches the configured
 fingerprint, so search refuses to serve potentially-mismatched
-results). Use `mode=fts` until the new generation activates; it does
-not depend on the vector index. Once `msgvault embeddings build`
-reports the new generation activated, vector and hybrid modes resume.
+results). On the CLI or HTTP API, use `mode=fts` until the new generation
+activates; it does not depend on the vector index. In MCP, omit `mode` for
+metadata search or use `search_message_bodies`. Once `msgvault embeddings
+build` reports the new generation activated, vector and hybrid modes resume.
 
 ## Troubleshooting
 
 Common HTTP/MCP error codes and fixes. The CLI reports equivalent
 conditions as command errors rather than structured codes.
 
+In the table, a non-vector fallback means `mode=fts` for the CLI or HTTP,
+omitted `mode` for MCP metadata search, or `search_message_bodies` for MCP
+body keywords.
+
 | Error | Meaning | Recovery |
 |---|---|---|
 | `vector_not_enabled` | The server or MCP process did not wire a vector backend, usually because `[vector] enabled = false`. | Set `enabled = true`, configure `[vector.embeddings]`, and start with a build that includes the needed backend (`sqlite_vec` or `pgvector`). |
 | `index_stale` | Active generation's fingerprint does not match the current model, dimension, preprocessing policy, `max_input_chars`, or embedding output policy. | Run `msgvault embeddings build --full-rebuild --yes`. |
-| `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build` or wait for the scheduler. Use `mode=fts` for the interim. |
-| `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or switch to `mode=fts`. |
-| `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use `mode=fts`, or rebuild an unscoped generation. |
+| `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build`, wait for the scheduler, or use the appropriate non-vector fallback. |
+| `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or use the appropriate non-vector fallback. |
+| `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use the appropriate non-vector fallback, or rebuild an unscoped generation. |
 | `pagination_unsupported` | HTTP request asked for `page>1` with `mode=vector|hybrid`. | Use `page=1` with a larger `page_size` instead. |
-| `pagination_limit` | MCP `search_messages` asked for an `offset` at or beyond a positive `[vector.search].max_page_size_hybrid` cap in `mode=vector|hybrid`. | Use `mode=fts` for deeper pagination, request an earlier page, or raise/disable the hybrid page-size cap. |
-| `invalid_mode` | `mode=` value other than `fts`, `vector`, `hybrid`. | Pick one of those. |
+| `pagination_limit` | MCP `search_messages` asked for an `offset` at or beyond a positive `[vector.search].max_page_size_hybrid` cap in `mode=vector|hybrid`. | Omit `mode` for metadata search, use `search_message_bodies` for body keywords, request an earlier vector page, or raise/disable the hybrid page-size cap. |
+| `invalid_mode` | The requested mode is not supported by that surface. | Use `fts`, `vector`, or `hybrid` on the CLI or HTTP; use `vector`, `hybrid`, or omitted `mode` in MCP. |
 | `embedding_timeout` | The embedding endpoint did not respond before the request deadline (transient: slow/cold model, network blip). | Retry; if persistent, raise `[vector.embeddings].timeout` or use a faster endpoint. |
 
 For non-429 HTTP 4xx errors, msgvault treats the response as

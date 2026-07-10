@@ -697,8 +697,7 @@ func (e *SQLiteEngine) buildAggregateSearchParts(
 	if groupBy == ViewLabels && len(q.Labels) > 0 {
 		var labelParts []string
 		for _, label := range q.Labels {
-			labelParts = append(labelParts,
-				`LOWER(l.name) LIKE LOWER(?) ESCAPE '\'`)
+			labelParts = append(labelParts, metadataContainsExpression(e.dialect, "l.name"))
 			args = append(args,
 				"%"+escapeSQLiteLike(label)+"%")
 		}
@@ -1664,22 +1663,20 @@ func (e *SQLiteEngine) buildSearchQueryParts(ctx context.Context, q *search.Quer
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
 	for _, label := range q.Labels {
-		conditions = append(conditions, `EXISTS (
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_labels ml_lbl
 			JOIN labels l_lbl ON l_lbl.id = ml_lbl.label_id
 			WHERE ml_lbl.message_id = m.id
-			  AND LOWER(l_lbl.name) LIKE LOWER(?) ESCAPE '\'
-		)`)
+			  AND %s
+		)`, metadataContainsExpression(e.dialect, "l_lbl.name")))
 		args = append(args, "%"+escapeSQLiteLike(label)+"%")
 	}
 
-	// Subject filter. LOWER both sides so PostgreSQL's case-sensitive
-	// LIKE matches the same rows the store API path returns (which
-	// already lowercases). SQLite's LIKE is ASCII-case-insensitive but
-	// the LOWER wrapper still works there.
+	// Subject filter. Use the dialect's Unicode-aware fold on both sides so
+	// SQLite and PostgreSQL retain the same case-insensitive substring contract.
 	if len(q.SubjectTerms) > 0 {
 		for _, term := range q.SubjectTerms {
-			conditions = append(conditions, "LOWER(m.subject) LIKE LOWER(?) ESCAPE '\\'")
+			conditions = append(conditions, metadataContainsExpression(e.dialect, "m.subject"))
 			args = append(args, "%"+escapeSQLiteLike(term)+"%")
 		}
 	}
@@ -1760,11 +1757,115 @@ func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
-// SearchFast searches using the same FTS5 path as Search but merges
-// MessageFilter context into the query (drill-down filters, hide-deleted, etc.).
+// SearchMessageBodies performs exact body-only full-text search and uses the
+// active backend's native tokenizer to attach bounded context to every hit.
+func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
+	if q == nil || len(q.TextTerms) == 0 {
+		return nil, errors.New("message body search requires at least one free-text term")
+	}
+	if err := validateMessageBodyContextQuery(q.TextTerms); err != nil {
+		return nil, err
+	}
+	if !e.hasFTSTable(ctx) {
+		return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' with an FTS-enabled build", ErrMessageBodySearchUnavailable)
+	}
+	if readinessSQL := e.dialect.FTSBodySearchReadinessSQL(); readinessSQL != "" {
+		var ready bool
+		if err := e.queryRowContext(ctx, readinessSQL).Scan(&ready); err != nil {
+			return nil, fmt.Errorf("check message body search index readiness: %w", err)
+		}
+		if !ready {
+			return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' or complete the FTS backfill, then retry", ErrMessageBodySearchIndexStale)
+		}
+	}
+
+	structured := *q
+	structured.TextTerms = nil
+	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, &structured)
+	expr, arg := e.dialect.BuildFTSBodyTerm(q.TextTerms)
+	conditions = append(conditions, expr)
+	if arg != "" {
+		args = append(args, arg)
+	}
+	if ftsJoin == "" {
+		ftsJoin = e.dialect.FTSJoin()
+	}
+	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.attachMessageBodySearchContexts(ctx, results, q.TextTerms); err != nil {
+		return nil, fmt.Errorf("extract message body contexts: %w", err)
+	}
+	return results, nil
+}
+
+// buildMetadataSearchQueryParts builds the metadata-only predicate shared by
+// SearchFast and SearchFastCount. Structured operators retain the generic
+// Search semantics, while free text is deliberately kept off the composite
+// body FTS index.
+func metadataContainsExpression(d Dialect, column string) string {
+	value := d.UnicodeLowerExpression("COALESCE(" + column + ", '')")
+	pattern := d.UnicodeLowerExpression("?")
+	return fmt.Sprintf(`%s LIKE %s ESCAPE '\'`, value, pattern)
+}
+
+func (e *SQLiteEngine) buildMetadataSearchQueryParts(ctx context.Context, q *search.Query) (conditions []string, args []any, ftsJoin string) {
+	structured := *q
+	structured.TextTerms = nil
+	conditions, args, ftsJoin = e.buildSearchQueryParts(ctx, &structured)
+
+	for _, term := range q.TextTerms {
+		pattern := "%" + escapeSQLiteLike(term) + "%"
+		conditions = append(conditions, fmt.Sprintf(`(
+			%s OR
+			%s OR
+			EXISTS (
+				SELECT 1
+				FROM message_recipients mr_meta
+				JOIN participants p_meta ON p_meta.id = mr_meta.participant_id
+				WHERE mr_meta.message_id = m.id
+				  AND (
+					%s OR
+					%s OR
+					%s OR
+					%s
+				  )
+			) OR
+			EXISTS (
+				SELECT 1
+				FROM participants p_direct_meta
+				WHERE p_direct_meta.id = m.sender_id
+				  AND (
+					%s OR
+					%s OR
+					%s
+				  )
+			)
+		)`,
+			metadataContainsExpression(e.dialect, "m.subject"),
+			metadataContainsExpression(e.dialect, "m.snippet"),
+			metadataContainsExpression(e.dialect, "p_meta.email_address"),
+			metadataContainsExpression(e.dialect, "p_meta.display_name"),
+			metadataContainsExpression(e.dialect, "p_meta.phone_number"),
+			metadataContainsExpression(e.dialect, "mr_meta.display_name"),
+			metadataContainsExpression(e.dialect, "p_direct_meta.email_address"),
+			metadataContainsExpression(e.dialect, "p_direct_meta.display_name"),
+			metadataContainsExpression(e.dialect, "p_direct_meta.phone_number"),
+		))
+		for range 9 {
+			args = append(args, pattern)
+		}
+	}
+
+	return conditions, args, ftsJoin
+}
+
+// SearchFast searches message metadata and merges MessageFilter context into
+// the query (drill-down filters, hide-deleted, etc.).
 func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	mergedQuery := MergeFilterIntoQuery(q, filter)
-	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, mergedQuery)
+	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2022,8 +2123,11 @@ func timePeriodToBounds(period string) (after, before time.Time, ok bool) {
 // Uses the same query logic as SearchFast to ensure consistent counts.
 func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	mergedQuery := MergeFilterIntoQuery(q, filter)
-	conditions, args, ftsJoin := e.buildSearchQueryParts(ctx, mergedQuery)
+	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
+	return e.executeSearchCount(ctx, conditions, args, ftsJoin)
+}
 
+func (e *SQLiteEngine) executeSearchCount(ctx context.Context, conditions []string, args []any, ftsJoin string) (int64, error) {
 	whereClause := strings.Join(conditions, " AND ")
 	if whereClause == "" {
 		whereClause = "1=1"
@@ -2043,31 +2147,93 @@ func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 	return count, nil
 }
 
-// SearchFastWithStats delegates to SearchFast + SearchFastCount + GetTotalStats.
-// SQLite doesn't benefit from temp table materialization, so we just call the
-// existing methods independently.
+// getMetadataSearchStats computes every aggregate from the same metadata-only
+// predicate used by SearchFast and SearchFastCount. Generic GetTotalStats keeps
+// its composite full-text semantics for its independent public contract.
+func (e *SQLiteEngine) getMetadataSearchStats(ctx context.Context, conditions []string, args []any, ftsJoin string) (*TotalStats, error) {
+	whereClause := strings.Join(conditions, " AND ")
+	if whereClause == "" {
+		whereClause = "1=1"
+	}
+
+	searchMatches := fmt.Sprintf(`
+		SELECT
+			m.id,
+			m.source_id,
+			m.deleted_from_source_at,
+			COALESCE(m.size_estimate, 0) AS size_estimate
+		FROM messages m
+		%s
+		WHERE %s
+	`, ftsJoin, whereClause)
+
+	stats := &TotalStats{}
+	messageStatsQuery := fmt.Sprintf(`
+		WITH search_matches AS (%s)
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN deleted_from_source_at IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN deleted_from_source_at IS NOT NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(size_estimate), 0),
+			COUNT(DISTINCT source_id)
+		FROM search_matches
+	`, searchMatches)
+	if err := e.queryRowContext(ctx, messageStatsQuery, args...).Scan(
+		&stats.MessageCount,
+		&stats.ActiveMessageCount,
+		&stats.SourceDeletedMessageCount,
+		&stats.TotalSize,
+		&stats.AccountCount,
+	); err != nil {
+		return nil, fmt.Errorf("metadata search message stats: %w", err)
+	}
+
+	attachmentStatsQuery := fmt.Sprintf(`
+		WITH search_matches AS (%s)
+		SELECT COUNT(*), COALESCE(SUM(a.size), 0)
+		FROM attachments a
+		JOIN search_matches sm ON sm.id = a.message_id
+	`, searchMatches)
+	if err := e.queryRowContext(ctx, attachmentStatsQuery, args...).Scan(
+		&stats.AttachmentCount,
+		&stats.AttachmentSize,
+	); err != nil {
+		return nil, fmt.Errorf("metadata search attachment stats: %w", err)
+	}
+
+	labelStatsQuery := fmt.Sprintf(`
+		WITH search_matches AS (%s)
+		SELECT COUNT(DISTINCT l.name)
+		FROM labels l
+		JOIN message_labels ml ON ml.label_id = l.id
+		JOIN search_matches sm ON sm.id = ml.message_id
+	`, searchMatches)
+	if err := e.queryRowContext(ctx, labelStatsQuery, args...).Scan(&stats.LabelCount); err != nil {
+		return nil, fmt.Errorf("metadata search label stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// SearchFastWithStats builds the metadata-only predicate once and reuses it
+// for messages, count, and stats so all three describe the same match set.
 func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
-	results, err := e.SearchFast(ctx, q, filter, limit, offset)
+	mergedQuery := MergeFilterIntoQuery(q, filter)
+	conditions, args, ftsJoin := e.buildMetadataSearchQueryParts(ctx, mergedQuery)
+	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
 	// Best-effort count: don't abort the search if count fails.
-	count, countErr := e.SearchFastCount(ctx, q, filter)
+	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
 
-	statsOpts := StatsOptions{
-		SourceID:              filter.SourceID,
-		WithAttachmentsOnly:   filter.WithAttachmentsOnly,
-		HideDeletedFromSource: filter.HideDeletedFromSource,
-		SearchQuery:           queryStr,
-		GroupBy:               statsGroupBy,
-	}
-	stats, _ := e.GetTotalStats(ctx, statsOpts)
+	stats, _ := e.getMetadataSearchStats(ctx, conditions, args, ftsJoin)
 
 	return &SearchFastResult{
 		Messages:   results,

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 //go:embed schema.sql schema_sqlite.sql schema_pg.sql
@@ -126,7 +127,7 @@ func openSQLite(dbPath, params string) (*Store, error) {
 	}
 
 	dsn := dbPath + params
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -214,7 +215,7 @@ func OpenReadOnly(dbPath string) (*Store, error) {
 	// under SQLITE_OPEN_READONLY. _query_only opens normally (so SQLite
 	// can manage sidecars) but rejects all write SQL at the query layer.
 	dsn := dbPath + "?_query_only=true&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(sqliteutil.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database (read-only): %w", err)
 	}

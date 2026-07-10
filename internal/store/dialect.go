@@ -5,6 +5,11 @@ import (
 	"database/sql"
 )
 
+// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
+// layout. Version 2 assigns subject=A, sender=B, recipients=C, and body=D so
+// exact body-only queries can restrict tsquery matches to weight D.
+const CurrentFTSIndexingVersion = 2
+
 // FTSDoc is the set of fields the dialect needs to upsert a message into
 // the full-text search index.
 type FTSDoc struct {
@@ -79,6 +84,11 @@ type Dialect interface {
 	// FTSDeleteSQL returns the SQL to remove FTS entries for messages belonging to
 	// a given source. Takes one parameter: source_id.
 	FTSDeleteSQL() string
+
+	// InvalidateFTSForMessage removes or marks stale one message's search
+	// document before its canonical body changes. This prevents a failed
+	// best-effort reindex from leaving an old body searchable as an exact hit.
+	InvalidateFTSForMessage(q querier, messageID int64) error
 
 	// FTSBackfillBatchSQL returns the SQL to populate the search index for a range of message IDs.
 	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?

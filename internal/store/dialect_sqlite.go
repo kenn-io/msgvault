@@ -10,12 +10,13 @@ import (
 	"unicode"
 
 	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // SQLiteDialect implements Dialect for SQLite (the default backend).
 type SQLiteDialect struct{}
 
-func (d *SQLiteDialect) DriverName() string { return "sqlite3" }
+func (d *SQLiteDialect) DriverName() string { return sqliteutil.DriverName() }
 
 // Rebind is a no-op for SQLite — it uses ? placeholders natively.
 func (d *SQLiteDialect) Rebind(query string) string { return query }
@@ -96,15 +97,17 @@ func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 //
 // The bm25 weights approximate PostgreSQL's setweight field-priority
 // preferences (subject heaviest, then sender, then body / other
-// recipients) for typical email shapes. This is a best-effort SQLite
-// tuning, NOT a strict cross-backend parity guarantee.
+// recipients) for typical email shapes. PostgreSQL assigns recipients
+// weight C and body weight D so body-only search can distinguish them,
+// then supplies explicit rank weights that keep C and D equivalent. This is a
+// best-effort SQLite tuning, NOT a strict cross-backend parity guarantee.
 //
 // Weights are positional over every column declared in messages_fts —
 // UNINDEXED columns count too even though they cannot match — so the
 // leading 1.0 is the placeholder for `message_id UNINDEXED`. The
 // remaining slots map to (subject, body, from_addr, to_addr, cc_addr).
 // PostgreSQL applies setweight 'A'=1.0 to subject and 'B'=0.4 to sender,
-// leaving body and other recipients at default 'D'=0.1 — a 10:4:1 ratio,
+// with explicit C/D rank weights of 0.1 for recipients/body — a 10:4:1 ratio,
 // which bm25 reproduces as 10/1/4/1/1 across (subject, body, from, to,
 // cc). bm25 returns lower (more negative) scores for more relevant rows,
 // so callers ORDER BY this expression ascending (the default).
@@ -128,6 +131,17 @@ func (d *SQLiteDialect) FTSDeleteSQL() string {
 	return `DELETE FROM messages_fts WHERE message_id IN (
 		SELECT id FROM messages WHERE source_id = ?
 	)`
+}
+
+func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
+	_, err := q.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID)
+	if d.IsNoSuchTableError(err) {
+		// A missing FTS table cannot contain a stale searchable row. Preserve
+		// the existing best-effort indexing contract so canonical message
+		// persistence can continue and a later rebuild can recreate the index.
+		return nil
+	}
+	return err
 }
 
 // FTSBackfillBatchSQL returns the SQL to backfill FTS5 for a range of message IDs.

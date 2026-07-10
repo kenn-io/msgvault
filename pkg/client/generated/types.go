@@ -175,6 +175,12 @@ func (b BackupFreezeEndRequest) Validate() error {
 
 type BackupFreezeEndResponse = map[string]any
 
+type BodySearchContext struct {
+	ContextSnippets          []string `json:"context_snippets,omitempty"`
+	ContextSnippetsTruncated *bool    `json:"context_snippets_truncated,omitempty"`
+	MessageID                int64    `json:"message_id"`
+}
+
 type BuildingSummary struct {
 	Dimension int64    `json:"dimension"`
 	ID        int64    `json:"id"`
@@ -894,16 +900,25 @@ func (c CreateRequest) Validate() error {
 }
 
 type DeepSearchResponse struct {
-	Count    int64            `json:"count"`
-	HasMore  bool             `json:"has_more"`
-	Limit    int64            `json:"limit"`
-	Messages []MessageSummary `json:"messages,omitempty" validate:"required"`
-	Offset   int64            `json:"offset"`
-	Query    string           `json:"query" validate:"required"`
+	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
+	Count        int64               `json:"count"`
+	HasMore      bool                `json:"has_more"`
+	Limit        int64               `json:"limit"`
+	Messages     []MessageSummary    `json:"messages,omitempty" validate:"required"`
+	Offset       int64               `json:"offset"`
+	Query        string              `json:"query" validate:"required"`
+	Scope        *string             `json:"scope,omitempty"`
 }
 
 func (d DeepSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range d.BodyContexts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("BodyContexts[%d]", i), err)
+			}
+		}
+	}
 	for i, item := range d.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

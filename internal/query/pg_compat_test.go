@@ -175,6 +175,14 @@ func TestNewEnginePostgresSatisfiesAccountsByGmailIDsResolver(t *testing.T) {
 	assert.Empty(accounts)
 }
 
+func TestNewEnginePostgresSatisfiesMessageBodySearcher(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	eng := query.NewEngine(st.DB(), true)
+
+	_, ok := eng.(query.MessageBodySearcher)
+	require.True(t, ok, "PostgreSQL engine should expose exact message body search")
+}
+
 // TestQueryEngine_CaseInsensitiveSearch_Subject verifies that
 // `subject:` terms passed through query.Engine.Search match
 // case-insensitively on both SQLite and PostgreSQL. SQLite's LIKE is
