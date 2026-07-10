@@ -39,6 +39,67 @@ type cancelAfterErrContext struct {
 	cancelAfter int
 }
 
+type canonicalizationFailurePoint int
+
+const (
+	failLegacyCanonicalization canonicalizationFailurePoint = iota
+	failSweepCanonicalization
+)
+
+func installCanonicalizationFailure(t *testing.T, st *store.Store, point canonicalizationFailurePoint) string {
+	t.Helper()
+
+	var triggerName, functionName, failureMessage string
+	switch point {
+	case failLegacyCanonicalization:
+		triggerName = "block_blob_canonicalization"
+		functionName = "block_blob_canonicalization_fn"
+		failureMessage = "injected canonicalization failure"
+	case failSweepCanonicalization:
+		triggerName = "block_sweep_canonicalization"
+		functionName = "block_sweep_canonicalization_fn"
+		failureMessage = "injected sweep canonicalization failure"
+	default:
+		require.FailNow(t, "unknown canonicalization failure point", "point=%d", point)
+	}
+
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(fmt.Sprintf(`
+			CREATE FUNCTION %s() RETURNS trigger AS $$
+			BEGIN
+				RAISE EXCEPTION '%s';
+			END;
+			$$ LANGUAGE plpgsql`, functionName, failureMessage))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, cleanupErr := st.DB().Exec(fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName))
+			require.NoError(t, cleanupErr)
+		})
+
+		_, err = st.DB().Exec(fmt.Sprintf(`
+			CREATE TRIGGER %s
+			BEFORE UPDATE OF storage_path ON attachments
+			FOR EACH ROW EXECUTE FUNCTION %s()`, triggerName, functionName))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, cleanupErr := st.DB().Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON attachments", triggerName))
+			require.NoError(t, cleanupErr)
+		})
+		return failureMessage
+	}
+
+	_, err := st.DB().Exec(fmt.Sprintf(`
+		CREATE TRIGGER %s
+		BEFORE UPDATE OF storage_path ON attachments
+		BEGIN SELECT RAISE(ABORT, '%s'); END`, triggerName, failureMessage))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, cleanupErr := st.DB().Exec("DROP TRIGGER IF EXISTS " + triggerName)
+		require.NoError(t, cleanupErr)
+	})
+	return failureMessage
+}
+
 func (c *cancelAfterErrContext) Err() error {
 	c.calls++
 	if c.calls >= c.cancelAfter {
@@ -253,14 +314,10 @@ func TestRunRetainsOversizedLegacySourceUntilDatabaseCanonicalizes(t *testing.T)
 	f := newMaintenanceFixture(t)
 	content := make([]byte, 1025)
 	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
-	_, err := f.store.DB().Exec(f.store.Rebind(`
-		CREATE TRIGGER block_blob_canonicalization
-		BEFORE UPDATE OF storage_path ON attachments
-		BEGIN SELECT RAISE(ABORT, 'injected canonicalization failure'); END`))
-	require.NoError(err)
+	failureMessage := installCanonicalizationFailure(t, f.store, failLegacyCanonicalization)
 
-	_, err = Run(context.Background(), f.store, f.dir, Options{})
-	require.Error(err)
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.ErrorContains(err, failureMessage)
 	assert.FileExists(legacy, "legacy source remains authoritative after the DB failure")
 	assert.Equal("legacy/"+hash, f.storagePath(hash))
 	assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(maintenanceCanonical(hash))),
@@ -567,15 +624,12 @@ func TestRunReportsDatabaseFailureDuringOversizedSweepRecovery(t *testing.T) {
 	_, err = f.store.DB().Exec(f.store.Rebind(`
 		UPDATE attachments SET storage_path = ? WHERE content_hash = ?`), legacyRel, hash)
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
-		CREATE TRIGGER block_sweep_canonicalization
-		BEFORE UPDATE OF storage_path ON attachments
-		BEGIN SELECT RAISE(ABORT, 'injected sweep canonicalization failure'); END`))
-	require.NoError(err)
+	failureMessage := installCanonicalizationFailure(t, f.store, failSweepCanonicalization)
 	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
 
 	_, err = Run(context.Background(), f.store, f.dir, Options{})
-	require.Error(err, "a systemic DB failure must not be downgraded to a damaged-content warning")
+	require.ErrorContains(err, failureMessage,
+		"a systemic DB failure must not be downgraded to a damaged-content warning")
 	assert.FileExists(legacy)
 	entry, lookupErr := f.store.GetAttachmentPackEntry(hash)
 	require.NoError(lookupErr)
