@@ -15,12 +15,18 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/kit/pack"
+
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
 // key: fullPath + size + expectedHash -> value: modTime (int64)
 var validatedAttachmentFiles sync.Map
+
+// syncDurableAttachmentFile is a narrow failure-injection seam. Production
+// always fsyncs the validated final canonical descriptor.
+var syncDurableAttachmentFile = func(f *os.File) error { return f.Sync() }
 
 // resolveContentHash computes the SHA-256 of content and validates it against
 // the provided hash (if any). Returns the canonical lowercase hash without
@@ -187,6 +193,69 @@ func StoreAttachmentFile(attachmentsDir string, att *mime.Attachment) (string, e
 
 	if err := writeAtomicFile(fullPath, att.Content, expectedSize, contentHash); err != nil {
 		return "", err
+	}
+	return storagePath, nil
+}
+
+// StoreAttachmentFileDurable stores attachment content, including an empty
+// blob, through the content-addressed atomic write path. Unlike ordinary
+// ingest, this entry point is reserved for maintenance that will discard an
+// existing authoritative copy after the loose file is durable.
+func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (string, error) {
+	if attachmentsDir == "" {
+		return "", nil
+	}
+	contentHash, err := resolveContentHash(att.Content, att.ContentHash)
+	if err != nil {
+		return "", err
+	}
+	att.ContentHash = contentHash
+	hashPrefix := contentHash[:2]
+	storagePath := path.Join(hashPrefix, contentHash)
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", err
+	}
+	if err := checkSubdirSafe(baseDir, hashPrefix); err != nil {
+		return "", err
+	}
+	hashDir := filepath.Join(baseDir, hashPrefix)
+	hashDirWasMissing := false
+	if _, err := os.Lstat(hashDir); err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("lstat durable attachment dir: %w", err)
+		}
+		hashDirWasMissing = true
+	}
+	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
+		return "", err
+	}
+	if hashDirWasMissing {
+		if err := pack.SyncDir(baseDir); err != nil {
+			return "", fmt.Errorf("sync attachments base after creating hash directory: %w", err)
+		}
+	}
+	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
+	expectedSize := int64(len(att.Content))
+	if _, err := os.Lstat(fullPath); err == nil {
+		if err := validateExistingAttachmentFileDurable(fullPath, expectedSize, contentHash); err != nil {
+			return "", err
+		}
+		if err := pack.SyncDir(hashDir); err != nil {
+			return "", fmt.Errorf("sync durable attachment parent: %w", err)
+		}
+		return storagePath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("lstat attachment file: %w", err)
+	}
+	if err := writeAtomicFile(fullPath, att.Content, expectedSize, contentHash); err != nil {
+		return "", err
+	}
+	if err := validateExistingAttachmentFileDurable(fullPath, expectedSize, contentHash); err != nil {
+		return "", err
+	}
+	if err := pack.SyncDir(hashDir); err != nil {
+		return "", fmt.Errorf("sync durable attachment parent: %w", err)
 	}
 	return storagePath, nil
 }
@@ -370,6 +439,36 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 }
 
 func validateExistingAttachmentFile(fullPath string, expectedSize int64, expectedHash string) error {
+	f, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	return nil
+}
+
+func validateExistingAttachmentFileDurable(fullPath string, expectedSize int64, expectedHash string) error {
+	f, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash)
+	if err != nil {
+		return err
+	}
+	if err := syncDurableAttachmentFile(f); err != nil {
+		return errors.Join(
+			fmt.Errorf("sync durable attachment file: %w", err),
+			closeDurableAttachmentFile(f),
+		)
+	}
+	return closeDurableAttachmentFile(f)
+}
+
+func closeDurableAttachmentFile(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close durable attachment file: %w", err)
+	}
+	return nil
+}
+
+func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHash string) (*os.File, error) {
 	var f *os.File
 	var err error
 	const maxRetries = 5
@@ -379,41 +478,48 @@ func validateExistingAttachmentFile(fullPath string, expectedSize int64, expecte
 			break
 		}
 		if runtime.GOOS != "windows" || attempt == maxRetries-1 {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"open attachment file for validation: %w", err,
 			)
 		}
 		time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
 	}
-	defer func() { _ = f.Close() }()
+	keepOpen := false
+	defer func() {
+		if !keepOpen {
+			_ = f.Close()
+		}
+	}()
 
 	st, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("stat attachment file: %w", err)
+		return nil, fmt.Errorf("stat attachment file: %w", err)
 	}
 	if !st.Mode().IsRegular() {
-		return fmt.Errorf("attachment file %q is not a regular file", fullPath)
+		return nil, fmt.Errorf("attachment file %q is not a regular file", fullPath)
 	}
 	if st.Size() != expectedSize {
-		return fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
+		return nil, fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
 	}
 
 	key := fmt.Sprintf("%s\x00%d\x00%s", fullPath, expectedSize, expectedHash)
 	modTime := st.ModTime().UnixNano()
 	if cached, ok := validatedAttachmentFiles.Load(key); ok {
 		if ts, ok := cached.(int64); ok && ts == modTime {
-			return nil
+			keepOpen = true
+			return f, nil
 		}
 	}
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("hash attachment file: %w", err)
+		return nil, fmt.Errorf("hash attachment file: %w", err)
 	}
 	gotHash := hex.EncodeToString(h.Sum(nil))
 	if gotHash != expectedHash {
-		return fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
+		return nil, fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
 	}
 	validatedAttachmentFiles.Store(key, modTime)
-	return nil
+	keepOpen = true
+	return f, nil
 }

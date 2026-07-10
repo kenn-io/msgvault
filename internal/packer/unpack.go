@@ -30,6 +30,10 @@ var openUnpackPack = func(path string) (unpackPackReader, error) {
 	return blobstore.OpenMaintenancePack(path)
 }
 
+// storeRestoredAttachment is a narrow test seam around the durable loose-file
+// authority boundary. Production always calls the export durable store.
+var storeRestoredAttachment = export.StoreAttachmentFileDurable
+
 // UnpackStats summarizes one unpack run.
 type UnpackStats struct {
 	PacksUnpacked  int   // packs restored and removed this run
@@ -92,7 +96,7 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 		return err
 	}
 	if len(liveEntries) == 0 {
-		return dropDeadPack(st, path, packID)
+		return dropDeadPack(ctx, st, path, packID)
 	}
 	r, err := openUnpackPack(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -203,31 +207,27 @@ func closeUnpackPack(r unpackPackReader, packID string) error {
 	return nil
 }
 
-// restoreBlob writes one blob to its canonical loose path via the export
-// store (atomic write, dedup, hash validation). StoreAttachmentFile skips
-// empty content, so zero-length blobs are written directly.
+// restoreBlob writes one blob to its canonical loose path through the durable
+// export store. It returns only after the final regular no-follow descriptor
+// and its parent directory have been synced, including for an empty blob.
 func restoreBlob(attachmentsDir, hash string, data []byte) error {
 	normalized, err := normalizeBlobHash(hash)
 	if err != nil {
 		return fmt.Errorf("restore attachment with invalid hash %q: %w", hash, err)
 	}
 	hash = normalized.String()
-	if len(data) == 0 {
-		dir := filepath.Join(attachmentsDir, hash[:2])
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-		return os.WriteFile(filepath.Join(dir, hash), nil, 0o600)
-	}
 	att := &mime.Attachment{Content: data, ContentHash: hash}
-	_, err = export.StoreAttachmentFile(attachmentsDir, att)
+	_, err = storeRestoredAttachment(attachmentsDir, att)
 	return err
 }
 
 // dropDeadPack removes a zero-live pack without opening it. Dead packs may be
 // corrupt (for example after orphan rescue), and their footer entries must not
 // block downgrade or be resurrected as loose blobs.
-func dropDeadPack(st *store.Store, path, packID string) error {
+func dropDeadPack(ctx context.Context, st *store.Store, path, packID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove dead pack file %s: %w", path, err)
 	}

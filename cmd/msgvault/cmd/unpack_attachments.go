@@ -30,6 +30,10 @@ host or pass --local to select this machine's local archive intentionally.`,
 	},
 }
 
+// unpackAttachmentsAfterDaemonLock is a narrow command test barrier.
+// Production leaves it nil.
+var unpackAttachmentsAfterDaemonLock func()
+
 // refuseUnpackWithLiveDaemon rejects unpack while any responding daemon owns
 // the archive, on every backend. The SQLite write lock (taken next by
 // openWritableStoreAndInit) already guarantees exclusivity there, but
@@ -46,11 +50,23 @@ func refuseUnpackWithLiveDaemon(dataDir string) error {
 	return nil
 }
 
-func runUnpackAttachmentsLocal(cmd *cobra.Command) error {
+func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	if IsRemoteMode() {
 		return errors.New(
 			"unpack-attachments is local-only; run it on the archive host, " +
 				"or pass --local to select this machine's local archive intentionally")
+	}
+	daemonLock, err := tryAcquireDaemonOwnerLock(cfg.Data.DataDir)
+	if err != nil {
+		return fmt.Errorf("unpack-attachments: %w", err)
+	}
+	defer func() {
+		if err := daemonLock.Close(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
+	if unpackAttachmentsAfterDaemonLock != nil {
+		unpackAttachmentsAfterDaemonLock()
 	}
 	if err := refuseUnpackWithLiveDaemon(cfg.Data.DataDir); err != nil {
 		return err
