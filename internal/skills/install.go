@@ -108,8 +108,10 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 	return results, nil
 }
 
-// Uninstall removes every msgvault-* skill directory under root whose
-// SKILL.md contains Marker. Hand-authored files are left in place.
+// Uninstall removes every msgvault-* SKILL.md under root that contains
+// Marker. Hand-authored files are left in place, including user-added
+// supporting files next to a generated SKILL.md: the skill directory
+// itself is removed only when it is empty afterwards.
 func Uninstall(root string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(root, "msgvault-*", skillFileName))
 	if err != nil {
@@ -124,8 +126,19 @@ func Uninstall(root string) ([]string, error) {
 		if !strings.Contains(string(content), Marker) {
 			continue
 		}
+		if err := os.Remove(path); err != nil {
+			return removed, fmt.Errorf("remove skill %s: %w", path, err)
+		}
 		dir := filepath.Dir(path)
-		if err := os.RemoveAll(dir); err != nil {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return removed, fmt.Errorf("scan skill directory %s: %w", dir, err)
+		}
+		if len(entries) > 0 {
+			removed = append(removed, path)
+			continue
+		}
+		if err := os.Remove(dir); err != nil {
 			return removed, fmt.Errorf("remove skill directory %s: %w", dir, err)
 		}
 		removed = append(removed, dir)

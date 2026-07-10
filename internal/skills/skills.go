@@ -51,9 +51,13 @@ func Render(version string) ([]Skill, error) {
 		if err := tmpl.ExecuteTemplate(&buf, base, data); err != nil {
 			return nil, fmt.Errorf("render skill template %s: %w", base, err)
 		}
+		// Embedded templates carry the checkout's line endings; on
+		// Windows that can mean CRLF. Normalize so rendered skills are
+		// byte-identical on every platform.
+		content := strings.ReplaceAll(buf.String(), "\r\n", "\n")
 		out = append(out, Skill{
 			Name:    strings.TrimSuffix(base, ".md.tmpl"),
-			Content: buf.String(),
+			Content: content,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

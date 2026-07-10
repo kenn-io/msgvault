@@ -52,77 +52,107 @@ func testSkills() []Skill {
 }
 
 func TestInstall_FreshAndUpdate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 
 	results, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
-	require.Len(t, results, 2)
+	require.NoError(err)
+	require.Len(results, 2)
 	for _, r := range results {
-		assert.Equal(t, StatusInstalled, r.Status)
+		assert.Equal(StatusInstalled, r.Status)
 		content, err := os.ReadFile(r.Path)
-		require.NoError(t, err)
-		assert.Contains(t, string(content), Marker)
+		require.NoError(err)
+		assert.Contains(string(content), Marker)
 	}
 
 	// Re-install over marker-bearing files: updated, not skipped.
 	results, err = Install(root, testSkills(), false)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, r := range results {
-		assert.Equal(t, StatusUpdated, r.Status)
+		assert.Equal(StatusUpdated, r.Status)
 	}
 }
 
 func TestInstall_SkipsHandEditedUnlessForced(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	_, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	edited := filepath.Join(root, "msgvault-search", "SKILL.md")
-	require.NoError(t, os.WriteFile(edited, []byte("my custom skill\n"), 0o644))
+	require.NoError(os.WriteFile(edited, []byte("my custom skill\n"), 0o644))
 
 	results, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
+	require.NoError(err)
 	byName := map[string]InstallResult{}
 	for _, r := range results {
 		byName[r.Skill] = r
 	}
-	assert.Equal(t, StatusSkipped, byName["msgvault-search"].Status)
-	assert.Equal(t, StatusUpdated, byName["msgvault-analytics"].Status)
+	assert.Equal(StatusSkipped, byName["msgvault-search"].Status)
+	assert.Equal(StatusUpdated, byName["msgvault-analytics"].Status)
 	content, err := os.ReadFile(edited)
-	require.NoError(t, err)
-	assert.Equal(t, "my custom skill\n", string(content),
+	require.NoError(err)
+	assert.Equal("my custom skill\n", string(content),
 		"hand-edited file must not be touched")
 
 	results, err = Install(root, testSkills(), true)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, r := range results {
-		assert.Equal(t, StatusUpdated, r.Status, "--force overwrites")
+		assert.Equal(StatusUpdated, r.Status, "--force overwrites")
 	}
 }
 
 func TestUninstall_RemovesOnlyMarkerDirs(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	_, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	// A hand-authored skill that happens to match the name prefix.
 	custom := filepath.Join(root, "msgvault-custom")
-	require.NoError(t, os.MkdirAll(custom, 0o755))
-	require.NoError(t, os.WriteFile(
+	require.NoError(os.MkdirAll(custom, 0o755))
+	require.NoError(os.WriteFile(
 		filepath.Join(custom, "SKILL.md"), []byte("mine\n"), 0o644))
 	// An unrelated skill directory.
 	other := filepath.Join(root, "other-skill")
-	require.NoError(t, os.MkdirAll(other, 0o755))
-	require.NoError(t, os.WriteFile(
+	require.NoError(os.MkdirAll(other, 0o755))
+	require.NoError(os.WriteFile(
 		filepath.Join(other, "SKILL.md"), []byte("other\n"), 0o644))
 
 	removed, err := Uninstall(root)
-	require.NoError(t, err)
-	assert.Len(t, removed, 2)
-	assert.NoDirExists(t, filepath.Join(root, "msgvault-search"))
-	assert.NoDirExists(t, filepath.Join(root, "msgvault-analytics"))
-	assert.DirExists(t, custom, "non-marker msgvault-* dir kept")
-	assert.DirExists(t, other, "unrelated skill kept")
+	require.NoError(err)
+	assert.Len(removed, 2)
+	assert.NoDirExists(filepath.Join(root, "msgvault-search"))
+	assert.NoDirExists(filepath.Join(root, "msgvault-analytics"))
+	assert.DirExists(custom, "non-marker msgvault-* dir kept")
+	assert.DirExists(other, "unrelated skill kept")
+}
+
+func TestUninstall_PreservesUserFiles(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	root := t.TempDir()
+	_, err := Install(root, testSkills(), false)
+	require.NoError(err)
+
+	// User adds a supporting file next to the generated SKILL.md.
+	searchDir := filepath.Join(root, "msgvault-search")
+	userFile := filepath.Join(searchDir, "notes.md")
+	require.NoError(os.WriteFile(userFile, []byte("my notes\n"), 0o644))
+
+	removed, err := Uninstall(root)
+	require.NoError(err)
+	assert.NoFileExists(filepath.Join(searchDir, "SKILL.md"),
+		"generated SKILL.md removed")
+	assert.FileExists(userFile, "user-added file preserved")
+	assert.DirExists(searchDir, "dir with user files kept")
+	assert.NoDirExists(filepath.Join(root, "msgvault-analytics"),
+		"empty skill dir fully removed")
+	assert.Contains(removed, filepath.Join(searchDir, "SKILL.md"))
+	assert.Contains(removed, filepath.Join(root, "msgvault-analytics"))
 }
 
 func TestUninstall_EmptyRoot(t *testing.T) {

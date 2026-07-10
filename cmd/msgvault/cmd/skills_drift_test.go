@@ -110,6 +110,8 @@ func validateFlagToken(cmd *cobra.Command, token, raw string) error {
 }
 
 func TestExtractSkillInvocations(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	content := "prose with `msgvault stats --json` inline\n" +
 		"```bash\n" +
 		"msgvault search from:alice@example.com --json |\n" +
@@ -118,10 +120,10 @@ func TestExtractSkillInvocations(t *testing.T) {
 		"```\n" +
 		"msgvault outside-fence-not-code is ignored\n"
 	got := extractSkillInvocations(content)
-	require.Len(t, got, 3)
-	assert.Equal(t, []string{"stats", "--json"}, got[0].Tokens)
-	assert.Equal(t, "search", got[1].Tokens[0])
-	assert.Equal(t, "show-message", got[2].Tokens[0])
+	require.Len(got, 3)
+	assert.Equal([]string{"stats", "--json"}, got[0].Tokens)
+	assert.Equal("search", got[1].Tokens[0])
+	assert.Equal("show-message", got[2].Tokens[0])
 }
 
 func TestValidateSkillInvocation_CatchesDrift(t *testing.T) {
@@ -147,17 +149,19 @@ func TestValidateSkillInvocation_CatchesDrift(t *testing.T) {
 // TestSkillsMatchCLI is the drift guard: every msgvault invocation in
 // every rendered skill must resolve against the real command tree.
 func TestSkillsMatchCLI(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	rendered, err := skills.Render("test")
-	require.NoError(t, err)
-	require.NotEmpty(t, rendered)
+	require.NoError(err)
+	require.NotEmpty(rendered)
 	total := 0
 	for _, sk := range rendered {
 		invocations := extractSkillInvocations(sk.Content)
-		assert.NotEmpty(t, invocations,
+		assert.NotEmpty(invocations,
 			"skill %s should contain msgvault examples", sk.Name)
 		for _, inv := range invocations {
 			//nolint:testifylint // guarded assert+continue: report every invocation, not just the first
-			assert.NoError(t, validateSkillInvocation(rootCmd, inv),
+			assert.NoError(validateSkillInvocation(rootCmd, inv),
 				"skill %s", sk.Name)
 			total++
 		}
