@@ -206,7 +206,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 	if !vectorAvailable {
 		return mcp.NewTool(ToolSearchMessages,
 			mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-				"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject/snippet only, not body). "+
+				"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
 				"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
 				"For full message body keyword search, use search_message_bodies instead. "+
 				"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more."),
@@ -222,7 +222,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 	}
 	return mcp.NewTool(ToolSearchMessages,
 		mcp.WithDescription("Search email metadata (subject, sender, recipients, labels, dates) using Gmail-like query syntax. "+
-			"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject/snippet only, not body). "+
+			"Supports from:, to:, subject:, label:, has:attachment, before:, after:, and free text (matched against subject, snippet, sender, and recipient metadata; never body). "+
 			"Gmail-only operators such as list: are rejected because msgvault does not index List-ID locally. "+
 			"For full message body keyword search, use search_message_bodies instead. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
@@ -250,7 +250,7 @@ func searchMessagesTool(vectorAvailable bool) mcp.Tool {
 
 func searchMessageBodiesTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchMessageBodies,
-		mcp.WithDescription("Search message bodies by keyword using full-text search (FTS). Returns messages whose body text contains the search terms, "+
+		mcp.WithDescription("Search message bodies by keyword using exact body-only full-text search (FTS). Returns messages whose body text contains the search terms, "+
 			"plus context_snippets — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term. "+
 			"Requires at least one free-text term; use search_messages for filter-only queries (from:, label:, etc.). "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+

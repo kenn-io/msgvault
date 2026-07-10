@@ -900,6 +900,7 @@ type DeepSearchResponse struct {
 	Messages []MessageSummary `json:"messages,omitempty" validate:"required"`
 	Offset   int64            `json:"offset"`
 	Query    string           `json:"query" validate:"required"`
+	Scope    *string          `json:"scope,omitempty"`
 }
 
 func (d DeepSearchResponse) Validate() error {

@@ -1299,12 +1299,11 @@ func (s *Store) backfillFTSRange(minID, maxID int64, progress func(done, total i
 // tsvector-overflow error; any OTHER per-row error aborts and is returned so a
 // systemic failure cannot be swallowed. Returns the number of rows indexed.
 //
-// A skipped row is NOT left with search_fts NULL: the codebase treats
-// search_fts IS NULL as the sole "needs backfill" signal (FTSNeedsBackfill /
-// idx_messages_search_fts_null), so leaving a permanently-unindexable row NULL
-// would make backfill re-run forever, re-hitting the same overflow each time.
-// Instead the row is marked with a non-NULL empty tsvector: it drops out of the
-// needs-backfill probe and the partial NULL index, and the row is correctly
+// A skipped row is NOT left with search_fts NULL or an obsolete
+// indexing_version: either state means "needs backfill", so leaving a
+// permanently-unindexable row stale would make backfill re-run forever,
+// re-hitting the same overflow each time. Instead the row is marked with a
+// non-NULL empty tsvector at the current layout version; the row is correctly
 // unsearchable (an empty vector matches nothing). This skip write is PG-only —
 // the overflow error is PG-specific (IsFTSValueTooLargeError is always false on
 // SQLite), so the PG-syntax empty-tsvector literal is safe.
@@ -1323,7 +1322,8 @@ func (s *Store) backfillFTSRowByRow(fromID, toID int64) (int64, error) {
 				slog.Int64("message_id", id),
 				slog.Any("error", err))
 			if _, uerr := s.db.Exec(
-				`UPDATE messages SET search_fts = ''::tsvector WHERE id = ?`, id,
+				`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`,
+				CurrentFTSIndexingVersion, id,
 			); uerr != nil {
 				return indexed, fmt.Errorf("mark FTS-overflow row %d terminal: %w", id, uerr)
 			}

@@ -32,6 +32,7 @@ type Engine struct {
 // Compile-time check that Engine implements query.Engine.
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
+var _ query.MessageBodySearcher = (*Engine)(nil)
 
 // NewEngine creates a new daemon-backed query engine.
 func NewEngine(cfg Config) (*Engine, error) {
@@ -762,6 +763,33 @@ func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int)
 	})
 	if err != nil {
 		return nil, err
+	}
+	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
+}
+
+// SearchMessageBodies requests the daemon's exact body-only search scope and
+// requires the response to echo that scope. Requiring the echo fails closed
+// against older daemons that ignore the additive query parameter and would
+// otherwise return generic composite-search false positives.
+func (e *Engine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
+	if q == nil || len(q.TextTerms) == 0 {
+		return nil, errors.New("message body search requires at least one free-text term")
+	}
+	queryStr := buildSearchQueryString(q)
+	queryParams, err := deepSearchQuery(queryStr, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	queryParams.Scope = optionalString("body")
+
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.DeepSearchResp, error) {
+		return client.DeepSearchWithResponse(ctx, &generated.DeepSearchRequestOptions{Query: queryParams})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200.Scope == nil || *resp.JSON200.Scope != "body" {
+		return nil, errors.New("daemon did not confirm body-only search scope; upgrade the daemon to API schema 1.3.0 or newer")
 	}
 	return messageSummariesFromGenerated(resp.JSON200.Messages), nil
 }

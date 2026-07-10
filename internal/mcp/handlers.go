@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -21,8 +22,11 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -432,7 +436,11 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError("search_message_bodies requires at least one free-text term; use search_messages for filter-only queries"), nil
 	}
 
-	results, err := h.engine.Search(ctx, q, limit+1, offset)
+	bodySearcher, ok := h.engine.(query.MessageBodySearcher)
+	if !ok {
+		return mcp.NewToolResultError("search_message_bodies is unavailable: the query engine does not support exact body-only search"), nil
+	}
+	results, err := bodySearcher.SearchMessageBodies(ctx, q, limit+1, offset)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
@@ -446,21 +454,32 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 	for _, r := range results {
 		item := searchMessageItem{MessageSummary: r}
 		msg, err := h.engine.GetMessage(ctx, r.ID)
-		if err == nil && msg != nil {
-			snippets := extractContextChar(msg.BodyText, q.TextTerms, searchContextChars)
-			if len(snippets) > maxContextSnippets {
-				item.ContextSnippetsTruncated = true
-				snippets = snippets[:maxContextSnippets]
-			}
-			item.ContextSnippets = snippets
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("body context unavailable for message %d: %v", r.ID, err)), nil
 		}
+		if msg == nil {
+			return mcp.NewToolResultError(fmt.Sprintf("body context unavailable for message %d: message not found", r.ID)), nil
+		}
+		if msg.BodyText == "" {
+			return mcp.NewToolResultError(fmt.Sprintf("body context unavailable for message %d: stored body is empty", r.ID)), nil
+		}
+		snippets := extractContextChar(msg.BodyText, q.TextTerms, searchContextChars)
+		if len(snippets) == 0 {
+			// The backend already proved this is an exact body-index hit. If its
+			// tokenizer ever diverges from the context matcher, preserve the
+			// every-hit-context contract with a bounded body prefix.
+			snippets = []string{bodyByteSlice(msg.BodyText, 0, min(len(msg.BodyText), searchContextChars))}
+		}
+		if len(snippets) > maxContextSnippets {
+			item.ContextSnippetsTruncated = true
+			snippets = snippets[:maxContextSnippets]
+		}
+		item.ContextSnippets = snippets
 		data = append(data, item)
 	}
 
 	return jsonResult(newPaginatedResponseNoTotal(data, offset, hasMore))
 }
-
-// hybridScoreBreakdown exposes fused-score components for debugging.
 
 // hybridScoreBreakdown exposes fused-score components for debugging.
 // All score fields are pointer-typed so "not present in this signal"
@@ -684,7 +703,7 @@ func (h *handlers) searchMessagesHybridViaSearcher(
 	if freeText == "" {
 		return mcp.NewToolResultError(
 			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; use mode=fts for filter-only queries",
+				" requires at least one free-text term; omit mode for metadata-only filter queries",
 		), nil
 	}
 
@@ -1048,37 +1067,99 @@ func lineNumberAt(body string, byteOffset int) int {
 	return 1 + strings.Count(body[:byteOffset], "\n")
 }
 
+type contextLexeme struct {
+	start      int
+	end        int
+	normalized string
+}
+
+var contextCaseFolder = cases.Fold()
+
+// normalizeContextLexeme applies the case and diacritic folding needed to
+// mirror SQLite FTS5's unicode61 remove_diacritics=1 matching closely enough
+// to locate an indexed token in the original body.
+func normalizeContextLexeme(s string) string {
+	decomposed := norm.NFD.String(s)
+	var folded strings.Builder
+	folded.Grow(len(decomposed))
+	for _, r := range decomposed {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		folded.WriteRune(r)
+	}
+	return contextCaseFolder.String(folded.String())
+}
+
+// contextBodyLexemes tokenizes body text on runes outside letters/digits and
+// attached nonspacing marks, retaining original UTF-8 byte offsets.
+func contextBodyLexemes(body string) []contextLexeme {
+	var lexemes []contextLexeme
+	start := -1
+	flush := func(end int) {
+		if start < 0 {
+			return
+		}
+		normalized := normalizeContextLexeme(body[start:end])
+		if normalized != "" {
+			lexemes = append(lexemes, contextLexeme{
+				start: start, end: end, normalized: normalized,
+			})
+		}
+		start = -1
+	}
+
+	for byteOffset, r := range body {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if start < 0 {
+				start = byteOffset
+			}
+		case start >= 0 && unicode.Is(unicode.Mn, r):
+			// Nonspacing marks continue an existing token so decomposed text stays
+			// intact for normalization. A leading mark, or a spacing/enclosing
+			// mark, reaches the default branch and never starts a lexeme by itself.
+		default:
+			flush(byteOffset)
+		}
+	}
+	flush(len(body))
+	return lexemes
+}
+
 // extractContextChar returns up to contextChars of body text centered on each
-// case-insensitive term match, merging overlapping windows.
+// normalized FTS token-prefix match, merging overlapping windows.
 func extractContextChar(body string, terms []string, contextChars int) []string {
 	if body == "" || len(terms) == 0 || contextChars <= 0 {
 		return nil
 	}
 
-	lowerBody := strings.ToLower(body)
+	var queryLexemes []string
+	for _, term := range terms {
+		for _, lexeme := range sqldialect.EscapeTSQueryTerm(term) {
+			normalized := normalizeContextLexeme(lexeme)
+			if normalized != "" {
+				queryLexemes = append(queryLexemes, normalized)
+			}
+		}
+	}
+	if len(queryLexemes) == 0 {
+		return nil
+	}
+	bodyLexemes := contextBodyLexemes(body)
 
 	type span struct {
 		start, end int
 	}
 	var spans []span
 
-	for _, term := range terms {
-		if len(term) < 2 {
-			continue
-		}
-		lowerTerm := strings.ToLower(term)
-		termLen := len(term)
-		searchFrom := 0
-		for {
-			idx := strings.Index(lowerBody[searchFrom:], lowerTerm)
-			if idx < 0 {
-				break
+	for _, queryLexeme := range queryLexemes {
+		for _, bodyLexeme := range bodyLexemes {
+			if strings.HasPrefix(bodyLexeme.normalized, queryLexeme) {
+				matchLen := min(bodyLexeme.end-bodyLexeme.start, contextChars)
+				start, end := contextWindow(len(body), bodyLexeme.start, matchLen, contextChars)
+				spans = append(spans, span{start: start, end: end})
 			}
-			pos := searchFrom + idx
-			searchFrom = pos + 1
-
-			start, end := contextWindow(len(body), pos, termLen, contextChars)
-			spans = append(spans, span{start: start, end: end})
 		}
 	}
 
@@ -1096,8 +1177,9 @@ func extractContextChar(body string, terms []string, contextChars int) []string 
 	merged := []span{spans[0]}
 	for _, s := range spans[1:] {
 		last := &merged[len(merged)-1]
-		if s.start <= last.end {
-			last.end = max(last.end, s.end)
+		unionEnd := max(last.end, s.end)
+		if s.start <= last.end && unionEnd-last.start <= contextChars {
+			last.end = unionEnd
 			continue
 		}
 		merged = append(merged, s)

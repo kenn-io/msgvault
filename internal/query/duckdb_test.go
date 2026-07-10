@@ -1126,8 +1126,8 @@ func TestDuckDBEngine_SearchFast(t *testing.T) {
 		{"CaseInsensitive_Lower", "hello", MessageFilter{}, []string{"Hello World", "Re: Hello"}},
 		{"CaseInsensitive_Upper", "HELLO", MessageFilter{}, []string{"Hello World", "Re: Hello"}},
 		{"CaseInsensitive_Mixed", "HeLLo", MessageFilter{}, []string{"Hello World", "Re: Hello"}},
-		{"CaseInsensitive_Sender_Upper", "ALICE", MessageFilter{}, []string{"Hello World", "Re: Hello", "Follow up"}},
-		{"CaseInsensitive_Sender_Lower", "alice", MessageFilter{}, []string{"Hello World", "Re: Hello", "Follow up"}},
+		{"CaseInsensitive_Participant_Upper", "ALICE", MessageFilter{}, []string{"Hello World", "Re: Hello", "Follow up", "Question", "Final"}},
+		{"CaseInsensitive_Participant_Lower", "alice", MessageFilter{}, []string{"Hello World", "Re: Hello", "Follow up", "Question", "Final"}},
 	}
 
 	for _, tt := range tests {

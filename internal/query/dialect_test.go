@@ -89,3 +89,17 @@ func TestSQLiteBuildFTSTerm(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildFTSBodyTermScopesExactBodyField(t *testing.T) {
+	t.Run("PostgreSQL weight D", func(t *testing.T) {
+		expr, arg := (PostgreSQLQueryDialect{}).BuildFTSBodyTerm([]string{"foo-bar", "baz"})
+		assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", expr)
+		assert.Equal(t, "foo:*D & bar:*D & baz:*D", arg)
+	})
+
+	t.Run("SQLite body column", func(t *testing.T) {
+		expr, arg := (SQLiteQueryDialect{}).BuildFTSBodyTerm([]string{"foo", "bar"})
+		assert.Equal(t, "messages_fts MATCH ?", expr)
+		assert.Equal(t, `body : ("foo"* "bar"*)`, arg)
+	})
+}

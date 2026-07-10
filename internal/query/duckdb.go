@@ -1981,6 +1981,16 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	return results, nil
 }
 
+// SearchMessageBodies delegates to the direct SQLite engine so FTS5 can scope
+// MATCH to the indexed body column. The sqlite_scanner fallback is
+// intentionally unsupported: exact body search must never scan message_bodies.
+func (e *DuckDBEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
+	if e.sqliteEngine == nil {
+		return nil, fmt.Errorf("%w: a direct SQLite engine is required; reopen the query engine with a SQLite connection", ErrMessageBodySearchUnavailable)
+	}
+	return e.sqliteEngine.SearchMessageBodies(ctx, q, limit, offset)
+}
+
 // SearchByDomains returns message summaries for the given sender domains.
 // It delegates to SQLite because domain search needs JOINs across
 // participants and message_recipients that the Parquet cache doesn't carry.
@@ -2311,7 +2321,7 @@ type ParquetSyncState struct {
 
 // SearchFast searches message metadata in Parquet files (no body text).
 // This is much faster than FTS search for large archives.
-// Searches: subject, sender email/name (case-insensitive).
+// Searches subject, snippet, and sender/recipient metadata (case-insensitive).
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
@@ -2879,7 +2889,10 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 		args = append(args, filter.TimeRange.Period)
 	}
 
-	// Text search terms - search subject, snippet, and from fields (fast path).
+	// Text search terms - search subject, snippet, and every participant row
+	// without consulting message bodies (fast path). The EXISTS branch includes
+	// all from rows as well as recipients because msg_sender retains only one
+	// display sender for result hydration.
 	// Uses ILIKE for performance on Parquet scans.
 	if len(q.TextTerms) > 0 {
 		for _, term := range q.TextTerms {
@@ -2889,9 +2902,23 @@ func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilt
 				COALESCE(msg.snippet, '') ILIKE ? ESCAPE '\' OR
 				COALESCE(ms.from_email, ds.from_email, '') ILIKE ? ESCAPE '\' OR
 				COALESCE(ms.from_name, ds.from_name, '') ILIKE ? ESCAPE '\' OR
-				COALESCE(ms.from_phone, ds.from_phone, '') ILIKE ? ESCAPE '\'
+				COALESCE(ms.from_phone, ds.from_phone, '') ILIKE ? ESCAPE '\' OR
+				EXISTS (
+					SELECT 1
+					FROM mr mr_meta
+					JOIN p p_meta ON p_meta.id = mr_meta.participant_id
+					WHERE mr_meta.message_id = msg.id
+					  AND (
+						COALESCE(p_meta.email_address, '') ILIKE ? ESCAPE '\' OR
+						COALESCE(p_meta.display_name, '') ILIKE ? ESCAPE '\' OR
+						COALESCE(p_meta.phone_number, '') ILIKE ? ESCAPE '\' OR
+						COALESCE(mr_meta.display_name, '') ILIKE ? ESCAPE '\'
+					  )
+				)
 			)`)
-			args = append(args, termPattern, termPattern, termPattern, termPattern, termPattern)
+			for range 9 {
+				args = append(args, termPattern)
+			}
 		}
 	}
 

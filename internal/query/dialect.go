@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/sqldialect"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Dialect abstracts SQL generation differences for SQLite vs PostgreSQL.
@@ -68,6 +69,17 @@ type Dialect interface {
 	// expression and a single argument string. Both SQLite FTS5 and PostgreSQL
 	// tsquery support prefix matching via dialect-appropriate syntax.
 	BuildFTSTerm(terms []string) (expr string, arg string)
+
+	// BuildFTSBodyTerm is the exact-body counterpart to BuildFTSTerm.
+	// SQLite scopes the FTS5 query to its body column; PostgreSQL restricts
+	// tsquery lexemes to weight D in the versioned search_fts layout.
+	BuildFTSBodyTerm(terms []string) (expr string, arg string)
+
+	// FTSBodySearchReadinessSQL returns a query that yields true when the
+	// backend's body-search layout is ready, or "" when no version probe is
+	// needed. PostgreSQL uses messages.indexing_version; SQLite's FTS5 table
+	// has a durable body column and needs no separate version watermark.
+	FTSBodySearchReadinessSQL() string
 
 	// SanitizeFTSQuery converts a raw user search string to a form safe to
 	// pass to FTSSearchExpression. Returns "" if the result is empty after
@@ -130,6 +142,16 @@ func (SQLiteQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string)
 	}
 	return "messages_fts MATCH ?", strings.Join(ftsTerms, " ")
 }
+
+func (d SQLiteQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
+	expr, arg = d.BuildFTSTerm(terms)
+	if arg == "" {
+		return expr, arg
+	}
+	return expr, "body : (" + arg + ")"
+}
+
+func (SQLiteQueryDialect) FTSBodySearchReadinessSQL() string { return "" }
 
 // SanitizeFTSQuery strips FTS5 metacharacters from a single query string
 // and wraps it in quotes for literal phrase interpretation with prefix match.
@@ -223,6 +245,26 @@ func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg str
 		return "FALSE", ""
 	}
 	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(tsTerms, " & ")
+}
+
+func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
+	tsTerms := make([]string, 0, len(terms))
+	for _, term := range terms {
+		for _, lex := range sqldialect.EscapeTSQueryTerm(term) {
+			tsTerms = append(tsTerms, lex+":*D")
+		}
+	}
+	if len(tsTerms) == 0 {
+		return "FALSE", ""
+	}
+	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(tsTerms, " & ")
+}
+
+func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
+	return fmt.Sprintf(
+		"SELECT NOT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
+		store.CurrentFTSIndexingVersion,
+	)
 }
 
 // SanitizeFTSQuery builds a tsquery arg from a single user string using the

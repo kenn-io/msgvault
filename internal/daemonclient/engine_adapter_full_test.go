@@ -908,6 +908,7 @@ func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
 
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
+		assert.Empty(r.URL.Query().Get("scope"), "generic Search must omit scope")
 		gotQuery := r.URL.Query().Get("q")
 		assert.Contains(gotQuery, "lunch", "q should preserve text terms")
 		assert.Contains(gotQuery, "message_type:sms", "q should preserve message type filters")
@@ -958,6 +959,73 @@ func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("alice@example.com", msgs[0].FromEmail)
 	assert.Equal("Alice", msgs[0].FromName)
 	assert.Equal("sms", msgs[0].MessageType)
+}
+
+func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
+	assert := assert.New(t)
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/search/deep", r.URL.Path, "path")
+		assert.Equal("body", r.URL.Query().Get("scope"), "scope")
+		assert.Equal("bodyneedle", r.URL.Query().Get("q"), "q")
+		assert.Equal("7", r.URL.Query().Get("source_id"), "source_id")
+		writeJSONResponse(t, w, map[string]any{
+			"query":    "bodyneedle",
+			"scope":    "body",
+			"count":    1,
+			"has_more": false,
+			"offset":   2,
+			"limit":    5,
+			"messages": []map[string]any{{
+				"id":         42,
+				"subject":    "body hit",
+				"from":       "sender@example.com",
+				"sent_at":    "2024-01-15T10:30:00Z",
+				"snippet":    "preview",
+				"labels":     []string{},
+				"size_bytes": 100,
+			}},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	messages, err := engine.SearchMessageBodies(context.Background(), &search.Query{
+		TextTerms:  []string{"bodyneedle"},
+		AccountIDs: []int64{7},
+	}, 5, 2)
+	require.NoError(t, err, "SearchMessageBodies")
+	require.Len(t, messages, 1)
+	assert.Equal(int64(42), messages[0].ID, "body hit ID")
+}
+
+func TestEngineSearchMessageBodiesFailsClosedWithoutScopeEcho(t *testing.T) {
+	assert := assert.New(t)
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("body", r.URL.Query().Get("scope"), "scope is still sent to old daemon")
+		writeJSONResponse(t, w, map[string]any{
+			"query":    "bodyneedle",
+			"count":    1,
+			"has_more": false,
+			"offset":   0,
+			"limit":    5,
+			"messages": []map[string]any{{
+				"id":         99,
+				"subject":    "generic false positive",
+				"from":       "sender@example.com",
+				"sent_at":    "2024-01-15T10:30:00Z",
+				"snippet":    "preview",
+				"labels":     []string{},
+				"size_bytes": 100,
+			}},
+		})
+	})
+	engine := NewEngineAdapter(store)
+
+	messages, err := engine.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"bodyneedle"}}, 5, 0)
+	require.Error(t, err, "old daemon must not produce generic false positives")
+	assert.Nil(messages, "unconfirmed results must be discarded")
+	assert.Contains(err.Error(), "did not confirm body-only search scope")
+	assert.Contains(err.Error(), "upgrade")
 }
 
 func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {

@@ -171,9 +171,10 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 		`UPDATE messages SET search_fts =
 			setweight(to_tsvector('simple', LEFT(COALESCE($2, ''), `+charCap+`)), 'A') ||
 			setweight(to_tsvector('simple', LEFT(COALESCE($4, ''), `+charCap+`)), 'B') ||
-			to_tsvector('simple', LEFT(COALESCE($3, ''), `+charCap+`)) ||
-			to_tsvector('simple', LEFT(COALESCE($5, ''), `+charCap+`)) ||
-			to_tsvector('simple', LEFT(COALESCE($6, ''), `+charCap+`))
+			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), `+charCap+`)), 'C') ||
+			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), `+charCap+`)), 'C') ||
+			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), `+charCap+`)), 'D'),
+			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		WHERE id = $1`,
 		doc.MessageID, subject, body,
 		fromAddr, toAddrs, ccAddrs,
@@ -191,7 +192,7 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 func (d *PostgreSQLDialect) FTSSearchClause() (join, where, orderBy string, orderArgCount int) {
 	return "",
 		"m.search_fts @@ to_tsquery('simple', ?)",
-		"ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC",
+		"ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC",
 		1
 }
 
@@ -207,7 +208,6 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `UPDATE messages m SET search_fts =
 		setweight(to_tsvector('simple', LEFT(COALESCE(m.subject, ''), ` + charCap + `)), 'A') ||
-		to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)) ||
 		setweight(to_tsvector('simple', LEFT(COALESCE(
 			CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
@@ -215,8 +215,10 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 			(SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
 			''
 		), ` + charCap + `)), 'B') ||
-		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)) ||
-		to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `))
+		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'to'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(COALESCE((SELECT STRING_AGG(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'cc'), ''), ` + charCap + `)), 'C') ||
+		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
+		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
 	FROM (
 		SELECT m2.id, mb.body_text
 		FROM messages m2
@@ -234,29 +236,35 @@ func (d *PostgreSQLDialect) FTSAvailable(db *sql.DB) bool {
 	return err == nil && count > 0
 }
 
-// FTSNeedsBackfill reports whether the tsvector column needs population.
-// Probes for the existence of any NULL search_fts row so an interrupted
-// backfill that leaves a low-id row NULL (and later inserts continue normally)
-// still flags the gap — the previous max-vs-max comparison missed that case.
+func postgresFTSNeedsBackfillSQL() string {
+	return fmt.Sprintf(
+		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
+		CurrentFTSIndexingVersion,
+	)
+}
+
+// FTSNeedsBackfill reports whether the tsvector column needs population or
+// uses an obsolete field-weight layout. It probes for a NULL search_fts or an
+// indexing_version other than CurrentFTSIndexingVersion, so both interrupted
+// backfills and durable layout migrations remain visible.
 //
 // Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
 // `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message
-// on each startup. EXISTS short-circuits at the first NULL row. The partial
-// btree index idx_messages_search_fts_null (created by EnsureFTSIndex) makes
-// even the false case index-served and self-pruning as backfill completes.
+// on each startup. EXISTS short-circuits at the first NULL row. The versioned
+// partial btree index created by EnsureFTSIndex makes even the false
+// case index-served and self-pruning as backfill completes.
 func (d *PostgreSQLDialect) FTSNeedsBackfill(db *sql.DB) bool {
 	var exists bool
 	if err := db.QueryRow(
-		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL)",
+		postgresFTSNeedsBackfillSQL(),
 	).Scan(&exists); err != nil {
 		return false
 	}
 	return exists
 }
 
-// FTSNeedsBackfillQuick delegates to FTSNeedsBackfill: the EXISTS probe is
-// already index-served by idx_messages_search_fts_null, so the exact check
-// is as cheap as any approximation would be.
+// FTSNeedsBackfillQuick delegates to FTSNeedsBackfill: the versioned stale-row
+// index makes the exact EXISTS probe as cheap as any approximation would be.
 func (d *PostgreSQLDialect) FTSNeedsBackfillQuick(db *sql.DB) bool {
 	return d.FTSNeedsBackfill(db)
 }
@@ -352,14 +360,13 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	); err != nil {
 		return fmt.Errorf("create messages_search_fts_idx: %w", err)
 	}
-	// Partial btree index that serves the FTSNeedsBackfill probe (a GIN index
-	// on search_fts cannot answer an IS NULL predicate). It only indexes the
-	// rows still awaiting backfill, so it self-prunes to empty as backfill
-	// completes and stays tiny thereafter.
+	// Version the partial-index name as well as its predicate: IF NOT EXISTS
+	// cannot alter the legacy NULL-only index on upgraded databases.
+	staleIndexName := fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion)
 	if _, err := q.Exec(
-		"CREATE INDEX IF NOT EXISTS idx_messages_search_fts_null ON messages (id) WHERE search_fts IS NULL",
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", staleIndexName, CurrentFTSIndexingVersion),
 	); err != nil {
-		return fmt.Errorf("create idx_messages_search_fts_null: %w", err)
+		return fmt.Errorf("create %s: %w", staleIndexName, err)
 	}
 	return nil
 }

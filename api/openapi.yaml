@@ -1118,6 +1118,8 @@ components:
           type: integer
         query:
           type: string
+        scope:
+          type: string
       required:
         - query
         - messages
@@ -2389,7 +2391,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 1.2.0
+  version: 1.3.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -4654,6 +4656,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: "Exact search scope: body; omit for composite full-text search"
+          in: query
+          name: scope
+          schema:
+            type: string
         - description: Sender email/address filter
           in: query
           name: sender
@@ -4773,7 +4780,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Run deep aggregate search
+      summary: Run full-text message search
       tags:
         - API
   /api/v1/search/domains:

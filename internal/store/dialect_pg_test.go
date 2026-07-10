@@ -1,9 +1,12 @@
 package store
 
 import (
+	"database/sql"
+	"database/sql/driver"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostgreSQLDialect_Rebind(t *testing.T) {
@@ -102,8 +105,73 @@ func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	join, where, orderBy, orderArgCount := d.FTSSearchClause()
 	assert.Empty(join, "join (PostgreSQL needs no JOIN)")
 	assert.Equal("m.search_fts @@ to_tsquery('simple', ?)", where)
-	assert.Equal("ts_rank(m.search_fts, to_tsquery('simple', ?)) DESC", orderBy)
+	assert.Equal("ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC", orderBy)
 	assert.Equal(1, orderArgCount, "orderArgCount (ts_rank needs query a second time)")
+}
+
+type recordingFTSQuerier struct {
+	query string
+	args  []any
+	all   []string
+}
+
+func (q *recordingFTSQuerier) Exec(query string, args ...any) (sql.Result, error) {
+	q.query = query
+	q.args = args
+	q.all = append(q.all, query)
+	return driver.RowsAffected(1), nil
+}
+
+func (*recordingFTSQuerier) QueryRow(string, ...any) *sql.Row {
+	panic("QueryRow is not used by FTSUpsert")
+}
+
+func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
+	assert := assert.New(t)
+	d := &PostgreSQLDialect{}
+	q := &recordingFTSQuerier{}
+	require.NoError(t, d.FTSUpsert(q, FTSDoc{
+		MessageID: 1,
+		Subject:   "subject",
+		Body:      "body",
+		FromAddr:  "from@example.com",
+		ToAddrs:   "to@example.com",
+		CcAddrs:   "cc@example.com",
+	}), "FTSUpsert")
+
+	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($2, '')", "subject vector")
+	assert.Contains(q.query, "), 'A')", "subject weight")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($4, '')", "sender vector")
+	assert.Contains(q.query, "), 'B')", "sender weight")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($5, '')", "to vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($6, '')", "cc vector")
+	assert.Contains(q.query, "), 'C')", "recipient weight")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($3, '')", "body vector")
+	assert.Contains(q.query, "), 'D')", "body weight")
+	assert.Contains(q.query, "indexing_version = 2", "layout version stamp")
+
+	backfill := d.FTSBackfillBatchSQL()
+	assert.Contains(backfill, "setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, '')", "backfill body vector")
+	assert.Contains(backfill, "), 'D')", "backfill body weight")
+	assert.Contains(backfill, "), 'C')", "backfill recipient weight")
+	assert.Contains(backfill, "indexing_version = 2", "backfill layout version stamp")
+}
+
+func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
+	sql := postgresFTSNeedsBackfillSQL()
+	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 2")
+	assert.NotContains(t, sql, "$1", "partial-index predicate must remain plan-time provable")
+}
+
+func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	d := &PostgreSQLDialect{}
+	q := &recordingFTSQuerier{}
+	require.NoError(d.EnsureFTSIndex(q), "EnsureFTSIndex")
+	require.Len(q.all, 2, "GIN and stale-row indexes")
+	assert.Contains(q.all[1], "idx_messages_search_fts_stale_v2")
+	assert.Contains(q.all[1], "search_fts IS NULL OR indexing_version IS DISTINCT FROM 2")
 }
 
 // TestPostgreSQLDialect_BuildFTSArg covers R3: the tsquery argument

@@ -26,7 +26,12 @@ import (
 // (list staged manifests by status), and DELETE /api/v1/deletions/{id}
 // (cancel a pending/in-progress manifest). Additive (minor bump): the
 // major-version compatibility gate stays at 1.
-const APISchemaVersion = "1.2.0"
+//
+// 1.3.0: GET /api/v1/search/deep accepts the additive scope=body parameter
+// and echoes that scope in successful body-only responses. Omitted scope keeps
+// the existing composite search contract. Additive (minor bump): the
+// major-version compatibility gate stays at 1.
+const APISchemaVersion = "1.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
