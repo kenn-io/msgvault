@@ -45,7 +45,7 @@ type Stats struct {
 	MappingsPruned         int   // unreferenced stale pack index rows removed
 	BlobsMissing           int   // enumerated blobs whose file was missing (left for backfill)
 	BlobsCorrupt           int   // files whose bytes did not match their recorded hash (skipped)
-	BlobsDeferredOversized int   // verified blobs left loose because buffering would exceed the maintenance ceiling
+	BlobsDeferredOversized int   // blobs left loose because buffering would exceed the maintenance ceiling
 	PacksDeferredOversized int   // orphan packs deferred because their container or an entry exceeds a maintenance ceiling
 	LooseSwept             int   // indexed loose files removed by the sweep
 	LooseOrphansRemoved    int   // unreferenced loose hash-named files removed
@@ -206,33 +206,30 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 			"pack", id, "path", path, "entries", len(entries), "limit", maintenancePackEntries)
 		return nil
 	}
-	for _, entry := range entries {
-		if entry.RawLen > uint64(maintenanceBlobBytes) || entry.StoredLen > uint64(maintenanceBlobBytes) { //nolint:gosec // maintenance limit is a positive fixed constant
-			_ = r.Close()
-			stats.PacksDeferredOversized++
-			slog.Warn("orphan pack entry exceeds maintenance ceiling; deferring whole pack",
-				"pack", id, "path", path, "hash", entry.ID.String(),
-				"rawSize", entry.RawLen, "storedSize", entry.StoredLen, "limit", maintenanceBlobBytes)
-			return nil
-		}
-	}
-	adoptable, rec, failed, err := collectAdoptable(ctx, st, existingBlobs, r, id, referenced)
+	collection, err := collectAdoptable(ctx, st, existingBlobs, r, id, referenced)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close orphan pack reader", "pack", id, "error", closeErr)
 	}
 	if err != nil {
 		return err
 	}
+	if collection.deferred {
+		stats.PacksDeferredOversized++
+		slog.Warn("orphan pack requires an oversized referenced blob; deferring whole pack",
+			"pack", id, "raw_bytes", collection.deferredRaw, "max_raw_bytes", maintenanceBlobBytes,
+			"withheld_entries", collection.withheld)
+		return nil
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if failed > 0 {
+	if collection.failed > 0 {
 		stats.PacksQuarantined++
 		slog.Error("orphan pack has damaged referenced recovery candidates; quarantining whole pack",
-			"pack", id, "failedEntries", failed, "withheldEntries", len(adoptable))
+			"pack", id, "failedEntries", collection.failed, "withheldEntries", len(collection.adoptable))
 		return nil
 	}
-	if len(adoptable) == 0 {
+	if len(collection.adoptable) == 0 {
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove redundant orphan pack %s: %w", id, err)
 		}
@@ -240,58 +237,92 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 		slog.Info("removed fully-redundant orphan pack", "pack", id)
 		return nil
 	}
-	if err := st.AdoptPackedBlobs(rec, adoptable); err != nil {
+	if err := st.AdoptPackedBlobs(collection.record, collection.adoptable); err != nil {
 		return fmt.Errorf("adopt orphan pack %s: %w", id, err)
 	}
 	stats.PacksAdopted++
-	slog.Info("adopted orphan pack", "pack", id, "entries", len(adoptable))
+	slog.Info("adopted orphan pack", "pack", id, "entries", len(collection.adoptable))
 	return nil
 }
 
-// collectAdoptable returns referenced orphan entries that verify and either
-// lack an index row or replace an unreadable packed copy. Unreferenced footer
-// entries are dead and are not read. The PackRecord retains full immutable
-// footer totals, while failed counts let the caller enforce all-or-nothing
-// adoption for referenced recovery candidates.
-func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced map[string]struct{}) ([]store.PackIndexEntry, store.PackRecord, int, error) {
+type orphanCollection struct {
+	adoptable   []store.PackIndexEntry
+	record      store.PackRecord
+	failed      int
+	deferredRaw uint64
+	withheld    int
+	deferred    bool
+}
+
+// collectAdoptable plans every referenced candidate before reading any of
+// them, then verifies candidates that lack a readable authoritative copy.
+// Unreferenced footer entries are dead and are never size-gated or read. The
+// PackRecord retains full immutable footer totals, while failure and deferral
+// state lets the caller enforce all-or-nothing adoption.
+func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced map[string]struct{}) (orphanCollection, error) {
 	entries := r.Entries()
-	rec := store.PackRecord{
+	result := orphanCollection{record: store.PackRecord{
 		PackID:     id,
 		EntryCount: int64(len(entries)),
 		CreatedAt:  time.Now().UTC(),
+	}}
+	referencedEntries := 0
+	for _, entry := range entries {
+		if _, live := referenced[entry.ID.String()]; live {
+			referencedEntries++
+		}
 	}
-	var adoptable []store.PackIndexEntry
-	var failed int
+	var candidates []pack.Entry
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
-			return nil, rec, failed, err
+			return result, err
 		}
-		rec.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
+		result.record.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
 		hash := e.ID.String()
 		if _, live := referenced[hash]; !live {
 			continue
 		}
 		existing, err := st.GetAttachmentPackEntry(hash)
 		if err != nil {
-			return nil, rec, failed, err
+			return result, err
 		}
 		if existing != nil && existing.PackID != id {
 			_, _, readErr := existingBlobs.ReadBounded(hash, maintenanceBlobBytes)
 			if readErr == nil {
 				continue
 			}
+			if errors.Is(readErr, blobstore.ErrBlobTooLarge) {
+				result.deferredRaw = max(uint64(existing.RawLen), uint64(existing.StoredLen)) //nolint:gosec // validated store metadata is nonnegative
+				result.withheld = referencedEntries
+				result.deferred = true
+				return result, nil
+			}
 			slog.Error("existing packed blob is unreadable; adopting orphan replacement",
 				"hash", hash, "existingPack", existing.PackID, "orphanPack", id, "error", readErr)
 		}
+		if e.RawLen > uint64(maintenanceBlobBytes) || e.StoredLen > uint64(maintenanceBlobBytes) { //nolint:gosec // maintenance limit is a positive fixed constant
+			result.deferredRaw = max(e.RawLen, e.StoredLen)
+			result.withheld = referencedEntries
+			result.deferred = true
+			return result, nil
+		}
+		candidates = append(candidates, e)
+	}
+
+	for _, e := range candidates {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		hash := e.ID.String()
 		if _, err := r.ReadBlob(hash, maintenanceBlobBytes); err != nil {
-			failed++
+			result.failed++
 			slog.Warn("orphan pack entry failed verification; not adopting",
 				"pack", id, "hash", hash, "error", err)
 			continue
 		}
-		adoptable = append(adoptable, indexEntry(id, e))
+		result.adoptable = append(result.adoptable, indexEntry(id, e))
 	}
-	return adoptable, rec, failed, nil
+	return result, nil
 }
 
 // dropDanglingPackRecords removes unusable attachment_packs records and their
@@ -441,11 +472,17 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 			continue
 		}
 		if info.Size() > maintenanceBlobBytes {
+			if isCanonicalLoosePath(attachmentsDir, b.Hash, full) {
+				sawOversized = true
+				slog.Warn("loose blob exceeds maintenance ceiling; leaving canonical copy loose",
+					"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
+				break
+			}
 			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, full); err != nil {
 				if errors.Is(err, errLooseHashMismatch) {
 					sawCorrupt = true
 					slog.Error("oversized loose blob candidate bytes do not match recorded hash",
-						"hash", b.Hash, "path", path, "size", info.Size(), "limit", maintenanceBlobBytes)
+						"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
 					continue
 				}
 				if errors.Is(err, fs.ErrNotExist) {
@@ -455,14 +492,20 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 				return nil, "", false, err
 			}
 			sawOversized = true
-			slog.Warn("loose blob exceeds maintenance ceiling; leaving verified canonical copy loose",
-				"hash", b.Hash, "path", path, "size", info.Size(), "limit", maintenanceBlobBytes)
+			slog.Warn("loose blob exceeds maintenance ceiling; leaving migrated canonical copy loose",
+				"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
 			break
 		}
-		data, _, err := readVerifiedLoose(full, b.Hash, maintenanceBlobBytes)
+		data, observedSize, err := readVerifiedLoose(full, b.Hash, maintenanceBlobBytes)
 		if errors.Is(err, blobstore.ErrBlobTooLarge) {
 			// The descriptor grew after stat. Handle it through the same streaming
 			// canonicalization path without allocating the new size.
+			if isCanonicalLoosePath(attachmentsDir, b.Hash, full) {
+				sawOversized = true
+				slog.Warn("loose blob grew beyond maintenance ceiling; leaving canonical copy loose",
+					"hash", b.Hash, "raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
+				break
+			}
 			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, full); err != nil {
 				if errors.Is(err, errLooseHashMismatch) {
 					sawCorrupt = true
@@ -471,6 +514,8 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 				return nil, "", false, err
 			}
 			sawOversized = true
+			slog.Warn("loose blob grew beyond maintenance ceiling; leaving migrated canonical copy loose",
+				"hash", b.Hash, "raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
 			break
 		}
 		if err != nil {

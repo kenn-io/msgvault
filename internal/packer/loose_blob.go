@@ -23,6 +23,12 @@ var (
 	// package tests exercise boundaries without allocating 64 MiB per case.
 	maintenanceBlobBytes   = int64(blobstore.MaxMaintenanceBlobBytes)
 	maintenancePackEntries = blobstore.MaxMaintenancePackEntries
+	// openLooseFile is a narrow test seam; production always uses os.Open.
+	openLooseFile = os.Open
+	// Publication seams let tests force filesystems without hard-link support
+	// and a destination race. Production always uses the os implementations.
+	linkLooseFile            = os.Link
+	createExclusiveLooseFile = os.OpenFile
 )
 
 var errLooseHashMismatch = errors.New("loose attachment bytes do not match hash")
@@ -47,7 +53,7 @@ func isCanonicalLoosePath(attachmentsDir, hash, path string) bool {
 // readVerifiedLoose buffers exactly the descriptor's stat-reported size,
 // bounded before allocation, and probes one more byte to detect growth.
 func readVerifiedLoose(path, hash string, limit int64) ([]byte, int64, error) {
-	f, err := os.Open(path)
+	f, err := openLooseFile(path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -89,7 +95,7 @@ func maintenanceHashBytes(data []byte) string {
 // after descriptor stats ensure a concurrently changed source is never
 // accepted as a canonical recovery copy.
 func verifyLooseStream(ctx context.Context, path, hash string) error {
-	f, err := os.Open(path)
+	f, err := openLooseFile(path)
 	if err != nil {
 		return err
 	}
@@ -163,7 +169,7 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 		}
 	}()
 
-	sourceFile, err := os.Open(source)
+	sourceFile, err := openLooseFile(source)
 	if err != nil {
 		return "", err
 	}
@@ -233,7 +239,7 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 }
 
 func publishLooseNoClobber(staging, canonical string) error {
-	if err := os.Link(staging, canonical); err == nil {
+	if err := linkLooseFile(staging, canonical); err == nil {
 		if err := os.Remove(staging); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -241,12 +247,37 @@ func publishLooseNoClobber(staging, canonical string) error {
 	} else if errors.Is(err, fs.ErrExist) {
 		return err
 	}
-	if _, err := os.Lstat(canonical); err == nil {
-		return fs.ErrExist
-	} else if !errors.Is(err, fs.ErrNotExist) {
+
+	source, err := openLooseFile(staging)
+	if err != nil {
+		return fmt.Errorf("open canonical loose staging file for publish: %w", err)
+	}
+	defer source.Close() //nolint:errcheck // copy error is authoritative
+	destination, err := createExclusiveLooseFile(canonical, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(staging, canonical)
+	published := false
+	defer func() {
+		_ = destination.Close()
+		if !published {
+			_ = os.Remove(canonical)
+		}
+	}()
+	if _, err := io.CopyBuffer(destination, source, make([]byte, looseCopyBufferBytes)); err != nil {
+		return fmt.Errorf("copy canonical loose destination: %w", err)
+	}
+	if err := destination.Sync(); err != nil {
+		return fmt.Errorf("sync canonical loose destination: %w", err)
+	}
+	if err := destination.Close(); err != nil {
+		return fmt.Errorf("close canonical loose destination: %w", err)
+	}
+	published = true
+	if err := os.Remove(staging); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove canonical loose staging file after publish: %w", err)
+	}
+	return nil
 }
 
 // canonicalizeLooseSource publishes verified canonical bytes, commits the DB

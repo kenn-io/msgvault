@@ -1,12 +1,15 @@
 package packer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,6 +144,15 @@ func buildMaintenanceOrphan(t *testing.T, dir string, blobs ...[]byte) (string, 
 	return id, path
 }
 
+func captureMaintenanceLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &logs
+}
+
 func TestRunAcceptsLooseBlobAtMaintenanceLimit(t *testing.T) {
 	assert := assert.New(t)
 	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
@@ -163,6 +175,7 @@ func TestRunDefersOversizedCanonicalBlobOncePerHash(t *testing.T) {
 	content := make([]byte, 1025)
 	hash, path := f.addBlob(content, maintenanceCanonical)
 	f.addRow(hash, maintenanceCanonical(hash), len(content))
+	logs := captureMaintenanceLogs(t)
 
 	stats, err := Run(context.Background(), f.store, f.dir, Options{})
 	require.NoError(err)
@@ -173,6 +186,39 @@ func TestRunDefersOversizedCanonicalBlobOncePerHash(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(entry)
 	assert.Equal(content, f.read(hash))
+	assert.Contains(logs.String(), "hash="+hash)
+	assert.Contains(logs.String(), "raw_bytes=1025")
+	assert.Contains(logs.String(), "max_raw_bytes=1024")
+}
+
+func TestRunDefersCanonicalOversizedBlobWithoutOpeningIt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	want := make([]byte, 1025)
+	want[0] = 1
+	hash := maintenanceHash(want)
+	path := f.write(maintenanceCanonical(hash), make([]byte, len(want)))
+	f.addRow(hash, maintenanceCanonical(hash), len(want))
+	oldOpen := openLooseFile
+	var opens int
+	openLooseFile = func(candidate string) (*os.File, error) {
+		if candidate == path {
+			opens++
+			return nil, errors.New("oversized canonical file must not be opened")
+		}
+		return oldOpen(candidate)
+	}
+	t.Cleanup(func() { openLooseFile = oldOpen })
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Zero(opens)
+	assert.Equal(1, stats.BlobsDeferredOversized)
+	assert.Zero(stats.BlobsCorrupt)
+	assert.FileExists(path)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
 }
 
 func TestRunMigratesOversizedNoncanonicalBlobWithoutPacking(t *testing.T) {
@@ -256,6 +302,7 @@ func TestRunDefersWholeOrphanWhenAnyEntryIsOversized(t *testing.T) {
 		f.addRow(hash, maintenanceCanonical(hash), len(content))
 	}
 	id, path := buildMaintenanceOrphan(t, f.dir, small, large)
+	logs := captureMaintenanceLogs(t)
 
 	stats, err := Run(context.Background(), f.store, f.dir, Options{})
 	require.NoError(err)
@@ -270,6 +317,94 @@ func TestRunDefersWholeOrphanWhenAnyEntryIsOversized(t *testing.T) {
 		require.NoError(err)
 		assert.Nil(entry, "no entry from an oversized orphan may be adopted")
 	}
+	assert.Contains(logs.String(), "pack="+id)
+	assert.Contains(logs.String(), "raw_bytes=1025")
+	assert.Contains(logs.String(), "max_raw_bytes=1024")
+	assert.Contains(logs.String(), "withheld_entries=2")
+}
+
+func TestRunAdoptsSmallReferencedCandidateDespiteDeadOversizedOrphanEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	small := []byte("small referenced orphan candidate")
+	largeDead := make([]byte, 1025)
+	smallHash := maintenanceHash(small)
+	f.addRow(smallHash, maintenanceCanonical(smallHash), len(small))
+	id, path := buildMaintenanceOrphan(t, f.dir, small, largeDead)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Zero(stats.PacksDeferredOversized)
+	assert.Equal(1, stats.PacksAdopted)
+	assert.FileExists(path)
+	has, err := f.store.HasPackRecord(id)
+	require.NoError(err)
+	assert.True(has)
+	entry, err := f.store.GetAttachmentPackEntry(smallHash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(id, entry.PackID)
+	assert.Equal(small, f.read(smallHash))
+}
+
+func TestRunDefersWholeOrphanBeforeReadingCandidateWhenExistingCopyIsOversized(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	large := make([]byte, 1025)
+	largeHash, _ := f.addBlob(large, maintenanceCanonical)
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	existing, err := f.store.GetAttachmentPackEntry(largeHash)
+	require.NoError(err)
+	require.NotNil(existing)
+
+	small := []byte("small candidate withheld by oversized redundancy check")
+	smallHash := maintenanceHash(small)
+	f.addRow(smallHash, maintenanceCanonical(smallHash), len(small))
+	orphanID, orphanPath := buildMaintenanceOrphan(t, f.dir, small, large)
+	r, err := blobstore.OpenMaintenancePack(orphanPath)
+	require.NoError(err)
+	var largeOffset int64
+	for _, entry := range r.Entries() {
+		if entry.ID.String() == largeHash {
+			largeOffset = int64(entry.Offset)
+		}
+	}
+	require.NoError(r.Close())
+	require.Positive(largeOffset)
+	packFile, err := os.OpenFile(orphanPath, os.O_RDWR, 0)
+	require.NoError(err)
+	var corrupt [1]byte
+	_, err = packFile.ReadAt(corrupt[:], largeOffset)
+	require.NoError(err)
+	corrupt[0] ^= 0xff
+	_, err = packFile.WriteAt(corrupt[:], largeOffset)
+	require.NoError(err)
+	require.NoError(packFile.Close())
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	logs := captureMaintenanceLogs(t)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(stats.PacksAdopted)
+	assert.Zero(stats.PacksQuarantined, "the damaged orphan candidate must not be read")
+	has, err := f.store.HasPackRecord(orphanID)
+	require.NoError(err)
+	assert.False(has)
+	smallEntry, err := f.store.GetAttachmentPackEntry(smallHash)
+	require.NoError(err)
+	assert.Nil(smallEntry, "all candidates are withheld together")
+	largeEntry, err := f.store.GetAttachmentPackEntry(largeHash)
+	require.NoError(err)
+	require.NotNil(largeEntry)
+	assert.Equal(existing.PackID, largeEntry.PackID)
+	assert.Contains(logs.String(), "raw_bytes=1025")
+	assert.Contains(logs.String(), "max_raw_bytes=1024")
+	assert.Contains(logs.String(), "withheld_entries=2")
 }
 
 func TestRunSealsWriterBeforeEntryCountLimitIsExceeded(t *testing.T) {
@@ -378,4 +513,32 @@ func TestCanonicalizeLooseSourceStopsBeforeDatabaseCommitWhenContextCancels(t *t
 	assert.Equal("legacy/"+hash, f.storagePath(hash))
 	assert.FileExists(canonicalLoosePath(f.dir, hash),
 		"a fully published canonical copy is harmless recovery data")
+}
+
+func TestPublishLooseFallbackNeverClobbersRacingDestination(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	staging := filepath.Join(dir, "blob.staging")
+	canonical := filepath.Join(dir, "canonical")
+	require.NoError(os.WriteFile(staging, []byte("new canonical bytes"), 0o600))
+	oldLink := linkLooseFile
+	oldCreate := createExclusiveLooseFile
+	linkLooseFile = func(_, _ string) error { return errors.New("hard links unsupported") }
+	createExclusiveLooseFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		require.Equal(canonical, name)
+		require.NoError(os.WriteFile(canonical, []byte("racing writer bytes"), 0o600))
+		return oldCreate(name, flag, perm)
+	}
+	t.Cleanup(func() {
+		linkLooseFile = oldLink
+		createExclusiveLooseFile = oldCreate
+	})
+
+	err := publishLooseNoClobber(staging, canonical)
+	require.ErrorIs(err, fs.ErrExist)
+	got, err := os.ReadFile(canonical)
+	require.NoError(err)
+	assert.Equal([]byte("racing writer bytes"), got)
+	assert.FileExists(staging, "failed publication retains the verified staging source")
 }
