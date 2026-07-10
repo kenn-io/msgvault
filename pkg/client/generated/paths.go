@@ -6,6 +6,15 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type GetAttachmentContentPath struct {
+	// Hash Attachment SHA-256 content hash
+	Hash string `json:"hash" validate:"required"`
+}
+
+func (g GetAttachmentContentPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetAttachmentPath struct {
 	// ID Attachment ID
 	ID int64 `json:"id"`

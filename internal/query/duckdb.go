@@ -1767,6 +1767,15 @@ func (e *DuckDBEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	return nil, errors.New("GetAttachment requires SQLite: pass sqliteDB to NewDuckDBEngine")
 }
 
+// GetAttachmentByHash retrieves attachment metadata by content hash.
+// Attachments live in SQLite, so delegate to the SQLite engine.
+func (e *DuckDBEngine) GetAttachmentByHash(ctx context.Context, contentHash string) (*AttachmentInfo, error) {
+	if e.sqliteEngine != nil {
+		return e.sqliteEngine.GetAttachmentByHash(ctx, contentHash)
+	}
+	return nil, errors.New("GetAttachmentByHash requires SQLite: pass sqliteDB to NewDuckDBEngine")
+}
+
 // GetMessageRaw returns the decompressed raw MIME data for a message.
 func (e *DuckDBEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	if e.sqliteDB != nil {

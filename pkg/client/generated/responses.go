@@ -33,6 +33,18 @@ type GetSubAggregatesResponse = AggregateResponse
 
 type GetSubAggregatesErrorResponse = ErrorResponse
 
+type GetAttachmentContentResponse = runtime.File
+
+type GetAttachmentContentErrorResponse = ErrorResponse
+
+type GetAttachmentContentErrorResponseJSON = ErrorResponse
+
+type GetAttachmentContentErrorResponseJSON404 = ErrorResponse
+
+type GetAttachmentContentErrorResponseJSON500 = ErrorResponse
+
+type GetAttachmentContentErrorResponseJSON503 = ErrorResponse
+
 type GetAttachmentResponse = AttachmentInfo
 
 type GetAttachmentErrorResponse = ErrorResponse
@@ -459,6 +471,17 @@ type GetSubAggregatesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetSubAggregatesResponse
+}
+
+type GetAttachmentContentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *GetAttachmentContentErrorResponse
+	JSON401      *GetAttachmentContentErrorResponseJSON
+	JSON404      *GetAttachmentContentErrorResponseJSON404
+	JSON500      *GetAttachmentContentErrorResponseJSON500
+	JSON503      *GetAttachmentContentErrorResponseJSON503
 }
 
 type GetAttachmentResp struct {

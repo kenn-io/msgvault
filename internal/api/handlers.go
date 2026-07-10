@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
@@ -2530,6 +2532,87 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo(*att))
+}
+
+// handleGetAttachmentContent streams a stored attachment's raw bytes by its
+// SHA-256 content hash. The /content suffix keeps this binary response distinct
+// from GET /attachments/{id}, which returns attachment metadata as JSON.
+func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
+		return
+	}
+
+	hash := r.PathValue("hash")
+
+	// StoragePath validates the hash is exactly 64 hex characters, which also
+	// guards against path traversal before we touch the filesystem.
+	path, err := msgexport.StoragePath(s.cfg.AttachmentsDir(), hash)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_hash", "Attachment hash must be a 64-character hex SHA-256")
+		return
+	}
+
+	att, err := s.engine.GetAttachmentByHash(r.Context(), hash)
+	if err != nil {
+		s.logger.Error("failed to look up attachment by hash", "error", err, "hash", hash)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
+		return
+	}
+	if att == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
+		return
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "not_found", "Attachment content not available")
+			return
+		}
+		s.logger.Error("failed to open attachment file", "error", err, "hash", hash)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		s.logger.Error("failed to stat attachment file", "error", err, "hash", hash)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read attachment")
+		return
+	}
+
+	contentType := att.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	if _, err := io.Copy(w, f); err != nil {
+		// Status and headers are already committed, so only logging is possible.
+		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
+	}
+}
+
+func contentDisposition(filename string) string {
+	if filename == "" {
+		return "attachment"
+	}
+	ascii := strings.Map(func(r rune) rune {
+		if r < 0x20 || r >= 0x7f || r == '"' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, filename)
+	value := fmt.Sprintf("attachment; filename=%q", ascii)
+	if ascii != filename {
+		value += "; filename*=UTF-8''" + url.PathEscape(filename)
+	}
+	return value
 }
 
 func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {

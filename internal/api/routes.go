@@ -254,6 +254,20 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(
 		apiV1,
+		"getAttachmentContent",
+		http.MethodGet,
+		"/attachments/{hash}/content",
+		"Download attachment content by SHA-256 hash",
+		"application/octet-stream",
+		s.handleGetAttachmentContent,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusNotFound,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+	)
+	registerAPIV1RawHumaBinaryRoute(
+		apiV1,
 		"getMessageInlinePart",
 		http.MethodGet,
 		"/messages/{id}/inline",
@@ -351,6 +365,7 @@ func registerAPIV1RawHumaJSONOneOfRoute(
 	registerRawHumaRoute(api, op, handler)
 }
 
+//nolint:unparam // Retain method for symmetry with the other raw-route helpers and future non-GET binary endpoints.
 func registerAPIV1RawHumaBinaryRoute(
 	api huma.API,
 	operationID string,
@@ -458,6 +473,8 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{pathStringParam("id", "Deletion manifest ID")}
 	case "getAttachment":
 		return []*huma.Param{pathIntegerParam("Attachment ID")}
+	case "getAttachmentContent":
+		return []*huma.Param{pathStringParam("hash", "Attachment SHA-256 content hash")}
 	case "getMessageInlinePart":
 		return []*huma.Param{
 			pathIntegerParam("Message ID"),

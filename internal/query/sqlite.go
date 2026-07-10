@@ -1045,6 +1045,24 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	return &att, nil
 }
 
+// GetAttachmentByHash retrieves attachment metadata by content hash.
+func (e *SQLiteEngine) GetAttachmentByHash(ctx context.Context, contentHash string) (*AttachmentInfo, error) {
+	var att AttachmentInfo
+	err := e.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, '')
+		FROM attachments
+		WHERE content_hash = ?
+		LIMIT 1
+	`, contentHash).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash)
+	if err == sql.ErrNoRows {
+		return nil, nil //nolint:nilnil // Engine.GetAttachmentByHash uses (nil, nil) for not-found; callers branch on the nil result
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get attachment by hash: %w", err)
+	}
+	return &att, nil
+}
+
 // GetMessageRaw returns the decompressed raw MIME data for a message.
 func (e *SQLiteEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	return getMessageRawShared(ctx, e.db, e.dialect.Rebind, "", id)

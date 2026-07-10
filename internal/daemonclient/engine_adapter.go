@@ -783,6 +783,12 @@ func (e *Engine) GetAttachment(ctx context.Context, id int64) (*query.Attachment
 	return queryAttachmentFromGenerated(resp.JSON200), nil
 }
 
+// GetAttachmentByHash is not exposed through the daemon query adapter. Raw
+// attachment downloads use the daemon client's dedicated binary store path.
+func (e *Engine) GetAttachmentByHash(context.Context, string) (*query.AttachmentInfo, error) {
+	return nil, ErrNotSupported
+}
+
 // Search performs full-text search including message body.
 func (e *Engine) Search(ctx context.Context, q *search.Query, limit, offset int) ([]query.MessageSummary, error) {
 	// Build query string from search.Query
