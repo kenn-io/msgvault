@@ -161,6 +161,124 @@ func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
 	assert.False(has, "failed swap must roll back new pack records")
 }
 
+func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
+	const (
+		oldA = "01hzy3v7q8r9s0t1a2v3w4x6g1"
+		oldB = "01hzy3v7q8r9s0t1a2v3w4x6g2"
+		newA = "01hzy3v7q8r9s0t1a2v3w4x6g3"
+	)
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, st *store.Store, hashA, hashB string)
+		moves  func(hashA, hashB string) []store.RepackMove
+	}{
+		{
+			name: "missing current mapping",
+			mutate: func(t *testing.T, st *store.Store, _ string, hashB string) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(
+					`DELETE FROM attachment_pack_index WHERE blob_hash = ?`), hashB)
+				require.NoError(t, err)
+			},
+			moves: func(hashA, hashB string) []store.RepackMove {
+				return []store.RepackMove{
+					{OldPackID: oldA, NewEntry: store.PackIndexEntry{BlobHash: hashA, PackID: newA, Offset: 6, StoredLen: 50, RawLen: 100}},
+					{OldPackID: oldB, NewEntry: store.PackIndexEntry{BlobHash: hashB, PackID: newA, Offset: 56, StoredLen: 70, RawLen: 200}},
+				}
+			},
+		},
+		{
+			name: "added current mapping",
+			mutate: func(t *testing.T, st *store.Store, hashA, _ string) {
+				t.Helper()
+				extra := packTestHash("g803")
+				fx := newPackAttachmentFixture(t, st)
+				fx.addAttachment(extra, extra[:2]+"/"+extra, 300)
+				_, err := st.DB().Exec(st.Rebind(`
+					INSERT INTO attachment_pack_index
+					    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+					VALUES (?, ?, 96, 40, 300, 0, 0)`), extra, oldA)
+				require.NoError(t, err)
+				entry, err := st.GetAttachmentPackEntry(hashA)
+				require.NoError(t, err)
+				require.NotNil(t, entry)
+			},
+			moves: func(hashA, hashB string) []store.RepackMove {
+				return []store.RepackMove{
+					{OldPackID: oldA, NewEntry: store.PackIndexEntry{BlobHash: hashA, PackID: newA, Offset: 6, StoredLen: 50, RawLen: 100}},
+					{OldPackID: oldB, NewEntry: store.PackIndexEntry{BlobHash: hashB, PackID: newA, Offset: 56, StoredLen: 70, RawLen: 200}},
+				}
+			},
+		},
+		{
+			name: "changed pack ownership",
+			mutate: func(t *testing.T, st *store.Store, hashA, _ string) {
+				t.Helper()
+				_, err := st.DB().Exec(st.Rebind(`
+					UPDATE attachment_pack_index SET pack_id = ? WHERE blob_hash = ?`), oldB, hashA)
+				require.NoError(t, err)
+			},
+			moves: func(hashA, hashB string) []store.RepackMove {
+				return []store.RepackMove{
+					{OldPackID: oldA, NewEntry: store.PackIndexEntry{BlobHash: hashA, PackID: newA, Offset: 6, StoredLen: 50, RawLen: 100}},
+					{OldPackID: oldB, NewEntry: store.PackIndexEntry{BlobHash: hashB, PackID: newA, Offset: 56, StoredLen: 70, RawLen: 200}},
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+			hashA := packTestHash("g801")
+			hashB := packTestHash("g802")
+			fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 100)
+			fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 200)
+			created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+				PackID: oldA, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
+			}, []store.PackIndexEntry{{
+				BlobHash: hashA, PackID: oldA, Offset: 6, StoredLen: 80, RawLen: 100,
+			}}))
+			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+				PackID: oldB, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
+			}, []store.PackIndexEntry{{
+				BlobHash: hashB, PackID: oldB, Offset: 6, StoredLen: 90, RawLen: 200,
+			}}))
+
+			tt.mutate(t, st, hashA, hashB)
+			beforeA, err := st.GetAttachmentPackEntry(hashA)
+			require.NoError(err)
+			beforeB, err := st.GetAttachmentPackEntry(hashB)
+			require.NoError(err)
+
+			moves := tt.moves(hashA, hashB)
+			var stored int64
+			for _, move := range moves {
+				stored += move.NewEntry.StoredLen
+			}
+			err = st.CommitRepack(context.Background(), []string{oldA, oldB}, []store.PackRecord{{
+				PackID: newA, EntryCount: int64(len(moves)), StoredBytes: stored,
+				CreatedAt: created.Add(time.Hour),
+			}}, moves)
+			require.ErrorContains(err, "exact")
+
+			afterA, getErr := st.GetAttachmentPackEntry(hashA)
+			require.NoError(getErr)
+			afterB, getErr := st.GetAttachmentPackEntry(hashB)
+			require.NoError(getErr)
+			assert.Equal(beforeA, afterA, "failed swap preserves pre-call mapping A")
+			assert.Equal(beforeB, afterB, "failed swap preserves pre-call mapping B")
+			has, getErr := st.HasPackRecord(newA)
+			require.NoError(getErr)
+			assert.False(has, "failed exact-set validation cannot publish a new record")
+		})
+	}
+}
+
 func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

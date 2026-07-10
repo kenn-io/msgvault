@@ -313,6 +313,60 @@ func TestRunRetirementFailureRetainsRetryableZeroLiveRecord(t *testing.T) {
 	assert.ErrorIs(statErr, fs.ErrNotExist)
 }
 
+type selectiveRetireStore struct {
+	*blobstore.Store
+
+	failures map[string]error
+	calls    []string
+}
+
+func (s *selectiveRetireStore) RetirePack(packID string) error {
+	s.calls = append(s.calls, packID)
+	if err := s.failures[packID]; err != nil {
+		return err
+	}
+	return s.Store.RetirePack(packID)
+}
+
+func TestRunCleanupContinuesAndJoinsRetirementErrors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	failedA, _, failedPathA := f.seal([]byte("first externally held zero-live pack"))
+	failedB, _, failedPathB := f.seal([]byte("second externally held zero-live pack"))
+	removed, _, removedPath := f.seal([]byte("independent zero-live pack can still be reclaimed"))
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	retirer := &selectiveRetireStore{
+		Store: realBlobs,
+		failures: map[string]error{
+			failedA.PackID: errors.New("first injected external reader hold"),
+			failedB.PackID: errors.New("second injected external reader hold"),
+		},
+	}
+
+	stats, err := Run(context.Background(), f.store, retirer, f.dir, Options{})
+	require.Error(err)
+	require.ErrorContains(err, "first injected external reader hold")
+	require.ErrorContains(err, "second injected external reader hold")
+	assert.Len(retirer.calls, 3, "one retirement failure must not stop later cleanup")
+	assert.Equal(1, stats.PacksRemoved)
+
+	for _, retained := range []struct {
+		record store.PackRecord
+		path   string
+	}{{failedA, failedPathA}, {failedB, failedPathB}} {
+		has, hasErr := f.store.HasPackRecord(retained.record.PackID)
+		require.NoError(hasErr)
+		assert.True(has, "failed retirement retains truthful inventory")
+		assert.FileExists(retained.path)
+	}
+	has, hasErr := f.store.HasPackRecord(removed.PackID)
+	require.NoError(hasErr)
+	assert.False(has)
+	assert.NoFileExists(removedPath)
+}
+
 func TestRunCanceledBeforeSelectionLeavesStateUntouched(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -330,6 +384,105 @@ func TestRunCanceledBeforeSelectionLeavesStateUntouched(t *testing.T) {
 	assert.True(has)
 	_, statErr := os.Stat(oldPath)
 	assert.NoError(statErr)
+}
+
+type cancelBeforeSealWriter struct {
+	packWriter
+
+	cancel context.CancelFunc
+}
+
+func (w cancelBeforeSealWriter) Full() bool {
+	w.cancel()
+	return true
+}
+
+func TestRunCancellationAtSealBoundaryAbortsStaging(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("cancellation immediately before seal keeps old authority")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, dead, []byte("other dead"))
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	originalFactory := newPackWriter
+	newPackWriter = func(dir string, opts pack.WriterOptions) (packWriter, error) {
+		writer, err := pack.NewWriter(dir, opts)
+		if err != nil {
+			return nil, fmt.Errorf("create cancel-before-seal writer: %w", err)
+		}
+		return cancelBeforeSealWriter{packWriter: writer, cancel: cancel}, nil
+	}
+	t.Cleanup(func() { newPackWriter = originalFactory })
+
+	stats, err := Run(ctx, f.store, blobs, f.dir,
+		Options{Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)})
+	require.ErrorIs(err, context.Canceled)
+	assert.Zero(stats.PacksSealed)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(old.PackID, entry.PackID)
+	assert.FileExists(oldPath)
+	staging, globErr := filepath.Glob(filepath.Join(f.dir, "packs", "*.staging"))
+	require.NoError(globErr)
+	assert.Empty(staging, "seal-boundary cancellation aborts the active writer")
+}
+
+type cancelAfterFirstRetireStore struct {
+	*blobstore.Store
+
+	cancel  context.CancelFunc
+	retired string
+}
+
+func (s *cancelAfterFirstRetireStore) RetirePack(packID string) error {
+	err := s.Store.RetirePack(packID)
+	if s.retired == "" {
+		s.retired = packID
+		s.cancel()
+	}
+	return err
+}
+
+func TestRunCancellationAtCleanupBoundaryLeavesRetryableInventory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	recordA, _, pathA := f.seal([]byte("cleanup cancellation zero-live A"))
+	recordB, _, pathB := f.seal([]byte("cleanup cancellation zero-live B"))
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	ctx, cancel := context.WithCancel(context.Background())
+	canceling := &cancelAfterFirstRetireStore{Store: realBlobs, cancel: cancel}
+
+	stats, err := Run(ctx, f.store, canceling, f.dir, Options{})
+	require.ErrorIs(err, context.Canceled)
+	assert.Equal(1, stats.PacksRemoved)
+	require.NotEmpty(canceling.retired)
+
+	for _, candidate := range []struct {
+		record store.PackRecord
+		path   string
+	}{{recordA, pathA}, {recordB, pathB}} {
+		has, hasErr := f.store.HasPackRecord(candidate.record.PackID)
+		require.NoError(hasErr)
+		if candidate.record.PackID == canceling.retired {
+			assert.False(has, "retirement already completed before cancellation")
+			assert.NoFileExists(candidate.path)
+			continue
+		}
+		assert.True(has, "unattempted cleanup remains truthful and retryable")
+		assert.FileExists(candidate.path)
+	}
+
+	retryStats, retryErr := Run(context.Background(), f.store, realBlobs, f.dir, Options{})
+	require.NoError(retryErr)
+	assert.Equal(1, retryStats.PacksRemoved)
 }
 
 type cancelAfterOpenStore struct {

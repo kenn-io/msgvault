@@ -721,6 +721,58 @@ func TestStoreAPIAdapterPostRemovalRepackWarningPreservesSuccess(t *testing.T) {
 	assert.Contains(events[0].Data, "repack-attachments")
 }
 
+func TestStoreAPIAdapterPostRemovalRepackCancellationPreservesSuccess(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	oldPackID := f.makeZeroLivePack([]byte("canceled post-removal repack remains retryable"))
+	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+	ctx, cancel := context.WithCancel(context.Background())
+	var events []api.CLIRunEvent
+
+	err := adapter.runCLICommandWithRunner(
+		ctx, api.CLIRunRequest{Args: []string{"remove-account", "alice@example.com", "--yes"}},
+		func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			cancel()
+			return nil
+		},
+	)
+
+	require.NoError(err, "maintenance cancellation cannot erase committed removal success")
+	assert.Empty(events, "cancellation is informational, not a streamed warning")
+	has, err := f.store.HasPackRecord(oldPackID)
+	require.NoError(err)
+	assert.True(has, "canceled cleanup remains inventoried for retry")
+	assert.Contains(f.logs.String(), "automatic attachment repack canceled")
+}
+
+func TestStoreAPIAdapterExplicitRepackCancellationFailsFast(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	oldPackID := f.makeZeroLivePack([]byte("explicit canceled repack is fail-fast"))
+	adapter := &storeAPIAdapter{store: f.store, attachmentMaintenance: f.maintenance}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := adapter.runCLICommandWithRunner(
+		ctx, api.CLIRunRequest{Args: []string{"repack-attachments"}}, nil,
+		func(context.Context, []string, map[string]string, string, func(string, string) error) error {
+			require.FailNow("explicit repack must never spawn a child process")
+			return nil
+		},
+	)
+
+	require.ErrorIs(err, context.Canceled)
+	has, getErr := f.store.HasPackRecord(oldPackID)
+	require.NoError(getErr)
+	assert.True(has, "fail-fast cancellation leaves physical inventory untouched")
+}
+
 func TestStoreAPIAdapterMaintenanceWarningStreamsWithoutChangingSuccess(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
