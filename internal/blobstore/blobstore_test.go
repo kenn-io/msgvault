@@ -148,15 +148,18 @@ func rewritePlainPackFooter(t *testing.T, path string, mutate func([]byte)) {
 }
 
 func TestReadBoundedConstants(t *testing.T) {
-	assert.Equal(t, 64<<20, MaxMaintenanceBlobBytes)
-	assert.Equal(t, 100_000, MaxMaintenancePackEntries)
-	assert.Equal(t, 8<<20, MaxMaintenanceFooterBytes)
-	assert.Equal(t, 128<<20, MaxMaintenancePackBytes)
+	assert := assert.New(t)
+	assert.Equal(64<<20, MaxMaintenanceBlobBytes)
+	assert.Equal(100_000, MaxMaintenancePackEntries)
+	assert.Equal(8<<20, MaxMaintenanceFooterBytes)
+	assert.Equal(128<<20, MaxMaintenancePackBytes)
 }
 
 func TestReadBoundedAcceptsExactLimit(t *testing.T) {
 	for _, storage := range []string{"packed", "loose"} {
 		t.Run(storage, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			dir := t.TempDir()
 			content := []byte("exact bounded attachment bytes")
 			hash := hashOf(content)
@@ -166,19 +169,19 @@ func TestReadBoundedAcceptsExactLimit(t *testing.T) {
 				idx = buildPack(t, dir, content)
 			} else {
 				referenced[hash] = true
-				require.NoError(t, os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, hash[:2], hash), content, 0o600))
+				require.NoError(os.MkdirAll(filepath.Join(dir, hash[:2]), 0o700))
+				require.NoError(os.WriteFile(filepath.Join(dir, hash[:2], hash), content, 0o600))
 			}
 			s := New(&mapIndex{m: idx, referenced: referenced}, dir)
-			defer func() { require.NoError(t, s.Close()) }()
+			defer func() { require.NoError(s.Close()) }()
 
 			got := readBounded(t, s, hash, int64(len(content)))
-			assert.Equal(t, content, got)
+			assert.Equal(content, got)
 			if storage == "loose" {
-				assert.Equal(t, len(got), cap(got), "loose reads allocate exactly the stat-reported size")
+				assert.Equal(len(got), cap(got), "loose reads allocate exactly the stat-reported size")
 			}
 			_, _, err := s.ReadBounded(hash, int64(len(content)-1))
-			assert.ErrorIs(t, err, ErrBlobTooLarge)
+			assert.ErrorIs(err, ErrBlobTooLarge)
 		})
 	}
 }
@@ -217,6 +220,7 @@ func TestReadBoundedPreflightsPackLimits(t *testing.T) {
 	})
 
 	t.Run("footer", func(t *testing.T) {
+		require := require.New(t)
 		dir := t.TempDir()
 		content := []byte("oversized claimed footer")
 		idx := buildPack(t, dir, content)
@@ -224,16 +228,16 @@ func TestReadBoundedPreflightsPackLimits(t *testing.T) {
 		entry := idx[hash]
 		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
 		f, err := os.OpenFile(path, os.O_RDWR, 0)
-		require.NoError(t, err)
+		require.NoError(err)
 		st, err := f.Stat()
-		require.NoError(t, err)
+		require.NoError(err)
 		var encoded [4]byte
 		binary.LittleEndian.PutUint32(encoded[:], MaxMaintenanceFooterBytes+1)
 		_, err = f.WriteAt(encoded[:], st.Size()-40)
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		require.NoError(err)
+		require.NoError(f.Close())
 		s := New(&mapIndex{m: idx}, dir)
-		defer func() { require.NoError(t, s.Close()) }()
+		defer func() { require.NoError(s.Close()) }()
 
 		_, _, err = s.ReadBounded(hash, MaxMaintenanceBlobBytes)
 		assert.ErrorIs(t, err, ErrBlobTooLarge,
@@ -277,6 +281,7 @@ func TestBoundedPackVersionIsPinnedToStableV1(t *testing.T) {
 }
 
 func TestBoundedPackReaderKeepsPreflightedDescriptor(t *testing.T) {
+	require := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("replacing an open file is not supported on Windows")
 	}
@@ -287,48 +292,50 @@ func TestBoundedPackReaderKeepsPreflightedDescriptor(t *testing.T) {
 	entry := idx[hash]
 	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
 	r, err := openBoundedPack(path)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, r.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(r.Close()) }()
 
 	replacementDir := t.TempDir()
 	replacement := []byte("replacement path bytes must not be observed")
 	replacementIdx := buildPack(t, replacementDir, replacement)
 	replacementEntry := replacementIdx[hashOf(replacement)]
 	replacementPath := filepath.Join(replacementDir, "packs", replacementEntry.PackID[:2], replacementEntry.PackID+PackExt)
-	require.NoError(t, os.Rename(replacementPath, path))
+	require.NoError(os.Rename(replacementPath, path))
 
 	blobID, err := pack.ParseBlobID(hash)
-	require.NoError(t, err)
+	require.NoError(err)
 	footerEntry, ok := r.entries[blobID]
-	require.True(t, ok)
+	require.True(ok)
 	got, err := r.readBlob(footerEntry, int64(len(original)))
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, original, got)
 }
 
 func TestBoundedReaderLifecycleClosesHeldDescriptor(t *testing.T) {
 	for _, lifecycle := range []string{"close", "retire"} {
 		t.Run(lifecycle, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			dir := t.TempDir()
 			content := []byte("bounded descriptor lifecycle")
 			idx := buildPack(t, dir, content)
 			hash := hashOf(content)
 			entry := idx[hash]
 			s := New(&mapIndex{m: idx}, dir)
-			assert.Equal(t, content, readBounded(t, s, hash, int64(len(content))))
+			assert.Equal(content, readBounded(t, s, hash, int64(len(content))))
 
 			s.mu.Lock()
 			cached := s.boundedReaders[entry.PackID]
 			s.mu.Unlock()
-			require.NotNil(t, cached)
+			require.NotNil(cached)
 			if lifecycle == "close" {
-				require.NoError(t, s.Close())
+				require.NoError(s.Close())
 			} else {
-				require.NoError(t, s.RetirePack(entry.PackID))
-				require.NoError(t, s.Close())
+				require.NoError(s.RetirePack(entry.PackID))
+				require.NoError(s.Close())
 			}
 			_, err := cached.file.ReadAt(make([]byte, 1), 0)
-			assert.Error(t, err, "cache lifecycle must close the held pack descriptor")
+			assert.Error(err, "cache lifecycle must close the held pack descriptor")
 		})
 	}
 }
@@ -395,20 +402,21 @@ func TestReadBoundedCapsCompressedOutputAtFooterRawLength(t *testing.T) {
 }
 
 func TestReadBoundedRejectsDuplicateFooterBlobIDs(t *testing.T) {
+	require := require.New(t)
 	dir := t.TempDir()
 	content := []byte("duplicate footer blob id")
 	staging := t.TempDir()
 	w, err := pack.NewWriter(staging, pack.WriterOptions{})
-	require.NoError(t, err)
+	require.NoError(err)
 	first, err := w.Append(content)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = w.Append(content)
-	require.NoError(t, err)
+	require.NoError(err)
 	packID := w.ID()
 	path := filepath.Join(dir, "packs", packID[:2], packID+PackExt)
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
 	_, err = w.Seal(path)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	hash := hashOf(content)
 	entry := &store.PackIndexEntry{
@@ -417,10 +425,10 @@ func TestReadBoundedRejectsDuplicateFooterBlobIDs(t *testing.T) {
 		Flags: uint8(first.Flags), CRC32C: first.CRC32C,
 	}
 	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{hash: entry}}, dir)
-	defer func() { require.NoError(t, s.Close()) }()
+	defer func() { require.NoError(s.Close()) }()
 
 	_, _, err = s.ReadBounded(hash, int64(len(content)))
-	require.ErrorIs(t, err, pack.ErrCorrupt)
+	require.ErrorIs(err, pack.ErrCorrupt)
 	assert.ErrorContains(t, err, "duplicate blob id")
 }
 
@@ -493,6 +501,7 @@ func TestReadBoundedVerifiesLocalPackIntegrity(t *testing.T) {
 	})
 
 	t.Run("stored crc32c", func(t *testing.T) {
+		require := require.New(t)
 		dir := t.TempDir()
 		content := []byte("bounded stored crc32c")
 		idx := buildPack(t, dir, content)
@@ -500,23 +509,24 @@ func TestReadBoundedVerifiesLocalPackIntegrity(t *testing.T) {
 		entry := idx[hash]
 		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
 		f, err := os.OpenFile(path, os.O_RDWR, 0)
-		require.NoError(t, err)
+		require.NoError(err)
 		stored := make([]byte, entry.StoredLen)
 		_, err = f.ReadAt(stored, entry.Offset)
-		require.NoError(t, err)
+		require.NoError(err)
 		stored[0] ^= 0x01
 		_, err = f.WriteAt(stored, entry.Offset)
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		require.NoError(err)
+		require.NoError(f.Close())
 		s := New(&mapIndex{m: idx}, dir)
-		defer func() { require.NoError(t, s.Close()) }()
+		defer func() { require.NoError(s.Close()) }()
 
 		_, _, err = s.ReadBounded(hash, int64(len(content)))
-		require.ErrorIs(t, err, pack.ErrCorrupt)
+		require.ErrorIs(err, pack.ErrCorrupt)
 		assert.ErrorContains(t, err, "crc mismatch")
 	})
 
 	t.Run("blob sha256", func(t *testing.T) {
+		require := require.New(t)
 		dir := t.TempDir()
 		content := []byte("bounded blob sha256")
 		idx := buildPack(t, dir, content)
@@ -524,21 +534,21 @@ func TestReadBoundedVerifiesLocalPackIntegrity(t *testing.T) {
 		entry := idx[hash]
 		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
 		f, err := os.OpenFile(path, os.O_RDWR, 0)
-		require.NoError(t, err)
+		require.NoError(err)
 		stored := make([]byte, entry.StoredLen)
 		_, err = f.ReadAt(stored, entry.Offset)
-		require.NoError(t, err)
+		require.NoError(err)
 		stored[0] ^= 0x01
 		_, err = f.WriteAt(stored, entry.Offset)
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		require.NoError(err)
+		require.NoError(f.Close())
 		newCRC := crc32.Checksum(stored, crc32.MakeTable(crc32.Castagnoli))
 		rewritePlainPackFooter(t, path, func(footer []byte) {
 			binary.LittleEndian.PutUint32(footer[4+57:], newCRC)
 		})
 		entry.CRC32C = newCRC
 		s := New(&mapIndex{m: idx}, dir)
-		defer func() { require.NoError(t, s.Close()) }()
+		defer func() { require.NoError(s.Close()) }()
 
 		_, _, err = s.ReadBounded(hash, int64(len(content)))
 		assert.ErrorIs(t, err, pack.ErrBlobMismatch)
@@ -845,6 +855,7 @@ func TestOpenConcurrent(t *testing.T) {
 // TestOpenAndReadBoundedConcurrent exercises the ordinary and bounded caches
 // for the same packs under the race detector.
 func TestOpenAndReadBoundedConcurrent(t *testing.T) {
+	assert := assert.New(t)
 	dir := t.TempDir()
 	blobs := [][]byte{
 		[]byte("mixed cache packed blob one"),
@@ -899,9 +910,9 @@ func TestOpenAndReadBoundedConcurrent(t *testing.T) {
 		require.NoError(t, err)
 	}
 	s.mu.Lock()
-	assert.Len(t, s.readers, 1)
-	assert.Len(t, s.boundedReaders, 1)
-	assert.Len(t, s.order, 1, "ordinary and bounded readers for one pack share a FIFO slot")
+	assert.Len(s.readers, 1)
+	assert.Len(s.boundedReaders, 1)
+	assert.Len(s.order, 1, "ordinary and bounded readers for one pack share a FIFO slot")
 	s.mu.Unlock()
 }
 
@@ -940,6 +951,8 @@ func TestOpenEvictsAndReopens(t *testing.T) {
 }
 
 func TestReadBoundedEvictsClosesAndReopens(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	const numPacks = maxOpenReaders + 1
 	blobs := make([][]byte, numPacks)
@@ -950,36 +963,36 @@ func TestReadBoundedEvictsClosesAndReopens(t *testing.T) {
 		maps.Copy(idx, buildPack(t, dir, blob))
 	}
 	s := New(&mapIndex{m: idx}, dir)
-	defer func() { require.NoError(t, s.Close()) }()
+	defer func() { require.NoError(s.Close()) }()
 
 	firstHash := hashOf(blobs[0])
-	assert.Equal(t, blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
+	assert.Equal(blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
 	firstPackID := idx[firstHash].PackID
 	s.mu.Lock()
 	firstReader := s.boundedReaders[firstPackID]
 	s.mu.Unlock()
-	require.NotNil(t, firstReader)
+	require.NotNil(firstReader)
 
 	for _, blob := range blobs[1:] {
-		assert.Equal(t, blob, readBounded(t, s, hashOf(blob), int64(len(blob))))
+		assert.Equal(blob, readBounded(t, s, hashOf(blob), int64(len(blob))))
 	}
 	s.mu.Lock()
 	_, stillCached := s.boundedReaders[firstPackID]
 	numBounded := len(s.boundedReaders)
 	numSlots := len(s.order)
 	s.mu.Unlock()
-	assert.False(t, stillCached)
-	assert.LessOrEqual(t, numBounded, maxOpenReaders)
-	assert.LessOrEqual(t, numSlots, maxOpenReaders)
+	assert.False(stillCached)
+	assert.LessOrEqual(numBounded, maxOpenReaders)
+	assert.LessOrEqual(numSlots, maxOpenReaders)
 	_, err := firstReader.file.ReadAt(make([]byte, 1), 0)
-	require.Error(t, err, "FIFO eviction closes the bounded descriptor")
+	require.Error(err, "FIFO eviction closes the bounded descriptor")
 
-	assert.Equal(t, blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
+	assert.Equal(blobs[0], readBounded(t, s, firstHash, int64(len(blobs[0]))))
 	s.mu.Lock()
 	reopened := s.boundedReaders[firstPackID]
 	s.mu.Unlock()
-	require.NotNil(t, reopened)
-	assert.NotSame(t, firstReader, reopened)
+	require.NotNil(reopened)
+	assert.NotSame(firstReader, reopened)
 }
 
 func TestRetirePackValidatesAndTreatsMissingAsSuccess(t *testing.T) {
