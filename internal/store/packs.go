@@ -385,8 +385,8 @@ type attachmentHashOwnerSwap struct {
 }
 
 // swapPreservedCanonicalHashOwnersTx frees the lowercase per-message key for
-// each local row without changing a URL/empty row's path. The invalid temporary
-// value exists only inside this transaction and prevents immediate unique-index
+// each local row without changing a URL/empty row's path. A temporary NULL,
+// excluded from the partial unique index, prevents immediate unique-index
 // checks from rejecting the two-row hash exchange.
 func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash string) error {
 	rows, err := tx.Query(`
@@ -427,10 +427,9 @@ func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash strin
 	}
 
 	for _, swap := range swaps {
-		temporary := fmt.Sprintf("msgvault-pack-hash-swap-%d", swap.ownerID)
 		if _, err := tx.Exec(`
-			UPDATE attachments SET content_hash = ?
-			WHERE id = ? AND content_hash = ?`, temporary, swap.ownerID, blobHash); err != nil {
+			UPDATE attachments SET content_hash = NULL
+			WHERE id = ? AND content_hash = ?`, swap.ownerID, blobHash); err != nil {
 			return fmt.Errorf("temporarily release canonical attachment hash %s: %w", blobHash, err)
 		}
 		if _, err := tx.Exec(`
@@ -440,7 +439,7 @@ func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash strin
 		}
 		if _, err := tx.Exec(`
 			UPDATE attachments SET content_hash = ?
-			WHERE id = ? AND content_hash = ?`, swap.localHash, swap.ownerID, temporary); err != nil {
+			WHERE id = ? AND content_hash IS NULL`, swap.localHash, swap.ownerID); err != nil {
 			return fmt.Errorf("preserve nonlocal attachment hash alias for %s: %w", blobHash, err)
 		}
 	}
