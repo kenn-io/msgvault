@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -45,14 +47,15 @@ func TestSelectPacksEligibilityOrderingAndBudget(t *testing.T) {
 	}
 
 	selected, exhausted := selectPacks(usage, Options{Now: now, MaxBytes: 256})
-	require.Len(selected, 2)
-	assert.Equal(eligibleA, selected[0].PackID, "first oversized eligible partial pack still makes progress")
-	assert.Equal(zeroYoung, selected[1].PackID, "zero-live packs bypass budget and threshold rules")
-	assert.True(exhausted)
+	require.Len(selected, 3)
+	assert.Equal(zeroYoung, selected[0].PackID, "zero-live packs are always retired before content rewrites")
+	assert.Equal(eligibleA, selected[1].PackID)
+	assert.Equal(eligibleB, selected[2].PackID, "dynamic budget selection happens after source success")
+	assert.False(exhausted)
 
 	selected, exhausted = selectPacks(usage, Options{Now: now})
 	require.Len(selected, 3)
-	assert.Equal([]string{eligibleA, eligibleB, zeroYoung}, packUsageIDs(selected))
+	assert.Equal([]string{zeroYoung, eligibleA, eligibleB}, packUsageIDs(selected))
 	assert.False(exhausted)
 }
 
@@ -182,7 +185,7 @@ func TestRunCombinesSparsePacksAndPreservesBytes(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, stats.PacksSelected)
 	assert.Equal(2, stats.PacksRewritten)
-	assert.Equal(1, stats.PacksSealed, "live entries from sparse sources combine into one target pack")
+	assert.Equal(2, stats.PacksSealed, "each sparse source commits independently")
 	assert.Equal(2, stats.PacksRemoved)
 	assert.Equal(2, stats.BlobsRepacked)
 	assert.Equal(liveA, readBlob(t, blobs, hashA))
@@ -198,7 +201,7 @@ func TestRunCombinesSparsePacksAndPreservesBytes(t *testing.T) {
 	}
 	records, err := f.store.ListPackRecords()
 	require.NoError(err)
-	assert.Len(records, 1)
+	assert.Len(records, 2)
 }
 
 func TestRunAlwaysRemovesZeroLivePackWithoutWriter(t *testing.T) {
@@ -262,6 +265,506 @@ func TestRunCorruptReadLeavesOldMappingAndFileAuthoritative(t *testing.T) {
 	records, listErr := f.store.ListPackRecords()
 	require.NoError(listErr)
 	assert.Len(records, 1, "pre-swap failures cannot record a replacement pack")
+}
+
+func TestRunAutomaticContinuesPastCorruptSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	corruptLive := []byte("corrupt oldest source stays authoritative")
+	healthyLive := []byte("healthy later source is still compacted")
+	corruptHash := f.reference(corruptLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	corrupt, corruptEntries, corruptPath := f.seal(corruptLive, dead, []byte("corrupt dead sibling"))
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), corrupt.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+	for _, entry := range corruptEntries {
+		if entry.BlobHash != corruptHash {
+			continue
+		}
+		file, openErr := os.OpenFile(corruptPath, os.O_RDWR, 0)
+		require.NoError(openErr)
+		one := []byte{0}
+		_, openErr = file.ReadAt(one, entry.Offset)
+		require.NoError(openErr)
+		one[0] ^= 0xff
+		_, openErr = file.WriteAt(one, entry.Offset)
+		require.NoError(openErr)
+		require.NoError(file.Close())
+		break
+	}
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+
+	stats, err := Run(context.Background(), f.store, blobs, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.Error(err)
+	assert.Equal(1, stats.PacksRewritten)
+	corruptEntry, getErr := f.store.GetAttachmentPackEntry(corruptHash)
+	require.NoError(getErr)
+	require.NotNil(corruptEntry)
+	assert.Equal(corrupt.PackID, corruptEntry.PackID)
+	healthyEntry, getErr := f.store.GetAttachmentPackEntry(healthyHash)
+	require.NoError(getErr)
+	require.NotNil(healthyEntry)
+	assert.NotEqual(healthy.PackID, healthyEntry.PackID)
+	assert.FileExists(corruptPath)
+	assert.NoFileExists(healthyPath)
+}
+
+func TestRunExplicitRetiresZeroLiveBeforeFailingOnCorruptSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	zero, _, zeroPath := f.seal([]byte("zero-live missing source needs no pack read"))
+	require.NoError(os.Remove(zeroPath))
+	live := []byte("explicit corrupt source fails fast")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	corrupt, entries, corruptPath := f.seal(live, dead, []byte("dead sibling"))
+	healthyLive := []byte("explicit mode must not attempt a later healthy source")
+	healthyHash := f.reference(healthyLive)
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), corrupt.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+	for _, entry := range entries {
+		if entry.BlobHash != hash {
+			continue
+		}
+		file, err := os.OpenFile(corruptPath, os.O_RDWR, 0)
+		require.NoError(err)
+		one := []byte{0}
+		_, err = file.ReadAt(one, entry.Offset)
+		require.NoError(err)
+		one[0] ^= 0xff
+		_, err = file.WriteAt(one, entry.Offset)
+		require.NoError(err)
+		require.NoError(file.Close())
+	}
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+
+	stats, err := Run(context.Background(), f.store, blobs, f.dir, Options{
+		Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.Error(err)
+	assert.Equal(1, stats.PacksRemoved)
+	has, getErr := f.store.HasPackRecord(zero.PackID)
+	require.NoError(getErr)
+	assert.False(has)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(corrupt.PackID, entry.PackID)
+	assert.FileExists(corruptPath)
+	healthyEntry, getErr := f.store.GetAttachmentPackEntry(healthyHash)
+	require.NoError(getErr)
+	require.NotNil(healthyEntry)
+	assert.Equal(healthy.PackID, healthyEntry.PackID)
+	assert.FileExists(healthyPath)
+}
+
+type countingBoundedStore struct {
+	*blobstore.Store
+
+	reads int
+}
+
+func (s *countingBoundedStore) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
+	s.reads++
+	return s.Store.ReadBounded(hash, maxBytes)
+}
+
+func TestRunDefersOversizedLiveUsageBeforeBudgetAndRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("forged accounting must not trigger an oversized allocation")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, dead, []byte("dead sibling"))
+	oversized := int64(blobstore.MaxMaintenanceBlobBytes + 1)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_pack_index SET raw_len = ? WHERE blob_hash = ?`), oversized, hash)
+	require.NoError(err)
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(stats.BytesRepacked)
+	assert.Zero(counting.reads)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(old.PackID, entry.PackID)
+	assert.FileExists(oldPath)
+}
+
+func TestRunDefersOversizedStoredUsageBeforeBudgetAndRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("forged stored accounting must not trigger an oversized allocation")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, dead, []byte("dead sibling"))
+	oversized := int64(blobstore.MaxMaintenanceBlobBytes + 1)
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_pack_index SET stored_len = ? WHERE blob_hash = ?`), oversized, hash)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET stored_bytes = ? WHERE pack_id = ?`),
+		oversized+minDeadStored, old.PackID)
+	require.NoError(err)
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(stats.BytesRepacked)
+	assert.Zero(counting.reads)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(old.PackID, entry.PackID)
+	assert.FileExists(oldPath)
+}
+
+func TestRunRejectsFooterIndexMismatchBeforeContentRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("footer metadata remains authoritative")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, dead, []byte("dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_pack_index SET pack_offset = pack_offset + 1 WHERE blob_hash = ?`), hash)
+	require.NoError(err)
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "does not match pack footer")
+	assert.Zero(stats.PacksRewritten)
+	assert.Zero(counting.reads)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(old.PackID, entry.PackID)
+	assert.FileExists(oldPath)
+}
+
+func TestRunDefersOversizedContainerWithoutContentRead(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("oversized container defers intact")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, dead, []byte("dead sibling"))
+	require.NoError(os.Truncate(oldPath, blobstore.MaxMaintenancePackBytes+1))
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(1, stats.PacksDeferredOversized)
+	assert.Zero(counting.reads)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.Equal(old.PackID, entry.PackID)
+	assert.FileExists(oldPath)
+}
+
+func TestRunDefersOversizedFooterAndEntryCountWithoutContentRead(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{
+			name: "footer",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+				file, err := os.OpenFile(path, os.O_RDWR, 0)
+				require.NoError(t, err)
+				info, err := file.Stat()
+				require.NoError(t, err)
+				var encoded [4]byte
+				binary.LittleEndian.PutUint32(encoded[:], blobstore.MaxMaintenanceFooterBytes+1)
+				_, err = file.WriteAt(encoded[:], info.Size()-40)
+				require.NoError(t, err)
+				require.NoError(t, file.Close())
+			},
+		},
+		{
+			name: "entry count",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				footerLen := int(binary.LittleEndian.Uint32(data[len(data)-40:]))
+				footerStart := len(data) - 40 - footerLen
+				binary.LittleEndian.PutUint32(data[footerStart:], blobstore.MaxMaintenancePackEntries+1)
+				require.NoError(t, os.WriteFile(path, data, 0o600))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newRepackFixture(t)
+			live := []byte("bounded pack metadata remains authoritative")
+			hash := f.reference(live)
+			dead := incompressible(t, int(minDeadStored)+(128<<10))
+			old, _, oldPath := f.seal(live, dead, []byte("dead sibling"))
+			tt.mutate(t, oldPath)
+			realBlobs := blobstore.New(f.store, f.dir)
+			defer func() { require.NoError(realBlobs.Close()) }()
+			counting := &countingBoundedStore{Store: realBlobs}
+
+			stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+				MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+			})
+			require.NoError(err)
+			assert.Equal(1, stats.PacksDeferredOversized)
+			assert.Zero(counting.reads)
+			entry, getErr := f.store.GetAttachmentPackEntry(hash)
+			require.NoError(getErr)
+			require.NotNil(entry)
+			assert.Equal(old.PackID, entry.PackID)
+			assert.FileExists(oldPath)
+		})
+	}
+}
+
+func rewriteFooterRawLen(t *testing.T, path, hash string, rawLen uint64) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(data), 40)
+	trailer := data[len(data)-40:]
+	footerLen := int(binary.LittleEndian.Uint32(trailer[:4]))
+	footer := data[len(data)-40-footerLen : len(data)-40]
+	count := int(binary.LittleEndian.Uint32(footer[:4]))
+	wanted, err := pack.ParseBlobID(hash)
+	require.NoError(t, err)
+	found := false
+	for i := range count {
+		off := 4 + i*61
+		if bytes.Equal(footer[off:off+32], wanted[:]) {
+			binary.LittleEndian.PutUint64(footer[off+48:], rawLen)
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+	digest := sha256.New()
+	_, err = digest.Write(footer)
+	require.NoError(t, err)
+	_, err = digest.Write(trailer[:4])
+	require.NoError(t, err)
+	copy(trailer[4:36], digest.Sum(nil))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+}
+
+func TestRunIgnoresOversizedDeadFooterEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	live := []byte("small live entry remains eligible")
+	deadHugeRaw := bytes.Repeat([]byte("z"), 1024)
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(live, deadHugeRaw, dead, []byte("dead sibling"))
+	deadHash := pack.ComputeBlobID(deadHugeRaw).String()
+	rewriteFooterRawLen(t, oldPath, deadHash, blobstore.MaxMaintenanceBlobBytes+1)
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+
+	stats, err := Run(context.Background(), f.store, blobs, f.dir, Options{
+		Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Zero(stats.PacksDeferredOversized)
+	assert.Equal(1, stats.PacksRewritten)
+	entry, getErr := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(getErr)
+	require.NotNil(entry)
+	assert.NotEqual(old.PackID, entry.PackID)
+	assert.NoFileExists(oldPath)
+}
+
+func TestRunSealsBeforeReplacementEntryLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	liveA := []byte("first live entry")
+	liveB := []byte("second live entry")
+	f.reference(liveA)
+	f.reference(liveB)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	f.seal(liveA, liveB, dead, []byte("dead sibling one"), []byte("dead sibling two"))
+	oldLimit := maxReplacementPackEntries
+	maxReplacementPackEntries = 1
+	t.Cleanup(func() { maxReplacementPackEntries = oldLimit })
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+
+	stats, err := Run(context.Background(), f.store, blobs, f.dir, Options{
+		Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(err)
+	assert.Equal(2, stats.PacksSealed)
+	records, err := f.store.ListPackRecords()
+	require.NoError(err)
+	require.Len(records, 2)
+	for _, record := range records {
+		assert.Equal(int64(1), record.EntryCount)
+	}
+}
+
+func TestRunDoesNotReportSealedAttemptAsCommittedProgress(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	liveA := []byte("first live entry seals before later failure")
+	liveB := []byte("second live entry is corrupt")
+	hashA := f.reference(liveA)
+	hashB := f.reference(liveB)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	old, _, oldPath := f.seal(liveA, liveB, dead, []byte("dead sibling one"), []byte("dead sibling two"))
+	referenced, err := f.store.ListReferencedPackEntries(context.Background(), old.PackID)
+	require.NoError(err)
+	require.Len(referenced, 2)
+	for _, entry := range referenced[1:] {
+		file, err := os.OpenFile(oldPath, os.O_RDWR, 0)
+		require.NoError(err)
+		one := []byte{0}
+		_, err = file.ReadAt(one, entry.Offset)
+		require.NoError(err)
+		one[0] ^= 0xff
+		_, err = file.WriteAt(one, entry.Offset)
+		require.NoError(err)
+		require.NoError(file.Close())
+	}
+	originalFactory := newPackWriter
+	newPackWriter = func(dir string, opts pack.WriterOptions) (packWriter, error) {
+		writer, err := pack.NewWriter(dir, opts)
+		if err != nil {
+			return nil, fmt.Errorf("create always-full test writer: %w", err)
+		}
+		return alwaysFullWriter{packWriter: writer}, nil
+	}
+	t.Cleanup(func() { newPackWriter = originalFactory })
+	blobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(blobs.Close()) }()
+
+	stats, err := Run(context.Background(), f.store, blobs, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.Error(err)
+	assert.Zero(stats.PacksRewritten)
+	assert.Zero(stats.PacksSealed)
+	assert.Zero(stats.BlobsRepacked)
+	assert.Zero(stats.BytesRepacked)
+	for _, hash := range []string{hashA, hashB} {
+		entry, getErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(getErr)
+		require.NotNil(entry)
+		assert.Equal(old.PackID, entry.PackID)
+	}
+	var packFiles []string
+	err = filepath.WalkDir(filepath.Join(f.dir, "packs"), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && filepath.Ext(path) == blobstore.PackExt {
+			packFiles = append(packFiles, path)
+		}
+		return nil
+	})
+	require.NoError(err)
+	assert.Len(packFiles, 2, "the sealed replacement remains an unreported reconciliation-safe orphan")
+}
+
+func TestRunJoinsZeroLiveCleanupAndAutomaticContentErrors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	zero, _, zeroPath := f.seal([]byte("held zero-live source"))
+	live := []byte("corrupt source after cleanup failure")
+	hash := f.reference(live)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	corrupt, entries, corruptPath := f.seal(live, dead, []byte("dead sibling"))
+	for _, entry := range entries {
+		if entry.BlobHash != hash {
+			continue
+		}
+		file, err := os.OpenFile(corruptPath, os.O_RDWR, 0)
+		require.NoError(err)
+		one := []byte{0}
+		_, err = file.ReadAt(one, entry.Offset)
+		require.NoError(err)
+		one[0] ^= 0xff
+		_, err = file.WriteAt(one, entry.Offset)
+		require.NoError(err)
+		require.NoError(file.Close())
+	}
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	failing := &selectiveRetireStore{
+		Store: realBlobs,
+		failures: map[string]error{
+			zero.PackID: errors.New("injected zero-live retirement failure"),
+		},
+	}
+
+	stats, err := Run(context.Background(), f.store, failing, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "injected zero-live retirement failure")
+	require.ErrorContains(err, "read live blob")
+	assert.Zero(stats.PacksRewritten)
+	assert.FileExists(zeroPath)
+	has, getErr := f.store.HasPackRecord(zero.PackID)
+	require.NoError(getErr)
+	assert.True(has)
+	has, getErr = f.store.HasPackRecord(corrupt.PackID)
+	require.NoError(getErr)
+	assert.True(has)
 }
 
 type failFirstRetireStore struct {
@@ -392,6 +895,10 @@ type cancelBeforeSealWriter struct {
 	cancel context.CancelFunc
 }
 
+type alwaysFullWriter struct{ packWriter }
+
+func (alwaysFullWriter) Full() bool { return true }
+
 func (w cancelBeforeSealWriter) Full() bool {
 	w.cancel()
 	return true
@@ -485,18 +992,18 @@ func TestRunCancellationAtCleanupBoundaryLeavesRetryableInventory(t *testing.T) 
 	assert.Equal(2, retryStats.PacksRemoved)
 }
 
-type cancelAfterOpenStore struct {
+type cancelAfterReadStore struct {
 	*blobstore.Store
 
 	cancel context.CancelFunc
 }
 
-func (s cancelAfterOpenStore) Open(hash string) (io.ReadSeekCloser, int64, error) {
-	r, size, err := s.Store.Open(hash)
+func (s cancelAfterReadStore) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
+	data, size, err := s.Store.ReadBounded(hash, maxBytes)
 	if err == nil {
 		s.cancel()
 	}
-	return r, size, err
+	return data, size, err
 }
 
 func TestRunCancellationAfterVerifiedReadAbortsActiveWriter(t *testing.T) {
@@ -510,7 +1017,7 @@ func TestRunCancellationAfterVerifiedReadAbortsActiveWriter(t *testing.T) {
 	realBlobs := blobstore.New(f.store, f.dir)
 	defer func() { require.NoError(realBlobs.Close()) }()
 	ctx, cancel := context.WithCancel(context.Background())
-	canceling := cancelAfterOpenStore{Store: realBlobs, cancel: cancel}
+	canceling := cancelAfterReadStore{Store: realBlobs, cancel: cancel}
 
 	stats, err := Run(ctx, f.store, canceling, f.dir,
 		Options{Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)})
@@ -527,15 +1034,11 @@ type mismatchedOpenStore struct {
 	data []byte
 }
 
-func (s mismatchedOpenStore) Open(string) (io.ReadSeekCloser, int64, error) {
-	return nopReadSeekCloser{bytes.NewReader(s.data)}, int64(len(s.data)), nil
+func (s mismatchedOpenStore) ReadBounded(string, int64) ([]byte, int64, error) {
+	return s.data, int64(len(s.data)), nil
 }
 
 func (mismatchedOpenStore) RetirePack(string) error { return nil }
-
-type nopReadSeekCloser struct{ *bytes.Reader }
-
-func (nopReadSeekCloser) Close() error { return nil }
 
 func TestRunRequiresAppendedBlobIDToMatchExpectedHash(t *testing.T) {
 	require := require.New(t)

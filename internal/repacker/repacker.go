@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -35,20 +35,21 @@ type Options struct {
 
 // Stats summarizes one repack run.
 type Stats struct {
-	MappingsPruned  int
-	PacksSelected   int
-	PacksRewritten  int
-	PacksSealed     int
-	PacksRemoved    int
-	BlobsRepacked   int
-	BytesRepacked   int64
-	BudgetExhausted bool
+	MappingsPruned         int
+	PacksSelected          int
+	PacksRewritten         int
+	PacksSealed            int
+	PacksRemoved           int
+	PacksDeferredOversized int
+	BlobsRepacked          int
+	BytesRepacked          int64
+	BudgetExhausted        bool
 }
 
 // BlobStore is the production verified attachment read path plus daemon-cache
 // reader retirement.
 type BlobStore interface {
-	Open(hash string) (io.ReadSeekCloser, int64, error)
+	ReadBounded(hash string, maxBytes int64) ([]byte, int64, error)
 	RetirePack(packID string) error
 }
 
@@ -66,20 +67,19 @@ var newPackWriter = func(stagingDir string, opts pack.WriterOptions) (packWriter
 	return pack.NewWriter(stagingDir, opts)
 }
 
+// maxReplacementPackEntries is a test seam for the production maintenance
+// footer-entry ceiling. Production never changes it.
+var maxReplacementPackEntries = blobstore.MaxMaintenancePackEntries
+
 type sourceEntry struct {
 	oldPackID string
 	entry     store.PackIndexEntry
 }
 
-// Run reclaims every selected old pack without changing a live mapping until
-// every replacement pack has been durably sealed.
-func Run(
-	ctx context.Context,
-	st *store.Store,
-	blobs BlobStore,
-	attachmentsDir string,
-	opts Options,
-) (Stats, error) {
+// Run reclaims each selected source independently. Zero-live inventory is
+// retired before any source content is opened, and an automatic run can make
+// progress on healthy sources even when another pack is corrupt.
+func Run(ctx context.Context, st *store.Store, blobs BlobStore, attachmentsDir string, opts Options) (Stats, error) {
 	var stats Stats
 	if err := ctx.Err(); err != nil {
 		return stats, err
@@ -101,97 +101,94 @@ func Run(
 		return stats, fmt.Errorf("pruned mapping count %d exceeds platform int", pruned)
 	}
 	stats.MappingsPruned = int(pruned)
-	if err := ctx.Err(); err != nil {
-		return stats, err
-	}
 
 	usage, err := st.ListPackUsage(ctx)
 	if err != nil {
 		return stats, err
 	}
-	selected, exhausted := selectPacks(usage, opts)
+	selected, _ := selectPacks(usage, opts)
 	stats.PacksSelected = len(selected)
-	stats.BudgetExhausted = exhausted
-	if len(selected) == 0 {
-		return stats, nil
-	}
 
-	var (
-		partialIDs  []string
-		liveEntries []sourceEntry
-	)
-	for _, selectedPack := range selected {
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		if selectedPack.LiveEntries == 0 {
+	var runErr error
+	partial := make([]store.PackUsage, 0, len(selected))
+	for _, candidate := range selected {
+		if candidate.LiveEntries != 0 {
+			partial = append(partial, candidate)
 			continue
 		}
-		entries, err := st.ListReferencedPackEntries(ctx, selectedPack.PackID)
+		if err := ctx.Err(); err != nil {
+			return stats, errors.Join(runErr, err)
+		}
+		runErr = errors.Join(runErr, retireSource(ctx, st, blobs, candidate.PackID, &stats))
+	}
+
+	automatic := opts.MaxBytes > 0
+	for _, candidate := range partial {
+		if err := ctx.Err(); err != nil {
+			return stats, errors.Join(runErr, err)
+		}
+		if limit := usageLimit(candidate); limit != nil {
+			stats.PacksDeferredOversized++
+			logPackLimit(candidate.PackID, limit)
+			continue
+		}
+		entries, err := st.ListReferencedPackEntries(ctx, candidate.PackID)
 		if err != nil {
-			return stats, err
+			return stats, errors.Join(runErr, err)
 		}
-		var stored, raw int64
-		for _, entry := range entries {
-			stored += entry.StoredLen
-			raw += entry.RawLen
-			liveEntries = append(liveEntries, sourceEntry{
-				oldPackID: selectedPack.PackID,
-				entry:     entry,
-			})
+		if err := verifyUsageSnapshot(candidate, entries); err != nil {
+			return stats, errors.Join(runErr, err)
 		}
-		if int64(len(entries)) != selectedPack.LiveEntries ||
-			stored != selectedPack.LiveStoredBytes || raw != selectedPack.LiveRawBytes {
-			return stats, fmt.Errorf(
-				"pack %s referenced entries changed during repack selection: usage=(%d,%d,%d) entries=(%d,%d,%d)",
-				selectedPack.PackID, selectedPack.LiveEntries,
-				selectedPack.LiveStoredBytes, selectedPack.LiveRawBytes,
-				len(entries), stored, raw)
-		}
-		partialIDs = append(partialIDs, selectedPack.PackID)
-	}
-
-	records, moves, rewriteErr := rewriteLiveEntries(
-		ctx, blobs, packsDir, opts.TargetSize, liveEntries, &stats,
-	)
-	if rewriteErr != nil {
-		return stats, rewriteErr
-	}
-	if len(partialIDs) > 0 {
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		if err := st.CommitRepack(ctx, partialIDs, records, moves); err != nil {
-			return stats, fmt.Errorf("commit repacked attachment mappings: %w", err)
-		}
-		stats.PacksRewritten = len(partialIDs)
-	}
-
-	var cleanupErr error
-	for _, selectedPack := range selected {
-		if err := ctx.Err(); err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
-			break
-		}
-		if err := blobs.RetirePack(selectedPack.PackID); err != nil {
-			cleanupErr = errors.Join(cleanupErr,
-				fmt.Errorf("retire old attachment pack %s: %w", selectedPack.PackID, err))
+		if err := preflightSourcePack(packsDir, candidate.PackID, entries); err != nil {
+			var limitErr *blobstore.LimitError
+			if errors.As(err, &limitErr) {
+				stats.PacksDeferredOversized++
+				logPackLimit(candidate.PackID, limitErr)
+				continue
+			}
+			contentErr := fmt.Errorf("preflight attachment pack %s: %w", candidate.PackID, err)
+			if !automatic {
+				return stats, errors.Join(runErr, contentErr)
+			}
+			runErr = errors.Join(runErr, contentErr)
 			continue
 		}
-		deleted, err := st.DeleteEmptyPackRecord(ctx, selectedPack.PackID)
+		if automatic && stats.BytesRepacked >= opts.MaxBytes {
+			stats.BudgetExhausted = true
+			continue
+		}
+
+		result, err := rewriteSource(ctx, blobs, packsDir, opts.TargetSize, candidate.PackID, entries)
 		if err != nil {
-			cleanupErr = errors.Join(cleanupErr,
-				fmt.Errorf("delete retired attachment pack record %s: %w", selectedPack.PackID, err))
+			var limitErr *blobstore.LimitError
+			if errors.As(err, &limitErr) {
+				stats.PacksDeferredOversized++
+				logPackLimit(candidate.PackID, limitErr)
+				continue
+			}
+			var contentErr *sourceContentError
+			if !errors.As(err, &contentErr) {
+				return stats, errors.Join(runErr, err)
+			}
+			if !automatic {
+				return stats, errors.Join(runErr, err)
+			}
+			runErr = errors.Join(runErr, err)
 			continue
 		}
-		if !deleted {
-			cleanupErr = errors.Join(cleanupErr,
-				fmt.Errorf("delete retired attachment pack record %s: pack still has referenced mappings or record is missing", selectedPack.PackID))
-			continue
+		if err := ctx.Err(); err != nil {
+			return stats, errors.Join(runErr, err)
 		}
-		stats.PacksRemoved++
+		if err := st.CommitRepack(ctx, []string{candidate.PackID}, result.records, result.moves); err != nil {
+			return stats, errors.Join(runErr, fmt.Errorf("commit repacked attachment mappings for %s: %w", candidate.PackID, err))
+		}
+		stats.PacksRewritten++
+		stats.PacksSealed += result.packsSealed
+		stats.BlobsRepacked += result.blobsRepacked
+		stats.BytesRepacked += result.bytesRepacked
+		runErr = errors.Join(runErr, retireSource(ctx, st, blobs, candidate.PackID, &stats))
 	}
-	return stats, cleanupErr
+	return stats, runErr
 }
 
 func selectPacks(usage []store.PackUsage, opts Options) ([]store.PackUsage, bool) {
@@ -209,15 +206,10 @@ func selectPacks(usage []store.PackUsage, opts Options) ([]store.PackUsage, bool
 		return ordered[i].PackID < ordered[j].PackID
 	})
 
-	var (
-		selected        []store.PackUsage
-		selectedPartial bool
-		selectedRaw     int64
-		exhausted       bool
-	)
+	var zeroLive, partial []store.PackUsage
 	for _, candidate := range ordered {
 		if candidate.LiveEntries == 0 {
-			selected = append(selected, candidate)
+			zeroLive = append(zeroLive, candidate)
 			continue
 		}
 		deadStored := candidate.StoredBytes - candidate.LiveStoredBytes
@@ -227,53 +219,143 @@ func selectPacks(usage []store.PackUsage, opts Options) ([]store.PackUsage, bool
 		if !belowHalf || !oldEnough || deadStored < minDeadStored {
 			continue
 		}
-		if opts.MaxBytes > 0 && selectedPartial && selectedRaw >= opts.MaxBytes {
-			exhausted = true
-			continue
-		}
-		selected = append(selected, candidate)
-		selectedPartial = true
-		selectedRaw += candidate.LiveRawBytes
+		partial = append(partial, candidate)
 	}
-	return selected, exhausted
+	return append(zeroLive, partial...), false
 }
 
-func rewriteLiveEntries(
-	ctx context.Context,
-	blobs BlobStore,
-	packsDir string,
-	targetSize int64,
-	liveEntries []sourceEntry,
-	stats *Stats,
-) ([]store.PackRecord, []store.RepackMove, error) {
-	if len(liveEntries) == 0 {
-		return nil, nil, nil
+func retireSource(ctx context.Context, st *store.Store, blobs BlobStore, packID string, stats *Stats) error {
+	if err := blobs.RetirePack(packID); err != nil {
+		return fmt.Errorf("retire old attachment pack %s: %w", packID, err)
 	}
+	deleted, err := st.DeleteEmptyPackRecord(ctx, packID)
+	if err != nil {
+		return fmt.Errorf("delete retired attachment pack record %s: %w", packID, err)
+	}
+	if !deleted {
+		return fmt.Errorf("delete retired attachment pack record %s: pack still has referenced mappings or record is missing", packID)
+	}
+	stats.PacksRemoved++
+	return nil
+}
 
-	var (
-		writer         packWriter
-		currentSources []sourceEntry
-		records        []store.PackRecord
-		moves          []store.RepackMove
-	)
-	abort := func(cause error) error {
-		if writer == nil {
-			return cause
+func usageLimit(candidate store.PackUsage) *blobstore.LimitError {
+	if candidate.MaxLiveRawLen > blobstore.MaxMaintenanceBlobBytes {
+		return &blobstore.LimitError{Dimension: blobstore.LimitBlobRawBytes,
+			Actual: uint64(candidate.MaxLiveRawLen), Limit: blobstore.MaxMaintenanceBlobBytes}
+	}
+	if candidate.MaxLiveStoredLen > blobstore.MaxMaintenanceBlobBytes {
+		return &blobstore.LimitError{Dimension: blobstore.LimitBlobStoredBytes,
+			Actual: uint64(candidate.MaxLiveStoredLen), Limit: blobstore.MaxMaintenanceBlobBytes}
+	}
+	return nil
+}
+
+func logPackLimit(packID string, limit *blobstore.LimitError) {
+	args := []any{"pack", packID}
+	switch limit.Dimension {
+	case blobstore.LimitBlobRawBytes:
+		args = append(args, "raw_bytes", limit.Actual, "max_raw_bytes", limit.Limit)
+	case blobstore.LimitBlobStoredBytes:
+		args = append(args, "stored_bytes", limit.Actual, "max_stored_bytes", limit.Limit)
+	default:
+		args = append(args, "dimension", limit.Dimension, "actual", limit.Actual, "limit", limit.Limit)
+	}
+	slog.Warn("attachment pack exceeds maintenance ceiling; deferring repack", args...)
+}
+
+func verifyUsageSnapshot(candidate store.PackUsage, entries []store.PackIndexEntry) error {
+	var stored, raw int64
+	for _, entry := range entries {
+		stored += entry.StoredLen
+		raw += entry.RawLen
+	}
+	if int64(len(entries)) != candidate.LiveEntries || stored != candidate.LiveStoredBytes || raw != candidate.LiveRawBytes {
+		return fmt.Errorf("pack %s referenced entries changed during repack selection: usage=(%d,%d,%d) entries=(%d,%d,%d)",
+			candidate.PackID, candidate.LiveEntries, candidate.LiveStoredBytes, candidate.LiveRawBytes,
+			len(entries), stored, raw)
+	}
+	return nil
+}
+
+func preflightSourcePack(packsDir, packID string, entries []store.PackIndexEntry) error {
+	path := filepath.Join(packsDir, packID[:2], packID+blobstore.PackExt)
+	reader, err := blobstore.OpenMaintenancePack(path)
+	if err != nil {
+		return err
+	}
+	footer := make(map[string]pack.Entry)
+	for _, entry := range reader.Entries() {
+		footer[entry.ID.String()] = entry
+	}
+	var checkErr error
+	for _, indexed := range entries {
+		authoritative, ok := footer[indexed.BlobHash]
+		if !ok {
+			checkErr = fmt.Errorf("%w: referenced blob %s is absent from pack footer", pack.ErrCorrupt, indexed.BlobHash)
+			break
 		}
-		return errors.Join(cause, writer.Abort())
+		if authoritative.RawLen > blobstore.MaxMaintenanceBlobBytes {
+			checkErr = &blobstore.LimitError{Dimension: blobstore.LimitBlobRawBytes,
+				Actual: authoritative.RawLen, Limit: blobstore.MaxMaintenanceBlobBytes}
+			break
+		}
+		if authoritative.StoredLen > blobstore.MaxMaintenanceBlobBytes {
+			checkErr = &blobstore.LimitError{Dimension: blobstore.LimitBlobStoredBytes,
+				Actual: authoritative.StoredLen, Limit: blobstore.MaxMaintenanceBlobBytes}
+			break
+		}
+		if indexed.PackID != packID || uint64(indexed.Offset) != authoritative.Offset || //nolint:gosec // store scan validation rejects negative offsets
+			uint64(indexed.StoredLen) != authoritative.StoredLen || //nolint:gosec // store scan validation rejects negative lengths
+			uint64(indexed.RawLen) != authoritative.RawLen || //nolint:gosec // store scan validation rejects negative lengths
+			pack.BlobFlags(indexed.Flags) != authoritative.Flags || indexed.CRC32C != authoritative.CRC32C {
+			checkErr = fmt.Errorf("%w: indexed metadata for blob %s does not match pack footer", pack.ErrCorrupt, indexed.BlobHash)
+			break
+		}
+	}
+	return errors.Join(checkErr, reader.Close())
+}
+
+type sourceContentError struct{ err error }
+
+func (e *sourceContentError) Error() string { return e.err.Error() }
+func (e *sourceContentError) Unwrap() error { return e.err }
+
+type rewriteResult struct {
+	records       []store.PackRecord
+	moves         []store.RepackMove
+	packsSealed   int
+	blobsRepacked int
+	bytesRepacked int64
+}
+
+func rewriteSource(ctx context.Context, blobs BlobStore, packsDir string, targetSize int64, oldPackID string, entries []store.PackIndexEntry) (rewriteResult, error) {
+	var result rewriteResult
+	var writer packWriter
+	var currentSources []sourceEntry
+	abort := func(cause error, content bool) error {
+		if writer != nil {
+			if abortErr := writer.Abort(); abortErr != nil {
+				return errors.Join(cause, fmt.Errorf("abort replacement attachment pack: %w", abortErr))
+			}
+		}
+		if content {
+			return &sourceContentError{err: cause}
+		}
+		return cause
 	}
 	seal := func() error {
 		if writer == nil {
 			return nil
 		}
 		if err := ctx.Err(); err != nil {
-			return abort(err)
+			return abort(err, false)
 		}
 		id := writer.ID()
 		path := filepath.Join(packsDir, id[:2], id+blobstore.PackExt)
 		entries, err := writer.Seal(path)
 		if err != nil {
-			return abort(fmt.Errorf("seal replacement attachment pack %s: %w", id, err))
+			return abort(fmt.Errorf("seal replacement attachment pack %s: %w", id, err), false)
 		}
 		if len(entries) != len(currentSources) {
 			return fmt.Errorf("sealed replacement pack %s returned %d entries, want %d", id, len(entries), len(currentSources))
@@ -287,7 +369,7 @@ func rewriteLiveEntries(
 				return fmt.Errorf("sealed replacement pack %s entry %d has blob %s, want %s", id, i, entry.ID, source.entry.BlobHash)
 			}
 			rec.StoredBytes += int64(entry.StoredLen) //nolint:gosec // kit bounds stored lengths
-			moves = append(moves, store.RepackMove{
+			result.moves = append(result.moves, store.RepackMove{
 				OldPackID: source.oldPackID,
 				NewEntry: store.PackIndexEntry{
 					BlobHash: entry.ID.String(), PackID: id,
@@ -298,75 +380,62 @@ func rewriteLiveEntries(
 				},
 			})
 		}
-		records = append(records, rec)
-		stats.PacksSealed++
+		result.records = append(result.records, rec)
+		result.packsSealed++
 		writer = nil
 		currentSources = nil
 		return nil
 	}
 
-	for _, source := range liveEntries {
+	for _, indexed := range entries {
 		if err := ctx.Err(); err != nil {
-			return records, moves, abort(err)
+			return result, abort(err, false)
 		}
-		reader, reportedSize, err := blobs.Open(source.entry.BlobHash)
+		data, reportedSize, err := blobs.ReadBounded(indexed.BlobHash, blobstore.MaxMaintenanceBlobBytes)
 		if err != nil {
-			return records, moves, abort(fmt.Errorf(
+			return result, abort(fmt.Errorf(
 				"read live blob %s from source pack %s: %w",
-				source.entry.BlobHash, source.oldPackID, err))
+				indexed.BlobHash, oldPackID, err), !errors.Is(err, blobstore.ErrBlobTooLarge))
 		}
-		data, readErr := io.ReadAll(reader)
-		closeErr := reader.Close()
-		if readErr != nil || closeErr != nil {
-			var wrappedReadErr error
-			if readErr != nil {
-				wrappedReadErr = fmt.Errorf("read live blob %s from source pack %s: %w",
-					source.entry.BlobHash, source.oldPackID, readErr)
-			}
-			return records, moves, abort(errors.Join(
-				wrappedReadErr, wrapCloseError(source.entry.BlobHash, closeErr)))
-		}
-		if reportedSize != int64(len(data)) || source.entry.RawLen != int64(len(data)) {
-			return records, moves, abort(fmt.Errorf(
+		if reportedSize != int64(len(data)) || indexed.RawLen != int64(len(data)) {
+			return result, abort(fmt.Errorf(
 				"live blob %s length mismatch: index=%d reader=%d actual=%d",
-				source.entry.BlobHash, source.entry.RawLen, reportedSize, len(data)))
+				indexed.BlobHash, indexed.RawLen, reportedSize, len(data)), true)
 		}
 
+		if writer != nil && len(currentSources) >= maxReplacementPackEntries {
+			if err := seal(); err != nil {
+				return result, err
+			}
+		}
 		if writer == nil {
 			writer, err = newPackWriter(packsDir, pack.WriterOptions{
 				TargetSize: targetSize, ZstdLevel: pack.DefaultZstdLevel,
 			})
 			if err != nil {
-				return records, moves, fmt.Errorf("create replacement attachment pack: %w", err)
+				return result, fmt.Errorf("create replacement attachment pack: %w", err)
 			}
 		}
 		entry, err := writer.Append(data)
 		if err != nil {
-			return records, moves, abort(fmt.Errorf("append live blob %s to replacement pack: %w", source.entry.BlobHash, err))
+			return result, abort(fmt.Errorf("append live blob %s to replacement pack: %w", indexed.BlobHash, err), false)
 		}
-		if entry.ID.String() != source.entry.BlobHash {
-			return records, moves, abort(fmt.Errorf(
+		if entry.ID.String() != indexed.BlobHash {
+			return result, abort(fmt.Errorf(
 				"appended blob id %s does not match expected %s",
-				entry.ID, source.entry.BlobHash))
+				entry.ID, indexed.BlobHash), false)
 		}
-		currentSources = append(currentSources, source)
-		stats.BlobsRepacked++
-		stats.BytesRepacked += int64(len(data))
+		currentSources = append(currentSources, sourceEntry{oldPackID: oldPackID, entry: indexed})
+		result.blobsRepacked++
+		result.bytesRepacked += int64(len(data))
 		if writer.Full() {
 			if err := seal(); err != nil {
-				return records, moves, err
+				return result, err
 			}
 		}
 	}
 	if err := seal(); err != nil {
-		return records, moves, err
+		return result, err
 	}
-	return records, moves, nil
-}
-
-func wrapCloseError(hash string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("close live blob %s: %w", hash, err)
+	return result, nil
 }
