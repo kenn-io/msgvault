@@ -24,6 +24,14 @@ type PackIndexEntry struct {
 	CRC32C    uint32
 }
 
+// PackIndexAdoption couples one canonical orphan-pack entry with every
+// original attachment hash spelling that made the entry live. Each original
+// hash must normalize exactly to Entry.BlobHash.
+type PackIndexAdoption struct {
+	Entry          PackIndexEntry
+	OriginalHashes []string
+}
+
 func scanPackIndexEntry(row scanner) (PackIndexEntry, error) {
 	var entry PackIndexEntry
 	var flags, crc int64
@@ -146,7 +154,7 @@ type PackRecord struct {
 // canonical pack ID, and every entry must belong to that pack and carry a
 // canonical lowercase SHA-256 blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(rec, entries, false)
+	return s.recordPackedBlobs(rec, entries, false, nil)
 }
 
 // AdoptPackedBlobs records a reconciled orphan pack and transactionally
@@ -155,10 +163,30 @@ func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) erro
 // copy failed verification. Repointing instead of deleting stale rows before
 // adoption avoids a crash window with no readable packed index.
 func (s *Store) AdoptPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(rec, entries, true)
+	return s.recordPackedBlobs(rec, entries, true, nil)
 }
 
-func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, replaceExisting bool) error {
+// AdoptPackedBlobsWithAliases records a reconciled orphan pack and repoints
+// each canonical index entry while transactionally canonicalizing the local
+// attachment rows that reference it through the supplied original spellings.
+// URL-backed and empty paths retain their original hash and path. Validation
+// of any entry or alias fails the entire call before the transaction begins.
+func (s *Store) AdoptPackedBlobsWithAliases(rec PackRecord, adoptions []PackIndexAdoption) error {
+	entries := make([]PackIndexEntry, len(adoptions))
+	originalHashes := make([][]string, len(adoptions))
+	for i, adoption := range adoptions {
+		entries[i] = adoption.Entry
+		originalHashes[i] = adoption.OriginalHashes
+	}
+	return s.recordPackedBlobs(rec, entries, true, originalHashes)
+}
+
+func (s *Store) recordPackedBlobs(
+	rec PackRecord,
+	entries []PackIndexEntry,
+	replaceExisting bool,
+	originalHashes [][]string,
+) error {
 	if !pack.IsValidPackID(rec.PackID) {
 		return fmt.Errorf("attachment pack record has malformed pack id %q", rec.PackID)
 	}
@@ -171,7 +199,12 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 			rec.PackID, len(entries), rec.EntryCount)
 	}
 	var submittedStoredBytes int64
-	for _, e := range entries {
+	if originalHashes != nil && len(originalHashes) != len(entries) {
+		return fmt.Errorf("attachment pack record %s has %d entries but %d alias sets",
+			rec.PackID, len(entries), len(originalHashes))
+	}
+	aliasesByEntry := make([][]string, len(entries))
+	for i, e := range entries {
 		if e.PackID != rec.PackID {
 			return fmt.Errorf("pack index entry %s has pack id %q, want %q",
 				e.BlobHash, e.PackID, rec.PackID)
@@ -185,6 +218,24 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 				rec.PackID, rec.StoredBytes)
 		}
 		submittedStoredBytes += e.StoredLen
+		aliases := []string{e.BlobHash}
+		if originalHashes != nil {
+			aliases = originalHashes[i]
+			if len(aliases) == 0 {
+				return fmt.Errorf("pack index entry %s has no original hash aliases", e.BlobHash)
+			}
+		}
+		for _, alias := range aliases {
+			normalized, err := normalizeBlobHash(alias)
+			if err != nil {
+				return fmt.Errorf("pack index entry %s alias: %w", e.BlobHash, err)
+			}
+			if normalized != e.BlobHash {
+				return fmt.Errorf("pack index entry %s alias %q normalizes to %s",
+					e.BlobHash, alias, normalized)
+			}
+		}
+		aliasesByEntry[i] = aliases
 	}
 	return s.withTx(func(tx *loggedTx) error {
 		if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
@@ -210,9 +261,11 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 				return fmt.Errorf("insert pack index row for %s: %w", e.BlobHash, err)
 			}
 		}
-		for _, e := range entries {
-			if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash, e.BlobHash); err != nil {
-				return err
+		for i, e := range entries {
+			for _, alias := range aliasesByEntry[i] {
+				if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash, alias); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -346,7 +399,10 @@ func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
 }
 
 // PruneUnreferencedPackIndex removes stale storage mappings whose hash no
-// longer appears in either attachment hash column.
+// longer appears in either attachment hash column. References are compared
+// case-insensitively because legacy rows may contain uppercase SHA-256 text;
+// pruning must not destroy their otherwise-readable canonical mapping before
+// alias-aware maintenance can normalize the row.
 func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error) {
 	var pruned int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
@@ -354,8 +410,8 @@ func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error) {
 			DELETE FROM attachment_pack_index
 			WHERE NOT EXISTS (
 			    SELECT 1 FROM attachments a
-			    WHERE a.content_hash = attachment_pack_index.blob_hash
-			       OR a.thumbnail_hash = attachment_pack_index.blob_hash
+			    WHERE LOWER(a.content_hash) = attachment_pack_index.blob_hash
+			       OR LOWER(a.thumbnail_hash) = attachment_pack_index.blob_hash
 			)`)
 		if err != nil {
 			return fmt.Errorf("prune unreferenced pack index: %w", err)

@@ -231,6 +231,99 @@ func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
 	assert.Equal(int64(1), newCount)
 }
 
+func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("fa08")
+	uppercase := strings.ToUpper(hash)
+	canonical := hash[:2] + "/" + hash
+	contentURL := "HTTPS://cdn.example.com/" + uppercase
+	thumbnailURL := "Http://cdn.example.com/" + uppercase
+
+	fx.addAttachmentOnNewMessage(uppercase, "legacy/"+uppercase, 100)
+	fx.addAttachmentOnNewMessage(uppercase, contentURL, 100)
+	fx.addAttachmentOnNewMessage(uppercase, "", 100)
+	carrierLocal := packTestHash("fa09")
+	fx.addAttachment(carrierLocal, carrierLocal[:2]+"/"+carrierLocal, 100)
+	fx.setThumbnail(carrierLocal, uppercase, "legacy/thumb/"+uppercase)
+	carrierURL := packTestHash("fa0a")
+	fx.addAttachment(carrierURL, carrierURL[:2]+"/"+carrierURL, 100)
+	fx.setThumbnail(carrierURL, uppercase, thumbnailURL)
+	carrierEmpty := packTestHash("fa0b")
+	fx.addAttachment(carrierEmpty, carrierEmpty[:2]+"/"+carrierEmpty, 100)
+	fx.setThumbnail(carrierEmpty, uppercase, "")
+
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a6", hash)
+	require.NoError(st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{{
+		Entry:          entries[0],
+		OriginalHashes: []string{uppercase},
+	}}))
+
+	assert.Equal([]string{canonical}, fx.pathsForContentHash(hash))
+	assert.Equal([]string{canonical}, fx.thumbnailPathsForHash(hash))
+	assert.ElementsMatch([]string{contentURL, ""}, fx.pathsForContentHash(uppercase),
+		"URL-backed and empty content paths retain their original hash and path")
+	assert.ElementsMatch([]string{thumbnailURL, ""}, fx.thumbnailPathsForHash(uppercase),
+		"URL-backed and empty thumbnail paths retain their original hash and path")
+	entry, err := st.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(rec.PackID, entry.PackID)
+	usage, err := st.ListPackUsage(context.Background())
+	require.NoError(err)
+	require.Len(usage, 1)
+	assert.Equal(int64(1), usage[0].LiveEntries)
+}
+
+func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T) {
+	tests := []struct {
+		name  string
+		alias string
+	}{
+		{name: "malformed", alias: "not-a-content-hash"},
+		{name: "belongs to another entry", alias: strings.ToUpper(packTestHash("fb01"))},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+
+			hashA := packTestHash("fb01")
+			hashB := packTestHash("fb02")
+			uppercaseA := strings.ToUpper(hashA)
+			uppercaseB := strings.ToUpper(hashB)
+			legacyA := "legacy/" + uppercaseA
+			legacyB := "legacy/" + uppercaseB
+			fx.addAttachment(uppercaseA, legacyA, 100)
+			fx.addAttachmentOnNewMessage(uppercaseB, legacyB, 100)
+			rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a7", hashA, hashB)
+
+			err := st.AdoptPackedBlobsWithAliases(rec, []store.PackIndexAdoption{
+				{Entry: entries[0], OriginalHashes: []string{uppercaseA}},
+				{Entry: entries[1], OriginalHashes: []string{tc.alias}},
+			})
+
+			require.Error(err)
+			has, getErr := st.HasPackRecord(rec.PackID)
+			require.NoError(getErr)
+			assert.False(has)
+			for _, hash := range []string{hashA, hashB} {
+				entry, entryErr := st.GetAttachmentPackEntry(hash)
+				require.NoError(entryErr)
+				assert.Nil(entry)
+			}
+			assert.Equal([]string{legacyA}, fx.pathsForContentHash(uppercaseA))
+			assert.Equal([]string{legacyB}, fx.pathsForContentHash(uppercaseB))
+		})
+	}
+}
+
 // packTestHash returns a synthetic 64-char blob hash unique per prefix.
 func packTestHash(prefix string) string {
 	const filler = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -537,6 +630,28 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 	pruned, err = st.PruneUnreferencedPackIndex(context.Background())
 	require.NoError(err)
 	assert.Zero(pruned, "repair is idempotent")
+}
+
+func TestPruneUnreferencedPackIndexPreservesCaseAliasReference(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("a125")
+	uppercase := strings.ToUpper(hash)
+	fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v3", hash)
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+
+	pruned, err := st.PruneUnreferencedPackIndex(context.Background())
+
+	require.NoError(err)
+	assert.Zero(pruned, "case aliases must preserve an otherwise-live packed mapping")
+	entry, err := st.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(rec.PackID, entry.PackID)
 }
 
 func (f *packAttachmentFixture) pathsForContentHash(hash string) []string {

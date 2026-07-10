@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -587,6 +588,49 @@ func TestRunRemovesRedundantOrphanPack(t *testing.T) {
 	require.NotNil(entryAfter)
 	assert.Equal(entryBefore.PackID, entryAfter.PackID, "index still points at the original pack")
 	assert.Equal(c, f.readBack(h))
+}
+
+func TestRunAdoptsOrphanForUppercaseReferenceAtomically(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := hashOf(content)
+	uppercase := strings.ToUpper(hash)
+	f.addRow(uppercase, "legacy/"+uppercase, len(content))
+	orphanID := buildOrphanPack(t, f.dir, content)
+	orphanPath := filepath.Join(f.dir, "packs", orphanID[:2], orphanID+blobstore.PackExt)
+
+	first := f.run(packer.Options{})
+
+	assert.Equal(1, first.PacksAdopted)
+	assert.Zero(first.PacksRemoved)
+	assert.Equal([]string{canonical(hash)}, f.storagePaths(hash),
+		"adoption must normalize the attachment reference in its index transaction")
+	assert.Empty(f.storagePaths(uppercase))
+	assert.Equal(content, f.readBack(hash))
+
+	usage, err := f.store.ListPackUsage(context.Background())
+	require.NoError(err)
+	require.Len(usage, 1)
+	assert.Equal(orphanID, usage[0].PackID)
+	assert.Equal(int64(1), usage[0].LiveEntries,
+		"the adopted alias must count as live for repack accounting")
+	live, err := f.store.ListReferencedPackEntries(context.Background(), orphanID)
+	require.NoError(err)
+	assert.Len(live, 1)
+
+	second := f.run(packer.Options{})
+
+	assert.Zero(second.MappingsPruned)
+	assert.Zero(second.PacksRemoved)
+	assert.FileExists(orphanPath)
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(orphanID, entry.PackID)
+	assert.Equal(content, f.readBack(hash))
 }
 
 func TestRunPrunesTeamsReplacement(t *testing.T) {

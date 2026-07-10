@@ -119,8 +119,10 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	return stats, nil
 }
 
-func normalizeReferencedInventory(raw map[string]struct{}) (map[normalizedBlobHash]struct{}, bool) {
-	normalized := make(map[normalizedBlobHash]struct{}, len(raw))
+type referencedAliases map[normalizedBlobHash][]string
+
+func normalizeReferencedInventory(raw map[string]struct{}) (referencedAliases, bool) {
+	normalized := make(referencedAliases, len(raw))
 	malformed := false
 	for original := range raw {
 		hash, err := normalizeBlobHash(original)
@@ -130,7 +132,10 @@ func normalizeReferencedInventory(raw map[string]struct{}) (map[normalizedBlobHa
 				"original_hash", original, "error", err)
 			continue
 		}
-		normalized[hash] = struct{}{}
+		normalized[hash] = append(normalized[hash], original)
+	}
+	for hash := range normalized {
+		sort.Strings(normalized[hash])
 	}
 	return normalized, malformed
 }
@@ -185,7 +190,7 @@ func cleanStaging(ctx context.Context, packsDir string) error {
 
 // reconcilePacks walks packsDir for *.mvpack files with no attachment_packs
 // row and adopts or removes each one.
-func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced map[normalizedBlobHash]struct{}, stats *Stats) error {
+func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced referencedAliases, stats *Stats) error {
 	existingBlobs := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := existingBlobs.Close(); err != nil {
@@ -231,7 +236,7 @@ func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsD
 // adopts verified recovery candidates only when every referenced candidate in
 // the pack verifies. One failure quarantines the whole orphan so a partial
 // adoption cannot hide the damaged entry from future reconciliation.
-func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced map[normalizedBlobHash]struct{}, stats *Stats) error {
+func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced referencedAliases, stats *Stats) error {
 	r, err := blobstore.OpenMaintenancePack(path)
 	if err != nil {
 		var limitErr *blobstore.LimitError
@@ -288,7 +293,7 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 		slog.Info("removed fully-redundant orphan pack", "pack", id)
 		return nil
 	}
-	if err := st.AdoptPackedBlobs(collection.record, collection.adoptable); err != nil {
+	if err := st.AdoptPackedBlobsWithAliases(collection.record, collection.adoptable); err != nil {
 		return fmt.Errorf("adopt orphan pack %s: %w", id, err)
 	}
 	stats.PacksAdopted++
@@ -297,7 +302,7 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 }
 
 type orphanCollection struct {
-	adoptable []store.PackIndexEntry
+	adoptable []store.PackIndexAdoption
 	record    store.PackRecord
 	failed    int
 	limit     *blobstore.LimitError
@@ -308,6 +313,7 @@ type orphanCollection struct {
 type orphanCandidatePlan struct {
 	entry    pack.Entry
 	existing *store.PackIndexEntry
+	aliases  []string
 }
 
 // collectAdoptable plans every referenced candidate before reading any of
@@ -315,7 +321,7 @@ type orphanCandidatePlan struct {
 // Unreferenced footer entries are dead and are never size-gated or read. The
 // PackRecord retains full immutable footer totals, while failure and deferral
 // state lets the caller enforce all-or-nothing adoption.
-func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced map[normalizedBlobHash]struct{}) (orphanCollection, error) {
+func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced referencedAliases) (orphanCollection, error) {
 	entries := r.Entries()
 	result := orphanCollection{record: store.PackRecord{
 		PackID:     id,
@@ -332,7 +338,8 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		if err != nil {
 			return result, fmt.Errorf("normalize orphan footer blob id: %w", err)
 		}
-		if _, live := referenced[hash]; !live {
+		aliases, live := referenced[hash]
+		if !live {
 			continue
 		}
 		result.withheld++
@@ -340,7 +347,7 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		if err != nil {
 			return result, err
 		}
-		plans = append(plans, orphanCandidatePlan{entry: e, existing: existing})
+		plans = append(plans, orphanCandidatePlan{entry: e, existing: existing, aliases: aliases})
 		maintenanceLimit := uint64(maintenanceBlobBytes) //nolint:gosec // positive fixed production/test limit
 		if e.RawLen > maintenanceLimit {
 			if result.limit == nil || e.RawLen > result.limit.Actual {
@@ -362,7 +369,7 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		return result, nil
 	}
 
-	var candidates []pack.Entry
+	var candidates []orphanCandidatePlan
 	for _, plan := range plans {
 		e := plan.entry
 		hash, err := normalizeBlobHash(e.ID.String())
@@ -387,13 +394,14 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 			slog.Error("existing packed blob is unreadable; adopting orphan replacement",
 				"hash", hash, "existingPack", existing.PackID, "orphanPack", id, "error", readErr)
 		}
-		candidates = append(candidates, e)
+		candidates = append(candidates, plan)
 	}
 
-	for _, e := range candidates {
+	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
+		e := candidate.entry
 		hash, err := normalizeBlobHash(e.ID.String())
 		if err != nil {
 			return result, fmt.Errorf("normalize orphan candidate blob id: %w", err)
@@ -404,7 +412,10 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 				"pack", id, "hash", hash, "error", err)
 			continue
 		}
-		result.adoptable = append(result.adoptable, indexEntry(id, e))
+		result.adoptable = append(result.adoptable, store.PackIndexAdoption{
+			Entry:          indexEntry(id, e),
+			OriginalHashes: candidate.aliases,
+		})
 	}
 	return result, nil
 }
@@ -750,7 +761,7 @@ func indexEntry(packID string, e pack.Entry) store.PackIndexEntry {
 // Unreferenced files are best-effort garbage; referenced/indexed files retain
 // the verified sweep/recovery behavior; referenced/unindexed files stay loose.
 func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir string,
-	referenced map[normalizedBlobHash]struct{}, indexed map[normalizedBlobHash]store.PackIndexEntry,
+	referenced referencedAliases, indexed map[normalizedBlobHash]store.PackIndexEntry,
 	suppressOrphanDeletion bool, stats *Stats,
 ) error {
 	packed := blobstore.New(st, attachmentsDir)
