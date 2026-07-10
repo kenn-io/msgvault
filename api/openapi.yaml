@@ -209,6 +209,23 @@ components:
     BackupFreezeEndResponse:
       additionalProperties: true
       type: object
+    BodySearchContext:
+      additionalProperties: true
+      properties:
+        context_snippets:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        context_snippets_truncated:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+      type: object
     BuildingSummary:
       additionalProperties: true
       properties:
@@ -1099,6 +1116,12 @@ components:
     DeepSearchResponse:
       additionalProperties: true
       properties:
+        body_contexts:
+          items:
+            $ref: "#/components/schemas/BodySearchContext"
+          type:
+            - array
+            - "null"
         count:
           format: int64
           type: integer

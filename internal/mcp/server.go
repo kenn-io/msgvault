@@ -252,6 +252,7 @@ func searchMessageBodiesTool() mcp.Tool {
 	return mcp.NewTool(ToolSearchMessageBodies,
 		mcp.WithDescription("Search message bodies by keyword using exact body-only full-text search (FTS). Returns messages whose body text contains the search terms, "+
 			"plus context_snippets — short excerpts (up to 5 per message, 300 bytes each) centered on each matched term. "+
+			"A hit outside the bounded context-extraction budget has no excerpt and sets context_snippets_truncated=true. "+
 			"Requires at least one free-text term; use search_messages for filter-only queries (from:, label:, etc.). "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
 			"(total is not available for body search; use has_more to detect more pages.)"),

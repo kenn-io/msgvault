@@ -197,13 +197,23 @@ type GmailIDsResponse struct {
 }
 
 type DeepSearchResponse struct {
-	Query    string           `json:"query"`
-	Scope    string           `json:"scope,omitempty"`
-	Messages []MessageSummary `json:"messages"`
-	Count    int              `json:"count"`
-	HasMore  bool             `json:"has_more"`
-	Offset   int              `json:"offset"`
-	Limit    int              `json:"limit"`
+	Query        string              `json:"query"`
+	Scope        string              `json:"scope,omitempty"`
+	Messages     []MessageSummary    `json:"messages"`
+	BodyContexts []BodySearchContext `json:"body_contexts,omitempty"`
+	Count        int                 `json:"count"`
+	HasMore      bool                `json:"has_more"`
+	Offset       int                 `json:"offset"`
+	Limit        int                 `json:"limit"`
+}
+
+// BodySearchContext carries exact body-match excerpts separately from the
+// stable MessageSummary schema used across existing client surfaces.
+type BodySearchContext struct {
+	MessageID       int64    `json:"message_id"`
+	ContextSnippets []string `json:"context_snippets,omitempty"`
+	// ContextSnippetsTruncated reports contexts omitted by response or work caps.
+	ContextSnippetsTruncated bool `json:"context_snippets_truncated,omitempty"`
 }
 
 // MessageSummary represents a message in list responses.
@@ -2274,6 +2284,14 @@ func toMessageSummaryFromQuery(m query.MessageSummary) MessageSummary {
 	}
 }
 
+func toBodySearchContext(m query.MessageSummary) BodySearchContext {
+	return BodySearchContext{
+		MessageID:                m.ID,
+		ContextSnippets:          m.BodyContextSnippets,
+		ContextSnippetsTruncated: m.BodyContextSnippetsTruncated,
+	}
+}
+
 func formatQueryAddresses(addrs []query.Address) []string {
 	if addrs == nil {
 		return []string{}
@@ -2797,6 +2815,10 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		if s.writeIfContextError(w, err) {
 			return
 		}
+		if scope == "body" && errors.Is(err, query.ErrMessageBodySearchInvalidQuery) {
+			writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+			return
+		}
 		if scope == "body" && (errors.Is(err, query.ErrMessageBodySearchUnavailable) ||
 			errors.Is(err, query.ErrMessageBodySearchIndexStale)) {
 			writeError(w, http.StatusServiceUnavailable, "body_search_index_unavailable", err.Error())
@@ -2816,15 +2838,23 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
+	var bodyContexts []BodySearchContext
+	if scope == "body" {
+		bodyContexts = make([]BodySearchContext, len(messages))
+		for i, message := range messages {
+			bodyContexts[i] = toBodySearchContext(message)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
-		Query:    queryStr,
-		Scope:    scope,
-		Messages: summaries,
-		Count:    len(summaries),
-		HasMore:  hasMore,
-		Offset:   offset,
-		Limit:    limit,
+		Query:        queryStr,
+		Scope:        scope,
+		Messages:     summaries,
+		BodyContexts: bodyContexts,
+		Count:        len(summaries),
+		HasMore:      hasMore,
+		Offset:       offset,
+		Limit:        limit,
 	})
 }
 

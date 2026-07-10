@@ -4437,7 +4437,12 @@ func TestHandleDeepSearchBodyScope(t *testing.T) {
 			assert.Equal([]string{"bodyneedle"}, q.TextTerms, "body TextTerms")
 			assert.Equal(11, limit, "limit includes has_more probe")
 			assert.Equal(3, offset, "offset")
-			return []query.MessageSummary{{ID: 2, Subject: "body hit"}}, nil
+			return []query.MessageSummary{{
+				ID:                           2,
+				Subject:                      "body hit",
+				BodyContextSnippets:          []string{"exact body context"},
+				BodyContextSnippetsTruncated: true,
+			}}, nil
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
@@ -4459,6 +4464,17 @@ func TestHandleDeepSearchBodyScope(t *testing.T) {
 	message, ok := messages[0].(map[string]any)
 	require.True(ok, "message response type")
 	assert.InDelta(float64(2), message["id"], 0, "body hit ID")
+	assert.NotContains(message, "context_snippets",
+		"body search must preserve the shared MessageSummary schema")
+	assert.NotContains(message, "context_snippets_truncated")
+	contexts, ok := resp["body_contexts"].([]any)
+	require.True(ok, "body_contexts response type")
+	require.Len(contexts, 1)
+	bodyContext, ok := contexts[0].(map[string]any)
+	require.True(ok, "body context response type")
+	assert.InDelta(float64(2), bodyContext["message_id"], 0, "body context message ID")
+	assert.Equal([]any{"exact body context"}, bodyContext["context_snippets"])
+	assert.Equal(true, bodyContext["context_snippets_truncated"])
 }
 
 func TestHandleDeepSearchScopeValidation(t *testing.T) {
@@ -4485,6 +4501,17 @@ func TestHandleDeepSearchScopeValidation(t *testing.T) {
 			path:       "/api/v1/search/deep?q=needle&scope=body",
 			engine:     struct{ query.Engine }{Engine: &querytest.MockEngine{}},
 			wantStatus: http.StatusNotImplemented,
+		},
+		{
+			name: "body work limit is a client error",
+			path: "/api/v1/search/deep?q=needle&scope=body",
+			engine: &bodySearchTestEngine{
+				MockEngine: &querytest.MockEngine{},
+				searchMessageBodiesFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
+					return nil, fmt.Errorf("%w: supports at most 32 free-text terms", query.ErrMessageBodySearchInvalidQuery)
+				},
+			},
+			wantStatus: http.StatusBadRequest,
 		},
 	}
 

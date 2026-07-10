@@ -798,6 +798,59 @@ func TestStore_UpsertMessageBody(t *testing.T) {
 	assert.False(bodyHTML.Valid, "after update: body_html should be NULL, got %q", bodyHTML.String)
 }
 
+func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS is unavailable")
+	}
+	messageID := f.CreateMessage("msg-body-fts-invalidation")
+	body := sql.NullString{String: "old indexed body", Valid: true}
+	require.NoError(f.Store.UpsertMessageBody(messageID, body, sql.NullString{}),
+		"store initial body")
+	require.NoError(f.Store.UpsertFTS(
+		messageID, "subject", body.String, "", "", "",
+	), "index initial body")
+
+	// An idempotent body write must not create needless backfill work.
+	require.NoError(f.Store.UpsertMessageBody(messageID, body, sql.NullString{}),
+		"store unchanged body")
+	if f.Store.IsPostgreSQL() {
+		var searchIsNull bool
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT search_fts IS NULL FROM messages WHERE id = $1", messageID,
+		).Scan(&searchIsNull), "check unchanged PostgreSQL index")
+		assert.False(searchIsNull, "unchanged body must retain its FTS document")
+	} else {
+		var count int
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
+		).Scan(&count), "check unchanged SQLite index")
+		assert.Equal(1, count, "unchanged body must retain its FTS document")
+	}
+
+	require.NoError(f.Store.UpsertMessageBody(messageID,
+		sql.NullString{},
+		sql.NullString{String: "<p>old indexed body</p>", Valid: true}),
+		"replace indexed text with equivalent HTML-only body")
+	if f.Store.IsPostgreSQL() {
+		var searchIsNull, versionIsNull bool
+		require.NoError(f.Store.DB().QueryRow(`
+			SELECT search_fts IS NULL, indexing_version IS NULL
+			FROM messages WHERE id = $1
+		`, messageID).Scan(&searchIsNull, &versionIsNull), "check PostgreSQL invalidation")
+		assert.True(searchIsNull, "changed body must clear its old FTS document")
+		assert.True(versionIsNull, "changed body must require a fresh index version")
+	} else {
+		var count int
+		require.NoError(f.Store.DB().QueryRow(
+			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
+		).Scan(&count), "check SQLite invalidation")
+		assert.Zero(count, "changed body must delete its old FTS document")
+	}
+}
+
 func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 	f := storetest.New(t)
 

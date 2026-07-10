@@ -22,6 +22,13 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+type messageBodyContextBackend uint8
+
+const (
+	messageBodyContextSQLite messageBodyContextBackend = iota
+	messageBodyContextPostgreSQL
+)
+
 // Dialect abstracts SQL generation differences for SQLite vs PostgreSQL.
 type Dialect interface {
 	// Rebind converts ? placeholders to the driver's native form.
@@ -97,6 +104,10 @@ type Dialect interface {
 	// SQLite delegates to a deterministic Go scalar registered on every
 	// connection; PostgreSQL uses its collation-aware LOWER implementation.
 	UnicodeLowerExpression(expr string) string
+
+	// messageBodyContextBackend selects the backend-native highlighter used to
+	// extract exact context for body-index hits.
+	messageBodyContextBackend() messageBodyContextBackend
 }
 
 // SQLiteQueryDialect implements Dialect for SQLite.
@@ -108,6 +119,10 @@ func (SQLiteQueryDialect) BoolTrueExpr(col string) string { return col + " = 1" 
 
 func (SQLiteQueryDialect) UnicodeLowerExpression(expr string) string {
 	return sqliteutil.UnicodeLowerFunction + "(" + expr + ")"
+}
+
+func (SQLiteQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
+	return messageBodyContextSQLite
 }
 
 func (SQLiteQueryDialect) TimeTruncExpression(column string, granularity string) string {
@@ -197,6 +212,10 @@ func (PostgreSQLQueryDialect) BoolTrueExpr(col string) string { return col }
 
 func (PostgreSQLQueryDialect) UnicodeLowerExpression(expr string) string {
 	return "LOWER(" + expr + ")"
+}
+
+func (PostgreSQLQueryDialect) messageBodyContextBackend() messageBodyContextBackend {
+	return messageBodyContextPostgreSQL
 }
 
 func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity string) string {

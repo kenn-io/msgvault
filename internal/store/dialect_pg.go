@@ -201,6 +201,14 @@ func (d *PostgreSQLDialect) FTSDeleteSQL() string {
 	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
 }
 
+func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
+	_, err := q.Exec(
+		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",
+		messageID,
+	)
+	return err
+}
+
 // FTSBackfillBatchSQL returns the SQL to populate tsvector for a range of message IDs.
 // Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
 // so messages without a body row are still indexed (subject + participants).

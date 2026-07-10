@@ -85,6 +85,11 @@ type Dialect interface {
 	// a given source. Takes one parameter: source_id.
 	FTSDeleteSQL() string
 
+	// InvalidateFTSForMessage removes or marks stale one message's search
+	// document before its canonical body changes. This prevents a failed
+	// best-effort reindex from leaving an old body searchable as an exact hit.
+	InvalidateFTSForMessage(q querier, messageID int64) error
+
 	// FTSBackfillBatchSQL returns the SQL to populate the search index for a range of message IDs.
 	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
 	FTSBackfillBatchSQL() string

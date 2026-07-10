@@ -3,6 +3,7 @@ package query_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -275,6 +276,8 @@ func TestSearchMessageBodies_BodyColumnOnly(t *testing.T) {
 	require.NoError(err, "SearchMessageBodies")
 	require.Len(messages, 1, "body-only hits")
 	assert.Equal(bodyID, messages[0].ID, "body-only hit ID")
+	require.NotEmpty(messages[0].BodyContextSnippets, "body-only hit context")
+	assert.Contains(messages[0].BodyContextSnippets[0], "scopeword")
 
 	nonBodyIDs := []int64{fromMessageID, toMessageID, ccMessageID}
 	for _, id := range nonBodyIDs {
@@ -311,6 +314,121 @@ func TestSearchMessageBodies_PostgreSQLRejectsStaleLayout(t *testing.T) {
 	assert.Contains(err.Error(), "backfill")
 }
 
+func TestSearchMessageBodies_RejectsCanonicalBodyIndexMismatch(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := createSearchScopeMessage(t, f, "body-canonical-mismatch",
+		"ordinary subject", "ordinary preview", "oldneedle marker", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	// Simulate a legacy/manual write that predates body-change invalidation.
+	// Search still finds the old index document, but context extraction must
+	// compare it with canonical storage and fail instead of presenting stale text.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		"UPDATE message_bodies SET body_text = ? WHERE message_id = ?"),
+		"new canonical body", messageID)
+	require.NoError(err, "create body/index mismatch")
+
+	bodySearcher, ok := query.NewEngine(
+		f.Store.DB(), f.Store.IsPostgreSQL(),
+	).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	_, err = bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"oldneedle"}}, 50, 0)
+	require.Error(err, "body/index mismatch must fail closed")
+	require.ErrorIs(err, query.ErrMessageBodySearchIndexStale)
+}
+
+func TestSearchMessageBodies_ValidatesTermsBeyondSnippetCap(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := createSearchScopeMessage(t, f, "body-sixth-term-mismatch",
+		"ordinary subject", "ordinary preview", "one two three four five six", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	// The response can render only five term groups, but the sixth term still
+	// participates in the indexed AND query and therefore must be checked
+	// against canonical storage before the hit is trusted.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		"UPDATE message_bodies SET body_text = ? WHERE message_id = ?"),
+		"one two three four five", messageID)
+	require.NoError(err, "create sixth-term body/index mismatch")
+
+	bodySearcher, ok := query.NewEngine(
+		f.Store.DB(), f.Store.IsPostgreSQL(),
+	).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	_, err = bodySearcher.SearchMessageBodies(context.Background(), &search.Query{
+		TextTerms: []string{"one", "two", "three", "four", "five", "six"},
+	}, 50, 0)
+	require.Error(err, "a non-rendered query group must not hide a stale hit")
+	require.ErrorIs(err, query.ErrMessageBodySearchIndexStale)
+}
+
+func TestSearchMessageBodies_SQLiteOversizedBodyDoesNotPoisonFollowingHit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite octet_length bounded-read regression")
+	}
+
+	oversizedID := createSearchScopeMessage(t, f, "body-context-oversized-first",
+		"ordinary subject", "ordinary preview",
+		"needle "+strings.Repeat("oversized ", 150_000), 0, 0)
+	smallID := createSearchScopeMessage(t, f, "body-context-small-second",
+		"ordinary subject", "ordinary preview", "small needle marker", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), false).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"needle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages, 2, "body hits")
+
+	byID := make(map[int64]query.MessageSummary, len(messages))
+	for _, message := range messages {
+		byID[message.ID] = message
+	}
+	oversized := byID[oversizedID]
+	assert.Empty(oversized.BodyContextSnippets,
+		"an oversized SQLite cell is skipped before materialization")
+	assert.True(oversized.BodyContextSnippetsTruncated)
+	small := byID[smallID]
+	require.NotEmpty(small.BodyContextSnippets,
+		"an oversized preceding row must not suppress a later bounded row")
+	assert.Contains(small.BodyContextSnippets[0], "needle")
+}
+
+func TestSearchMessageBodies_LimitedHitDoesNotMaskAnotherStaleHit(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	createSearchScopeMessage(t, f, "body-wide-valid-hit",
+		"ordinary subject", "ordinary preview",
+		"needle"+strings.Repeat(" ", 7_000)+"marker", 0, 0)
+	staleID := createSearchScopeMessage(t, f, "body-short-stale-hit",
+		"ordinary subject", "ordinary preview", "needle marker stale", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		"UPDATE message_bodies SET body_text = ? WHERE message_id = ?"),
+		"fresh canonical body", staleID)
+	require.NoError(err, "create second body/index mismatch")
+
+	bodySearcher, ok := query.NewEngine(
+		f.Store.DB(), f.Store.IsPostgreSQL(),
+	).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	_, err = bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"needle marker"}}, 50, 0)
+	require.Error(err, "a limited valid hit must not excuse a separate stale hit")
+	require.ErrorIs(err, query.ErrMessageBodySearchIndexStale)
+}
+
 func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -332,6 +450,75 @@ func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 	require.NoError(err, "SearchMessageBodies")
 	require.Len(messages, 1, "phrase body hits")
 	assert.Equal(adjacentID, messages[0].ID, "adjacent phrase hit")
+}
+
+func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	messageID := createSearchScopeMessage(t, f, "body-unsearchable-group",
+		"ordinary subject", "ordinary preview", "needle marker", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"!!!", "needle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages, 1, "body hit")
+	assert.Equal(messageID, messages[0].ID)
+	require.NotEmpty(messages[0].BodyContextSnippets)
+	assert.Contains(messages[0].BodyContextSnippets[0], "needle")
+}
+
+func TestSearchMessageBodies_SQLiteUsesNativeTokenizerForTermGroups(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite unicode61 term-probe regression")
+	}
+	matchedID := createSearchScopeMessage(t, f, "body-native-term-group",
+		"ordinary subject", "ordinary preview", "🫨 needle marker", 0, 0)
+	createSearchScopeMessage(t, f, "body-without-native-term-group",
+		"ordinary subject", "ordinary preview", "needle only", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), false).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"🫨", "needle"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages, 1, "native tokenizer AND terms")
+	assert.Equal(matchedID, messages[0].ID,
+		"a unicode61 token unknown to Go's letter/digit categories must not be dropped")
+}
+
+func TestSearchMessageBodies_SQLiteTermProbeUsesSanitizedLiteral(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite FTS5 embedded-star sanitization regression")
+	}
+	matchedID := createSearchScopeMessage(t, f, "body-sanitized-term-group",
+		"ordinary subject", "ordinary preview", "foobar marker", 0, 0)
+	createSearchScopeMessage(t, f, "body-unsanitized-term-group",
+		"ordinary subject", "ordinary preview", "foo bar marker", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err, "BackfillFTS")
+
+	bodySearcher, ok := query.NewEngine(f.Store.DB(), false).(query.MessageBodySearcher)
+	require.True(ok, "production query engine must expose exact body search")
+	messages, err := bodySearcher.SearchMessageBodies(context.Background(),
+		&search.Query{TextTerms: []string{"foo*bar"}}, 50, 0)
+	require.NoError(err, "SearchMessageBodies")
+	require.Len(messages, 1, "sanitized literal hit")
+	assert.Equal(matchedID, messages[0].ID)
+	require.NotEmpty(messages[0].BodyContextSnippets)
+	assert.Contains(messages[0].BodyContextSnippets[0], "foobar")
 }
 
 func createSearchScopeMessage(

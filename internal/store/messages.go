@@ -350,13 +350,27 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
 func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullString) error {
-	return upsertMessageBody(s.db, messageID, bodyText, bodyHTML)
+	return upsertMessageBody(s.db, s.dialect, s.fts5Available, messageID, bodyText, bodyHTML)
 }
 
-func upsertMessageBody(q querier, messageID int64, bodyText, bodyHTML sql.NullString) error {
-	bodyChanged, err := messageBodyChanged(q, messageID, bodyText, bodyHTML)
+func upsertMessageBody(
+	q querier,
+	dialect Dialect,
+	ftsAvailable bool,
+	messageID int64,
+	bodyText, bodyHTML sql.NullString,
+) error {
+	embeddingChanged, textChanged, err := messageBodyChanges(q, messageID, bodyText, bodyHTML)
 	if err != nil {
 		return err
+	}
+	if textChanged && ftsAvailable {
+		// Invalidate first. UpsertMessageBody is also used outside a wider
+		// transaction; if the body write then fails, a missing index entry is
+		// recoverable by backfill, while a stale entry could produce a false hit.
+		if err := dialect.InvalidateFTSForMessage(q, messageID); err != nil {
+			return fmt.Errorf("invalidate message FTS document: %w", err)
+		}
 	}
 	_, err = q.Exec(`
 		INSERT INTO message_bodies (message_id, body_text, body_html)
@@ -368,25 +382,31 @@ func upsertMessageBody(q querier, messageID int64, bodyText, bodyHTML sql.NullSt
 	if err != nil {
 		return err
 	}
-	if !bodyChanged {
+	if !embeddingChanged {
 		return nil
 	}
 	_, err = q.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ? AND embed_gen IS NOT NULL`, messageID)
 	return err
 }
 
-func messageBodyChanged(q querier, messageID int64, bodyText, bodyHTML sql.NullString) (bool, error) {
+func messageBodyChanges(
+	q querier,
+	messageID int64,
+	bodyText, bodyHTML sql.NullString,
+) (embeddingChanged bool, textChanged bool, err error) {
 	var oldText, oldHTML sql.NullString
-	err := q.QueryRow(`
+	err = q.QueryRow(`
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
 	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingBodyValue(bodyText, bodyHTML) != "", nil
+		return embeddingBodyValue(bodyText, bodyHTML) != "",
+			nullStringValue(bodyText) != "", nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML), nil
+	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
+		nullStringValue(oldText) != nullStringValue(bodyText), nil
 }
 
 func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {
@@ -465,7 +485,9 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 		}
 		messageID = id
 
-		if err := upsertMessageBody(tx, messageID, data.BodyText, data.BodyHTML); err != nil {
+		if err := upsertMessageBody(
+			tx, s.dialect, s.fts5Available, messageID, data.BodyText, data.BodyHTML,
+		); err != nil {
 			return fmt.Errorf("upsert body: %w", err)
 		}
 

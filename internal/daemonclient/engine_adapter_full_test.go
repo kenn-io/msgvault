@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
@@ -984,6 +985,11 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 				"labels":     []string{},
 				"size_bytes": 100,
 			}},
+			"body_contexts": []map[string]any{{
+				"message_id":                 42,
+				"context_snippets":           []string{"exact daemon context"},
+				"context_snippets_truncated": true,
+			}},
 		})
 	})
 	engine := NewEngineAdapter(store)
@@ -995,6 +1001,49 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 	require.NoError(t, err, "SearchMessageBodies")
 	require.Len(t, messages, 1)
 	assert.Equal(int64(42), messages[0].ID, "body hit ID")
+	assert.Equal([]string{"exact daemon context"}, messages[0].BodyContextSnippets)
+	assert.True(messages[0].BodyContextSnippetsTruncated)
+}
+
+func TestBodySearchSummariesFromGeneratedRejectsInvalidCompanions(t *testing.T) {
+	truncated := true
+	tests := []struct {
+		name     string
+		contexts []generated.BodySearchContext
+		want     string
+	}{
+		{name: "missing", want: "omitted body context"},
+		{
+			name: "unknown message",
+			contexts: []generated.BodySearchContext{{
+				MessageID: 99, ContextSnippets: []string{"context"},
+			}},
+			want: "unknown message",
+		},
+		{
+			name: "duplicate",
+			contexts: []generated.BodySearchContext{
+				{MessageID: 42, ContextSnippets: []string{"first"}},
+				{MessageID: 42, ContextSnippetsTruncated: &truncated},
+			},
+			want: "duplicate body context",
+		},
+		{
+			name:     "empty and untruncated",
+			contexts: []generated.BodySearchContext{{MessageID: 42}},
+			want:     "empty untruncated body context",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := bodySearchSummariesFromGenerated(
+				[]generated.MessageSummary{{ID: 42}}, tc.contexts,
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }
 
 func TestEngineSearchMessageBodiesFailsClosedWithoutScopeEcho(t *testing.T) {

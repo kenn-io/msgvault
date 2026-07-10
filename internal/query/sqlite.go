@@ -1757,12 +1757,14 @@ func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
-// SearchMessageBodies performs exact body-only full-text search. It never
-// reads message_bodies: SQLite scopes MATCH to the FTS5 body column, while
-// PostgreSQL restricts tsquery lexemes to the D-weight body field.
+// SearchMessageBodies performs exact body-only full-text search and uses the
+// active backend's native tokenizer to attach bounded context to every hit.
 func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query, limit, offset int) ([]MessageSummary, error) {
 	if q == nil || len(q.TextTerms) == 0 {
 		return nil, errors.New("message body search requires at least one free-text term")
+	}
+	if err := validateMessageBodyContextQuery(q.TextTerms); err != nil {
+		return nil, err
 	}
 	if !e.hasFTSTable(ctx) {
 		return nil, fmt.Errorf("%w: run 'msgvault rebuild-fts' with an FTS-enabled build", ErrMessageBodySearchUnavailable)
@@ -1788,7 +1790,14 @@ func (e *SQLiteEngine) SearchMessageBodies(ctx context.Context, q *search.Query,
 	if ftsJoin == "" {
 		ftsJoin = e.dialect.FTSJoin()
 	}
-	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.attachMessageBodySearchContexts(ctx, results, q.TextTerms); err != nil {
+		return nil, fmt.Errorf("extract message body contexts: %w", err)
+	}
+	return results, nil
 }
 
 // buildMetadataSearchQueryParts builds the metadata-only predicate shared by

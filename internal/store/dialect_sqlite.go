@@ -133,6 +133,17 @@ func (d *SQLiteDialect) FTSDeleteSQL() string {
 	)`
 }
 
+func (d *SQLiteDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
+	_, err := q.Exec("DELETE FROM messages_fts WHERE rowid = ?", messageID)
+	if d.IsNoSuchTableError(err) {
+		// A missing FTS table cannot contain a stale searchable row. Preserve
+		// the existing best-effort indexing contract so canonical message
+		// persistence can continue and a later rebuild can recreate the index.
+		return nil
+	}
+	return err
+}
+
 // FTSBackfillBatchSQL returns the SQL to backfill FTS5 for a range of message IDs.
 // Parameters: fromID(?), toID(?)
 func (d *SQLiteDialect) FTSBackfillBatchSQL() string {

@@ -196,6 +196,21 @@ components:
       type: object
     BackupFreezeEndResponse:
       type: object
+    BodySearchContext:
+      properties:
+        context_snippets:
+          items:
+            type: string
+          nullable: true
+          type: array
+        context_snippets_truncated:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+      type: object
     BuildingSummary:
       properties:
         dimension:
@@ -1023,6 +1038,11 @@ components:
       type: object
     DeepSearchResponse:
       properties:
+        body_contexts:
+          items:
+            $ref: "#/components/schemas/BodySearchContext"
+          nullable: true
+          type: array
         count:
           format: int64
           type: integer

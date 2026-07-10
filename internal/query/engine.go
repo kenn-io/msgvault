@@ -15,6 +15,9 @@ var (
 	// ErrMessageBodySearchIndexStale means the backend has an FTS index, but
 	// its field layout is not the version required for exact body scoping.
 	ErrMessageBodySearchIndexStale = errors.New("message body search index layout is stale")
+	// ErrMessageBodySearchInvalidQuery means exact body search rejected a
+	// bounded-work query limit before touching the index.
+	ErrMessageBodySearchInvalidQuery = errors.New("invalid message body search query")
 )
 
 // Engine provides query operations for msgvault data.
