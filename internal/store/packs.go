@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.kenn.io/kit/pack"
@@ -33,36 +35,43 @@ func scanPackIndexEntry(row scanner) (PackIndexEntry, error) {
 }
 
 func decodePackIndexEntry(entry PackIndexEntry, flags, crc int64) (PackIndexEntry, error) {
-	if err := validatePackIndexBlobHash(entry.BlobHash); err != nil {
+	if err := validatePackIndexEntry(entry, flags, crc); err != nil {
 		return PackIndexEntry{}, err
 	}
+	entry.Flags = uint8(flags) //nolint:gosec // validatePackIndexEntry proved uint8 range
+	entry.CRC32C = uint32(crc) //nolint:gosec // validatePackIndexEntry proved uint32 range
+	return entry, nil
+}
+
+func validatePackIndexEntry(entry PackIndexEntry, flags, crc int64) error {
+	if err := validateCanonicalBlobHash(entry.BlobHash); err != nil {
+		return err
+	}
 	if !pack.IsValidPackID(entry.PackID) {
-		return PackIndexEntry{}, fmt.Errorf("malformed pack id %q", entry.PackID)
+		return fmt.Errorf("malformed pack id %q", entry.PackID)
 	}
 	if entry.Offset < 0 {
-		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has negative offset %d",
+		return fmt.Errorf("pack index entry %s has negative offset %d",
 			entry.BlobHash, entry.Offset)
 	}
 	if entry.StoredLen < 0 {
-		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has negative stored length %d",
+		return fmt.Errorf("pack index entry %s has negative stored length %d",
 			entry.BlobHash, entry.StoredLen)
 	}
 	if entry.RawLen < 0 || entry.RawLen > int64(pack.MaxRawLen) {
-		return PackIndexEntry{}, fmt.Errorf(
+		return fmt.Errorf(
 			"pack index entry %s has raw length %d outside 0..%d",
 			entry.BlobHash, entry.RawLen, uint64(pack.MaxRawLen))
 	}
 	if flags < 0 || flags > int64(^uint8(0)) {
-		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has flags %d outside uint8 range",
+		return fmt.Errorf("pack index entry %s has flags %d outside uint8 range",
 			entry.BlobHash, flags)
 	}
 	if crc < 0 || crc > int64(^uint32(0)) {
-		return PackIndexEntry{}, fmt.Errorf("pack index entry %s has crc32c %d outside uint32 range",
+		return fmt.Errorf("pack index entry %s has crc32c %d outside uint32 range",
 			entry.BlobHash, crc)
 	}
-	entry.Flags = uint8(flags)
-	entry.CRC32C = uint32(crc)
-	return entry, nil
+	return nil
 }
 
 func scanPackIndexEntries(
@@ -88,17 +97,24 @@ func scanPackIndexEntries(
 	return entries, nil
 }
 
-func validateBlobHash(blobHash string) error {
-	id, err := pack.ParseBlobID(blobHash)
-	if err != nil || id.String() != blobHash {
-		return fmt.Errorf("malformed blob hash %q", blobHash)
+func normalizeBlobHash(blobHash string) (string, error) {
+	normalized := strings.ToLower(blobHash)
+	if len(normalized) != 64 {
+		return "", fmt.Errorf("malformed blob hash %q: must be exactly 64 hex characters", blobHash)
 	}
-	return nil
+	if _, err := hex.DecodeString(normalized); err != nil {
+		return "", fmt.Errorf("malformed blob hash %q: contains non-hexadecimal characters", blobHash)
+	}
+	return normalized, nil
 }
 
-func validatePackIndexBlobHash(blobHash string) error {
-	if len(blobHash) != 64 {
-		return fmt.Errorf("malformed blob hash %q", blobHash)
+func validateCanonicalBlobHash(blobHash string) error {
+	normalized, err := normalizeBlobHash(blobHash)
+	if err != nil {
+		return err
+	}
+	if normalized != blobHash {
+		return fmt.Errorf("malformed blob hash %q: must use canonical lowercase hex", blobHash)
 	}
 	return nil
 }
@@ -128,7 +144,7 @@ type PackRecord struct {
 // rewritten. Idempotent: re-recording an existing pack or blob is a no-op,
 // so crash reconciliation can re-run adoption safely. The record must carry a
 // canonical pack ID, and every entry must belong to that pack and carry a
-// 64-char blob hash; any violation fails the whole call.
+// canonical lowercase SHA-256 blob hash; any violation fails the whole call.
 func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
 	return s.recordPackedBlobs(rec, entries, false)
 }
@@ -146,14 +162,29 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 	if !pack.IsValidPackID(rec.PackID) {
 		return fmt.Errorf("attachment pack record has malformed pack id %q", rec.PackID)
 	}
+	if rec.EntryCount < 0 || rec.StoredBytes < 0 {
+		return fmt.Errorf("attachment pack record %s has invalid totals: entries=%d stored_bytes=%d",
+			rec.PackID, rec.EntryCount, rec.StoredBytes)
+	}
+	if int64(len(entries)) > rec.EntryCount {
+		return fmt.Errorf("attachment pack record %s has %d submitted entries, exceeding total %d",
+			rec.PackID, len(entries), rec.EntryCount)
+	}
+	var submittedStoredBytes int64
 	for _, e := range entries {
 		if e.PackID != rec.PackID {
 			return fmt.Errorf("pack index entry %s has pack id %q, want %q",
 				e.BlobHash, e.PackID, rec.PackID)
 		}
-		if err := validatePackIndexBlobHash(e.BlobHash); err != nil {
+		if err := validatePackIndexEntry(e, int64(e.Flags), int64(e.CRC32C)); err != nil {
 			return fmt.Errorf("pack index entry: %w", err)
 		}
+		if e.StoredLen > rec.StoredBytes-submittedStoredBytes {
+			return fmt.Errorf(
+				"attachment pack record %s has submitted stored bytes exceeding total %d",
+				rec.PackID, rec.StoredBytes)
+		}
+		submittedStoredBytes += e.StoredLen
 	}
 	return s.withTx(func(tx *loggedTx) error {
 		if _, err := tx.Exec(s.dialect.InsertOrIgnore(`
@@ -180,7 +211,7 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 			}
 		}
 		for _, e := range entries {
-			if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash); err != nil {
+			if err := canonicalizeAttachmentBlobPathsTx(tx, e.BlobHash, e.BlobHash); err != nil {
 				return err
 			}
 		}
@@ -192,32 +223,33 @@ func (s *Store) recordPackedBlobs(rec PackRecord, entries []PackIndexEntry, repl
 // local content and thumbnail path for blobHash to its content-addressed path.
 // URL-backed and empty paths are left unchanged.
 func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
-	if err := validateBlobHash(blobHash); err != nil {
+	normalized, err := normalizeBlobHash(blobHash)
+	if err != nil {
 		return err
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		return canonicalizeAttachmentBlobPathsTx(tx, blobHash)
+		return canonicalizeAttachmentBlobPathsTx(tx, normalized, blobHash)
 	})
 }
 
-func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash string) error {
+func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
 	if _, err := tx.Exec(`
 		UPDATE attachments SET storage_path = ?
-		WHERE content_hash = ? AND storage_path != ?
+		WHERE (content_hash = ? OR content_hash = ?) AND storage_path != ?
 		  AND storage_path IS NOT NULL AND storage_path != ''
-		  AND storage_path NOT LIKE 'http://%'
-		  AND storage_path NOT LIKE 'https://%'`,
-		canonical, blobHash, canonical); err != nil {
+		  AND LOWER(storage_path) NOT LIKE 'http://%'
+		  AND LOWER(storage_path) NOT LIKE 'https://%'`,
+		canonical, blobHash, lookupHash, canonical); err != nil {
 		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
 	}
 	if _, err := tx.Exec(`
 		UPDATE attachments SET thumbnail_path = ?
-		WHERE thumbnail_hash = ? AND thumbnail_path != ?
+		WHERE (thumbnail_hash = ? OR thumbnail_hash = ?) AND thumbnail_path != ?
 		  AND thumbnail_path IS NOT NULL AND thumbnail_path != ''
-		  AND thumbnail_path NOT LIKE 'http://%'
-		  AND thumbnail_path NOT LIKE 'https://%'`,
-		canonical, blobHash, canonical); err != nil {
+		  AND LOWER(thumbnail_path) NOT LIKE 'http://%'
+		  AND LOWER(thumbnail_path) NOT LIKE 'https://%'`,
+		canonical, blobHash, lookupHash, canonical); err != nil {
 		return fmt.Errorf("canonicalize thumbnail_path for %s: %w", blobHash, err)
 	}
 	return nil
@@ -473,13 +505,16 @@ func (s *Store) ListIndexedBlobEntries() (map[string]PackIndexEntry, error) {
 		return nil, fmt.Errorf("list indexed blob entries: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // read-only cursor
-	entries, err := scanPackIndexEntries(rows, "indexed blob entries", "")
-	if err != nil {
-		return nil, err
-	}
-	byHash := make(map[string]PackIndexEntry, len(entries))
-	for _, entry := range entries {
+	byHash := make(map[string]PackIndexEntry)
+	for rows.Next() {
+		entry, err := scanPackIndexEntry(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan indexed blob entry: %w", err)
+		}
 		byHash[entry.BlobHash] = entry
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate indexed blob entries: %w", err)
 	}
 	return byHash, nil
 }

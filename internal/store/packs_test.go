@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,114 @@ func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
 	entry, err := st.GetAttachmentPackEntry(hash)
 	require.NoError(err)
 	require.Nil(entry, "invalid metadata must fail atomically")
+}
+
+func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*store.PackRecord, []store.PackIndexEntry)
+	}{
+		{name: "negative offset", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].Offset = -1
+		}},
+		{name: "negative stored length", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].StoredLen = -1
+		}},
+		{name: "negative raw length", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].RawLen = -1
+		}},
+		{name: "raw length beyond pack limit", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].RawLen = int64(pack.MaxRawLen) + 1
+		}},
+		{name: "negative record entry count", mutate: func(rec *store.PackRecord, _ []store.PackIndexEntry) {
+			rec.EntryCount = -1
+		}},
+		{name: "negative record stored bytes", mutate: func(rec *store.PackRecord, _ []store.PackIndexEntry) {
+			rec.StoredBytes = -1
+		}},
+		{name: "submitted entry count exceeds record", mutate: func(rec *store.PackRecord, _ []store.PackIndexEntry) {
+			rec.EntryCount = 0
+		}},
+		{name: "submitted stored bytes exceed record", mutate: func(rec *store.PackRecord, _ []store.PackIndexEntry) {
+			rec.StoredBytes = 127
+		}},
+		{name: "nonhex hash", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].BlobHash = packTestHash("zzzz")
+		}},
+		{name: "noncanonical uppercase hash", mutate: func(_ *store.PackRecord, entries []store.PackIndexEntry) {
+			entries[0].BlobHash = strings.ToUpper(entries[0].BlobHash)
+		}},
+	}
+	operations := []struct {
+		name  string
+		adopt bool
+	}{
+		{name: "record"},
+		{name: "adopt", adopt: true},
+	}
+
+	for _, op := range operations {
+		for _, tc := range tests {
+			t.Run(op.name+"/"+tc.name, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				st := testutil.NewTestStore(t)
+				fx := newPackAttachmentFixture(t, st)
+				hash := packTestHash("ab07")
+				legacyPath := "legacy/" + hash
+				fx.addAttachment(hash, legacyPath, 100)
+
+				const (
+					oldPackID = "01hzy3v7q8r9s0t1a2v3w4x5a3"
+					newPackID = "01hzy3v7q8r9s0t1a2v3w4x5a4"
+				)
+				if op.adopt {
+					oldRec, oldEntries := packTestRecord(oldPackID, hash)
+					require.NoError(st.RecordPackedBlobs(oldRec, oldEntries))
+					_, err := st.DB().Exec(st.Rebind(`
+						UPDATE attachments SET storage_path = ? WHERE content_hash = ?`),
+						legacyPath, hash)
+					require.NoError(err)
+				}
+
+				rec, entries := packTestRecord(newPackID, hash)
+				tc.mutate(&rec, entries)
+				var err error
+				if op.adopt {
+					err = st.AdoptPackedBlobs(rec, entries)
+				} else {
+					err = st.RecordPackedBlobs(rec, entries)
+				}
+				require.Error(err)
+
+				has, getErr := st.HasPackRecord(newPackID)
+				require.NoError(getErr)
+				assert.False(has, "invalid input must not create a pack record")
+				entry, getErr := st.GetAttachmentPackEntry(hash)
+				require.NoError(getErr)
+				if op.adopt {
+					require.NotNil(entry)
+					assert.Equal(oldPackID, entry.PackID,
+						"invalid adoption must retain the old mapping")
+				} else {
+					assert.Nil(entry, "invalid record must not create a mapping")
+				}
+				assert.Equal([]string{legacyPath}, fx.pathsForContentHash(hash),
+					"invalid input must not canonicalize paths")
+			})
+		}
+	}
+}
+
+func TestAdoptPackedBlobsAllowsPartialPackMetadata(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	hash := packTestHash("ac08")
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a5", hash)
+	rec.EntryCount = 2
+	rec.StoredBytes = 256
+
+	require.NoError(t, st.AdoptPackedBlobs(rec, entries),
+		"orphan adoption may submit only the newly recovered subset")
 }
 
 func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
@@ -317,6 +426,66 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 	}
 }
 
+func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{name: "nonhex", hash: packTestHash("zzzz")},
+		{name: "noncanonical uppercase", hash: strings.ToUpper(packTestHash("ab09"))},
+	}
+	readers := []struct {
+		name string
+		read func(*store.Store, string, string) error
+	}{
+		{name: "get", read: func(st *store.Store, hash, _ string) error {
+			_, err := st.GetAttachmentPackEntry(hash)
+			return err
+		}},
+		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
+			_, err := st.ResolveAttachmentBlob(hash)
+			return err
+		}},
+		{name: "list pack", read: func(st *store.Store, _, packID string) error {
+			_, err := st.ListAttachmentPackEntries(packID)
+			return err
+		}},
+		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
+			_, err := st.ListReferencedPackEntries(context.Background(), packID)
+			return err
+		}},
+		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
+			_, err := st.ListIndexedBlobEntries()
+			return err
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+			fx.addAttachment(tc.hash, "legacy/"+tc.hash, 100)
+			const packID = "01hzy3v7q8r9s0t1a2v3w4x5t2"
+			_, err := st.DB().Exec(st.Rebind(`
+				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
+				VALUES (?, 1, 128, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
+			require.NoError(t, err)
+			_, err = st.DB().Exec(st.Rebind(`
+				INSERT INTO attachment_pack_index
+				    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
+				VALUES (?, ?, 6, 128, 256, 0, 0)`), tc.hash, packID)
+			require.NoError(t, err)
+
+			for _, reader := range readers {
+				t.Run(reader.name, func(t *testing.T) {
+					assert.Error(t, reader.read(st, tc.hash, packID),
+						"legacy corrupt hash must be reported, not normalized")
+				})
+			}
+		})
+	}
+}
+
 func TestListReferencedBlobHashes(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -420,6 +589,7 @@ func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
 		"legacy/two/" + hash,
 		canonical,
 		"https://cdn.example.com/" + hash,
+		"HTTP://cdn.example.com/" + hash,
 		"",
 	} {
 		fx.addAttachmentOnNewMessage(hash, path, 100)
@@ -429,6 +599,7 @@ func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
 		"legacy/thumb-two/" + hash,
 		canonical,
 		"http://cdn.example.com/" + hash,
+		"Https://cdn.example.com/" + hash,
 		"",
 	}
 	for i, path := range thumbnailPaths {
@@ -437,13 +608,14 @@ func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
 		fx.setThumbnail(contentHash, hash, path)
 	}
 
-	require.NoError(st.CanonicalizeAttachmentBlobPaths(hash))
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(strings.ToUpper(hash)))
 
 	assert.Equal([]string{
 		canonical,
 		canonical,
 		canonical,
 		"https://cdn.example.com/" + hash,
+		"HTTP://cdn.example.com/" + hash,
 		"",
 	}, fx.pathsForContentHash(hash))
 	assert.Equal([]string{
@@ -451,8 +623,51 @@ func TestCanonicalizeAttachmentBlobPaths(t *testing.T) {
 		canonical,
 		canonical,
 		"http://cdn.example.com/" + hash,
+		"Https://cdn.example.com/" + hash,
 		"",
 	}, fx.thumbnailPathsForHash(hash))
+}
+
+func TestCanonicalizeAttachmentBlobPathsPreservesURLsWithCaseSensitiveLike(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	require.NoError(err)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("ab0a")
+	contentURL := "HTTP://cdn.example.com/" + hash
+	thumbnailURL := "Https://cdn.example.com/" + hash
+	fx.addAttachment(hash, contentURL, 100)
+	carrierHash := packTestHash("ab0b")
+	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
+	fx.setThumbnail(carrierHash, hash, thumbnailURL)
+
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(hash))
+	assert.Equal([]string{contentURL}, fx.pathsForContentHash(hash))
+	assert.Equal([]string{thumbnailURL}, fx.thumbnailPathsForHash(hash))
+}
+
+func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	hash := packTestHash("ab0c")
+	uppercaseHash := strings.ToUpper(hash)
+	canonical := hash[:2] + "/" + hash
+	fx.addAttachment(uppercaseHash, "legacy/"+uppercaseHash, 100)
+	carrierHash := packTestHash("ab0d")
+	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
+	fx.setThumbnail(carrierHash, uppercaseHash, "legacy/thumb/"+uppercaseHash)
+
+	require.NoError(st.CanonicalizeAttachmentBlobPaths(uppercaseHash))
+	assert.Equal([]string{canonical}, fx.pathsForContentHash(uppercaseHash))
+	assert.Equal([]string{canonical}, fx.thumbnailPathsForHash(uppercaseHash))
 }
 
 func TestCanonicalizeAttachmentBlobPathsRejectsMalformedHash(t *testing.T) {

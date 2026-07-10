@@ -292,7 +292,7 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			name: "added current mapping",
 			mutate: func(t *testing.T, st *store.Store, hashA, _ string) {
 				t.Helper()
-				extra := packTestHash("g803")
+				extra := packTestHash("a813")
 				fx := newPackAttachmentFixture(t, st)
 				fx.addAttachment(extra, extra[:2]+"/"+extra, 300)
 				_, err := st.DB().Exec(st.Rebind(`
@@ -334,8 +334,8 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 			fx := newPackAttachmentFixture(t, st)
-			hashA := packTestHash("g801")
-			hashB := packTestHash("g802")
+			hashA := packTestHash("a811")
+			hashB := packTestHash("a812")
 			fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 100)
 			fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 200)
 			created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)

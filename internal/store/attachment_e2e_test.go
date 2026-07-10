@@ -85,8 +85,6 @@ func (c *attachmentCorpus) attachmentRowCount() int {
 // attachmentRowsForHash counts attachment rows carrying the given content
 // hash. The hash argument is always hashShared in the current suite but
 // kept explicit so each call site reads as a content-hash assertion.
-//
-//nolint:unparam // hash intentionally parameterized; see doc comment.
 func (c *attachmentCorpus) attachmentRowsForHash(hash string) int {
 	c.t.Helper()
 	var n int
@@ -98,13 +96,11 @@ func (c *attachmentCorpus) attachmentRowsForHash(hash string) int {
 	return n
 }
 
-// hashes used throughout the suite. Real values are 64-char hex; the values
-// here are fixed sentinels that round-trip cleanly through the DB and the
-// content_hash column has no parsing constraints inside the store layer.
-const (
-	hashShared = "h1sharedhash0000000000000000000000000000000000000000000000000abc"
-	hashUniqA  = "h2uniqueA00000000000000000000000000000000000000000000000000000de"
-	hashUniqB  = "h3uniqueB000000000000000000000000000000000000000000000000000ab12"
+// Deterministic SHA-256-shaped sentinels used throughout the suite.
+var (
+	hashShared = packTestHash("a1ab")
+	hashUniqA  = packTestHash("a2cd")
+	hashUniqB  = packTestHash("a3ef")
 )
 
 func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
