@@ -462,7 +462,9 @@ CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 -- Attachments
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);
+CREATE INDEX IF NOT EXISTS idx_attachments_content_hash_lower ON attachments(LOWER(content_hash));
 CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash ON attachments(thumbnail_hash);
+CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_hash_lower ON attachments(LOWER(thumbnail_hash));
 CREATE INDEX IF NOT EXISTS idx_attachments_thumbnail_path ON attachments(thumbnail_path);
 CREATE INDEX IF NOT EXISTS idx_attachments_storage_path ON attachments(storage_path);
 -- The partial unique index on (message_id, content_hash) for

@@ -1046,7 +1046,8 @@ func TestListUnpackedBlobs(t *testing.T) {
 
 	require.Contains(byHash, hashLoose)
 	assert.Equal(store.UnpackedBlob{
-		Hash: hashLoose, Paths: []string{hashLoose[:2] + "/" + hashLoose}, Size: 100,
+		Hash: hashLoose, OriginalHashes: []string{hashLoose},
+		Paths: []string{hashLoose[:2] + "/" + hashLoose}, Size: 100,
 	}, byHash[hashLoose])
 
 	require.Contains(byHash, hashBoth)
@@ -1057,10 +1058,49 @@ func TestListUnpackedBlobs(t *testing.T) {
 
 	require.Contains(byHash, hashThumbOnly)
 	assert.Equal(store.UnpackedBlob{
-		Hash: hashThumbOnly, Paths: []string{"thumbs/" + hashThumbOnly}, Size: -1,
+		Hash: hashThumbOnly, OriginalHashes: []string{hashThumbOnly},
+		Paths: []string{"thumbs/" + hashThumbOnly}, Size: -1,
 	}, byHash[hashThumbOnly], "thumbnail-only blobs have Size -1")
 
 	assert.Len(blobs, 3)
+}
+
+func TestListUnpackedBlobsCoalescesCaseAliasesDeterministically(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	forceCaseSensitiveSQLiteLike(t, st)
+	fx := newPackAttachmentFixture(t, st)
+
+	shared := packTestHash("ab2d")
+	uppercase := strings.ToUpper(shared)
+	unrelated := packTestHash("cd2e")
+	fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
+	fx.addAttachmentOnNewMessage(shared, shared[:2]+"/"+shared, 300)
+	fx.addAttachmentOnNewMessage(unrelated, unrelated[:2]+"/"+unrelated, 200)
+	fx.addAttachmentOnNewMessage("BAD-HASH", "malformed/BAD-HASH", 50)
+	fx.addAttachmentOnNewMessage("bad-hash", "malformed/bad-hash", 60)
+	fx.setThumbnail(unrelated, uppercase, "thumbs/"+uppercase)
+
+	blobs, err := st.ListUnpackedBlobs()
+
+	require.NoError(err)
+	require.Len(blobs, 4, "valid case aliases coalesce while malformed spellings remain distinct")
+	assert.Equal(shared, blobs[0].Hash)
+	assert.Equal([]string{uppercase, shared}, blobs[0].OriginalHashes,
+		"original local spellings remain ordered for atomic canonicalization")
+	assert.Equal([]string{"legacy/" + uppercase, shared[:2] + "/" + shared, "thumbs/" + uppercase},
+		blobs[0].Paths)
+	assert.Equal(int64(300), blobs[0].Size, "content aliases retain the largest recorded size")
+	assert.Equal(unrelated, blobs[1].Hash, "content-first first-seen order remains deterministic")
+	assert.Equal(store.UnpackedBlob{
+		Hash: "BAD-HASH", OriginalHashes: []string{"BAD-HASH"},
+		Paths: []string{"malformed/BAD-HASH"}, Size: 50,
+	}, blobs[2])
+	assert.Equal(store.UnpackedBlob{
+		Hash: "bad-hash", OriginalHashes: []string{"bad-hash"},
+		Paths: []string{"malformed/bad-hash"}, Size: 60,
+	}, blobs[3])
 }
 
 func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {

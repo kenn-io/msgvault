@@ -589,7 +589,7 @@ func TestCanonicalizeLooseSourceStopsBeforeDatabaseCommitWhenContextCancels(t *t
 	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
 	ctx := &cancelAfterErrContext{Context: context.Background(), cancelAfter: 3}
 
-	err := canonicalizeLooseSource(ctx, f.store, f.dir, hash, mustNormalizedBlobHash(t, hash), legacy)
+	err := canonicalizeLooseSource(ctx, f.store, f.dir, []string{hash}, mustNormalizedBlobHash(t, hash), legacy)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.FileExists(legacy, "source deletion must follow a successful DB commit")
 	assert.Equal("legacy/"+hash, f.storagePath(hash))
@@ -764,6 +764,28 @@ func TestRunPacksAndNormalizesUppercaseAttachmentHash(t *testing.T) {
 	entry, err := f.store.GetAttachmentPackEntry(hash)
 	require.NoError(err)
 	require.NotNil(entry)
+	assert.Equal(content, f.read(hash))
+}
+
+func TestRunNormalizesUppercaseAliasWhenOversizedBlobStaysLoose(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := bytes.Repeat([]byte("x"), 1025)
+	hash := maintenanceHash(content)
+	uppercase := strings.ToUpper(hash)
+	legacyPath := "legacy/" + uppercase
+	f.addRow(uppercase, legacyPath, len(content))
+	legacy := f.write(legacyPath, content)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsDeferredOversized)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
+	assert.NoFileExists(legacy)
+	assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(maintenanceCanonical(hash))))
 	assert.Equal(content, f.read(hash))
 }
 

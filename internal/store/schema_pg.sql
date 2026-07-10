@@ -433,10 +433,10 @@ CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(content_hash);
--- idx_attachments_thumbnail_hash and idx_attachments_thumbnail_path are
--- created in Go (Store.InitSchema) under the maintenance escape hatch: this
--- file executes before that hatch is available, and the one-time index builds
--- over a populated attachments table can exceed the pool-wide 30s
+-- Thumbnail hash/path and LOWER(content_hash)/LOWER(thumbnail_hash) indexes
+-- are created in Go (Store.InitSchema) under the maintenance escape hatch:
+-- this file executes before that hatch is available, and the one-time index
+-- builds over a populated attachments table can exceed the pool-wide 30s
 -- statement_timeout on a large archive (finding S1). SQLite keeps the indexes
 -- in schema.sql (no statement_timeout there).
 CREATE INDEX IF NOT EXISTS idx_attachments_storage_path ON attachments(storage_path);

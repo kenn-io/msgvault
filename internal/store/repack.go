@@ -28,30 +28,29 @@ type RepackMove struct {
 	NewEntry  PackIndexEntry
 }
 
+const listPackUsageSQL = `
+	WITH referenced AS (
+	    SELECT i.blob_hash, i.pack_id, i.stored_len, i.raw_len
+	    FROM attachment_pack_index i
+	    WHERE i.blob_hash IN (` + attachmentReferencedHashesSQL + `
+	    )
+	)
+	SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
+	       COUNT(r.blob_hash), COALESCE(SUM(r.stored_len), 0),
+	       COALESCE(SUM(r.raw_len), 0),
+	       COALESCE(MAX(r.stored_len), 0),
+	       COALESCE(MAX(r.raw_len), 0)
+	FROM attachment_packs p
+	LEFT JOIN referenced r ON r.pack_id = p.pack_id
+	GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
+	ORDER BY p.created_at, p.pack_id`
+
 // ListPackUsage returns every recorded pack in deterministic creation order.
 // Attachment references, not index rows alone, define the live aggregates.
 func (s *Store) ListPackUsage(ctx context.Context) ([]PackUsage, error) {
 	var usage []PackUsage
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `
-			WITH referenced AS (
-			    SELECT i.blob_hash, i.pack_id, i.stored_len, i.raw_len
-			    FROM attachment_pack_index i
-			    WHERE EXISTS (
-			        SELECT 1 FROM attachments a
-			        WHERE LOWER(a.content_hash) = i.blob_hash
-			           OR LOWER(a.thumbnail_hash) = i.blob_hash
-			    )
-			)
-			SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
-			       COUNT(r.blob_hash), COALESCE(SUM(r.stored_len), 0),
-			       COALESCE(SUM(r.raw_len), 0),
-			       COALESCE(MAX(r.stored_len), 0),
-			       COALESCE(MAX(r.raw_len), 0)
-			FROM attachment_packs p
-			LEFT JOIN referenced r ON r.pack_id = p.pack_id
-			GROUP BY p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-			ORDER BY p.created_at, p.pack_id`)
+		rows, err := tx.QueryContext(ctx, listPackUsageSQL)
 		if err != nil {
 			return fmt.Errorf("list attachment pack usage: %w", err)
 		}
@@ -119,11 +118,7 @@ func (s *Store) ListReferencedPackEntries(ctx context.Context, packID string) ([
 			FROM attachment_pack_index i
 			WHERE i.pack_id = ?
 			  AND (
-			      EXISTS (
-			          SELECT 1 FROM attachments a
-			          WHERE LOWER(a.content_hash) = i.blob_hash
-			             OR LOWER(a.thumbnail_hash) = i.blob_hash
-			      )
+			      i.blob_hash IN (`+attachmentReferencedHashesSQL+`)
 			      OR i.blob_hash != LOWER(i.blob_hash)
 			  )
 			ORDER BY i.pack_offset, i.blob_hash`, packID)
@@ -169,11 +164,7 @@ func (s *Store) CommitRepack(
 				SELECT i.blob_hash
 				FROM attachment_pack_index i
 				WHERE i.pack_id = ?
-				  AND EXISTS (
-				      SELECT 1 FROM attachments a
-				      WHERE LOWER(a.content_hash) = i.blob_hash
-				         OR LOWER(a.thumbnail_hash) = i.blob_hash
-				  )`, sourcePackID)
+				  AND i.blob_hash IN (`+attachmentReferencedHashesSQL+`)`, sourcePackID)
 			if err != nil {
 				return fmt.Errorf("list current referenced mappings for %s: %w", sourcePackID, err)
 			}
@@ -238,11 +229,7 @@ func (s *Store) CommitRepack(
 			if err := tx.QueryRowContext(ctx, `
 				SELECT COUNT(*) FROM attachment_pack_index i
 				WHERE i.pack_id = ?
-				  AND EXISTS (
-				      SELECT 1 FROM attachments a
-				      WHERE LOWER(a.content_hash) = i.blob_hash
-				         OR LOWER(a.thumbnail_hash) = i.blob_hash
-				  )`, sourcePackID).Scan(&remaining); err != nil {
+				  AND i.blob_hash IN (`+attachmentReferencedHashesSQL+`)`, sourcePackID).Scan(&remaining); err != nil {
 				return fmt.Errorf("verify source pack %s is empty: %w", sourcePackID, err)
 			}
 			if remaining != 0 {
@@ -337,11 +324,7 @@ func (s *Store) DeleteEmptyPackRecord(ctx context.Context, packID string) (bool,
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM attachment_pack_index i
 			WHERE i.pack_id = ?
-			  AND EXISTS (
-			      SELECT 1 FROM attachments a
-			      WHERE LOWER(a.content_hash) = i.blob_hash
-			         OR LOWER(a.thumbnail_hash) = i.blob_hash
-			  )`, packID).Scan(&live); err != nil {
+			  AND i.blob_hash IN (`+attachmentReferencedHashesSQL+`)`, packID).Scan(&live); err != nil {
 			return fmt.Errorf("count referenced mappings for pack %s: %w", packID, err)
 		}
 		if live != 0 {

@@ -157,6 +157,21 @@ func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) erro
 	return s.recordPackedBlobs(rec, entries, false, nil)
 }
 
+// RecordPackedBlobsWithAliases inserts a newly sealed pack while
+// transactionally canonicalizing every local attachment hash spelling that
+// produced each entry. Unlike orphan adoption, existing index rows are not
+// replaced: ordinary packing must not overwrite a concurrently published
+// mapping.
+func (s *Store) RecordPackedBlobsWithAliases(rec PackRecord, packed []PackIndexAdoption) error {
+	entries := make([]PackIndexEntry, len(packed))
+	originalHashes := make([][]string, len(packed))
+	for i, blob := range packed {
+		entries[i] = blob.Entry
+		originalHashes[i] = blob.OriginalHashes
+	}
+	return s.recordPackedBlobs(rec, entries, false, originalHashes)
+}
+
 // AdoptPackedBlobs records a reconciled orphan pack and transactionally
 // repoints the supplied blob index entries to it. The caller must submit only
 // entries that were absent from the index or whose previously indexed packed
@@ -276,12 +291,38 @@ func (s *Store) recordPackedBlobs(
 // local content and thumbnail path for blobHash to its content-addressed path.
 // URL-backed and empty paths are left unchanged.
 func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
+	return s.CanonicalizeAttachmentBlobAliases(blobHash, []string{blobHash})
+}
+
+// CanonicalizeAttachmentBlobAliases transactionally rewrites every nonempty
+// local path whose hash is one of originalHashes to the canonical lowercase
+// hash and content-addressed path. Every alias must normalize to blobHash;
+// URL-backed and empty paths remain untouched.
+func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashes []string) error {
 	normalized, err := normalizeBlobHash(blobHash)
 	if err != nil {
 		return err
 	}
+	if len(originalHashes) == 0 {
+		return fmt.Errorf("canonicalize attachment blob %s: no original hash aliases", normalized)
+	}
+	for _, original := range originalHashes {
+		alias, err := normalizeBlobHash(original)
+		if err != nil {
+			return fmt.Errorf("canonicalize attachment blob %s alias: %w", normalized, err)
+		}
+		if alias != normalized {
+			return fmt.Errorf("canonicalize attachment blob %s alias %q normalizes to %s",
+				normalized, original, alias)
+		}
+	}
 	return s.withTx(func(tx *loggedTx) error {
-		return canonicalizeAttachmentBlobPathsTx(tx, normalized, blobHash)
+		for _, original := range originalHashes {
+			if err := canonicalizeAttachmentBlobPathsTx(tx, normalized, original); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -325,6 +366,26 @@ func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error)
 	return &entry, nil
 }
 
+const attachmentReferencedHashesSQL = `
+	SELECT LOWER(content_hash) FROM attachments
+	WHERE content_hash IS NOT NULL AND content_hash != ''
+	UNION
+	SELECT LOWER(thumbnail_hash) FROM attachments
+	WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''`
+
+const resolveAttachmentBlobSQL = `
+	WITH requested(blob_hash) AS (VALUES (CAST(? AS TEXT)))
+	SELECT CASE WHEN (
+	           EXISTS (SELECT 1 FROM attachments a
+	                   WHERE LOWER(a.content_hash) = ?)
+	           OR EXISTS (SELECT 1 FROM attachments a
+	                      WHERE LOWER(a.thumbnail_hash) = ?)
+	       ) THEN 1 ELSE 0 END,
+	       p.blob_hash, p.pack_id, p.pack_offset,
+	       p.stored_len, p.raw_len, p.flags, p.crc32c
+	FROM requested
+	LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`
+
 // ResolveAttachmentBlob determines attachment liveness and the optional pack
 // location in one query. Attachment rows, rather than storage metadata, are
 // the liveness authority, so stale unreferenced index rows are never exposed
@@ -352,17 +413,8 @@ func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, 
 	var referenced int
 	var hash, packID sql.NullString
 	var offset, storedLen, rawLen, flags, crc sql.NullInt64
-	err = s.db.QueryRow(s.dialect.Rebind(`
-		WITH requested(blob_hash) AS (VALUES (CAST(? AS TEXT)))
-		SELECT CASE WHEN EXISTS (
-		           SELECT 1 FROM attachments a
-		           WHERE LOWER(a.content_hash) = requested.blob_hash
-		              OR LOWER(a.thumbnail_hash) = requested.blob_hash
-		       ) THEN 1 ELSE 0 END,
-		       p.blob_hash, p.pack_id, p.pack_offset,
-		       p.stored_len, p.raw_len, p.flags, p.crc32c
-		FROM requested
-		LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`), canonicalHash).
+	err = s.db.QueryRow(s.dialect.Rebind(resolveAttachmentBlobSQL),
+		canonicalHash, canonicalHash, canonicalHash).
 		Scan(&referenced, &hash, &packID, &offset, &storedLen, &rawLen, &flags, &crc)
 	if err != nil {
 		return AttachmentBlobLocation{}, fmt.Errorf("resolve attachment blob %s: %w", blobHash, err)
@@ -425,13 +477,7 @@ func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
 func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error) {
 	var pruned int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		res, err := tx.ExecContext(ctx, `
-			DELETE FROM attachment_pack_index
-			WHERE NOT EXISTS (
-			    SELECT 1 FROM attachments a
-			    WHERE LOWER(a.content_hash) = attachment_pack_index.blob_hash
-			       OR LOWER(a.thumbnail_hash) = attachment_pack_index.blob_hash
-			)`)
+		res, err := tx.ExecContext(ctx, pruneUnreferencedPackIndexSQL)
 		if err != nil {
 			return fmt.Errorf("prune unreferenced pack index: %w", err)
 		}
@@ -443,6 +489,11 @@ func (s *Store) PruneUnreferencedPackIndex(ctx context.Context) (int64, error) {
 	})
 	return pruned, err
 }
+
+const pruneUnreferencedPackIndexSQL = `
+	DELETE FROM attachment_pack_index
+	WHERE blob_hash NOT IN (` + attachmentReferencedHashesSQL + `
+	)`
 
 // ListAttachmentPackEntries returns the live blob index rows owned by one
 // pack, ordered by their position in the pack. Footer entries without a live
@@ -460,14 +511,18 @@ func (s *Store) ListAttachmentPackEntries(packID string) ([]PackIndexEntry, erro
 	return scanPackIndexEntries(rows, "pack index entries for "+packID, packID)
 }
 
-// UnpackedBlob is one distinct local blob that has no pack index row.
-// Paths contains every distinct DB-recorded local candidate path relative to
-// the attachments dir, slash-separated. Size is -1 when unknown
-// (thumbnail-only blobs).
+// UnpackedBlob is one distinct local blob that has no pack index row. Hash is
+// canonical lowercase for every valid SHA-256 value; OriginalHashes retains
+// every case spelling that must be canonicalized atomically when the blob is
+// packed. Malformed hashes remain unmodified and distinct so maintenance can
+// report and preserve them without deriving content-addressed paths. Paths
+// contains every distinct DB-recorded local candidate path relative to the
+// attachments dir, slash-separated. Size is -1 when unknown (thumbnail-only).
 type UnpackedBlob struct {
-	Hash  string
-	Paths []string
-	Size  int64
+	Hash           string
+	OriginalHashes []string
+	Paths          []string
+	Size           int64
 }
 
 // ListUnpackedBlobs returns every distinct local (non-URL) content and
@@ -479,6 +534,7 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 	var blobs []UnpackedBlob
 	byHash := make(map[string]int)
 	seenPaths := make(map[string]map[string]struct{})
+	seenAliases := make(map[string]map[string]struct{})
 
 	collect := func(query string, scanSize bool) error {
 		rows, err := s.db.Query(query)
@@ -498,22 +554,32 @@ func (s *Store) ListUnpackedBlobs() ([]UnpackedBlob, error) {
 			if err != nil {
 				return fmt.Errorf("scan unpacked blob: %w", err)
 			}
-			if _, ok := seenPaths[hash]; !ok {
-				seenPaths[hash] = make(map[string]struct{})
+			canonicalHash, normalizeErr := normalizeBlobHash(hash)
+			key := "valid:" + canonicalHash
+			if normalizeErr != nil {
+				canonicalHash = hash
+				key = "malformed:" + hash
 			}
-			if _, dup := seenPaths[hash][path]; dup {
+			idx, exists := byHash[key]
+			if !exists {
+				idx = len(blobs)
+				byHash[key] = idx
+				seenPaths[key] = make(map[string]struct{})
+				seenAliases[key] = make(map[string]struct{})
+				blobs = append(blobs, UnpackedBlob{Hash: canonicalHash, Size: size})
+			}
+			if _, seen := seenAliases[key][hash]; !seen {
+				seenAliases[key][hash] = struct{}{}
+				blobs[idx].OriginalHashes = append(blobs[idx].OriginalHashes, hash)
+			}
+			if scanSize && size > blobs[idx].Size {
+				blobs[idx].Size = size
+			}
+			if _, dup := seenPaths[key][path]; dup {
 				continue
 			}
-			seenPaths[hash][path] = struct{}{}
-			if idx, ok := byHash[hash]; ok {
-				blobs[idx].Paths = append(blobs[idx].Paths, path)
-				if scanSize && size > blobs[idx].Size {
-					blobs[idx].Size = size
-				}
-				continue
-			}
-			byHash[hash] = len(blobs)
-			blobs = append(blobs, UnpackedBlob{Hash: hash, Paths: []string{path}, Size: size})
+			seenPaths[key][path] = struct{}{}
+			blobs[idx].Paths = append(blobs[idx].Paths, path)
 		}
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("iterate unpacked blobs: %w", err)

@@ -316,9 +316,10 @@ func publishLooseNoClobber(staging, canonical string) error {
 	return fmt.Errorf("atomic no-replace canonical loose publish: %w", err)
 }
 
-// canonicalizeLooseSource publishes verified canonical bytes, commits the DB
-// path update, and only then attempts best-effort legacy deletion.
-func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDir, originalHash string, hash normalizedBlobHash, source string) error {
+// canonicalizeLooseSource publishes verified canonical bytes, commits every
+// case-equivalent DB path update, and only then attempts best-effort legacy
+// deletion.
+func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDir string, originalHashes []string, hash normalizedBlobHash, source string) error {
 	canonical, err := materializeCanonicalLoose(ctx, attachmentsDir, hash, source)
 	if err != nil {
 		return err
@@ -326,13 +327,13 @@ func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := st.CanonicalizeAttachmentBlobPaths(originalHash); err != nil {
+	if err := st.CanonicalizeAttachmentBlobAliases(hash.String(), originalHashes); err != nil {
 		return &canonicalizeStoreError{err: fmt.Errorf(
-			"canonicalize attachment blob paths for %s: %w", originalHash, err)}
+			"canonicalize attachment blob paths for %s: %w", hash.String(), err)}
 	}
 	if _, err := removeIndependentLoose(source, canonical); err != nil {
 		slog.Warn("preserve canonicalized legacy loose blob after identity check",
-			"hash", hash.String(), "original_hash", originalHash, "path", source, "error", err)
+			"hash", hash.String(), "original_hashes", originalHashes, "path", source, "error", err)
 	}
 	return nil
 }

@@ -692,6 +692,94 @@ func TestRunPreservesUppercaseExternalReferencesToAdoptedOrphans(t *testing.T) {
 	}
 }
 
+func TestRunCoalescesSimultaneousLooseCaseAliases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		f.store.DB().SetMaxOpenConns(1)
+		f.store.DB().SetMaxIdleConns(1)
+		_, err := f.store.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+		require.NoError(err)
+	}
+
+	sharedContent := randomContent(t, 900)
+	sharedHash := hashOf(sharedContent)
+	uppercase := strings.ToUpper(sharedHash)
+	upperPath := "legacy/" + uppercase
+	f.addRow(uppercase, upperPath, len(sharedContent))
+	f.writeLoose(upperPath, sharedContent)
+	src, err := f.store.GetOrCreateSource("gmail", "case-alias@example.com")
+	require.NoError(err)
+	convID, err := f.store.EnsureConversation(src.ID, "case-alias-thread", "Case Alias Thread")
+	require.NoError(err)
+	aliasMsgID, err := f.store.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "case-alias-message",
+		MessageType:     "email",
+		SizeEstimate:    100,
+	})
+	require.NoError(err)
+	require.NoError(f.store.UpsertAttachment(aliasMsgID, "case-alias.bin", "application/octet-stream",
+		canonical(sharedHash), sharedHash, len(sharedContent)))
+	f.writeLoose(canonical(sharedHash), sharedContent)
+	unrelatedContent := randomContent(t, 700)
+	unrelatedHash := f.addBlob(unrelatedContent, canonical)
+
+	first := f.run(packer.Options{})
+
+	assert.Equal(2, first.BlobsPacked, "case aliases append one shared BlobID")
+	entry, err := f.store.GetAttachmentPackEntry(sharedHash)
+	require.NoError(err)
+	require.NotNil(entry)
+	packPath := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+blobstore.PackExt)
+	reader, err := pack.OpenReader(packPath, nil)
+	require.NoError(err)
+	assert.Len(reader.Entries(), 2, "shared aliases and the unrelated blob produce two footer entries")
+	require.NoError(reader.Close())
+
+	assert.Equal([]string{canonical(sharedHash), canonical(sharedHash)}, f.storagePaths(sharedHash))
+	assert.Empty(f.storagePaths(uppercase))
+	assert.Empty(f.looseFiles(), "selected and alias loose sources are swept after verified publication")
+	for _, requested := range []string{sharedHash, uppercase} {
+		assert.Equal(sharedContent, f.readBack(requested))
+		bs := blobstore.New(f.store, f.dir)
+		data, size, err := bs.ReadBounded(requested, int64(len(sharedContent)))
+		require.NoError(err)
+		assert.Equal(int64(len(sharedContent)), size)
+		assert.Equal(sharedContent, data)
+		require.NoError(bs.Close())
+	}
+	assert.Equal(unrelatedContent, f.readBack(unrelatedHash))
+
+	second := f.run(packer.Options{})
+
+	assert.Zero(second.BlobsPacked)
+	assert.Zero(second.PacksSealed)
+	assert.Zero(second.MappingsPruned)
+	assert.FileExists(packPath)
+	assert.Equal(sharedContent, f.readBack(sharedHash))
+}
+
+func TestRunDoesNotDeriveLoosePathForMalformedHash(t *testing.T) {
+	assert := assert.New(t)
+	f := newFixture(t)
+	malformed := "zz" + strings.Repeat("0", 62)
+	recordedPath := "missing/" + malformed
+	derivedPath := malformed[:2] + "/" + malformed
+	f.addRow(malformed, recordedPath, 20)
+	f.writeLoose(derivedPath, []byte("must remain unmanaged"))
+
+	stats := f.run(packer.Options{})
+
+	assert.Zero(stats.BlobsPacked)
+	assert.Zero(stats.PacksSealed)
+	assert.Equal([]string{recordedPath}, f.storagePaths(malformed))
+	assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(derivedPath)),
+		"malformed hashes must never authorize a derived content-addressed path")
+}
+
 func TestRunPrunesTeamsReplacement(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
