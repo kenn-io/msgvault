@@ -184,8 +184,10 @@ func (s *Store) AdoptPackedBlobs(rec PackRecord, entries []PackIndexEntry) error
 // AdoptPackedBlobsWithAliases records a reconciled orphan pack and repoints
 // each canonical index entry while transactionally canonicalizing the local
 // attachment rows that reference it through the supplied original spellings.
-// URL-backed and empty paths retain their original hash and path. Validation
-// of any entry or alias fails the entire call before the transaction begins.
+// URL-backed and empty paths remain unchanged; their case-equivalent hash
+// spelling may be exchanged with a local alias so the local hash and path stay
+// canonical. Validation of any entry or alias fails the entire call before
+// the transaction begins.
 func (s *Store) AdoptPackedBlobsWithAliases(rec PackRecord, adoptions []PackIndexAdoption) error {
 	entries := make([]PackIndexEntry, len(adoptions))
 	originalHashes := make([][]string, len(adoptions))
