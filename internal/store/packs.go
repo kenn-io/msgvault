@@ -295,9 +295,11 @@ func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
 }
 
 // CanonicalizeAttachmentBlobAliases transactionally rewrites every nonempty
-// local path whose hash is one of originalHashes to the canonical lowercase
-// hash and content-addressed path. Every alias must normalize to blobHash;
-// URL-backed and empty paths remain untouched.
+// local path whose hash is one of originalHashes to its content-addressed
+// path and, when the per-message unique key is available, the canonical
+// lowercase hash. Every alias must normalize to blobHash. URL-backed and
+// empty paths remain untouched; a local row retains its case alias when one
+// of those preserved rows already owns the canonical unique key.
 func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashes []string) error {
 	normalized, err := normalizeBlobHash(blobHash)
 	if err != nil {
@@ -328,29 +330,43 @@ func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashe
 
 func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string) error {
 	canonical := blobHash[:2] + "/" + blobHash
-	// The unique attachment key is case-sensitive, so legacy rows for one
-	// message can contain case-equivalent hashes. Collapse those logical
+	// The unique attachment key is case-sensitive, so legacy local rows for one
+	// message can contain case-equivalent hashes. Collapse those logical local
 	// duplicates before lowercasing; otherwise the update below collides with
 	// idx_attachments_msg_content_hash and wedges every later maintenance run.
-	// Retaining MIN(id) matches the one-shot legacy duplicate migration.
+	// Retaining MIN(id) matches the one-shot legacy duplicate migration. URL and
+	// empty-path rows are outside this repair because this API preserves them.
 	if _, err := tx.Exec(`
 		DELETE FROM attachments
 		WHERE LOWER(content_hash) = ?
+		  AND storage_path IS NOT NULL AND storage_path != ''
+		  AND LOWER(storage_path) NOT LIKE 'http://%'
+		  AND LOWER(storage_path) NOT LIKE 'https://%'
 		  AND id NOT IN (
 			SELECT MIN(id) FROM attachments
 			WHERE LOWER(content_hash) = ?
+			  AND storage_path IS NOT NULL AND storage_path != ''
+			  AND LOWER(storage_path) NOT LIKE 'http://%'
+			  AND LOWER(storage_path) NOT LIKE 'https://%'
 			GROUP BY message_id
 		  )`, blobHash, blobHash); err != nil {
 		return fmt.Errorf("deduplicate case-equivalent attachment rows for %s: %w", blobHash, err)
 	}
 	if _, err := tx.Exec(`
-		UPDATE attachments SET storage_path = ?, content_hash = ?
+		UPDATE attachments
+		SET storage_path = ?,
+		    content_hash = CASE WHEN EXISTS (
+			SELECT 1 FROM attachments AS canonical_owner
+			WHERE canonical_owner.message_id = attachments.message_id
+			  AND canonical_owner.id != attachments.id
+			  AND canonical_owner.content_hash = ?
+		    ) THEN content_hash ELSE ? END
 		WHERE (content_hash = ? OR content_hash = ?)
 		  AND (storage_path != ? OR content_hash != ?)
 		  AND storage_path IS NOT NULL AND storage_path != ''
 		  AND LOWER(storage_path) NOT LIKE 'http://%'
 		  AND LOWER(storage_path) NOT LIKE 'https://%'`,
-		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
+		canonical, blobHash, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
 	}
 	if _, err := tx.Exec(`

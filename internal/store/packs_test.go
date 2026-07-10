@@ -302,6 +302,50 @@ func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *test
 	assert.Empty(fx.pathsForContentHash(uppercase))
 }
 
+func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		preservedPath string
+	}{
+		{name: "URL", preservedPath: "HTTPS://cdn.example.com/attachment"},
+		{name: "empty path", preservedPath: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			fx := newPackAttachmentFixture(t, st)
+
+			hash := packTestHash("fa0d")
+			uppercase := strings.ToUpper(hash)
+			canonical := hash[:2] + "/" + hash
+			fx.addAttachment(hash, tc.preservedPath, 100)
+			fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
+
+			err := st.CanonicalizeAttachmentBlobAliases(hash, []string{uppercase})
+			require.NoError(err)
+
+			rows, err := st.DB().Query(st.Rebind(`
+				SELECT content_hash, storage_path FROM attachments
+				WHERE message_id = ? AND LOWER(content_hash) = ? ORDER BY id`), fx.msgID, hash)
+			require.NoError(err)
+			defer func() { assert.NoError(rows.Close()) }()
+			var got [][2]string
+			for rows.Next() {
+				var row [2]string
+				require.NoError(rows.Scan(&row[0], &row[1]))
+				got = append(got, row)
+			}
+			require.NoError(rows.Err())
+
+			assert.Equal([][2]string{
+				{hash, tc.preservedPath},
+				{uppercase, canonical},
+			}, got)
+		})
+	}
+}
+
 func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T) {
 	tests := []struct {
 		name  string
