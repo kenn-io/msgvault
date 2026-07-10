@@ -255,6 +255,76 @@ func TestReadBoundedPreflightsPackLimits(t *testing.T) {
 	})
 }
 
+func TestOpenMaintenancePackProvidesBoundedOpaqueReads(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("maintenance reader content")
+	idx := buildPack(t, dir, content)
+	hash := hashOf(content)
+	entry := idx[hash]
+	path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+
+	r, err := OpenMaintenancePack(path)
+	require.NoError(err)
+	entries := r.Entries()
+	require.Len(entries, 1)
+	assert.Equal(hash, entries[0].ID.String())
+
+	got, err := r.ReadBlob(hash, int64(len(content)))
+	require.NoError(err)
+	assert.Equal(content, got)
+	_, err = r.ReadBlob(hash, int64(len(content)-1))
+	require.ErrorIs(err, ErrBlobTooLarge)
+	require.NoError(r.Close())
+
+	_, err = r.ReadBlob(hash, int64(len(content)))
+	assert.Error(err, "reads after Close must fail through the retained descriptor")
+}
+
+func TestOpenMaintenancePackPreflightsContainerFooterAndCount(t *testing.T) {
+	t.Run("container", func(t *testing.T) {
+		dir := t.TempDir()
+		content := []byte("oversized sparse maintenance container")
+		idx := buildPack(t, dir, content)
+		entry := idx[hashOf(content)]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		require.NoError(t, os.Truncate(path, MaxMaintenancePackBytes+1))
+
+		_, err := OpenMaintenancePack(path)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+
+	t.Run("footer", func(t *testing.T) {
+		require := require.New(t)
+		dir := t.TempDir()
+		content := []byte("oversized claimed maintenance footer")
+		idx := buildPack(t, dir, content)
+		entry := idx[hashOf(content)]
+		path := filepath.Join(dir, "packs", entry.PackID[:2], entry.PackID+PackExt)
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		require.NoError(err)
+		st, err := f.Stat()
+		require.NoError(err)
+		var encoded [4]byte
+		binary.LittleEndian.PutUint32(encoded[:], MaxMaintenanceFooterBytes+1)
+		_, err = f.WriteAt(encoded[:], st.Size()-40)
+		require.NoError(err)
+		require.NoError(f.Close())
+
+		_, err = OpenMaintenancePack(path)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+
+	t.Run("entry count", func(t *testing.T) {
+		dir := t.TempDir()
+		path, _, _ := buildSyntheticEntryHeavyPack(t, dir)
+
+		_, err := OpenMaintenancePack(path)
+		assert.ErrorIs(t, err, ErrBlobTooLarge)
+	})
+}
+
 func TestReadBoundedChecksCachedReaderEntryLimit(t *testing.T) {
 	dir := t.TempDir()
 	path, hash, entry := buildSyntheticEntryHeavyPack(t, dir)

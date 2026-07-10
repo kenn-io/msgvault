@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"os"
 
 	"github.com/klauspost/compress/zstd"
@@ -49,6 +50,52 @@ type boundedPackReader struct {
 	file    *os.File
 	entries map[pack.BlobID]pack.Entry
 }
+
+// MaintenancePackReader exposes the bounded plain-v1 reader to maintenance
+// packages without exposing its descriptor or mutable footer map. It keeps the
+// exact descriptor used for preflight open until Close.
+type MaintenancePackReader struct {
+	reader *boundedPackReader
+}
+
+// OpenMaintenancePack preflights a pack's container, footer, entry count,
+// checksum, and entry spans before returning an opaque retained-FD reader.
+func OpenMaintenancePack(path string) (*MaintenancePackReader, error) {
+	r, err := openBoundedPack(path)
+	if err != nil {
+		return nil, err
+	}
+	return &MaintenancePackReader{reader: r}, nil
+}
+
+// Entries returns a copy of the pack's authoritative footer entries.
+func (r *MaintenancePackReader) Entries() []pack.Entry {
+	entries := make([]pack.Entry, 0, len(r.reader.entries))
+	for _, entry := range r.reader.entries {
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// ReadBlob returns one fully verified entry while enforcing maxBytes against
+// both its stored and raw lengths.
+func (r *MaintenancePackReader) ReadBlob(hash string, maxBytes int64) ([]byte, error) {
+	id, err := pack.ParseBlobID(hash)
+	if err != nil {
+		return nil, fmt.Errorf("parse maintenance blob hash: %w", err)
+	}
+	entry, ok := r.reader.entries[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: blob %s is absent from pack footer", fs.ErrNotExist, hash)
+	}
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("bounded attachment limit must be nonnegative, got %d", maxBytes)
+	}
+	return r.reader.readBlob(entry, maxBytes)
+}
+
+// Close releases the retained preflighted pack descriptor.
+func (r *MaintenancePackReader) Close() error { return r.reader.Close() }
 
 // openBoundedPack parses only the stable plain v1 format. This duplicates the
 // small wire-format parser because pack.OpenReader reopens a pathname and its
