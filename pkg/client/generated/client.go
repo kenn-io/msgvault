@@ -660,22 +660,8 @@ func (c *Client) GetAttachmentContent(ctx context.Context, options *GetAttachmen
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(GetAttachmentContentResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "GetAttachmentContentResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
+		result := GetAttachmentContentResponse(bodyBytes)
+		return &result, nil
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/attachments/{hash}/content")

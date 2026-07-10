@@ -6,10 +6,36 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestGeneratedGetAttachmentContentReturnsBinaryBytes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	content := []byte{0x00, 0xff, 0x7b, 0x22, 0x6e, 0x6f, 0x74, 0x2d, 0x6a, 0x73, 0x6f, 0x6e}
+	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodGet, r.Method, "method")
+		assert.Equal("/api/v1/attachments/"+hash+"/content", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := generated.NewDefaultClient(server.URL, runtime.WithHTTPClient(httpClientDoer{client: http.DefaultClient}))
+	require.NoError(err, "NewDefaultClient")
+
+	got, err := c.GetAttachmentContent(context.Background(), &generated.GetAttachmentContentRequestOptions{
+		PathParams: &generated.GetAttachmentContentPath{Hash: hash},
+	})
+	require.NoError(err, "GetAttachmentContent")
+	require.NotNil(got, "response")
+	assert.Equal(content, *got, "content")
+}
 
 func TestNewCreatesTypedClient(t *testing.T) {
 	require := require.New(t)

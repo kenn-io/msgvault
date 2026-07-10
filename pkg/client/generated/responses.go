@@ -33,7 +33,7 @@ type GetSubAggregatesResponse = AggregateResponse
 
 type GetSubAggregatesErrorResponse = ErrorResponse
 
-type GetAttachmentContentResponse = runtime.File
+type GetAttachmentContentResponse = []byte
 
 type GetAttachmentContentErrorResponse = ErrorResponse
 

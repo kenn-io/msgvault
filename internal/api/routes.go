@@ -258,7 +258,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.MethodGet,
 		"/attachments/{hash}/content",
 		"Download attachment content by SHA-256 hash",
-		"application/octet-stream",
+		"*/*",
 		s.handleGetAttachmentContent,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
