@@ -259,6 +259,56 @@ func TestUnpackRoundTrip(t *testing.T) {
 		"production read path serves the restored loose file")
 }
 
+func TestMixedNonlocalAliasRemainsReadableAfterPackAuthorityRemoval(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		removeAuthority func(*testing.T, *fixture, string, []byte)
+	}{
+		{
+			name: "unpack",
+			removeAuthority: func(t *testing.T, f *fixture, _ string, _ []byte) {
+				t.Helper()
+				_, err := packer.Unpack(context.Background(), f.store, f.dir)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "restored metadata clear",
+			removeAuthority: func(t *testing.T, f *fixture, hash string, content []byte) {
+				t.Helper()
+				f.writeLoose(canonical(hash), content)
+				require.NoError(t, f.store.ClearAttachmentPackMetadata())
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+			content := randomContent(t, 600)
+			hash := hashOf(content)
+			uppercase := strings.ToUpper(hash)
+			f.addRow(hash, "HTTPS://cdn.example.com/attachment", len(content))
+			f.addRow(uppercase, "legacy/"+uppercase, len(content))
+			f.writeLoose("legacy/"+uppercase, content)
+
+			packed := f.run(packer.Options{})
+			require.Equal(1, packed.BlobsPacked)
+			tc.removeAuthority(t, f, hash, content)
+
+			var localHash string
+			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+				SELECT content_hash FROM attachments
+				WHERE message_id = ?
+				  AND storage_path IS NOT NULL AND storage_path != ''
+				  AND LOWER(storage_path) NOT LIKE 'http://%'
+				  AND LOWER(storage_path) NOT LIKE 'https://%'`), f.msgID).Scan(&localHash))
+			assert.Equal(hash, localHash, "local DB hash must address the canonical loose path")
+			assert.Equal(content, f.readBack(localHash))
+		})
+	}
+}
+
 func TestUnpackRestoresEmptyBlob(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

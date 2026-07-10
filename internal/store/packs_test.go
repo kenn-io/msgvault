@@ -339,8 +339,8 @@ func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t 
 			require.NoError(rows.Err())
 
 			assert.Equal([][2]string{
-				{hash, tc.preservedPath},
-				{uppercase, canonical},
+				{uppercase, tc.preservedPath},
+				{hash, canonical},
 			}, got)
 		})
 	}

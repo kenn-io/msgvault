@@ -296,10 +296,10 @@ func (s *Store) CanonicalizeAttachmentBlobPaths(blobHash string) error {
 
 // CanonicalizeAttachmentBlobAliases transactionally rewrites every nonempty
 // local path whose hash is one of originalHashes to its content-addressed
-// path and, when the per-message unique key is available, the canonical
-// lowercase hash. Every alias must normalize to blobHash. URL-backed and
-// empty paths remain untouched; a local row retains its case alias when one
-// of those preserved rows already owns the canonical unique key.
+// path and the canonical lowercase hash. Every alias must normalize to
+// blobHash. URL-backed and empty paths remain unchanged; when one owns the
+// canonical per-message unique key, its hash spelling is exchanged with the
+// local row's alias so loose reads remain consistent with the local path.
 func (s *Store) CanonicalizeAttachmentBlobAliases(blobHash string, originalHashes []string) error {
 	normalized, err := normalizeBlobHash(blobHash)
 	if err != nil {
@@ -352,21 +352,17 @@ func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string
 		  )`, blobHash, blobHash); err != nil {
 		return fmt.Errorf("deduplicate case-equivalent attachment rows for %s: %w", blobHash, err)
 	}
+	if err := swapPreservedCanonicalHashOwnersTx(tx, blobHash, lookupHash); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
-		UPDATE attachments
-		SET storage_path = ?,
-		    content_hash = CASE WHEN EXISTS (
-			SELECT 1 FROM attachments AS canonical_owner
-			WHERE canonical_owner.message_id = attachments.message_id
-			  AND canonical_owner.id != attachments.id
-			  AND canonical_owner.content_hash = ?
-		    ) THEN content_hash ELSE ? END
+		UPDATE attachments SET storage_path = ?, content_hash = ?
 		WHERE (content_hash = ? OR content_hash = ?)
 		  AND (storage_path != ? OR content_hash != ?)
 		  AND storage_path IS NOT NULL AND storage_path != ''
 		  AND LOWER(storage_path) NOT LIKE 'http://%'
 		  AND LOWER(storage_path) NOT LIKE 'https://%'`,
-		canonical, blobHash, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
+		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize storage_path for %s: %w", blobHash, err)
 	}
 	if _, err := tx.Exec(`
@@ -378,6 +374,75 @@ func canonicalizeAttachmentBlobPathsTx(tx *loggedTx, blobHash, lookupHash string
 		  AND LOWER(thumbnail_path) NOT LIKE 'https://%'`,
 		canonical, blobHash, blobHash, lookupHash, canonical, blobHash); err != nil {
 		return fmt.Errorf("canonicalize thumbnail_path for %s: %w", blobHash, err)
+	}
+	return nil
+}
+
+type attachmentHashOwnerSwap struct {
+	localID   int64
+	localHash string
+	ownerID   int64
+}
+
+// swapPreservedCanonicalHashOwnersTx frees the lowercase per-message key for
+// each local row without changing a URL/empty row's path. The invalid temporary
+// value exists only inside this transaction and prevents immediate unique-index
+// checks from rejecting the two-row hash exchange.
+func swapPreservedCanonicalHashOwnersTx(tx *loggedTx, blobHash, lookupHash string) error {
+	rows, err := tx.Query(`
+		SELECT local.id, local.content_hash, canonical_owner.id
+		FROM attachments AS local
+		JOIN attachments AS canonical_owner
+		  ON canonical_owner.message_id = local.message_id
+		 AND canonical_owner.id != local.id
+		 AND canonical_owner.content_hash = ?
+		WHERE (local.content_hash = ? OR local.content_hash = ?)
+		  AND local.content_hash != ?
+		  AND local.storage_path IS NOT NULL AND local.storage_path != ''
+		  AND LOWER(local.storage_path) NOT LIKE 'http://%'
+		  AND LOWER(local.storage_path) NOT LIKE 'https://%'
+		  AND (canonical_owner.storage_path IS NULL
+		       OR canonical_owner.storage_path = ''
+		       OR LOWER(canonical_owner.storage_path) LIKE 'http://%'
+		       OR LOWER(canonical_owner.storage_path) LIKE 'https://%')`,
+		blobHash, blobHash, lookupHash, blobHash)
+	if err != nil {
+		return fmt.Errorf("find preserved canonical hash owners for %s: %w", blobHash, err)
+	}
+	var swaps []attachmentHashOwnerSwap
+	for rows.Next() {
+		var swap attachmentHashOwnerSwap
+		if err := rows.Scan(&swap.localID, &swap.localHash, &swap.ownerID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan preserved canonical hash owner for %s: %w", blobHash, err)
+		}
+		swaps = append(swaps, swap)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate preserved canonical hash owners for %s: %w", blobHash, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close preserved canonical hash owners for %s: %w", blobHash, err)
+	}
+
+	for _, swap := range swaps {
+		temporary := fmt.Sprintf("msgvault-pack-hash-swap-%d", swap.ownerID)
+		if _, err := tx.Exec(`
+			UPDATE attachments SET content_hash = ?
+			WHERE id = ? AND content_hash = ?`, temporary, swap.ownerID, blobHash); err != nil {
+			return fmt.Errorf("temporarily release canonical attachment hash %s: %w", blobHash, err)
+		}
+		if _, err := tx.Exec(`
+			UPDATE attachments SET content_hash = ?
+			WHERE id = ? AND content_hash = ?`, blobHash, swap.localID, swap.localHash); err != nil {
+			return fmt.Errorf("assign canonical attachment hash %s to local row: %w", blobHash, err)
+		}
+		if _, err := tx.Exec(`
+			UPDATE attachments SET content_hash = ?
+			WHERE id = ? AND content_hash = ?`, swap.localHash, swap.ownerID, temporary); err != nil {
+			return fmt.Errorf("preserve nonlocal attachment hash alias for %s: %w", blobHash, err)
+		}
 	}
 	return nil
 }
