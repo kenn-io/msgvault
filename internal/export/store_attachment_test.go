@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -313,16 +314,17 @@ func TestStoreAttachmentFileDurableRejectsIdentitySwapAfterOpen(t *testing.T) {
 	_, err = StoreAttachmentFileDurable(dir, att)
 	require.Error(err)
 	assert.Contains(err.Error(), "identity")
+	require.ErrorIs(err, errAttachmentFileIdentityChanged)
 	assert.Equal(2, canonicalLstats)
 	assert.FileExists(canonical)
 	assert.FileExists(displaced)
 }
 
-func TestValidateExistingAttachmentFileRejectsIdentitySwapAfterOpen(t *testing.T) {
+func TestValidateExistingAttachmentFileRetriesIdentitySwapAfterOpen(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
-	content := []byte("ordinary validation also binds pathname identity")
+	content := []byte("ordinary validation retries a same-content replacement")
 	hash := sha256.Sum256(content)
 	hashText := hex.EncodeToString(hash[:])
 	canonical := filepath.Join(dir, hashText)
@@ -343,9 +345,119 @@ func TestValidateExistingAttachmentFileRejectsIdentitySwapAfterOpen(t *testing.T
 	t.Cleanup(func() { lstatValidatedAttachmentFile = originalLstat })
 
 	err := validateExistingAttachmentFile(canonical, int64(len(content)), hashText)
-	require.Error(err)
-	assert.Contains(err.Error(), "identity")
-	assert.Equal(2, canonicalLstats)
+	require.NoError(err)
+	assert.Equal(4, canonicalLstats)
 	assert.FileExists(canonical)
 	assert.FileExists(displaced)
+	got, err := os.ReadFile(canonical)
+	require.NoError(err)
+	assert.Equal(content, got)
+}
+
+func TestValidateExistingAttachmentFileRetriesIdentitySwapBeforeOpen(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("ordinary validation retries a pre-open replacement")
+	hash := sha256.Sum256(content)
+	hashText := hex.EncodeToString(hash[:])
+	canonical := filepath.Join(dir, hashText)
+	require.NoError(os.WriteFile(canonical, content, 0o600))
+	displaced := canonical + ".displaced"
+	originalLstat := lstatValidatedAttachmentFile
+	var canonicalLstats int
+	lstatValidatedAttachmentFile = func(path string) (os.FileInfo, error) {
+		if filepath.Clean(path) != filepath.Clean(canonical) {
+			return originalLstat(path)
+		}
+		canonicalLstats++
+		if canonicalLstats != 1 {
+			return originalLstat(path)
+		}
+		info, err := originalLstat(path)
+		require.NoError(err)
+		require.NoError(os.Rename(canonical, displaced))
+		require.NoError(os.WriteFile(canonical, content, 0o600))
+		return info, nil
+	}
+	t.Cleanup(func() { lstatValidatedAttachmentFile = originalLstat })
+
+	err := validateExistingAttachmentFile(canonical, int64(len(content)), hashText)
+	require.NoError(err)
+	assert.Equal(3, canonicalLstats)
+	assert.FileExists(canonical)
+	assert.FileExists(displaced)
+	got, err := os.ReadFile(canonical)
+	require.NoError(err)
+	assert.Equal(content, got)
+}
+
+func TestValidateExistingAttachmentFileRehashesReplacementWithSameMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("expected replacement bytes")
+	corrupt := []byte("corrupt! replacement bytes")
+	require.Len(corrupt, len(content))
+	hash := sha256.Sum256(content)
+	hashText := hex.EncodeToString(hash[:])
+	canonical := filepath.Join(dir, hashText)
+	require.NoError(os.WriteFile(canonical, content, 0o600))
+	originalInfo, err := os.Lstat(canonical)
+	require.NoError(err)
+	displaced := canonical + ".displaced"
+	originalLstat := lstatValidatedAttachmentFile
+	var canonicalLstats int
+	lstatValidatedAttachmentFile = func(path string) (os.FileInfo, error) {
+		if filepath.Clean(path) == filepath.Clean(canonical) {
+			canonicalLstats++
+			if canonicalLstats == 2 {
+				require.NoError(os.Rename(canonical, displaced))
+				require.NoError(os.WriteFile(canonical, corrupt, 0o600))
+				require.NoError(os.Chtimes(canonical, originalInfo.ModTime(), originalInfo.ModTime()))
+			}
+		}
+		return originalLstat(path)
+	}
+	t.Cleanup(func() { lstatValidatedAttachmentFile = originalLstat })
+
+	err = validateExistingAttachmentFile(canonical, int64(len(content)), hashText)
+	require.Error(err)
+	assert.Contains(err.Error(), "has hash")
+	require.NotErrorIs(err, errAttachmentFileIdentityChanged)
+	assert.Equal(3, canonicalLstats, "the replacement should fail during the retry hash")
+}
+
+func TestValidateExistingAttachmentFileIdentityChurnExhaustsRetries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("ordinary validation eventually rejects unbounded identity churn")
+	hash := sha256.Sum256(content)
+	hashText := hex.EncodeToString(hash[:])
+	canonical := filepath.Join(dir, hashText)
+	require.NoError(os.WriteFile(canonical, content, 0o600))
+	originalLstat := lstatValidatedAttachmentFile
+	var canonicalLstats int
+	lstatValidatedAttachmentFile = func(path string) (os.FileInfo, error) {
+		if filepath.Clean(path) == filepath.Clean(canonical) {
+			canonicalLstats++
+			if canonicalLstats%2 == 0 {
+				displaced := fmt.Sprintf("%s.displaced-%d", canonical, canonicalLstats)
+				require.NoError(os.Rename(canonical, displaced))
+				require.NoError(os.WriteFile(canonical, content, 0o600))
+			}
+		}
+		return originalLstat(path)
+	}
+	t.Cleanup(func() { lstatValidatedAttachmentFile = originalLstat })
+
+	err := validateExistingAttachmentFile(canonical, int64(len(content)), hashText)
+	require.Error(err)
+	assert.Contains(err.Error(), "identity")
+	require.ErrorIs(err, errAttachmentFileIdentityChanged)
+	assert.Equal(10, canonicalLstats)
+	got, readErr := os.ReadFile(canonical)
+	require.NoError(readErr)
+	assert.Equal(content, got)
 }

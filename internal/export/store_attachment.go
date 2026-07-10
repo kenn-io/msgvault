@@ -21,8 +21,13 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 )
 
-// key: fullPath + size + expectedHash -> value: modTime (int64)
+// key: fullPath + size + expectedHash -> value: validatedAttachmentFile
 var validatedAttachmentFiles sync.Map
+
+type validatedAttachmentFile struct {
+	modTime int64
+	info    os.FileInfo
+}
 
 // syncDurableAttachmentFile is a narrow failure-injection seam. Production
 // always fsyncs the validated final canonical descriptor.
@@ -31,6 +36,33 @@ var syncDurableAttachmentFile = func(f *os.File) error { return f.Sync() }
 // lstatValidatedAttachmentFile is a narrow identity-swap test seam.
 // Production always uses os.Lstat.
 var lstatValidatedAttachmentFile = os.Lstat
+
+var errAttachmentFileIdentityChanged = errors.New("attachment file identity changed")
+
+type attachmentFileIdentityChangedError struct {
+	path  string
+	phase string
+}
+
+func (e *attachmentFileIdentityChangedError) Error() string {
+	return fmt.Sprintf("attachment file %q changed identity %s", e.path, e.phase)
+}
+
+func (e *attachmentFileIdentityChangedError) Unwrap() error {
+	return errAttachmentFileIdentityChanged
+}
+
+type attachmentFileValidationCloseError struct {
+	err error
+}
+
+func (e *attachmentFileValidationCloseError) Error() string {
+	return fmt.Sprintf("close attachment file after validation: %v", e.err)
+}
+
+func (e *attachmentFileValidationCloseError) Unwrap() error {
+	return e.err
+}
 
 // resolveContentHash computes the SHA-256 of content and validates it against
 // the provided hash (if any). Returns the canonical lowercase hash without
@@ -434,13 +466,39 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 }
 
 func validateExistingAttachmentFile(fullPath string, expectedSize int64, expectedHash string) error {
-	f, descriptorInfo, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash, false)
-	if err != nil {
-		return err
+	const maxIdentityAttempts = 5
+	var lastErr error
+	for attempt := range maxIdentityAttempts {
+		f, descriptorInfo, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash, false)
+		if err == nil {
+			identityErr := validateAttachmentPathIdentity(fullPath, f, descriptorInfo)
+			if closeErr := closeValidatedAttachmentFile(f); closeErr != nil {
+				return errors.Join(identityErr, closeErr)
+			}
+			if identityErr == nil {
+				return nil
+			}
+			lastErr = identityErr
+		} else {
+			lastErr = err
+		}
+
+		if !isRetryableAttachmentFileIdentityChange(lastErr) || attempt == maxIdentityAttempts-1 {
+			return lastErr
+		}
+		runtime.Gosched()
+		time.Sleep(time.Duration(attempt+1) * time.Millisecond)
 	}
-	identityErr := validateAttachmentPathIdentity(fullPath, f, descriptorInfo)
-	_ = f.Close()
-	return identityErr
+	return lastErr
+}
+
+func isRetryableAttachmentFileIdentityChange(err error) bool {
+	var closeErr *attachmentFileValidationCloseError
+	if errors.As(err, &closeErr) {
+		return false
+	}
+	var identityErr *attachmentFileIdentityChangedError
+	return errors.As(err, &identityErr)
 }
 
 func validateExistingAttachmentFileDurable(fullPath string, expectedSize int64, expectedHash string) error {
@@ -467,7 +525,16 @@ func closeDurableAttachmentFile(f *os.File) error {
 	return nil
 }
 
-func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHash string, durable bool) (*os.File, os.FileInfo, error) {
+func closeValidatedAttachmentFile(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return &attachmentFileValidationCloseError{err: err}
+	}
+	return nil
+}
+
+func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHash string, durable bool) (
+	resultFile *os.File, resultInfo os.FileInfo, resultErr error,
+) {
 	preOpenInfo, err := lstatValidatedAttachmentFile(fullPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("lstat attachment file before validation: %w", err)
@@ -496,8 +563,17 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 	}
 	keepOpen := false
 	defer func() {
-		if !keepOpen {
-			_ = f.Close()
+		if keepOpen || f == nil {
+			return
+		}
+		var closeErr error
+		if durable {
+			closeErr = closeDurableAttachmentFile(f)
+		} else {
+			closeErr = closeValidatedAttachmentFile(f)
+		}
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, closeErr)
 		}
 	}()
 
@@ -509,7 +585,9 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 		return nil, nil, fmt.Errorf("attachment file %q descriptor is not a regular file", fullPath)
 	}
 	if !os.SameFile(preOpenInfo, st) {
-		return nil, nil, fmt.Errorf("attachment file %q changed identity before validation", fullPath)
+		return nil, nil, &attachmentFileIdentityChangedError{
+			path: fullPath, phase: "before validation",
+		}
 	}
 	if st.Size() != expectedSize {
 		return nil, nil, fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
@@ -518,7 +596,8 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 	key := fmt.Sprintf("%s\x00%d\x00%s", fullPath, expectedSize, expectedHash)
 	modTime := st.ModTime().UnixNano()
 	if cached, ok := validatedAttachmentFiles.Load(key); ok {
-		if ts, ok := cached.(int64); ok && ts == modTime {
+		if validated, ok := cached.(validatedAttachmentFile); ok &&
+			validated.modTime == modTime && os.SameFile(validated.info, st) {
 			keepOpen = true
 			return f, st, nil
 		}
@@ -532,7 +611,10 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 	if gotHash != expectedHash {
 		return nil, nil, fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
 	}
-	validatedAttachmentFiles.Store(key, modTime)
+	validatedAttachmentFiles.Store(key, validatedAttachmentFile{
+		modTime: modTime,
+		info:    st,
+	})
 	keepOpen = true
 	return f, st, nil
 }
@@ -564,7 +646,9 @@ func validateAttachmentPathIdentity(fullPath string, f *os.File, descriptorInfo 
 	}
 	if !currentInfo.Mode().IsRegular() || !os.SameFile(descriptorInfo, currentInfo) ||
 		!os.SameFile(postOpenInfo, currentInfo) {
-		return fmt.Errorf("attachment file %q changed identity during validation", fullPath)
+		return &attachmentFileIdentityChangedError{
+			path: fullPath, phase: "during validation",
+		}
 	}
 	return nil
 }
