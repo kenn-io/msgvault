@@ -187,6 +187,97 @@ func (f *packAttachmentFixture) setThumbnail(contentHash, thumbHash, thumbPath s
 	require.NoErrorf(f.t, err, "setThumbnail(%s)", thumbHash)
 }
 
+func TestResolveAttachmentBlob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	contentHash := packTestHash("a101")
+	thumbnailHash := packTestHash("b102")
+	unindexedHash := packTestHash("c103")
+	staleHash := packTestHash("d104")
+	fx.addAttachment(contentHash, contentHash[:2]+"/"+contentHash, 100)
+	fx.setThumbnail(contentHash, thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash)
+	fx.addAttachment(unindexedHash, unindexedHash[:2]+"/"+unindexedHash, 200)
+
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v1",
+		contentHash, thumbnailHash, staleHash)
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+
+	for _, hash := range []string{contentHash, thumbnailHash} {
+		loc, err := st.ResolveAttachmentBlob(hash)
+		require.NoError(err)
+		assert.True(loc.Referenced, "%s is referenced through content or thumbnail", hash)
+		require.NotNil(loc.Pack)
+		assert.Equal(hash, loc.Pack.BlobHash)
+	}
+
+	loc, err := st.ResolveAttachmentBlob(unindexedHash)
+	require.NoError(err)
+	assert.True(loc.Referenced)
+	assert.Nil(loc.Pack, "referenced loose hash has no pack location")
+
+	loc, err = st.ResolveAttachmentBlob(staleHash)
+	require.NoError(err)
+	assert.False(loc.Referenced, "a stale mapping is not a live attachment reference")
+	assert.Nil(loc.Pack, "unreferenced mappings must not be exposed by production resolution")
+
+	loc, err = st.ResolveAttachmentBlob(packTestHash("e105"))
+	require.NoError(err)
+	assert.False(loc.Referenced)
+	assert.Nil(loc.Pack)
+}
+
+func TestListReferencedBlobHashes(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	contentHash := packTestHash("a111")
+	thumbnailHash := packTestHash("b112")
+	sharedAcrossColumns := packTestHash("c113")
+	fx.addAttachment(contentHash, contentHash[:2]+"/"+contentHash, 100)
+	fx.setThumbnail(contentHash, thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash)
+	fx.addAttachment(sharedAcrossColumns, sharedAcrossColumns[:2]+"/"+sharedAcrossColumns, 100)
+	fx.setThumbnail(sharedAcrossColumns, sharedAcrossColumns, sharedAcrossColumns[:2]+"/"+sharedAcrossColumns)
+
+	hashes, err := st.ListReferencedBlobHashes()
+	require.NoError(err)
+	assert.Equal(t, map[string]struct{}{
+		contentHash: {}, thumbnailHash: {}, sharedAcrossColumns: {},
+	}, hashes)
+}
+
+func TestPruneUnreferencedPackIndex(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+
+	contentHash := packTestHash("a121")
+	thumbnailHash := packTestHash("b122")
+	staleA := packTestHash("c123")
+	staleB := packTestHash("d124")
+	fx.addAttachment(contentHash, contentHash[:2]+"/"+contentHash, 100)
+	fx.setThumbnail(contentHash, thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash)
+	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v2",
+		contentHash, thumbnailHash, staleA, staleB)
+	require.NoError(st.RecordPackedBlobs(rec, entries))
+
+	pruned, err := st.PruneUnreferencedPackIndex()
+	require.NoError(err)
+	assert.Equal(int64(2), pruned)
+
+	indexed, err := st.ListIndexedBlobHashes()
+	require.NoError(err)
+	assert.Equal(map[string]struct{}{contentHash: {}, thumbnailHash: {}}, indexed)
+
+	pruned, err = st.PruneUnreferencedPackIndex()
+	require.NoError(err)
+	assert.Zero(pruned, "repair is idempotent")
+}
+
 func (f *packAttachmentFixture) pathsForContentHash(hash string) []string {
 	f.t.Helper()
 	rows, err := f.store.DB().Query(f.store.Rebind(`

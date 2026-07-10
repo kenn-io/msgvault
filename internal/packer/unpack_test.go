@@ -101,6 +101,8 @@ func TestUnpackRestoresEmptyBlob(t *testing.T) {
 	assert := assert.New(t)
 	f := newFixture(t)
 
+	emptyHash := hashOf(nil)
+	f.addRow(emptyHash, canonical(emptyHash), 0)
 	buildOrphanPack(t, f.dir, []byte{})
 	adopted := f.run(packer.Options{})
 	require.Equal(1, adopted.PacksAdopted, "orphan pack with empty blob adopted")
@@ -111,7 +113,6 @@ func TestUnpackRestoresEmptyBlob(t *testing.T) {
 	assert.Equal(1, stats.PacksUnpacked)
 	assert.Equal(1, stats.BlobsRestored)
 	assert.Zero(stats.BytesRestored)
-	emptyHash := hashOf(nil)
 	data, err := os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(canonical(emptyHash))))
 	require.NoError(err, "canonical loose file for empty blob")
 	assert.Empty(data)
@@ -226,6 +227,33 @@ func TestUnpackRestoresOnlyLivePackEntries(t *testing.T) {
 	assert.Equal(liveContent, live)
 	_, err = os.Stat(filepath.Join(f.dir, filepath.FromSlash(canonical(deadHash))))
 	assert.ErrorIs(err, fs.ErrNotExist, "dead blob must not be resurrected as loose content")
+}
+
+func TestUnpackPrunesStaleMappings(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	packed := f.run(packer.Options{})
+	require.Equal(1, packed.PacksSealed)
+	require.NoError(f.store.ReplaceMessageInlineAttachments(f.msgID, nil))
+	// UpsertAttachment is not Teams-managed, so remove the final liveness row
+	// directly to model a generic cascade while retaining its stale mapping.
+	_, err := f.store.DB().Exec(f.store.Rebind(
+		`DELETE FROM attachments WHERE message_id = ? AND content_hash = ?`), f.msgID, hash)
+	require.NoError(err)
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err)
+
+	assert.Equal(1, stats.MappingsPruned)
+	assert.Zero(stats.BlobsRestored, "unreferenced stale mapping must not be restored")
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))))
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.Nil(entry)
 }
 
 func TestUnpackFailsOnMalformedPackID(t *testing.T) {

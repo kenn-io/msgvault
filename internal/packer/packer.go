@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,17 +36,25 @@ type Options struct {
 
 // Stats summarizes one packer run.
 type Stats struct {
-	PacksSealed     int   // packs written this run
-	BlobsPacked     int   // blobs appended this run
-	BytesPacked     int64 // raw bytes appended this run
-	PacksAdopted    int   // orphan packs adopted during reconciliation
-	PacksRemoved    int   // fully-redundant orphan packs deleted
-	RecordsDropped  int   // unusable pack records dropped so loose blobs can re-pack
-	BlobsMissing    int   // enumerated blobs whose file was missing (left for backfill)
-	BlobsCorrupt    int   // files whose bytes did not match their recorded hash (skipped)
-	LooseSwept      int   // indexed loose files removed by the sweep
-	BudgetExhausted bool  // packing stopped after reaching the soft raw-byte budget
+	PacksSealed         int   // packs written this run
+	BlobsPacked         int   // blobs appended this run
+	BytesPacked         int64 // raw bytes appended this run
+	PacksAdopted        int   // orphan packs adopted during reconciliation
+	PacksRemoved        int   // fully-redundant orphan packs deleted
+	PacksQuarantined    int   // readable orphans withheld after a referenced candidate failed verification
+	PacksUnreadable     int   // orphan pack containers whose footer could not be opened
+	RecordsDropped      int   // unusable pack records dropped so loose blobs can re-pack
+	MappingsPruned      int   // unreferenced stale pack index rows removed
+	BlobsMissing        int   // enumerated blobs whose file was missing (left for backfill)
+	BlobsCorrupt        int   // files whose bytes did not match their recorded hash (skipped)
+	LooseSwept          int   // indexed loose files removed by the sweep
+	LooseOrphansRemoved int   // unreferenced loose hash-named files removed
+	BudgetExhausted     bool  // packing stopped after reaching the soft raw-byte budget
 }
+
+// removeLooseFile is a narrow failure-injection seam for best-effort orphan
+// cleanup. Production always uses os.Remove.
+var removeLooseFile = os.Remove
 
 // Run packs all unindexed loose attachment blobs into sealed packs,
 // reconciling crash leftovers first and sweeping indexed loose files after.
@@ -67,7 +76,19 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := dropDanglingPackRecords(ctx, st, packsDir, &stats); err != nil {
 		return stats, fmt.Errorf("drop dangling pack records: %w", err)
 	}
-	if err := reconcilePacks(ctx, st, attachmentsDir, packsDir, &stats); err != nil {
+	pruned, err := st.PruneUnreferencedPackIndex()
+	if err != nil {
+		return stats, fmt.Errorf("prune unreferenced pack index: %w", err)
+	}
+	if pruned > int64(math.MaxInt) {
+		return stats, fmt.Errorf("pruned mapping count %d exceeds platform int", pruned)
+	}
+	stats.MappingsPruned = int(pruned)
+	referenced, err := st.ListReferencedBlobHashes()
+	if err != nil {
+		return stats, err
+	}
+	if err := reconcilePacks(ctx, st, attachmentsDir, packsDir, referenced, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -79,7 +100,11 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
-	if err := sweepIndexed(ctx, st, attachmentsDir, packsDir, &stats); err != nil {
+	indexed, err := st.ListIndexedBlobHashes()
+	if err != nil {
+		return stats, err
+	}
+	if err := sweepLoose(ctx, st, attachmentsDir, packsDir, referenced, indexed, &stats); err != nil {
 		return stats, err
 	}
 	return stats, nil
@@ -113,7 +138,7 @@ func cleanStaging(ctx context.Context, packsDir string) error {
 
 // reconcilePacks walks packsDir for *.mvpack files with no attachment_packs
 // row and adopts or removes each one.
-func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
+func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced map[string]struct{}, stats *Stats) error {
 	existingBlobs := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := existingBlobs.Close(); err != nil {
@@ -150,22 +175,24 @@ func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsD
 		if has {
 			return nil
 		}
-		return reconcileOnePack(ctx, st, existingBlobs, path, id, stats)
+		return reconcileOnePack(ctx, st, existingBlobs, path, id, referenced, stats)
 	})
 }
 
-// reconcileOnePack adopts an orphan pack's unindexed, verified entries, or
-// removes the pack when EVERY entry was verified already indexed elsewhere.
-// An orphan whose unindexed entries fail verification is neither adopted nor
-// removed: its bytes may be the only (damaged) copy, so deleting it could
-// destroy data a repair might still recover.
-func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, stats *Stats) error {
+// reconcileOnePack considers only attachment-referenced entries for adoption.
+// It removes a pack whose entries are all dead or readable elsewhere, and
+// adopts verified recovery candidates only when every referenced candidate in
+// the pack verifies. One failure quarantines the whole orphan so a partial
+// adoption cannot hide the damaged entry from future reconciliation.
+func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced map[string]struct{}, stats *Stats) error {
 	r, err := pack.OpenReader(path, nil)
 	if err != nil {
-		slog.Warn("skipping unreadable orphan pack", "pack", id, "error", err)
+		stats.PacksUnreadable++
+		slog.Error("orphan pack container is unreadable; leaving pack in place",
+			"pack", id, "path", path, "error", err)
 		return nil
 	}
-	adoptable, rec, failed, err := collectAdoptable(ctx, st, existingBlobs, r, id)
+	adoptable, rec, failed, err := collectAdoptable(ctx, st, existingBlobs, r, id, referenced)
 	if closeErr := r.Close(); closeErr != nil {
 		slog.Warn("close orphan pack reader", "pack", id, "error", closeErr)
 	}
@@ -175,12 +202,13 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if failed > 0 {
+		stats.PacksQuarantined++
+		slog.Error("orphan pack has damaged referenced recovery candidates; quarantining whole pack",
+			"pack", id, "failedEntries", failed, "withheldEntries", len(adoptable))
+		return nil
+	}
 	if len(adoptable) == 0 {
-		if failed > 0 {
-			slog.Error("orphan pack has unindexed entries that failed verification; leaving pack in place",
-				"pack", id, "failedEntries", failed)
-			return nil
-		}
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove redundant orphan pack %s: %w", id, err)
 		}
@@ -196,13 +224,12 @@ func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobs
 	return nil
 }
 
-// collectAdoptable returns the orphan pack's verified entries that have no
-// index row or whose currently indexed packed copy is unreadable, plus a
-// PackRecord carrying the FULL footer totals (design: "footer entry count at
-// seal/adoption") and the count of candidate entries that failed orphan
-// read/verification (so the caller never treats a damaged pack as fully
-// redundant).
-func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *pack.Reader, id string) ([]store.PackIndexEntry, store.PackRecord, int, error) {
+// collectAdoptable returns referenced orphan entries that verify and either
+// lack an index row or replace an unreadable packed copy. Unreferenced footer
+// entries are dead and are not read. The PackRecord retains full immutable
+// footer totals, while failed counts let the caller enforce all-or-nothing
+// adoption for referenced recovery candidates.
+func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *pack.Reader, id string, referenced map[string]struct{}) ([]store.PackIndexEntry, store.PackRecord, int, error) {
 	entries := r.Entries()
 	rec := store.PackRecord{
 		PackID:     id,
@@ -217,6 +244,9 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		}
 		rec.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
 		hash := e.ID.String()
+		if _, live := referenced[hash]; !live {
+			continue
+		}
 		existing, err := st.GetAttachmentPackEntry(hash)
 		if err != nil {
 			return nil, rec, failed, err
@@ -468,20 +498,10 @@ func indexEntry(packID string, e pack.Entry) store.PackIndexEntry {
 	}
 }
 
-// sweepIndexed removes every loose file (outside the packs subtree) whose
-// base name is an indexed blob hash and whose packed copy is readable through
-// the production blob store. These files are canonical leftovers from a crash
-// between commit and delete, or noncanonical originals whose basename is the
-// hash. Verification preserves the loose recovery copy when the index or pack
-// bytes are corrupt.
-func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, stats *Stats) error {
-	indexed, err := st.ListIndexedBlobHashes()
-	if err != nil {
-		return err
-	}
-	if len(indexed) == 0 {
-		return nil
-	}
+// sweepLoose classifies every regular hash-named loose file outside packs/.
+// Unreferenced files are best-effort garbage; referenced/indexed files retain
+// the verified sweep/recovery behavior; referenced/unindexed files stay loose.
+func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced, indexed map[string]struct{}, stats *Stats) error {
 	packed := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := packed.Close(); err != nil {
@@ -489,7 +509,7 @@ func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir
 		}
 	}()
 	var dirs []string
-	err = filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -506,6 +526,20 @@ func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		if !isBlobHashName(d.Name()) {
+			return nil
+		}
+		if _, live := referenced[d.Name()]; !live {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := removeLooseFile(path); err != nil {
+				slog.Warn("remove unreferenced loose attachment", "path", path, "error", err)
+				return nil
+			}
+			stats.LooseOrphansRemoved++
 			return nil
 		}
 		if _, ok := indexed[d.Name()]; !ok {
@@ -574,4 +608,9 @@ func sweepIndexed(ctx context.Context, st *store.Store, attachmentsDir, packsDir
 		_ = os.Remove(dir)
 	}
 	return nil
+}
+
+func isBlobHashName(name string) bool {
+	_, err := pack.ParseBlobID(name)
+	return err == nil
 }

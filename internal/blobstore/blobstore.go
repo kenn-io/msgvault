@@ -28,10 +28,10 @@ const PackExt = ".mvpack"
 // parsed footer each).
 const maxOpenReaders = 16
 
-// PackIndex resolves a blob hash to its pack location. *store.Store
-// implements it via GetAttachmentPackEntry; (nil, nil) means "not packed".
+// PackIndex resolves both attachment liveness and its optional pack location
+// in one lookup. *store.Store implements it via ResolveAttachmentBlob.
 type PackIndex interface {
-	GetAttachmentPackEntry(blobHash string) (*store.PackIndexEntry, error)
+	ResolveAttachmentBlob(blobHash string) (store.AttachmentBlobLocation, error)
 }
 
 // Store reads attachment blobs from packs with a loose-file fallback.
@@ -66,36 +66,49 @@ func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
 	if err := export.ValidateContentHash(hash); err != nil {
 		return nil, 0, err
 	}
-	entry, err := s.index.GetAttachmentPackEntry(hash)
+	loc, err := s.index.ResolveAttachmentBlob(hash)
 	if err != nil {
 		return nil, 0, err
 	}
-	if entry == nil {
+	if !loc.Referenced {
+		return nil, 0, blobNotFound(hash)
+	}
+	if loc.Pack == nil {
 		r, size, looseErr := s.openLoose(hash)
 		if !errors.Is(looseErr, fs.ErrNotExist) {
 			return r, size, looseErr
 		}
-		entry, err = s.index.GetAttachmentPackEntry(hash)
+		loc, err = s.index.ResolveAttachmentBlob(hash)
 		if err != nil {
 			return nil, 0, err
 		}
-		if entry == nil {
+		if !loc.Referenced {
+			return nil, 0, blobNotFound(hash)
+		}
+		if loc.Pack == nil {
 			return nil, 0, looseErr
 		}
-		return s.openPacked(hash, entry)
+		return s.openPacked(hash, loc.Pack)
 	}
-	r, size, packErr := s.openPacked(hash, entry)
+	r, size, packErr := s.openPacked(hash, loc.Pack)
 	if !errors.Is(packErr, fs.ErrNotExist) {
 		return r, size, packErr
 	}
-	entry, err = s.index.GetAttachmentPackEntry(hash)
+	loc, err = s.index.ResolveAttachmentBlob(hash)
 	if err != nil {
 		return nil, 0, err
 	}
-	if entry == nil {
+	if !loc.Referenced {
+		return nil, 0, blobNotFound(hash)
+	}
+	if loc.Pack == nil {
 		return s.openLoose(hash)
 	}
-	return s.openPacked(hash, entry)
+	return s.openPacked(hash, loc.Pack)
+}
+
+func blobNotFound(hash string) error {
+	return &fs.PathError{Op: "open attachment blob", Path: hash, Err: fs.ErrNotExist}
 }
 
 // Opener adapts Open to the export package's opener callback.

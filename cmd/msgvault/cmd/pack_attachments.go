@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/packer"
@@ -43,7 +44,11 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
+	writePackAttachmentsStats(cmd.OutOrStdout(), stats)
+	return nil
+}
+
+func writePackAttachmentsStats(out io.Writer, stats packer.Stats) {
 	_, _ = fmt.Fprintf(out, "Packed %d blob(s) (%s) into %d pack(s).\n",
 		stats.BlobsPacked, formatSize(stats.BytesPacked), stats.PacksSealed)
 	if stats.PacksAdopted > 0 {
@@ -61,7 +66,18 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 	if stats.LooseSwept > 0 {
 		_, _ = fmt.Fprintf(out, "Swept %d already-packed loose file(s).\n", stats.LooseSwept)
 	}
-	return nil
+	if stats.MappingsPruned > 0 {
+		_, _ = fmt.Fprintf(out, "Pruned %d stale packed blob mapping(s).\n", stats.MappingsPruned)
+	}
+	if stats.LooseOrphansRemoved > 0 {
+		_, _ = fmt.Fprintf(out, "Removed %d unreferenced loose file(s).\n", stats.LooseOrphansRemoved)
+	}
+	if stats.PacksQuarantined > 0 {
+		_, _ = fmt.Fprintf(out, "Quarantined %d damaged orphan pack(s).\n", stats.PacksQuarantined)
+	}
+	if stats.PacksUnreadable > 0 {
+		_, _ = fmt.Fprintf(out, "Found %d unreadable orphan pack(s).\n", stats.PacksUnreadable)
+	}
 }
 
 func init() {

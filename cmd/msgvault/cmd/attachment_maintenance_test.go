@@ -146,10 +146,14 @@ func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testi
 		"bytes_packed=40",
 		"packs_adopted=0",
 		"packs_removed=0",
+		"packs_quarantined=0",
+		"packs_unreadable=0",
 		"records_dropped=0",
+		"mappings_pruned=0",
 		"blobs_missing=0",
 		"blobs_corrupt=0",
 		"loose_swept=0",
+		"loose_orphans_removed=0",
 		"budget_exhausted=false",
 	} {
 		assert.Contains(logOutput, field, "complete stats field %q", field)

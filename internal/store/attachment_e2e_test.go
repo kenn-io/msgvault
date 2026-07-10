@@ -261,16 +261,18 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 	if assert.Len(pathsB, 1, "pathsB before A removal") {
 		assert.Equal(wantB, pathsB[0], "pathsB[0] before A removal")
 	}
-	packedA, err := c.store.CountPackedBlobsUniqueToSource(c.srcA.ID)
-	require.NoError(err)
-	assert.Equal(1, packedA, "A's shared packed blob must not block removal")
-	packedB, err := c.store.CountPackedBlobsUniqueToSource(c.srcB.ID)
-	require.NoError(err)
-	assert.Equal(1, packedB, "B's shared packed blob must not block removal")
 
-	// Remove source B. The shared hash is now unique to A.
-	err = c.store.RemoveSource(c.srcB.ID)
-	require.NoError(err, "RemoveSource(B)")
+	// Remove source B transactionally. Its unique mapping is deleted while
+	// the cross-source shared mapping remains live for A.
+	_, packedB, err := c.store.RemoveSourceSerialized(context.Background(), c.srcB.ID)
+	require.NoError(err, "RemoveSourceSerialized(B)")
+	assert.Equal(int64(1), packedB, "only B's unique packed mapping is removed")
+	entry, err := c.store.GetAttachmentPackEntry(hashShared)
+	require.NoError(err)
+	assert.NotNil(entry, "shared packed mapping remains live for A")
+	entry, err = c.store.GetAttachmentPackEntry(hashUniqB)
+	require.NoError(err)
+	assert.Nil(entry, "B's unique packed mapping is logically deleted")
 
 	pathsA, err = c.store.AttachmentPathsUniqueToSource(c.srcA.ID)
 	require.NoError(err, "AttachmentPathsUniqueToSource(A) after B removal")
@@ -279,9 +281,10 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 		assert.Truef(got[want], "paths missing %q after B removal; got %v", want, pathsA)
 	}
 	assert.Len(pathsA, 2, "pathsA len after B removal; got %v", pathsA)
-	packedA, err = c.store.CountPackedBlobsUniqueToSource(c.srcA.ID)
-	require.NoError(err)
-	assert.Equal(2, packedA, "shared packed blob becomes unique after B is removed")
+	_, packedA, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
+	require.NoError(err, "RemoveSourceSerialized(A)")
+	assert.Equal(int64(2), packedA,
+		"shared packed blob becomes unique and is deleted with A's original unique blob")
 }
 
 // TestAttachment_E2E_RemoveSourceCascadesAttachmentRows verifies that
@@ -343,9 +346,10 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 	}
 
 	// Pipeline step 2: cascade-delete source A.
-	hadActive, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
+	hadActive, packedRemoved, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
 	require.NoError(err, "RemoveSourceSerialized(A)")
 	assert.False(hadActive, "hadActiveSync want false (no sync running in fixture)")
+	assert.Zero(packedRemoved, "fixture has no packed mappings")
 
 	// Pipeline step 3: per-candidate reference recheck. The candidate path
 	// for A is now unreferenced (msg-a2 row is gone); the shared path is

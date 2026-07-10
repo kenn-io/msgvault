@@ -1,12 +1,14 @@
 package packer_test
 
 import (
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,6 +200,15 @@ func buildOrphanPack(t *testing.T, attachmentsDir string, blobs ...[]byte) strin
 	_, err = w.Seal(filepath.Join(packsDir, id[:2], id+blobstore.PackExt))
 	require.NoError(err, "pack seal")
 	return id
+}
+
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &logs
 }
 
 func TestRunPacksLooseBlobs(t *testing.T) {
@@ -477,6 +488,35 @@ func TestRunAdoptsOrphanPack(t *testing.T) {
 	assert.Empty(f.looseFiles())
 }
 
+func TestRunAdoptsOnlyReferencedOrphanEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	liveContent := randomContent(t, 600)
+	deadContent := randomContent(t, 600)
+	liveHash := hashOf(liveContent)
+	deadHash := hashOf(deadContent)
+	f.addRow(liveHash, canonical(liveHash), len(liveContent))
+	id := buildOrphanPack(t, f.dir, liveContent, deadContent)
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.PacksAdopted)
+	liveEntry, err := f.store.GetAttachmentPackEntry(liveHash)
+	require.NoError(err)
+	require.NotNil(liveEntry)
+	assert.Equal(id, liveEntry.PackID)
+	deadEntry, err := f.store.GetAttachmentPackEntry(deadHash)
+	require.NoError(err)
+	assert.Nil(deadEntry, "dead footer entry must never be resurrected")
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	require.Len(recs, 1)
+	assert.Equal(int64(2), recs[0].EntryCount,
+		"immutable pack record retains full footer accounting")
+}
+
 func TestRunSkipsMislocatedPack(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -547,6 +587,137 @@ func TestRunRemovesRedundantOrphanPack(t *testing.T) {
 	require.NotNil(entryAfter)
 	assert.Equal(entryBefore.PackID, entryAfter.PackID, "index still points at the original pack")
 	assert.Equal(c, f.readBack(h))
+}
+
+func TestRunPrunesTeamsReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	oldContent := randomContent(t, 600)
+	oldHash := hashOf(oldContent)
+	require.NoError(f.store.ReplaceMessageInlineAttachments(f.msgID, []store.AttachmentRef{{
+		StoragePath: canonical(oldHash), ContentHash: oldHash, Size: len(oldContent),
+		SourceAttachmentID: "teams:inline:old",
+	}}))
+	f.writeLoose(canonical(oldHash), oldContent)
+	first := f.run(packer.Options{})
+	require.Equal(1, first.BlobsPacked)
+	oldEntry, err := f.store.GetAttachmentPackEntry(oldHash)
+	require.NoError(err)
+	require.NotNil(oldEntry)
+
+	newHash := hashOf([]byte("replacement teams inline media"))
+	require.NoError(f.store.ReplaceMessageInlineAttachments(f.msgID, []store.AttachmentRef{{
+		StoragePath: canonical(newHash), ContentHash: newHash, Size: 30,
+		SourceAttachmentID: "teams:inline:new",
+	}}))
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.MappingsPruned)
+	oldEntry, err = f.store.GetAttachmentPackEntry(oldHash)
+	require.NoError(err)
+	assert.Nil(oldEntry, "replacement removes the old hash from live pack accounting")
+	referenced, err := f.store.ListReferencedBlobHashes()
+	require.NoError(err)
+	assert.NotContains(referenced, oldHash)
+}
+
+func TestRunCleansUnreferencedLoose(t *testing.T) {
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	canonicalDead := hashOf([]byte("dead canonical loose attachment"))
+	legacyDead := hashOf([]byte("dead legacy loose attachment"))
+	f.writeLoose(canonical(canonicalDead), []byte("dead canonical loose attachment"))
+	f.writeLoose("legacy/"+legacyDead, []byte("dead legacy loose attachment"))
+
+	referenced := hashOf([]byte("referenced loose attachment"))
+	// Record a missing legacy candidate so packLoose cannot consume the extra
+	// canonical copy; the final classifier must retain it based on liveness.
+	f.addRow(referenced, "missing/"+referenced, 27)
+	f.writeLoose(canonical(referenced), []byte("referenced loose attachment"))
+	f.writeLoose("notes/not-a-hash", []byte("unmanaged file"))
+	f.writeLoose("packs/"+hashOf([]byte("inside packs")), []byte("inside packs"))
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(2, stats.LooseOrphansRemoved)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(canonicalDead))))
+	assert.NoFileExists(filepath.Join(f.dir, "legacy", legacyDead))
+	assert.FileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(referenced))))
+	assert.FileExists(filepath.Join(f.dir, "notes", "not-a-hash"))
+	assert.FileExists(filepath.Join(f.dir, "packs", hashOf([]byte("inside packs"))))
+}
+
+func TestRunQuarantinesMixedDamagedOrphan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	logs := captureLogs(t)
+
+	valid := randomContent(t, 600)
+	damaged := randomContent(t, 600)
+	validHash := hashOf(valid)
+	damagedHash := hashOf(damaged)
+	f.addRow(validHash, canonical(validHash), len(valid))
+	f.addRow(damagedHash, canonical(damagedHash), len(damaged))
+	id := buildOrphanPack(t, f.dir, valid, damaged)
+	packPath := filepath.Join(f.dir, "packs", id[:2], id+blobstore.PackExt)
+	r, err := pack.OpenReader(packPath, nil)
+	require.NoError(err)
+	entries := r.Entries()
+	require.Len(entries, 2)
+	require.NoError(r.Close())
+	pf, err := os.OpenFile(packPath, os.O_RDWR, 0)
+	require.NoError(err)
+	buf := []byte{0}
+	_, err = pf.ReadAt(buf, int64(entries[1].Offset))
+	require.NoError(err)
+	buf[0] ^= 0xff
+	_, err = pf.WriteAt(buf, int64(entries[1].Offset))
+	require.NoError(err)
+	require.NoError(pf.Close())
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.PacksQuarantined)
+	assert.Zero(stats.PacksAdopted)
+	assert.Zero(stats.PacksRemoved)
+	assert.FileExists(packPath)
+	has, err := f.store.HasPackRecord(id)
+	require.NoError(err)
+	assert.False(has)
+	for _, hash := range []string{validHash, damagedHash} {
+		entry, err := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(err)
+		assert.Nil(entry, "quarantine must not partially publish %s", hash)
+	}
+	assert.Contains(logs.String(), id)
+	assert.Contains(logs.String(), "failedEntries=1")
+	assert.Contains(logs.String(), "withheldEntries=1")
+}
+
+func TestRunReportsUnreadableOrphan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	logs := captureLogs(t)
+
+	id := pack.NewPackID()
+	path := filepath.Join(f.dir, "packs", id[:2], id+blobstore.PackExt)
+	require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(os.WriteFile(path, []byte("not a pack footer"), 0o600))
+
+	stats := f.run(packer.Options{})
+
+	assert.Equal(1, stats.PacksUnreadable)
+	assert.Zero(stats.PacksQuarantined)
+	assert.FileExists(path)
+	assert.Contains(logs.String(), id)
+	assert.Contains(logs.String(), path)
+	assert.Contains(logs.String(), "error=")
 }
 
 // TestRunRepairsDanglingRecordsBeforeReconcilingOrphans pins the ordering
@@ -676,10 +847,9 @@ func TestRunDropsDanglingPackRecords(t *testing.T) {
 	assert.Empty(f.looseFiles(), "loose copy removed after re-packing")
 }
 
-// TestRunLeavesCorruptOrphanPackInPlace pins that an orphan pack whose
-// unindexed entry fails verification is NOT treated as fully redundant: its
-// bytes may be the only (damaged) copy, so deleting it could destroy data.
-func TestRunLeavesCorruptOrphanPackInPlace(t *testing.T) {
+// TestRunRemovesFullyUnreferencedOrphan pins that dead entries are never
+// verified or adopted merely because an orphan footer names them.
+func TestRunRemovesFullyUnreferencedOrphan(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFixture(t)
@@ -703,10 +873,11 @@ func TestRunLeavesCorruptOrphanPackInPlace(t *testing.T) {
 
 	stats := f.run(packer.Options{})
 
-	assert.Zero(stats.PacksRemoved, "corrupt orphan pack must not be deleted")
-	assert.Zero(stats.PacksAdopted, "failed entries are not adopted")
+	assert.Equal(1, stats.PacksRemoved, "fully dead orphan is redundant without reading blob bytes")
+	assert.Zero(stats.PacksAdopted)
+	assert.Zero(stats.PacksQuarantined)
 	_, err = os.Stat(packPath)
-	require.NoError(err, "pack file left in place for repair/inspection")
+	require.ErrorIs(err, os.ErrNotExist)
 	has, err := f.store.HasPackRecord(id)
 	require.NoError(err)
 	assert.False(has, "no record for the unadoptable pack")

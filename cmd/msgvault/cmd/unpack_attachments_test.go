@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"io"
 	"net"
 	"net/http/httptest"
@@ -12,7 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/packer"
 )
+
+func TestUnpackAttachmentsReportsRepairStats(t *testing.T) {
+	var out bytes.Buffer
+	writeUnpackAttachmentsStats(&out, packer.UnpackStats{MappingsPruned: 2})
+
+	require.Contains(t, out.String(), "Pruned 2 stale packed blob mapping(s).")
+}
 
 // TestRefuseUnpackWithLiveDaemon pins the unpack preflight: unlike the SQLite
 // write lock (which acquireDirectSQLiteWriteLock skips for PostgreSQL DSNs),

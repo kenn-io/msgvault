@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -18,9 +19,10 @@ import (
 
 // UnpackStats summarizes one unpack run.
 type UnpackStats struct {
-	PacksUnpacked int   // packs restored and removed this run
-	BlobsRestored int   // blobs written back to canonical loose files
-	BytesRestored int64 // raw bytes written back
+	PacksUnpacked  int   // packs restored and removed this run
+	BlobsRestored  int   // blobs written back to canonical loose files
+	BytesRestored  int64 // raw bytes written back
+	MappingsPruned int   // unreferenced stale pack index rows removed
 }
 
 // Unpack streams every live packed blob back to a canonical loose file
@@ -31,8 +33,19 @@ type UnpackStats struct {
 // running (its cached pack readers would hold deleted packs open).
 func Unpack(ctx context.Context, st *store.Store, attachmentsDir string) (UnpackStats, error) {
 	var stats UnpackStats
+	if err := ctx.Err(); err != nil {
+		return stats, err
+	}
 	attachmentsDir = filepath.Clean(attachmentsDir)
 	packsDir := filepath.Join(attachmentsDir, "packs")
+	pruned, err := st.PruneUnreferencedPackIndex()
+	if err != nil {
+		return stats, err
+	}
+	if pruned > int64(math.MaxInt) {
+		return stats, fmt.Errorf("pruned mapping count %d exceeds platform int", pruned)
+	}
+	stats.MappingsPruned = int(pruned)
 	recs, err := st.ListPackRecords()
 	if err != nil {
 		return stats, err

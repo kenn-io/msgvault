@@ -20,13 +20,19 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// mapIndex is a PackIndex over a plain map; nil values mean "not packed".
+// mapIndex is a PackIndex over a plain map. Pack entries imply a live
+// reference unless explicitly overridden; loose references are listed in
+// referenced.
 type mapIndex struct {
-	m map[string]*store.PackIndexEntry
+	m            map[string]*store.PackIndexEntry
+	referenced   map[string]bool
+	unreferenced map[string]bool
 }
 
-func (i *mapIndex) GetAttachmentPackEntry(h string) (*store.PackIndexEntry, error) {
-	return i.m[h], nil
+func (i *mapIndex) ResolveAttachmentBlob(h string) (store.AttachmentBlobLocation, error) {
+	entry := i.m[h]
+	referenced := !i.unreferenced[h] && (entry != nil || i.referenced[h])
+	return store.AttachmentBlobLocation{Referenced: referenced, Pack: entry}, nil
 }
 
 // buildPack seals content blobs into a pack under attachmentsDir/packs/ and
@@ -95,7 +101,9 @@ func TestOpenLooseFallback(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, h[:2]), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, h[:2], h), content, 0o600))
 
-	s := New(&mapIndex{m: map[string]*store.PackIndexEntry{}}, dir)
+	s := New(&mapIndex{
+		m: map[string]*store.PackIndexEntry{}, referenced: map[string]bool{h: true},
+	}, dir)
 	defer func() { _ = s.Close() }()
 	assert.Equal(t, content, readAll(t, s, h))
 }
@@ -105,6 +113,24 @@ func TestOpenNotFound(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	_, _, err := s.Open(hashOf([]byte("nowhere")))
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestOpenRejectsUnreferenced(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	content := []byte("logically deleted attachment")
+	h := hashOf(content)
+	idx := buildPack(t, dir, content)
+	require.NoError(os.MkdirAll(filepath.Join(dir, h[:2]), 0o700))
+	require.NoError(os.WriteFile(filepath.Join(dir, h[:2], h), content, 0o600))
+
+	s := New(&mapIndex{m: idx, unreferenced: map[string]bool{h: true}}, dir)
+	defer func() { require.NoError(s.Close()) }()
+	_, _, err := s.Open(h)
+	require.ErrorIs(err, fs.ErrNotExist,
+		"neither a stale pack mapping nor loose crash copy may bypass logical deletion")
+	assert.Empty(s.readers, "production resolution rejects the hash before opening its pack")
 }
 
 func TestOpenRejectsCorruptPack(t *testing.T) {
@@ -153,12 +179,12 @@ type flipIndex struct {
 	entry *store.PackIndexEntry
 }
 
-func (i *flipIndex) GetAttachmentPackEntry(string) (*store.PackIndexEntry, error) {
+func (i *flipIndex) ResolveAttachmentBlob(string) (store.AttachmentBlobLocation, error) {
 	if !i.first {
 		i.first = true
-		return nil, nil //nolint:nilnil // (nil, nil) signals "not packed" on the first lookup
+		return store.AttachmentBlobLocation{Referenced: true}, nil
 	}
-	return i.entry, nil
+	return store.AttachmentBlobLocation{Referenced: true, Pack: i.entry}, nil
 }
 
 func TestOpenRetriesIndexAfterLooseMiss(t *testing.T) {
@@ -180,12 +206,12 @@ type staleIndex struct {
 	live   *store.PackIndexEntry
 }
 
-func (i *staleIndex) GetAttachmentPackEntry(string) (*store.PackIndexEntry, error) {
+func (i *staleIndex) ResolveAttachmentBlob(string) (store.AttachmentBlobLocation, error) {
 	if !i.served {
 		i.served = true
-		return i.stale, nil
+		return store.AttachmentBlobLocation{Referenced: true, Pack: i.stale}, nil
 	}
-	return i.live, nil
+	return store.AttachmentBlobLocation{Referenced: true, Pack: i.live}, nil
 }
 
 func TestOpenRetriesIndexAfterPackMiss(t *testing.T) {
@@ -224,6 +250,9 @@ func TestOpenConcurrent(t *testing.T) {
 	}
 	for _, b := range looseBlobs {
 		h := hashOf(b)
+		if idx[h] != nil {
+			require.FailNow("loose hash unexpectedly collides with packed fixture")
+		}
 		require.NoError(os.MkdirAll(filepath.Join(dir, h[:2]), 0o700))
 		require.NoError(os.WriteFile(filepath.Join(dir, h[:2], h), b, 0o600))
 	}
@@ -232,7 +261,11 @@ func TestOpenConcurrent(t *testing.T) {
 	all = append(all, packedBlobs...)
 	all = append(all, looseBlobs...)
 
-	s := New(&mapIndex{m: idx}, dir)
+	referenced := make(map[string]bool, len(looseBlobs))
+	for _, b := range looseBlobs {
+		referenced[hashOf(b)] = true
+	}
+	s := New(&mapIndex{m: idx, referenced: referenced}, dir)
 	defer func() { _ = s.Close() }()
 
 	// t.Error/t.Errorf are safe to call from non-test goroutines; t.Fatal

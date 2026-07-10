@@ -21,6 +21,14 @@ type PackIndexEntry struct {
 	CRC32C    uint32
 }
 
+// AttachmentBlobLocation is the production read resolution for one content
+// hash. Referenced is authoritative: callers must not serve either Pack or a
+// loose fallback when it is false. Pack is nil for a referenced loose blob.
+type AttachmentBlobLocation struct {
+	Referenced bool
+	Pack       *PackIndexEntry
+}
+
 // PackRecord holds a sealed pack's immutable totals, captured at seal or
 // crash-reconciliation adoption.
 type PackRecord struct {
@@ -132,6 +140,92 @@ func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error)
 	e.Flags = uint8(flags) //nolint:gosec // flags column stores a single byte
 	e.CRC32C = uint32(crc) //nolint:gosec // crc32c column stores a uint32
 	return &e, nil
+}
+
+// ResolveAttachmentBlob determines attachment liveness and the optional pack
+// location in one query. Attachment rows, rather than storage metadata, are
+// the liveness authority, so stale unreferenced index rows are never exposed
+// to the production read path.
+func (s *Store) ResolveAttachmentBlob(blobHash string) (AttachmentBlobLocation, error) {
+	var referenced int
+	var hash, packID sql.NullString
+	var offset, storedLen, rawLen, flags, crc sql.NullInt64
+	err := s.db.QueryRow(s.dialect.Rebind(`
+		WITH requested(blob_hash) AS (VALUES (CAST(? AS TEXT)))
+		SELECT CASE WHEN EXISTS (
+		           SELECT 1 FROM attachments a
+		           WHERE a.content_hash = requested.blob_hash
+		              OR a.thumbnail_hash = requested.blob_hash
+		       ) THEN 1 ELSE 0 END,
+		       p.blob_hash, p.pack_id, p.pack_offset,
+		       p.stored_len, p.raw_len, p.flags, p.crc32c
+		FROM requested
+		LEFT JOIN attachment_pack_index p ON p.blob_hash = requested.blob_hash`), blobHash).
+		Scan(&referenced, &hash, &packID, &offset, &storedLen, &rawLen, &flags, &crc)
+	if err != nil {
+		return AttachmentBlobLocation{}, fmt.Errorf("resolve attachment blob %s: %w", blobHash, err)
+	}
+	loc := AttachmentBlobLocation{Referenced: referenced != 0}
+	if !loc.Referenced || !hash.Valid {
+		return loc, nil
+	}
+	loc.Pack = &PackIndexEntry{
+		BlobHash:  hash.String,
+		PackID:    packID.String,
+		Offset:    offset.Int64,
+		StoredLen: storedLen.Int64,
+		RawLen:    rawLen.Int64,
+		Flags:     uint8(flags.Int64), //nolint:gosec // flags column stores a single byte
+		CRC32C:    uint32(crc.Int64),  //nolint:gosec // crc32c column stores a uint32
+	}
+	return loc, nil
+}
+
+// ListReferencedBlobHashes returns every non-empty content or thumbnail hash
+// named by an attachment row. A hash shared across columns appears once.
+func (s *Store) ListReferencedBlobHashes() (map[string]struct{}, error) {
+	rows, err := s.db.Query(`
+		SELECT content_hash FROM attachments
+		WHERE content_hash IS NOT NULL AND content_hash != ''
+		UNION
+		SELECT thumbnail_hash FROM attachments
+		WHERE thumbnail_hash IS NOT NULL AND thumbnail_hash != ''`)
+	if err != nil {
+		return nil, fmt.Errorf("list referenced attachment blob hashes: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	hashes := make(map[string]struct{})
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, fmt.Errorf("scan referenced attachment blob hash: %w", err)
+		}
+		hashes[hash] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate referenced attachment blob hashes: %w", err)
+	}
+	return hashes, nil
+}
+
+// PruneUnreferencedPackIndex removes stale storage mappings whose hash no
+// longer appears in either attachment hash column.
+func (s *Store) PruneUnreferencedPackIndex() (int64, error) {
+	res, err := s.db.Exec(`
+		DELETE FROM attachment_pack_index
+		WHERE NOT EXISTS (
+		    SELECT 1 FROM attachments a
+		    WHERE a.content_hash = attachment_pack_index.blob_hash
+		       OR a.thumbnail_hash = attachment_pack_index.blob_hash
+		)`)
+	if err != nil {
+		return 0, fmt.Errorf("prune unreferenced pack index: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned pack index rows: %w", err)
+	}
+	return rows, nil
 }
 
 // ListAttachmentPackEntries returns the live blob index rows owned by one

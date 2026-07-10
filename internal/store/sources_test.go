@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -172,39 +175,170 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 
-	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.False(had, "hadActiveSync")
+	assert.Zero(removed, "no packed mappings")
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be removed")
 }
 
-func TestStore_RemoveSourceSerialized_RefusesUniquePackedBlob(t *testing.T) {
+func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	hash := "aa" + strings.Repeat("0", 62)
-	msgID := f.CreateMessage("msg-packed")
+
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	otherConv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	require.NoError(err)
+	otherMsg, err := f.Store.UpsertMessage(&store.Message{
+		ConversationID: otherConv, SourceID: other.ID,
+		SourceMessageID: "other-packed", MessageType: "email",
+	})
+	require.NoError(err)
+
+	hash := func(prefix string) string { return prefix + strings.Repeat("0", 64-len(prefix)) }
+	uniqueContent := hash("aa01")
+	uniqueThumbnail := hash("bb02")
+	sharedContentContent := hash("cc03")
+	sharedThumbnailThumbnail := hash("dd04")
+	sharedContentThumbnail := hash("ee05")
+	sharedThumbnailContent := hash("ff06")
+
+	add := func(msgID int64, filename, contentHash string) {
+		require.NoError(f.Store.UpsertAttachment(msgID, filename, "application/octet-stream",
+			contentHash[:2]+"/"+contentHash, contentHash, 10))
+	}
+	setThumbnail := func(msgID int64, contentHash, thumbnailHash string) {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+			UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
+			WHERE message_id = ? AND content_hash = ?`),
+			thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash, msgID, contentHash)
+		require.NoError(err)
+	}
+
+	msgA := f.CreateMessage("msg-packed")
+	add(msgA, "unique.bin", uniqueContent)
+	setThumbnail(msgA, uniqueContent, uniqueThumbnail)
+	add(msgA, "shared-cc.bin", sharedContentContent)
+	carrierATT := hash("1007")
+	add(msgA, "carrier-att.bin", carrierATT)
+	setThumbnail(msgA, carrierATT, sharedThumbnailThumbnail)
+	add(msgA, "shared-ct.bin", sharedContentThumbnail)
+	carrierATC := hash("1108")
+	add(msgA, "carrier-atc.bin", carrierATC)
+	setThumbnail(msgA, carrierATC, sharedThumbnailContent)
+
+	add(otherMsg, "shared-cc.bin", sharedContentContent)
+	carrierBTT := hash("1209")
+	add(otherMsg, "carrier-btt.bin", carrierBTT)
+	setThumbnail(otherMsg, carrierBTT, sharedThumbnailThumbnail)
+	carrierBCT := hash("130a")
+	add(otherMsg, "carrier-bct.bin", carrierBCT)
+	setThumbnail(otherMsg, carrierBCT, sharedContentThumbnail)
+	add(otherMsg, "shared-tc.bin", sharedThumbnailContent)
+
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r1"
+	packedHashes := []string{
+		uniqueContent, uniqueThumbnail, sharedContentContent,
+		sharedThumbnailThumbnail, sharedContentThumbnail, sharedThumbnailContent,
+	}
+	entries := make([]store.PackIndexEntry, 0, len(packedHashes))
+	for i, packedHash := range packedHashes {
+		entries = append(entries, store.PackIndexEntry{
+			BlobHash: packedHash, PackID: packID, Offset: int64(i * 10),
+			StoredLen: 10, RawLen: 10,
+		})
+	}
+	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+		PackID: packID, EntryCount: int64(len(entries)), StoredBytes: int64(len(entries) * 10),
+		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}, entries))
+
+	attachmentsDir := t.TempDir()
+	loosePath := filepath.Join(attachmentsDir, uniqueContent[:2], uniqueContent)
+	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
+	require.NoError(os.WriteFile(loosePath, []byte("crash leftover"), 0o600))
+
+	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	require.NoError(err)
+	assert.False(had)
+	assert.Equal(int64(2), removed, "unique content and thumbnail mappings are deleted")
+
+	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
+	require.ErrorIs(err, store.ErrSourceNotFound)
+	assert.Nil(src)
+
+	for _, removedHash := range []string{uniqueContent, uniqueThumbnail} {
+		entry, err := f.Store.GetAttachmentPackEntry(removedHash)
+		require.NoError(err)
+		assert.Nil(entry, "%s is logically deleted", removedHash)
+	}
+	for _, sharedHash := range []string{
+		sharedContentContent, sharedThumbnailThumbnail,
+		sharedContentThumbnail, sharedThumbnailContent,
+	} {
+		entry, err := f.Store.GetAttachmentPackEntry(sharedHash)
+		require.NoError(err)
+		assert.NotNil(entry, "%s remains shared through either hash column", sharedHash)
+	}
+
+	bs := blobstore.New(f.Store, attachmentsDir)
+	defer func() { require.NoError(bs.Close()) }()
+	_, _, err = bs.Open(uniqueContent)
+	require.ErrorIs(err, fs.ErrNotExist,
+		"logical deletion rejects even a canonical loose crash leftover")
+	assert.FileExists(loosePath, "file cleanup remains best effort and separate from logical GC")
+}
+
+func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	hash := "aa" + strings.Repeat("1", 62)
+	msgID := f.CreateMessage("msg-packed-rollback")
 	require.NoError(f.Store.UpsertAttachment(msgID, "a.pdf", "application/pdf",
 		hash[:2]+"/"+hash, hash, 10))
-	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r1"
+	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r2"
 	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
 		PackID: packID, EntryCount: 1, StoredBytes: 10,
 		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
-	}, []store.PackIndexEntry{
-		{BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10},
-	}))
+	}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10}}))
 
-	_, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
-	var packedErr *store.UniquePackedBlobsError
-	require.ErrorAs(err, &packedErr)
-	assert.Equal(1, packedErr.Count)
+	if f.Store.IsPostgreSQL() {
+		_, err := f.Store.DB().Exec(`
+			CREATE FUNCTION force_source_delete_failure() RETURNS trigger AS $$
+			BEGIN
+			    RAISE EXCEPTION 'forced source delete failure';
+			END;
+			$$ LANGUAGE plpgsql`)
+		require.NoError(err)
+		_, err = f.Store.DB().Exec(`
+			CREATE TRIGGER force_source_delete_failure
+			BEFORE DELETE ON sources FOR EACH ROW
+			EXECUTE FUNCTION force_source_delete_failure()`)
+		require.NoError(err)
+	} else {
+		_, err := f.Store.DB().Exec(`
+			CREATE TRIGGER force_source_delete_failure
+			BEFORE DELETE ON sources
+			BEGIN
+			    SELECT RAISE(ABORT, 'forced source delete failure');
+			END`)
+		require.NoError(err)
+	}
 
+	_, _, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	require.ErrorContains(err, "forced source delete failure")
 	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
-	require.NoError(err, "guarded transaction must roll back the source cascade")
+	require.NoError(err, "failed transaction retains source")
 	assert.NotNil(src)
+	entry, err := f.Store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.NotNil(entry, "failed transaction retains every packed mapping")
 }
 
 func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
@@ -216,9 +350,10 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 	// by the DELETE. The serialized check must still observe it.
 	f.StartSync()
 
-	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.True(had, "hadActiveSync should be true for sync on removed source")
+	assert.Zero(removed)
 
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
@@ -236,9 +371,10 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 	_, err = f.Store.StartSync(otherSrc.ID, "full")
 	require.NoError(err, "start other sync")
 
-	had, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.True(had, "hadActiveSync should be true for sync on another source")
+	assert.Zero(removed)
 
 	// Original source is gone.
 	src, err := f.Store.GetSourceByIdentifier("test@example.com")
@@ -254,7 +390,7 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 func TestStore_RemoveSourceSerialized_NotFound(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
-	_, err := st.RemoveSourceSerialized(context.Background(), 99999)
+	_, _, err := st.RemoveSourceSerialized(context.Background(), 99999)
 	require.Error(t, err, "RemoveSourceSerialized should error for nonexistent ID")
 }
 

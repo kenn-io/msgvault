@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/packer"
 )
 
 func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
@@ -33,4 +34,20 @@ func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
 	require.NoError(cmd.Execute(), "pack-attachments")
 	assert.Equal(1, int(requests.Load()), "runner endpoint calls")
 	assert.Equal("Packed 0 blob(s) (0B) into 0 pack(s).\n", stdout.String(), "stdout")
+}
+
+func TestPackAttachmentsReportsRepairStats(t *testing.T) {
+	assert := assert.New(t)
+	var out bytes.Buffer
+	writePackAttachmentsStats(&out, packer.Stats{
+		MappingsPruned:      2,
+		LooseOrphansRemoved: 3,
+		PacksQuarantined:    4,
+		PacksUnreadable:     5,
+	})
+
+	assert.Contains(out.String(), "Pruned 2 stale packed blob mapping(s).")
+	assert.Contains(out.String(), "Removed 3 unreferenced loose file(s).")
+	assert.Contains(out.String(), "Quarantined 4 damaged orphan pack(s).")
+	assert.Contains(out.String(), "Found 5 unreadable orphan pack(s).")
 }

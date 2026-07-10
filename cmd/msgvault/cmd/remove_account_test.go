@@ -252,7 +252,7 @@ func TestRemoveAccountCmd_PreservesSharedAttachments(t *testing.T) {
 	assert.NoError(t, err, "shared attachment file should be preserved")
 }
 
-func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
+func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 	attachmentsDir := filepath.Join(tmpDir, "attachments")
@@ -286,27 +286,14 @@ func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
 		Data:    config.DataConfig{DataDir: tmpDir},
 	}
 
-	runRemove := func() error {
-		root := newTestRootCmd()
-		root.AddCommand(newRemoveAccountLocalTestCmd())
-		root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
-		return root.Execute()
-	}
-
-	err = runRemove()
-	require.ErrorContains(err, "unpack-attachments",
-		"phase 2b must refuse rather than leave a unique packed blob addressable")
-
-	stillPacked, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
-	require.NoError(err)
-	src, err := stillPacked.GetSourceByIdentifier("alice@example.com")
-	require.NoError(err, "refusal must leave the account intact")
-	require.NotNil(src)
-	_, err = packer.Unpack(context.Background(), stillPacked, attachmentsDir)
-	require.NoError(err)
-	require.NoError(stillPacked.Close())
-
-	require.NoError(runRemove(), "removal succeeds after the operator unpacks")
+	root := newTestRootCmd()
+	root.AddCommand(newRemoveAccountLocalTestCmd())
+	root.SetArgs([]string{"remove-account", "alice@example.com", "--yes"})
+	getOutput := captureStdout(t)
+	require.NoError(root.Execute(), "packed removal succeeds without unpacking first")
+	output := getOutput()
+	assert.Contains(t, output, "Removed 2 packed blob mapping(s)")
+	assert.Contains(t, output, "repack")
 
 	removed, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)
@@ -319,10 +306,9 @@ func TestRemoveAccountCmd_RefusesUniquePackedBlobUntilUnpacked(t *testing.T) {
 	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
 	_, _, err = bs.Open(thumbnailHash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed thumbnail is no longer addressable by hash")
-	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(storagePath)))
-	require.ErrorIs(err, fs.ErrNotExist, "unpacked loose copy is removed with the account")
-	_, err = os.Stat(filepath.Join(attachmentsDir, filepath.FromSlash(thumbnailPath)))
-	require.ErrorIs(err, fs.ErrNotExist, "unpacked loose thumbnail is removed with the account")
+	recs, err := removed.ListPackRecords()
+	require.NoError(err)
+	assert.Len(t, recs, 1, "logical deletion leaves immutable pack reclamation to repack")
 }
 
 func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {

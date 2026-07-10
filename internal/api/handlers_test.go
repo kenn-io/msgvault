@@ -2644,6 +2644,7 @@ func buildTestPack(t *testing.T, attachmentsDir string, content []byte) store.Pa
 // BlobStore-configured server (the nil-BlobStore path is exercised
 // separately by TestHandleCLIAttachmentReturnsContentAddressedBytes).
 func TestCLIAttachmentServesPackedBlob(t *testing.T) {
+	must := require.New(t)
 	dataDir := t.TempDir()
 	attachmentsDir := filepath.Join(dataDir, "attachments")
 
@@ -2651,7 +2652,18 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 	entry := buildTestPack(t, attachmentsDir, content)
 
 	st := testutil.NewTestStore(t)
-	require.NoError(t, st.RecordPackedBlobs(store.PackRecord{
+	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	must.NoError(err, "GetOrCreateSource")
+	convID, err := st.EnsureConversation(src.ID, "packed-thread", "Packed Thread")
+	must.NoError(err, "EnsureConversation")
+	msgID, err := st.UpsertMessage(&store.Message{
+		ConversationID: convID, SourceID: src.ID,
+		SourceMessageID: "packed-message", MessageType: "email",
+	})
+	must.NoError(err, "UpsertMessage")
+	must.NoError(st.UpsertAttachment(msgID, "packed.bin", "application/octet-stream",
+		entry.BlobHash[:2]+"/"+entry.BlobHash, entry.BlobHash, len(content)), "UpsertAttachment packed")
+	must.NoError(st.RecordPackedBlobs(store.PackRecord{
 		PackID:      entry.PackID,
 		EntryCount:  1,
 		StoredBytes: entry.StoredLen,
@@ -2700,6 +2712,8 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		assert := assert.New(t)
 		looseHash := "220a1f4bfb5bd7d3fc13a5b9475afc62f88b94bbd7177ea4581e8049288a6bd2"
 		looseContent := []byte("loose fallback bytes")
+		require.NoError(st.UpsertAttachment(msgID, "loose.bin", "application/octet-stream",
+			looseHash[:2]+"/"+looseHash, looseHash, len(looseContent)), "UpsertAttachment loose")
 		looseDir := filepath.Join(attachmentsDir, looseHash[:2])
 		require.NoError(os.MkdirAll(looseDir, 0o755), "create loose dir")
 		require.NoError(os.WriteFile(filepath.Join(looseDir, looseHash), looseContent, 0o600), "write loose attachment")

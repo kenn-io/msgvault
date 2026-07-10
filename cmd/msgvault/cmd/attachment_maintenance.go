@@ -66,10 +66,14 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		"bytes_packed", stats.BytesPacked,
 		"packs_adopted", stats.PacksAdopted,
 		"packs_removed", stats.PacksRemoved,
+		"packs_quarantined", stats.PacksQuarantined,
+		"packs_unreadable", stats.PacksUnreadable,
 		"records_dropped", stats.RecordsDropped,
+		"mappings_pruned", stats.MappingsPruned,
 		"blobs_missing", stats.BlobsMissing,
 		"blobs_corrupt", stats.BlobsCorrupt,
 		"loose_swept", stats.LooseSwept,
+		"loose_orphans_removed", stats.LooseOrphansRemoved,
 		"budget_exhausted", stats.BudgetExhausted)
 	return nil
 }

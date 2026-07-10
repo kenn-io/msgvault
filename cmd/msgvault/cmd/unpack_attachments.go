@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/packer"
@@ -65,10 +66,17 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+	writeUnpackAttachmentsStats(cmd.OutOrStdout(), stats)
+	return nil
+}
+
+func writeUnpackAttachmentsStats(out io.Writer, stats packer.UnpackStats) {
+	_, _ = fmt.Fprintf(out,
 		"Restored %d blob(s) (%s) from %d pack(s) to loose files.\n",
 		stats.BlobsRestored, formatSize(stats.BytesRestored), stats.PacksUnpacked)
-	return nil
+	if stats.MappingsPruned > 0 {
+		_, _ = fmt.Fprintf(out, "Pruned %d stale packed blob mapping(s).\n", stats.MappingsPruned)
+	}
 }
 
 func init() {
