@@ -10,3 +10,9 @@ import "os"
 func openNoFollow(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY, 0)
 }
+
+func openNoFollowDurable(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR, 0)
+}
+
+func validateNoFollowFileInfo(os.FileInfo) error { return nil }

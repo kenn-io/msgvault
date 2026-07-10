@@ -28,6 +28,10 @@ var validatedAttachmentFiles sync.Map
 // always fsyncs the validated final canonical descriptor.
 var syncDurableAttachmentFile = func(f *os.File) error { return f.Sync() }
 
+// lstatValidatedAttachmentFile is a narrow identity-swap test seam.
+// Production always uses os.Lstat.
+var lstatValidatedAttachmentFile = os.Lstat
+
 // resolveContentHash computes the SHA-256 of content and validates it against
 // the provided hash (if any). Returns the canonical lowercase hash without
 // mutating the attachment.
@@ -220,20 +224,11 @@ func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (st
 		return "", err
 	}
 	hashDir := filepath.Join(baseDir, hashPrefix)
-	hashDirWasMissing := false
-	if _, err := os.Lstat(hashDir); err != nil {
-		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("lstat durable attachment dir: %w", err)
-		}
-		hashDirWasMissing = true
-	}
 	if err := ensureSubdirSafe(baseDir, hashPrefix); err != nil {
 		return "", err
 	}
-	if hashDirWasMissing {
-		if err := pack.SyncDir(baseDir); err != nil {
-			return "", fmt.Errorf("sync attachments base after creating hash directory: %w", err)
-		}
+	if err := pack.SyncDir(baseDir); err != nil {
+		return "", fmt.Errorf("sync attachments base before durable attachment publish: %w", err)
 	}
 	fullPath := filepath.Join(baseDir, hashPrefix, contentHash)
 	expectedSize := int64(len(att.Content))
@@ -439,16 +434,17 @@ func StoreAttachmentFromPath(attachmentsDir, srcPath string, maxSize int64) (str
 }
 
 func validateExistingAttachmentFile(fullPath string, expectedSize int64, expectedHash string) error {
-	f, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash)
+	f, descriptorInfo, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash, false)
 	if err != nil {
 		return err
 	}
+	identityErr := validateAttachmentPathIdentity(fullPath, f, descriptorInfo)
 	_ = f.Close()
-	return nil
+	return identityErr
 }
 
 func validateExistingAttachmentFileDurable(fullPath string, expectedSize int64, expectedHash string) error {
-	f, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash)
+	f, descriptorInfo, err := openValidatedAttachmentFile(fullPath, expectedSize, expectedHash, true)
 	if err != nil {
 		return err
 	}
@@ -457,6 +453,9 @@ func validateExistingAttachmentFileDurable(fullPath string, expectedSize int64, 
 			fmt.Errorf("sync durable attachment file: %w", err),
 			closeDurableAttachmentFile(f),
 		)
+	}
+	if err := validateAttachmentPathIdentity(fullPath, f, descriptorInfo); err != nil {
+		return errors.Join(err, closeDurableAttachmentFile(f))
 	}
 	return closeDurableAttachmentFile(f)
 }
@@ -468,17 +467,28 @@ func closeDurableAttachmentFile(f *os.File) error {
 	return nil
 }
 
-func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHash string) (*os.File, error) {
+func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHash string, durable bool) (*os.File, os.FileInfo, error) {
+	preOpenInfo, err := lstatValidatedAttachmentFile(fullPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("lstat attachment file before validation: %w", err)
+	}
+	if err := validateAttachmentPathInfo(fullPath, preOpenInfo); err != nil {
+		return nil, nil, err
+	}
+
 	var f *os.File
-	var err error
 	const maxRetries = 5
 	for attempt := range maxRetries {
-		f, err = openNoFollow(fullPath)
+		if durable {
+			f, err = openNoFollowDurable(fullPath)
+		} else {
+			f, err = openNoFollow(fullPath)
+		}
 		if err == nil {
 			break
 		}
 		if runtime.GOOS != "windows" || attempt == maxRetries-1 {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"open attachment file for validation: %w", err,
 			)
 		}
@@ -493,13 +503,16 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 
 	st, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat attachment file: %w", err)
+		return nil, nil, fmt.Errorf("stat attachment file: %w", err)
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("attachment file %q is not a regular file", fullPath)
+		return nil, nil, fmt.Errorf("attachment file %q descriptor is not a regular file", fullPath)
+	}
+	if !os.SameFile(preOpenInfo, st) {
+		return nil, nil, fmt.Errorf("attachment file %q changed identity before validation", fullPath)
 	}
 	if st.Size() != expectedSize {
-		return nil, fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
+		return nil, nil, fmt.Errorf("attachment file %q has size %d, want %d", fullPath, st.Size(), expectedSize)
 	}
 
 	key := fmt.Sprintf("%s\x00%d\x00%s", fullPath, expectedSize, expectedHash)
@@ -507,19 +520,51 @@ func openValidatedAttachmentFile(fullPath string, expectedSize int64, expectedHa
 	if cached, ok := validatedAttachmentFiles.Load(key); ok {
 		if ts, ok := cached.(int64); ok && ts == modTime {
 			keepOpen = true
-			return f, nil
+			return f, st, nil
 		}
 	}
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return nil, fmt.Errorf("hash attachment file: %w", err)
+		return nil, nil, fmt.Errorf("hash attachment file: %w", err)
 	}
 	gotHash := hex.EncodeToString(h.Sum(nil))
 	if gotHash != expectedHash {
-		return nil, fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
+		return nil, nil, fmt.Errorf("attachment file %q has hash %q, want %q", fullPath, gotHash, expectedHash)
 	}
 	validatedAttachmentFiles.Store(key, modTime)
 	keepOpen = true
-	return f, nil
+	return f, st, nil
+}
+
+func validateAttachmentPathInfo(fullPath string, info os.FileInfo) error {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("attachment file %q is a symlink", fullPath)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("attachment file %q is not a regular file", fullPath)
+	}
+	if err := validateNoFollowFileInfo(info); err != nil {
+		return fmt.Errorf("attachment file %q %w", fullPath, err)
+	}
+	return nil
+}
+
+func validateAttachmentPathIdentity(fullPath string, f *os.File, descriptorInfo os.FileInfo) error {
+	postOpenInfo, err := lstatValidatedAttachmentFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("lstat attachment file after validation: %w", err)
+	}
+	if err := validateAttachmentPathInfo(fullPath, postOpenInfo); err != nil {
+		return err
+	}
+	currentInfo, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat attachment descriptor after validation: %w", err)
+	}
+	if !currentInfo.Mode().IsRegular() || !os.SameFile(descriptorInfo, currentInfo) ||
+		!os.SameFile(postOpenInfo, currentInfo) {
+		return fmt.Errorf("attachment file %q changed identity during validation", fullPath)
+	}
+	return nil
 }

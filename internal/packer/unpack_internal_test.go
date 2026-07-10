@@ -196,3 +196,51 @@ func TestUnpackRechecksContextBeforeDroppingZeroLivePack(t *testing.T) {
 	require.NoError(err)
 	assert.True(has)
 }
+
+func TestUnpackRetriesAttachmentsBaseSyncAfterDirectoryResidue(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	content := []byte("base directory durability retry")
+	hash, _ := f.addBlob(content, maintenanceCanonical)
+	packed, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	require.Equal(1, packed.PacksSealed)
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	packPath := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+blobstore.PackExt)
+	resolvedDir, err := filepath.EvalSymlinks(f.dir)
+	require.NoError(err)
+	hashDir := filepath.Join(resolvedDir, hash[:2])
+	_ = os.Remove(hashDir)
+	syncErr := errors.New("injected attachments base sync failure")
+	originalSyncDir := pack.SyncDir
+	var baseSyncs int
+	pack.SyncDir = func(path string) error {
+		if filepath.Clean(path) == filepath.Clean(resolvedDir) {
+			baseSyncs++
+			if baseSyncs == 1 {
+				return syncErr
+			}
+		}
+		return originalSyncDir(path)
+	}
+	t.Cleanup(func() { pack.SyncDir = originalSyncDir })
+
+	stats, err := Unpack(context.Background(), f.store, f.dir)
+	require.ErrorIs(err, syncErr)
+	assert.Equal(UnpackStats{}, stats)
+	assert.Equal(1, baseSyncs)
+	assert.DirExists(hashDir, "failed base sync may leave a directory residue")
+	assert.FileExists(packPath)
+	indexed, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	assert.NotNil(indexed)
+
+	stats, err = Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "retry must resync the base despite the existing hash directory residue")
+	assert.Equal(2, baseSyncs, "base durability must be retried unconditionally")
+	assert.Equal(1, stats.PacksUnpacked)
+	assert.NoFileExists(packPath)
+}
