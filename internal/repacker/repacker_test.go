@@ -385,6 +385,287 @@ type countingBoundedStore struct {
 	reads int
 }
 
+type injectedReadErrorStore struct {
+	*blobstore.Store
+
+	errors map[string]error
+	reads  []string
+}
+
+func (s *injectedReadErrorStore) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
+	s.reads = append(s.reads, hash)
+	if err := s.errors[hash]; err != nil {
+		return nil, 0, err
+	}
+	return s.Store.ReadBounded(hash, maxBytes)
+}
+
+func TestRunAutomaticStopsOnUnknownBoundedReadError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	brokenLive := []byte("resolver failure must stop automatic maintenance")
+	healthyLive := []byte("later source must remain untouched")
+	brokenHash := f.reference(brokenLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	broken, _, brokenPath := f.seal(brokenLive, dead, []byte("broken dead sibling"))
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), broken.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	injected := &injectedReadErrorStore{
+		Store: realBlobs,
+		errors: map[string]error{
+			brokenHash: errors.New("injected resolver database failure"),
+		},
+	}
+
+	stats, err := Run(context.Background(), f.store, injected, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "injected resolver database failure")
+	assert.Zero(stats.PacksRewritten)
+	assert.Equal([]string{brokenHash}, injected.reads)
+	brokenEntry, getErr := f.store.GetAttachmentPackEntry(brokenHash)
+	require.NoError(getErr)
+	require.NotNil(brokenEntry)
+	assert.Equal(broken.PackID, brokenEntry.PackID)
+	healthyEntry, getErr := f.store.GetAttachmentPackEntry(healthyHash)
+	require.NoError(getErr)
+	require.NotNil(healthyEntry)
+	assert.Equal(healthy.PackID, healthyEntry.PackID)
+	assert.FileExists(brokenPath)
+	assert.FileExists(healthyPath)
+}
+
+type injectedMaintenancePackReader struct {
+	entries  []pack.Entry
+	closeErr error
+}
+
+func (r *injectedMaintenancePackReader) Entries() []pack.Entry { return r.entries }
+func (r *injectedMaintenancePackReader) Close() error          { return r.closeErr }
+
+func TestRunAutomaticStopsWhenPreflightCloseFailsWithCorruption(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	brokenLive := []byte("descriptor close failure is systemic")
+	healthyLive := []byte("later preflight must not run")
+	brokenHash := f.reference(brokenLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	broken, _, brokenPath := f.seal(brokenLive, dead, []byte("broken dead sibling"))
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), broken.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+
+	originalOpen := openMaintenancePack
+	var opened []string
+	openMaintenancePack = func(path string) (maintenancePackReader, error) {
+		opened = append(opened, path)
+		if filepath.Base(path) == broken.PackID+blobstore.PackExt {
+			return &injectedMaintenancePackReader{
+				closeErr: errors.New("injected descriptor close failure"),
+			}, nil
+		}
+		return originalOpen(path)
+	}
+	t.Cleanup(func() { openMaintenancePack = originalOpen })
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "injected descriptor close failure")
+	assert.Zero(stats.PacksRewritten)
+	assert.Len(opened, 1)
+	assert.Zero(counting.reads)
+	for hash, oldPackID := range map[string]string{
+		brokenHash:  broken.PackID,
+		healthyHash: healthy.PackID,
+	} {
+		entry, getErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(getErr)
+		require.NotNil(entry)
+		assert.Equal(oldPackID, entry.PackID)
+	}
+	assert.FileExists(brokenPath)
+	assert.FileExists(healthyPath)
+}
+
+func TestRunAutomaticStopsOnPreflightPermissionError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	brokenLive := []byte("pack stat permission failure is systemic")
+	healthyLive := []byte("later source must remain untouched")
+	brokenHash := f.reference(brokenLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	broken, _, brokenPath := f.seal(brokenLive, dead, []byte("broken dead sibling"))
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), broken.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+
+	originalOpen := openMaintenancePack
+	var opened []string
+	openMaintenancePack = func(path string) (maintenancePackReader, error) {
+		opened = append(opened, path)
+		if filepath.Base(path) == broken.PackID+blobstore.PackExt {
+			return nil, &os.PathError{Op: "stat", Path: path, Err: fs.ErrPermission}
+		}
+		return originalOpen(path)
+	}
+	t.Cleanup(func() { openMaintenancePack = originalOpen })
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorIs(err, fs.ErrPermission)
+	assert.Zero(stats.PacksRewritten)
+	assert.Len(opened, 1)
+	assert.Zero(counting.reads)
+	for hash, oldPackID := range map[string]string{
+		brokenHash:  broken.PackID,
+		healthyHash: healthy.PackID,
+	} {
+		entry, getErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(getErr)
+		require.NotNil(entry)
+		assert.Equal(oldPackID, entry.PackID)
+	}
+	assert.FileExists(brokenPath)
+	assert.FileExists(healthyPath)
+}
+
+func TestRunAutomaticJoinsKnownContentFailuresAndCommitsHealthySource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	checksumLive := []byte("known checksum failure")
+	missingLive := []byte("known missing source")
+	healthyLive := []byte("healthy third source commits")
+	checksumHash := f.reference(checksumLive)
+	missingHash := f.reference(missingLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	checksumPack, _, checksumPath := f.seal(checksumLive, dead, []byte("checksum dead sibling"))
+	missingPack, _, missingPath := f.seal(missingLive, dead, []byte("missing dead sibling"))
+	healthyPack, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	for i, packID := range []string{checksumPack.PackID, missingPack.PackID, healthyPack.PackID} {
+		_, err := f.store.DB().Exec(f.store.Rebind(`
+			UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+			f.created.Add(time.Duration(i-2)*time.Hour).Format(time.RFC3339), packID)
+		require.NoError(err)
+	}
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	injected := &injectedReadErrorStore{
+		Store: realBlobs,
+		errors: map[string]error{
+			checksumHash: fmt.Errorf("first known checksum failure: %w", pack.ErrChecksum),
+			missingHash:  fmt.Errorf("second known missing failure: %w", fs.ErrNotExist),
+		},
+	}
+
+	stats, err := Run(context.Background(), f.store, injected, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "first known checksum failure")
+	require.ErrorContains(err, "second known missing failure")
+	assert.Equal(1, stats.PacksRewritten)
+	assert.Equal([]string{checksumHash, missingHash, healthyHash}, injected.reads)
+	for hash, oldPackID := range map[string]string{
+		checksumHash: checksumPack.PackID,
+		missingHash:  missingPack.PackID,
+	} {
+		entry, getErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(getErr)
+		require.NotNil(entry)
+		assert.Equal(oldPackID, entry.PackID)
+	}
+	healthyEntry, getErr := f.store.GetAttachmentPackEntry(healthyHash)
+	require.NoError(getErr)
+	require.NotNil(healthyEntry)
+	assert.NotEqual(healthyPack.PackID, healthyEntry.PackID)
+	assert.FileExists(checksumPath)
+	assert.FileExists(missingPath)
+	assert.NoFileExists(healthyPath)
+}
+
+func TestRunAutomaticWriterCreationFailureStopsBeforeLaterSource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRepackFixture(t)
+	brokenLive := []byte("writer creation failure is systemic")
+	healthyLive := []byte("later source must remain untouched")
+	brokenHash := f.reference(brokenLive)
+	healthyHash := f.reference(healthyLive)
+	dead := incompressible(t, int(minDeadStored)+(128<<10))
+	broken, _, brokenPath := f.seal(brokenLive, dead, []byte("broken dead sibling"))
+	healthy, _, healthyPath := f.seal(healthyLive, dead, []byte("healthy dead sibling"))
+	_, err := f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Add(-time.Hour).Format(time.RFC3339), broken.PackID)
+	require.NoError(err)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
+		f.created.Format(time.RFC3339), healthy.PackID)
+	require.NoError(err)
+	originalFactory := newPackWriter
+	newPackWriter = func(string, pack.WriterOptions) (packWriter, error) {
+		return nil, errors.New("injected automatic writer creation failure")
+	}
+	t.Cleanup(func() { newPackWriter = originalFactory })
+	realBlobs := blobstore.New(f.store, f.dir)
+	defer func() { require.NoError(realBlobs.Close()) }()
+	counting := &countingBoundedStore{Store: realBlobs}
+
+	stats, err := Run(context.Background(), f.store, counting, f.dir, Options{
+		MaxBytes: 1, Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	})
+	require.ErrorContains(err, "injected automatic writer creation failure")
+	assert.Zero(stats.PacksRewritten)
+	assert.Equal(1, counting.reads)
+	for hash, oldPackID := range map[string]string{
+		brokenHash:  broken.PackID,
+		healthyHash: healthy.PackID,
+	} {
+		entry, getErr := f.store.GetAttachmentPackEntry(hash)
+		require.NoError(getErr)
+		require.NotNil(entry)
+		assert.Equal(oldPackID, entry.PackID)
+	}
+	assert.FileExists(brokenPath)
+	assert.FileExists(healthyPath)
+}
+
 func (s *countingBoundedStore) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
 	s.reads++
 	return s.Store.ReadBounded(hash, maxBytes)

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -65,6 +66,15 @@ type packWriter interface {
 // unreachable kit writer failures. Production always installs pack.NewWriter.
 var newPackWriter = func(stagingDir string, opts pack.WriterOptions) (packWriter, error) {
 	return pack.NewWriter(stagingDir, opts)
+}
+
+type maintenancePackReader interface {
+	Entries() []pack.Entry
+	Close() error
+}
+
+var openMaintenancePack = func(path string) (maintenancePackReader, error) {
+	return blobstore.OpenMaintenancePack(path)
 }
 
 // maxReplacementPackEntries is a test seam for the production maintenance
@@ -139,7 +149,16 @@ func Run(ctx context.Context, st *store.Store, blobs BlobStore, attachmentsDir s
 		if err := verifyUsageSnapshot(candidate, entries); err != nil {
 			return stats, errors.Join(runErr, err)
 		}
-		if err := preflightSourcePack(packsDir, candidate.PackID, entries); err != nil {
+		preflightErr, closeErr := preflightSourcePack(packsDir, candidate.PackID, entries)
+		if closeErr != nil {
+			var contentErr error
+			if preflightErr != nil {
+				contentErr = fmt.Errorf("preflight attachment pack %s: %w", candidate.PackID, preflightErr)
+			}
+			return stats, errors.Join(runErr, contentErr,
+				fmt.Errorf("close preflight attachment pack %s: %w", candidate.PackID, closeErr))
+		}
+		if err := preflightErr; err != nil {
 			var limitErr *blobstore.LimitError
 			if errors.As(err, &limitErr) {
 				stats.PacksDeferredOversized++
@@ -147,7 +166,7 @@ func Run(ctx context.Context, st *store.Store, blobs BlobStore, attachmentsDir s
 				continue
 			}
 			contentErr := fmt.Errorf("preflight attachment pack %s: %w", candidate.PackID, err)
-			if !automatic {
+			if !automatic || !isKnownSourceContentError(err) {
 				return stats, errors.Join(runErr, contentErr)
 			}
 			runErr = errors.Join(runErr, contentErr)
@@ -278,11 +297,11 @@ func verifyUsageSnapshot(candidate store.PackUsage, entries []store.PackIndexEnt
 	return nil
 }
 
-func preflightSourcePack(packsDir, packID string, entries []store.PackIndexEntry) error {
+func preflightSourcePack(packsDir, packID string, entries []store.PackIndexEntry) (error, error) {
 	path := filepath.Join(packsDir, packID[:2], packID+blobstore.PackExt)
-	reader, err := blobstore.OpenMaintenancePack(path)
+	reader, err := openMaintenancePack(path)
 	if err != nil {
-		return err
+		return err, nil
 	}
 	footer := make(map[string]pack.Entry)
 	for _, entry := range reader.Entries() {
@@ -313,13 +332,45 @@ func preflightSourcePack(packsDir, packID string, entries []store.PackIndexEntry
 			break
 		}
 	}
-	return errors.Join(checkErr, reader.Close())
+	return checkErr, reader.Close()
 }
 
 type sourceContentError struct{ err error }
 
 func (e *sourceContentError) Error() string { return e.err.Error() }
 func (e *sourceContentError) Unwrap() error { return e.err }
+
+func isKnownSourceContentError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, fs.ErrPermission) {
+		return false
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && !errors.Is(pathErr, fs.ErrNotExist) {
+		return false
+	}
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return false
+	}
+	for _, known := range []error{
+		fs.ErrNotExist,
+		pack.ErrBadMagic,
+		pack.ErrUnsupportedVersion,
+		pack.ErrTruncated,
+		pack.ErrChecksum,
+		pack.ErrCorrupt,
+		pack.ErrBlobMismatch,
+		pack.ErrEncrypted,
+		pack.ErrDecrypt,
+	} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	var contentErr *sourceContentError
+	return errors.As(err, &contentErr)
+}
 
 type rewriteResult struct {
 	records       []store.PackRecord
@@ -393,9 +444,10 @@ func rewriteSource(ctx context.Context, blobs BlobStore, packsDir string, target
 		}
 		data, reportedSize, err := blobs.ReadBounded(indexed.BlobHash, blobstore.MaxMaintenanceBlobBytes)
 		if err != nil {
+			content := isKnownSourceContentError(err)
 			return result, abort(fmt.Errorf(
 				"read live blob %s from source pack %s: %w",
-				indexed.BlobHash, oldPackID, err), !errors.Is(err, blobstore.ErrBlobTooLarge))
+				indexed.BlobHash, oldPackID, err), content)
 		}
 		if reportedSize != int64(len(data)) || indexed.RawLen != int64(len(data)) {
 			return result, abort(fmt.Errorf(
@@ -423,7 +475,7 @@ func rewriteSource(ctx context.Context, blobs BlobStore, packsDir string, target
 		if entry.ID.String() != indexed.BlobHash {
 			return result, abort(fmt.Errorf(
 				"appended blob id %s does not match expected %s",
-				entry.ID, indexed.BlobHash), false)
+				entry.ID, indexed.BlobHash), true)
 		}
 		currentSources = append(currentSources, sourceEntry{oldPackID: oldPackID, entry: indexed})
 		result.blobsRepacked++
