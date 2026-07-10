@@ -321,7 +321,10 @@ explicit maintenance enforce a fixed 64 MiB raw-blob ceiling:
   verified legacy source when destination validation/publication fails. A crash
   or DB failure after publication can leave a redundant legacy file but cannot
   make the verified canonical copy unreadable. Future runs see the canonical
-  oversized file and do not re-hash it merely to defer packing.
+  oversized file and do not re-hash it merely to defer packing. If legacy
+  deletion fails after the DB update, the final sweep retries it: a referenced,
+  unindexed noncanonical hash-named file is redundant only after the canonical
+  file streaming-verifies, then it is removed best-effort.
 - Orphan reconciliation inspects footer `RawLen` before any production or
   orphan blob read. Before verifying an existing indexed copy, the blob store
   also opens the pack footer, finds the same blob ID, requires the DB entry to
@@ -358,12 +361,29 @@ loose files or unreclaimed sparse packs in place. Large-file count is not the
 Windows/NAS bottleneck this design targets; the benefit comes primarily from
 packing the much more numerous small files.
 
+Before maintenance calls `pack.OpenReader`, it performs a fixed-size preflight
+of the stable plain-pack header and 40-byte trailer, then reads only the
+footer's four-byte entry count. It rejects a container above 128 MiB, a footer
+above 8 MiB, more than 100,000 entries, inconsistent footer-length/count math,
+or encrypted/invalid header/trailer metadata before kit allocates the footer or
+decoded entry table. Normal production packs target 32 MiB and can cross that
+target by at most one ceiling-eligible 64 MiB append; the remaining headroom
+covers the bounded footer. Packer and repacker seal a writer before a new append
+would exceed 100,000 entries, so they cannot create a pack their own maintenance
+reader later defers. Cached readers are checked against the same entry ceiling
+before bounded use. An oversized orphan or recorded repack source remains
+preserved, is excluded before budget charging, and is reported with the other
+oversized pack deferrals.
+
 Maintenance reads of packed content use a bounded blob-store operation that
 cross-checks mutable DB offsets and lengths against the matching cached footer
 entry before allocation, then rejects either authoritative `RawLen` or
-`StoredLen` above the ceiling. Repack uses this operation even after selection
-has screened DB aggregates, so corrupt metadata cannot turn the accounting
-guard into a large allocation.
+`StoredLen` above the ceiling. Store scans validate offsets/lengths and BIGINT
+flag/CRC ranges before narrowing them to Go integer types. The bounded operation
+returns kit's verified byte slice directly; repack does not make a second
+`io.ReadAll` copy. Repack uses it even after selection has screened DB
+aggregates, so corrupt metadata cannot turn the accounting guard into a large
+allocation.
 
 Deferral is operator-visible. `packer.Stats` exposes
 `BlobsDeferredOversized` and `PacksDeferredOversized`; `repacker.Stats` exposes
@@ -407,8 +427,11 @@ deferred.
   and does not prevent attempting the next candidate. Writer creation, append
   I/O, seal, database, cancellation, and other systemic failures stop the run.
   Isolated content errors are joined and returned after later candidates run so
-  the daily job still records failure. This prevents a corrupt oldest pack from
-  consuming every daily budget before useful work starts. Explicit repack
+  the daily job still records failure. The automatic coordinator emits the
+  progress/deferral INFO summary before its existing aggregate warning, so
+  successful sibling work remains observable on a failed job. This prevents a
+  corrupt oldest pack from consuming every daily budget before useful work
+  starts. Explicit repack
   remains fail-fast after the zero-live pass. For each rewrite, copy live blobs
   to new target-sized packs.
   The production read verifies CRC, decoding, and SHA-256 before append; the
@@ -476,6 +499,13 @@ deleted content. Because the packer canonicalizes `storage_path`/
 `thumbnail_path` rows at pack time, canonical output paths are always
 consistent with the DB. Old binaries cannot read packs, so this is the escape
 hatch before any downgrade.
+
+Unpack applies the same container/footer/entry-count preflight and 64 MiB
+raw/stored entry ceiling before writing the first loose blob from each live
+pack. A pre-amendment pack outside those bounds fails safely with its complete
+index, record, and file retained for a future streaming-capable release;
+zero-live packs still delete without opening their footer. Packs completed
+earlier in the command remain independently and consistently unpacked.
 
 ### Backup coordination (release-blocking)
 
