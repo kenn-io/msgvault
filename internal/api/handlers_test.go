@@ -2683,7 +2683,7 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		},
 		Logger:    testLogger(),
 		BlobStore: bs,
-		Engine:    query.NewSQLiteEngine(st.DB()),
+		Engine:    query.NewEngine(st.DB(), st.IsPostgreSQL()),
 	})
 
 	t.Run("packed blob returns 200 with body", func(t *testing.T) {
