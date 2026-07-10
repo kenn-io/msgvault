@@ -2,7 +2,12 @@ package packer_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"hash/crc32"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,11 +17,169 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/packer"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+const syntheticUnpackPackID = "01hzy3v7q8r9s0t1a2b3c4d5e6"
+
+func recordSyntheticUnpackPack(
+	t *testing.T,
+	f *fixture,
+	entries []pack.Entry,
+	writeData map[string][]byte,
+) string {
+	t.Helper()
+	require := require.New(t)
+	path := filepath.Join(f.dir, "packs", syntheticUnpackPackID[:2],
+		syntheticUnpackPackID+blobstore.PackExt)
+	require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	require.NoError(err)
+	require.NoError(func() error {
+		_, err := file.WriteAt([]byte{'M', 'V', 'P', 'K', 1, 0}, 0)
+		return err
+	}())
+
+	footerStart := uint64(6)
+	for _, entry := range entries {
+		footerStart = max(footerStart, entry.Offset+entry.StoredLen)
+		if data := writeData[entry.ID.String()]; data != nil {
+			_, err = file.WriteAt(data, int64(entry.Offset))
+			require.NoError(err)
+		}
+	}
+	footer := make([]byte, 4+61*len(entries))
+	binary.LittleEndian.PutUint32(footer, uint32(len(entries)))
+	for i, entry := range entries {
+		offset := 4 + i*61
+		copy(footer[offset:offset+32], entry.ID[:])
+		binary.LittleEndian.PutUint64(footer[offset+32:], entry.Offset)
+		binary.LittleEndian.PutUint64(footer[offset+40:], entry.StoredLen)
+		binary.LittleEndian.PutUint64(footer[offset+48:], entry.RawLen)
+		footer[offset+56] = byte(entry.Flags)
+		binary.LittleEndian.PutUint32(footer[offset+57:], entry.CRC32C)
+	}
+	footerLen := uint32(len(footer))
+	var footerLenBytes [4]byte
+	binary.LittleEndian.PutUint32(footerLenBytes[:], footerLen)
+	digest := sha256.New()
+	_, err = digest.Write(footer)
+	require.NoError(err)
+	_, err = digest.Write(footerLenBytes[:])
+	require.NoError(err)
+	trailer := make([]byte, 40)
+	copy(trailer[:4], footerLenBytes[:])
+	copy(trailer[4:36], digest.Sum(nil))
+	copy(trailer[36:], "KPVM")
+	_, err = file.WriteAt(footer, int64(footerStart))
+	require.NoError(err)
+	_, err = file.WriteAt(trailer, int64(footerStart)+int64(len(footer)))
+	require.NoError(err)
+	require.NoError(file.Close())
+
+	indexed := make([]store.PackIndexEntry, 0, len(entries))
+	var storedBytes int64
+	for _, entry := range entries {
+		indexed = append(indexed, store.PackIndexEntry{
+			BlobHash: entry.ID.String(), PackID: syntheticUnpackPackID,
+			Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen),
+			RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C,
+		})
+		storedBytes += int64(entry.StoredLen)
+	}
+	require.NoError(f.store.RecordPackedBlobs(store.PackRecord{
+		PackID: syntheticUnpackPackID, EntryCount: int64(len(entries)),
+		StoredBytes: storedBytes, CreatedAt: time.Now().UTC(),
+	}, indexed))
+	return path
+}
+
+func syntheticUnpackEntry(t *testing.T, content []byte, offset, rawLen, storedLen uint64) pack.Entry {
+	t.Helper()
+	id, err := pack.ParseBlobID(hashOf(content))
+	require.NoError(t, err)
+	return pack.Entry{
+		ID: id, Offset: offset, RawLen: rawLen, StoredLen: storedLen,
+		CRC32C: crc32.Checksum(content, crc32.MakeTable(crc32.Castagnoli)),
+	}
+}
+
+func assertUnpackPackPreserved(t *testing.T, f *fixture, path, packID string, wantEntries int64) {
+	t.Helper()
+	assert := assert.New(t)
+	assert.FileExists(path)
+	has, err := f.store.HasPackRecord(packID)
+	require.NoError(t, err)
+	assert.True(has)
+	count, err := f.store.CountPackIndexEntries(packID)
+	require.NoError(t, err)
+	assert.Equal(wantEntries, count)
+}
+
+func recordExistingUnpackPack(t *testing.T, f *fixture, packID string) string {
+	t.Helper()
+	path := filepath.Join(f.dir, "packs", packID[:2], packID+blobstore.PackExt)
+	r, err := blobstore.OpenMaintenancePack(path)
+	require.NoError(t, err)
+	footer := r.Entries()
+	require.NoError(t, r.Close())
+	entries := make([]store.PackIndexEntry, 0, len(footer))
+	var storedBytes int64
+	for _, entry := range footer {
+		entries = append(entries, store.PackIndexEntry{
+			BlobHash: entry.ID.String(), PackID: packID,
+			Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen),
+			RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C,
+		})
+		storedBytes += int64(entry.StoredLen)
+	}
+	require.NoError(t, f.store.RecordPackedBlobs(store.PackRecord{
+		PackID: packID, EntryCount: int64(len(entries)), StoredBytes: storedBytes,
+		CreatedAt: time.Now().UTC(),
+	}, entries))
+	return path
+}
+
+func rewriteUnpackPreflightFixture(t *testing.T, path string, dimension blobstore.LimitDimension) {
+	t.Helper()
+	require := require.New(t)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_TRUNC, 0o600)
+	require.NoError(err)
+	defer func() { require.NoError(file.Close()) }()
+	require.NoError(func() error {
+		_, err := file.WriteAt([]byte{'M', 'V', 'P', 'K', 1, 0}, 0)
+		return err
+	}())
+	switch dimension {
+	case blobstore.LimitPackContainerBytes:
+		require.NoError(file.Truncate(blobstore.MaxMaintenancePackBytes + 1))
+	case blobstore.LimitPackFooterBytes:
+		trailer := make([]byte, 40)
+		binary.LittleEndian.PutUint32(trailer[:4], blobstore.MaxMaintenanceFooterBytes+1)
+		copy(trailer[36:], "KPVM")
+		_, err = file.WriteAt(trailer, 6)
+		require.NoError(err)
+	case blobstore.LimitPackEntryCount:
+		count := uint32(blobstore.MaxMaintenancePackEntries + 1)
+		footerLen := uint32(4) + count*61
+		footerStart := int64(6)
+		var countBytes [4]byte
+		binary.LittleEndian.PutUint32(countBytes[:], count)
+		_, err = file.WriteAt(countBytes[:], footerStart)
+		require.NoError(err)
+		trailer := make([]byte, 40)
+		binary.LittleEndian.PutUint32(trailer[:4], footerLen)
+		copy(trailer[36:], "KPVM")
+		_, err = file.WriteAt(trailer, footerStart+int64(footerLen))
+		require.NoError(err)
+	default:
+		require.FailNow("unsupported preflight fixture dimension", string(dimension))
+	}
+}
 
 // packIndexRowCount returns the total number of attachment_pack_index rows.
 func (f *fixture) packIndexRowCount() int64 {
@@ -227,6 +390,218 @@ func TestUnpackRestoresOnlyLivePackEntries(t *testing.T) {
 	assert.Equal(liveContent, live)
 	_, err = os.Stat(filepath.Join(f.dir, filepath.FromSlash(canonical(deadHash))))
 	assert.ErrorIs(err, fs.ErrNotExist, "dead blob must not be resurrected as loose content")
+}
+
+func TestUnpackPlansEveryLiveEntryBeforeWriting(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	firstContent := []byte("eligible first blob")
+	first := syntheticUnpackEntry(t, firstContent, 6,
+		uint64(len(firstContent)), uint64(len(firstContent)))
+	oversizedContent := []byte{0x7f}
+	oversized := syntheticUnpackEntry(t, oversizedContent,
+		first.Offset+first.StoredLen,
+		uint64(blobstore.MaxMaintenanceBlobBytes+1), 1)
+	f.addRow(first.ID.String(), canonical(first.ID.String()), len(firstContent))
+	f.addRow(oversized.ID.String(), canonical(oversized.ID.String()), len(oversizedContent))
+	packPath := recordSyntheticUnpackPack(t, f, []pack.Entry{first, oversized}, map[string][]byte{
+		first.ID.String():     firstContent,
+		oversized.ID.String(): oversizedContent,
+	})
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err)
+	var limitErr *blobstore.LimitError
+	require.ErrorAs(err, &limitErr)
+	assert.Equal(blobstore.LimitBlobRawBytes, limitErr.Dimension)
+	assert.Equal(uint64(blobstore.MaxMaintenanceBlobBytes+1), limitErr.Actual)
+	assert.Equal(uint64(blobstore.MaxMaintenanceBlobBytes), limitErr.Limit)
+	assert.Contains(err.Error(), oversized.ID.String())
+	assert.Contains(err.Error(), syntheticUnpackPackID)
+	assert.Equal(packer.UnpackStats{}, stats)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(first.ID.String()))),
+		"planning a later oversized entry must precede the first loose write")
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(oversized.ID.String()))))
+	assertUnpackPackPreserved(t, f, packPath, syntheticUnpackPackID, 2)
+}
+
+func TestUnpackRejectsAuthoritativeOversizedStoredLengthBeforeWriting(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+
+	content := []byte{0x42}
+	entry := syntheticUnpackEntry(t, content, 6, 1,
+		uint64(blobstore.MaxMaintenanceBlobBytes+1))
+	f.addRow(entry.ID.String(), canonical(entry.ID.String()), len(content))
+	packPath := recordSyntheticUnpackPack(t, f, []pack.Entry{entry}, map[string][]byte{
+		entry.ID.String(): content,
+	})
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err)
+	var limitErr *blobstore.LimitError
+	require.ErrorAs(err, &limitErr)
+	assert.Equal(blobstore.LimitBlobStoredBytes, limitErr.Dimension)
+	assert.Equal(uint64(blobstore.MaxMaintenanceBlobBytes+1), limitErr.Actual)
+	assert.Equal(packer.UnpackStats{}, stats)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(entry.ID.String()))))
+	assertUnpackPackPreserved(t, f, packPath, syntheticUnpackPackID, 1)
+}
+
+func TestUnpackDropsZeroLiveOversizedPackWithoutOpeningIt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	rec := store.PackRecord{
+		PackID:    syntheticUnpackPackID,
+		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+	}
+	require.NoError(f.store.RecordPackedBlobs(rec, nil))
+	path := filepath.Join(f.dir, "packs", rec.PackID[:2], rec.PackID+blobstore.PackExt)
+	require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+	file, err := os.Create(path)
+	require.NoError(err)
+	require.NoError(file.Truncate(blobstore.MaxMaintenancePackBytes + 1))
+	require.NoError(file.Close())
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err, "zero-live packs must not enter bounded preflight")
+	assert.Equal(packer.UnpackStats{}, stats)
+	assert.NoFileExists(path)
+	has, err := f.store.HasPackRecord(rec.PackID)
+	require.NoError(err)
+	assert.False(has)
+}
+
+func TestUnpackPreflightFailuresPreserveLivePackAuthority(t *testing.T) {
+	for _, dimension := range []blobstore.LimitDimension{
+		blobstore.LimitPackContainerBytes,
+		blobstore.LimitPackFooterBytes,
+		blobstore.LimitPackEntryCount,
+	} {
+		t.Run(string(dimension), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+			content := []byte("live preflight blob")
+			entry := syntheticUnpackEntry(t, content, 6,
+				uint64(len(content)), uint64(len(content)))
+			f.addRow(entry.ID.String(), canonical(entry.ID.String()), len(content))
+			path := recordSyntheticUnpackPack(t, f, []pack.Entry{entry}, map[string][]byte{
+				entry.ID.String(): content,
+			})
+			rewriteUnpackPreflightFixture(t, path, dimension)
+
+			stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+			require.Error(err)
+			var limitErr *blobstore.LimitError
+			require.ErrorAs(err, &limitErr)
+			assert.Equal(dimension, limitErr.Dimension)
+			assert.Equal(packer.UnpackStats{}, stats)
+			assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(entry.ID.String()))))
+			assertUnpackPackPreserved(t, f, path, syntheticUnpackPackID, 1)
+		})
+	}
+}
+
+func TestUnpackRejectsFooterDatabaseMismatchBeforeWriting(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	content := randomContent(t, 600)
+	hash := f.addBlob(content, canonical)
+	packed := f.run(packer.Options{})
+	require.Equal(1, packed.PacksSealed)
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	path := filepath.Join(f.dir, "packs", entry.PackID[:2], entry.PackID+blobstore.PackExt)
+	_, err = f.store.DB().Exec(f.store.Rebind(`
+		UPDATE attachment_pack_index SET raw_len = raw_len + 1 WHERE blob_hash = ?`), hash)
+	require.NoError(err)
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err)
+	require.ErrorIs(err, pack.ErrCorrupt)
+	assert.Contains(err.Error(), hash)
+	assert.Contains(err.Error(), entry.PackID)
+	assert.Equal(packer.UnpackStats{}, stats)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(hash))))
+	assertUnpackPackPreserved(t, f, path, entry.PackID, 1)
+}
+
+func TestUnpackAcceptsBlobAtExactMaintenanceLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exact 64 MiB boundary test")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	content := make([]byte, blobstore.MaxMaintenanceBlobBytes)
+	hash := hashOf(content)
+	f.addRow(hash, canonical(hash), len(content))
+	packID := buildOrphanPack(t, f.dir, content)
+	packPath := recordExistingUnpackPack(t, f, packID)
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.NoError(err)
+	assert.Equal(1, stats.PacksUnpacked)
+	assert.Equal(1, stats.BlobsRestored)
+	assert.Equal(int64(blobstore.MaxMaintenanceBlobBytes), stats.BytesRestored)
+	assert.NoFileExists(packPath)
+	loosePath := filepath.Join(f.dir, filepath.FromSlash(canonical(hash)))
+	file, err := os.Open(loosePath)
+	require.NoError(err)
+	digest := sha256.New()
+	bytesRead, err := io.Copy(digest, file)
+	require.NoError(err)
+	require.NoError(file.Close())
+	assert.Equal(int64(blobstore.MaxMaintenanceBlobBytes), bytesRead)
+	assert.Equal(hash, hex.EncodeToString(digest.Sum(nil)))
+}
+
+func TestUnpackCorruptLaterBlobRetainsPackAuthority(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	contents := map[string][]byte{}
+	for range 2 {
+		content := randomContent(t, 600)
+		hash := f.addBlob(content, canonical)
+		contents[hash] = content
+	}
+	packed := f.run(packer.Options{})
+	require.Equal(1, packed.PacksSealed)
+	recs, err := f.store.ListPackRecords()
+	require.NoError(err)
+	require.Len(recs, 1)
+	entries, err := f.store.ListAttachmentPackEntries(recs[0].PackID)
+	require.NoError(err)
+	require.Len(entries, 2)
+	path := filepath.Join(f.dir, "packs", recs[0].PackID[:2], recs[0].PackID+blobstore.PackExt)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	require.NoError(err)
+	var damaged [1]byte
+	_, err = file.ReadAt(damaged[:], entries[1].Offset)
+	require.NoError(err)
+	damaged[0] ^= 0xff
+	_, err = file.WriteAt(damaged[:], entries[1].Offset)
+	require.NoError(err)
+	require.NoError(file.Close())
+
+	stats, err := packer.Unpack(context.Background(), f.store, f.dir)
+	require.Error(err)
+	require.ErrorIs(err, pack.ErrCorrupt)
+	assert.Equal(packer.UnpackStats{}, stats)
+	firstPath := filepath.Join(f.dir, filepath.FromSlash(canonical(entries[0].BlobHash)))
+	firstData, readErr := os.ReadFile(firstPath)
+	require.NoError(readErr, "a prior verified loose copy may remain harmlessly")
+	assert.Equal(contents[entries[0].BlobHash], firstData)
+	assert.NoFileExists(filepath.Join(f.dir, filepath.FromSlash(canonical(entries[1].BlobHash))))
+	assertUnpackPackPreserved(t, f, path, recs[0].PackID, 2)
 }
 
 func TestUnpackPrunesStaleMappings(t *testing.T) {

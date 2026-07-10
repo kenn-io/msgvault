@@ -12,10 +12,23 @@ import (
 
 	"go.kenn.io/kit/pack"
 
+	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+type unpackPackReader interface {
+	Entries() []pack.Entry
+	ReadBlob(hash string, maxBytes int64) ([]byte, error)
+	Close() error
+}
+
+// openUnpackPack is a narrow test seam for close-failure coverage. Production
+// always uses the retained-descriptor bounded maintenance reader.
+var openUnpackPack = func(path string) (unpackPackReader, error) {
+	return blobstore.OpenMaintenancePack(path)
+}
 
 // UnpackStats summarizes one unpack run.
 type UnpackStats struct {
@@ -25,8 +38,8 @@ type UnpackStats struct {
 	MappingsPruned int   // unreferenced stale pack index rows removed
 }
 
-// Unpack streams every live packed blob back to a canonical loose file
-// (hash-verified by pack.Reader.ReadBlob). Only blobs with live index rows
+// Unpack restores every live packed blob to a canonical loose file through a
+// bounded, hash-verifying maintenance reader. Only blobs with live index rows
 // are restored; dead footer entries are ignored. It then drops the pack's
 // index and attachment_packs rows and deletes the pack file. The caller must
 // hold the archive's exclusive-writer coverage AND the daemon must not be
@@ -81,7 +94,7 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 	if len(liveEntries) == 0 {
 		return dropDeadPack(st, path, packID)
 	}
-	r, err := pack.OpenReader(path, nil)
+	r, err := openUnpackPack(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("pack %s file is missing but %d blobs are indexed in it; "+
 			"restore the pack file (e.g. from a backup) before unpacking", packID, len(liveEntries))
@@ -89,12 +102,14 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 	if err != nil {
 		return fmt.Errorf("open pack %s: %w", packID, err)
 	}
-	restored, rawBytes, err := restoreEntries(ctx, r, liveEntries, attachmentsDir, packID)
-	if closeErr := r.Close(); closeErr != nil {
-		slog.Warn("close pack reader", "pack", packID, "error", closeErr)
-	}
+	planned, err := planRestoreEntries(ctx, r, liveEntries, packID)
 	if err != nil {
-		return err
+		return errors.Join(err, closeUnpackPack(r, packID))
+	}
+	restored, rawBytes, restoreErr := restoreEntries(ctx, r, planned, attachmentsDir, packID)
+	closeErr := closeUnpackPack(r, packID)
+	if restoreErr != nil || closeErr != nil {
+		return errors.Join(restoreErr, closeErr)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -114,38 +129,78 @@ func unpackOne(ctx context.Context, st *store.Store, attachmentsDir, packsDir, p
 	return nil
 }
 
-// restoreEntries writes every live index entry back to its canonical loose
-// file, resolving the authoritative read metadata from the pack footer.
-// Footer-only entries are dead and deliberately ignored. Any read or write
-// error (or a cancelled ctx) aborts the run with the pack untouched, so no
-// data can be lost.
-func restoreEntries(ctx context.Context, r *pack.Reader, liveEntries []store.PackIndexEntry, attachmentsDir, packID string) (int, int64, error) {
-	footerEntries := make(map[string]pack.Entry, len(r.Entries()))
-	for _, e := range r.Entries() {
+// planRestoreEntries validates the complete live index against the bounded
+// reader's authoritative footer before the first loose write. Footer-only
+// entries are dead and deliberately ignored.
+func planRestoreEntries(ctx context.Context, r unpackPackReader, liveEntries []store.PackIndexEntry, packID string) ([]string, error) {
+	footer := r.Entries()
+	footerEntries := make(map[string]pack.Entry, len(footer))
+	for _, e := range footer {
+		if _, duplicate := footerEntries[e.ID.String()]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate blob %s in pack %s footer", pack.ErrCorrupt, e.ID, packID)
+		}
 		footerEntries[e.ID.String()] = e
 	}
-	var restored int
-	var rawBytes int64
+	planned := make([]string, 0, len(liveEntries))
 	for _, live := range liveEntries {
 		if err := ctx.Err(); err != nil {
-			return restored, rawBytes, err
+			return nil, err
 		}
 		e, ok := footerEntries[live.BlobHash]
 		if !ok {
-			return restored, rawBytes, fmt.Errorf("indexed blob %s is absent from pack %s footer",
+			return nil, fmt.Errorf("indexed blob %s is absent from pack %s footer",
 				live.BlobHash, packID)
 		}
-		data, err := r.ReadBlob(e)
-		if err != nil {
-			return restored, rawBytes, fmt.Errorf("read blob %s from pack %s: %w", e.ID, packID, err)
+		if live.PackID != packID || uint64(live.Offset) != e.Offset || //nolint:gosec // store scan rejects negative values
+			uint64(live.StoredLen) != e.StoredLen || //nolint:gosec // store scan rejects negative values
+			uint64(live.RawLen) != e.RawLen || //nolint:gosec // store scan rejects negative values
+			pack.BlobFlags(live.Flags) != e.Flags || live.CRC32C != e.CRC32C {
+			return nil, fmt.Errorf("%w: indexed metadata for blob %s does not match pack %s footer",
+				pack.ErrCorrupt, live.BlobHash, packID)
 		}
-		if err := restoreBlob(attachmentsDir, e.ID.String(), data); err != nil {
-			return restored, rawBytes, fmt.Errorf("restore blob %s from pack %s: %w", e.ID, packID, err)
+		if e.RawLen > uint64(maintenanceBlobBytes) { //nolint:gosec // positive fixed production/test limit
+			return nil, fmt.Errorf("plan blob %s from pack %s: %w", live.BlobHash, packID,
+				&blobstore.LimitError{Dimension: blobstore.LimitBlobRawBytes,
+					Actual: e.RawLen, Limit: uint64(maintenanceBlobBytes)}) //nolint:gosec // positive fixed production/test limit
+		}
+		if e.StoredLen > uint64(maintenanceBlobBytes) { //nolint:gosec // positive fixed production/test limit
+			return nil, fmt.Errorf("plan blob %s from pack %s: %w", live.BlobHash, packID,
+				&blobstore.LimitError{Dimension: blobstore.LimitBlobStoredBytes,
+					Actual: e.StoredLen, Limit: uint64(maintenanceBlobBytes)}) //nolint:gosec // positive fixed production/test limit
+		}
+		planned = append(planned, live.BlobHash)
+	}
+	return planned, nil
+}
+
+// restoreEntries writes a fully planned pack's live entries back to canonical
+// loose files. Any read or write error (or a cancelled ctx) aborts the run
+// with pack authority untouched, so already-restored loose copies are harmless.
+func restoreEntries(ctx context.Context, r unpackPackReader, planned []string, attachmentsDir, packID string) (int, int64, error) {
+	var restored int
+	var rawBytes int64
+	for _, hash := range planned {
+		if err := ctx.Err(); err != nil {
+			return restored, rawBytes, err
+		}
+		data, err := r.ReadBlob(hash, maintenanceBlobBytes)
+		if err != nil {
+			return restored, rawBytes, fmt.Errorf("read blob %s from pack %s: %w", hash, packID, err)
+		}
+		if err := restoreBlob(attachmentsDir, hash, data); err != nil {
+			return restored, rawBytes, fmt.Errorf("restore blob %s from pack %s: %w", hash, packID, err)
 		}
 		restored++
 		rawBytes += int64(len(data))
 	}
 	return restored, rawBytes, nil
+}
+
+func closeUnpackPack(r unpackPackReader, packID string) error {
+	if err := r.Close(); err != nil {
+		return fmt.Errorf("close pack %s reader before metadata removal: %w", packID, err)
+	}
+	return nil
 }
 
 // restoreBlob writes one blob to its canonical loose path via the export
