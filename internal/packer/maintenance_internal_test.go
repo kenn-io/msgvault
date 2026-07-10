@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,6 +70,13 @@ func maintenanceHash(content []byte) string {
 }
 
 func maintenanceCanonical(hash string) string { return hash[:2] + "/" + hash }
+
+func mustNormalizedBlobHash(t *testing.T, hash string) normalizedBlobHash {
+	t.Helper()
+	normalized, err := normalizeBlobHash(hash)
+	require.NoError(t, err)
+	return normalized
+}
 
 func (f *maintenanceFixture) addRow(hash, relPath string, size int) {
 	f.t.Helper()
@@ -581,11 +589,11 @@ func TestCanonicalizeLooseSourceStopsBeforeDatabaseCommitWhenContextCancels(t *t
 	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
 	ctx := &cancelAfterErrContext{Context: context.Background(), cancelAfter: 3}
 
-	err := canonicalizeLooseSource(ctx, f.store, f.dir, hash, legacy)
+	err := canonicalizeLooseSource(ctx, f.store, f.dir, hash, mustNormalizedBlobHash(t, hash), legacy)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.FileExists(legacy, "source deletion must follow a successful DB commit")
 	assert.Equal("legacy/"+hash, f.storagePath(hash))
-	assert.FileExists(canonicalLoosePath(f.dir, hash),
+	assert.FileExists(canonicalLoosePath(f.dir, mustNormalizedBlobHash(t, hash)),
 		"a fully published canonical copy is harmless recovery data")
 }
 
@@ -619,7 +627,7 @@ func TestRunFailsClosedWhenAtomicNoReplacePublishIsUnsupported(t *testing.T) {
 	f := newMaintenanceFixture(t)
 	content := make([]byte, 1025)
 	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
-	canonical := canonicalLoosePath(f.dir, hash)
+	canonical := canonicalLoosePath(f.dir, mustNormalizedBlobHash(t, hash))
 	oldLink := linkLooseFile
 	linkLooseFile = func(_, _ string) error { return errors.New("atomic no-replace unavailable") }
 	t.Cleanup(func() { linkLooseFile = oldLink })
@@ -635,4 +643,183 @@ func TestRunFailsClosedWhenAtomicNoReplacePublishIsUnsupported(t *testing.T) {
 	stagingFiles, globErr := filepath.Glob(filepath.Join(filepath.Dir(canonical), ".*.staging"))
 	require.NoError(globErr)
 	assert.Empty(stagingFiles, "failed publication cleans only its private same-directory staging file")
+}
+
+func TestRunRejectsCanonicalSymlinkToLegacySource(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := make([]byte, 1025)
+	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	canonical := filepath.Join(f.dir, filepath.FromSlash(maintenanceCanonical(hash)))
+	require.NoError(os.MkdirAll(filepath.Dir(canonical), 0o700))
+	if err := os.Symlink(legacy, canonical); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.Error(err)
+	assert.FileExists(legacy)
+	assert.Equal("legacy/"+hash, f.storagePath(hash))
+	info, lstatErr := os.Lstat(canonical)
+	require.NoError(lstatErr)
+	assert.NotZero(info.Mode() & os.ModeSymlink)
+}
+
+func TestRunNeverRemovesLegacyAliasOfCanonicalObject(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := make([]byte, 1025)
+	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	canonical := filepath.Join(f.dir, filepath.FromSlash(maintenanceCanonical(hash)))
+	require.NoError(os.MkdirAll(filepath.Dir(canonical), 0o700))
+	if err := os.Link(legacy, canonical); err != nil {
+		t.Skipf("hard-link identity fixture unavailable: %v", err)
+	}
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsDeferredOversized)
+	assert.FileExists(legacy, "an alias of canonical storage must never be removed")
+	assert.FileExists(canonical)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
+	legacyInfo, err := os.Stat(legacy)
+	require.NoError(err)
+	canonicalInfo, err := os.Stat(canonical)
+	require.NoError(err)
+	assert.True(os.SameFile(legacyInfo, canonicalInfo))
+}
+
+func TestRunPreservesInjectedCaseAliasIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := make([]byte, 1025)
+	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	canonical := f.write(maintenanceCanonical(hash), content)
+	oldSameFile := sameLooseFile
+	sameLooseFile = func(_, _ fs.FileInfo) bool { return true }
+	t.Cleanup(func() { sameLooseFile = oldSameFile })
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsDeferredOversized)
+	assert.FileExists(legacy, "case aliases of canonical storage must be preserved")
+	assert.FileExists(canonical)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
+}
+
+func TestRunSyncsExistingCanonicalDirectoryBeforeCommittingLegacyMigration(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := make([]byte, 1025)
+	hash, legacy := f.addBlob(content, func(hash string) string { return "legacy/" + hash })
+	canonical := f.write(maintenanceCanonical(hash), content)
+	oldSyncDir := pack.SyncDir
+	calls := 0
+	pack.SyncDir = func(path string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected canonical directory sync failure")
+		}
+		return oldSyncDir(path)
+	}
+	t.Cleanup(func() { pack.SyncDir = oldSyncDir })
+
+	_, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.ErrorContains(err, "injected canonical directory sync failure")
+	assert.FileExists(legacy)
+	assert.FileExists(canonical)
+	assert.Equal("legacy/"+hash, f.storagePath(hash))
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsDeferredOversized)
+	assert.NoFileExists(legacy)
+	assert.FileExists(canonical)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
+}
+
+func TestRunPacksAndNormalizesUppercaseAttachmentHash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newMaintenanceFixture(t)
+	content := []byte("uppercase attachment hash content")
+	hash := maintenanceHash(content)
+	uppercase := strings.ToUpper(hash)
+	uppercasePath := uppercase[:2] + "/" + uppercase
+	f.addRow(uppercase, uppercasePath, len(content))
+	f.write(uppercasePath, content)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsPacked)
+	assert.Equal(maintenanceCanonical(hash), f.storagePath(hash))
+	entry, err := f.store.GetAttachmentPackEntry(hash)
+	require.NoError(err)
+	require.NotNil(entry)
+	assert.Equal(content, f.read(hash))
+}
+
+func TestRunPreservesMalformedOversizedAttachmentWithoutPanic(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	malformed := "x"
+	path := "legacy/" + malformed
+	f.addRow(malformed, path, 1025)
+	full := f.write(path, make([]byte, 1025))
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(err)
+	assert.Zero(stats.BlobsPacked)
+	assert.FileExists(full)
+	assert.Equal(path, f.storagePath(malformed))
+}
+
+func TestRunNormalizesUppercaseReferenceBeforeLooseSweep(t *testing.T) {
+	assert := assert.New(t)
+	setMaintenanceTestLimits(t, blobstore.MaxMaintenancePackEntries)
+	f := newMaintenanceFixture(t)
+	content := []byte("lowercase canonical file protected by uppercase reference")
+	hash := maintenanceHash(content)
+	uppercase := strings.ToUpper(hash)
+	f.addRow(uppercase, "missing/"+uppercase, len(content))
+	canonical := f.write(maintenanceCanonical(hash), content)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(t, err)
+	assert.Equal(1, stats.BlobsPacked)
+	assert.Zero(stats.LooseOrphansRemoved)
+	assert.NoFileExists(canonical)
+	assert.Equal(content, f.read(hash))
+}
+
+func TestRunMalformedReferenceSuppressesUnrelatedLooseDeletion(t *testing.T) {
+	f := newMaintenanceFixture(t)
+	f.addRow("malformed", "missing/malformed", 10)
+	unrelated := []byte("unrelated unreferenced loose content")
+	unrelatedHash := maintenanceHash(unrelated)
+	unrelatedPath := f.write(maintenanceCanonical(unrelatedHash), unrelated)
+
+	stats, err := Run(context.Background(), f.store, f.dir, Options{})
+	require.NoError(t, err)
+	assert.Zero(t, stats.LooseOrphansRemoved)
+	assert.FileExists(t, unrelatedPath)
+}
+
+func TestRestoreBlobRejectsMalformedHashWithoutDerivingPath(t *testing.T) {
+	dir := t.TempDir()
+	err := restoreBlob(dir, "x", nil)
+	require.Error(t, err)
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries)
 }

@@ -90,10 +90,11 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 		return stats, fmt.Errorf("pruned mapping count %d exceeds platform int", pruned)
 	}
 	stats.MappingsPruned = int(pruned)
-	referenced, err := st.ListReferencedBlobHashes()
+	rawReferenced, err := st.ListReferencedBlobHashes()
 	if err != nil {
 		return stats, err
 	}
+	referenced, malformedReferenced := normalizeReferencedInventory(rawReferenced)
 	if err := reconcilePacks(ctx, st, attachmentsDir, packsDir, referenced, &stats); err != nil {
 		return stats, fmt.Errorf("reconcile orphan packs: %w", err)
 	}
@@ -106,14 +107,54 @@ func Run(ctx context.Context, st *store.Store, attachmentsDir string, opts Optio
 	if err := ctx.Err(); err != nil {
 		return stats, err
 	}
-	indexed, err := st.ListIndexedBlobEntries()
+	rawIndexed, err := st.ListIndexedBlobEntries()
 	if err != nil {
 		return stats, err
 	}
-	if err := sweepLoose(ctx, st, attachmentsDir, packsDir, referenced, indexed, &stats); err != nil {
+	indexed, malformedIndexed := normalizeIndexedInventory(rawIndexed)
+	if err := sweepLoose(ctx, st, attachmentsDir, packsDir, referenced, indexed,
+		malformedReferenced || malformedIndexed, &stats); err != nil {
 		return stats, err
 	}
 	return stats, nil
+}
+
+func normalizeReferencedInventory(raw map[string]struct{}) (map[normalizedBlobHash]struct{}, bool) {
+	normalized := make(map[normalizedBlobHash]struct{}, len(raw))
+	malformed := false
+	for original := range raw {
+		hash, err := normalizeBlobHash(original)
+		if err != nil {
+			malformed = true
+			slog.Error("malformed referenced attachment hash; suppressing loose orphan deletion",
+				"original_hash", original, "error", err)
+			continue
+		}
+		normalized[hash] = struct{}{}
+	}
+	return normalized, malformed
+}
+
+func normalizeIndexedInventory(raw map[string]store.PackIndexEntry) (map[normalizedBlobHash]store.PackIndexEntry, bool) {
+	normalized := make(map[normalizedBlobHash]store.PackIndexEntry, len(raw))
+	malformed := false
+	for original, entry := range raw {
+		hash, err := normalizeBlobHash(original)
+		if err != nil {
+			malformed = true
+			slog.Error("malformed packed attachment hash; suppressing loose orphan deletion",
+				"original_hash", original, "error", err)
+			continue
+		}
+		if _, duplicate := normalized[hash]; duplicate {
+			malformed = true
+			slog.Error("case-colliding packed attachment hashes; suppressing loose orphan deletion",
+				"original_hash", original, "hash", hash.String())
+			continue
+		}
+		normalized[hash] = entry
+	}
+	return normalized, malformed
 }
 
 // cleanStaging removes every *.staging file directly under packsDir. The
@@ -144,7 +185,7 @@ func cleanStaging(ctx context.Context, packsDir string) error {
 
 // reconcilePacks walks packsDir for *.mvpack files with no attachment_packs
 // row and adopts or removes each one.
-func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced map[string]struct{}, stats *Stats) error {
+func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced map[normalizedBlobHash]struct{}, stats *Stats) error {
 	existingBlobs := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := existingBlobs.Close(); err != nil {
@@ -190,7 +231,7 @@ func reconcilePacks(ctx context.Context, st *store.Store, attachmentsDir, packsD
 // adopts verified recovery candidates only when every referenced candidate in
 // the pack verifies. One failure quarantines the whole orphan so a partial
 // adoption cannot hide the damaged entry from future reconciliation.
-func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced map[string]struct{}, stats *Stats) error {
+func reconcileOnePack(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, path, id string, referenced map[normalizedBlobHash]struct{}, stats *Stats) error {
 	r, err := blobstore.OpenMaintenancePack(path)
 	if err != nil {
 		var limitErr *blobstore.LimitError
@@ -274,7 +315,7 @@ type orphanCandidatePlan struct {
 // Unreferenced footer entries are dead and are never size-gated or read. The
 // PackRecord retains full immutable footer totals, while failure and deferral
 // state lets the caller enforce all-or-nothing adoption.
-func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced map[string]struct{}) (orphanCollection, error) {
+func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobstore.Store, r *blobstore.MaintenancePackReader, id string, referenced map[normalizedBlobHash]struct{}) (orphanCollection, error) {
 	entries := r.Entries()
 	result := orphanCollection{record: store.PackRecord{
 		PackID:     id,
@@ -287,12 +328,15 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 			return result, err
 		}
 		result.record.StoredBytes += int64(e.StoredLen) //nolint:gosec // stored lengths are bounded by pack.MaxRawLen
-		hash := e.ID.String()
+		hash, err := normalizeBlobHash(e.ID.String())
+		if err != nil {
+			return result, fmt.Errorf("normalize orphan footer blob id: %w", err)
+		}
 		if _, live := referenced[hash]; !live {
 			continue
 		}
 		result.withheld++
-		existing, err := st.GetAttachmentPackEntry(hash)
+		existing, err := st.GetAttachmentPackEntry(hash.String())
 		if err != nil {
 			return result, err
 		}
@@ -321,10 +365,13 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 	var candidates []pack.Entry
 	for _, plan := range plans {
 		e := plan.entry
-		hash := e.ID.String()
+		hash, err := normalizeBlobHash(e.ID.String())
+		if err != nil {
+			return result, fmt.Errorf("normalize planned orphan blob id: %w", err)
+		}
 		existing := plan.existing
 		if existing != nil && existing.PackID != id {
-			_, _, readErr := readExistingBounded(existingBlobs, hash, maintenanceBlobBytes)
+			_, _, readErr := readExistingBounded(existingBlobs, hash.String(), maintenanceBlobBytes)
 			if readErr == nil {
 				continue
 			}
@@ -347,8 +394,11 @@ func collectAdoptable(ctx context.Context, st *store.Store, existingBlobs *blobs
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		hash := e.ID.String()
-		if _, err := r.ReadBlob(hash, maintenanceBlobBytes); err != nil {
+		hash, err := normalizeBlobHash(e.ID.String())
+		if err != nil {
+			return result, fmt.Errorf("normalize orphan candidate blob id: %w", err)
+		}
+		if _, err := r.ReadBlob(hash.String(), maintenanceBlobBytes); err != nil {
 			result.failed++
 			slog.Warn("orphan pack entry failed verification; not adopting",
 				"pack", id, "hash", hash, "error", err)
@@ -510,8 +560,26 @@ func packLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir st
 // readLooseBlob loads and verifies one enumerated blob's bytes; a false
 // return means the blob was skipped (counted in stats where applicable).
 func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, b store.UnpackedBlob, stats *Stats) ([]byte, string, bool, error) {
+	hash, err := normalizeBlobHash(b.Hash)
+	if err != nil {
+		slog.Error("malformed unpacked attachment hash; preserving recorded candidates",
+			"original_hash", b.Hash, "error", err)
+		return nil, "", false, nil
+	}
 	var sawMissing, sawCorrupt, sawOversized bool
-	for _, path := range b.Paths {
+	paths := append([]string(nil), b.Paths...)
+	canonicalRel := canonicalLooseRel(hash)
+	canonicalListed := false
+	for _, path := range paths {
+		if filepath.Clean(filepath.FromSlash(path)) == filepath.Clean(filepath.FromSlash(canonicalRel)) {
+			canonicalListed = true
+			break
+		}
+	}
+	if b.Hash != hash.String() && !canonicalListed {
+		paths = append(paths, canonicalRel)
+	}
+	for _, path := range paths {
 		rel := filepath.FromSlash(path)
 		if !filepath.IsLocal(rel) {
 			slog.Warn("skipping blob candidate with non-local recorded path", "hash", b.Hash, "path", path)
@@ -529,17 +597,30 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 			continue
 		}
 		if info.Size() > maintenanceBlobBytes {
-			if isCanonicalLoosePath(attachmentsDir, b.Hash, full) {
+			if isCanonicalLoosePath(attachmentsDir, hash, full) {
+				if b.Hash != hash.String() {
+					if err := validateCanonicalLooseObject(full); err != nil {
+						return nil, "", false, err
+					}
+					if err := pack.SyncDir(filepath.Dir(full)); err != nil {
+						return nil, "", false, fmt.Errorf("sync canonical loose directory before hash normalization: %w", err)
+					}
+					if err := st.CanonicalizeAttachmentBlobPaths(b.Hash); err != nil {
+						return nil, "", false, err
+					}
+				}
 				sawOversized = true
 				slog.Warn("loose blob exceeds maintenance ceiling; leaving canonical copy loose",
-					"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
+					"hash", hash.String(), "original_hash", b.Hash,
+					"raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
 				break
 			}
-			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, full); err != nil {
+			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, hash, full); err != nil {
 				if errors.Is(err, errLooseHashMismatch) {
 					sawCorrupt = true
 					slog.Error("oversized loose blob candidate bytes do not match recorded hash",
-						"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
+						"hash", hash.String(), "original_hash", b.Hash,
+						"raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
 					continue
 				}
 				if errors.Is(err, fs.ErrNotExist) {
@@ -550,20 +631,22 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 			}
 			sawOversized = true
 			slog.Warn("loose blob exceeds maintenance ceiling; leaving migrated canonical copy loose",
-				"hash", b.Hash, "raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
+				"hash", hash.String(), "original_hash", b.Hash,
+				"raw_bytes", info.Size(), "max_raw_bytes", maintenanceBlobBytes)
 			break
 		}
-		data, observedSize, err := readVerifiedLoose(full, b.Hash, maintenanceBlobBytes)
+		data, observedSize, err := readVerifiedLoose(full, hash, maintenanceBlobBytes)
 		if errors.Is(err, blobstore.ErrBlobTooLarge) {
 			// The descriptor grew after stat. Handle it through the same streaming
 			// canonicalization path without allocating the new size.
-			if isCanonicalLoosePath(attachmentsDir, b.Hash, full) {
+			if isCanonicalLoosePath(attachmentsDir, hash, full) {
 				sawOversized = true
 				slog.Warn("loose blob grew beyond maintenance ceiling; leaving canonical copy loose",
-					"hash", b.Hash, "raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
+					"hash", hash.String(), "original_hash", b.Hash,
+					"raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
 				break
 			}
-			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, full); err != nil {
+			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, hash, full); err != nil {
 				if errors.Is(err, errLooseHashMismatch) {
 					sawCorrupt = true
 					continue
@@ -572,18 +655,25 @@ func readLooseBlob(ctx context.Context, st *store.Store, attachmentsDir string, 
 			}
 			sawOversized = true
 			slog.Warn("loose blob grew beyond maintenance ceiling; leaving migrated canonical copy loose",
-				"hash", b.Hash, "raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
+				"hash", hash.String(), "original_hash", b.Hash,
+				"raw_bytes", observedSize, "max_raw_bytes", maintenanceBlobBytes)
 			break
 		}
 		if err != nil {
 			if errors.Is(err, errLooseHashMismatch) {
 				sawCorrupt = true
 				slog.Error("loose blob candidate bytes do not match recorded hash",
-					"hash", b.Hash, "path", path)
+					"hash", hash.String(), "original_hash", b.Hash, "path", path)
 				continue
 			}
 			slog.Warn("skipping unreadable loose blob candidate", "hash", b.Hash, "path", path, "error", err)
 			continue
+		}
+		if b.Hash != hash.String() {
+			if err := canonicalizeLooseSource(ctx, st, attachmentsDir, b.Hash, hash, full); err != nil {
+				return nil, "", false, err
+			}
+			full = canonicalLoosePath(attachmentsDir, hash)
 		}
 		return data, full, true, nil
 	}
@@ -659,7 +749,10 @@ func indexEntry(packID string, e pack.Entry) store.PackIndexEntry {
 // sweepLoose classifies every regular hash-named loose file outside packs/.
 // Unreferenced files are best-effort garbage; referenced/indexed files retain
 // the verified sweep/recovery behavior; referenced/unindexed files stay loose.
-func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir string, referenced map[string]struct{}, indexed map[string]store.PackIndexEntry, stats *Stats) error {
+func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir string,
+	referenced map[normalizedBlobHash]struct{}, indexed map[normalizedBlobHash]store.PackIndexEntry,
+	suppressOrphanDeletion bool, stats *Stats,
+) error {
 	packed := blobstore.New(st, attachmentsDir)
 	defer func() {
 		if err := packed.Close(); err != nil {
@@ -689,7 +782,15 @@ func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir s
 		if !isBlobHashName(d.Name()) {
 			return nil
 		}
-		if _, live := referenced[d.Name()]; !live {
+		hash, hashErr := normalizeBlobHash(d.Name())
+		if hashErr != nil {
+			slog.Error("malformed loose attachment filename; preserving file", "path", path, "error", hashErr)
+			return nil
+		}
+		if _, live := referenced[hash]; !live {
+			if suppressOrphanDeletion {
+				return nil
+			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -700,33 +801,41 @@ func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir s
 			stats.LooseOrphansRemoved++
 			return nil
 		}
-		entry, ok := indexed[d.Name()]
+		entry, ok := indexed[hash]
 		if !ok {
-			canonical := canonicalLoosePath(attachmentsDir, d.Name())
+			canonical := canonicalLoosePath(attachmentsDir, hash)
 			if filepath.Clean(path) == filepath.Clean(canonical) {
 				return nil
 			}
 			// A committed noncanonical migration can leave its source behind when
 			// best-effort removal fails. Retry only after the canonical copy verifies.
-			if verifyErr := verifyLooseStream(ctx, canonical, d.Name()); verifyErr != nil {
+			if verifyErr := verifyLooseStream(ctx, canonical, hash); verifyErr != nil {
 				return nil //nolint:nilerr // unverifiable canonical bytes deliberately preserve the legacy source
 			}
-			if err := removeLooseFile(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				slog.Warn("retry legacy loose blob cleanup", "hash", d.Name(), "path", path, "error", err)
+			if err := pack.SyncDir(filepath.Dir(canonical)); err != nil {
+				slog.Warn("preserve legacy loose blob after canonical directory sync failure",
+					"hash", hash.String(), "path", path, "error", err)
 				return nil
 			}
-			stats.LooseSwept++
+			removed, removeErr := removeIndependentLoose(path, canonical)
+			if removeErr != nil {
+				slog.Warn("retry legacy loose blob cleanup", "hash", hash.String(), "path", path, "error", removeErr)
+				return nil
+			}
+			if removed {
+				stats.LooseSwept++
+			}
 			return nil
 		}
 		// An index row alone is not proof that the packed copy is readable:
 		// restored/corrupt metadata or damaged pack bytes can make blobstore
 		// reads fail. Verify through the production read path before deleting a
 		// loose recovery copy.
-		_, _, err = packed.ReadBounded(d.Name(), maintenanceBlobBytes)
+		_, _, err = packed.ReadBounded(hash.String(), maintenanceBlobBytes)
 		if err != nil {
 			slog.Error("packed copy is unreadable; validating loose recovery candidate",
 				"path", path, "hash", d.Name(), "pack", entry.PackID, "error", err)
-			if recoverErr := canonicalizeLooseSource(ctx, st, attachmentsDir, d.Name(), path); recoverErr != nil {
+			if recoverErr := canonicalizeLooseSource(ctx, st, attachmentsDir, d.Name(), hash, path); recoverErr != nil {
 				var storeErr *canonicalizeStoreError
 				if errors.As(recoverErr, &storeErr) || errors.Is(recoverErr, context.Canceled) ||
 					errors.Is(recoverErr, context.DeadlineExceeded) {
@@ -736,10 +845,10 @@ func sweepLoose(ctx context.Context, st *store.Store, attachmentsDir, packsDir s
 					"path", path, "hash", d.Name(), "error", recoverErr)
 				return nil
 			}
-			if err := st.DeletePackIndexEntry(d.Name()); err != nil {
+			if err := st.DeletePackIndexEntry(hash.String()); err != nil {
 				return err
 			}
-			delete(indexed, d.Name())
+			delete(indexed, hash)
 			slog.Error("dropped unreadable packed index after verifying loose recovery copy",
 				"path", path, "hash", d.Name())
 			return nil

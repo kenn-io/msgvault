@@ -152,6 +152,11 @@ func restoreEntries(ctx context.Context, r *pack.Reader, liveEntries []store.Pac
 // store (atomic write, dedup, hash validation). StoreAttachmentFile skips
 // empty content, so zero-length blobs are written directly.
 func restoreBlob(attachmentsDir, hash string, data []byte) error {
+	normalized, err := normalizeBlobHash(hash)
+	if err != nil {
+		return fmt.Errorf("restore attachment with invalid hash %q: %w", hash, err)
+	}
+	hash = normalized.String()
 	if len(data) == 0 {
 		dir := filepath.Join(attachmentsDir, hash[:2])
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -160,7 +165,7 @@ func restoreBlob(attachmentsDir, hash string, data []byte) error {
 		return os.WriteFile(filepath.Join(dir, hash), nil, 0o600)
 	}
 	att := &mime.Attachment{Content: data, ContentHash: hash}
-	_, err := export.StoreAttachmentFile(attachmentsDir, att)
+	_, err = export.StoreAttachmentFile(attachmentsDir, att)
 	return err
 }
 

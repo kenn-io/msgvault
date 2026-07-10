@@ -11,10 +11,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/pack"
 
 	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -28,6 +30,9 @@ var (
 	// linkLooseFile lets tests force unsupported atomic no-replace publication
 	// and destination races. Production always uses os.Link.
 	linkLooseFile = os.Link
+	// sameLooseFile lets portable tests model case-insensitive path aliases.
+	// Production always uses os.SameFile.
+	sameLooseFile = os.SameFile
 )
 
 var errLooseHashMismatch = errors.New("loose attachment bytes do not match hash")
@@ -39,19 +44,34 @@ func (e *canonicalizeStoreError) Unwrap() error { return e.err }
 
 const looseCopyBufferBytes = 128 << 10
 
-func canonicalLooseRel(hash string) string { return hash[:2] + "/" + hash }
+type normalizedBlobHash string
 
-func canonicalLoosePath(attachmentsDir, hash string) string {
+func normalizeBlobHash(raw string) (normalizedBlobHash, error) {
+	normalized := strings.ToLower(raw)
+	if err := export.ValidateContentHash(normalized); err != nil {
+		return "", err
+	}
+	return normalizedBlobHash(normalized), nil
+}
+
+func (h normalizedBlobHash) String() string { return string(h) }
+
+func canonicalLooseRel(hash normalizedBlobHash) string {
+	value := hash.String()
+	return value[:2] + "/" + value
+}
+
+func canonicalLoosePath(attachmentsDir string, hash normalizedBlobHash) string {
 	return filepath.Join(attachmentsDir, filepath.FromSlash(canonicalLooseRel(hash)))
 }
 
-func isCanonicalLoosePath(attachmentsDir, hash, path string) bool {
+func isCanonicalLoosePath(attachmentsDir string, hash normalizedBlobHash, path string) bool {
 	return filepath.Clean(path) == filepath.Clean(canonicalLoosePath(attachmentsDir, hash))
 }
 
 // readVerifiedLoose buffers exactly the descriptor's stat-reported size,
 // bounded before allocation, and probes one more byte to detect growth.
-func readVerifiedLoose(path, hash string, limit int64) ([]byte, int64, error) {
+func readVerifiedLoose(path string, hash normalizedBlobHash, limit int64) ([]byte, int64, error) {
 	f, err := openLooseFile(path)
 	if err != nil {
 		return nil, 0, err
@@ -88,7 +108,7 @@ func readVerifiedLoose(path, hash string, limit int64) ([]byte, int64, error) {
 	if !errors.Is(probeErr, io.EOF) {
 		return nil, size, fmt.Errorf("probe loose blob growth: %w", probeErr)
 	}
-	if maintenanceHashBytes(data) != hash {
+	if maintenanceHashBytes(data) != hash.String() {
 		return nil, size, errLooseHashMismatch
 	}
 	return data, size, nil
@@ -102,7 +122,14 @@ func maintenanceHashBytes(data []byte) string {
 // verifyLooseStream hashes a file through a fixed-size buffer. The before and
 // after descriptor stats ensure a concurrently changed source is never
 // accepted as a canonical recovery copy.
-func verifyLooseStream(ctx context.Context, path, hash string) error {
+func verifyLooseStream(ctx context.Context, path string, hash normalizedBlobHash) error {
+	lstatInfo, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if err := validateCanonicalLooseInfo(path, lstatInfo); err != nil {
+		return err
+	}
 	f, err := openLooseFile(path)
 	if err != nil {
 		return err
@@ -111,6 +138,9 @@ func verifyLooseStream(ctx context.Context, path, hash string) error {
 	before, err := f.Stat()
 	if err != nil {
 		return err
+	}
+	if !sameLooseFile(lstatInfo, before) {
+		return fmt.Errorf("canonical loose blob changed identity before open: %s", path)
 	}
 	digest := sha256.New()
 	buf := make([]byte, looseCopyBufferBytes)
@@ -139,8 +169,23 @@ func verifyLooseStream(ctx context.Context, path, hash string) error {
 		!after.ModTime().Equal(before.ModTime()) {
 		return errors.New("loose attachment changed while hashing")
 	}
-	if hex.EncodeToString(digest.Sum(nil)) != hash {
+	if hex.EncodeToString(digest.Sum(nil)) != hash.String() {
 		return errLooseHashMismatch
+	}
+	return nil
+}
+
+func validateCanonicalLooseObject(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	return validateCanonicalLooseInfo(path, info)
+}
+
+func validateCanonicalLooseInfo(path string, info fs.FileInfo) error {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("canonical loose blob is not an independent regular file: %s", path)
 	}
 	return nil
 }
@@ -148,13 +193,21 @@ func verifyLooseStream(ctx context.Context, path, hash string) error {
 // materializeCanonicalLoose makes a streaming-verified canonical copy without
 // replacing any existing file. It does not update the database or remove the
 // source; callers preserve that ordering around the transaction boundary.
-func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source string) (string, error) {
+func materializeCanonicalLoose(ctx context.Context, attachmentsDir string, hash normalizedBlobHash, source string) (string, error) {
 	canonical := canonicalLoosePath(attachmentsDir, hash)
 	if isCanonicalLoosePath(attachmentsDir, hash, source) {
-		err := verifyLooseStream(ctx, source, hash)
-		return canonical, err
+		if err := verifyLooseStream(ctx, source, hash); err != nil {
+			return "", err
+		}
+		if err := pack.SyncDir(filepath.Dir(canonical)); err != nil {
+			return "", fmt.Errorf("sync existing canonical loose directory: %w", err)
+		}
+		return canonical, nil
 	}
 	if err := verifyLooseStream(ctx, canonical, hash); err == nil {
+		if err := pack.SyncDir(filepath.Dir(canonical)); err != nil {
+			return "", fmt.Errorf("sync existing canonical loose directory: %w", err)
+		}
 		return canonical, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("verify existing canonical loose blob: %w", err)
@@ -164,7 +217,7 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 	if err := pack.MkdirAllSynced(parent); err != nil {
 		return "", fmt.Errorf("create synced canonical loose directory: %w", err)
 	}
-	staging, err := os.CreateTemp(parent, "."+hash+".*.staging")
+	staging, err := os.CreateTemp(parent, "."+hash.String()+".*.staging")
 	if err != nil {
 		return "", fmt.Errorf("create canonical loose staging file: %w", err)
 	}
@@ -222,7 +275,7 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 	if copied != beforeClose.Size() {
 		return "", errors.New("loose attachment changed while copying")
 	}
-	if hex.EncodeToString(digest.Sum(nil)) != hash {
+	if hex.EncodeToString(digest.Sum(nil)) != hash.String() {
 		return "", errLooseHashMismatch
 	}
 	if err := staging.Sync(); err != nil {
@@ -234,6 +287,9 @@ func materializeCanonicalLoose(ctx context.Context, attachmentsDir, hash, source
 	if err := publishLooseNoClobber(stagingPath, canonical); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			if verifyErr := verifyLooseStream(ctx, canonical, hash); verifyErr == nil {
+				if syncErr := pack.SyncDir(filepath.Dir(canonical)); syncErr != nil {
+					return "", fmt.Errorf("sync winning canonical loose directory: %w", syncErr)
+				}
 				return canonical, nil
 			}
 		}
@@ -262,7 +318,7 @@ func publishLooseNoClobber(staging, canonical string) error {
 
 // canonicalizeLooseSource publishes verified canonical bytes, commits the DB
 // path update, and only then attempts best-effort legacy deletion.
-func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDir, hash, source string) error {
+func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDir, originalHash string, hash normalizedBlobHash, source string) error {
 	canonical, err := materializeCanonicalLoose(ctx, attachmentsDir, hash, source)
 	if err != nil {
 		return err
@@ -270,14 +326,37 @@ func canonicalizeLooseSource(ctx context.Context, st *store.Store, attachmentsDi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := st.CanonicalizeAttachmentBlobPaths(hash); err != nil {
+	if err := st.CanonicalizeAttachmentBlobPaths(originalHash); err != nil {
 		return &canonicalizeStoreError{err: fmt.Errorf(
-			"canonicalize attachment blob paths for %s: %w", hash, err)}
+			"canonicalize attachment blob paths for %s: %w", originalHash, err)}
 	}
-	if filepath.Clean(source) != filepath.Clean(canonical) {
-		if err := removeLooseFile(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("remove canonicalized legacy loose blob", "hash", hash, "path", source, "error", err)
-		}
+	if _, err := removeIndependentLoose(source, canonical); err != nil {
+		slog.Warn("preserve canonicalized legacy loose blob after identity check",
+			"hash", hash.String(), "original_hash", originalHash, "path", source, "error", err)
 	}
 	return nil
+}
+
+func removeIndependentLoose(source, canonical string) (bool, error) {
+	if filepath.Clean(source) == filepath.Clean(canonical) {
+		return false, nil
+	}
+	sourceInfo, err := os.Stat(source)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat legacy loose source before removal: %w", err)
+	}
+	canonicalInfo, err := os.Stat(canonical)
+	if err != nil {
+		return false, fmt.Errorf("stat canonical loose blob before legacy removal: %w", err)
+	}
+	if sameLooseFile(sourceInfo, canonicalInfo) {
+		return false, nil
+	}
+	if err := removeLooseFile(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	return true, nil
 }
