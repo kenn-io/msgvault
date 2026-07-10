@@ -3,9 +3,9 @@
 Design for storing attachment content in kit CAS pack files instead of loose
 content-addressed files. Written 2026-07-09; status: delivery steps 1-5 (see
 Delivery order below) are implemented and copy-based real-archive hardening is
-complete on the `packed-attachments` branch. Exact-head review and the full
-cross-platform CI matrix passed on PR #464. Pack-native restore remains the
-separate follow-up in issue #466.
+complete on the `packed-attachments` branch. The 64 MiB memory-ceiling
+amendment below is approved but pending implementation and verification.
+Pack-native restore remains the separate follow-up in issue #466.
 
 ## Motivation
 
@@ -25,8 +25,10 @@ attachment rows):
 
 Goals, in priority order:
 
-1. **Uniform architecture** — all attachment bytes end up in sealed,
-   immutable pack files; loose files exist only transiently.
+1. **Uniform architecture** — all ceiling-eligible attachment bytes end up in
+   sealed, immutable pack files; loose files otherwise exist only transiently.
+   Blobs above the release's safe in-memory ceiling remain deliberately loose
+   until kit supports verified streaming pack I/O.
 2. **Backup synergy** — production packs use the exact kit pack format,
    blob IDs, extension, target size, and shard layout that `msgvault backup`
    uses, so a future release can teach backup to adopt production packs
@@ -60,7 +62,7 @@ reduction as a primary objective.
   canonical path from the hash, so SyncTech MMS attachments are unreadable
   through the API/MCP/export today. This design fixes it via
   canonicalization (below).
-- kit pack format (`go.kenn.io/kit/pack`, v0.3.0): sealed-immutable packs,
+- kit pack format (`go.kenn.io/kit/pack`, v0.4.0): sealed-immutable packs,
   `MVPK` header, per-blob zstd-3 with >= 3% savings gate, footer entry table
   (`ID, Offset, StoredLen, RawLen, Flags, CRC32C`), SHA-256-verified footer,
   atomic staging+fsync+publish. `pack.Reader.ReadBlob` is true random access
@@ -301,10 +303,42 @@ Until kit exposes verified streaming reads and writes, both automatic and
 explicit maintenance enforce a fixed 64 MiB raw-blob ceiling:
 
 - The loose packer reads through a 64 MiB + 1 byte bounded reader, rather than
-  `os.ReadFile`. A larger candidate is counted and warned, remains unindexed
-  and loose, and packing continues with later candidates. Reads, exports, and
-  backup continue through the normal loose fallback. Alternate recorded paths
-  remain eligible for verification; the blob is counted once if none fit.
+  `os.ReadFile`. A larger canonical candidate remains unindexed and loose, and
+  packing continues with later blobs; production reads, exports, and backup
+  continue through the canonical loose fallback. Deferral alone does not claim
+  that the canonical file's bytes verify: production loose reads already trust
+  this content-addressed path, and the packer makes no metadata or filesystem
+  change that would elevate that trust. Backup still independently hashes it.
+- A larger noncanonical legacy candidate cannot merely be skipped: production
+  reads derive only the canonical path. Copy it to a canonical temp file with a
+  fixed buffer while streaming SHA-256, fsync and close the temp, publish it
+  without replacing an existing destination, and fsync the canonical parent
+  directory. Only after durable publication does a transaction canonicalize
+  every matching DB path; only after that commit may the legacy source be
+  removed best-effort. A hash mismatch removes the temp and tries the next
+  recorded path. If the canonical destination already exists, streaming-verify
+  and reuse it only when its hash matches; never replace it or delete the
+  verified legacy source when destination validation/publication fails. A crash
+  or DB failure after publication can leave a redundant legacy file but cannot
+  make the verified canonical copy unreadable. Future runs see the canonical
+  oversized file and do not re-hash it merely to defer packing.
+- Orphan reconciliation inspects footer `RawLen` before any production or
+  orphan blob read. Before verifying an existing indexed copy, the blob store
+  also opens the pack footer, finds the same blob ID, requires the DB entry to
+  match that footer entry, and bounds both authoritative `RawLen` and
+  `StoredLen`. If any referenced entry requiring redundancy verification,
+  adoption, or repointing exceeds the ceiling, preserve and defer the entire
+  orphan under the existing all-or-nothing rule; do not materialize the entry
+  or classify the pack as corrupt/unreadable.
+- During the final loose sweep, load each indexed hash's `raw_len` rather than
+  only an indexed-hash set. If either indexed length or the loose candidate's
+  stat size exceeds the ceiling, never use ordinary `Store.Open`; use the same
+  footer-cross-checked bounded packed-read guard. An oversized authoritative
+  footer entry instead takes the streaming loose-recovery path. A verified
+  loose candidate is canonicalized if necessary and its index mapping is
+  dropped so production reads use bounded-memory loose storage; the old pack
+  bytes become ordinary dead space. If the loose candidate fails verification,
+  retain both it and the mapping and fail closed as today.
 - Pack usage accounting includes the largest referenced entry's raw length.
   A partially-live source pack with any live entry above 64 MiB is excluded
   before repack budget accounting, counted and warned as deferred, and left
@@ -324,6 +358,24 @@ loose files or unreclaimed sparse packs in place. Large-file count is not the
 Windows/NAS bottleneck this design targets; the benefit comes primarily from
 packing the much more numerous small files.
 
+Maintenance reads of packed content use a bounded blob-store operation that
+cross-checks mutable DB offsets and lengths against the matching cached footer
+entry before allocation, then rejects either authoritative `RawLen` or
+`StoredLen` above the ceiling. Repack uses this operation even after selection
+has screened DB aggregates, so corrupt metadata cannot turn the accounting
+guard into a large allocation.
+
+Deferral is operator-visible. `packer.Stats` exposes
+`BlobsDeferredOversized` and `PacksDeferredOversized`; `repacker.Stats` exposes
+`PacksDeferredOversized`. Structured warnings identify the hash or pack ID,
+actual/largest raw size, 64 MiB limit, and (for an orphan) the number of
+withheld referenced candidates using literal keys `hash`, `pack`, `raw_bytes`,
+`max_raw_bytes`, and `withheld_entries` where applicable. Blob counts are once
+per distinct hash, not once per recorded candidate. Explicit command output
+includes these counters, while automatic maintenance records them in its INFO
+summary. A size exactly equal to 64 MiB is eligible; 64 MiB + 1 byte is
+deferred.
+
 ### GC and repack
 
 - `remove-account` orphan sweep: loose orphans are deleted as today; packed
@@ -340,12 +392,42 @@ packing the much more numerous small files.
   A live entry means an index row whose hash is still attachment-referenced;
   stale rows are repaired before selection, and accounting/enumeration/CAS use
   the referenced rows as defense in depth. All accounting comes from the
-  database without opening packs. These metadata phases and guarded cleanup
+  database without opening packs. Selection is deterministic by creation time
+  then pack ID. Every zero-live pack retires before fallible live-byte
+  rewriting, so corrupt sparse content cannot block no-read reclamation. These
+  metadata phases and guarded cleanup
   use context-aware maintenance transactions so PostgreSQL disables its
-  statement timeout without losing cancellation. Copy live blobs to new
-  target-sized packs and swap their index rows transactionally. The production read verifies CRC,
-  decoding, and SHA-256 before append; the new writer independently derives the
-  same blob ID, which repack requires to match.
+  statement timeout without losing cancellation.
+
+  Automatic maintenance isolates partially-live source packs and applies its
+  budget dynamically. It walks eligible packs in deterministic order while
+  successfully swapped raw bytes remain below the budget; a source consumes
+  budget only after its exact-set swap commits. A content-specific missing,
+  corrupt, length-mismatched, or hash-mismatched source is recorded, skipped,
+  and does not prevent attempting the next candidate. Writer creation, append
+  I/O, seal, database, cancellation, and other systemic failures stop the run.
+  Isolated content errors are joined and returned after later candidates run so
+  the daily job still records failure. This prevents a corrupt oldest pack from
+  consuming every daily budget before useful work starts. Explicit repack
+  remains fail-fast after the zero-live pass. For each rewrite, copy live blobs
+  to new target-sized packs.
+  The production read verifies CRC, decoding, and SHA-256 before append; the
+  new writer independently derives the same blob ID, which repack requires to
+  match. Seal every replacement before changing metadata, then commit one
+  exact-set compare-and-swap transaction that:
+
+  1. inserts every new pack record;
+  2. moves each expected live mapping from its exact old pack, requiring one
+     affected row per blob;
+  3. rejects omitted or newly added referenced mappings from that source pack;
+     and
+  4. retains the old pack record until physical retirement succeeds.
+
+  A failure before the swap leaves old mappings/files authoritative; already
+  sealed replacements are safe orphans for reference-aware reconciliation. A
+  crash after the swap leaves truthful zero-live old inventory for the next
+  cleanup pass.
+
   Keep the old `attachment_packs` rows until the daemon's shared blob store
   has waited for active reads, closed cached readers, and deleted the old
   files under its reader-cache mutex; then delete the now-empty records.
@@ -357,6 +439,11 @@ packing the much more numerous small files.
   payload bytes rewritten, not total metadata work: reference repair and usage
   accounting inspect the pack inventory, and every zero-live pack remains
   eligible because reclaiming it requires no blob rewrite.
+
+  After a successful swap, retirement attempts every old pack even if one
+  reader close or file deletion fails. Each failure remains loud and retains
+  that zero-live record/file for retry; successful siblings are not held
+  hostage. Guarded record deletion requires no live mapping to name the pack.
 
   TUI, MCP, and exports remain daemon-backed even with `--local`. Backup is the
   supported independent reader: kit releases the freeze gate after pinning its
@@ -437,17 +524,26 @@ their entries into the repo index, skipping per-blob re-reads.
   plus readable loose-copy preservation, duplicate recorded paths with a valid
   fallback, cancellation before the first recovery mutation, stale mapping
   repair after Teams inline replacement, and retryable unreferenced loose-file
-  cleanup. Memory-bound coverage verifies that a loose blob above 64 MiB is
-  detected by a bounded read, remains loose and readable, does not consume the
-  automatic byte budget, and does not prevent later eligible blobs from
-  packing.
+  cleanup. Required memory-bound coverage includes exact-64-MiB acceptance and
+  64-MiB-plus-one deferral for automatic and explicit commands, bounded loose
+  reads, literal counter/log fields and unique-hash counting, later eligible
+  progress, streaming canonicalization of oversized legacy paths, existing
+  canonical-destination validation, and crash/DB-failure injection at the
+  publish-to-DB and DB-to-legacy-delete boundaries. Oversized orphan
+  all-or-nothing deferral and indexed-loose recovery must avoid ordinary packed
+  reads; forged DB raw/stored lengths must fail the footer cross-check before
+  allocation.
 - Canonicalization: SyncTech-style namespaced rows become readable and
   canonical after packing.
 - Repack: referenced-live accounting despite stale index rows, live-blob
   preservation, threshold + hysteresis, transactional index swap, and explicit
   SHA-verified copy semantics. A partially-live pack with an oversized live
   entry is deferred before selection/budget accounting, while oversized dead
-  entries and zero-live packs do not block reclamation. Race coverage includes
+  entries and zero-live packs do not block reclamation. Required tests also pin
+  oversized counters/output, a corrupt oldest source large enough to fill the
+  automatic budget followed by a successful small source, aggregate content
+  error reporting, systemic-error fail-fast behavior, zero-live-first progress,
+  and explicit fail-fast behavior. Race coverage includes
   backup's independent reader cache: Windows retains an old zero-live pack when
   the handle blocks deletion and removes it on the next run after close; Unix
   open handles remain readable after unlink while new lookups use the
@@ -492,8 +588,8 @@ and 46,060 distinct local blobs totaling 8,193,617,238 bytes.
   `get_attachment` returned hash-identical bytes.
 - Memory ceiling: the largest blob in this archive was approximately 23 MiB,
   below the 64 MiB in-memory maintenance ceiling. Oversized behavior is
-  therefore pinned by synthetic bounded-read and repack-selection tests rather
-  than this dataset.
+  therefore covered by synthetic bounded-read and repack-selection tests rather
+  than this dataset once the amendment is implemented.
 - Crash recovery: the daemon was sent `SIGKILL` with 135 sealed packs, one
   staging file, 26,513 indexed blobs, and 19,547 loose blobs. Restart removed
   staging and packed exactly the remaining 19,547 blobs in 12.1 seconds,
