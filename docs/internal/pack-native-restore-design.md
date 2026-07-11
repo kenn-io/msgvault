@@ -285,13 +285,22 @@ data justifies the added policy.
 | After no-clobber pack publish, before catalog transaction | Canonical uncataloged pack | Safe orphan: packstore maintenance either adopts verified entries needed by the currently visible catalog when its reference inventory is complete, removes a pack with no needed entries, or retains an unreadable/quarantined pack. Restore retry validates and reuses the stable source-ID destination if it remains, or recopies it if maintenance removed it. |
 | During catalog transaction | Published packs; transaction rolled back | Staged database has its previous metadata. Retry reuses verified published packs. |
 | After catalog commit, before proof | Published packs and mappings only in unpublished staged DB | Failure removes or abandons the staged DB; visible database authority is unchanged. Published packs are safe orphans relative to the visible database. |
-| Proof or extras failure | Visible database unchanged | Existing restore cleanup runs. Retry handles published packs idempotently. |
+| Proof or extras failure | Visible database unchanged; published packs and content-addressed loose files may remain | Existing cleanup removes the staged database and extras. Loose files are benign, and retry handles published packs idempotently. |
 | After database publish | Complete packed/loose restored vault | No later restore step can make an index point at an absent pack. |
 
 The importer never relies on an orphan surviving maintenance. Its retry rule is
 idempotent under every existing packstore disposition: validate-and-reuse if
 the canonical pack remains, copy again if it was removed, and fail closed if a
 different object occupies the same pack ID.
+
+With `--overwrite`, the existing database and sidecars remain authoritative
+until the final publish, exactly as in current restore. Old production pack
+files that are not selected by the new snapshot may remain on disk after the
+catalog replacement, but the new database grants them no authority; ordinary
+packstore reconciliation removes or adopts them according to the new catalog.
+An existing target pack at a selected repository pack ID is reused only when
+it is byte-identical. A different object at that ID fails restore before the
+database publish.
 
 ## Compatibility and fallback contract
 
@@ -373,8 +382,9 @@ The command no longer prints an unconditional instruction to run
 - Restore followed by pack, repack, unpack, and another backup round-trip.
 - `--loose-attachments` preserves the fully loose recovery path.
 - Frozen old-repository fixtures remain restorable.
-- SQLite and PostgreSQL catalog logic where applicable; backup restore itself
-  continues to materialize a SQLite archive.
+- The staged SQLite catalog transaction uses the same application adapter
+  semantics as ordinary pack maintenance; backup restore continues to
+  materialize a SQLite archive.
 
 ## Performance and hardening gate
 
@@ -405,9 +415,13 @@ Required functional hardening is:
 6. explicit loose restore; and
 7. integrity and manifest-statistics proof after every restored layout.
 
-Native Windows CI is mandatory. A representative Windows restore benchmark is
-recorded when a suitable archive and runner are available; absence of that
-external dataset does not weaken the native correctness gate.
+Native Windows CI is mandatory. Before merge, record destination file counts
+and elapsed time for loose and pack-native restore on a representative native
+Windows archive. If a suitable existing archive is unavailable, use a
+deterministic generated repository large enough for per-file filesystem and
+antivirus overhead to be visible. The Windows measurement complements, rather
+than replaces, the larger isolated real-archive comparison on the primary
+hardening host.
 
 ## Rollout and follow-ups
 
