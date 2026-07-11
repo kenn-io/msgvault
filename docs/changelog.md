@@ -9,6 +9,10 @@ All notable changes to msgvault, grouped by release.
 
 **New features**
 
+- `msgvault skills install` installs agent skills (per the open
+  agent-skills standard) for Claude Code and Codex, teaching coding
+  agents the search, attachment, and analytics CLI workflows.
+  `msgvault skills uninstall` removes them.
 - MCP message search now separates metadata and body search:
   `search_messages` searches metadata when `mode` is omitted, while
   `search_message_bodies` performs body-only full-text search with bounded

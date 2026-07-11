@@ -71,11 +71,7 @@ in a single binary.`,
 
 		// Skip config loading (and therefore logging setup) for
 		// commands that must run without touching disk or config.
-		if cmd.Name() == "version" || cmd.Name() == "update" ||
-			cmd.Name() == "quickstart" || cmd.Name() == "openapi" ||
-			cmd.Name() == "completion" ||
-			cmd.Name() == cobra.ShellCompRequestCmd ||
-			cmd.Name() == cobra.ShellCompNoDescRequestCmd {
+		if skipsConfigLoad(cmd) {
 			cmd.SilenceUsage = false
 			return nil
 		}
@@ -202,6 +198,23 @@ in a single binary.`,
 	// shutdown, which runs after the exit record is written. Do not
 	// close logResult in PersistentPostRunE — doing so drops the
 	// "msgvault exit" log line on successful runs.
+}
+
+// skipsConfigLoad reports whether cmd must run without loading config
+// or touching the msgvault home directory (e.g. version, completion,
+// and the skills group, which only writes agent skill files).
+func skipsConfigLoad(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "version", "update", "quickstart", "openapi", "completion",
+		cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return true
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c == skillsCmd {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizeArgs removes anything that might carry a secret before

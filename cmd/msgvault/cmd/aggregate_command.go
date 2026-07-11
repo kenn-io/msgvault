@@ -31,13 +31,14 @@ func runAggregateListCommand(
 		return query.HintRepairEncoding(fmt.Errorf("aggregate by %s: %w", errorLabel, err))
 	}
 
+	// JSON mode must stay machine-parseable even with zero results:
+	// emit an empty array, never prose.
+	if aggJSON {
+		return outputAggregateJSON(results)
+	}
 	if len(results) == 0 {
 		fmt.Println(emptyMessage)
 		return nil
-	}
-
-	if aggJSON {
-		return outputAggregateJSON(results)
 	}
 	outputAggregateTable(results, keyHeader)
 	return nil
