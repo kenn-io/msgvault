@@ -199,7 +199,7 @@ func withInterruptCancel(cmd *cobra.Command, note string) (context.Context, func
 // runConfiguredBeeperSync is the daemon scheduler entrypoint: an incremental
 // sync of every registered Beeper account. Per-account failures are collected
 // so one broken account does not starve the others, and the analytics cache is
-// rebuilt regardless so successful accounts' messages become visible.
+// rebuilt after any attempt so partial writes become visible too.
 func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 	token, err := beeper.LoadToken(cfg.TokensDir())
 	if err != nil {
@@ -210,21 +210,32 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 		return err
 	}
 	imp := beeper.NewImporter(s, beeperClient(token))
+	return runScheduledBeeperAttempts(ctx, accountIDs,
+		func(accountID string) error {
+			_, err := imp.Import(ctx, beeperImportOptions(accountID))
+			return err
+		},
+		func() { rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "beeper") },
+	)
+}
 
+// runScheduledBeeperAttempts keeps per-account failures isolated while
+// rebuilding analytics after any import attempt, since even a failed or
+// canceled attempt may have committed messages from healthy chats.
+func runScheduledBeeperAttempts(ctx context.Context, accountIDs []string, attempt func(string) error, rebuild func()) error {
 	var errs []error
-	synced := 0
+	attempted := 0
 	for _, accountID := range accountIDs {
 		if ctx.Err() != nil {
 			break
 		}
-		if _, err := imp.Import(ctx, beeperImportOptions(accountID)); err != nil {
+		attempted++
+		if err := attempt(accountID); err != nil {
 			errs = append(errs, fmt.Errorf("beeper %s: %w", accountID, err))
-		} else {
-			synced++
 		}
 	}
-	if synced > 0 {
-		rebuildCacheAfterScheduledSync(ctx, "beeper")
+	if attempted > 0 {
+		rebuild()
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())

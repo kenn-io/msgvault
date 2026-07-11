@@ -47,6 +47,15 @@ type chatScope struct {
 	opts               ImportOptions
 	cs                 *ChatState
 	membershipComplete bool
+	budgetUsed         int
+}
+
+func (cc *chatScope) limitReached() bool {
+	return cc.opts.Limit > 0 && cc.budgetUsed >= cc.opts.Limit
+}
+
+func (cc *chatScope) chargeBudget(processed int) {
+	cc.budgetUsed += processed
 }
 
 // Importer ingests Beeper Desktop messages into the msgvault store. One
@@ -239,6 +248,9 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 			continue
 		}
 		if gerr != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			imp.recordItem(syncID, chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
 			sum.FetchErrors++
 			sum.Errors++
@@ -271,7 +283,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		err = imp.backfillChat(ctx, cc, state, sum)
 	} else {
 		err = imp.incrementalChat(ctx, cc, sum)
-		if err == nil {
+		if err == nil && !cc.limitReached() {
 			err = imp.reconcileChat(ctx, cc, reconcileCutoff, sum)
 		}
 	}
@@ -297,6 +309,9 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 	if ch.Participants.HasMore {
 		d, gerr := imp.client.GetChat(ctx, ch.ID)
 		if gerr != nil {
+			if ctx.Err() != nil {
+				return 0, false, ctx.Err()
+			}
 			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
 			sum.FetchErrors++
 			sum.Errors++
@@ -383,11 +398,13 @@ func (w *recentIDWindow) add(pageIDs []string) {
 func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *SyncState, sum *ImportSummary) error {
 	cs := cc.cs
 	pages := 0
-	processed := 0
 	recent := newRecentIDWindow(recentIDWindowPages)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if cc.limitReached() {
+			return nil
 		}
 		cursor, direction := cs.Oldest, "before"
 		if cursor == "" {
@@ -395,6 +412,9 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		}
 		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, direction)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -426,8 +446,8 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
 				return err
 			}
-			processed++
 		}
+		cc.chargeBudget(newItems)
 		recent.add(pageIDs)
 		armAnchorFromPage(state, cc.chatID, page.Items)
 		if newItems == 0 {
@@ -445,7 +465,7 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 			cs.Done = true
 			return nil
 		}
-		if cc.opts.Limit > 0 && processed >= cc.opts.Limit {
+		if cc.limitReached() {
 			return nil // resumable: Done stays false
 		}
 		if page.OldestCursor == "" {
@@ -464,8 +484,14 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if cc.limitReached() {
+			return nil
+		}
 		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, "after")
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -476,6 +502,7 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		if len(page.Items) == 0 {
 			return nil
 		}
+		processed := 0
 		for i := range page.Items {
 			if err := imp.processMessage(ctx, cc, &page.Items[i], true, sum); err != nil {
 				if errors.Is(err, errRetryPage) {
@@ -483,7 +510,9 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 				}
 				return err
 			}
+			processed++
 		}
+		cc.chargeBudget(processed)
 		// A non-advancing cursor means the API is re-serving the same page
 		// (same misbehavior the backfill defends against): stop rather than
 		// spin forever.
@@ -492,6 +521,9 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		}
 		cursor = page.NewestCursor
 		cs.Newest = cursor
+		if cc.limitReached() {
+			return nil
+		}
 		if !page.HasMore {
 			return nil
 		}
@@ -509,14 +541,21 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if cc.limitReached() {
+			return nil
+		}
 		page, err := imp.client.ListMessagesPage(ctx, cc.chatID, cursor, direction)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			imp.recordItem(cc.syncID, cc.chatID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
 			return nil
 		}
 		reachedCutoff := false
+		processed := 0
 		for i := range page.Items {
 			m := &page.Items[i]
 			if m.Timestamp.Before(cutoff) {
@@ -528,8 +567,10 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
 				return err
 			}
+			processed++
 		}
-		if reachedCutoff || len(page.Items) == 0 || !page.HasMore || page.OldestCursor == "" {
+		cc.chargeBudget(processed)
+		if cc.limitReached() || reachedCutoff || len(page.Items) == 0 || !page.HasMore || page.OldestCursor == "" {
 			return nil
 		}
 		cursor, direction = page.OldestCursor, "before"
@@ -580,6 +621,9 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 		return nil
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		imp.recordItem(cc.syncID, m.ID, "reaction", store.SyncRunItemStatusError, "beeper_fetch_error", err)
 		sum.FetchErrors++
 		sum.Errors++

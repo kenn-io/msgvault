@@ -2,12 +2,38 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/clirun"
 )
+
+func TestScheduledBeeperAttemptsRebuildAfterPartialFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	var attempted []string
+	rebuilds := 0
+	err := runScheduledBeeperAttempts(
+		context.Background(),
+		[]string{"signal", "telegram"},
+		func(accountID string) error {
+			attempted = append(attempted, accountID)
+			if accountID == "signal" {
+				return errors.New("partial sync")
+			}
+			return nil
+		},
+		func() { rebuilds++ },
+	)
+
+	require.ErrorContains(err, "beeper signal: partial sync")
+	assert.Equal([]string{"signal", "telegram"}, attempted, "one failure must not starve later accounts")
+	assert.Equal(1, rebuilds, "any attempted import may write messages and must trigger a cache rebuild")
+}
 
 func resetSyncBeeperRoutingGlobals(t *testing.T) {
 	t.Helper()

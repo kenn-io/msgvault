@@ -253,6 +253,53 @@ func TestImportSecondRunIncremental(t *testing.T) {
 	assert.True(sawActivityFilter, "second run must filter chat discovery by lastActivityAfter")
 }
 
+func TestImportLimitIsSharedAcrossIncrementalAndReconcile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(e2eChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := range 45 {
+		f.appendMsg("!e2e:beeper.local", fakeMsg{
+			ID: "limited-new-" + strconv.Itoa(i), SortKey: 100 + i,
+			Timestamp: now.Add(time.Duration(i) * time.Second), Text: "limited incremental",
+			SenderID: "@signal_bob:beeper.local", SenderName: "Bob",
+		})
+	}
+
+	f.resetRequests()
+	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 20})
+	require.NoError(err)
+	assert.EqualValues(20, sum.MessagesProcessed,
+		"one per-chat budget must cover incremental and reconciliation work")
+
+	messageLists := 0
+	for _, req := range f.requests() {
+		if strings.Contains(req, "/messages?") && !strings.Contains(req, "/messages/") {
+			messageLists++
+			assert.Contains(req, "direction=after", "the limited run must stop before reconciliation: %s", req)
+		}
+	}
+	assert.Equal(1, messageLists, "the limit must stop before fetching another page")
+
+	var limitedTotal int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&limitedTotal))
+	assert.Equal(63, limitedTotal, "the first incremental page is archived without skipping later pages")
+
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var finalTotal int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type = 'beeper'`).Scan(&finalTotal))
+	assert.Equal(88, finalTotal, "the next run must resume the pages left by the limit")
+}
+
 func TestImportResumeAfterLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
