@@ -567,7 +567,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 		require.Error(repackErr, "backup-held independent reader must make Windows deletion retryable")
 		has, hasErr := f.store.HasPackRecord(oldPackID)
 		require.NoError(hasErr)
-		assert.True(has)
+		assert.False(has, "the committed mapping swap removes stale catalog authority before physical cleanup")
 		assert.FileExists(oldPath)
 	} else {
 		require.NoError(repackErr)
@@ -586,9 +586,9 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	assert.Equal(int64(1), result.manifest.Attachments.Blobs)
 	require.NoError(backupBlobs.Close())
 	if runtime.GOOS == "windows" {
-		retryStats, retryErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
-		require.NoError(retryErr)
-		assert.Equal(1, retryStats.PacksRemoved)
+		repairStats, repairErr := f.maint.Pack(context.Background(), packstore.PackOptions{})
+		require.NoError(repairErr)
+		assert.Equal(1, repairStats.PacksRemoved, "orphan repair reclaims the old pack after the external reader closes")
 		assert.NoFileExists(oldPath)
 	}
 	verify, err := backup.Verify(context.Background(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})

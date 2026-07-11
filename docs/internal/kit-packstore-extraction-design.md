@@ -497,8 +497,9 @@ daemon-owned reader for a source pack before attempting physical deletion.
 Another process can still hold its own reader. On Windows, deletion may then
 fail with a sharing violation. This is an expected, observable, retryable
 physical-cleanup failure; it does not roll back an already-committed mapping
-swap. On Unix, an already-open handle remains usable while subsequent opens
-resolve to the replacement.
+swap. The old pack remains an orphan and the next repair pass reclaims it after
+the external reader closes. On Unix, an already-open handle remains usable
+while subsequent opens resolve to the replacement.
 
 Msgvault is daemon-backed for production read and maintenance paths, so the
 daemon's shared store is the principal cache. Tests must still cover external

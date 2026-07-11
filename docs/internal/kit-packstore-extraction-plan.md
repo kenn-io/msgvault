@@ -436,7 +436,8 @@ missing skill name.
   Cover zero-live retirement first, sparse selection thresholds, oversized
   deferral, source independence, aggregated content failures, exact-set CAS
   loss, committed-only budget accounting, replacement orphan handling, cached
-  reader retirement, and Windows sharing failures retaining retryable records.
+  reader retirement, and Windows sharing failures retaining a retryable orphan
+  for the next repair pass after the catalog swap commits.
 
 - [ ] **Step 3: Verify red**
 

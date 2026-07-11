@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -32,6 +33,5 @@ func TestStoreAttachmentFileDurableWindowsRejectsFinalReparsePoint(t *testing.T)
 	_, err := StoreAttachmentFileDurable(dir, &mime.Attachment{
 		Content: content, ContentHash: hash,
 	})
-	require.Error(err)
-	require.Contains(err.Error(), "symlink")
+	require.ErrorIs(err, packstore.ErrContentMismatch)
 }
