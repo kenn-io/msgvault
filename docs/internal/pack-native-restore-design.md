@@ -340,8 +340,10 @@ authority; later maintenance may physically remove its now-unreferenced packs.
 uses the current fully loose behavior. It is the explicit recovery, inspection,
 and downgrade path for a fresh target. With `--overwrite`, pre-existing
 uncataloged packs may later be adopted by maintenance if the restored snapshot
-still references their contents. To guarantee a fully loose vault, restore
-into a fresh target or run `unpack-attachments` after restore.
+still references their contents. `unpack-attachments` cannot remove those
+uncataloged leftovers because it processes cataloged packs only. Restoring into
+a fresh target is therefore the only path that currently guarantees a fully
+loose vault.
 
 Success output reports:
 

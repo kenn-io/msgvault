@@ -641,8 +641,9 @@ or packs that use an incompatible representation, are restored loose instead.
 The summary reports the resulting packed/loose split and any fallback reasons.
 
 Use `--loose-attachments` for downgrade or recovery. Restore into a fresh
-target with that flag to guarantee a fully loose result; when overwriting a
-target that already contains packs, run `unpack-attachments` afterward.
+target with that flag to guarantee a fully loose result. An overwritten target
+can retain uncataloged old pack files, and `unpack-attachments` processes only
+cataloged packs, so overwrite cannot currently make the same guarantee.
 Restoring into the live archive home of a running daemon is refused. See
 [Backup](/usage/backup/) for repository format, scheduling, verification, and
 privacy details.

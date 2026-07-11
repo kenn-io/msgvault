@@ -49,11 +49,12 @@ Restore is self-proving, in layers. During materialization every blob read re-de
 `--loose-attachments` leaves the optional importer disabled and clears restored
 pack metadata after publication, preserving the downgrade/recovery path. A
 fresh target is then fully loose. An overwritten target can retain old,
-uncataloged pack files that normal maintenance may rediscover, so use a fresh
-target or run `unpack-attachments` afterward when a guaranteed-loose physical
-layout matters. Conversely, ordinary overwrite replaces packed authority with
-the snapshot's membership; maintenance may reclaim old packs whose content
-belonged only to the newer target.
+uncataloged pack files that normal maintenance may rediscover.
+`unpack-attachments` processes cataloged packs only, so a fresh restore target
+is the only path that currently guarantees a fully loose physical layout.
+Conversely, ordinary overwrite replaces packed authority with the snapshot's
+membership; maintenance may reclaim old packs whose content belonged only to
+the newer target.
 
 ## Limitations
 

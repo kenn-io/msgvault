@@ -419,8 +419,8 @@ Use a separate timeout and upload output; do not lengthen full Windows job.
 **Files:** modify CLI reference, backup-format architecture, changelog.
 
 - [ ] Document automatic compatible import, selected-byte hashing, loose
-  incompatible/oversized refs, explicit loose flag, fresh-target/unpack rule
-  for guaranteed loose, and overwrite reclamation.
+  incompatible/oversized refs, explicit loose flag, the fresh-target-only
+  guarantee for fully loose storage, and overwrite reclamation.
 - [ ] Run `make docs-build`. Expected: no issues.
 - [ ] Commit: `Document pack-native backup restore`.
 

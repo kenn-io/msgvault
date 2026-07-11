@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -11,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -28,6 +35,129 @@ func TestBackupRestorePackedTargetSelection(t *testing.T) {
 	flag := backupRestoreCmd.Flags().Lookup("loose-attachments")
 	require.NotNil(t, flag)
 	assert.Equal("false", flag.DefValue)
+}
+
+func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "msgvault.db")
+	st, err := store.OpenForTest(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "restore-cli@example.com")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "restore-cli-thread", "Restore CLI")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversationID, SourceID: source.ID,
+		SourceMessageID: "restore-cli-message", MessageType: "email",
+	})
+	require.NoError(err)
+	content := []byte("CLI restore must preserve packed bytes and clear loose-mode authority")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	attachmentsDir := filepath.Join(dataDir, "attachments")
+	loosePath := filepath.Join(attachmentsDir, hash[:2], hash)
+	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
+	require.NoError(os.WriteFile(loosePath, content, 0o600))
+	require.NoError(st.UpsertAttachment(messageID, "restore-cli.bin", "application/octet-stream",
+		hash[:2]+"/"+hash, hash, len(content)))
+	layout, err := packstore.NewLayout(attachmentsDir, packstore.LayoutOptions{
+		Staging: packstore.StagingSameDirectory,
+	})
+	require.NoError(err)
+	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
+	require.NoError(err)
+	t.Cleanup(func() { _ = maintainer.Close() })
+	packed, err := maintainer.Pack(ctx, packstore.PackOptions{})
+	require.NoError(err)
+	require.Equal(1, packed.BlobsPacked)
+
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	repo, err := backup.Init(repoPath)
+	require.NoError(err)
+	_, err = backup.Create(ctx, repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: dataDir,
+		ContentSource: backupapp.NewContentSource(attachmentstore.Wrap(maintainer.Store()), attachmentsDir),
+	})
+	require.NoError(err)
+
+	savedCfg := cfg
+	savedRepo := backupRestoreRepo
+	savedTarget := backupRestoreTarget
+	savedOverwrite := backupRestoreOverwrite
+	savedForceUnlock := backupRestoreForceUnlock
+	savedJobs := backupRestoreJobs
+	savedLoose := backupRestoreLooseAttachments
+	t.Cleanup(func() {
+		cfg = savedCfg
+		backupRestoreRepo = savedRepo
+		backupRestoreTarget = savedTarget
+		backupRestoreOverwrite = savedOverwrite
+		backupRestoreForceUnlock = savedForceUnlock
+		backupRestoreJobs = savedJobs
+		backupRestoreLooseAttachments = savedLoose
+	})
+	cfg = &config.Config{Data: config.DataConfig{DataDir: filepath.Join(t.TempDir(), "live")}}
+	backupRestoreRepo = repoPath
+	backupRestoreOverwrite = false
+	backupRestoreForceUnlock = false
+	backupRestoreJobs = 1
+
+	backupRestoreTarget = filepath.Join(t.TempDir(), "packed-target")
+	backupRestoreLooseAttachments = false
+	var packedOutput bytes.Buffer
+	packedCmd := &cobra.Command{Use: "restore"}
+	packedCmd.SetContext(ctx)
+	packedCmd.SetOut(&packedOutput)
+	require.NoError(runBackupRestore(packedCmd, nil))
+	assert.Contains(packedOutput.String(), "1 packed in 1 pack(s), 0 loose")
+	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, true)
+
+	backupRestoreTarget = filepath.Join(t.TempDir(), "loose-target")
+	backupRestoreLooseAttachments = true
+	var looseOutput bytes.Buffer
+	looseCmd := &cobra.Command{Use: "restore"}
+	looseCmd.SetContext(ctx)
+	looseCmd.SetOut(&looseOutput)
+	require.NoError(runBackupRestore(looseCmd, nil))
+	assert.Contains(looseOutput.String(), "Pack metadata cleared")
+	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, false)
+}
+
+func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packed bool) {
+	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
+	restored, err := store.OpenForTest(filepath.Join(target, "msgvault.db"))
+	require.NoError(err)
+	defer func() { require.NoError(restored.Close()) }()
+	records, err := restored.ListPackRecords()
+	require.NoError(err)
+	indexed, err := restored.ListIndexedBlobHashes()
+	require.NoError(err)
+	if packed {
+		assert.NotEmpty(records)
+		assert.Contains(indexed, hash)
+		assert.NoFileExists(filepath.Join(target, "attachments", hash[:2], hash))
+	} else {
+		assert.Empty(records, "explicit loose restore must clear stale source-vault pack records")
+		assert.Empty(indexed, "explicit loose restore must clear stale source-vault mappings")
+		assert.FileExists(filepath.Join(target, "attachments", hash[:2], hash))
+	}
+	blobs, err := attachmentstore.New(store.NewPackCatalog(restored), filepath.Join(target, "attachments"))
+	require.NoError(err)
+	reader, size, err := blobs.Open(hash)
+	require.NoError(err)
+	got, err := io.ReadAll(reader)
+	require.NoError(err)
+	require.NoError(reader.Close())
+	require.NoError(blobs.Close())
+	assert.Equal(int64(len(want)), size)
+	assert.Equal(want, got)
 }
 
 func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T) {
