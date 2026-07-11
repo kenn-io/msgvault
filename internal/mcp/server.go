@@ -212,7 +212,9 @@ const (
 		"Not supported: negation (-), OR, or parentheses grouping."
 	searchMetadataFreeTextDoc = "Free text matches subject, snippet, and sender/recipient metadata only (not bodies). " +
 		"Use search_message_bodies for full-body keyword, vector, or hybrid search."
-	searchMetadataPaginationDoc = "Paginate with offset/limit (default limit 20, max 50). " +
+	searchMetadataPaginationDoc = "Results are ordered newest-first (by sent date); there is no sort parameter — " +
+		"use before:/after: to scope a date range. " +
+		"Paginate with offset/limit (default limit 20, max 50). " +
 		"Response: data, total, returned, offset, has_more."
 )
 
@@ -255,9 +257,10 @@ func searchMessageBodiesTool(vectorAvailable bool) mcp.Tool {
 	if !vectorAvailable {
 		return mcp.NewTool(ToolSearchMessageBodies,
 			mcp.WithDescription(searchIntro+
-				"Default mode=keyword uses full-text search (FTS). "+
+				"Default mode=keyword uses full-text search (FTS) and returns matches ordered newest-first (by sent date). "+
 				"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more. "+
-				"(total is not available for body search; use has_more to detect more pages.)"),
+				"Body search has no total count (use has_more to detect more pages); "+
+				"to gauge how many more hits likely remain, note the lowest score among your results and raise min_score to prune noise."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("query",
 				mcp.Required(),
@@ -274,7 +277,8 @@ func searchMessageBodiesTool(vectorAvailable bool) mcp.Tool {
 			"Vector/hybrid hits include matches — embedded body chunks ranked by semantic similarity to the query (up to 5 per message). "+
 			"Vector/hybrid require free-text terms; filter-only queries must use search_metadata. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more, mode, pool_saturated, generation. "+
-			"total is not available for body search; use has_more to detect more pages."),
+			"total is not available for body search (vector/hybrid matches are unbounded by similarity, so no fixed count exists); use has_more to page. "+
+			"Watch the minimum score across returned hits to estimate how many more useful results remain, and raise min_score to cut noise."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -383,7 +387,9 @@ func searchInMessageTool() mcp.Tool {
 
 func listMessagesTool() mcp.Tool {
 	return mcp.NewTool(ToolListMessages,
-		mcp.WithDescription("List messages with optional filters. Returns message summaries sorted by date. "+
+		mcp.WithDescription("List messages with optional filters, newest-first. "+
+			"Pass conversation_id to enumerate a thread's messages, then call get_message(id) per message to read bodies — "+
+			"there is deliberately no bulk body fetch, to avoid loading huge threads into the context window. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, total, returned, offset, has_more. "+
 			"total=-1 because the full count is not computed; use has_more for paging."),
 		mcp.WithReadOnlyHintAnnotation(true),
