@@ -1649,11 +1649,12 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 	}
 	return s.withTx(func(tx *loggedTx) error {
 		// The merge must not lose contact metadata: fill gaps on the survivor
-		// from the absorbed row. Both columns are UNIQUE, so the absorbed row
-		// must release each value before the survivor can take it.
-		var oldEmail, oldPhone sql.NullString
-		if err := tx.QueryRow(`SELECT NULLIF(email_address, ''), NULLIF(phone_number, '') FROM participants WHERE id = ?`, oldID).
-			Scan(&oldEmail, &oldPhone); err != nil {
+		// from the absorbed row, carrying the email's analytics domain with it.
+		// Email and phone are UNIQUE, so the absorbed row must release each
+		// value before the survivor can take it.
+		var oldEmail, oldDomain, oldPhone sql.NullString
+		if err := tx.QueryRow(`SELECT NULLIF(email_address, ''), NULLIF(domain, ''), NULLIF(phone_number, '') FROM participants WHERE id = ?`, oldID).
+			Scan(&oldEmail, &oldDomain, &oldPhone); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE participants SET email_address = NULL, phone_number = NULL WHERE id = ?`, oldID); err != nil {
@@ -1662,8 +1663,9 @@ func (s *Store) MergeParticipants(oldID, newID int64) error {
 		if _, err := tx.Exec(`
 			UPDATE participants SET
 				email_address = COALESCE(NULLIF(email_address, ''), ?),
+				domain        = COALESCE(NULLIF(domain, ''), ?),
 				phone_number  = COALESCE(NULLIF(phone_number, ''), ?)
-			WHERE id = ?`, oldEmail, oldPhone, newID); err != nil {
+			WHERE id = ?`, oldEmail, oldDomain, oldPhone, newID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE messages SET sender_id = ? WHERE sender_id = ?`, newID, oldID); err != nil {

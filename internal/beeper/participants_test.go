@@ -304,11 +304,14 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 	assert.Equal(native, phonePID, "phone metadata must dedupe with the native archive")
 	assert.NotEqual(emailPID, phonePID)
 
-	// The merge preserved the email on the surviving participant.
-	var email string
+	// The merge preserved the email and its analytics domain on the surviving
+	// participant.
+	var email, domain string
 	require.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT COALESCE(email_address, '') FROM participants WHERE id = ?`), phonePID).Scan(&email))
+		`SELECT COALESCE(email_address, ''), COALESCE(domain, '') FROM participants WHERE id = ?`), phonePID).
+		Scan(&email, &domain))
 	assert.Equal("kim@example.com", email)
+	assert.Equal("example.com", domain)
 
 	// Cache and identifier now both point at the phone participant.
 	again, err := r.resolveUser(&User{ID: "@15550100008:beeper.local", Email: "kim@example.com"})
