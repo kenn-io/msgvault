@@ -266,6 +266,10 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 				sum.MessagesProcessed, sum.AttachmentsDownloaded, sum.AttachmentsPending))
 		}
 	}
+	// The initial checkpoint carries resume state, but its counters predate
+	// all media work. Persist the final summary before completing the run so
+	// diagnostics and monitoring agree with the returned result.
+	imp.checkpointNow(syncID, state, sum)
 	if err = imp.store.CompleteSync(syncID, stateBlob); err != nil {
 		return sum, err
 	}

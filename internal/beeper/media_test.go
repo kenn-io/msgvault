@@ -374,6 +374,15 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 	assert.Positive(bsum.Errors, "transient fetch failures must be reported")
 	assert.EqualValues(0, bsum.AttachmentsDownloaded)
 
+	src, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(src.ID)
+	require.NoError(err)
+	assert.Equal(bsum.MessagesProcessed, run.MessagesProcessed,
+		"completed run must persist the returned processed count")
+	assert.Equal(bsum.Errors, run.ErrorsCount,
+		"completed run must persist the returned error count")
+
 	var markers int
 	require.NoError(st.DB().QueryRow(
 		`SELECT COUNT(*) FROM attachments WHERE content_hash IS NULL OR content_hash = ''`).Scan(&markers))
