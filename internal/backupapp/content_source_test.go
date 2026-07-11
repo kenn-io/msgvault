@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -564,17 +563,9 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 		require.FailNow("backup did not open the old packed blob")
 	}
 	repackStats, repackErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
-	if runtime.GOOS == "windows" {
-		require.Error(repackErr, "backup-held independent reader must make Windows deletion retryable")
-		has, hasErr := f.store.HasPackRecord(oldPackID)
-		require.NoError(hasErr)
-		assert.False(has, "the committed mapping swap removes stale catalog authority before physical cleanup")
-		assert.FileExists(oldPath)
-	} else {
-		require.NoError(repackErr)
-		assert.Equal(1, repackStats.PacksRemoved)
-		assert.NoFileExists(oldPath)
-	}
+	require.NoError(repackErr)
+	assert.Equal(1, repackStats.PacksRemoved)
+	assert.NoFileExists(oldPath)
 	close(blocked.release)
 	var result createResult
 	select {
@@ -586,12 +577,6 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	require.NotNil(result.manifest)
 	assert.Equal(int64(1), result.manifest.Attachments.Blobs)
 	require.NoError(backupBlobs.Close())
-	if runtime.GOOS == "windows" {
-		repairStats, repairErr := f.maint.Pack(context.Background(), packstore.PackOptions{})
-		require.NoError(repairErr)
-		assert.Equal(1, repairStats.PacksRemoved, "orphan repair reclaims the old pack after the external reader closes")
-		assert.NoFileExists(oldPath)
-	}
 	verify, err := backup.Verify(context.Background(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})
 	require.NoError(err)
 	assert.Empty(verify.Problems)
