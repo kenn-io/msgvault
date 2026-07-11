@@ -832,3 +832,43 @@ func TestSearchCmd_MutualExclusion(t *testing.T) {
 	_ = a
 	_ = b
 }
+
+// Zero-match searches in --json mode must emit a valid empty JSON
+// array, never the "No messages found." prose — agents pipe this
+// straight into jq.
+func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	savedCfg := cfg
+	savedUseLocal := useLocal
+	defer func() {
+		cfg = savedCfg
+		useLocal = savedUseLocal
+		resetSearchFlags()
+	}()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer srv.Close()
+
+	cfg = &config.Config{}
+	cfg.Remote.URL = srv.URL
+	cfg.Remote.AllowInsecure = true
+	useLocal = false
+
+	root := newTestRootCmd()
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--json", "nothing-matches"})
+
+	done := captureStdout(t)
+	err := root.Execute()
+	out := done()
+	require.NoError(err, "empty search should succeed")
+
+	var results []map[string]any
+	require.NoError(json.Unmarshal([]byte(out), &results),
+		"--json output must be valid JSON with zero results, got: %q", out)
+	assert.Empty(results)
+}

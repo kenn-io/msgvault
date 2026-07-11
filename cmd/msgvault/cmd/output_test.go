@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,4 +51,32 @@ func TestParseCommonFlagsUsesFlagLimit(t *testing.T) {
 	opts, err := parseCommonFlags()
 	require.NoError(t, err, "parseCommonFlags")
 	assert.Equal(t, 25, opts.Limit, "opts.Limit should track the flag")
+}
+
+// JSON mode must emit valid empty JSON ([]) for zero results, never
+// prose like "No senders found." — agents pipe --json output to jq.
+func TestOutputAggregateJSON_EmptyEmitsEmptyArray(t *testing.T) {
+	done := captureStdout(t)
+	require.NoError(t, outputAggregateJSON(nil))
+	out := done()
+
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows),
+		"empty aggregate --json output must be valid JSON, got: %q", out)
+	assert.Empty(t, rows)
+}
+
+func TestOutputAccountStats_JSONEmptyEmitsEmptyArray(t *testing.T) {
+	savedJSON := listAccountsJSON
+	listAccountsJSON = true
+	defer func() { listAccountsJSON = savedJSON }()
+
+	done := captureStdout(t)
+	require.NoError(t, outputAccountStats(nil))
+	out := done()
+
+	var entries []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &entries),
+		"empty list-accounts --json output must be valid JSON, got: %q", out)
+	assert.Empty(t, entries)
 }

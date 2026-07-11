@@ -206,12 +206,14 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 
+	// JSON mode must stay machine-parseable even with zero results:
+	// emit an empty array, never prose.
+	if searchJSON {
+		return outputSearchResultsJSON(resp.Results)
+	}
 	if len(resp.Results) == 0 {
 		fmt.Println("No messages found.")
 		return nil
-	}
-	if searchJSON {
-		return outputSearchResultsJSON(resp.Results)
 	}
 	return outputSearchResultsTable(resp.Results)
 }

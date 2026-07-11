@@ -48,12 +48,14 @@ func listHTTPAccounts(cmd *cobra.Command) error {
 }
 
 func outputAccountStats(stats []accountStats) error {
+	// JSON mode must stay machine-parseable even with zero results:
+	// emit an empty array, never prose.
+	if listAccountsJSON {
+		return outputAccountsJSON(stats)
+	}
 	if len(stats) == 0 {
 		fmt.Println("No accounts found. Use 'msgvault add-account <email>' to add one.")
 		return nil
-	}
-	if listAccountsJSON {
-		return outputAccountsJSON(stats)
 	}
 	outputAccountsTable(stats)
 	return nil
