@@ -47,7 +47,8 @@ The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `search_messages` | Search with a subset of Gmail query syntax (not full Gmail compatibility). When [vector search](/usage/vector-search/) is configured, supports semantic and hybrid modes. | `query` (string, required), `mode` (string: `fts`/`vector`/`hybrid`, default `fts`), `explain` (bool), `limit` (int), `offset` (int), `account` (string) |
+| `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
+| `search_message_bodies` | Search inside message bodies. Supports keyword full-text search, and semantic/hybrid modes when [vector search](/usage/vector-search/) is configured. Returns `matches` excerpts. | `query` (string, required), `mode` (string: `keyword`/`vector`/`hybrid`, default `keyword`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
@@ -58,7 +59,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 
-`search_messages` and `list_messages` return paginated JSON:
+`search_metadata`, `search_message_bodies`, and `list_messages` return paginated JSON. `search_metadata` reports an exact `total` when it can; `search_message_bodies` and `list_messages` return `total = -1` because they do not run a separate count query:
 
 ```json
 {
@@ -70,12 +71,11 @@ The MCP server exposes the following tools to connected AI clients:
 }
 ```
 
-Use `offset` and `limit` to request subsequent pages. `search_messages`
-and `list_messages` default to `limit = 20` and cap it at 50. When a
-backend cannot report a full result count, `total` is `-1`; use
-`has_more` as the pagination signal. `list_messages` uses this
-`total = -1` shape because it does not run a separate count query.
-`search_messages` accepts msgvault's local subset of Gmail-like syntax.
+Use `offset` and `limit` to request subsequent pages. `search_metadata`,
+`search_message_bodies`, and `list_messages` default to `limit = 20` and
+cap it at 50. `search_message_bodies` and `list_messages` use this
+`total = -1` shape because they do not run a separate count query.
+`search_metadata` accepts msgvault's local subset of Gmail-like syntax.
 Gmail-only operators such as `list:` are rejected because msgvault does
 not index `List-ID` locally; use Gmail-side validation for those checks.
 To restrict mixed archives to values such as `email`, `calendar_event`,
@@ -89,13 +89,13 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
-### `search_messages` query syntax
+### `search_metadata` and `search_message_bodies` query syntax
 
 Supported operators: `from:`, `to:`, `cc:`, `bcc:`, `subject:`, `label:` (or `l:`), `has:attachment`, `before:`/`after:` (YYYY-MM-DD), `older_than:`/`newer_than:` (e.g. `7d`, `2w`, `1m`, `1y`), `larger:`/`smaller:` (e.g. `5M`). Bare domains on `from:`/`to:` match any address at that domain. Multiple terms are ANDed.
 
 Not supported: negation (`-has:attachment`), `OR`, or parentheses grouping.
 
-Free text matches subject, snippet, and sender fields first. If that returns no results, the server falls back to full-text search including message bodies (when the FTS index is available).
+Free text in `search_metadata` matches subject, snippet, and sender/recipient metadata only. Use `search_message_bodies` to search inside message bodies; it requires at least one free-text term and matches literal words in keyword mode (default) or semantic chunks in vector/hybrid mode.
 
 ### `aggregate` response
 
@@ -112,7 +112,7 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-`find_similar_messages` is only registered when the server starts with vector search configured. `search_messages` is always available, but `mode=vector` and `mode=hybrid` return `vector_not_enabled` when the server is not configured for vector search. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. Use `mode=fts` for deeper pagination or adjust that config cap.
+`find_similar_messages` is only registered when the server starts with vector search configured. `search_message_bodies` is always available; `mode=vector` and `mode=hybrid` return `vector_not_enabled` when the server is not configured for vector search. Vector and hybrid queries require at least one free-text term (operator-only queries return `missing_free_text`). They support `offset`/`limit` pagination inside the configured hybrid ranking window; when `[vector.search].max_page_size_hybrid` is positive, an `offset` at or beyond that cap returns `pagination_limit`. Use `mode=keyword` for deeper pagination or adjust that config cap.
 
 In `mode=vector` and `mode=hybrid`, the paginated response also includes
 top-level `mode`, `pool_saturated`, and `generation` fields. When

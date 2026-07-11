@@ -25,7 +25,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Start an MCP (Model Context Protocol) server over stdio.
 
 This allows Claude Desktop (or any MCP client) to query your email archive
-using tools like search_messages, get_message, list_messages, get_stats,
+using tools like search_metadata, search_message_bodies, get_message, list_messages, get_stats,
 aggregate, and stage_deletion.
 
 Add to Claude Desktop config:

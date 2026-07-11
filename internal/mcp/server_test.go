@@ -178,7 +178,7 @@ func runToolExpectError(t *testing.T, name string, fn toolHandler, args map[stri
 	return r
 }
 
-func TestSearchMessages(t *testing.T) {
+func TestSearchMetadata(t *testing.T) {
 	eng := &querytest.MockEngine{
 		SearchFastResults: []query.MessageSummary{
 			testutil.NewMessageSummary(1).WithSubject("Hello").WithFromEmail("alice@example.com").WithSourceConversationID("thread-abc").WithConversationID(99).Build(),
@@ -192,7 +192,7 @@ func TestSearchMessages(t *testing.T) {
 	t.Run("valid query", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "from:alice"})
+		resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{"query": "from:alice"})
 		require.Len(resp.Data, 1, "data")
 		assert.Equal("Hello", resp.Data[0].Subject, "subject")
 		assert.Equal("thread-abc", resp.Data[0].SourceConversationID, "SourceConversationID")
@@ -201,18 +201,18 @@ func TestSearchMessages(t *testing.T) {
 	})
 
 	t.Run("missing query", func(t *testing.T) {
-		runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{})
+		runToolExpectError(t, "search_metadata", h.searchMetadata, map[string]any{})
 	})
 
 	t.Run("unsupported Gmail list operator rejected", func(t *testing.T) {
-		r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{"query": "list:(alerts.example.com)"})
+		r := runToolExpectError(t, "search_metadata", h.searchMetadata, map[string]any{"query": "list:(alerts.example.com)"})
 		txt := resultText(t, r)
 		assert.Contains(t, txt, "unsupported_search_operator", "expected unsupported-operator error, got: %s")
 		assert.Contains(t, txt, "list:", "expected list operator context, got: %s")
 	})
 }
 
-func TestSearchMessagesRejectsInvalidQueryBeforeDispatch(t *testing.T) {
+func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
 	queries := []struct {
 		name string
 		text string
@@ -254,7 +254,7 @@ func TestSearchMessagesRejectsInvalidQueryBeforeDispatch(t *testing.T) {
 					args["mode"] = searchModeHybrid
 				}
 
-				result := runToolExpectError(t, "search_messages", h.searchMessages, args)
+				result := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, args)
 				text := resultText(t, result)
 				for _, want := range queryCase.want {
 					assert.Contains(text, want)
@@ -270,9 +270,9 @@ func TestSearchMessagesRejectsInvalidQueryBeforeDispatch(t *testing.T) {
 	}
 }
 
-// TestSearchMessages_MetadataOnly verifies that search_messages uses only the
+// TestSearchMetadata_MetadataOnly verifies that search_metadata uses only the
 // fast metadata path and never calls the FTS body search engine.
-func TestSearchMessages_MetadataOnly(t *testing.T) {
+func TestSearchMetadata_MetadataOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -281,7 +281,7 @@ func TestSearchMessages_MetadataOnly(t *testing.T) {
 			testutil.NewMessageSummary(3).WithSubject("Fast only").Build(),
 		},
 		// SearchResults would be returned by FTS body search — we set it to
-		// confirm search_messages never touches it.
+		// confirm search_metadata never touches it.
 		SearchResults: []query.MessageSummary{
 			testutil.NewMessageSummary(2).WithSubject("Body match").WithFromEmail("bob@example.com").Build(),
 		},
@@ -291,13 +291,13 @@ func TestSearchMessages_MetadataOnly(t *testing.T) {
 	}
 	h := newTestHandlers(eng)
 
-	resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{"query": "important meeting notes"})
+	resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{"query": "important meeting notes"})
 	require.Len(resp.Data, 1, "metadata-only results")
 	// Must return the fast result (ID 3), not the FTS result (ID 2).
 	assert.Equal(int64(3), resp.Data[0].ID, "metadata result ID")
 }
 
-func TestSearchMessages_NonPositiveLimitUsesDefault(t *testing.T) {
+func TestSearchMetadata_NonPositiveLimitUsesDefault(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		limit float64
@@ -321,7 +321,7 @@ func TestSearchMessages_NonPositiveLimitUsesDefault(t *testing.T) {
 			}
 			h := newTestHandlers(eng)
 
-			resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
+			resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{
 				"query": "hello",
 				"limit": tt.limit,
 			})
@@ -531,7 +531,7 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 	}
 	h := newTestHandlers(engine)
 
-	metadata := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages,
+	metadata := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata,
 		map[string]any{"query": "bodyonlyterm"})
 	assert.Empty(metadata.Data, "body-only term must not cross into metadata search")
 	assert.Equal(int64(0), metadata.Total, "metadata count")
@@ -989,12 +989,12 @@ func TestSearchMessageBodies_DenseNativeMarkersStayBounded(t *testing.T) {
 	}
 }
 
-func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
+func TestSearchMessageBodies_HybridModeNotConfigured(t *testing.T) {
 	// Handlers constructed without a hybridEngine must reject
 	// mode=hybrid (and mode=vector) with a vector_not_enabled error.
 	h := newTestHandlers(&querytest.MockEngine{})
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "meeting notes",
 		"mode":  searchModeHybrid,
 	})
@@ -1002,7 +1002,7 @@ func TestSearchMessages_HybridModeNotConfigured(t *testing.T) {
 	assert.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
-func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
+func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	var gotReq HybridSearchRequest
@@ -1037,7 +1037,7 @@ func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
 		}),
 	}
 
-	resp := runTool[searchMessagesHybridResponse](t, "search_messages", h.searchMessages, map[string]any{
+	resp := runTool[searchMessageBodiesResponse](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":   "quarterly plan",
 		"mode":    searchModeHybrid,
 		"account": "alice@example.com",
@@ -1060,7 +1060,7 @@ func TestSearchMessages_HybridUsesDaemonSearcher(t *testing.T) {
 	assert.Equal(int64(7), resp.Generation.ID, "generation")
 }
 
-func TestSearchMessages_HybridDaemonFilterOnlyGuidance(t *testing.T) {
+func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
 	searcherCalled := false
 	h := &handlers{
 		engine: &querytest.MockEngine{},
@@ -1070,18 +1070,18 @@ func TestSearchMessages_HybridDaemonFilterOnlyGuidance(t *testing.T) {
 		}),
 	}
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "from:alice@example.com",
 		"mode":  searchModeHybrid,
 	})
 	text := resultText(t, r)
-	assert.Contains(t, text, "omit mode", "filter-only guidance")
-	assert.NotContains(t, text, "mode=fts", "mode=fts is rejected by search_messages")
+	assert.Contains(t, text, "search_metadata", "filter-only guidance")
+	assert.NotContains(t, text, "mode=fts", "mode=fts is not a valid mode for search_message_bodies")
 	assert.False(t, searcherCalled, "filter-only query must fail before remote search")
 }
 
 // newHybridHandlersForErrorTest wires a real hybrid.Engine around the
-// supplied backend so the search_messages handler exercises the engine's
+// supplied backend so the search_message_bodies handler exercises the engine's
 // sentinel-error translation. mainDB is nil because the test query has
 // no operators, so BuildFilter never touches it.
 func newHybridHandlersForErrorTest(backend vector.Backend) *handlers {
@@ -1101,7 +1101,7 @@ func newHybridHandlersForErrorTest(backend vector.Backend) *handlers {
 // handler's translation of vector.ErrIndexBuilding from the hybrid
 // engine into an "index_building" tool error. The engine returns this
 // when no active generation exists yet but a build is in progress.
-func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
+func TestSearchMessageBodies_HybridErrIndexBuilding(t *testing.T) {
 	building := &vector.Generation{
 		ID: 1, Model: "nomic-embed", Dimension: 768,
 		Fingerprint: "nomic-embed:768", State: vector.GenerationBuilding,
@@ -1113,7 +1113,7 @@ func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
 		building:  building,
 	})
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "anything",
 		"mode":  searchModeHybrid,
 	})
@@ -1125,14 +1125,14 @@ func TestSearchMessages_HybridErrIndexBuilding(t *testing.T) {
 // handler's translation of vector.ErrNotEnabled from the hybrid engine
 // into a "vector_not_enabled" tool error. The engine returns this when
 // no generation exists at all (no active, no building).
-func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
+func TestSearchMessageBodies_HybridErrNotEnabled(t *testing.T) {
 	// fakeBackend.activeErr=ErrNoActiveGeneration + building=nil
 	// drives ResolveActiveForFingerprint into the ErrNotEnabled branch.
 	h := newHybridHandlersForErrorTest(&fakeBackend{
 		activeErr: vector.ErrNoActiveGeneration,
 	})
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "anything",
 		"mode":  searchModeHybrid,
 	})
@@ -1140,7 +1140,7 @@ func TestSearchMessages_HybridErrNotEnabled(t *testing.T) {
 	assert.Contains(t, txt, "vector_not_enabled", "expected 'vector_not_enabled' error, got: %s")
 }
 
-func TestSearchMessages_HybridErrIndexScopeMismatch(t *testing.T) {
+func TestSearchMessageBodies_HybridErrIndexScopeMismatch(t *testing.T) {
 	backend := &fakeBackend{
 		active: vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -1159,7 +1159,7 @@ func TestSearchMessages_HybridErrIndexScopeMismatch(t *testing.T) {
 		backend:      backend,
 	}
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "anything",
 		"mode":  searchModeVector,
 	})
@@ -1190,7 +1190,7 @@ func (e realEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, er
 // "missing_free_text" tool error rather than passing an empty string
 // into the embedder. Mirrors the API-side handler check so MCP and
 // HTTP clients see the same boundary.
-func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
+func TestSearchMessageBodies_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 	// A real engine wired to a backend with an active generation —
 	// stubEmbedder keeps us safe if the handler ever forgets to
 	// short-circuit (Embed will return an error, exposing the bug).
@@ -1209,7 +1209,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 		backend:      backend,
 	}
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "from:alice@example.com",
 		"mode":  searchModeVector,
 	})
@@ -1222,7 +1222,7 @@ func TestSearchMessages_HybridFilterOnlyReturnsMissingFreeText(t *testing.T) {
 // false on a successful, under-cap response). An `omitempty` slip
 // would silently drop the field when false; clients that key off
 // "saturated vs not" would break.
-func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
+func TestSearchMessageBodies_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	require := require.New(t)
 	backend := &fakeBackend{
 		active: vector.Generation{
@@ -1241,7 +1241,7 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 		backend:      backend,
 	}
 
-	r := callToolDirect(t, "search_messages", h.searchMessages, map[string]any{
+	r := callToolDirect(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "hello world",
 		"mode":  searchModeVector,
 	})
@@ -1253,7 +1253,7 @@ func TestSearchMessages_HybridPoolSaturatedAlwaysEmitted(t *testing.T) {
 	assert.Equal(t, "false", string(val), "pool_saturated")
 }
 
-func TestSearchMessages_HybridModePagination(t *testing.T) {
+func TestSearchMessageBodies_HybridModePagination(t *testing.T) {
 	const msgID = int64(77)
 	backend := &fakeBackend{
 		active: vector.Generation{
@@ -1292,7 +1292,7 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 		Total    int64 `json:"total"`
 		HasMore  bool  `json:"has_more"`
 	}
-	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+	resp := runTool[hybridPage](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(1),
@@ -1307,7 +1307,7 @@ func TestSearchMessages_HybridModePagination(t *testing.T) {
 	assert.True(resp.HasMore, "has_more")
 }
 
-func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
+func TestSearchMessageBodies_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 	// Regression: offset=40&limit=20 with max_page_size_hybrid=50 fetches the
 	// last 10 hits in-window. Pool saturation must not set has_more=true when
 	// the next page (offset=60) exceeds the ranking window. total must stay -1
@@ -1344,7 +1344,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 		Total   int64 `json:"total"`
 		HasMore bool  `json:"has_more"`
 	}
-	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+	resp := runTool[hybridPage](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(40),
@@ -1356,7 +1356,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
 	assert.False(resp.HasMore, "has_more")
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(60),
@@ -1365,7 +1365,7 @@ func TestSearchMessages_HybridPagination_NoUnreachableHasMore(t *testing.T) {
 	assert.Contains(resultText(t, r), "pagination_limit")
 }
 
-func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T) {
+func TestSearchMessageBodies_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T) {
 	// Regression: offset=30&limit=20 with max_page_size_hybrid=50 fills the
 	// ranking window (requestedEnd=50). has_more must be false even when the
 	// pool is saturated — the next page (offset=50) is rejected.
@@ -1402,7 +1402,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 		Total   int64 `json:"total"`
 		HasMore bool  `json:"has_more"`
 	}
-	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+	resp := runTool[hybridPage](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(30),
@@ -1414,7 +1414,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 	assert.Equal(int64(totalCountUnknown), resp.Total, "total")
 	assert.False(resp.HasMore, "has_more")
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(50),
@@ -1423,7 +1423,7 @@ func TestSearchMessages_HybridPagination_NoHasMoreAtMaxPageBoundary(t *testing.T
 	assert.Contains(resultText(t, r), "pagination_limit")
 }
 
-func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
+func TestSearchMessageBodies_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 	// Regression: hybrid must fetch offset+limit+1 rows so has_more is true
 	// when additional in-window fused results exist (not only when the pool
 	// is saturated past the ranking window).
@@ -1458,7 +1458,7 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 		} `json:"data"`
 		HasMore bool `json:"has_more"`
 	}
-	resp := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+	resp := runTool[hybridPage](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "hit",
 		"mode":  searchModeVector,
 		"limit": float64(20),
@@ -1468,7 +1468,7 @@ func TestSearchMessages_HybridPagination_ProbeRowDetectsMore(t *testing.T) {
 	require.Len(resp.Data, 20, "data")
 	assert.True(resp.HasMore, "has_more")
 
-	resp2 := runTool[hybridPage](t, "search_messages", h.searchMessages, map[string]any{
+	resp2 := runTool[hybridPage](t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query":  "hit",
 		"mode":   searchModeVector,
 		"offset": float64(20),
@@ -1526,25 +1526,12 @@ func TestBodyByteSlice(t *testing.T) {
 	})
 }
 
-func TestSearchMessages_UnknownMode(t *testing.T) {
+func TestSearchMessageBodies_UnknownMode(t *testing.T) {
 	h := newTestHandlers(&querytest.MockEngine{})
 
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+	r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 		"query": "meeting notes",
 		"mode":  "bogus",
-	})
-	txt := resultText(t, r)
-	assert.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
-}
-
-// TestSearchMessages_FTSModeRejected guards that passing mode=fts to
-// search_messages returns an error directing the caller to search_message_bodies.
-func TestSearchMessages_FTSModeRejected(t *testing.T) {
-	h := newTestHandlers(&querytest.MockEngine{})
-
-	r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
-		"query": "meeting notes",
-		"mode":  searchModeFTS,
 	})
 	txt := resultText(t, r)
 	assert.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
@@ -2482,7 +2469,7 @@ func TestAccountFilter(t *testing.T) {
 		eng.SearchFastCountFunc = func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
 			return 1, nil
 		}
-		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
+		resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{
 			"query":   "test",
 			"account": "alice@gmail.com",
 		})
@@ -2490,7 +2477,7 @@ func TestAccountFilter(t *testing.T) {
 	})
 
 	t.Run("search with invalid account", func(t *testing.T) {
-		r := runToolExpectError(t, "search_messages", h.searchMessages, map[string]any{
+		r := runToolExpectError(t, "search_message_bodies", h.searchMessageBodies, map[string]any{
 			"query":   "test",
 			"account": "unknown@gmail.com",
 		})
@@ -2535,7 +2522,7 @@ func TestAccountFilter(t *testing.T) {
 		eng.SearchFastCountFunc = func(_ context.Context, _ *search.Query, _ query.MessageFilter) (int64, error) {
 			return 1, nil
 		}
-		resp := runTool[paginatedSearchMessages](t, "search_messages", h.searchMessages, map[string]any{
+		resp := runTool[paginatedSearchMessages](t, "search_metadata", h.searchMetadata, map[string]any{
 			"query":   "test",
 			"account": "",
 		})
@@ -3028,19 +3015,19 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 	assert.Equal(int64(102), resp.Messages[0].ID, "message id")
 }
 
-// TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable guards the
+// TestSearchMessageBodiesTool_AdvertisesVectorModesOnlyWhenAvailable guards the
 // capability-discovery contract: when the server has no hybrid engine,
-// the search_messages tool omits the "mode" and "explain" parameters so
+// the search_message_bodies tool omits the "mode" and "explain" parameters so
 // clients don't build vector requests that will fail at runtime.
-func TestSearchMessagesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T) {
+func TestSearchMessageBodiesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T) {
 	assert := assert.New(t)
-	disabled := searchMessagesTool(false)
+	disabled := searchMessageBodiesTool(false)
 	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: tool advertises 'mode' but vector modes are unsupported")
 	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: tool advertises 'explain' but vector modes are unsupported")
 	assert.False(strings.Contains(disabled.Description, "mode=vector") || strings.Contains(disabled.Description, "mode=hybrid"),
 		"vectorAvailable=false: tool description mentions vector modes: %q", disabled.Description)
 
-	enabled := searchMessagesTool(true)
+	enabled := searchMessageBodiesTool(true)
 	assert.Contains(enabled.InputSchema.Properties, "mode", "vectorAvailable=true: tool is missing 'mode' parameter")
 	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: tool is missing 'explain' parameter")
 	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: tool description should call out the free-text requirement, got: %q", enabled.Description)
@@ -3052,34 +3039,32 @@ func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
 	assert.Contains(tool.InputSchema.Properties, "message_type")
 }
 
-// TestSearchMessagesTool_DocumentsQuerySyntax guards the operator-support
+// TestSearchMetadataTool_DocumentsQuerySyntax guards the operator-support
 // contract so clients do not assume full Gmail compatibility.
-func TestSearchMessagesTool_DocumentsQuerySyntax(t *testing.T) {
+func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
 	assert := assert.New(t)
-	for _, vectorAvailable := range []bool{false, true} {
-		tool := searchMessagesTool(vectorAvailable)
-		desc := tool.Description
-		for _, want := range []string{
-			"cc:",
-			"bcc:",
-			"older_than:",
-			"Not supported: negation",
-			"subject, snippet",
-		} {
-			assert.Contains(desc, want, "vectorAvailable=%v: description missing %q", vectorAvailable, want)
-		}
-		assert.NotContains(desc, "Gmail-like", "vectorAvailable=%v: description should not over-promise Gmail compatibility", vectorAvailable)
-
-		queryDesc := toolPropertyDescription(tool, "query")
-		assert.Contains(queryDesc, "supported operators", "vectorAvailable=%v: query param should reference operator docs", vectorAvailable)
+	tool := searchMetadataTool()
+	desc := tool.Description
+	for _, want := range []string{
+		"cc:",
+		"bcc:",
+		"older_than:",
+		"Not supported: negation",
+		"subject, snippet",
+	} {
+		assert.Contains(desc, want, "description missing %q", want)
 	}
+	assert.NotContains(desc, "Gmail-like", "description should not over-promise Gmail compatibility")
+
+	queryDesc := toolPropertyDescription(tool, "query")
+	assert.Contains(queryDesc, "supported operators", "query param should reference operator docs")
 }
 
 // TestSearchMessageBodiesTool_DocumentsQuerySyntax guards the query-syntax
 // contract so MCP clients know how body FTS interprets free-text terms.
 func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesTool(false)
 
 	assert.Contains(tool.Description, "ANDed", "tool description should document implicit AND, got: %q", tool.Description)
 	assert.Contains(tool.Description, "double-quoted phrase", "tool description should document phrase matching, got: %q", tool.Description)
@@ -3096,7 +3081,7 @@ func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
 // tokens are literal body text.
 func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesTool(false)
 
 	assert.Contains(tool.Description, "metadata filters", "tool description should distinguish filters from free text, got: %q", tool.Description)
 	assert.Contains(tool.Description, "Unrecognized word:value", "tool description should document literal colon tokens, got: %q", tool.Description)
@@ -3111,7 +3096,7 @@ func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
 // contract for when excerpt lists are capped.
 func TestSearchMessageBodiesTool_DocumentsMatchesTruncated(t *testing.T) {
 	assert := assert.New(t)
-	tool := searchMessageBodiesTool()
+	tool := searchMessageBodiesTool(false)
 
 	assert.Contains(tool.Description, "matches_truncated",
 		"tool description should document matches_truncated, got: %q", tool.Description)

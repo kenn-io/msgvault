@@ -9,10 +9,10 @@ import (
 	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
-// messageMatch is the unified excerpt shape for search_in_message,
-// search_message_bodies, and vector/hybrid search_messages. char_offset
-// is a byte offset into raw body_text for get_message center_at.
-// score is set for vector chunk matches only.
+// messageMatch is the unified excerpt shape for search_in_message and
+// search_message_bodies (keyword, vector, and hybrid). char_offset is a byte
+// offset into raw body_text for get_message center_at. score is set for vector
+// chunk matches only.
 type messageMatch struct {
 	CharOffset int      `json:"char_offset"`
 	Snippet    string   `json:"snippet"`

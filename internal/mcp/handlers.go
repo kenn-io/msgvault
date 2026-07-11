@@ -109,7 +109,7 @@ type handlers struct {
 	dataDir          string
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
-	// search_messages handler rejects mode=vector and mode=hybrid with
+	// search_message_bodies handler rejects mode=vector and mode=hybrid with
 	// a vector_not_enabled error. backend is additionally required by
 	// the find_similar_messages handler to load seed vectors and
 	// resolve the active generation.
@@ -314,34 +314,27 @@ func (h *handlers) readAttachmentFile(contentHash string) ([]byte, error) {
 }
 
 // searchMessageItem carries a message summary plus body match excerpts.
-// Used by search_message_bodies.
+// Used by search_message_bodies for keyword, vector, and hybrid results.
+// Score is present only when mode=vector/hybrid and explain=true.
 type searchMessageItem struct {
 	query.MessageSummary
 
 	// MatchesTruncated is true when more than maxContextSnippets (5) match
 	// excerpts were found; only the first 5 are returned.
-	Matches          []messageMatch `json:"matches,omitempty"`
-	MatchesTruncated bool           `json:"matches_truncated,omitempty"`
+	Matches          []messageMatch        `json:"matches,omitempty"`
+	MatchesTruncated bool                  `json:"matches_truncated,omitempty"`
+	Score            *hybridScoreBreakdown `json:"score,omitempty"`
 }
 
-// searchMessages searches message metadata only (subject, sender, recipients,
-// labels, dates). Use search_message_bodies for full-body keyword search.
-// Vector and hybrid modes are delegated to searchMessagesHybrid.
-func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// searchMetadata searches message metadata only (subject, sender, recipients,
+// labels, dates). Use search_message_bodies for full-body keyword, vector, or
+// hybrid search.
+func (h *handlers) searchMetadata(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
 	queryStr, _ := args["query"].(string)
 	if queryStr == "" {
 		return mcp.NewToolResultError("query parameter is required"), nil
-	}
-
-	mode, _ := args["mode"].(string)
-	explain, _ := args["explain"].(bool)
-
-	if mode != "" && mode != searchModeVector && mode != searchModeHybrid {
-		return mcp.NewToolResultError(
-			fmt.Sprintf("invalid mode %q: must be %s or %s (or omit for metadata search)", mode, searchModeVector, searchModeHybrid),
-		), nil
 	}
 
 	q := search.Parse(queryStr)
@@ -350,10 +343,6 @@ func (h *handlers) searchMessages(ctx context.Context, req mcp.CallToolRequest) 
 	}
 	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
 		return mcp.NewToolResultError(msg), nil
-	}
-
-	if mode == searchModeVector || mode == searchModeHybrid {
-		return h.searchMessagesHybrid(ctx, args, queryStr, q, mode, explain)
 	}
 
 	limit := searchLimitArg(args)
@@ -406,9 +395,10 @@ func unsupportedSearchOperatorMessage(q *search.Query) string {
 	)
 }
 
-// searchMessageBodies performs full-text search over message bodies and returns
-// matches — short excerpts centered on each matched term. Requires at
-// least one free-text term; use search_messages for filter-only queries.
+// searchMessageBodies searches message bodies by keyword, vector, or hybrid.
+// It returns messages whose body matches the query, plus matches — short
+// excerpts centered on each matched term. Requires at least one free-text term
+// for keyword mode; use search_metadata for filter-only queries.
 func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 
@@ -417,12 +407,30 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError("query parameter is required"), nil
 	}
 
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = searchModeKeyword
+	}
+	explain, _ := args["explain"].(bool)
+
+	switch mode {
+	case searchModeKeyword, searchModeVector, searchModeHybrid:
+	default:
+		return mcp.NewToolResultError(
+			fmt.Sprintf("invalid mode %q: must be %s, %s, or %s (default %s)", mode, searchModeKeyword, searchModeVector, searchModeHybrid, searchModeKeyword),
+		), nil
+	}
+
 	q := search.Parse(queryStr)
 	if err := q.Err(); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if msg := unsupportedSearchOperatorMessage(q); msg != "" {
 		return mcp.NewToolResultError(msg), nil
+	}
+
+	if mode == searchModeVector || mode == searchModeHybrid {
+		return h.searchMessageBodiesHybrid(ctx, args, queryStr, q, mode, explain)
 	}
 
 	limit := searchLimitArg(args)
@@ -442,7 +450,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(
 			"search_message_bodies requires at least one free-text term (bare word or quoted phrase); " +
 				"Gmail operators such as from: or subject: are metadata filters and do not count — " +
-				"use search_messages for filter-only queries",
+				"use search_metadata for filter-only queries",
 		), nil
 	}
 
@@ -490,7 +498,10 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req mcp.CallToolRequ
 		data = append(data, item)
 	}
 
-	return jsonResult(newPaginatedResponseNoTotal(data, offset, hasMore))
+	return jsonResult(searchMessageBodiesResponse{
+		paginatedResponse: newPaginatedResponseNoTotal(data, offset, hasMore),
+		Mode:              searchModeKeyword,
+	})
 }
 
 // hybridScoreBreakdown exposes fused-score components for debugging.
@@ -502,18 +513,6 @@ type hybridScoreBreakdown struct {
 	BM25           *float64 `json:"bm25,omitempty"`
 	Vector         *float64 `json:"vector,omitempty"`
 	SubjectBoosted bool     `json:"subject_boosted,omitempty"`
-}
-
-// hybridMessageItem is a single hit in a vector/hybrid response. The
-// embedded MessageSummary carries the standard message fields; Score is
-// present only when explain=true was requested. Matches lists the best
-// scoring embedded chunks for the query within this message.
-type hybridMessageItem struct {
-	query.MessageSummary
-
-	Score            *hybridScoreBreakdown `json:"score,omitempty"`
-	Matches          []messageMatch        `json:"matches,omitempty"`
-	MatchesTruncated bool                  `json:"matches_truncated,omitempty"`
 }
 
 // HybridGeneration describes the active vector-index generation used to answer
@@ -528,27 +527,29 @@ type HybridGeneration struct {
 
 type hybridGenerationSummary = HybridGeneration
 
-// searchMessagesHybridResponse is the paginated body for mode=vector|hybrid.
-type searchMessagesHybridResponse struct {
-	paginatedResponse[hybridMessageItem]
+// searchMessageBodiesResponse is the paginated body for search_message_bodies.
+// It is returned for all modes (keyword, vector, hybrid); Mode/PoolSaturated/Generation
+// are only meaningful for vector/hybrid.
+type searchMessageBodiesResponse struct {
+	paginatedResponse[searchMessageItem]
 
 	Mode          string                  `json:"mode"`
 	PoolSaturated bool                    `json:"pool_saturated"`
 	Generation    hybridGenerationSummary `json:"generation"`
 }
 
-// searchMessagesHybrid runs vector or hybrid search via the configured
+// searchMessageBodiesHybrid runs vector or hybrid search via the configured
 // hybrid engine. Mirrors api/handlers.go handleHybridSearch: returns
 // descriptive errors when the engine is not configured or the index is
 // stale/building, otherwise returns RRF-ranked hits hydrated via
 // GetMessageSummariesByIDs (body omitted — use search_message_bodies or
 // search_in_message for body content).
-func (h *handlers) searchMessagesHybrid(
+func (h *handlers) searchMessageBodiesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*mcp.CallToolResult, error) {
 	if h.hybridSearcher != nil {
-		return h.searchMessagesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
+		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
 	}
 	if h.hybridEngine == nil {
 		return mcp.NewToolResultError(
@@ -574,7 +575,7 @@ func (h *handlers) searchMessagesHybrid(
 	if freeText == "" {
 		return mcp.NewToolResultError(
 			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; omit mode for metadata-only search",
+				" requires at least one free-text term; use search_metadata for filter-only queries",
 		), nil
 	}
 
@@ -600,7 +601,7 @@ func (h *handlers) searchMessagesHybrid(
 		if offset >= maxPage {
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"pagination_limit: offset %d exceeds hybrid ranking window (max %d); "+
-					"use search_messages (metadata) or search_message_bodies for deeper pagination",
+					"use search_metadata or search_message_bodies for deeper pagination",
 				offset, maxPage,
 			)), nil
 		}
@@ -646,13 +647,13 @@ func (h *handlers) searchMessagesHybrid(
 	for _, s := range summaries {
 		byID[s.ID] = s
 	}
-	items := make([]hybridMessageItem, 0, len(hits))
+	items := make([]searchMessageItem, 0, len(hits))
 	for _, hit := range hits {
 		msg, ok := byID[hit.MessageID]
 		if !ok {
 			continue
 		}
-		item := hybridMessageItem{MessageSummary: msg}
+		item := searchMessageItem{MessageSummary: msg}
 		if explain {
 			sb := &hybridScoreBreakdown{SubjectBoosted: hit.SubjectBoosted}
 			if !math.IsNaN(hit.RRFScore) {
@@ -672,7 +673,7 @@ func (h *handlers) searchMessagesHybrid(
 		items = append(items, item)
 	}
 
-	var page []hybridMessageItem
+	var page []searchMessageItem
 	if offset < len(items) {
 		end := min(offset+limit, len(items))
 		page = items[offset:end]
@@ -691,7 +692,7 @@ func (h *handlers) searchMessagesHybrid(
 		}
 	}
 
-	return jsonResult(searchMessagesHybridResponse{
+	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(page, offset, hasMore),
 		Mode:              mode,
 		PoolSaturated:     meta.PoolSaturated,
@@ -705,7 +706,7 @@ func (h *handlers) searchMessagesHybrid(
 	})
 }
 
-func (h *handlers) searchMessagesHybridViaSearcher(
+func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*mcp.CallToolResult, error) {
@@ -717,7 +718,7 @@ func (h *handlers) searchMessagesHybridViaSearcher(
 	if freeText == "" {
 		return mcp.NewToolResultError(
 			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; omit mode for metadata-only filter queries",
+				" requires at least one free-text term; use search_metadata for filter-only queries",
 		), nil
 	}
 
@@ -759,13 +760,13 @@ func (h *handlers) searchMessagesHybridViaSearcher(
 		byID[s.ID] = s
 	}
 
-	items := make([]hybridMessageItem, 0, len(pageHits))
+	items := make([]searchMessageItem, 0, len(pageHits))
 	for _, hit := range pageHits {
 		msg, ok := byID[hit.ID]
 		if !ok {
 			continue
 		}
-		item := hybridMessageItem{MessageSummary: msg}
+		item := searchMessageItem{MessageSummary: msg}
 		if explain {
 			item.Score = &hybridScoreBreakdown{
 				RRF:            hit.RRFScore,
@@ -777,7 +778,7 @@ func (h *handlers) searchMessagesHybridViaSearcher(
 		items = append(items, item)
 	}
 
-	return jsonResult(searchMessagesHybridResponse{
+	return jsonResult(searchMessageBodiesResponse{
 		paginatedResponse: newPaginatedResponseNoTotal(items, offset, hasMore),
 		Mode:              mode,
 		PoolSaturated:     result.PoolSaturated,
@@ -1208,7 +1209,7 @@ func (h *handlers) attachVectorChunkMatches(
 	ctx context.Context,
 	genID vector.GenerationID,
 	queryVec []float32,
-	items []hybridMessageItem,
+	items []searchMessageItem,
 	minScore float64,
 ) {
 	scorer, ok := h.backend.(vector.ChunkScoringBackend)
