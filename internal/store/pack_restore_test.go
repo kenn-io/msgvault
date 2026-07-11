@@ -19,16 +19,17 @@ const (
 )
 
 func TestRestorePackCatalogCreatesOnlyPackSchema(t *testing.T) {
+	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
 
 	_, err := NewRestorePackCatalog(context.Background(), db)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"attachment_pack_index", "attachment_packs", "attachments"},
+	assert.Equal([]string{"attachment_pack_index", "attachment_packs", "attachments"},
 		listSQLiteObjects(t, db, "table"))
-	assert.Equal(t, []string{"idx_attachment_pack_index_pack"},
+	assert.Equal([]string{"idx_attachment_pack_index_pack"},
 		listSQLiteObjects(t, db, "index", "sqlite_autoindex_%"))
-	assert.Empty(t, listSQLiteObjects(t, db, "trigger"))
+	assert.Empty(listSQLiteObjects(t, db, "trigger"))
 }
 
 func TestLooseMetadataClearDoesNotCreatePackSchema(t *testing.T) {
@@ -42,6 +43,8 @@ func TestLooseMetadataClearDoesNotCreatePackSchema(t *testing.T) {
 }
 
 func TestRestorePackCatalogReplacesMetadataAtomically(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
 	hashA := restoreHash("a1")
 	hashB := restoreHash("b2")
@@ -57,20 +60,20 @@ func TestRestorePackCatalogReplacesMetadataAtomically(t *testing.T) {
 		{Entry: restoreIndexEntry(hashB, restorePackA, 106, 200, 240, 1, 22), OriginalHashes: []string{hashB}},
 	}
 
-	require.NoError(t, catalog.ReplaceRestoredPacks(context.Background(), []packstore.PackRecord{record}, adoptions))
+	require.NoError(catalog.ReplaceRestoredPacks(context.Background(), []packstore.PackRecord{record}, adoptions))
 
-	assert.Equal(t, []string{restorePackA}, queryStrings(t, db, `SELECT pack_id FROM attachment_packs ORDER BY pack_id`))
-	assert.Equal(t, []string{hashA, hashB}, queryStrings(t, db, `SELECT blob_hash FROM attachment_pack_index ORDER BY blob_hash`))
+	assert.Equal([]string{restorePackA}, queryStrings(t, db, `SELECT pack_id FROM attachment_packs ORDER BY pack_id`))
+	assert.Equal([]string{hashA, hashB}, queryStrings(t, db, `SELECT blob_hash FROM attachment_pack_index ORDER BY blob_hash`))
 	var got packstore.IndexEntry
-	require.NoError(t, db.QueryRow(`
+	require.NoError(db.QueryRow(`
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index WHERE blob_hash = ?`, hashB).Scan(
 		&got.Hash, &got.PackID, &got.Offset, &got.StoredLen, &got.RawLen, &got.Flags, &got.CRC32C))
-	assert.Equal(t, adoptions[1].Entry, got)
-	assert.Equal(t, []string{upperA, hashA}, queryStrings(t, db,
+	assert.Equal(adoptions[1].Entry, got)
+	assert.Equal([]string{upperA, hashA}, queryStrings(t, db,
 		`SELECT content_hash FROM attachments WHERE message_id = 10 ORDER BY id`),
 		"restore catalog must not rewrite case-equivalent attachment aliases")
-	assert.Equal(t, []string{"legacy/a", "legacy/a-duplicate"}, queryStrings(t, db,
+	assert.Equal([]string{"legacy/a", "legacy/a-duplicate"}, queryStrings(t, db,
 		`SELECT storage_path FROM attachments WHERE message_id = 10 ORDER BY id`))
 }
 
@@ -93,21 +96,23 @@ func TestRestorePackCatalogRejectsNonSnapshotHash(t *testing.T) {
 }
 
 func TestRestorePackCatalogKeepsFullFooterTotals(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
 	hash := restoreHash("e5")
 	insertHistoricalAttachment(t, db, 1, 1, hash, "live", "", "")
 	catalog := openRestoreCatalog(t, db)
 	record := restorePackRecord(17, 987654, time.Now().UTC())
 
-	require.NoError(t, catalog.ReplaceRestoredPacks(context.Background(), []packstore.PackRecord{record}, []packstore.Adoption{
+	require.NoError(catalog.ReplaceRestoredPacks(context.Background(), []packstore.PackRecord{record}, []packstore.Adoption{
 		{Entry: restoreIndexEntry(hash, restorePackA, 6, 50, 75, 1, 42)},
 	}))
 
 	var entries, stored int64
-	require.NoError(t, db.QueryRow(`SELECT entry_count, stored_bytes FROM attachment_packs WHERE pack_id = ?`, restorePackA).
+	require.NoError(db.QueryRow(`SELECT entry_count, stored_bytes FROM attachment_packs WHERE pack_id = ?`, restorePackA).
 		Scan(&entries, &stored))
-	assert.Equal(t, record.EntryCount, entries)
-	assert.Equal(t, record.StoredBytes, stored)
+	assert.Equal(record.EntryCount, entries)
+	assert.Equal(record.StoredBytes, stored)
 }
 
 func TestRestorePackCatalogEmptyReplacementClearsMetadata(t *testing.T) {
@@ -122,6 +127,8 @@ func TestRestorePackCatalogEmptyReplacementClearsMetadata(t *testing.T) {
 }
 
 func TestRestorePackCatalogRollbackPreservesPriorMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	db := openHistoricalRestoreDB(t)
 	oldHash := restoreHash("f6")
 	newHash := restoreHash("07")
@@ -132,15 +139,15 @@ func TestRestorePackCatalogRollbackPreservesPriorMetadata(t *testing.T) {
 		BEFORE INSERT ON attachment_pack_index
 		WHEN NEW.blob_hash = '` + newHash + `'
 		BEGIN SELECT RAISE(ABORT, 'forced restore index failure'); END`)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	err = catalog.ReplaceRestoredPacks(context.Background(), []packstore.PackRecord{
 		restorePackRecord(1, 100, time.Now().UTC()),
 	}, []packstore.Adoption{{Entry: restoreIndexEntry(newHash, restorePackA, 6, 100, 100, 0, 1)}})
 
-	require.ErrorContains(t, err, "forced restore index failure")
-	assert.Equal(t, []string{restorePackB}, queryStrings(t, db, `SELECT pack_id FROM attachment_packs`))
-	assert.Equal(t, []string{oldHash}, queryStrings(t, db, `SELECT blob_hash FROM attachment_pack_index`))
+	require.ErrorContains(err, "forced restore index failure")
+	assert.Equal([]string{restorePackB}, queryStrings(t, db, `SELECT pack_id FROM attachment_packs`))
+	assert.Equal([]string{oldHash}, queryStrings(t, db, `SELECT blob_hash FROM attachment_pack_index`))
 }
 
 func TestRestorePackCatalogUsesRestoreTime(t *testing.T) {

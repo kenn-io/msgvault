@@ -21,12 +21,13 @@ import (
 )
 
 func TestBackupRestorePackedTargetSelection(t *testing.T) {
-	assert.NotNil(t, backupRestorePackedContentTarget(false), "packed restore is the default")
-	assert.Equal(t, packstore.DefaultLimits(), backupRestorePackedContentTarget(false).Limits())
-	assert.Nil(t, backupRestorePackedContentTarget(true), "explicit loose restore must use Kit's legacy path")
+	assert := assert.New(t)
+	assert.NotNil(backupRestorePackedContentTarget(false), "packed restore is the default")
+	assert.Equal(packstore.DefaultLimits(), backupRestorePackedContentTarget(false).Limits())
+	assert.Nil(backupRestorePackedContentTarget(true), "explicit loose restore must use Kit's legacy path")
 	flag := backupRestoreCmd.Flags().Lookup("loose-attachments")
 	require.NotNil(t, flag)
-	assert.Equal(t, "false", flag.DefValue)
+	assert.Equal("false", flag.DefValue)
 }
 
 func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T) {
