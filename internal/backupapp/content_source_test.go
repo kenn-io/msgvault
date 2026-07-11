@@ -365,11 +365,11 @@ func TestContentSourceCancelledContext(t *testing.T) {
 	assert.ErrorIs(err, context.Canceled)
 }
 
-// TestBackupCreatePackedVaultEndToEnd proves capture never needs loose files:
-// a fully packed vault (one canonical blob, one legacy noncanonical blob,
-// zero loose content) round-trips through create → verify → restore with the
-// ContentSource supplying every attachment byte.
-func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
+// TestBackupPackedRestoreLifecycle proves capture and restore preserve the
+// packed foundation end to end: a fully packed vault round-trips through
+// backup, restores without eligible loose files, remains readable, can be
+// backed up again, and survives unpack/repack with identical hashes.
+func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newVaultFixture(t)
@@ -384,6 +384,13 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 	stats := f.pack()
 	require.Equal(2, stats.BlobsPacked)
 	require.Empty(f.looseFiles(), "packer must leave no loose content")
+	sourceRecords, err := f.store.ListPackRecords()
+	require.NoError(err)
+	require.NotEmpty(sourceRecords)
+	sourcePackIDs := make(map[string]struct{}, len(sourceRecords))
+	for _, record := range sourceRecords {
+		sourcePackIDs[record.PackID] = struct{}{}
+	}
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err, "backup.Init")
@@ -402,55 +409,145 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 	assert.Empty(verifyRes.Problems)
 
 	target := filepath.Join(t.TempDir(), "restored")
-	restoreRes, err := backup.Restore(ctx, repo, app, backup.RestoreOptions{TargetDir: target})
+	restoreRes, err := backup.Restore(ctx, repo, app, backup.RestoreOptions{
+		TargetDir: target, PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
+	})
 	require.NoError(err, "backup.Restore")
 	assert.Equal(int64(2), restoreRes.AttachmentBlobs)
+	assert.Equal(int64(2), restoreRes.PackedAttachmentBlobs)
+	assert.Zero(restoreRes.LooseAttachmentBlobs)
+	assert.Positive(restoreRes.AttachmentPacks)
+	assert.Empty(restoreRes.PackFallbacks)
 
-	restoredA, err := os.ReadFile(filepath.Join(target, "attachments",
-		hashA[:2], hashA))
-	require.NoError(err, "read restored blob A")
-	assert.Equal(contentA, restoredA)
-	// The packer canonicalized hashB's recorded path in the same transaction
-	// that indexed it, so restore materializes it at the canonical location.
-	restoredB, err := os.ReadFile(filepath.Join(target, "attachments",
-		hashB[:2], hashB))
-	require.NoError(err, "read restored blob B")
-	assert.Equal(contentB, restoredB)
-
-	_, err = os.Stat(filepath.Join(target, "attachments", "synctech-sms"))
-	require.ErrorIs(err, fs.ErrNotExist, "no legacy path should be restored")
-
-	// A restored vault has loose files but NO production pack files, so the
-	// pack metadata carried in the restored DB is dangling. Reads through the
-	// production blob store must fail while it remains (index hit -> missing
-	// pack -> single index retry -> fail; no loose fallback by design) — this
-	// is exactly why `backup restore` clears the metadata.
 	restoredStore, err := store.OpenForTest(restoreRes.DBPath)
 	require.NoError(err, "open restored store")
 	t.Cleanup(func() { _ = restoredStore.Close() })
 	restoredAttDir := filepath.Join(target, "attachments")
-
-	stale, err := attachmentstore.New(store.NewPackCatalog(restoredStore), restoredAttDir)
-	require.NoError(err)
-	_, _, err = stale.Open(hashA)
-	require.Error(err, "packed-blob read must fail while stale pack metadata remains")
-	require.ErrorIs(err, fs.ErrNotExist, "failure is the missing pack file, not the loose copy")
-	require.NoError(stale.Close(), "close stale blob store")
-
-	// Mirror the CLI restore flow (cmd/msgvault/cmd/backup.go): InitSchema is
-	// idempotent and guarantees the pack tables exist even for snapshots
-	// predating them, then the metadata is cleared.
-	require.NoError(restoredStore.InitSchema(), "init restored schema")
-	require.NoError(restoredStore.ClearAttachmentPackMetadata(), "clear restored pack metadata")
-
 	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), restoredAttDir)
 	require.NoError(err)
-	t.Cleanup(func() { _ = blobs.Close() })
 	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
 		r, size, err := blobs.Open(h)
-		require.NoErrorf(err, "attachmentstore.Open(%s) after clearing pack metadata", h)
+		require.NoErrorf(err, "attachmentstore.Open(%s) after packed restore", h)
 		assert.Equalf(int64(len(want)), size, "blob %s size", h)
 		assert.Equalf(want, readAllAndClose(t, r), "blob %s reads byte-identical", h)
+		_, err = os.Stat(filepath.Join(restoredAttDir, h[:2], h))
+		require.ErrorIs(err, fs.ErrNotExist, "eligible restored blob must not be materialized loose")
+	}
+	packRecords, err := restoredStore.ListPackRecords()
+	require.NoError(err)
+	assert.Len(packRecords, restoreRes.AttachmentPacks)
+	for _, record := range packRecords {
+		_, staleSourceID := sourcePackIDs[record.PackID]
+		assert.False(staleSourceID, "restore must replace source-vault pack metadata with repository pack IDs")
+	}
+	indexed, err := restoredStore.ListIndexedBlobHashes()
+	require.NoError(err)
+	assert.Equal(map[string]struct{}{hashA: {}, hashB: {}}, indexed)
+
+	secondRepo, err := backup.Init(filepath.Join(t.TempDir(), "restored-repo"))
+	require.NoError(err)
+	_, err = backup.Create(ctx, secondRepo, app, backup.CreateOptions{
+		DBPath: restoreRes.DBPath, ContentDir: restoredAttDir, DataDir: target,
+		ContentSource: backupapp.NewContentSource(blobs, restoredAttDir),
+	})
+	require.NoError(err, "back up packed restored vault")
+	require.NoError(blobs.Close())
+	secondVerify, err := backup.Verify(ctx, secondRepo, app, backup.VerifyOptions{All: true})
+	require.NoError(err)
+	assert.Empty(secondVerify.Problems)
+
+	layout, err := packstore.NewLayout(restoredAttDir, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err)
+	maint, err := packstore.NewMaintainer(store.NewPackCatalog(restoredStore), layout, packstore.MaintainerOptions{})
+	require.NoError(err)
+	t.Cleanup(func() { _ = maint.Close() })
+	unpacked, err := maint.Unpack(ctx)
+	require.NoError(err)
+	assert.Equal(2, unpacked.BlobsRestored)
+	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
+		got, err := os.ReadFile(filepath.Join(restoredAttDir, h[:2], h))
+		require.NoError(err)
+		assert.Equal(want, got)
+	}
+	repacked, err := maint.Pack(ctx, packstore.PackOptions{})
+	require.NoError(err)
+	assert.Equal(2, repacked.BlobsPacked)
+	cycleBlobs := attachmentstore.Wrap(maint.Store())
+	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
+		r, size, err := cycleBlobs.Open(h)
+		require.NoError(err)
+		assert.Equal(int64(len(want)), size)
+		assert.Equal(want, readAllAndClose(t, r))
+	}
+
+	looseTarget := filepath.Join(t.TempDir(), "restored-loose")
+	looseRes, err := backup.Restore(ctx, repo, app, backup.RestoreOptions{TargetDir: looseTarget})
+	require.NoError(err)
+	assert.Zero(looseRes.PackedAttachmentBlobs)
+	assert.Equal(int64(2), looseRes.LooseAttachmentBlobs)
+	_, err = os.Stat(filepath.Join(looseTarget, "attachments", "packs"))
+	require.ErrorIs(err, fs.ErrNotExist)
+	looseStore, err := store.OpenForTest(looseRes.DBPath)
+	require.NoError(err)
+	defer func() { require.NoError(looseStore.Close()) }()
+	require.NoError(looseStore.ClearAttachmentPackMetadata(), "mirror --loose-attachments CLI cleanup")
+	looseBlobs, err := attachmentstore.New(store.NewPackCatalog(looseStore), filepath.Join(looseTarget, "attachments"))
+	require.NoError(err)
+	defer func() { require.NoError(looseBlobs.Close()) }()
+	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
+		r, _, err := looseBlobs.Open(h)
+		require.NoError(err)
+		assert.Equal(want, readAllAndClose(t, r))
+	}
+}
+
+func TestBackupPackedRestoreMixedConfiguredLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newVaultFixture(t)
+	ctx := context.Background()
+	small := []byte("small packed blob")
+	large := randomBytes(t, 1024)
+	smallHash := f.addBlob(small, canonicalPath(hashOf(small)))
+	largeHash := f.addBlob(large, canonicalPath(hashOf(large)))
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	app := backupapp.New("test")
+	_, err = backup.Create(ctx, repo, app, backup.CreateOptions{
+		DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
+		ContentSource: f.contentSource(),
+	})
+	require.NoError(err)
+	limits := packstore.DefaultLimits()
+	limits.BlobBytes = 64
+	target := filepath.Join(t.TempDir(), "mixed")
+	res, err := backup.Restore(ctx, repo, app, backup.RestoreOptions{
+		TargetDir: target, PackedContent: backupapp.NewPackedRestoreTarget(limits),
+	})
+	require.NoError(err)
+	assert.Equal(int64(2), res.AttachmentBlobs)
+	assert.Equal(int64(1), res.PackedAttachmentBlobs)
+	assert.Equal(int64(1), res.LooseAttachmentBlobs)
+	var fallbackHashes []string
+	for _, fallback := range res.PackFallbacks {
+		if fallback.Hash != "" {
+			fallbackHashes = append(fallbackHashes, fallback.Hash.String())
+		}
+	}
+	assert.Equal([]string{largeHash}, fallbackHashes)
+	assert.NoFileExists(filepath.Join(target, "attachments", smallHash[:2], smallHash))
+	assert.FileExists(filepath.Join(target, "attachments", largeHash[:2], largeHash))
+
+	restoredStore, err := store.OpenForTest(res.DBPath)
+	require.NoError(err)
+	defer func() { require.NoError(restoredStore.Close()) }()
+	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "attachments"))
+	require.NoError(err)
+	defer func() { require.NoError(blobs.Close()) }()
+	for h, want := range map[string][]byte{smallHash: small, largeHash: large} {
+		r, _, err := blobs.Open(h)
+		require.NoError(err)
+		assert.Equal(want, readAllAndClose(t, r))
 	}
 }
 
