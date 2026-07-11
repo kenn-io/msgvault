@@ -30,7 +30,7 @@ import (
 // files under a temp attachments dir. SQLite is intrinsic here — the kit
 // backup engine snapshots a SQLite database file.
 type vaultFixture struct {
-	t       *testing.T
+	t       testing.TB
 	store   *store.Store
 	dbPath  string
 	dataDir string
@@ -41,14 +41,14 @@ type vaultFixture struct {
 	seq     int
 }
 
-func newVaultFixture(t *testing.T) *vaultFixture {
-	t.Helper()
-	require := require.New(t)
-	dataDir := t.TempDir()
+func newVaultFixture(tb testing.TB) *vaultFixture {
+	tb.Helper()
+	require := require.New(tb)
+	dataDir := tb.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
 	st, err := store.OpenForTest(dbPath)
 	require.NoError(err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
+	tb.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "init schema")
 
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
@@ -68,9 +68,9 @@ func newVaultFixture(t *testing.T) *vaultFixture {
 	require.NoError(err, "create pack layout")
 	maint, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
 	require.NoError(err, "create pack maintainer")
-	t.Cleanup(func() { _ = maint.Close() })
+	tb.Cleanup(func() { _ = maint.Close() })
 	return &vaultFixture{
-		t:       t,
+		t:       tb,
 		store:   st,
 		dbPath:  dbPath,
 		dataDir: dataDir,
