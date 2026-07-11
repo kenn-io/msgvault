@@ -9,7 +9,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/clirun"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestResolveBeeperSyncAccountsValidatesAndDeduplicatesExplicitIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+
+	_, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(err)
+	_, err = st.GetOrCreateSource(sourceTypeBeeper, "telegram")
+	require.NoError(err)
+
+	accounts, err := resolveBeeperSyncAccounts(st, []string{"signal", "signal", "telegram"})
+	require.NoError(err)
+	assert.Equal([]string{"signal", "telegram"}, accounts)
+
+	_, err = resolveBeeperSyncAccounts(st, []string{"signal", "typo"})
+	require.ErrorContains(err, `beeper account "typo" is not registered`)
+}
 
 func TestScheduledBeeperAttemptsRebuildAfterPartialFailure(t *testing.T) {
 	assert := assert.New(t)

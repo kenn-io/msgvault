@@ -128,12 +128,28 @@ func printBeeperSummary(cmd *cobra.Command, accountID string, sum *beeper.Import
 // explicit flag values, or every registered beeper source that passes the
 // config include/exclude filters.
 func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string) ([]string, error) {
-	if len(flagAccounts) > 0 {
-		return flagAccounts, nil
-	}
 	sources, err := s.ListSources(sourceTypeBeeper)
 	if err != nil {
 		return nil, fmt.Errorf("list beeper sources: %w", err)
+	}
+	if len(flagAccounts) > 0 {
+		registered := make(map[string]struct{}, len(sources))
+		for _, src := range sources {
+			registered[src.Identifier] = struct{}{}
+		}
+		seen := make(map[string]struct{}, len(flagAccounts))
+		out := make([]string, 0, len(flagAccounts))
+		for _, accountID := range flagAccounts {
+			if _, ok := registered[accountID]; !ok {
+				return nil, fmt.Errorf("beeper account %q is not registered (run 'add-beeper' first)", accountID)
+			}
+			if _, duplicate := seen[accountID]; duplicate {
+				continue
+			}
+			seen[accountID] = struct{}{}
+			out = append(out, accountID)
+		}
+		return out, nil
 	}
 	var out []string
 	for _, src := range sources {
