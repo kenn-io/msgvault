@@ -1,10 +1,14 @@
 package store_test
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
@@ -19,6 +23,40 @@ func TestPackCatalogContract(t *testing.T) {
 		Now:       time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
 		NewPackID: pack.NewPackID,
 	})
+}
+
+func TestPackCatalogMalformedReferenceDoesNotBlockValidPackingOrPermitOrphanSweep(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	fx := newPackAttachmentFixture(t, st)
+	root := t.TempDir()
+	writeLoose := func(content []byte) string {
+		hash := pack.ComputeBlobID(content).String()
+		path := filepath.Join(root, hash[:2], hash)
+		require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(os.WriteFile(path, content, 0o600))
+		return hash
+	}
+	validHash := writeLoose([]byte("valid content must still be packed"))
+	fx.addAttachment(validHash, validHash[:2]+"/"+validHash, 34)
+	fx.addAttachmentOnNewMessage("BAD-HASH", "malformed/BAD-HASH", 8)
+	orphanHash := writeLoose([]byte("incomplete reachability must preserve this loose object"))
+	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err)
+	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(maintainer.Close()) })
+
+	stats, err := maintainer.Pack(context.Background(), packstore.PackOptions{})
+	require.NoError(err)
+	assert.Equal(1, stats.BlobsPacked)
+	assert.True(stats.LooseOrphanSweepSuppressed)
+	assert.NoFileExists(filepath.Join(root, validHash[:2], validHash))
+	assert.FileExists(filepath.Join(root, orphanHash[:2], orphanHash))
+	entry, err := st.GetAttachmentPackEntry(validHash)
+	require.NoError(err)
+	assert.NotNil(entry)
 }
 
 type msgvaultPackHarness struct {

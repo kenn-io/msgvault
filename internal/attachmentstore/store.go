@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"go.kenn.io/kit/packstore"
 
@@ -41,7 +42,7 @@ func New(resolver packstore.Resolver, attachmentsDir string) (*Store, error) {
 
 // Open preserves msgvault's established string-hash reader interface.
 func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
-	parsed, err := packstore.ParseHash(hash)
+	parsed, err := parseHash(hash)
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse attachment hash: %w", err)
 	}
@@ -54,7 +55,7 @@ func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
 
 // ReadBounded preserves msgvault's maintenance reader interface.
 func (s *Store) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) {
-	parsed, err := packstore.ParseHash(hash)
+	parsed, err := parseHash(hash)
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse bounded attachment hash: %w", err)
 	}
@@ -63,6 +64,17 @@ func (s *Store) ReadBounded(hash string, maxBytes int64) ([]byte, int64, error) 
 		return nil, 0, fmt.Errorf("read bounded attachment %s: %w", hash, err)
 	}
 	return data, size, nil
+}
+
+func parseHash(hash string) (packstore.Hash, error) {
+	if err := export.ValidateContentHash(hash); err != nil {
+		return "", err
+	}
+	parsed, err := packstore.ParseHash(strings.ToLower(hash))
+	if err != nil {
+		return "", fmt.Errorf("parse canonical attachment hash: %w", err)
+	}
+	return parsed, nil
 }
 
 // RetirePack closes cached readers before physically deleting packID.

@@ -22,6 +22,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -332,7 +333,7 @@ func TestContentSourceMalformedHash(t *testing.T) {
 				Hash: hash, Size: 1, StoragePath: "synctech-sms/xx/" + hash,
 			})
 		}, "hash %q", hash)
-		require.ErrorIsf(err, packstore.ErrInvalidHash, "hash %q", hash)
+		require.ErrorIsf(err, export.ErrInvalidContentHash, "hash %q", hash)
 		assert.NotErrorIsf(err, fs.ErrNotExist, "hash %q", hash)
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -40,19 +41,23 @@ func (c *PackCatalog) Resolve(ctx context.Context, hash packstore.Hash) (packsto
 	return result, nil
 }
 
-func (c *PackCatalog) ListReferences(ctx context.Context) ([]packstore.Reference, error) {
+func (c *PackCatalog) ListReferences(ctx context.Context) (packstore.ReferenceInventory, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return packstore.ReferenceInventory{}, err
 	}
 	raw, err := c.store.ListReferencedBlobHashes()
 	if err != nil {
-		return nil, err
+		return packstore.ReferenceInventory{}, err
 	}
 	byHash := make(map[packstore.Hash][]string)
+	complete := true
 	for original := range raw {
 		hash, err := packstore.ParseHash(strings.ToLower(original))
 		if err != nil {
-			return nil, fmt.Errorf("convert referenced attachment hash %q: %w", original, err)
+			complete = false
+			slog.Error("malformed referenced attachment hash; suppressing loose orphan deletion",
+				"original_hash", original, "error", err)
+			continue
 		}
 		byHash[hash] = append(byHash[hash], original)
 	}
@@ -62,7 +67,7 @@ func (c *PackCatalog) ListReferences(ctx context.Context) ([]packstore.Reference
 		result = append(result, packstore.Reference{Hash: hash, OriginalHashes: aliases})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Hash < result[j].Hash })
-	return result, nil
+	return packstore.ReferenceInventory{References: result, Complete: complete}, nil
 }
 
 func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, error) {
@@ -75,9 +80,11 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	}
 	result := make([]packstore.Candidate, 0, len(raw))
 	for _, blob := range raw {
-		hash, err := packstore.ParseHash(blob.Hash)
+		hash, err := packstore.ParseHash(strings.ToLower(blob.Hash))
 		if err != nil {
-			return nil, fmt.Errorf("convert unpacked attachment hash %q: %w", blob.Hash, err)
+			slog.Error("malformed unpacked attachment hash; preserving recorded candidates",
+				"original_hash", blob.Hash, "error", err)
+			continue
 		}
 		result = append(result, packstore.Candidate{Hash: hash,
 			OriginalHashes: blob.OriginalHashes, Paths: blob.Paths, Size: blob.Size})
