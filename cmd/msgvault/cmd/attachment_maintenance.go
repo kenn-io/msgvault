@@ -205,6 +205,21 @@ func registerAttachmentMaintenanceJob(sched *scheduler.Scheduler, maintenance *a
 	})
 }
 
+func registerScheduledBeeperJob(
+	sched *scheduler.Scheduler,
+	schedule string,
+	maintenance *attachmentMaintenance,
+	run func(context.Context) error,
+) error {
+	return sched.AddJob(scheduler.Job{
+		Name:     "beeper",
+		Schedule: schedule,
+		Run: func(ctx context.Context) error {
+			return runScheduledSource(ctx, maintenance, true, run)
+		},
+	})
+}
+
 // attachmentProducingCommand reports whether the first command word names a
 // generic daemon CLI operation that can create loose attachments.
 func attachmentProducingCommand(args []string) bool {
@@ -212,7 +227,8 @@ func attachmentProducingCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "backfill-teams-media",
+	case "backfill-beeper-media",
+		"backfill-teams-media",
 		"import",
 		"import-emlx",
 		"import-gvoice",
@@ -222,6 +238,7 @@ func attachmentProducingCommand(args []string) bool {
 		"import-pst",
 		"import-synctech-sms",
 		"import-whatsapp",
+		"sync-beeper",
 		"sync-synctech-sms",
 		"sync-teams":
 		return true

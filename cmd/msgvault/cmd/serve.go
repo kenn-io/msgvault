@@ -282,12 +282,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [beeper] entry`)
 	}
 	if cfg.Beeper.Enabled && cfg.Beeper.Schedule != "" {
-		if err := sched.AddJob(scheduler.Job{
-			Name:     "beeper",
-			Schedule: cfg.Beeper.Schedule,
-			Run: func(ctx context.Context) error {
-				return runConfiguredBeeperSync(ctx, s)
-			},
+		if err := registerScheduledBeeperJob(sched, cfg.Beeper.Schedule, attachmentMaint, func(ctx context.Context) error {
+			return runConfiguredBeeperSync(ctx, s)
 		}); err != nil {
 			logger.Error("failed to schedule beeper sync", "error", err)
 		} else {
