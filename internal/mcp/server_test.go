@@ -3015,22 +3015,36 @@ func TestFindSimilarMessages_UsesDaemonSearcher(t *testing.T) {
 	assert.Equal(int64(102), resp.Messages[0].ID, "message id")
 }
 
-// TestSearchMessageBodiesTool_AdvertisesVectorModesOnlyWhenAvailable guards the
-// capability-discovery contract: when the server has no hybrid engine,
-// the search_message_bodies tool omits the "mode" and "explain" parameters so
-// clients don't build vector requests that will fail at runtime.
-func TestSearchMessageBodiesTool_AdvertisesVectorModesOnlyWhenAvailable(t *testing.T) {
+// TestSearchMessageBodiesTool_KeywordOnly guards the contract split:
+// search_message_bodies is keyword-only and must not advertise the
+// vector/hybrid parameters (mode/explain/min_score). Those live on
+// semantic_search_messages instead.
+func TestSearchMessageBodiesTool_KeywordOnly(t *testing.T) {
 	assert := assert.New(t)
-	disabled := searchMessageBodiesTool(false)
-	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: tool advertises 'mode' but vector modes are unsupported")
-	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: tool advertises 'explain' but vector modes are unsupported")
-	assert.False(strings.Contains(disabled.Description, "mode=vector") || strings.Contains(disabled.Description, "mode=hybrid"),
-		"vectorAvailable=false: tool description mentions vector modes: %q", disabled.Description)
+	tool := searchMessageBodiesTool()
+	assert.NotContains(tool.InputSchema.Properties, "mode", "keyword tool must not advertise 'mode'")
+	assert.NotContains(tool.InputSchema.Properties, "explain", "keyword tool must not advertise 'explain'")
+	assert.NotContains(tool.InputSchema.Properties, "min_score", "keyword tool must not advertise 'min_score'")
+	assert.False(strings.Contains(tool.Description, "mode=vector") || strings.Contains(tool.Description, "mode=hybrid"),
+		"keyword tool description mentions vector modes: %q", tool.Description)
+}
 
-	enabled := searchMessageBodiesTool(true)
-	assert.Contains(enabled.InputSchema.Properties, "mode", "vectorAvailable=true: tool is missing 'mode' parameter")
-	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: tool is missing 'explain' parameter")
-	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: tool description should call out the free-text requirement, got: %q", enabled.Description)
+// TestSemanticSearchMessagesTool_AdvertisesVectorParams guards the companion
+// contract: semantic_search_messages owns mode/explain/min_score and only
+// advertises them when vector search is configured.
+func TestSemanticSearchMessagesTool_AdvertisesVectorParams(t *testing.T) {
+	assert := assert.New(t)
+
+	disabled := semanticSearchMessagesTool(false)
+	assert.NotContains(disabled.InputSchema.Properties, "mode", "vectorAvailable=false: semantic tool advertises 'mode' but vector modes are unsupported")
+	assert.NotContains(disabled.InputSchema.Properties, "explain", "vectorAvailable=false: semantic tool advertises 'explain' but vector modes are unsupported")
+	assert.NotContains(disabled.InputSchema.Properties, "min_score", "vectorAvailable=false: semantic tool advertises 'min_score' but vector modes are unsupported")
+
+	enabled := semanticSearchMessagesTool(true)
+	assert.Contains(enabled.InputSchema.Properties, "mode", "vectorAvailable=true: semantic tool is missing 'mode' parameter")
+	assert.Contains(enabled.InputSchema.Properties, "explain", "vectorAvailable=true: semantic tool is missing 'explain' parameter")
+	assert.Contains(enabled.InputSchema.Properties, "min_score", "vectorAvailable=true: semantic tool is missing 'min_score' parameter")
+	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: semantic tool description should call out the free-text requirement, got: %q", enabled.Description)
 }
 
 func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
