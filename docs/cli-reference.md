@@ -230,6 +230,75 @@ attachments are content-addressed.
 
 ---
 
+## add-beeper
+
+Register the chat accounts bridged through a locally running
+[Beeper Desktop](/usage/beeper/) as `beeper` sources, one per network.
+
+```bash
+msgvault add-beeper
+msgvault add-beeper --token-file ~/beeper-token.txt
+MSGVAULT_BEEPER_TOKEN="..." msgvault add-beeper
+```
+
+Requires Beeper Desktop running on the same machine and an access token
+minted in Beeper Desktop (Settings → Developer). The token is stored at
+`tokens/beeper.json`. Accounts filtered out by `[beeper].accounts` /
+`exclude_accounts` in `config.toml` are skipped.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token-file` | | Read the access token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm each account's own identity as that source's "me" identity |
+
+After adding, sync with `msgvault sync-beeper`.
+
+---
+
+## sync-beeper
+
+Sync chats from Beeper Desktop for every registered Beeper account (all
+bridged networks). The first run backfills full locally-available history and
+is resumable; later runs are incremental. Per-account failures do not stop the
+run: remaining accounts still sync, the analytics cache is rebuilt for the
+successful ones, and the command exits non-zero listing the failures. Without
+`--account`, the `[beeper]` config `accounts`/`exclude_accounts` filters
+select which registered sources sync. See [Beeper](/usage/beeper/).
+
+```bash
+msgvault sync-beeper
+msgvault sync-beeper --account signal --account telegram
+msgvault sync-beeper --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | all registered | Beeper accountID to sync (repeatable) |
+| `--limit` | `0` | Max messages per chat this run (0 = no limit; limited backfills resume next run) |
+| `--full` | `false` | Ignore stored cursors and re-fetch every message (repairs rows in place) |
+| `--no-media` | `false` | Skip attachment downloads for this run |
+
+---
+
+## backfill-beeper-media
+
+Retry pending Beeper attachment downloads (media that failed or exceeded the
+size cap during `sync-beeper`). Idempotent: attachments are content-addressed.
+If the source message is gone (deleted in Beeper), its pending markers are
+cleared permanently — already-downloaded attachments are kept. Transient fetch
+errors keep the marker and count as still pending, so re-running retries them.
+
+```bash
+msgvault backfill-beeper-media
+msgvault backfill-beeper-media --account signal
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | all registered | Beeper accountID to backfill (repeatable) |
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.

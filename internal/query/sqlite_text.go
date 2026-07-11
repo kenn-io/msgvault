@@ -44,13 +44,13 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 // textMsgTypeFilter returns a SQL condition restricting to text message types.
 // Uses the m. table alias used in text query methods.
 func textMsgTypeFilter() string {
-	return "m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text','teams')"
+	return "m.message_type IN (" + TextMessageTypeSQLList + ")"
 }
 
 // textMsgTypeFilterAlias returns a SQL condition restricting to text message types
 // using the given table alias.
 func textMsgTypeFilterAlias(alias string) string {
-	return alias + ".message_type IN ('whatsapp','imessage','sms','mms','google_voice_text','teams')"
+	return alias + ".message_type IN (" + TextMessageTypeSQLList + ")"
 }
 
 func sqliteDirection(d SortDirection) string {
@@ -466,11 +466,11 @@ func (e *SQLiteEngine) TextSearch(
 		LEFT JOIN participants p ON p.id = m.sender_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE fts.messages_fts MATCH ?
-		  AND m.message_type IN ('whatsapp','imessage','sms','mms','google_voice_text','teams')
+		  AND %s
 		  AND %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, store.LiveMessagesWhere("m", true))
+	`, textMsgTypeFilter(), store.LiveMessagesWhere("m", true))
 
 	rows, err := e.db.QueryContext(ctx, sqlQuery, match, limit, offset)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/beeper"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -220,6 +221,22 @@ func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph token: %v\n", err,
 			)
+		}
+	case sourceTypeBeeper:
+		// The token is shared by every Beeper network-account source; only
+		// remove it when the last one is gone. The source row was already
+		// removed above, so any remaining rows belong to other accounts.
+		remaining, lerr := s.ListSources(sourceTypeBeeper)
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr,
+				"Warning: could not check remaining beeper sources: %v\n", lerr,
+			)
+		} else if len(remaining) == 0 {
+			if err := beeper.DeleteToken(cfg.TokensDir()); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: could not remove Beeper token: %v\n", err,
+				)
+			}
 		}
 	case sourceTypeIMAP:
 		if source.SyncConfig.Valid && source.SyncConfig.String != "" {

@@ -274,6 +274,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("schedule attachment maintenance: %w", err)
 	}
 
+	if cfg.Beeper.Enabled && cfg.Beeper.Schedule == "" {
+		logger.Warn("beeper is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+			"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [beeper] entry`)
+	}
+	if cfg.Beeper.Enabled && cfg.Beeper.Schedule != "" {
+		if err := registerScheduledBeeperJob(sched, cfg.Beeper.Schedule, attachmentMaint, func(ctx context.Context) error {
+			return runConfiguredBeeperSync(ctx, s)
+		}); err != nil {
+			logger.Error("failed to schedule beeper sync", "error", err)
+		} else {
+			logger.Info("scheduled beeper sync", "schedule", cfg.Beeper.Schedule)
+		}
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 

@@ -307,6 +307,36 @@ enabled = true
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
+### `[beeper]`
+
+Archive chats from a locally running [Beeper Desktop](/usage/beeper/). A single
+block (not a list): the Beeper Desktop API is loopback-only, so there is one
+instance per machine and the daemon must run beside it. Authorize first with
+`msgvault add-beeper`.
+
+```toml
+[beeper]
+# url = "http://localhost:23373"  # Beeper Desktop API (default)
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+accounts = []                     # accountID include filter (empty = all)
+exclude_accounts = []             # skip networks archived natively, e.g. ["whatsapp"]
+rate_limit_qps = 20               # request rate against the local API
+media = true                      # download attachment bytes
+max_media_mb = 100                # per-attachment download cap (MiB)
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `url` | `http://localhost:23373` | Beeper Desktop API base URL |
+| `enabled` | `false` | Whether the daemon schedules Beeper sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `accounts` | all | Beeper accountIDs to sync (include filter) |
+| `exclude_accounts` | — | Beeper accountIDs to skip (wins over `accounts`) |
+| `rate_limit_qps` | `20` | Request rate limit against the local API |
+| `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
+| `max_media_mb` | `100` | Per-attachment download cap in MiB (over-cap media leaves a retry marker) |
+
 ### `[vector]`
 
 Top-level toggle and backend marker for semantic/hybrid search. SQLite vector search requires a build with `sqlite_vec` support (default via `make build`). PostgreSQL vector search requires a build with the `pgvector` tag and a PostgreSQL `[data].database_url`. See [Vector Search](/usage/vector-search/) for prerequisites, initial embedding, and the full workflow.

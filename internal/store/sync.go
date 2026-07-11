@@ -544,7 +544,7 @@ func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
 		       error_message, cursor_before, cursor_after
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'
-		ORDER BY completed_at DESC
+		ORDER BY completed_at DESC, id DESC
 		LIMIT 1
 	`, sourceID)
 

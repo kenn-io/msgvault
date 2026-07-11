@@ -318,6 +318,35 @@ func TestRunScheduledSourcePacksOnlySuccessfulAttachmentSources(t *testing.T) {
 	}
 }
 
+func TestRegisterScheduledBeeperJobPacksAfterSuccessfulSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	hash := f.addLoose([]byte("scheduled beeper payload"))
+	sched := scheduler.New(func(context.Context, string) error { return nil }).WithLogger(f.maintenance.logger)
+	t.Cleanup(func() {
+		ctx := sched.Stop()
+		<-ctx.Done()
+	})
+	syncCalls := 0
+
+	require.NoError(registerScheduledBeeperJob(
+		sched,
+		"*/30 * * * *",
+		f.maintenance,
+		func(context.Context) error {
+			syncCalls++
+			assert.Nil(f.packedEntry(hash), "packing must happen after Beeper sync")
+			return nil
+		},
+	))
+	require.True(sched.IsJobScheduled("beeper"))
+
+	require.NoError(sched.TriggerJob("beeper"))
+	assert.Equal(1, syncCalls)
+	assert.NotNil(f.packedEntry(hash))
+}
+
 func TestRegisterAttachmentMaintenanceJobAndTrigger(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -452,6 +481,7 @@ func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *te
 
 func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 	allowlisted := []string{
+		"backfill-beeper-media",
 		"backfill-teams-media",
 		"import",
 		"import-emlx",
@@ -462,6 +492,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"import-pst",
 		"import-synctech-sms",
 		"import-whatsapp",
+		"sync-beeper",
 		"sync-synctech-sms",
 		"sync-teams",
 	}

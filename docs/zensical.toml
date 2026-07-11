@@ -26,6 +26,7 @@ nav = [
     {"Text Messages" = "usage/text-messages.md"},
     {"Google Calendar" = "usage/calendar.md"},
     {"Microsoft Teams" = "usage/teams.md"},
+    {"Beeper" = "usage/beeper.md"},
     {"Exporting Data" = "usage/exporting.md"},
     {"Analytics & Stats" = "usage/analytics.md"},
     {"SQL Queries" = "usage/querying.md"},

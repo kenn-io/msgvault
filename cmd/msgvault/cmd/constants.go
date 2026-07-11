@@ -8,6 +8,7 @@ const (
 	sourceTypeMbox     = "mbox"
 	sourceTypeTeams    = "teams"
 	sourceTypeCalendar = "gcal"
+	sourceTypeBeeper   = "beeper"
 )
 
 // Analytics dataset / SQLite table names: the Parquet subdirectory under
