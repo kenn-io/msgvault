@@ -231,7 +231,8 @@ entries.
 After every compatible pack and fallback loose file is durable, the msgvault
 adapter performs one transaction against the staged database:
 
-1. ensure only the pack tables and their required indexes exist;
+1. create the pack tables and their required indexes if absent, without
+   running unrelated migrations;
 2. delete all restored `attachment_pack_index` rows and
    `attachment_packs` rows;
 3. insert one pack record per imported pack, using full footer entry and stored
@@ -331,9 +332,16 @@ Pack-native restore is automatic when the application provides the capability
 and source packs are compatible. Existing commands and old repositories keep
 working without migration.
 
+As with every `--overwrite` restore, the snapshot replaces the target's logical
+archive state. Content that exists only in the newer target loses catalog
+authority; later maintenance may physically remove its now-unreferenced packs.
+
 `msgvault backup restore --loose-attachments` disables the packed seam and
 uses the current fully loose behavior. It is the explicit recovery, inspection,
-and downgrade path.
+and downgrade path for a fresh target. With `--overwrite`, pre-existing
+uncataloged packs may later be adopted by maintenance if the restored snapshot
+still references their contents. To guarantee a fully loose vault, restore
+into a fresh target or run `unpack-attachments` after restore.
 
 Success output reports:
 

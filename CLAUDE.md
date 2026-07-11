@@ -8,6 +8,11 @@ Always commit after every turn. Don't wait for the user to ask — if you made c
 
 PR descriptions should be concise and changelog-oriented: what changed, why, and how to use it. Do not include test plans, design decisions, or implementation details — those belong in specs and commit messages.
 
+Never name private downstream projects or other private codebases in public
+code, tests, fixtures, documentation, commit messages, pull requests, or
+issues. Describe the reusable requirement generically and run the private-data
+scrub before publishing.
+
 ## Project Overview
 
 msgvault is an offline Gmail archive tool that exports and stores email data locally with full-text search capabilities. The goal is to archive 20+ years of Gmail data from multiple accounts, make it searchable, and eventually delete emails from Gmail once safely archived.

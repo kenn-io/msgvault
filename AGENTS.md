@@ -14,6 +14,13 @@ This file applies to all AI coding agents (Claude Code, Codex, Copilot CLI, etc.
   skill (including `roborev-fix` or `roborev-design-review-branch`) unless the
   user explicitly asks for that skill.
 
+## Content Hygiene
+
+- Never name private downstream projects or other private codebases in public
+  code, tests, fixtures, documentation, commit messages, pull requests, or
+  issues. Describe the reusable requirement generically and run the private-data
+  scrub before publishing.
+
 ## Testing — Use testify
 
 All Go tests use `github.com/stretchr/testify`. New tests and modifications to existing tests MUST use `assert.X` or `require.X` from testify — never `t.Errorf`, `t.Fatalf`, `t.Fatal`, or `t.Error`.
