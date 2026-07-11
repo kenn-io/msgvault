@@ -2132,6 +2132,32 @@ func (s *Store) EnsureConversationParticipant(conversationID, participantID int6
 	return err
 }
 
+// ConversationParticipantRef identifies one current member of a conversation.
+type ConversationParticipantRef struct {
+	ParticipantID int64
+	Role          string
+}
+
+// ReplaceConversationParticipants atomically replaces a conversation's
+// membership with a complete source snapshot.
+func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ?`, conversationID); err != nil {
+			return err
+		}
+		for _, participant := range participants {
+			if participant.ParticipantID == 0 {
+				continue
+			}
+			if _, err := tx.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+				VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participant.ParticipantID, participant.Role); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // UpsertReaction inserts or ignores a reaction.
 func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, reactionValue string, createdAt time.Time) error {
 	_, err := s.db.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)

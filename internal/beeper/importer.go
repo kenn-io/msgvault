@@ -40,12 +40,13 @@ const (
 // PendingReplies buffer persistMessage appends to, keeping checkpoints
 // consistent with the cursor by construction).
 type chatScope struct {
-	chatID   string
-	convID   int64
-	sourceID int64
-	syncID   int64
-	opts     ImportOptions
-	cs       *ChatState
+	chatID             string
+	convID             int64
+	sourceID           int64
+	syncID             int64
+	opts               ImportOptions
+	cs                 *ChatState
+	membershipComplete bool
 }
 
 // Importer ingests Beeper Desktop messages into the msgvault store. One
@@ -243,13 +244,16 @@ func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts Impo
 // incrementally extends the chat's messages. Returns the number of messages
 // processed for this chat.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, sum *ImportSummary) (int64, error) {
-	convID, err := imp.ensureConversation(ctx, syncID, sourceID, ch, sum)
+	convID, membershipComplete, err := imp.ensureConversation(ctx, syncID, sourceID, ch, sum)
 	if err != nil {
 		return 0, err
 	}
 
 	cs := state.EnsureChat(ch.ID)
-	cc := &chatScope{chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID, opts: opts, cs: cs}
+	cc := &chatScope{
+		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
+		opts: opts, cs: cs, membershipComplete: membershipComplete,
+	}
 	before := sum.MessagesProcessed
 
 	// A chat that was empty when backfilled has Done set but no incremental
@@ -278,8 +282,9 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 // ensureConversation upserts the conversation row and its membership,
 // fetching the full participant list when the search listing truncated it
 // (chat search returns at most 20 participants per chat).
-func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID int64, ch *Chat, sum *ImportSummary) (int64, error) {
+func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID int64, ch *Chat, sum *ImportSummary) (int64, bool, error) {
 	detail := ch
+	membershipComplete := !ch.Participants.HasMore
 	if ch.Participants.HasMore {
 		d, gerr := imp.client.GetChat(ctx, ch.ID)
 		if gerr != nil {
@@ -288,17 +293,19 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 			sum.Errors++
 		} else {
 			detail = d
+			membershipComplete = !d.Participants.HasMore
 		}
 	}
 	convID, err := imp.store.EnsureConversationWithType(sourceID, ch.ID, conversationType(ch.Type), ch.Title)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
+	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
 	for i := range detail.Participants.Items {
 		p := &detail.Participants.Items[i]
 		pid, rerr := imp.res.resolveUser(&p.User)
 		if rerr != nil {
-			return 0, rerr
+			return 0, false, rerr
 		}
 		if pid == 0 {
 			continue
@@ -307,11 +314,20 @@ func (imp *Importer) ensureConversation(ctx context.Context, syncID, sourceID in
 		if p.IsAdmin {
 			role = "admin"
 		}
-		if cerr := imp.store.EnsureConversationParticipant(convID, pid, role); cerr != nil {
-			sum.Errors++
+		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: role})
+	}
+	if membershipComplete {
+		if err := imp.store.ReplaceConversationParticipants(convID, members); err != nil {
+			return 0, false, err
+		}
+	} else {
+		for _, member := range members {
+			if cerr := imp.store.EnsureConversationParticipant(convID, member.ParticipantID, member.Role); cerr != nil {
+				sum.Errors++
+			}
 		}
 	}
-	return convID, nil
+	return convID, membershipComplete, nil
 }
 
 // recentIDWindow remembers the message IDs of the last few pages of a
@@ -588,8 +604,10 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	}
 	if senderPID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: senderPID, Valid: true}
-		if cerr := imp.store.EnsureConversationParticipant(cc.convID, senderPID, "member"); cerr != nil {
-			sum.Errors++
+		if !cc.membershipComplete {
+			if cerr := imp.store.EnsureConversationParticipant(cc.convID, senderPID, "member"); cerr != nil {
+				sum.Errors++
+			}
 		}
 	}
 	messageID, err := imp.store.UpsertMessage(&msg)

@@ -559,6 +559,63 @@ func TestImportTruncatedParticipantsFetchesDetail(t *testing.T) {
 	assert.Equal(3, partCount, "truncated listing must trigger a full-detail fetch")
 }
 
+func TestImportFullReconcilesConversationParticipants(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!membership:beeper.local", AccountID: "signal", Network: "Signal", Title: "Membership", Type: "group",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+			{"id": "@signal_bea:beeper.local", "fullName": "Bea", "isAdmin": true},
+		},
+		Msgs: []fakeMsg{{
+			ID: "membership-0", SortKey: 0, Timestamp: base, Text: "hello",
+			SenderID: "@signal_bea:beeper.local", SenderName: "Bea",
+		}},
+		LastActivity: base,
+	}
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// Bea leaves and Ann becomes an admin without any new message activity.
+	// A full sync receives a complete membership snapshot and must make the
+	// stored membership exactly match it.
+	ch.Participants = []map[string]any{
+		{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+		{"id": "@signal_ann:beeper.local", "fullName": "Ann", "isAdmin": true},
+	}
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", Full: true})
+	require.NoError(err)
+
+	var convID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM conversations WHERE source_conversation_id = ?`), ch.ID).Scan(&convID))
+	var memberCount, departedCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), convID).Scan(&memberCount))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT COUNT(*) FROM conversation_participants cp
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE cp.conversation_id = ? AND p.display_name = 'Bea'`), convID).Scan(&departedCount))
+	assert.Equal(2, memberCount)
+	assert.Zero(departedCount, "departed participants must be removed")
+
+	var annRole string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT cp.role FROM conversation_participants cp
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE cp.conversation_id = ? AND p.display_name = 'Ann'`), convID).Scan(&annRole))
+	assert.Equal("admin", annRole, "role changes must replace the stored role")
+}
+
 func TestImportFullRepairsWithoutDuplicates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
