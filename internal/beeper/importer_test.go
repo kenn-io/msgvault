@@ -506,7 +506,7 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	f.setMessageGetFailure("m5", true)
 
 	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err)
+	require.ErrorContains(err, "partial Beeper sync")
 	assert.Positive(sum.FetchErrors, "transient target failure must be recorded as a fetch error")
 
 	// Healed: the next run re-delivers the reaction event and archives it.
@@ -914,7 +914,21 @@ func TestImportWatermarkHeldOnFetchError(t *testing.T) {
 		Text: "recent", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"})
 	f.setMessageListFailure("!e2e:beeper.local", true)
 	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err, "fetch errors are per-chat, not run-fatal")
+	require.ErrorContains(err, "partial Beeper sync")
+
+	// The failure is reported only after the healthy chat is processed and
+	// the resumable state is checkpointed. Monitoring sees a failed run while
+	// successful work from the same attempt remains archived.
+	var healthyCount int
+	require.NoError(st.DB().QueryRow(
+		`SELECT COUNT(*) FROM messages WHERE source_message_id = 'o1'`).Scan(&healthyCount))
+	require.Equal(1, healthyCount, "healthy chats must continue after another chat fails")
+	var status string
+	var cursorBefore sql.NullString
+	require.NoError(st.DB().QueryRow(`
+		SELECT status, cursor_before FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &cursorBefore))
+	require.Equal(store.SyncStatusFailed, status)
+	require.True(cursorBefore.Valid, "partial progress must remain checkpointed for retry")
 
 	// Healed: the held-back watermark keeps the chat discoverable and the
 	// missed message is archived.

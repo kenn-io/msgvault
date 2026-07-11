@@ -181,6 +181,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// Mid-run checkpoints are throttled, so persist the final counters before
 	// completing (CompleteSync only writes status and cursor).
 	imp.checkpointNow(syncID, state, sum)
+	if sum.FetchErrors > 0 {
+		// Page failures are isolated so healthy chats still sync, but the run
+		// must remain failed and caller-visible. The checkpoint above preserves
+		// all partial progress for the next attempt; the deferred FailSync marks
+		// the run consistently for diagnostics and scheduler monitoring.
+		sum.Duration = time.Since(start)
+		err = fmt.Errorf("partial Beeper sync: %d fetch error(s)", sum.FetchErrors)
+		return sum, err
+	}
 	blob, _ := state.Marshal()
 	if err = imp.store.CompleteSync(syncID, blob); err != nil {
 		return sum, err
