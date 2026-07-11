@@ -18,7 +18,7 @@ type MockEngine struct {
 	ListResults       []query.MessageSummary
 	Messages          map[int64]*query.MessageDetail
 	Attachments       map[int64]*query.AttachmentInfo
-	AttachmentsByHash map[string]*query.AttachmentInfo
+	AttachmentsByHash map[string][]query.AttachmentInfo
 	Stats             *query.TotalStats
 	Accounts          []query.AccountInfo
 	AggregateRows     []query.AggregateRow
@@ -132,13 +132,13 @@ func (m *MockEngine) GetAttachment(_ context.Context, id int64) (*query.Attachme
 	return nil, nil //nolint:nilnil // mirrors Engine.GetAttachment (nil, nil) not-found contract
 }
 
-func (m *MockEngine) GetAttachmentByHash(_ context.Context, contentHash string) (*query.AttachmentInfo, error) {
+func (m *MockEngine) GetAttachmentsByHash(_ context.Context, contentHash string) ([]query.AttachmentInfo, error) {
 	if m.AttachmentsByHash != nil {
-		if a, ok := m.AttachmentsByHash[contentHash]; ok {
-			return a, nil
+		if attachments, ok := m.AttachmentsByHash[contentHash]; ok {
+			return attachments, nil
 		}
 	}
-	return nil, nil //nolint:nilnil // mirrors Engine.GetAttachmentByHash (nil, nil) not-found contract
+	return nil, nil
 }
 
 func (m *MockEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, error) {

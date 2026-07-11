@@ -1045,22 +1045,32 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 	return &att, nil
 }
 
-// GetAttachmentByHash retrieves attachment metadata by content hash.
-func (e *SQLiteEngine) GetAttachmentByHash(ctx context.Context, contentHash string) (*AttachmentInfo, error) {
-	var att AttachmentInfo
-	err := e.queryRowContext(ctx, `
+// GetAttachmentsByHash retrieves all attachment metadata matching a content
+// hash in stable ID order.
+func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash string) ([]AttachmentInfo, error) {
+	rows, err := e.queryContext(ctx, `
 		SELECT id, COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(size, 0), COALESCE(content_hash, ''), COALESCE(storage_path, '')
 		FROM attachments
 		WHERE content_hash = ?
-		LIMIT 1
-	`, contentHash).Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath)
-	if err == sql.ErrNoRows {
-		return nil, nil //nolint:nilnil // Engine.GetAttachmentByHash uses (nil, nil) for not-found; callers branch on the nil result
-	}
+		ORDER BY id
+	`, contentHash)
 	if err != nil {
-		return nil, fmt.Errorf("get attachment by hash: %w", err)
+		return nil, fmt.Errorf("get attachments by hash: %w", err)
 	}
-	return &att, nil
+	defer func() { _ = rows.Close() }()
+
+	var attachments []AttachmentInfo
+	for rows.Next() {
+		var att AttachmentInfo
+		if err := rows.Scan(&att.ID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
+			return nil, fmt.Errorf("scan attachment by hash: %w", err)
+		}
+		attachments = append(attachments, att)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate attachments by hash: %w", err)
+	}
+	return attachments, nil
 }
 
 // GetMessageRaw returns the decompressed raw MIME data for a message.

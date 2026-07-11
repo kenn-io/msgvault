@@ -308,7 +308,7 @@ func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
 	assert.Equal("https://sp/recording.mp4", att.URL)
 }
 
-func TestGetAttachmentByHashUsesDialectRebind(t *testing.T) {
+func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -322,9 +322,9 @@ func TestGetAttachmentByHashUsesDialectRebind(t *testing.T) {
 
 	dialect := &rebindRecordingDialect{Dialect: PostgreSQLQueryDialect{}}
 	engine := NewEngineWithDialect(env.DB, dialect)
-	att, err := engine.GetAttachmentByHash(env.Ctx, hash)
-	require.NoError(err, "GetAttachmentByHash")
-	require.NotNil(att, "attachment")
+	attachments, err := engine.GetAttachmentsByHash(env.Ctx, hash)
+	require.NoError(err, "GetAttachmentsByHash")
+	require.Len(attachments, 1, "attachments")
 	require.NotEmpty(dialect.queries, "dialect Rebind calls")
 	assert.Contains(dialect.queries[len(dialect.queries)-1], "content_hash = $1", "rebound query")
 }

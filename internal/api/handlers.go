@@ -2557,16 +2557,17 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	att, err := s.engine.GetAttachmentByHash(r.Context(), hash)
+	attachments, err := s.engine.GetAttachmentsByHash(r.Context(), hash)
 	if err != nil {
 		s.logger.Error("failed to look up attachment by hash", "error", err, "hash", hash)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to look up attachment")
 		return
 	}
-	if att == nil {
+	if len(attachments) == 0 {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	att := &attachments[0]
 
 	var content io.ReadCloser
 	var contentLength int64
@@ -2574,8 +2575,8 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		content, contentLength, err = s.blobStore.Open(hash)
 	}
 	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
-		content, contentLength, err = openLooseAttachmentContent(
-			s.cfg.AttachmentsDir(), hash, att.StoragePath,
+		content, contentLength, att, err = openLooseAttachmentCandidates(
+			s.cfg.AttachmentsDir(), hash, attachments,
 		)
 	}
 	if err != nil {
@@ -2602,6 +2603,45 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
 	}
+}
+
+func openLooseAttachmentCandidates(
+	attachmentsDir string,
+	contentHash string,
+	attachments []query.AttachmentInfo,
+) (io.ReadCloser, int64, *query.AttachmentInfo, error) {
+	content, contentLength, err := openLooseAttachmentContent(attachmentsDir, contentHash, "")
+	if err == nil {
+		return content, contentLength, &attachments[0], nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, 0, nil, err
+	}
+
+	seen := make(map[string]struct{}, len(attachments))
+	var firstPathError error
+	for i := range attachments {
+		storagePath := attachments[i].StoragePath
+		if storagePath == "" {
+			continue
+		}
+		if _, ok := seen[storagePath]; ok {
+			continue
+		}
+		seen[storagePath] = struct{}{}
+
+		content, contentLength, err = openLooseAttachmentContent(attachmentsDir, contentHash, storagePath)
+		if err == nil {
+			return content, contentLength, &attachments[i], nil
+		}
+		if !errors.Is(err, os.ErrNotExist) && firstPathError == nil {
+			firstPathError = err
+		}
+	}
+	if firstPathError != nil {
+		return nil, 0, nil, firstPathError
+	}
+	return nil, 0, nil, os.ErrNotExist
 }
 
 func openLooseAttachmentContent(attachmentsDir, contentHash, storagePath string) (io.ReadCloser, int64, error) {

@@ -2731,6 +2731,35 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		assert.Equal(legacyContent, w.Body.Bytes(), "data")
 	})
 
+	t.Run("public content endpoint tries every duplicate hash path", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		hash := "80c92207dd517f7edb6479ca8694460ed21ddf969f52e17e2ba7808f706cce74"
+		availableContent := []byte("available duplicate attachment")
+		availablePath := filepath.Join("synctech-sms", hash[:2], hash)
+
+		require.NoError(st.UpsertAttachment(msgID, "missing.bin", "application/x-missing",
+			filepath.Join("missing", hash), hash, len(availableContent)), "UpsertAttachment missing duplicate")
+		availableMsgID, err := st.UpsertMessage(&store.Message{
+			ConversationID: convID, SourceID: src.ID,
+			SourceMessageID: "available-duplicate-message", MessageType: "email",
+		})
+		require.NoError(err, "UpsertMessage available duplicate")
+		require.NoError(st.UpsertAttachment(availableMsgID, "available.bin", "text/plain",
+			availablePath, hash, len(availableContent)), "UpsertAttachment available duplicate")
+		require.NoError(os.MkdirAll(filepath.Join(attachmentsDir, filepath.Dir(availablePath)), 0o700), "create available duplicate dir")
+		require.NoError(os.WriteFile(filepath.Join(attachmentsDir, availablePath), availableContent, 0o600), "write available duplicate")
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		assert.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		assert.Equal("text/plain", w.Header().Get("Content-Type"), "Content-Type")
+		assert.Equal(`attachment; filename="available.bin"`, w.Header().Get("Content-Disposition"), "Content-Disposition")
+		assert.Equal(availableContent, w.Body.Bytes(), "data")
+	})
+
 	t.Run("unknown hash returns 404", func(t *testing.T) {
 		assert := assert.New(t)
 		unknownHash := "bf0803740e367e2f5e45f0813f62b9c4c09a44e8a649a39970295a9322859048"
@@ -6071,8 +6100,8 @@ func TestHandleGetAttachmentContent(t *testing.T) {
 	content := []byte("hello attachment world")
 
 	engine := &querytest.MockEngine{
-		AttachmentsByHash: map[string]*query.AttachmentInfo{
-			hash: {ID: 7, Filename: "report.pdf", MimeType: "application/pdf", Size: int64(len(content)), ContentHash: hash},
+		AttachmentsByHash: map[string][]query.AttachmentInfo{
+			hash: {{ID: 7, Filename: "report.pdf", MimeType: "application/pdf", Size: int64(len(content)), ContentHash: hash}},
 		},
 	}
 	srv, cfg := newAttachmentTestServer(t, engine)
@@ -6096,8 +6125,8 @@ func TestHandleGetAttachmentContent_MissingMimeAndFilename(t *testing.T) {
 	content := []byte{0x00, 0x01, 0x02}
 
 	engine := &querytest.MockEngine{
-		AttachmentsByHash: map[string]*query.AttachmentInfo{
-			hash: {ID: 8, Size: int64(len(content)), ContentHash: hash}, // no Filename, no MimeType
+		AttachmentsByHash: map[string][]query.AttachmentInfo{
+			hash: {{ID: 8, Size: int64(len(content)), ContentHash: hash}}, // no Filename, no MimeType
 		},
 	}
 	srv, cfg := newAttachmentTestServer(t, engine)
@@ -6139,8 +6168,8 @@ func TestHandleGetAttachmentContent_MetadataButFileMissing(t *testing.T) {
 	assert := assert.New(t)
 	hash := strings.Repeat("ef", 32)
 	engine := &querytest.MockEngine{
-		AttachmentsByHash: map[string]*query.AttachmentInfo{
-			hash: {ID: 9, Filename: "gone.bin", MimeType: "application/octet-stream", Size: 10, ContentHash: hash},
+		AttachmentsByHash: map[string][]query.AttachmentInfo{
+			hash: {{ID: 9, Filename: "gone.bin", MimeType: "application/octet-stream", Size: 10, ContentHash: hash}},
 		},
 	}
 	srv, _ := newAttachmentTestServer(t, engine) // note: no seedAttachmentFile
