@@ -431,6 +431,54 @@ func TestImportReconcileCatchesRecentDeletion(t *testing.T) {
 	assert.Equal("recent 2", body)
 }
 
+func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	participants := []map[string]any{
+		{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+		{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+	}
+	f.addChat(&fakeChat{
+		ID: "!watermark:beeper.local", AccountID: "signal", Network: "Signal", Title: "Watermark", Type: "single",
+		Participants: participants,
+		Msgs: []fakeMsg{{
+			ID: "w0", SortKey: 0, Timestamp: now, Text: "sets watermark",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: now,
+	})
+	recentActivity := now.Add(-12 * time.Hour)
+	f.addChat(&fakeChat{
+		ID: "!recent-idle:beeper.local", AccountID: "signal", Network: "Signal", Title: "Recent Idle", Type: "single",
+		Participants: participants,
+		Msgs: []fakeMsg{{
+			ID: "ri0", SortKey: 0, Timestamp: recentActivity, Text: "deleted in place",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: recentActivity,
+	})
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// The recent chat changes in place without advancing LastActivity. It is
+	// older than the one-hour watermark overlap but still inside the promised
+	// reconciliation window, so the next run must enumerate and revisit it.
+	f.chat("!recent-idle:beeper.local").Msgs[0].IsDeleted = true
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	var deletedAt sql.NullTime
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "ri0").Scan(&deletedAt))
+	assert.True(deletedAt.Valid, "recent inactive chat must be reconciled despite the newer global watermark")
+}
+
 func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

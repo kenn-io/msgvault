@@ -131,7 +131,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, err
 	}
 
-	chats, err := imp.enumerateChats(ctx, syncID, opts, state, sum)
+	reconcileCutoff := start.Add(-reconcileWindow)
+	chats, err := imp.enumerateChats(ctx, syncID, opts, state, reconcileCutoff, sum)
 	if err != nil {
 		return sum, err
 	}
@@ -139,8 +140,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	// Reconciliation re-walks each active chat's last-24h head to catch
 	// in-place edits/deletions/reaction changes the forward-only cursor cannot
 	// see. Cheap on re-runs: already-stored media is never re-downloaded.
-	reconcileCutoff := start.Add(-reconcileWindow)
-
 	maxActivity := parseWatermark(state.ListWatermark)
 	total := len(chats)
 	for idx := range chats {
@@ -189,16 +188,21 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	return sum, nil
 }
 
-// enumerateChats lists the chats this run must visit: every chat with
-// activity after the watermark (all chats on first/full runs), plus any chat
-// whose backfill is unfinished even without new activity.
-func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts ImportOptions, state *SyncState, sum *ImportSummary) ([]Chat, error) {
+// enumerateChats lists the chats this run must visit: every chat active in
+// the discovery overlap or reconciliation window (all chats on first/full
+// runs), plus any chat whose backfill is unfinished even without new activity.
+func (imp *Importer) enumerateChats(ctx context.Context, syncID int64, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, sum *ImportSummary) ([]Chat, error) {
 	params := SearchChatsParams{AccountID: opts.AccountID}
 	if !opts.Full && state.ListWatermark != "" {
 		if wm := parseWatermark(state.ListWatermark); !wm.IsZero() {
 			// Overlap by an hour so clock skew or a mid-listing crash cannot
-			// permanently hide a chat from enumeration.
+			// permanently hide a chat from enumeration. Also include every chat
+			// inside the reconciliation window so in-place changes are revisited
+			// even when their LastActivity did not advance.
 			params.LastActivityAfter = wm.Add(-time.Hour)
+			if reconcileCutoff.Before(params.LastActivityAfter) {
+				params.LastActivityAfter = reconcileCutoff
+			}
 		}
 	}
 	var chats []Chat
