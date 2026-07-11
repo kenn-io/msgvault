@@ -258,8 +258,10 @@ msgvault pack-attachments
 
 Reads, exports, MCP, and backups work transparently with loose, packed, or mixed
 storage. `repack-attachments` reclaims dead pack space and also runs
-automatically as bounded maintenance. A restored backup intentionally contains
-loose attachment files and can be packed again with the command above.
+automatically as bounded maintenance. Backup restore installs compatible packs
+directly by default and leaves only incompatible or oversized blobs loose; use
+`backup restore --loose-attachments` when an all-loose recovery layout is
+preferred.
 
 `unpack-attachments` is the downgrade escape hatch. It requires exclusive local
 access because it deletes production pack files, so stop the local daemon first:

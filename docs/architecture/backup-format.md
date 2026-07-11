@@ -21,9 +21,39 @@ The freeze window is therefore milliseconds-to-seconds regardless of archive siz
 
 ## Restore
 
-`backup restore` materializes one snapshot into a target directory as a usable archive home: the database written run-by-run at `page × page_size` from the materialized page map, attachments at the storage paths the restored database records for each hash (importers may namespace paths beyond the loose `<hash[:2]>/<hash>` layout; paths are re-validated as local before writing), and captured extras at their recorded relative paths and file modes (tree entry paths are re-validated as local and traversal-free before writing). It refuses a non-empty target without `--overwrite` and refuses the live archive home of a running daemon outright.
+`backup restore` materializes one snapshot into a target directory as a usable archive home: the database written run-by-run at `page × page_size` from the materialized page map, a complete attachment store, and captured extras at their recorded relative paths and file modes (tree entry paths are re-validated as local and traversal-free before writing). It refuses a non-empty target without `--overwrite` and refuses the live archive home of a running daemon outright.
 
-Restore is self-proving, in layers. During materialization every blob read re-derives its SHA-256 identity (the pack reader's normal contract) and every database page is additionally checked against the snapshot's page-hash map before it is written — so a page-map bug cannot silently place correct bytes at the wrong offset. After materialization the restored database must pass `PRAGMA integrity_check` and reproduce the manifest's recorded stats through exactly the queries capture ran inside the freeze window; the end-to-end test further proves the restored file is byte-identical to the live database as it existed at capture time, including for parent snapshots restored from an incremental chain. All files, and the directory entries naming them, are fsynced before restore reports success. Pack reads are grouped by pack with a `--jobs` worker bound (1 = strictly serial for spinning-disk repositories); serial and parallel restores produce byte-identical trees. Restoring an old backup onto a newer msgvault goes through normal schema migration at first open, the same path as any upgrade.
+The attachment store is representation-neutral. By default, msgvault asks the
+engine to import compatible repository packs using the target packstore's
+configured limits. The importer validates pack structure, cross-checks the
+repository index against the immutable footer, and bounded-reads and SHA-256
+verifies every snapshot-selected entry. Compatible selected entries gain
+authority through the staged database's pack catalog; entries over the target
+blob limit and entries from a well-formed but incompatible pack are
+materialized through the ordinary loose path. Unselected entries copied as
+part of an immutable pack never gain read authority. Corruption is a hard
+restore error, not a reason to fall back.
+
+Publication ordering keeps the visible archive safe: loose fallback bytes and
+verified pack files are durable before one transaction replaces the staged
+database's pack records and selected mappings. That transaction runs after
+database page materialization and before `PRAGMA integrity_check` and manifest
+statistics prove the restored database. The database is published only after
+the final catalog passes that proof. A crash can leave an unauthorized pack
+file, but cannot publish a mapping to an absent pack; retries remain
+idempotent whether normal maintenance later adopts, removes, or retains the
+orphan.
+
+Restore is self-proving, in layers. During materialization every blob read re-derives its SHA-256 identity (the pack reader's normal contract) and every database page is additionally checked against the snapshot's page-hash map before it is written — so a page-map bug cannot silently place correct bytes at the wrong offset. After materialization the restored database must pass `PRAGMA integrity_check` and reproduce the manifest's recorded stats through exactly the queries capture ran inside the freeze window; the end-to-end test further proves the restored file is byte-identical to the live database as it existed at capture time, including for parent snapshots restored from an incremental chain. All files, and the directory entries naming them, are fsynced before restore reports success. Pack reads are grouped by pack with a `--jobs` worker bound (1 = strictly serial for spinning-disk repositories); serial and parallel restores produce byte-identical content. Restoring an old backup onto a newer msgvault goes through normal schema migration at first open, the same path as any upgrade.
+
+`--loose-attachments` leaves the optional importer disabled and clears restored
+pack metadata after publication, preserving the downgrade/recovery path. A
+fresh target is then fully loose. An overwritten target can retain old,
+uncataloged pack files that normal maintenance may rediscover, so use a fresh
+target or run `unpack-attachments` afterward when a guaranteed-loose physical
+layout matters. Conversely, ordinary overwrite replaces packed authority with
+the snapshot's membership; maintenance may reclaim old packs whose content
+belonged only to the newer target.
 
 ## Limitations
 
