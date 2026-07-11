@@ -1,19 +1,90 @@
 package cmd
 
 import (
+	"bytes"
 	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestBackupRestorePackedTargetSelection(t *testing.T) {
+	assert.NotNil(t, backupRestorePackedContentTarget(false), "packed restore is the default")
+	assert.Equal(t, packstore.DefaultLimits(), backupRestorePackedContentTarget(false).Limits())
+	assert.Nil(t, backupRestorePackedContentTarget(true), "explicit loose restore must use Kit's legacy path")
+	flag := backupRestoreCmd.Flags().Lookup("loose-attachments")
+	require.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T) {
+	tests := []struct {
+		name        string
+		looseFlag   bool
+		result      backup.RestoreResult
+		contains    []string
+		notContains []string
+	}{
+		{
+			name: "fully packed",
+			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
+				DBBytes: 10, AttachmentBlobs: 3, AttachmentBytes: 30,
+				PackedAttachmentBlobs: 3, AttachmentPacks: 1, Duration: time.Second},
+			contains:    []string{"Attachments: 3 (30B); 3 packed in 1 pack(s), 0 loose"},
+			notContains: []string{"pack-attachments", "Pack fallbacks:"},
+		},
+		{
+			name: "mixed compatibility fallback",
+			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
+				AttachmentBlobs: 3, AttachmentBytes: 30, PackedAttachmentBlobs: 2,
+				LooseAttachmentBlobs: 1, AttachmentPacks: 1,
+				PackFallbacks: []packstore.ImportFallback{{PackID: restorePackAForOutput, Hash: packstore.Hash(strings.Repeat("a", 64)), Reason: packstore.FallbackBlobLimit}}},
+			contains: []string{"2 packed in 1 pack(s), 1 loose", "Pack fallbacks: blob_limit=1",
+				"1 attachment blob(s) remain loose", "msgvault pack-attachments"},
+		},
+		{
+			name:      "explicit loose",
+			looseFlag: true,
+			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
+				AttachmentBlobs: 3, AttachmentBytes: 30, LooseAttachmentBlobs: 3},
+			contains: []string{"0 packed in 0 pack(s), 3 loose", "restored as loose files by request",
+				"msgvault pack-attachments"},
+		},
+		{
+			name: "whole pack fallback",
+			result: backup.RestoreResult{SnapshotID: "snap", DBPath: "/target/msgvault.db",
+				AttachmentBlobs: 3, AttachmentBytes: 30, LooseAttachmentBlobs: 3,
+				PackFallbacks: []packstore.ImportFallback{{PackID: restorePackAForOutput, Reason: packstore.FallbackPackContainerLimit}}},
+			contains: []string{"Pack fallbacks: pack_container_limit=1", "3 attachment blob(s) remain loose"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			require.NoError(t, printBackupRestoreSummary(&out, "/target", &tt.result, tt.looseFlag))
+			for _, want := range tt.contains {
+				assert.Contains(t, out.String(), want)
+			}
+			for _, unwanted := range tt.notContains {
+				assert.NotContains(t, out.String(), unwanted)
+			}
+		})
+	}
+}
+
+const restorePackAForOutput = "01hzy3v7q8r9s0t1a2v3w4x5y6"
 
 func TestResolveBackupRepoPrecedence(t *testing.T) {
 	savedCfg := cfg
