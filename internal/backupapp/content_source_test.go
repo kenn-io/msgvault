@@ -501,6 +501,84 @@ func TestBackupPackedRestoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestBackupPackedRestoreOverwriteReplacesPriorPackAuthority(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	snapshot := newVaultFixture(t)
+	snapshotContent := []byte("attachment retained by the restored snapshot")
+	snapshotHash := snapshot.addBlob(snapshotContent, canonicalPath(hashOf(snapshotContent)))
+	require.Equal(1, snapshot.pack().BlobsPacked)
+	snapshotRepo, err := backup.Init(filepath.Join(t.TempDir(), "snapshot-repo"))
+	require.NoError(err)
+	app := backupapp.New("test")
+	_, err = backup.Create(ctx, snapshotRepo, app, backup.CreateOptions{
+		DBPath: snapshot.dbPath, ContentDir: snapshot.attDir, DataDir: snapshot.dataDir,
+		ContentSource: snapshot.contentSource(),
+	})
+	require.NoError(err)
+
+	newer := newVaultFixture(t)
+	newerContent := []byte("attachment that exists only in the overwritten target")
+	newerHash := newer.addBlob(newerContent, canonicalPath(hashOf(newerContent)))
+	require.Equal(1, newer.pack().BlobsPacked)
+	newerRepo, err := backup.Init(filepath.Join(t.TempDir(), "newer-repo"))
+	require.NoError(err)
+	_, err = backup.Create(ctx, newerRepo, app, backup.CreateOptions{
+		DBPath: newer.dbPath, ContentDir: newer.attDir, DataDir: newer.dataDir,
+		ContentSource: newer.contentSource(),
+	})
+	require.NoError(err)
+
+	target := filepath.Join(t.TempDir(), "overwrite-target")
+	newerRestore, err := backup.Restore(ctx, newerRepo, app, backup.RestoreOptions{
+		TargetDir: target, PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
+	})
+	require.NoError(err)
+	newerStore, err := store.OpenForTest(newerRestore.DBPath)
+	require.NoError(err)
+	newerRecords, err := newerStore.ListPackRecords()
+	require.NoError(err)
+	require.Len(newerRecords, 1)
+	require.NoError(newerStore.Close())
+	targetLayout, err := packstore.NewLayout(filepath.Join(target, "attachments"), packstore.LayoutOptions{
+		Staging: packstore.StagingSameDirectory,
+	})
+	require.NoError(err)
+	oldPackPath := targetLayout.PackPath(newerRecords[0].PackID)
+	require.FileExists(oldPackPath)
+
+	restored, err := backup.Restore(ctx, snapshotRepo, app, backup.RestoreOptions{
+		TargetDir: target, Overwrite: true,
+		PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
+	})
+	require.NoError(err)
+	restoredStore, err := store.OpenForTest(restored.DBPath)
+	require.NoError(err)
+	defer func() { require.NoError(restoredStore.Close()) }()
+	restoredRecords, err := restoredStore.ListPackRecords()
+	require.NoError(err)
+	require.Len(restoredRecords, 1)
+	assert.NotEqual(newerRecords[0].PackID, restoredRecords[0].PackID)
+	indexed, err := restoredStore.ListIndexedBlobHashes()
+	require.NoError(err)
+	assert.Equal(map[string]struct{}{snapshotHash: {}}, indexed,
+		"overwrite must grant authority only to snapshot-referenced content")
+	assert.FileExists(oldPackPath,
+		"overwrite merge preserves old physical files until normal maintenance reconciles them")
+
+	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "attachments"))
+	require.NoError(err)
+	defer func() { require.NoError(blobs.Close()) }()
+	reader, _, err := blobs.Open(snapshotHash)
+	require.NoError(err)
+	assert.Equal(snapshotContent, readAllAndClose(t, reader))
+	_, _, err = blobs.Open(newerHash)
+	require.ErrorIs(err, fs.ErrNotExist,
+		"a preserved old pack file must not grant authority to non-snapshot content")
+}
+
 func TestBackupPackedRestoreMixedConfiguredLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
