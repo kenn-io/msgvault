@@ -2,6 +2,7 @@ package query
 
 import (
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -115,8 +116,14 @@ const messageTypeSMS = "sms"
 
 // TextMessageTypes lists the message_type values included in Texts mode.
 var TextMessageTypes = []string{
-	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams",
+	"whatsapp", "imessage", messageTypeSMS, "mms", "google_voice_text", "teams", "beeper",
 }
+
+// TextMessageTypeSQLList renders TextMessageTypes as a quoted SQL IN-list
+// ("'whatsapp','imessage',...") so filters derive from the one canonical
+// slice instead of hand-maintained literals. Values are trusted package
+// constants, never user input.
+var TextMessageTypeSQLList = "'" + strings.Join(TextMessageTypes, "','") + "'"
 
 // textSortFieldToSortField converts a TextSortField to the generic SortField
 // used by aggregate queries. TextSortByLastMessage has no direct equivalent
@@ -154,6 +161,7 @@ var KnownMessageTypes = []string{
 	"google_voice_text",
 	"google_voice_call",
 	"google_voice_voicemail",
+	"beeper",
 }
 
 // IsKnownMessageType reports whether mt is a message_type value that msgvault

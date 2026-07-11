@@ -1029,11 +1029,13 @@ func cliRunCommandAllowed(args []string) bool {
 	}
 	switch args[0] {
 	case "add-account",
+		"add-beeper",
 		"add-calendar",
 		"add-imap",
 		"add-o365",
 		"add-synctech-sms-drive",
 		"add-teams",
+		"backfill-beeper-media",
 		"backfill-teams-media",
 		"build-embeddings",
 		"cancel-deletion",
@@ -1056,6 +1058,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"repack-attachments",
 		"remove-account",
 		"show-deletion",
+		"sync-beeper",
 		"sync-calendar",
 		"sync-synctech-sms",
 		"sync-teams":

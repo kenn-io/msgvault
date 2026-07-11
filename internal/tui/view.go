@@ -572,7 +572,7 @@ func (m Model) messageListView() string {
 		// Format subject with indicators (rune-aware)
 		// For chat messages without a subject, show snippet or group title
 		subject := textutil.SanitizeTerminal(msg.Subject)
-		if subject == "" && msg.MessageType == "whatsapp" {
+		if subject == "" && query.IsTextMessageType(msg.MessageType) {
 			title := textutil.SanitizeTerminal(msg.ConversationTitle)
 			snippet := textutil.SanitizeTerminal(msg.Snippet)
 			if title != "" {
@@ -924,7 +924,7 @@ func (m Model) threadView() string {
 		}
 		if msg.Subject != "" {
 			fromSubject = truncateRunes(fromSubject, 18) + ": " + textutil.SanitizeTerminal(msg.Subject)
-		} else if msg.MessageType == "whatsapp" && msg.Snippet != "" {
+		} else if query.IsTextMessageType(msg.MessageType) && msg.Snippet != "" {
 			fromSubject = truncateRunes(fromSubject, 18) + ": " + textutil.SanitizeTerminal(msg.Snippet)
 		}
 		if msg.DeletedAt != nil {

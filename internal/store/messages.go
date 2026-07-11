@@ -969,6 +969,14 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 	return err
 }
 
+// SetMessageEdited marks a message as edited at the source. UpsertMessage
+// does not write is_edited, so importers that observe an edit flag call this
+// after upserting.
+func (s *Store) SetMessageEdited(messageID int64) error {
+	_, err := s.db.Exec(`UPDATE messages SET is_edited = TRUE WHERE id = ?`, messageID)
+	return err
+}
+
 // MarkMessageDeleted marks a message as deleted from the source.
 func (s *Store) MarkMessageDeleted(sourceID int64, sourceMessageID string) error {
 	_, err := s.db.Exec(fmt.Sprintf(`
@@ -1630,6 +1638,109 @@ func (s *Store) EnsureParticipantByPhone(phone, displayName, identifierType stri
 	return id, nil
 }
 
+// MergeParticipants repoints every reference from the old participant to the
+// new one — messages, reactions, recipients, conversation membership, and
+// identifiers — deduplicating where unique constraints would collide, then
+// deletes the old participant row. Used when an importer discovers that two
+// participant rows are the same person.
+func (s *Store) MergeParticipants(oldID, newID int64) error {
+	if oldID == newID || oldID == 0 || newID == 0 {
+		return nil
+	}
+	return s.withTx(func(tx *loggedTx) error {
+		// The merge must not lose contact metadata: fill gaps on the survivor
+		// from the absorbed row. Both columns are UNIQUE, so the absorbed row
+		// must release each value before the survivor can take it.
+		var oldEmail, oldPhone sql.NullString
+		if err := tx.QueryRow(`SELECT NULLIF(email_address, ''), NULLIF(phone_number, '') FROM participants WHERE id = ?`, oldID).
+			Scan(&oldEmail, &oldPhone); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE participants SET email_address = NULL, phone_number = NULL WHERE id = ?`, oldID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			UPDATE participants SET
+				email_address = COALESCE(NULLIF(email_address, ''), ?),
+				phone_number  = COALESCE(NULLIF(phone_number, ''), ?)
+			WHERE id = ?`, oldEmail, oldPhone, newID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE messages SET sender_id = ? WHERE sender_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		// Drop old rows that would collide with an existing row of the new
+		// participant, then repoint the remainder.
+		if _, err := tx.Exec(`
+			DELETE FROM reactions WHERE participant_id = ? AND EXISTS (
+				SELECT 1 FROM reactions r2 WHERE r2.message_id = reactions.message_id
+				  AND r2.participant_id = ? AND r2.reaction_type = reactions.reaction_type
+				  AND r2.reaction_value = reactions.reaction_value)`, oldID, newID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE reactions SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM message_recipients WHERE participant_id = ? AND EXISTS (
+				SELECT 1 FROM message_recipients m2 WHERE m2.message_id = message_recipients.message_id
+				  AND m2.participant_id = ? AND m2.recipient_type = message_recipients.recipient_type)`, oldID, newID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE message_recipients SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM conversation_participants WHERE participant_id = ? AND EXISTS (
+				SELECT 1 FROM conversation_participants c2 WHERE c2.conversation_id = conversation_participants.conversation_id
+				  AND c2.participant_id = ?)`, oldID, newID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE conversation_participants SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		// Identifier values are globally unique, so a plain repoint suffices.
+		if _, err := tx.Exec(`UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`DELETE FROM participants WHERE id = ?`, oldID)
+		return err
+	})
+}
+
+// ParticipantByIdentifier returns the participant an identifier points at,
+// with whether that participant carries a phone number (0 if none).
+func (s *Store) ParticipantByIdentifier(identifierType, identifierValue string) (id int64, hasPhone bool, err error) {
+	err = s.db.QueryRow(`
+		SELECT p.id, COALESCE(p.phone_number, '') != ''
+		FROM participant_identifiers pi
+		JOIN participants p ON p.id = pi.participant_id
+		WHERE pi.identifier_type = ? AND pi.identifier_value = ?
+	`, identifierType, identifierValue).Scan(&id, &hasPhone)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, hasPhone, err
+}
+
+// SetParticipantIdentifier points identifier (type, value) at participantID,
+// creating the row or re-pointing an existing one (idempotent). Importers use
+// it to persist alternate identifiers on an already-resolved participant so
+// later runs unify instead of forking a new participant.
+func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, identifierValue string) error {
+	identifierType = strings.TrimSpace(identifierType)
+	identifierValue = strings.TrimSpace(identifierValue)
+	if identifierType == "" || identifierValue == "" {
+		return errors.New("identifier type and value are required")
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value, is_primary)
+		VALUES (?, ?, ?, FALSE)
+		ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET participant_id = excluded.participant_id
+	`, participantID, identifierType, identifierValue)
+	return err
+}
+
 func (s *Store) EnsureParticipantByIdentifier(identifierType, identifierValue, displayName string) (int64, error) {
 	identifierType = strings.TrimSpace(identifierType)
 	identifierValue = strings.TrimSpace(identifierValue)
@@ -2200,6 +2311,45 @@ type AttachmentRef struct {
 	ContentHash        string
 	Size               int
 	SourceAttachmentID string
+	// Optional media metadata; zero values are stored as NULL.
+	MediaType  string
+	Width      int64
+	Height     int64
+	DurationMS int64
+}
+
+// replaceMessageAttachmentsWhere atomically deletes a message's attachment
+// rows matching deleteWhere and inserts refs. Refs with an empty StoragePath
+// (and, when requireHash is set, an empty ContentHash) are skipped.
+func (s *Store) replaceMessageAttachmentsWhere(messageID int64, deleteWhere string, requireHash bool, refs []AttachmentRef) error {
+	return s.withTx(func(tx *loggedTx) error {
+		if _, err := tx.Exec(`DELETE FROM attachments WHERE message_id = ? AND (`+deleteWhere+`)`, messageID); err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.StoragePath == "" || (requireHash && ref.ContentHash == "") {
+				continue
+			}
+			if _, err := tx.Exec(fmt.Sprintf(`
+				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id,
+					media_type, width, height, duration_ms, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)
+				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
+			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID,
+				nullIfEmpty(ref.MediaType), nullIfZero(ref.Width), nullIfZero(ref.Height), nullIfZero(ref.DurationMS)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func nullIfEmpty(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
+}
+
+func nullIfZero(n int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: n, Valid: n != 0}
 }
 
 // ReplaceMessageInlineAttachments replaces Teams-managed inline media rows for
@@ -2207,66 +2357,136 @@ type AttachmentRef struct {
 // scheme and legacy unmarked Teams inline rows produced before that marker was
 // added, while leaving URL-backed reference/recording attachments untouched.
 func (s *Store) ReplaceMessageInlineAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`
-			DELETE FROM attachments
-			WHERE message_id = ?
-			  AND (
-			    source_attachment_id LIKE 'teams:inline:%'
-			    OR (
-			      (source_attachment_id IS NULL OR source_attachment_id = '')
-			      AND storage_path != ''
-			      AND storage_path NOT LIKE 'http://%'
-			      AND storage_path NOT LIKE 'https://%'
-			      AND content_hash IS NOT NULL
-			      AND content_hash != ''
-			      AND COALESCE(filename, '') = ''
-			      AND COALESCE(mime_type, '') = ''
-			    )
-			  )
-		`, messageID); err != nil {
-			return err
+	return s.replaceMessageAttachmentsWhere(messageID, `
+		source_attachment_id LIKE 'teams:inline:%'
+		OR (
+		  (source_attachment_id IS NULL OR source_attachment_id = '')
+		  AND storage_path != ''
+		  AND storage_path NOT LIKE 'http://%'
+		  AND storage_path NOT LIKE 'https://%'
+		  AND content_hash IS NOT NULL
+		  AND content_hash != ''
+		  AND COALESCE(filename, '') = ''
+		  AND COALESCE(mime_type, '') = ''
+		)`, true, refs)
+}
+
+// ReplaceMessageBeeperAttachments replaces Beeper-managed attachment rows for
+// a message (rows whose source_attachment_id carries the "beeper:" prefix).
+// Rows with a content hash are downloaded media; rows without one are
+// pending-download markers whose storage_path holds the source asset URL, so
+// a later retry pass can find and repair them.
+func (s *Store) ReplaceMessageBeeperAttachments(messageID int64, refs []AttachmentRef) error {
+	return s.replaceMessageAttachmentsWhere(messageID, `source_attachment_id LIKE 'beeper:%'`, false, refs)
+}
+
+// MessageBeeperAttachments returns the message's existing Beeper-managed
+// attachment rows keyed by source_attachment_id, so re-persisting a message
+// can keep already-downloaded media without re-fetching it.
+func (s *Store) MessageBeeperAttachments(messageID int64) (map[string]AttachmentRef, error) {
+	rows, err := s.db.Query(`
+		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), storage_path, COALESCE(content_hash, ''), size, source_attachment_id,
+		       COALESCE(media_type, ''), COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0)
+		FROM attachments
+		WHERE message_id = ? AND source_attachment_id LIKE 'beeper:%'
+	`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]AttachmentRef{}
+	for rows.Next() {
+		var ref AttachmentRef
+		var size int64
+		if err := rows.Scan(&ref.Filename, &ref.MimeType, &ref.StoragePath, &ref.ContentHash, &size, &ref.SourceAttachmentID,
+			&ref.MediaType, &ref.Width, &ref.Height, &ref.DurationMS); err != nil {
+			return nil, err
 		}
-		for _, ref := range refs {
-			if ref.StoragePath == "" || ref.ContentHash == "" {
-				continue
-			}
-			if _, err := tx.Exec(fmt.Sprintf(`
-				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, %s)
-				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID); err != nil {
-				return err
-			}
+		ref.Size = int(size)
+		out[ref.SourceAttachmentID] = ref
+	}
+	return out, rows.Err()
+}
+
+// SourceMessageRef locates an archived message at its source: the source
+// message ID, its conversation's source ID, and the archived timestamp.
+type SourceMessageRef struct {
+	SourceMessageID string
+	ChatID          string // conversations.source_conversation_id
+	SentAt          time.Time
+}
+
+// ListRecentMessagesForSource returns refs of the source's most recently
+// archived, non-tombstoned messages, for verifying that stored IDs still
+// resolve to the same content at the source.
+func (s *Store) ListRecentMessagesForSource(sourceID int64, limit int) ([]SourceMessageRef, error) {
+	rows, err := s.db.Query(`
+		SELECT m.source_message_id, c.source_conversation_id, m.sent_at
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ? AND m.sent_at IS NOT NULL AND m.deleted_from_source_at IS NULL
+		ORDER BY m.sent_at DESC, m.id DESC
+		LIMIT ?
+	`, sourceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SourceMessageRef
+	for rows.Next() {
+		var ref SourceMessageRef
+		if err := rows.Scan(&ref.SourceMessageID, &ref.ChatID, &ref.SentAt); err != nil {
+			return nil, err
 		}
-		return nil
-	})
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+// BeeperPendingAttachmentMessage identifies a message with at least one
+// pending (not yet downloaded) Beeper attachment marker.
+type BeeperPendingAttachmentMessage struct {
+	MessageID       int64
+	SourceMessageID string
+	ChatID          string // conversations.source_conversation_id
+}
+
+// ListBeeperPendingAttachmentMessages returns the messages of a beeper
+// source that still have pending attachment markers, so a retry pass can
+// re-fetch their media. Buffered (not a cursor callback): callers do slow
+// network and write work per item, which must not hold a read cursor open.
+func (s *Store) ListBeeperPendingAttachmentMessages(sourceID int64) ([]BeeperPendingAttachmentMessage, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.source_message_id, c.source_conversation_id
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ?
+		  AND EXISTS (
+		    SELECT 1 FROM attachments a
+		    WHERE a.message_id = m.id
+		      AND a.source_attachment_id LIKE 'beeper:%'
+		      AND (a.content_hash IS NULL OR a.content_hash = '')
+		  )
+	`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []BeeperPendingAttachmentMessage
+	for rows.Next() {
+		var item BeeperPendingAttachmentMessage
+		if err := rows.Scan(&item.MessageID, &item.SourceMessageID, &item.ChatID); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // ReplaceMessageLinkAttachments replaces URL-backed attachment rows for a message.
 // It intentionally leaves content-addressed local attachment paths (for example
 // downloaded inline media) untouched.
 func (s *Store) ReplaceMessageLinkAttachments(messageID int64, refs []AttachmentRef) error {
-	return s.withTx(func(tx *loggedTx) error {
-		if _, err := tx.Exec(`
-			DELETE FROM attachments
-			WHERE message_id = ?
-			  AND (storage_path LIKE 'http://%' OR storage_path LIKE 'https://%')
-		`, messageID); err != nil {
-			return err
-		}
-		for _, ref := range refs {
-			if ref.StoragePath == "" {
-				continue
-			}
-			if _, err := tx.Exec(fmt.Sprintf(`
-				INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, source_attachment_id, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, %s)
-				ON CONFLICT (message_id, content_hash) WHERE content_hash IS NOT NULL AND content_hash != '' DO NOTHING
-			`, s.dialect.Now()), messageID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, int64(ref.Size), ref.SourceAttachmentID); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return s.replaceMessageAttachmentsWhere(messageID,
+		`storage_path LIKE 'http://%' OR storage_path LIKE 'https://%'`, false, refs)
 }

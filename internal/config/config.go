@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -189,6 +190,7 @@ type Config struct {
 	Accounts    []AccountSchedule `toml:"accounts"`
 	SynctechSMS SynctechSMSConfig `toml:"synctech_sms"`
 	GCal        []GCalSource      `toml:"gcal"`
+	Beeper      BeeperConfig      `toml:"beeper"`
 	Backup      BackupConfig      `toml:"backup"`
 
 	// Computed paths (not from config file)
@@ -666,6 +668,57 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 		}
 	}
 	return nil
+}
+
+// BeeperConfig configures the Beeper Desktop archive source ([beeper] table).
+// A single block, not a slice: the Beeper Desktop API is loopback-only, so
+// there is exactly one instance per machine and the daemon must be co-located
+// with it.
+type BeeperConfig struct {
+	// URL is the Beeper Desktop API base URL. Empty means the default
+	// loopback address (http://localhost:23373).
+	URL string `toml:"url"`
+	// Enabled gates the daemon scheduler job.
+	Enabled bool `toml:"enabled"`
+	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
+	Schedule string `toml:"schedule"`
+	// Accounts is an accountID include filter (empty = sync all accounts).
+	Accounts []string `toml:"accounts"`
+	// ExcludeAccounts skips specific accountIDs — e.g. ["whatsapp"] when the
+	// native import-whatsapp path already archives that network.
+	ExcludeAccounts []string `toml:"exclude_accounts"`
+	// RateLimitQPS bounds request rate against the local Beeper Desktop app
+	// (0 = default 20).
+	RateLimitQPS float64 `toml:"rate_limit_qps"`
+	// Media toggles attachment download (nil/absent = enabled).
+	Media *bool `toml:"media"`
+	// MaxMediaMB caps individual attachment downloads in MiB (0 = 100).
+	MaxMediaMB int `toml:"max_media_mb"`
+}
+
+// MediaEnabled reports whether attachment download is on (default true).
+func (b BeeperConfig) MediaEnabled() bool {
+	return b.Media == nil || *b.Media
+}
+
+// MaxMediaBytes returns the per-attachment download cap in bytes.
+func (b BeeperConfig) MaxMediaBytes() int64 {
+	if b.MaxMediaMB > 0 {
+		return int64(b.MaxMediaMB) << 20
+	}
+	return 100 << 20
+}
+
+// AccountIncluded reports whether a Beeper accountID passes the
+// include/exclude filters.
+func (b BeeperConfig) AccountIncluded(accountID string) bool {
+	if slices.Contains(b.ExcludeAccounts, accountID) {
+		return false
+	}
+	if len(b.Accounts) == 0 {
+		return true
+	}
+	return slices.Contains(b.Accounts, accountID)
 }
 
 // GCalSource is one configured Google Calendar sync target. Each entry is a
