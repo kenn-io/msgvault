@@ -6,7 +6,10 @@ Delivery order below) are implemented and copy-based real-archive hardening is
 complete on the `packed-attachments` branch. The 64 MiB memory-ceiling
 amendment is implemented and locally verified through automated boundary,
 fault-injection, and race tests. Pack-native restore remains the separate
-follow-up in issue #466.
+follow-up in issue #466. The design for extracting this engine into reusable
+Kit infrastructure is in `docs/internal/kit-packstore-extraction-design.md`.
+Internal package paths below describe the pre-extraction implementation and
+are retained as historical design context.
 
 ## Motivation
 
@@ -146,7 +149,7 @@ and would enable a future kit API that preads from an externally supplied
 `pack.Entry` without any footer parse. The pack footer remains the
 authoritative self-describing copy.
 
-### Blob store (`internal/blobstore`)
+### Pre-extraction blob store (`internal/blobstore`)
 
 `Store.Open(hash) (io.ReadSeekCloser, int64, error)`:
 

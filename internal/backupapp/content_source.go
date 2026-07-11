@@ -10,15 +10,18 @@ import (
 	"path/filepath"
 
 	"go.kenn.io/kit/backup"
-
-	"go.kenn.io/msgvault/internal/blobstore"
 )
+
+// BlobStore is the production mixed-storage read contract used by capture.
+type BlobStore interface {
+	Open(hash string) (io.ReadSeekCloser, int64, error)
+}
 
 // NewContentSource returns a backup.ContentSource that serves attachment
 // bytes from the production blob store (packs plus canonical loose files),
 // falling back to the DB-recorded noncanonical relative path under
 // attachmentsDir for legacy blobs the packer has not canonicalized yet.
-func NewContentSource(blobs *blobstore.Store, attachmentsDir string) backup.ContentSource {
+func NewContentSource(blobs BlobStore, attachmentsDir string) backup.ContentSource {
 	return &blobSource{blobs: blobs, attachmentsDir: attachmentsDir}
 }
 
@@ -28,7 +31,7 @@ func NewContentSource(blobs *blobstore.Store, attachmentsDir string) backup.Cont
 // (e.g. synctech-sms/<aa>/<hash>). Open is concurrency-safe (blobstore
 // serializes packed reads; loose reads are independent os.Open calls).
 type blobSource struct {
-	blobs          *blobstore.Store
+	blobs          BlobStore
 	attachmentsDir string
 }
 

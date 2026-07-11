@@ -18,12 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/backupapp"
-	"go.kenn.io/msgvault/internal/blobstore"
-	"go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/packer"
-	"go.kenn.io/msgvault/internal/repacker"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -37,6 +35,8 @@ type vaultFixture struct {
 	dbPath  string
 	dataDir string
 	attDir  string
+	maint   *packstore.Maintainer
+	blobs   *attachmentstore.Store
 	msgID   int64
 	seq     int
 }
@@ -63,12 +63,20 @@ func newVaultFixture(t *testing.T) *vaultFixture {
 		SizeEstimate:    100,
 	})
 	require.NoError(err, "UpsertMessage")
+	attDir := filepath.Join(dataDir, "attachments")
+	layout, err := packstore.NewLayout(attDir, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(err, "create pack layout")
+	maint, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
+	require.NoError(err, "create pack maintainer")
+	t.Cleanup(func() { _ = maint.Close() })
 	return &vaultFixture{
 		t:       t,
 		store:   st,
 		dbPath:  dbPath,
 		dataDir: dataDir,
-		attDir:  filepath.Join(dataDir, "attachments"),
+		attDir:  attDir,
+		maint:   maint,
+		blobs:   attachmentstore.Wrap(maint.Store()),
 		msgID:   msgID,
 	}
 }
@@ -106,27 +114,28 @@ func (f *vaultFixture) writeLoose(relPath string, content []byte) {
 // it in the backup ContentSource under test.
 func (f *vaultFixture) contentSource() backup.ContentSource {
 	f.t.Helper()
-	blobs := blobstore.New(f.store, f.attDir)
-	f.t.Cleanup(func() { _ = blobs.Close() })
-	return backupapp.NewContentSource(blobs, f.attDir)
+	return backupapp.NewContentSource(f.blobs, f.attDir)
 }
 
-// blockingSecondLookupIndex freezes a blobstore.Open after it has observed
+// blockingSecondLookupIndex freezes a packstore.Open after it has observed
 // the target hash as loose on both index lookups. This lets a test run the
 // production packer before Open returns that now-stale result to its caller.
 type blockingSecondLookupIndex struct {
-	inner   blobstore.PackIndex
-	hash    string
+	inner   packstore.Resolver
+	hash    packstore.Hash
 	reached chan struct{}
 	release chan struct{}
 	mu      sync.Mutex
 	lookups int
 }
 
-func (i *blockingSecondLookupIndex) ResolveAttachmentBlob(hash string) (store.AttachmentBlobLocation, error) {
-	loc, err := i.inner.ResolveAttachmentBlob(hash)
-	if hash != i.hash || err != nil {
-		return loc, err
+func (i *blockingSecondLookupIndex) Resolve(ctx context.Context, hash packstore.Hash) (packstore.Location, error) {
+	loc, err := i.inner.Resolve(ctx, hash)
+	if err != nil {
+		return loc, fmt.Errorf("resolve blocked hash: %w", err)
+	}
+	if hash != i.hash {
+		return loc, nil
 	}
 	i.mu.Lock()
 	i.lookups++
@@ -140,10 +149,10 @@ func (i *blockingSecondLookupIndex) ResolveAttachmentBlob(hash string) (store.At
 }
 
 // pack runs the packer over the fixture vault.
-func (f *vaultFixture) pack() packer.Stats {
+func (f *vaultFixture) pack() packstore.PackStats {
 	f.t.Helper()
-	stats, err := packer.Run(context.Background(), f.store, f.attDir, packer.Options{})
-	require.NoError(f.t, err, "packer.Run")
+	stats, err := f.maint.Pack(context.Background(), packstore.PackOptions{})
+	require.NoError(f.t, err, "packstore.Pack")
 	return stats
 }
 
@@ -241,10 +250,15 @@ func TestContentSourceRetriesPackedLookupWhenLegacyOpenLosesRace(t *testing.T) {
 	h := hashOf(content)
 	rel := "synctech-sms/" + h[:2] + "/" + h
 	f.addBlob(content, rel)
+	parsedHash, err := packstore.ParseHash(h)
+	require.NoError(err)
 	index := &blockingSecondLookupIndex{
-		inner: f.store, hash: h, reached: make(chan struct{}), release: make(chan struct{}),
+		inner:   store.NewPackCatalog(f.store),
+		hash:    parsedHash,
+		reached: make(chan struct{}), release: make(chan struct{}),
 	}
-	blobs := blobstore.New(index, f.attDir)
+	blobs, err := attachmentstore.New(index, f.attDir)
+	require.NoError(err)
 	t.Cleanup(func() { require.NoError(blobs.Close()) })
 	src := backupapp.NewContentSource(blobs, f.attDir)
 
@@ -318,7 +332,7 @@ func TestContentSourceMalformedHash(t *testing.T) {
 				Hash: hash, Size: 1, StoragePath: "synctech-sms/xx/" + hash,
 			})
 		}, "hash %q", hash)
-		require.ErrorIsf(err, export.ErrInvalidContentHash, "hash %q", hash)
+		require.ErrorIsf(err, packstore.ErrInvalidHash, "hash %q", hash)
 		assert.NotErrorIsf(err, fs.ErrNotExist, "hash %q", hash)
 	}
 }
@@ -416,7 +430,8 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = restoredStore.Close() })
 	restoredAttDir := filepath.Join(target, "attachments")
 
-	stale := blobstore.New(restoredStore, restoredAttDir)
+	stale, err := attachmentstore.New(store.NewPackCatalog(restoredStore), restoredAttDir)
+	require.NoError(err)
 	_, _, err = stale.Open(hashA)
 	require.Error(err, "packed-blob read must fail while stale pack metadata remains")
 	require.ErrorIs(err, fs.ErrNotExist, "failure is the missing pack file, not the loose copy")
@@ -428,11 +443,12 @@ func TestBackupCreatePackedVaultEndToEnd(t *testing.T) {
 	require.NoError(restoredStore.InitSchema(), "init restored schema")
 	require.NoError(restoredStore.ClearAttachmentPackMetadata(), "clear restored pack metadata")
 
-	blobs := blobstore.New(restoredStore, restoredAttDir)
+	blobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), restoredAttDir)
+	require.NoError(err)
 	t.Cleanup(func() { _ = blobs.Close() })
 	for h, want := range map[string][]byte{hashA: contentA, hashB: contentB} {
 		r, size, err := blobs.Open(h)
-		require.NoErrorf(err, "blobstore.Open(%s) after clearing pack metadata", h)
+		require.NoErrorf(err, "attachmentstore.Open(%s) after clearing pack metadata", h)
 		assert.Equalf(int64(len(want)), size, "blob %s size", h)
 		assert.Equalf(want, readAllAndClose(t, r), "blob %s reads byte-identical", h)
 	}
@@ -518,9 +534,10 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	assert := assert.New(t)
 	f := newVaultFixture(t)
 	liveHash, live, oldPackID := makeSparsePackedVault(t, f)
-	oldPath := filepath.Join(f.attDir, "packs", oldPackID[:2], oldPackID+blobstore.PackExt)
+	oldPath := filepath.Join(f.attDir, "packs", oldPackID[:2], oldPackID+packstore.PackExt)
 
-	backupBlobs := blobstore.New(f.store, f.attDir)
+	backupBlobs, err := attachmentstore.New(store.NewPackCatalog(f.store), f.attDir)
+	require.NoError(err)
 	realSource := backupapp.NewContentSource(backupBlobs, f.attDir)
 	blocked := &blockingOpenedSource{
 		inner: realSource, opened: make(chan struct{}), release: make(chan struct{}),
@@ -545,8 +562,7 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.FailNow("backup did not open the old packed blob")
 	}
-	daemonBlobs := blobstore.New(f.store, f.attDir)
-	repackStats, repackErr := repacker.Run(context.Background(), f.store, daemonBlobs, f.attDir, repacker.Options{})
+	repackStats, repackErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
 	if runtime.GOOS == "windows" {
 		require.Error(repackErr, "backup-held independent reader must make Windows deletion retryable")
 		has, hasErr := f.store.HasPackRecord(oldPackID)
@@ -570,19 +586,15 @@ func TestBackupCaptureOverlapsRepack(t *testing.T) {
 	assert.Equal(int64(1), result.manifest.Attachments.Blobs)
 	require.NoError(backupBlobs.Close())
 	if runtime.GOOS == "windows" {
-		retryStats, retryErr := repacker.Run(context.Background(), f.store, daemonBlobs, f.attDir, repacker.Options{})
+		retryStats, retryErr := f.maint.Repack(context.Background(), packstore.RepackOptions{})
 		require.NoError(retryErr)
 		assert.Equal(1, retryStats.PacksRemoved)
 		assert.NoFileExists(oldPath)
 	}
-	require.NoError(daemonBlobs.Close())
-
 	verify, err := backup.Verify(context.Background(), repo, backupapp.New("test"), backup.VerifyOptions{All: true})
 	require.NoError(err)
 	assert.Empty(verify.Problems)
-	current := blobstore.New(f.store, f.attDir)
-	defer func() { require.NoError(current.Close()) }()
-	r, _, err := current.Open(liveHash)
+	r, _, err := f.blobs.Open(liveHash)
 	require.NoError(err)
 	assert.Equal(live, readAllAndClose(t, r))
 }
@@ -595,7 +607,8 @@ func TestBackupCaptureFailsLoudlyAfterLogicalDeletion(t *testing.T) {
 	hash := f.addBlob(content, canonicalPath(hashOf(content)))
 	f.pack()
 
-	blobs := blobstore.New(f.store, f.attDir)
+	blobs, err := attachmentstore.New(store.NewPackCatalog(f.store), f.attDir)
+	require.NoError(err)
 	defer func() { require.NoError(blobs.Close()) }()
 	blocked := &blockingBeforeOpenSource{
 		inner:   backupapp.NewContentSource(blobs, f.attDir),

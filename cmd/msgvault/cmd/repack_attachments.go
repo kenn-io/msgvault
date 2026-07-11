@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/msgvault/internal/repacker"
+	"go.kenn.io/kit/packstore"
 )
 
 var repackAttachmentsCmd = &cobra.Command{
@@ -21,7 +21,7 @@ files. It is safe to retry after interruption or a Windows file-sharing error.`,
 	RunE: runDaemonCLICommandHTTPFromCobra,
 }
 
-func writeRepackAttachmentsStats(out io.Writer, stats repacker.Stats) {
+func writeRepackAttachmentsStats(out io.Writer, stats packstore.RepackStats) {
 	_, _ = fmt.Fprintf(out,
 		"Repacked %d blob(s) (%s) from %d pack(s) into %d pack(s); removed %d old pack(s).\n",
 		stats.BlobsRepacked, formatSize(stats.BytesRepacked), stats.PacksRewritten,

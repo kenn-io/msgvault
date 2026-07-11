@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/kit/packstore"
 )
 
 var packAttachmentsCmd = &cobra.Command{
@@ -39,7 +39,12 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 	}
 	defer cleanup()
 
-	stats, err := packer.Run(cmd.Context(), s, cfg.AttachmentsDir(), packer.Options{})
+	maintenance, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = maintenance.close() }()
+	stats, err := maintenance.pack(cmd.Context(), 0)
 	if err != nil {
 		return err
 	}
@@ -48,7 +53,7 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 	return nil
 }
 
-func writePackAttachmentsStats(out io.Writer, stats packer.Stats) {
+func writePackAttachmentsStats(out io.Writer, stats packstore.PackStats) {
 	_, _ = fmt.Fprintf(out, "Packed %d blob(s) (%s) into %d pack(s).\n",
 		stats.BlobsPacked, formatSize(stats.BytesPacked), stats.PacksSealed)
 	if stats.PacksAdopted > 0 {

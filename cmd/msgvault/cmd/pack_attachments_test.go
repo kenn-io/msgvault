@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
@@ -39,7 +39,7 @@ func TestPackAttachmentsProxiesThroughDaemonCLIRunner(t *testing.T) {
 func TestPackAttachmentsReportsRepairStats(t *testing.T) {
 	assert := assert.New(t)
 	var out bytes.Buffer
-	writePackAttachmentsStats(&out, packer.Stats{
+	writePackAttachmentsStats(&out, packstore.PackStats{
 		MappingsPruned:         2,
 		LooseOrphansRemoved:    3,
 		PacksQuarantined:       4,
@@ -59,7 +59,7 @@ func TestPackAttachmentsReportsRepairStats(t *testing.T) {
 
 func TestPackAttachmentsOmitsZeroDeferredStats(t *testing.T) {
 	var out bytes.Buffer
-	writePackAttachmentsStats(&out, packer.Stats{})
+	writePackAttachmentsStats(&out, packstore.PackStats{})
 
 	assert.Equal(t, "Packed 0 blob(s) (0B) into 0 pack(s).\n", out.String())
 }

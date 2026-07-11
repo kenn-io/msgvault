@@ -24,7 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/pack"
-	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -2622,7 +2623,7 @@ func buildTestPack(t *testing.T, attachmentsDir string, content []byte) store.Pa
 	_, err = w.Append(content)
 	require.NoError(t, err, "Append")
 	packID := w.ID()
-	final := filepath.Join(attachmentsDir, "packs", packID[:2], packID+blobstore.PackExt)
+	final := filepath.Join(attachmentsDir, "packs", packID[:2], packID+packstore.PackExt)
 	require.NoError(t, os.MkdirAll(filepath.Dir(final), 0o700), "create pack dir")
 	sealed, err := w.Seal(final)
 	require.NoError(t, err, "Seal")
@@ -2671,7 +2672,8 @@ func TestCLIAttachmentServesPackedBlob(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}, []store.PackIndexEntry{entry}), "RecordPackedBlobs")
 
-	bs := blobstore.New(st, attachmentsDir)
+	bs, err := attachmentstore.New(store.NewPackCatalog(st), attachmentsDir)
+	require.NoError(t, err)
 	// Close cached pack readers before t.TempDir cleanup; Windows cannot
 	// delete the .mvpack file while a reader holds it open.
 	t.Cleanup(func() { assert.NoError(t, bs.Close(), "close blob store") })

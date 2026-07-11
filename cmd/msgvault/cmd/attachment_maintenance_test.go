@@ -18,8 +18,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -29,7 +30,7 @@ type attachmentMaintenanceFixture struct {
 	t           *testing.T
 	store       *store.Store
 	dir         string
-	blob        *blobstore.Store
+	blob        *attachmentstore.Store
 	maintenance *attachmentMaintenance
 	logs        *bytes.Buffer
 	messageID   int64
@@ -42,21 +43,17 @@ func newAttachmentMaintenanceFixture(t *testing.T) *attachmentMaintenanceFixture
 	dir := t.TempDir()
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	blob := blobstore.New(storeFixture.Store, dir)
-	t.Cleanup(func() { require.NoError(t, blob.Close(), "close blob store") })
+	maintenance, err := newAttachmentMaintenance(storeFixture.Store, dir, logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, maintenance.close(), "close attachment maintenance") })
 	return &attachmentMaintenanceFixture{
-		t:         t,
-		store:     storeFixture.Store,
-		dir:       dir,
-		blob:      blob,
-		logs:      logs,
-		messageID: storeFixture.CreateMessage("attachment-maintenance"),
-		maintenance: &attachmentMaintenance{
-			store:          storeFixture.Store,
-			blob:           blob,
-			attachmentsDir: dir,
-			logger:         logger,
-		},
+		t:           t,
+		store:       storeFixture.Store,
+		dir:         dir,
+		blob:        maintenance.blob,
+		logs:        logs,
+		messageID:   storeFixture.CreateMessage("attachment-maintenance"),
+		maintenance: maintenance,
 	}
 }
 
@@ -64,17 +61,13 @@ func newFailingAttachmentMaintenance(t *testing.T) (*attachmentMaintenance, *byt
 	t.Helper()
 	storeFixture := storetest.New(t)
 	attachmentsPath := filepath.Join(t.TempDir(), "attachments")
-	require.NoError(t, os.WriteFile(attachmentsPath, []byte("not a directory"), 0o600))
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	blob := blobstore.New(storeFixture.Store, attachmentsPath)
-	t.Cleanup(func() { require.NoError(t, blob.Close(), "close blob store") })
-	return &attachmentMaintenance{
-		store:          storeFixture.Store,
-		blob:           blob,
-		attachmentsDir: attachmentsPath,
-		logger:         logger,
-	}, logs
+	maintenance, err := newAttachmentMaintenance(storeFixture.Store, attachmentsPath, logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, maintenance.close(), "close attachment maintenance") })
+	require.NoError(t, storeFixture.Store.Close(), "close catalog to inject maintenance failure")
+	return maintenance, logs
 }
 
 func (f *attachmentMaintenanceFixture) addLoose(content []byte) string {
@@ -419,7 +412,7 @@ func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *te
 	_, corruptPackID := f.makeSparsePack([]byte("live blob in corrupt oldest source"), now.Add(-72*time.Hour))
 	healthyLive := []byte("healthy sibling remains eligible after the corrupt source")
 	healthyHash, healthyPackID := f.makeSparsePack(healthyLive, now.Add(-48*time.Hour))
-	corruptPath := filepath.Join(f.dir, "packs", corruptPackID[:2], corruptPackID+blobstore.PackExt)
+	corruptPath := filepath.Join(f.dir, "packs", corruptPackID[:2], corruptPackID+packstore.PackExt)
 	require.NoError(os.WriteFile(corruptPath, []byte("truncated corrupt pack"), 0o600), "corrupt oldest source")
 	var warning string
 
@@ -491,4 +484,35 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		})
 	}
 	assert.False(t, attachmentProducingCommand(nil))
+}
+
+func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
+	require := require.New(t)
+	f := newAttachmentMaintenanceFixture(t)
+	maintenanceLease, err := f.maintenance.coordinator.AcquireMaintenance(context.Background())
+	require.NoError(err)
+	ingestStarted := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runAfterSuccessfulAttachmentIngest(
+			context.Background(), f.maintenance,
+			func(context.Context) error {
+				close(ingestStarted)
+				return nil
+			}, nil,
+		)
+	}()
+
+	select {
+	case <-ingestStarted:
+		assert.Fail(t, "ingest started while maintenance held the exclusive lease")
+	case <-time.After(25 * time.Millisecond):
+	}
+	require.NoError(maintenanceLease.Release())
+	select {
+	case <-ingestStarted:
+	case <-time.After(time.Second):
+		require.Fail("ingest did not start after maintenance released its lease")
+	}
+	require.NoError(<-done)
 }

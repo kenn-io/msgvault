@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/packer"
+	"go.kenn.io/kit/packstore"
 )
 
 var unpackAttachmentsCmd = &cobra.Command{
@@ -77,7 +77,12 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	}
 	defer cleanup()
 
-	stats, err := packer.Unpack(cmd.Context(), s, cfg.AttachmentsDir())
+	maintenance, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = maintenance.close() }()
+	stats, err := maintenance.unpack(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -86,7 +91,7 @@ func runUnpackAttachmentsLocal(cmd *cobra.Command) (runErr error) {
 	return nil
 }
 
-func writeUnpackAttachmentsStats(out io.Writer, stats packer.UnpackStats) {
+func writeUnpackAttachmentsStats(out io.Writer, stats packstore.UnpackStats) {
 	_, _ = fmt.Fprintf(out,
 		"Restored %d blob(s) (%s) from %d pack(s) to loose files.\n",
 		stats.BlobsRestored, formatSize(stats.BytesRestored), stats.PacksUnpacked)

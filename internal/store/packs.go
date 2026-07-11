@@ -455,7 +455,7 @@ func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error)
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index WHERE blob_hash = ?`, blobHash))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil //nolint:nilnil // (nil, nil) signals "not packed"; blobstore.PackIndex callers nil-check the pointer
+		return nil, nil //nolint:nilnil // (nil, nil) signals "not packed"; packed-storage resolvers nil-check the pointer
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get pack index entry for %s: %w", blobHash, err)

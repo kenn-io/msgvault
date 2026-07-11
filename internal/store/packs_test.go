@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 
-	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -958,7 +958,8 @@ func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing
 		uppercaseThumbnailHash, thumbnailURL).Scan(&preserved))
 	assert.Equal(2, preserved, "thumbnail URL and empty rows retain their original hash and path")
 
-	loose := blobstore.New(st, attachmentsDir)
+	loose, err := attachmentstore.New(store.NewPackCatalog(st), attachmentsDir)
+	require.NoError(err)
 	t.Cleanup(func() { require.NoError(loose.Close()) })
 	for _, tc := range []struct {
 		hash string

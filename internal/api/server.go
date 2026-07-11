@@ -118,7 +118,7 @@ type SyncScheduler interface {
 type AccountStatus = scheduler.AccountStatus
 
 // AttachmentBlobStore serves attachment bytes by content hash from packed or
-// loose storage. Implemented by *blobstore.Store. Not-found errors satisfy
+// loose storage. Implemented by the daemon attachment store. Not-found errors satisfy
 // errors.Is(err, fs.ErrNotExist).
 type AttachmentBlobStore interface {
 	Open(hash string) (io.ReadSeekCloser, int64, error)

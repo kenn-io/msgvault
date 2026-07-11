@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/packer"
 )
 
 func TestUnpackAttachmentsReportsRepairStats(t *testing.T) {
 	var out bytes.Buffer
-	writeUnpackAttachmentsStats(&out, packer.UnpackStats{MappingsPruned: 2})
+	writeUnpackAttachmentsStats(&out, packstore.UnpackStats{MappingsPruned: 2})
 
 	require.Contains(t, out.String(), "Pruned 2 stale packed blob mapping(s).")
 }

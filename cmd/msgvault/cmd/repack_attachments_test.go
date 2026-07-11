@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/repacker"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestRepackAttachmentsAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
@@ -36,7 +36,7 @@ func TestRepackAttachmentsAlwaysProxiesThroughDaemonCLIRunner(t *testing.T) {
 func TestWriteRepackAttachmentsStats(t *testing.T) {
 	assert := assert.New(t)
 	var out bytes.Buffer
-	writeRepackAttachmentsStats(&out, repacker.Stats{
+	writeRepackAttachmentsStats(&out, packstore.RepackStats{
 		MappingsPruned: 2, PacksSelected: 3, PacksRewritten: 2,
 		PacksSealed: 1, PacksRemoved: 3, BlobsRepacked: 4,
 		BytesRepacked: 1024, PacksDeferredOversized: 5, BudgetExhausted: true,
@@ -49,7 +49,7 @@ func TestWriteRepackAttachmentsStats(t *testing.T) {
 
 func TestRepackAttachmentsOmitsZeroDeferredStats(t *testing.T) {
 	var out bytes.Buffer
-	writeRepackAttachmentsStats(&out, repacker.Stats{})
+	writeRepackAttachmentsStats(&out, packstore.RepackStats{})
 
 	assert.Equal(t,
 		"Repacked 0 blob(s) (0B) from 0 pack(s) into 0 pack(s); removed 0 old pack(s).\n",

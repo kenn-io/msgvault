@@ -18,7 +18,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/gmail"
@@ -171,14 +170,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	operationGate := api.NewSerialOperationGate()
 	// Closed on shutdown so cached pack readers don't hold attachment pack
 	// files open past the daemon's lifetime (blocks deletion on Windows).
-	blobStore := blobstore.New(s, cfg.AttachmentsDir())
-	defer func() { _ = blobStore.Close() }()
-	attachmentMaint := &attachmentMaintenance{
-		store:          s,
-		blob:           blobStore,
-		attachmentsDir: cfg.AttachmentsDir(),
-		logger:         logger,
+	attachmentMaint, err := newAttachmentMaintenance(s, cfg.AttachmentsDir(), logger)
+	if err != nil {
+		return fmt.Errorf("open attachment maintenance: %w", err)
 	}
+	defer func() { _ = attachmentMaint.close() }()
+	blobStore := attachmentMaint.blob
 
 	// Vector misconfiguration still fails startup fast; the expensive
 	// backend open/migrate/backfill runs in the background after the API

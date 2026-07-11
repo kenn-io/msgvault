@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"go.kenn.io/msgvault/internal/blobstore"
-	"go.kenn.io/msgvault/internal/packer"
-	"go.kenn.io/msgvault/internal/repacker"
+	"go.kenn.io/kit/packstore"
+
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -24,21 +24,75 @@ const (
 // callers already hold the daemon operation gate; these methods must not try
 // to acquire it again.
 type attachmentMaintenance struct {
-	store          *store.Store
-	blob           *blobstore.Store
-	attachmentsDir string
-	logger         *slog.Logger
+	store       *store.Store
+	maintainer  *packstore.Maintainer
+	coordinator *packstore.Coordinator
+	blob        *attachmentstore.Store
+	logger      *slog.Logger
+}
+
+func newAttachmentMaintenance(
+	s *store.Store,
+	attachmentsDir string,
+	logger *slog.Logger,
+) (*attachmentMaintenance, error) {
+	layout, err := packstore.NewLayout(attachmentsDir, packstore.LayoutOptions{
+		Staging: packstore.StagingSameDirectory,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create attachment maintenance layout: %w", err)
+	}
+	coordinator := packstore.NewCoordinator()
+	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(s), layout, packstore.MaintainerOptions{
+		Coordinator: coordinator,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create attachment maintainer: %w", err)
+	}
+	return &attachmentMaintenance{
+		store:       s,
+		maintainer:  maintainer,
+		coordinator: coordinator,
+		blob:        attachmentstore.Wrap(maintainer.Store()),
+		logger:      logger,
+	}, nil
+}
+
+func (m *attachmentMaintenance) close() error {
+	if m == nil || m.maintainer == nil {
+		return nil
+	}
+	if err := m.maintainer.Close(); err != nil {
+		return fmt.Errorf("close attachment maintainer: %w", err)
+	}
+	return nil
 }
 
 // pack performs one packer pass with the requested soft raw-byte budget.
-func (m *attachmentMaintenance) pack(ctx context.Context, maxBytes int64) (packer.Stats, error) {
-	return packer.Run(ctx, m.store, m.attachmentsDir, packer.Options{MaxBytes: maxBytes})
+func (m *attachmentMaintenance) pack(ctx context.Context, maxBytes int64) (packstore.PackStats, error) {
+	stats, err := m.maintainer.Pack(ctx, packstore.PackOptions{MaxBytes: maxBytes})
+	if err != nil {
+		return stats, fmt.Errorf("pack attachments: %w", err)
+	}
+	return stats, nil
 }
 
 // repack performs one physical-GC pass through the daemon's shared blob-store
 // cache with the requested soft live-raw-byte budget.
-func (m *attachmentMaintenance) repack(ctx context.Context, maxBytes int64) (repacker.Stats, error) {
-	return repacker.Run(ctx, m.store, m.blob, m.attachmentsDir, repacker.Options{MaxBytes: maxBytes})
+func (m *attachmentMaintenance) repack(ctx context.Context, maxBytes int64) (packstore.RepackStats, error) {
+	stats, err := m.maintainer.Repack(ctx, packstore.RepackOptions{MaxBytes: maxBytes})
+	if err != nil {
+		return stats, fmt.Errorf("repack attachments: %w", err)
+	}
+	return stats, nil
+}
+
+func (m *attachmentMaintenance) unpack(ctx context.Context) (packstore.UnpackStats, error) {
+	stats, err := m.maintainer.Unpack(ctx)
+	if err != nil {
+		return stats, fmt.Errorf("unpack attachments: %w", err)
+	}
+	return stats, nil
 }
 
 // runAutomaticPack performs one bounded maintenance pass. Errors remain
@@ -71,7 +125,7 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 	return nil
 }
 
-func (m *attachmentMaintenance) logAutomaticPackSummary(message string, stats packer.Stats) {
+func (m *attachmentMaintenance) logAutomaticPackSummary(message string, stats packstore.PackStats) {
 	m.log().Info(message,
 		"max_bytes", automaticAttachmentBytes,
 		"packs_sealed", stats.PacksSealed,
@@ -114,7 +168,7 @@ func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarn
 	return nil
 }
 
-func (m *attachmentMaintenance) logAutomaticRepackSummary(message string, stats repacker.Stats) {
+func (m *attachmentMaintenance) logAutomaticRepackSummary(message string, stats packstore.RepackStats) {
 	m.log().Info(message,
 		"max_bytes", automaticAttachmentBytes,
 		"mappings_pruned", stats.MappingsPruned,
@@ -154,7 +208,7 @@ func runAfterSuccessfulAttachmentIngest(
 	ingest func(context.Context) error,
 	emitWarning func(string) error,
 ) error {
-	if err := ingest(ctx); err != nil {
+	if err := runWithAttachmentMutation(ctx, maintenance, ingest); err != nil {
 		return err
 	}
 	if maintenance != nil {
@@ -172,13 +226,28 @@ func runAfterSuccessfulAttachmentRemoval(
 	remove func(context.Context) error,
 	emitWarning func(string) error,
 ) error {
-	if err := remove(ctx); err != nil {
+	if err := runWithAttachmentMutation(ctx, maintenance, remove); err != nil {
 		return err
 	}
 	if maintenance != nil {
 		_ = maintenance.runAutomaticRepack(ctx, emitWarning)
 	}
 	return nil
+}
+
+func runWithAttachmentMutation(
+	ctx context.Context,
+	maintenance *attachmentMaintenance,
+	run func(context.Context) error,
+) error {
+	if maintenance == nil || maintenance.coordinator == nil {
+		return run(ctx)
+	}
+	lease, err := maintenance.coordinator.AcquireMutation(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire attachment mutation lease: %w", err)
+	}
+	return errors.Join(run(ctx), lease.Release())
 }
 
 // runScheduledSource distinguishes attachment-producing provider/SyncTech

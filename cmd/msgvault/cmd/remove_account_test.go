@@ -18,11 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
-	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/packer"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -274,9 +273,12 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	require.NoError(err)
 	seedAttachmentFile(t, attachmentsDir, storagePath, string(content))
 	seedAttachmentFile(t, attachmentsDir, thumbnailPath, string(thumbnail))
-	packed, err := packer.Run(context.Background(), s, attachmentsDir, packer.Options{})
+	maintenance, err := newAttachmentMaintenance(s, attachmentsDir, nil)
+	require.NoError(err)
+	packed, err := maintenance.pack(context.Background(), 0)
 	require.NoError(err)
 	require.Equal(2, packed.BlobsPacked)
+	require.NoError(maintenance.close())
 	require.NoError(s.Close())
 
 	savedCfg := cfg
@@ -300,7 +302,8 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	defer func() { require.NoError(removed.Close()) }()
 	_, err = removed.GetSourceByIdentifier("alice@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound)
-	bs := blobstore.New(removed, attachmentsDir)
+	bs, err := attachmentstore.New(store.NewPackCatalog(removed), attachmentsDir)
+	require.NoError(err)
 	defer func() { require.NoError(bs.Close()) }()
 	_, _, err = bs.Open(hash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")

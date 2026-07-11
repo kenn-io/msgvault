@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/backupapp"
-	"go.kenn.io/msgvault/internal/blobstore"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -411,7 +411,10 @@ func runBackupCreateLocal(cmd *cobra.Command) error {
 		return fmt.Errorf("open archive for backup content reads: %w", err)
 	}
 	defer func() { _ = roStore.Close() }()
-	blobs := blobstore.New(roStore, cfg.AttachmentsDir())
+	blobs, err := attachmentstore.New(store.NewPackCatalog(roStore), cfg.AttachmentsDir())
+	if err != nil {
+		return fmt.Errorf("open attachment content store for backup: %w", err)
+	}
 	defer func() { _ = blobs.Close() }()
 
 	freezer, closeFreezer, err := newBackupFreezer()

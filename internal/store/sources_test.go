@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/blobstore"
+	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -286,7 +286,8 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 		assert.NotNil(entry, "%s remains shared through either hash column", sharedHash)
 	}
 
-	bs := blobstore.New(f.Store, attachmentsDir)
+	bs, err := attachmentstore.New(store.NewPackCatalog(f.Store), attachmentsDir)
+	require.NoError(err)
 	defer func() { require.NoError(bs.Close()) }()
 	_, _, err = bs.Open(uniqueContent)
 	require.ErrorIs(err, fs.ErrNotExist,
