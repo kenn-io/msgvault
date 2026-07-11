@@ -20,6 +20,28 @@ func TestPackedRestoreTargetUsesDefaultAndCustomLimits(t *testing.T) {
 	assert.Equal(t, custom, NewPackedRestoreTarget(custom).Limits())
 }
 
+func TestPackedRestoreTargetAcquiresMutationLease(t *testing.T) {
+	require := require.New(t)
+	target := NewPackedRestoreTarget(packstore.DefaultLimits())
+
+	lease, err := target.AcquireRestoreLease(context.Background())
+	require.NoError(err)
+	require.NoError(lease.ValidateMutation())
+	require.NoError(lease.Release())
+	assert.ErrorIs(t, lease.ValidateMutation(), packstore.ErrLeaseReleased)
+}
+
+func TestPackedRestoreTargetWrapsLeaseAcquisitionFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lease, err := NewPackedRestoreTarget(packstore.DefaultLimits()).AcquireRestoreLease(ctx)
+
+	assert.Nil(t, lease)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.ErrorContains(t, err, "acquire packed restore mutation lease")
+}
+
 func TestPackedRestoreTargetOpensOnlyStagedCatalog(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
