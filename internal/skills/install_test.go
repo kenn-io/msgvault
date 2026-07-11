@@ -160,3 +160,33 @@ func TestUninstall_EmptyRoot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, removed)
 }
+
+func TestUninstall_RootWithGlobMetacharacters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	root := filepath.Join(t.TempDir(), "sk[1]lls")
+	_, err := Install(root, testSkills(), false)
+	require.NoError(err)
+
+	removed, err := Uninstall(root)
+	require.NoError(err, "a [ in the root path must not break uninstall")
+	assert.Len(removed, 2)
+	assert.NoDirExists(filepath.Join(root, "msgvault-search"))
+}
+
+func TestUninstall_GlobRootDoesNotEscape(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	parent := t.TempDir()
+	neighbor := filepath.Join(parent, "real-skills")
+	_, err := Install(neighbor, testSkills(), false)
+	require.NoError(err)
+
+	// A root literally named "*" must not expand to neighboring dirs.
+	removed, err := Uninstall(filepath.Join(parent, "*"))
+	require.NoError(err)
+	assert.Empty(removed)
+	assert.FileExists(
+		filepath.Join(neighbor, "msgvault-search", "SKILL.md"),
+		"skills under a sibling directory must be untouched")
+}

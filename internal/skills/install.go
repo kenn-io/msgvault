@@ -113,13 +113,26 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 // supporting files next to a generated SKILL.md: the skill directory
 // itself is removed only when it is empty afterwards.
 func Uninstall(root string) ([]string, error) {
-	matches, err := filepath.Glob(filepath.Join(root, "msgvault-*", skillFileName))
+	// List children directly rather than filepath.Glob: root is
+	// user-provided (--dir) and may contain glob metacharacters,
+	// which would break matching or escape the requested directory.
+	rootEntries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("scan skills root %s: %w", root, err)
 	}
 	var removed []string
-	for _, path := range matches {
+	for _, entry := range rootEntries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "msgvault-") {
+			continue
+		}
+		path := filepath.Join(root, entry.Name(), skillFileName)
 		content, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return removed, fmt.Errorf("read skill %s: %w", path, err)
 		}
