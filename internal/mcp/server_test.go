@@ -2622,6 +2622,38 @@ func TestSearchInMessage(t *testing.T) {
 	})
 }
 
+// TestSearchInMessage_VectorNilMessage regression-guards roborev's finding that
+// vectorMatchesInMessage dereferenced the message returned by GetMessage without
+// checking for nil. Engine.GetMessage returns (nil, nil) for an unknown ID, so a
+// vector-mode search_in_message for a missing message must return "message not
+// found" (matching keyword mode) instead of panicking on msg.Subject/msg.BodyText.
+func TestSearchInMessage_VectorNilMessage(t *testing.T) {
+	cfg := testSimilarVectorConfig()
+	backend := &fakeBackend{
+		active: testSimilarActiveGeneration(cfg),
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+		ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
+	})
+	eng := &querytest.MockEngine{
+		GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+			return nil, nil //nolint:nilnil // mirrors Engine.GetMessage not-found contract
+		},
+	}
+	h := &handlers{
+		engine:       eng,
+		hybridEngine: engine,
+		backend:      backend,
+		vectorCfg:    cfg,
+	}
+	r := runToolExpectError(t, "search_in_message", h.searchInMessage, map[string]any{
+		"id":    float64(42),
+		"query": "resistor",
+		"mode":  searchModeVector,
+	})
+	assert.Contains(t, resultText(t, r), "message not found")
+}
+
 func TestListMessagesConversationID(t *testing.T) {
 	var captured query.MessageFilter
 	eng := &querytest.MockEngine{

@@ -1318,6 +1318,9 @@ func (h *handlers) vectorMatchesInMessage(
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("message not found: %v", err)), nil
 	}
+	if msg == nil {
+		return mcp.NewToolResultError("message not found"), nil
+	}
 
 	chunkHits, err := scorer.ScoreMessageChunks(ctx, active.ID, messageID, queryVec)
 	if err != nil {
