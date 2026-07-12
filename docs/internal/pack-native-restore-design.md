@@ -434,7 +434,7 @@ live database, and live attachment files were never modified. The verified
 repository held the corpus in 203 packs totaling 6.7 GiB.
 
 Order-balanced restores compared `origin/main` at `5464711e` with this branch
-at the Kit v0.7.0 pin (`885d10f7`):
+using the released Kit v0.7.0 dependency:
 
 | Layout | Order 1 | Order 2 | Destination files | Peak RSS |
 | --- | ---: | ---: | ---: | ---: |
