@@ -144,6 +144,44 @@ Between snapshots, msgvault keeps a per-page hash map of the database. At backup
 - **Verify on a schedule too.** `backup verify --all --quick` is fast enough to run alongside every backup; run a full `backup verify --all` weekly or monthly to catch bit rot on the storage medium itself.
 - **Keep the cache.** msgvault stores a small per-repository page-hash cache under `~/.msgvault/backup-cache/`. Losing it is harmless — the next backup just re-derives it — but keeping it makes nightly backups faster.
 
+## Restoring to a New Machine
+
+This is the scenario `backup` exists for: a drive dies, or you're setting up msgvault on a new Mac, Linux box, or Windows PC, and you need the archive back exactly as it was.
+
+1. **Install msgvault**, but don't run any command that touches `~/.msgvault` yet — no `init-db`, no `add-account`. Restoring works best into a directory that doesn't exist yet; see the footgun below for why.
+2. **Get the repository onto the new machine.** However you synced it off-site — `rclone`, `rsync`, a cloud-drive client, an external drive — copy or mount it locally:
+   ```bash
+   rclone copy remote:msgvault-backups ~/Backups/msgvault
+   ```
+3. **List snapshots** to confirm the repository came across intact and pick one (usually the latest):
+   ```bash
+   msgvault backup list --repo ~/Backups/msgvault
+   ```
+   There's no `config.toml` on this machine yet, so pass `--repo` explicitly here and below rather than relying on `[backup] repo`.
+4. **Restore into the default location** — `~/.msgvault` on macOS and Linux, `%USERPROFILE%\.msgvault` on Windows:
+   ```bash
+   msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
+   ```
+   Since nothing has touched `~/.msgvault` yet, the directory doesn't exist and restore creates it fresh — the path that guarantees the target ends up with exactly the snapshot's contents (see `--overwrite` above for what changes once the target already exists).
+5. **Use it.** `msgvault stats` and `msgvault tui` read `~/.msgvault` by default on every platform, so nothing further to configure — the restored archive is now the active one.
+
+### Footgun: restoring over an existing msgvault
+
+`backup restore --target DIR` refuses a non-empty `DIR` unless you pass `--overwrite` — but `--overwrite` **merges**, it doesn't wipe first (see the flag's description above). Reach for it only when you deliberately want to merge a snapshot into a target you understand, such as re-running a restore that was interrupted partway through.
+
+!!! warning "A non-empty `~/.msgvault` is not a blank slate"
+    If `~/.msgvault` already has anything in it — a `config.toml` left over from once running `msgvault init-db` to try something, tokens for an account the snapshot doesn't include, loose attachment files from an earlier experiment — restoring with `--overwrite` layers the snapshot on top rather than replacing the directory outright. The previous `msgvault.db` is removed and replaced, but unrelated files the snapshot doesn't carry are left in place. The result is a target that is *not* provably identical to the snapshot, which defeats the point of restoring in the first place.
+
+    Check before you restore:
+    ```bash
+    ls -la ~/.msgvault
+    ```
+    If it's non-empty and you're not deliberately merging, move it aside rather than deleting it — it may be an archive you still want:
+    ```bash
+    mv ~/.msgvault ~/.msgvault.bak
+    msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
+    ```
+
 ## Deleted and Purged Messages
 
 msgvault distinguishes hiding a message (flagging it deleted) from purging it (removing the rows and attachment files from disk). Backups interact with each differently:
