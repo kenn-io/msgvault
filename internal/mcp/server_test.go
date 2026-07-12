@@ -3128,7 +3128,7 @@ func TestSearchInMessageTool_AdvertisesVectorModeWhenConfigured(t *testing.T) {
 	disabled := searchInMessageTool(false)
 	assert.NotContains(disabled.InputSchema.Properties, "mode", "vector-in-message unavailable: tool advertises 'mode' but vector mode is unsupported")
 	assert.NotContains(disabled.InputSchema.Properties, "min_score", "vector-in-message unavailable: tool advertises 'min_score' but vector mode is unsupported")
-	assert.False(strings.Contains(disabled.Description, "mode=vector"),
+	assert.NotContains(disabled.Description, "mode=vector",
 		"vector-in-message unavailable: tool description mentions vector mode: %q", disabled.Description)
 
 	enabled := searchInMessageTool(true)
