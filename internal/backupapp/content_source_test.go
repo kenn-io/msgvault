@@ -224,6 +224,50 @@ func TestContentSourceCanonicalLooseBlob(t *testing.T) {
 	assert.Equal(content, readAllAndClose(t, rc))
 }
 
+func TestBackupCapturesLooseBlobAboveMaintenanceLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	f := newVaultFixture(t)
+	content := randomBytes(t, 1024)
+	h := f.addBlob(content, canonicalPath(hashOf(content)))
+
+	limits := packstore.DefaultLimits()
+	limits.BlobBytes = 64
+	layout, err := packstore.NewLayout(f.attDir, packstore.LayoutOptions{
+		Staging: packstore.StagingSameDirectory,
+	})
+	require.NoError(err)
+	physical, err := packstore.NewStore(store.NewPackCatalog(f.store), layout, packstore.StoreOptions{Limits: limits})
+	require.NoError(err)
+	blobs := attachmentstore.Wrap(physical)
+	t.Cleanup(func() { require.NoError(blobs.Close()) })
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	app := backupapp.New("test")
+	manifest, err := backup.Create(ctx, repo, app, backup.CreateOptions{
+		DBPath: f.dbPath, ContentDir: f.attDir, DataDir: f.dataDir,
+		ContentSource: backupapp.NewContentSource(blobs, f.attDir),
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), manifest.Attachments.Blobs)
+	assert.Equal(int64(len(content)), manifest.Attachments.BlobBytes)
+
+	verified, err := backup.Verify(ctx, repo, app, backup.VerifyOptions{All: true})
+	require.NoError(err)
+	assert.Empty(verified.Problems)
+
+	stream, size, err := blobs.OpenStream(ctx, h)
+	require.NoError(err)
+	assert.Equal(int64(len(content)), size)
+	assert.Equal(content, readAllAndClose(t, stream))
+	_, _, err = blobs.ReadBounded(h, int64(len(content)))
+	var limitErr *packstore.LimitError
+	require.ErrorAs(err, &limitErr, "bounded reads must retain the configured maintenance ceiling")
+	assert.Equal(packstore.LimitBlobRawBytes, limitErr.Dimension)
+}
+
 func TestContentSourceNoncanonicalFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
