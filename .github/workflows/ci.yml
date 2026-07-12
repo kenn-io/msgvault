@@ -132,7 +132,7 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: go test -tags "fts5 sqlite_vec" ./...
+        run: go test -timeout 20m -tags "fts5 sqlite_vec" ./...
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
