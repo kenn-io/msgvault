@@ -163,7 +163,12 @@ This is the scenario `backup` exists for: a drive dies, or you're setting up msg
    msgvault backup restore --repo ~/Backups/msgvault --target ~/.msgvault
    ```
    Since nothing has touched `~/.msgvault` yet, the directory doesn't exist and restore creates it fresh — the path that guarantees the target ends up with exactly the snapshot's contents (see `--overwrite` above for what changes once the target already exists).
-5. **Use it.** `msgvault stats` and `msgvault tui` read `~/.msgvault` by default on every platform, so nothing further to configure — the restored archive is now the active one.
+5. **Check for a restored config.** If the snapshot was taken with `--include-config`, the restore just placed the *old machine's* `config.toml` into `~/.msgvault` — and settings in it can point msgvault away from the archive you just restored: an absolute `[data] data_dir` naming a path from the old machine, or a remote server URL that sends `tui` to a server instead of the local database. Open it and remove or update anything machine-specific:
+   ```bash
+   cat ~/.msgvault/config.toml
+   ```
+   If the snapshot did not capture config, there is nothing to check — msgvault's defaults already point at `~/.msgvault`.
+6. **Use it.** `msgvault stats` and `msgvault tui` read `~/.msgvault` by default on every platform, so once no leftover config overrides that, the restored archive is the active one.
 
 ### Footgun: restoring over an existing msgvault
 
