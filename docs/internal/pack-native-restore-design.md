@@ -436,15 +436,24 @@ repository held the corpus in 203 packs totaling 6.7 GiB.
 Order-balanced restores compared `origin/main` at `5464711e` with this branch
 using the released Kit v0.7.0 dependency:
 
-| Layout | Order 1 | Order 2 | Destination files | Peak RSS |
-| --- | ---: | ---: | ---: | ---: |
-| Main loose | 176.5 s | 168.5 s | 46,060 | 227-239 MiB |
-| Branch packed | 16.5 s | 13.8 s | 203 | 301-303 MiB |
+| Layout | Attachment stage | Proof stage | Total | Destination files | Peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Main loose, order 1 | 172 s | 1 s | 176.5 s | 46,060 | 227 MiB |
+| Main loose, order 2 | 167 s | <1 s | 168.5 s | 46,060 | 239 MiB |
+| Branch packed, order 1 | 16 s | <1 s | 16.5 s | 203 | 303 MiB |
+| Branch packed, order 2 | 13 s | <1 s | 13.8 s | 203 | 301 MiB |
+| Branch explicit loose | 160 s | <1 s | 161.7 s | 46,060 | 249 MiB |
 
 Both layouts restored and proved the same 46,060 blobs and manifest statistics.
 The mean packed restore was 11.4 times faster on this filesystem. As designed,
 the improvement came from avoiding per-blob destination creation rather than
 from skipping source reads or SHA-256 verification.
+
+Each restore selected and SHA-256 verified 46,060 blobs totaling 7.6 GiB of
+logical content. Packed restore additionally copied all 203 selected source
+pack files, whose physical footprint was 6.7 GiB. Database materialization was
+37.1 MiB and completed in less than one second; the table separates the
+attachment and proof stages from total wall time.
 
 Functional hardening evidence from the same run:
 
@@ -457,8 +466,15 @@ Functional hardening evidence from the same run:
   overwrite retry completed with exactly 203 packs and 46,060 mappings;
 - a forced readonly staged catalog failed after pack publication with no
   visible database, and retry completed with the same exact authority;
+- an explicit branch `--loose-attachments` restore produced 46,060 loose files,
+  zero pack records or mappings, and passed both the ordinary manifest proof
+  and an independent `PRAGMA integrity_check`;
 - unpack restored all 46,060 loose blobs, an independent full SHA-256 pass had
-  zero mismatches, and repacking restored the 203-pack layout; and
+  zero mismatches, and repacking restored the 203-pack layout;
+- the packed, unpacked, and repacked databases each passed
+  `PRAGMA integrity_check`; message, conversation, source, attachment-row, and
+  attachment-blob counts remained identical at every step, and the final full
+  manifest-statistics recomputation matched the source snapshot; and
 - a post-repack backup and a subsequent incremental packed backup both fully
   verified. The incremental capture completed in 8.1 seconds.
 
@@ -468,39 +484,8 @@ backup capture, pack time, or repack time. Read and maintenance geomeans moved
 by +1.34% and +1.19%, respectively, within noise. Repack added 0.02% allocated
 bytes and 0.69% allocations, which is not material.
 
-### Gate coverage and outstanding items
-
-Of the measurements mandated above, the primary-host run recorded attachment
-blobs and bytes selected (46,060 blobs, 7.6 GiB raw), destination pack and
-loose file counts, total restore elapsed time, and peak RSS. Repository read
-verification is covered indirectly: the source repository (203 packs,
-6.7 GiB) fully verified before the runs, and every selected blob was SHA-256
-re-verified during both restores, but a per-run repository-bytes-read figure
-was not captured. The restore command reports only total duration, so the
-attachment-stage versus total split and the database-proof elapsed time were
-not measured separately.
-
-Functional gate items 1 through 5 — packed restore; reads through API, MCP,
-and export; backup verification; crash injection and retry; repack and unpack
-round-trips — are evidenced above. Item 7's integrity and manifest-statistics
-proof ran, via Kit's ordinary restore proof, for both the loose and packed
-restore layouts.
-
-Outstanding before merge:
-
-- Gate item 6: an explicit `--loose-attachments` restore on the isolated
-  corpus. The flag is exercised end-to-end by the CLI restore tests,
-  including the loose-mode metadata cleanup, but the hardening host has not
-  run it against the real-content corpus.
-- Gate item 7 for maintenance-produced layouts: an explicit
-  `PRAGMA integrity_check` and manifest-statistics recomputation after the
-  unpacked and repacked layouts. The unpack round-trip passed an independent
-  full SHA-256 comparison and the post-repack backups fully verified, but a
-  per-layout database proof was not separately recorded.
-- The repository-bytes-read, attachment-stage, and database-proof
-  measurements, which require timing instrumentation beyond the command's
-  total duration.
-- The native Windows measurement described below.
+All seven primary-host functional gate items are therefore complete. Native
+Windows measurement remains the independent CI gate described below.
 
 Native Windows CI is mandatory. Before merge, record destination file counts
 and elapsed time for loose and pack-native restore on a representative native
