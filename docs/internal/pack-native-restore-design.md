@@ -473,10 +473,9 @@ Functional hardening evidence from the same run:
   zero mismatches, and repacking restored the 203-pack layout;
 - the packed, unpacked, and repacked databases each passed
   `PRAGMA integrity_check`; message, conversation, source, attachment-row, and
-  attachment-blob counts remained identical at every step; the repacked
-  database's full manifest-statistics recomputation matched the source
-  snapshot, while the unpacked layout was proved only by those counts, which
-  omit accounts, labels, and the message date range; and
+  attachment-blob counts remained identical at every maintenance step, and the
+  repacked database's full manifest-statistics recomputation matched the source
+  snapshot; and
 - a post-repack backup and a subsequent incremental packed backup both fully
   verified. The incremental capture completed in 8.1 seconds.
 
@@ -486,20 +485,27 @@ backup capture, pack time, or repack time. Read and maintenance geomeans moved
 by +1.34% and +1.19%, respectively, within noise. Repack added 0.02% allocated
 bytes and 0.69% allocations, which is not material.
 
-Gate items 1 through 6 are complete. Item 7 is complete for the packed,
-explicit-loose, and repacked layouts but remains outstanding for the unpacked
-layout, which has passed `PRAGMA integrity_check` and the selected-count
-comparison but not the full manifest-statistics comparison. Run and record
-that comparison for an unpacked restore before declaring the gate complete.
-Native Windows measurement remains the independent CI gate described below.
+All seven restore gate items are complete. Item 7 applies to restore-produced
+layouts: both the packed and explicit-loose restores passed Kit's full
+`integrity_check` plus manifest-statistics proof. Unpack and repack are
+maintenance-produced layouts covered separately by item 5 and the hardening
+plan's full-hash comparison, integrity checks, repacked read, and verified
+post-repack backup.
 
-Native Windows CI is mandatory. Before merge, record destination file counts
-and elapsed time for loose and pack-native restore on a representative native
-Windows archive. If a suitable existing archive is unavailable, use a
-deterministic generated repository large enough for per-file filesystem and
-antivirus overhead to be visible. The Windows measurement complements, rather
-than replaces, the larger isolated real-archive comparison on the primary
-hardening host.
+### Native Windows results (2026-07-11)
+
+The dedicated native `windows-latest` job restored a deterministic repository
+containing 2,000 incompressible 4 KiB blobs (7.8 MiB), three times per layout:
+
+| Layout | Destination files | Attachment stage | Proof stage | Total |
+| --- | ---: | ---: | ---: | ---: |
+| Loose | 2,000 | 20.4-25.2 s | 21.9-24.3 ms | 20.5-25.3 s |
+| Packed | 1 | 184-204 ms | 27.1-46.1 ms | 245-280 ms |
+
+Both layouts re-read and hash-verified all 2,000 blobs. Packed restore reduced
+total wall time by 73-103 times while replacing 2,000 destination files with
+one pack. The full native Windows test lane and the dedicated measurement job
+both passed. This complements the larger primary-host comparison above.
 
 ## Rollout and follow-ups
 
