@@ -1,7 +1,10 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +12,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -35,6 +39,32 @@ func TestGeneratedGetAttachmentContentReturnsBinaryBytes(t *testing.T) {
 	require.NoError(err, "GetAttachmentContent")
 	require.NotNil(got, "response")
 	assert.Equal(content, *got, "content")
+}
+
+func TestGetAttachmentContentVerifiesRequestedHash(t *testing.T) {
+	require := require.New(t)
+	want := []byte("public client attachment")
+	corrupt := bytes.Clone(want)
+	corrupt[0] ^= 0xff
+	hash := fmt.Sprintf("%x", sha256.Sum256(want))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(corrupt)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err)
+	options := &generated.GetAttachmentContentRequestOptions{
+		PathParams: &generated.GetAttachmentContentPath{Hash: hash},
+	}
+	_, err = c.GetAttachmentContent(context.Background(), options)
+	require.ErrorIs(err, contentverify.ErrMismatch)
+	response, err := c.GetAttachmentContentWithResponse(context.Background(), options)
+	require.ErrorIs(err, contentverify.ErrMismatch)
+	require.NotNil(response)
+	assert.Equal(t, corrupt, response.Body)
 }
 
 func TestNewCreatesTypedClient(t *testing.T) {

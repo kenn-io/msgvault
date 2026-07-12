@@ -1,9 +1,12 @@
 package daemonclient
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -1474,8 +1478,8 @@ func TestGetCLIMessageRaw_NotFoundPreservesGeneratedDecodeError(t *testing.T) {
 
 func TestGetCLIAttachment_Success(t *testing.T) {
 	assert := assert.New(t)
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
 		assert.Equal(contentHash, r.URL.Query().Get("content_hash"), "content_hash query")
@@ -1494,8 +1498,8 @@ func TestGetCLIAttachment_Success(t *testing.T) {
 func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
@@ -1512,8 +1516,8 @@ func TestGetCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 func TestOpenCLIAttachment_Success(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
 		assert.Equal(contentHash, r.URL.Query().Get("content_hash"), "content_hash query")
@@ -1535,8 +1539,8 @@ func TestOpenCLIAttachment_Success(t *testing.T) {
 func TestOpenCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	data := []byte("attachment bytes")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(data))
 
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/cli/attachment", r.URL.Path, "path")
@@ -1552,6 +1556,41 @@ func TestOpenCLIAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 	got, err := io.ReadAll(body)
 	require.NoError(err, "read stream")
 	assert.Equal(data, got, "data")
+}
+
+func TestGetCLIAttachmentRejectsSameLengthCorruption(t *testing.T) {
+	want := []byte("expected attachment")
+	corrupt := bytes.Clone(want)
+	corrupt[0] ^= 0xff
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(want))
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(corrupt)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newTestStore(srv, "key")
+	_, err := s.GetCLIAttachment(context.Background(), contentHash)
+	require.ErrorIs(t, err, contentverify.ErrMismatch)
+}
+
+func TestOpenCLIAttachmentRejectsSameLengthCorruption(t *testing.T) {
+	want := []byte("expected attachment")
+	corrupt := bytes.Clone(want)
+	corrupt[len(corrupt)-1] ^= 0xff
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(want))
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(corrupt)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newTestStore(srv, "key")
+	body, err := s.OpenCLIAttachment(context.Background(), contentHash)
+	require.NoError(t, err)
+	_, readErr := io.ReadAll(body)
+	require.ErrorIs(t, readErr, contentverify.ErrMismatch)
+	require.ErrorIs(t, body.Close(), contentverify.ErrMismatch)
 }
 
 func TestGetMessage_NotFound(t *testing.T) {

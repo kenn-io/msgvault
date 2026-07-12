@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,8 +78,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesFileOutput(t *testing.T)
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 
@@ -126,8 +128,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesJSONOutput(t *testing.T)
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 
@@ -178,8 +180,8 @@ func TestExportAttachmentUsesLocalDaemonHTTPAndPreservesBase64Output(t *testing.
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	contentHash := "61ccf192b5bd358738802dc2676d3ceab856f47d26dd29681ac3d335bfd5bbd0"
 	wantData := []byte("daemon attachment content")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(wantData))
 	server, attachmentRequests := attachmentHTTPDaemon(t, contentHash, wantData)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 

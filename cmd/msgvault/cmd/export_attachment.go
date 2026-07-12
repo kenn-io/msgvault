@@ -90,12 +90,14 @@ func runExportAttachmentHTTP(cmd *cobra.Command, contentHash string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = body.Close() }()
 
+	var exportErr error
 	if exportAttachmentBase64 {
-		return exportAttachmentStreamAsBase64(body)
+		exportErr = exportAttachmentStreamAsBase64(body)
+	} else {
+		exportErr = exportAttachmentBinaryStream(body)
 	}
-	return exportAttachmentBinaryStream(body)
+	return errors.Join(exportErr, body.Close())
 }
 
 func exportAttachmentDataAsJSON(data []byte, contentHash string) error {
