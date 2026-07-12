@@ -473,8 +473,10 @@ Functional hardening evidence from the same run:
   zero mismatches, and repacking restored the 203-pack layout;
 - the packed, unpacked, and repacked databases each passed
   `PRAGMA integrity_check`; message, conversation, source, attachment-row, and
-  attachment-blob counts remained identical at every step, and the final full
-  manifest-statistics recomputation matched the source snapshot; and
+  attachment-blob counts remained identical at every step; the repacked
+  database's full manifest-statistics recomputation matched the source
+  snapshot, while the unpacked layout was proved only by those counts, which
+  omit accounts, labels, and the message date range; and
 - a post-repack backup and a subsequent incremental packed backup both fully
   verified. The incremental capture completed in 8.1 seconds.
 
@@ -484,8 +486,12 @@ backup capture, pack time, or repack time. Read and maintenance geomeans moved
 by +1.34% and +1.19%, respectively, within noise. Repack added 0.02% allocated
 bytes and 0.69% allocations, which is not material.
 
-All seven primary-host functional gate items are therefore complete. Native
-Windows measurement remains the independent CI gate described below.
+Gate items 1 through 6 are complete. Item 7 is complete for the packed,
+explicit-loose, and repacked layouts but remains outstanding for the unpacked
+layout, which has passed `PRAGMA integrity_check` and the selected-count
+comparison but not the full manifest-statistics comparison. Run and record
+that comparison for an unpacked restore before declaring the gate complete.
+Native Windows measurement remains the independent CI gate described below.
 
 Native Windows CI is mandatory. Before merge, record destination file counts
 and elapsed time for loose and pack-native restore on a representative native
