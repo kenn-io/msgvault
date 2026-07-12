@@ -3116,6 +3116,27 @@ func TestSemanticSearchMessagesTool_AdvertisesVectorParams(t *testing.T) {
 	assert.Contains(enabled.Description, "free-text", "vectorAvailable=true: semantic tool description should call out the free-text requirement, got: %q", enabled.Description)
 }
 
+// TestSearchInMessageTool_AdvertisesVectorModeWhenConfigured guards the
+// contract that search_in_message only advertises mode=vector and min_score
+// when the in-process vector components (HybridEngine + Backend) are wired.
+// The production CLI wires only the daemon HybridSearcher, so vector within-message
+// search is unavailable there and the tool must not advertise a mode it cannot
+// deliver (roborev: advertised vector mode unavailable in production config).
+func TestSearchInMessageTool_AdvertisesVectorModeWhenConfigured(t *testing.T) {
+	assert := assert.New(t)
+
+	disabled := searchInMessageTool(false)
+	assert.NotContains(disabled.InputSchema.Properties, "mode", "vector-in-message unavailable: tool advertises 'mode' but vector mode is unsupported")
+	assert.NotContains(disabled.InputSchema.Properties, "min_score", "vector-in-message unavailable: tool advertises 'min_score' but vector mode is unsupported")
+	assert.False(strings.Contains(disabled.Description, "mode=vector"),
+		"vector-in-message unavailable: tool description mentions vector mode: %q", disabled.Description)
+
+	enabled := searchInMessageTool(true)
+	assert.Contains(enabled.InputSchema.Properties, "mode", "vector-in-message available: tool is missing 'mode' parameter")
+	assert.Contains(enabled.InputSchema.Properties, "min_score", "vector-in-message available: tool is missing 'min_score' parameter")
+	assert.Contains(enabled.Description, "mode=vector", "vector-in-message available: tool description should mention vector mode, got: %q", enabled.Description)
+}
+
 func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
 	assert := assert.New(t)
 	tool := findSimilarMessagesTool()

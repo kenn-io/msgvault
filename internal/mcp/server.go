@@ -17,19 +17,19 @@ import (
 
 // Tool name constants.
 const (
-	ToolSearchMetadata      = "search_metadata"
-	ToolSearchMessageBodies = "search_message_bodies"
+	ToolSearchMetadata         = "search_metadata"
+	ToolSearchMessageBodies    = "search_message_bodies"
 	ToolSemanticSearchMessages = "semantic_search_messages"
-	ToolGetMessage          = "get_message"
-	ToolGetAttachment       = "get_attachment"
-	ToolExportAttachment    = "export_attachment"
-	ToolListMessages        = "list_messages"
-	ToolGetStats            = "get_stats"
-	ToolAggregate           = "aggregate"
-	ToolStageDeletion       = "stage_deletion"
-	ToolSearchByDomains     = "search_by_domains"
-	ToolFindSimilarMessages = "find_similar_messages"
-	ToolSearchInMessage     = "search_in_message"
+	ToolGetMessage             = "get_message"
+	ToolGetAttachment          = "get_attachment"
+	ToolExportAttachment       = "export_attachment"
+	ToolListMessages           = "list_messages"
+	ToolGetStats               = "get_stats"
+	ToolAggregate              = "aggregate"
+	ToolStageDeletion          = "stage_deletion"
+	ToolSearchByDomains        = "search_by_domains"
+	ToolFindSimilarMessages    = "find_similar_messages"
+	ToolSearchInMessage        = "search_in_message"
 )
 
 // search_message_bodies/search_in_message mode values (wire format).
@@ -122,12 +122,17 @@ func newMCPServer(opts ServeOptions) *server.MCPServer {
 	}
 
 	vectorAvailable := opts.HybridEngine != nil || opts.HybridSearcher != nil
+	// search_in_message mode=vector needs the in-process vector components
+	// (HybridEngine + Backend as ChunkScoringBackend), not just the daemon
+	// HybridSearcher. The production CLI only wires the daemon searcher, so
+	// gate the vector mode advertisement on the actual capability.
+	vectorInMessageAvailable := opts.HybridEngine != nil && opts.Backend != nil
 	s.AddTool(searchMetadataTool(), h.searchMetadata)
 	s.AddTool(searchMessageBodiesTool(), h.searchMessageBodies)
 	s.AddTool(semanticSearchMessagesTool(vectorAvailable), h.semanticSearchMessages)
 	s.AddTool(getMessageTool(), h.getMessage)
 	s.AddTool(getAttachmentTool(), h.getAttachment)
-	s.AddTool(searchInMessageTool(), h.searchInMessage)
+	s.AddTool(searchInMessageTool(vectorInMessageAvailable), h.searchInMessage)
 	s.AddTool(exportAttachmentTool(), h.exportAttachment)
 	s.AddTool(listMessagesTool(), h.listMessages)
 	s.AddTool(getStatsTool(), h.getStats)
@@ -388,12 +393,19 @@ func exportAttachmentTool() mcp.Tool {
 	)
 }
 
-func searchInMessageTool() mcp.Tool {
-	return mcp.NewTool(ToolSearchInMessage,
-		mcp.WithDescription("Find matches within one message body. Default mode=keyword finds literal term occurrences. "+
-			"mode=vector scores each embedded chunk by semantic similarity to the query (best first, with score on each match). "+
-			"Each match includes char_offset (byte offset into body_text), snippet, and line. "+
-			"Use char_offset with get_message center_at to read a larger window around any match."),
+func searchInMessageTool(vectorInMessageAvailable bool) mcp.Tool {
+	desc := "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
+		"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
+		"Use char_offset with get_message center_at to read a larger window around any match."
+	if vectorInMessageAvailable {
+		desc = "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
+			"mode=vector scores each embedded chunk by semantic similarity to the query (best first, with score on each match). " +
+			"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
+			"Use char_offset with get_message center_at to read a larger window around any match."
+	}
+
+	opts := []mcp.ToolOption{
+		mcp.WithDescription(desc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithNumber("id",
 			mcp.Required(),
@@ -401,20 +413,25 @@ func searchInMessageTool() mcp.Tool {
 		),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Search query (keyword term or semantic query when mode=vector)"),
-		),
-		mcp.WithString("mode",
-			mcp.Description("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)"),
-			mcp.Enum(searchModeKeyword, searchModeVector),
-		),
-		mcp.WithNumber("min_score",
-			mcp.Description("Minimum chunk similarity score (0–1) when mode=vector (default 0)"),
+			mcp.Description("Search query (keyword term, or semantic query when mode=vector)"),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum matches to return (default 10)"),
 		),
 		withOffset(),
-	)
+	}
+	if vectorInMessageAvailable {
+		opts = append(opts,
+			mcp.WithString("mode",
+				mcp.Description("Search mode: keyword (default, literal term) or vector (semantic chunk scoring)"),
+				mcp.Enum(searchModeKeyword, searchModeVector),
+			),
+			mcp.WithNumber("min_score",
+				mcp.Description("Minimum chunk similarity score (0–1) when mode=vector (default 0)"),
+			),
+		)
+	}
+	return mcp.NewTool(ToolSearchInMessage, opts...)
 }
 
 func listMessagesTool() mcp.Tool {
